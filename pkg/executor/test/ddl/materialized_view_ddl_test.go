@@ -360,6 +360,27 @@ func TestShowMaterializedViewLogs(t *testing.T) {
 	tk.MustQuery("show materialized view logs where base_table_name = 't_not_exist'").Check(testkit.Rows())
 }
 
+func TestInformationSchemaTiDBMViews(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_meta (a, s, cnt) comment='mv-meta' refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_meta"))
+	require.NoError(t, err)
+	mvID := mvTable.Meta().ID
+
+	tk.MustQuery("select table_catalog, table_schema, mview_id, mview_name, mview_comment, refresh_method, refresh_start, refresh_interval from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'").
+		Check(testkit.Rows(fmt.Sprintf("def test %d mv_meta mv-meta FAST  DATE_ADD(NOW(), INTERVAL 1 HOUR)", mvID)))
+	tk.MustQuery("select mview_modify_time is not null from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("select mview_sql_content like 'SELECT%' from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'").
+		Check(testkit.Rows("1"))
+}
+
 func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

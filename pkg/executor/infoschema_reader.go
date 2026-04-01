@@ -159,6 +159,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexes(ctx, sctx)
 		case infoschema.TableViews:
 			err = e.setDataFromViews(ctx, sctx)
+		case infoschema.TableTiDBMViews:
+			err = e.setDataFromTiDBMViews(ctx, sctx)
 		case infoschema.TableEngines:
 			e.setDataFromEngines()
 		case infoschema.TableCharacterSets:
@@ -1532,6 +1534,46 @@ func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionct
 			collation,                       // COLLATION_CONNECTION
 		)
 		rows = append(rows, record)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	rows := make([][]types.Datum, 0)
+	loc := sctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
+
+	for _, schema := range e.is.AllSchemaNames() {
+		tables, err := e.is.SchemaTableInfos(ctx, schema)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, tbl := range tables {
+			if tbl.MaterializedView == nil {
+				continue
+			}
+			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+				continue
+			}
+			modifyTime := types.NewTime(types.FromGoTime(tbl.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+			record := types.MakeDatums(
+				infoschema.CatalogVal,                 // TABLE_CATALOG
+				schema.O,                              // TABLE_SCHEMA
+				tbl.ID,                                // MVIEW_ID
+				tbl.Name.O,                            // MVIEW_NAME
+				tbl.MaterializedView.SQLContent,       // MVIEW_SQL_CONTENT
+				tbl.Comment,                           // MVIEW_COMMENT
+				modifyTime,                            // MVIEW_MODIFY_TIME
+				tbl.MaterializedView.RefreshMethod,    // REFRESH_METHOD
+				tbl.MaterializedView.RefreshStartWith, // REFRESH_START
+				tbl.MaterializedView.RefreshNext,      // REFRESH_INTERVAL
+			)
+			rows = append(rows, record)
+		}
 	}
 	e.rows = rows
 	return nil
