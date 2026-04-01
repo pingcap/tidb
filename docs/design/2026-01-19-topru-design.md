@@ -101,7 +101,7 @@ SQL Execution → ExecutionContext Registration
 - Therefore, the value read during sampling is "cumulative value up to the current moment", TopRU calculates the RU increment within the sampling period through `ruDelta = currentRU - lastRU` to avoid double counting.
 
 **Aggregation Dimensions**: `(user, sql_digest, plan_digest)` tuple
-- `user`: Obtained from `SessionVars.User.Username`
+- `user`: Obtained from the effective authenticated identity (`vars.User.String()`), typically in `user@host` form
 - `sql_digest`: SQL Digest, identifies SQL statement pattern
 - `plan_digest`: Plan Digest, identifies execution plan
 
@@ -147,9 +147,12 @@ Add `ExecutionContext` field in `StatementStats` to store sampling state of exec
 ```go
 // ExecutionContext stores the execution context of the currently executing SQL in the session
 type ExecutionContext struct {
-    Ctx          context.Context    // Used to read util.RUDetails
-    Key          UserSQLPlanDigest  // (user, sql_digest, plan_digest)
-    LastRUSample *atomic.Float64    // Last sampled cumulative RU (RRU+WRU), used to calculate increment
+    RUDetails   *util.RUDetails
+    RUV2Metrics *execdetails.RUV2Metrics
+    Key         RUKey
+    RUV2Weights execdetails.RUV2Weights
+    LastRUTotal float64
+    RUVersion   rmclient.RUVersion
 }
 
 // StatementStats extension
@@ -163,8 +166,15 @@ type StatementStats struct {
     finishedRUBuffer RUIncrementMap
 }
 
-// RUIncrementMap stores RU increments in a lightweight map
-type RUIncrementMap map[UserSQLPlanDigest]float64
+// RUIncrement represents a delta RU consumption for one RUKey.
+type RUIncrement struct {
+    TotalRU      float64
+    ExecCount    uint64
+    ExecDuration uint64
+}
+
+// RUIncrementMap stores aggregated RU increments keyed by (user, sql_digest, plan_digest).
+type RUIncrementMap map[RUKey]*RUIncrement
 ```
 
 **Lifecycle Management**:
@@ -185,7 +195,6 @@ Uses delta calculation mechanism to avoid double counting:
 **Edge Case Handling**:
 - **ruDelta <= 0**: Skip this sampling
 - **util.RUDetails is nil**: Skip this sampling
-- **Resource Control not enabled (`tidb_enable_resource_control = OFF`)**: Skip RU collection and reporting (avoid producing invalid all-zero data)
 - **Session finished RU buffer behavior**: `MergeRUInto()` drains `finishedRUBuffer` every tick and samples active execution RU in the same call.
 - **SQL Execution Completed**: Clear `execCtx`, stop sampling
 
@@ -368,7 +377,6 @@ type ReportData struct {
 
 - **OOM**: Reuses TopSQL's existing memory management mechanism + ruWindowAggregator bounded-window protection
 - **CPU Spike**: RU collection and CPU collection are on the same call path, overhead is controllable
-- **Data Inaccuracy**: When Resource Control is not enabled, TopRU skips RU collection and reporting (avoids invalid all-zero data); RU is only counted when enabled
 
 ### Integration with Other Observability Modules
 
@@ -388,13 +396,12 @@ type ReportData struct {
 
 ### Functional Compatibility
 
-- **Resource Control**: Resource Control must be enabled to get accurate RU data; when disabled, TopRU skips RU collection and reporting
 - **TopSQL**: Fully compatible with existing CPU statistics, can sort by CPU/RU simultaneously
 
 ### Upgrade Compatibility
 
-- **Version Upgrade**: TopRU is automatically available as a new feature, no additional configuration required
-- **Protobuf**: RU fields use optional, old clients can ignore new fields
+- **Version Upgrade**: TopRU is opt-in through PubSub subscription; existing subscribers remain TopSQL-only unless they request `COLLECTOR_TYPE_TOPRU` and provide `TopRU` config
+- **Protobuf**: TopRU uses additive protobuf schema evolution; old clients ignore unknown fields/messages
 - **Data**: In-memory data is not persisted, re-collected after upgrade
 
 ## Test Design
@@ -404,7 +411,7 @@ type ReportData struct {
 - **Data Collection**: Local sampling/execution completion collection correctness, RU increment calculation, execCtx/finished buffer lifecycle
 - **Aggregation**: `(user, sql_digest, plan_digest)` aggregation correctness, same SQL from different users counted separately
 - **Query**: Sort by RU, query by user dimension, Top N sorting, RU Share Percent calculation
-- **Edge Cases**: RU = 0 (Resource Control not enabled), user is empty (internal SQL), execution time < 1s
+- **Edge Cases**: RU = 0, user is empty (internal SQL), execution time < 1s
 
 ### Performance Test
 
@@ -416,7 +423,6 @@ type ReportData struct {
 
 ### Compatibility Test
 
-- Resource Control enabled/disabled scenarios
 - Protobuf forward compatibility
 - Coexistence with existing TopSQL functionality
   - Behavior after upgrading from older TopSQL version is not affected
