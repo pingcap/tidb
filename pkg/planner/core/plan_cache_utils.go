@@ -457,7 +457,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	}
 
 	// stats version can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
-	// is enabled. Sync-load timeout fallback is checked separately on cache hit.
+	// is enabled. A binding pins the plan via hints, so stats changes cannot alter the chosen plan.
 	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
 		var statsVerHash uint64
 		for _, t := range stmt.tables {
