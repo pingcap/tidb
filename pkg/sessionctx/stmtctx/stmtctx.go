@@ -478,6 +478,9 @@ type StatementContext struct {
 	// AlternativeLogicalPlanSameOrderIndexJoin indicates whether the current first
 	// round already produced a same-order index join candidate for a decorrelated Apply.
 	AlternativeLogicalPlanSameOrderIndexJoin bool
+	// AlternativeLogicalPlanSemiJoinRewrite indicates whether the current logical
+	// build found a semi join that can try an additional SEMI_JOIN_REWRITE round.
+	AlternativeLogicalPlanSemiJoinRewrite bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -657,6 +660,7 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanDecorrelatedApply = false
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
+	sc.AlternativeLogicalPlanSemiJoinRewrite = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
@@ -669,6 +673,12 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() {
 // has already produced a same-order index join candidate for a decorrelated Apply.
 func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
+}
+
+// MarkAlternativeLogicalPlanSemiJoinRewrite records that the current first round
+// found a semi join that can try an extra SEMI_JOIN_REWRITE-based logical round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
+	sc.AlternativeLogicalPlanSemiJoinRewrite = true
 }
 
 // CtxID returns the context id of the statement

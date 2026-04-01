@@ -5754,6 +5754,12 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 			joinPlan.JoinType = base.SemiJoin
 		}
 	}
+	if b.ctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		!forceRewrite &&
+		!b.ctx.GetSessionVars().EnableSemiJoinRewrite &&
+		joinPlan.JoinType == base.SemiJoin {
+		b.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanSemiJoinRewrite()
+	}
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	joinPlan.SetPreferredJoinTypeAndOrder(b.TableHints())
 	// Make the session variable behave like the hint by setting the same prefer bit.

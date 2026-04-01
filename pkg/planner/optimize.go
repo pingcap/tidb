@@ -480,11 +480,19 @@ func buildAndOptimizeLogicalPlanRound(
 	bestCost *float64,
 	bestLogicalPlanCtx *logicalPlanBuildCtx,
 	optFlagAdjust func(uint64) uint64,
+	sessVarAdjust func(*variable.SessionVars) func(),
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	// TODO: when buildRound > 1, only emit unused view-hint warnings for the winner build.
 	defer builder.HandleUnusedViewHints()
+
+	if sessVarAdjust != nil {
+		restoreSessVars := sessVarAdjust(sctx.GetSessionVars())
+		if restoreSessVars != nil {
+			defer restoreSessVars()
+		}
+	}
 
 	builder.Init(sctx, is, hintProcessor)
 
@@ -557,6 +565,12 @@ func shouldTryAlternativeLogicalPlanRound(sessVars *variable.SessionVars) bool {
 		!sessVars.StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin
 }
 
+func shouldTryAlternativeSemiJoinRewriteRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanSemiJoinRewrite &&
+		!sessVars.EnableSemiJoinRewrite
+}
+
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
 		// only count the optimization for SQL with specified text
@@ -617,6 +631,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		&bestCost,
 		&bestLogicalPlanCtx,
 		nil,
+		nil,
 	)
 	if err != nil {
 		return nil, nil, 0, err
@@ -649,6 +664,39 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			&bestCost,
 			&bestLogicalPlanCtx,
 			func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+			nil,
+		)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		if nonLogical {
+			return p, names, 0, nil
+		}
+	}
+	if shouldTryAlternativeSemiJoinRewriteRound(sessVars) {
+		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
+		p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+			ctx,
+			sctx,
+			node,
+			is,
+			hintProcessor,
+			&checked,
+			&optimizeStarted,
+			&beginOpt,
+			needRestoreLogicalPlanCtx,
+			&bestPlan,
+			&bestNames,
+			&bestCost,
+			&bestLogicalPlanCtx,
+			nil,
+			func(sessVars *variable.SessionVars) func() {
+				prev := sessVars.EnableSemiJoinRewrite
+				sessVars.EnableSemiJoinRewrite = true
+				return func() {
+					sessVars.EnableSemiJoinRewrite = prev
+				}
+			},
 		)
 		if err != nil {
 			return nil, nil, 0, err
