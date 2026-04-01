@@ -40,7 +40,7 @@ func (r *OrderAwareJoinReorder) optimizeRecursive(
 	p base.LogicalPlan,
 	orderCols []*expression.Column,
 	midFilters []expression.Expression,
-) (bool, bool, error) {
+) (changed bool, ordered bool, err error) {
 	if p == nil {
 		return false, false, nil
 	}
@@ -52,7 +52,6 @@ func (r *OrderAwareJoinReorder) optimizeRecursive(
 		midFilters = nil
 	}
 
-	changed := false
 	switch node := p.(type) {
 	// for TopN and Sort, we extract the ordering columns and pass down to children so they can annotate join groups with leading preferences!
 	case *logicalop.LogicalTopN:
@@ -157,9 +156,7 @@ func (r *OrderAwareJoinReorder) optimizeChildren(
 	orderCols []*expression.Column,
 	parentFilters []expression.Expression,
 	vertexIDShouldFollowOrder int,
-) (bool, bool, error) {
-	changed := false
-	ordered := false
+) (changed bool, ordered bool, err error) {
 	for _, child := range children {
 		nextOrderCols := orderCols
 		nextParentFilters := parentFilters
