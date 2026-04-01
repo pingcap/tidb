@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
-	"github.com/tiancaiamao/gp"
 )
 
 func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*statistics.TopN, []*statistics.Histogram) {
@@ -67,79 +66,7 @@ func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*s
 	return topNs, hists
 }
 
-func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
-	loc := time.UTC
-	version := 1
-	killer := sqlkiller.SQLKiller{}
-	topNs, hists := prepareTopNsAndHists(b, partitions, loc)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Benchmark merge 100 topN.
-		_, _, _, _ = MergePartTopN2GlobalTopN(
-			loc,
-			version,
-			topNs,
-			100,
-			hists,
-			false,
-			&killer,
-		)
-	}
-}
-
 var benchmarkSizes = []int{100, 1000, 2000, 5000, 10000}
-
-// cmd: go test -run=^$ -bench=BenchmarkMergePartTopN2GlobalTopNWithHists -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
-func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
-	for _, size := range benchmarkSizes {
-		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			benchmarkMergePartTopN2GlobalTopNWithHists(size, b)
-		})
-	}
-}
-
-func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *testing.B) {
-	loc := time.UTC
-	version := 1
-	killer := sqlkiller.SQLKiller{}
-
-	topNs, hists := prepareTopNsAndHists(b, partitions, loc)
-	wrapper := NewStatsWrapper(hists, topNs)
-	const mergeConcurrency = 4
-	batchSize := len(wrapper.AllTopN) / mergeConcurrency
-	if batchSize < 1 {
-		batchSize = 1
-	} else if batchSize > MaxPartitionMergeBatchSize {
-		batchSize = MaxPartitionMergeBatchSize
-	}
-	gpool := gp.New(mergeConcurrency, 5*time.Minute)
-	defer gpool.Close()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Benchmark merge 100 topN.
-		_, _, _, _ = MergeGlobalStatsTopNByConcurrency(
-			gpool,
-			mergeConcurrency,
-			batchSize,
-			wrapper,
-			loc,
-			version,
-			100,
-			false,
-			&killer,
-		)
-	}
-}
-
-// cmd: go test -run=^$ -bench=BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
-func BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists(b *testing.B) {
-	for _, size := range benchmarkSizes {
-		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(size, b)
-		})
-	}
-}
 
 func benchmarkMergePartTopNAndHistToGlobal(partitions int, b *testing.B) {
 	loc := time.UTC
@@ -161,91 +88,5 @@ func BenchmarkMergePartTopNAndHistToGlobal(b *testing.B) {
 		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
 			benchmarkMergePartTopNAndHistToGlobal(size, b)
 		})
-	}
-}
-
-// BenchmarkFullPipeline benchmarks the full TopN + histogram merge pipeline
-// for all three approaches: Separate, Concurrent (4 workers), and Combined.
-//
-// Note: Separate and Concurrent mutate input histograms via BinarySearchRemoveVal
-// during the TopN merge phase. Across benchmark iterations the histograms
-// become progressively emptier, making later iterations slightly faster.
-// The Combined approach does not mutate inputs.
-//
-// cmd: go test -run=^$ -bench=BenchmarkFullPipeline -benchmem --tags=intest github.com/pingcap/tidb/pkg/statistics/handle/globalstats
-func BenchmarkFullPipeline(b *testing.B) {
-	for _, size := range benchmarkSizes {
-		b.Run(fmt.Sprintf("Size%d/Separate", size), func(b *testing.B) {
-			benchmarkFullPipelineSeparate(size, b)
-		})
-		b.Run(fmt.Sprintf("Size%d/Concurrent", size), func(b *testing.B) {
-			benchmarkFullPipelineConcurrent(size, b)
-		})
-		b.Run(fmt.Sprintf("Size%d/Combined", size), func(b *testing.B) {
-			benchmarkFullPipelineCombined(size, b)
-		})
-	}
-}
-
-func benchmarkFullPipelineSeparate(partitions int, b *testing.B) {
-	loc := time.UTC
-	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
-	version := 1
-	killer := sqlkiller.SQLKiller{}
-	topNs, hists := prepareTopNsAndHists(b, partitions, loc)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		globalTopN, leftTopN, mergedHists, _ := MergePartTopN2GlobalTopN(
-			loc, version, topNs, 100, hists, false, &killer,
-		)
-		_, _ = statistics.MergePartitionHist2GlobalHist(
-			sc, mergedHists, leftTopN, 256, false, version,
-		)
-		_ = globalTopN
-	}
-}
-
-func benchmarkFullPipelineConcurrent(partitions int, b *testing.B) {
-	loc := time.UTC
-	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
-	version := 1
-	killer := sqlkiller.SQLKiller{}
-	topNs, hists := prepareTopNsAndHists(b, partitions, loc)
-	wrapper := NewStatsWrapper(hists, topNs)
-	const mergeConcurrency = 4
-	batchSize := len(wrapper.AllTopN) / mergeConcurrency
-	if batchSize < 1 {
-		batchSize = 1
-	} else if batchSize > MaxPartitionMergeBatchSize {
-		batchSize = MaxPartitionMergeBatchSize
-	}
-	gpool := gp.New(mergeConcurrency, 5*time.Minute)
-	defer gpool.Close()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		globalTopN, leftTopN, mergedHists, _ := MergeGlobalStatsTopNByConcurrency(
-			gpool, mergeConcurrency, batchSize, wrapper,
-			loc, version, 100, false, &killer,
-		)
-		_, _ = statistics.MergePartitionHist2GlobalHist(
-			sc, mergedHists, leftTopN, 256, false, version,
-		)
-		_ = globalTopN
-	}
-}
-
-func benchmarkFullPipelineCombined(partitions int, b *testing.B) {
-	loc := time.UTC
-	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
-	killer := sqlkiller.SQLKiller{}
-	topNs, hists := prepareTopNsAndHists(b, partitions, loc)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _ = statistics.MergePartTopNAndHistToGlobal(
-			topNs, hists, 100, 256, false, &killer, sc, 1,
-		)
 	}
 }

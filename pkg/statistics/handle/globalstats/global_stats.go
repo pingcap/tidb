@@ -31,11 +31,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// MaxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
-	MaxPartitionMergeBatchSize = 256
-)
-
 // statsGlobalImpl implements util.StatsGlobal
 type statsGlobalImpl struct {
 	statsHandler statstypes.StatsHandle
