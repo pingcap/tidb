@@ -98,6 +98,57 @@ func TestExecAutoAnalyzeRewritesLegacyStatsVersionToV2(t *testing.T) {
 	require.NoError(t, err)
 	tblStats := handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
 	require.Equal(t, statistics.Version2, tblStats.StatsVer)
+
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`create table pt (a int, b int, index idx(a))
+partition by range (a) (
+	partition p0 values less than (10),
+	partition p1 values less than (20)
+)`)
+	tk.MustExec("insert into pt values (1, 1), (2, 2), (3, 3), (11, 11), (12, 12)")
+	tk.MustExec("analyze table pt")
+
+	is = dom.InfoSchema()
+	partitionedTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pt"))
+	require.NoError(t, err)
+	pi := partitionedTbl.Meta().GetPartitionInfo()
+	require.NotNil(t, pi)
+	legacyTableIDs := []int64{partitionedTbl.Meta().ID, pi.Definitions[0].ID, pi.Definitions[1].ID}
+	tk.MustExec(
+		"update mysql.stats_histograms set stats_ver = 1 where table_id in (?,?,?)",
+		legacyTableIDs[0], legacyTableIDs[1], legacyTableIDs[2],
+	)
+	handle.Clear()
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema(), legacyTableIDs...))
+	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(partitionedTbl.Meta().ID, partitionedTbl.Meta()).StatsVer)
+	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(pi.Definitions[0].ID, partitionedTbl.Meta()).StatsVer)
+	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(pi.Definitions[1].ID, partitionedTbl.Meta()).StatsVer)
+
+	require.NotPanics(t, func() {
+		ok := exec.AutoAnalyze(
+			sctx,
+			handle,
+			dom.SysProcTracker(),
+			statistics.Version2,
+			true,
+			"analyze table %n partition %n",
+			"pt",
+			"p0",
+		)
+		require.True(t, ok)
+	})
+
+	warnLogs = recorded.FilterMessage("auto analyze rewrites legacy statistics version 1 to version 2").All()
+	require.Len(t, warnLogs, 2)
+	require.Equal(t, "analyze table `pt` partition `p0`", warnLogs[1].ContextMap()["sql"])
+	tk.MustQuery(
+		"select table_id, stats_ver from mysql.stats_histograms where table_id in (?,?,?) group by table_id, stats_ver order by table_id",
+		legacyTableIDs[0], legacyTableIDs[1], legacyTableIDs[2],
+	).Check(testkit.Rows(
+		fmt.Sprintf("%d 2", legacyTableIDs[0]),
+		fmt.Sprintf("%d 2", legacyTableIDs[1]),
+		fmt.Sprintf("%d 2", legacyTableIDs[2]),
+	))
 }
 
 func TestKillInWindows(t *testing.T) {

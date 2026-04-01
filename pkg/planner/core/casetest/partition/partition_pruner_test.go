@@ -110,7 +110,7 @@ func getPartitionInfoFromPlan(plan []string) string {
 		if i > 0 {
 			buf.WriteString("; ")
 		}
-		buf.WriteString(fmt.Sprintf("%v: %v", info.Table, info.Partitions))
+		fmt.Fprintf(buf, "%v: %v", info.Table, info.Partitions)
 	}
 	return buf.String()
 }

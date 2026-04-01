@@ -261,6 +261,9 @@ type PlanBuilder struct {
 	partitionedTable []table.PartitionedTable
 	// buildingViewStack is used to check whether there is a recursive view.
 	buildingViewStack set.StringSet
+	// ignoreTruncateErrForViewPredicateFolding narrows truncate relaxation to
+	// constant predicate folding while expanding a view.
+	ignoreTruncateErrForViewPredicateFolding bool
 	// renamingViewName is the name of the view which is being renamed.
 	renamingViewName string
 	// isCreateView indicates whether the query is create view.
@@ -310,6 +313,15 @@ type PlanBuilder struct {
 
 	// noDecorrelate indicates whether decorrelation should be disabled for correlated aggregates in subqueries
 	noDecorrelate bool
+
+	// buildingLateralSubquery indicates we're currently building a LATERAL derived table
+	// This allows resolving column references against the left side of the join
+	buildingLateralSubquery bool
+
+	// lateralOuterCount tracks how many of the last entries in outerSchemas
+	// were pushed by buildJoin for LATERAL purposes. Non-LATERAL derived tables
+	// must not see these entries, so buildResultSetNode temporarily hides them.
+	lateralOuterCount int
 
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
@@ -526,6 +538,14 @@ func (b *PlanBuilder) HandleUnusedViewHints() {
 	b.hintProcessor.SetWarns(b.hintProcessor.HandleUnusedViewHints(b.hintState, nil))
 }
 
+func (b *PlanBuilder) recordPlanBuilderMetric() {
+	if b.ctx != nil {
+		if vars := b.ctx.GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
+			vars.RUV2Metrics.AddPlanCnt(1)
+		}
+	}
+}
+
 // Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
 	err := b.checkSEMStmt(node.Node)
@@ -537,6 +557,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
 	b.optFlag |= rule.FlagPruneColumns
+	// Count every recursive build invocation because RU v2 charges plan work per build step.
+	b.recordPlanBuilderMetric()
 	switch x := node.Node.(type) {
 	case *ast.AdminStmt:
 		return b.buildAdmin(ctx, x)
@@ -1261,17 +1283,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	publicPaths = append(publicPaths, tablePath)
 
 	// consider hypo TiFlash replicas
-	isHypoTiFlashReplica := false
-	if ctx.GetSessionVars().StmtCtx.InExplainStmt && ctx.GetSessionVars().HypoTiFlashReplicas != nil {
-		hypoReplicas := ctx.GetSessionVars().HypoTiFlashReplicas
-		originalTableName := tblInfo.Name.L
-		if hypoReplicas[dbName.L] != nil {
-			if _, ok := hypoReplicas[dbName.L][originalTableName]; ok {
-				isHypoTiFlashReplica = true
-			}
-		}
-	}
-
+	isHypoTiFlashReplica := logicalop.UsedHypoTiFlashReplicas(ctx.GetSessionVars(), dbName, tblInfo)
 	if tblInfo.TiFlashReplica == nil {
 		if isHypoTiFlashReplica {
 			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
@@ -1488,7 +1500,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = publicPaths
 	}
 
-	available = removeIgnoredPaths(available, ignored, tblInfo)
+	available = removeIgnoredPaths(available, ignored)
 
 	// global index must not use partition pruning optimization, as LogicalPartitionAll not suitable for global index.
 	// ignore global index if flagPartitionProcessor exists.
@@ -1519,13 +1531,18 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	return available, nil
 }
 
-func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath, tblInfo *model.TableInfo) []*util.AccessPath {
+func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath) []*util.AccessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
 	}
 	remainedPaths := make([]*util.AccessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.IsTiKVTablePath() || path.IsTiFlashSimpleTablePath() || getPathByIndexName(ignoredPaths, path.Index.Name, tblInfo) == nil {
+		// ignoredPaths already stores the resolved access paths from the hint.
+		// Re-matching them by prefix here can incorrectly remove sibling indexes that share a prefix.
+		isIgnored := path.Index != nil && slices.ContainsFunc(ignoredPaths, func(ignoredPath *util.AccessPath) bool {
+			return ignoredPath.Index != nil && ignoredPath.Index.Name.L == path.Index.Name.L
+		})
+		if path.IsTiKVTablePath() || path.IsTiFlashSimpleTablePath() || !isIgnored {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
@@ -2377,6 +2394,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 
 	return nil, nil, nil
 }
+
 func (b *PlanBuilder) getColumnsBasedOnPredicateColumns(
 	tbl *resolve.TableNameW,
 	predicateCols, mustAnalyzedCols *calcOnceMap,
@@ -2638,10 +2656,30 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	}
 
 	var predicateCols, mustAnalyzedCols calcOnceMap
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	dynamicPrune := variable.PartitionPruneMode(b.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
+	isPartitioned := tbl.TableInfo.GetPartitionInfo() != nil
+	targetPhysicalIDsVersionMatch := b.analyzeVersionMatchesForPhysicalIDs(tbl.TableInfo, physicalIDs, version)
+	if !isAnalyzeTable && dynamicPrune && isPartitioned {
+		// Dynamic partition analyze later merges all partitions into table-level stats, so this
+		// rewrite decision must follow table-level/global stats compatibility rather than only the
+		// requested partition IDs.
+		tableVersionMatches := domain.GetDomain(b.ctx).StatsHandle().AnalyzeVersionMatchesForTable(tbl.TableInfo, version)
+		if !tableVersionMatches {
+			// Reanalyze all partitions so the global merge rewrites table-level stats with the
+			// session-selected version.
+			physicalIDs, partitionNames, err = GetPhysicalIDsAndPartitionNames(tbl.TableInfo, nil)
+			if err != nil {
+				return err
+			}
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+				"The analyze version from the session is not compatible with the existing statistics of the table. TiDB will analyze all partitions to rewrite the table statistics with the session-selected version",
+			))
+			// Force downstream logic to rewrite all stats after expanding to all partitions.
+			targetPhysicalIDsVersionMatch = false
+		}
+	}
 	// If the statistics of the table is version 1, we must analyze all columns to overwrites all of old statistics.
-	_, versionMatches := statsHandle.ResolveAnalyzeVersion(tbl.TableInfo, physicalIDs, version)
-	mustAllColumns := !versionMatches
+	mustAllColumns := !targetPhysicalIDsVersionMatch
 
 	astColsInfo, _, err := b.getFullAnalyzeColumnsInfo(tbl, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns, true)
 	if err != nil {
@@ -2916,6 +2954,23 @@ func pickColumnList(astColChoice ast.ColumnChoice, astColList []*model.ColumnInf
 	return tblSavedColChoice, tblSavedColList
 }
 
+func (b *PlanBuilder) analyzeVersionMatchesForPhysicalIDs(tblInfo *model.TableInfo, physicalIDs []int64, requestedVersion int) bool {
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	intest.Assert(statsHandle != nil, "statsHandle should not be nil")
+	for _, physicalID := range physicalIDs {
+		if !statistics.AnalyzeVersionMatchesForTableStats(statsHandle.GetPhysicalTableStats(physicalID, tblInfo), requestedVersion) {
+			return false
+		}
+	}
+	return true
+}
+
+func (b *PlanBuilder) appendAnalyzeVersionOverwriteWarning() {
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+		"The analyze version from the session is not compatible with the existing statistics of the table. The session-selected version will overwrite the existing version instead",
+	))
+}
+
 // buildAnalyzeTable constructs analyze tasks for each table.
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
 	p := &Analyze{Opts: opts}
@@ -2946,37 +3001,29 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 }
 
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-	if statsHandle == nil {
-		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
-	}
 	tnW := b.resolveCtx.GetTableName(as.TableNames[0])
 	tblInfo := tnW.TableInfo
 	physicalIDs, _, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
-	_, versionIsSame := statsHandle.ResolveAnalyzeVersion(tblInfo, physicalIDs, version)
+	versionIsSame := b.analyzeVersionMatchesForPhysicalIDs(tblInfo, physicalIDs, version)
 	if !versionIsSame {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The analyze version from the session is not compatible with the existing statistics of the table. The session-selected version will overwrite the existing version instead"))
+		b.appendAnalyzeVersionOverwriteWarning()
 	}
 	return b.buildAnalyzeTable(as, opts, version)
 }
 
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (base.Plan, error) {
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-	if statsHandle == nil {
-		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
-	}
 	tnW := b.resolveCtx.GetTableName(as.TableNames[0])
 	tblInfo := tnW.TableInfo
 	physicalIDs, _, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
-	_, versionIsSame := statsHandle.ResolveAnalyzeVersion(tblInfo, physicalIDs, version)
+	versionIsSame := b.analyzeVersionMatchesForPhysicalIDs(tblInfo, physicalIDs, version)
 	if !versionIsSame {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The analyze version from the session is not compatible with the existing statistics of the table. The session-selected version will overwrite the existing version instead"))
+		b.appendAnalyzeVersionOverwriteWarning()
 	}
 	return b.buildAnalyzeTable(as, opts, version)
 }

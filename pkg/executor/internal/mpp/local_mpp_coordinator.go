@@ -784,9 +784,12 @@ func (c *localMppCoordinator) handleAllReports() error {
 							RecordOneCopTask(-1, kv.TiFlash, detail)] = 0
 					}
 				}
-				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
-					if err := execdetails.MergeTiFlashRUConsumption(report.executionSummaries, ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
-						return err
+				ruv2Metrics := execdetails.RUV2MetricsFromContext(c.ctx)
+				if ruv2Metrics == nil || !ruv2Metrics.Bypass() {
+					if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
+						if err := execdetails.MergeTiFlashRUConsumption(report.executionSummaries, ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
+							return err
+						}
 					}
 				}
 			}

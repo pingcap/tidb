@@ -405,9 +405,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.flag |= inCreateOrDropTable
 		}
 	case *ast.TableSource:
-		if node.Lateral {
-			p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("LATERAL derived tables")
-		}
 		isModeOracle := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 		_, isSelectStmt := node.Source.(*ast.SelectStmt)
 		_, isSetOprStmt := node.Source.(*ast.SetOprStmt)

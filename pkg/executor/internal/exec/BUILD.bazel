@@ -36,11 +36,14 @@ go_library(
 go_test(
     name = "exec_test",
     timeout = "short",
-    srcs = ["indexusage_test.go"],
+    srcs = [
+        "executor_test.go",
+        "indexusage_test.go",
+    ],
+    embed = [":exec"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
-        ":exec",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/parser/ast",
@@ -50,6 +53,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/types/parser_driver",
         "//pkg/util/logutil",
+        "//pkg/util/mock",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",

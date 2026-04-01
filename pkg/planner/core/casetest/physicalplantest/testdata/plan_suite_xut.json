@@ -1394,7 +1394,6 @@
           "    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid",
           "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
         ]
       },
@@ -1410,7 +1409,6 @@
           "    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid",
           "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid"
         ]
       }

@@ -25,10 +25,11 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/atomic"
 )
 
-// TestSetupCloseAggregator verifies setup close aggregator and guards against regressions in begin-based RU accounting.
+// TestSetupCloseAggregator verifies the global aggregator lifecycle helpers.
 func TestSetupCloseAggregator(t *testing.T) {
 	for range 3 {
 		SetupAggregator()
@@ -40,7 +41,29 @@ func TestSetupCloseAggregator(t *testing.T) {
 	}
 }
 
-// TestRegisterUnregisterCollector verifies register unregister collector and guards against regressions in begin-based RU accounting.
+func TestBindRUVersionProviderAfterCloseAggregator(t *testing.T) {
+	originalProvider := globalAggregator.ruVersionProvider
+	provider := &mockRUVersionProvider{version: rmclient.RUVersionV2}
+	t.Cleanup(func() {
+		CloseAggregator()
+		BindRUVersionProvider(originalProvider)
+	})
+	BindRUVersionProvider(provider)
+	SetupAggregator()
+	require.Eventually(t, func() bool {
+		return !globalAggregator.closed()
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, rmclient.RUVersionV2, globalAggregator.lastRUVersion)
+
+	CloseAggregator()
+	require.True(t, globalAggregator.closed())
+	require.Same(t, provider, globalAggregator.ruVersionProvider)
+
+	BindRUVersionProvider(nil)
+	require.Nil(t, globalAggregator.ruVersionProvider)
+}
+
+// TestRegisterUnregisterCollector verifies the exported collector registration helpers.
 func TestRegisterUnregisterCollector(t *testing.T) {
 	SetupAggregator()
 	defer CloseAggregator()
@@ -91,7 +114,7 @@ func TestAggregatorRegisterCollect(t *testing.T) {
 	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 }
 
-// TestAggregatorRunClose verifies aggregator run close and guards against regressions in begin-based RU accounting.
+// TestAggregatorRunClose verifies start/close idempotence on a standalone aggregator.
 func TestAggregatorRunClose(t *testing.T) {
 	a := newAggregator()
 	assert.True(t, a.closed())
@@ -153,6 +176,7 @@ func TestAggregatorDisableAggregateRUNoEmit(t *testing.T) {
 	}
 
 	a := newAggregator()
+	a.lastRUVersion = a.currentRUVersion()
 	stats := &StatementStats{
 		data:             StatementStatsMap{},
 		finished:         atomic.NewBool(false),
@@ -191,6 +215,7 @@ func TestAggregatorRunOrderKeepsFinishedRU(t *testing.T) {
 	}()
 
 	a := newAggregator()
+	a.lastRUVersion = a.currentRUVersion()
 	stats := &StatementStats{
 		data:             StatementStatsMap{},
 		finished:         atomic.NewBool(true),
@@ -208,6 +233,72 @@ func TestAggregatorRunOrderKeepsFinishedRU(t *testing.T) {
 	require.Equal(t, 1.0, collected[key].TotalRU)
 	_, ok := a.statsSet.Load(stats)
 	require.False(t, ok)
+}
+
+func TestAggregatorDetectsRUVersionHandover(t *testing.T) {
+	for state.TopRUEnabled() {
+		state.DisableTopRU()
+	}
+	state.EnableTopRU()
+	defer func() {
+		for state.TopRUEnabled() {
+			state.DisableTopRU()
+		}
+	}()
+
+	key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
+	stats := &StatementStats{
+		data:             StatementStatsMap{},
+		finished:         atomic.NewBool(false),
+		finishedRUBuffer: RUIncrementMap{key: &RUIncrement{TotalRU: 10}},
+		execCtx: &ExecutionContext{
+			Key:       key,
+			RUVersion: rmclient.RUVersionV1,
+		},
+	}
+
+	provider := &mockRUVersionProvider{version: rmclient.RUVersionV1}
+	a := newAggregator()
+	a.setRUVersionProvider(provider)
+	a.lastRUVersion = a.currentRUVersion()
+	a.register(stats)
+
+	collected := RUIncrementMap{}
+	var collectedVersion rmclient.RUVersion
+	var changes []rmclient.RUVersion
+	a.registerRUCollector(&mockRUCollector{
+		fWithVersion: func(m RUIncrementMap, version rmclient.RUVersion) {
+			collected.Merge(m)
+			collectedVersion = version
+		},
+		onChange: func(version rmclient.RUVersion) {
+			changes = append(changes, version)
+		},
+	})
+
+	a.drainAndPushRU()
+	require.Len(t, collected, 1)
+	require.Equal(t, rmclient.RUVersionV1, collectedVersion)
+
+	stats.finishedRUBuffer[key] = &RUIncrement{TotalRU: 5}
+	stats.execCtx = &ExecutionContext{
+		Key:       key,
+		RUVersion: rmclient.RUVersionV1,
+	}
+	provider.version = rmclient.RUVersionV2
+	collected = RUIncrementMap{}
+	collectedVersion = 0
+
+	a.drainAndPushRU()
+	require.Empty(t, collected)
+	require.Equal(t, []rmclient.RUVersion{rmclient.RUVersionV2}, changes)
+	require.Nil(t, stats.execCtx)
+	require.Empty(t, stats.finishedRUBuffer)
+
+	stats.finishedRUBuffer[key] = &RUIncrement{TotalRU: 7}
+	a.drainAndPushRU()
+	require.Len(t, collected, 1)
+	require.Equal(t, rmclient.RUVersionV2, collectedVersion)
 }
 
 // TestAggregatorTopSQLTopRUCoexistenceMatrix verifies TopRU disable-on-finish keeps exec context clean without emitting tail RU noise.
@@ -271,6 +362,7 @@ func TestAggregatorTopSQLTopRUCoexistenceMatrix(t *testing.T) {
 			})
 
 			a := newAggregator()
+			a.lastRUVersion = a.currentRUVersion()
 			stats := &StatementStats{
 				data: StatementStatsMap{
 					SQLPlanDigest{SQLDigest: "sql1", PlanDigest: "plan1"}: &StatementStatsItem{
@@ -357,6 +449,7 @@ func TestAggregatorDrainTailIncrementMatrix(t *testing.T) {
 			})
 
 			a := newAggregator()
+			a.lastRUVersion = a.currentRUVersion()
 			key := RUKey{User: "u1", SQLDigest: BinaryDigest("sql1"), PlanDigest: BinaryDigest("plan1")}
 			stats := &StatementStats{
 				data:             StatementStatsMap{},
@@ -423,6 +516,7 @@ func TestDrainPushRUCapsAtMax(t *testing.T) {
 	})
 
 	a := newAggregator()
+	a.lastRUVersion = a.currentRUVersion()
 	hotKey := RUKey{
 		User:       "hot-user",
 		SQLDigest:  BinaryDigest("hot-sql"),
@@ -482,11 +576,33 @@ func TestDrainPushRUCapsAtMax(t *testing.T) {
 }
 
 type mockRUCollector struct {
-	f func(RUIncrementMap)
+	f            func(RUIncrementMap)
+	fWithVersion func(RUIncrementMap, rmclient.RUVersion)
+	onChange     func(rmclient.RUVersion)
 }
 
-func (c *mockRUCollector) CollectRUIncrements(data RUIncrementMap) {
-	c.f(data)
+func (c *mockRUCollector) CollectRUIncrements(data RUIncrementMap, version rmclient.RUVersion) {
+	if c.fWithVersion != nil {
+		c.fWithVersion(data, version)
+		return
+	}
+	if c.f != nil {
+		c.f(data)
+	}
+}
+
+func (c *mockRUCollector) OnRUVersionChange(version rmclient.RUVersion) {
+	if c.onChange != nil {
+		c.onChange(version)
+	}
+}
+
+type mockRUVersionProvider struct {
+	version rmclient.RUVersion
+}
+
+func (p *mockRUVersionProvider) GetRUVersion() rmclient.RUVersion {
+	return p.version
 }
 
 type mockCollector struct {
