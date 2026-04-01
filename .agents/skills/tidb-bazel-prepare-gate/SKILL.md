@@ -20,17 +20,23 @@ git status --short
 git diff --name-status
 git diff --name-status --cached
 git ls-files --others --exclude-standard
+git diff -U0 -- '*_test.go'
+git diff -U0 --cached -- '*_test.go'
 ```
 
 ## Decision Rules
 
-Run `make bazel_prepare` if any of these are true:
+Trigger conditions are defined in `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`.
+Compare the output from the commands above against those conditions.
 
-- New workspace or fresh clone.
-- Changed Bazel files (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`).
-- Any Go source file is added/removed/renamed/moved.
-- `go.mod` or `go.sum` changed.
-- UT or RealTiKV tests were added and Bazel test targets changed.
-- Local Bazel dependency/toolchain errors occurred.
+For the top-level test-function trigger in existing `*_test.go` files, inspect added lines in the
+`git diff -U0` output for patterns like:
 
+```diff
++func TestXxx(t *testing.T) {
+```
+
+and treat that as requiring `make bazel_prepare`.
+
+If any condition matches, run `make bazel_prepare`.
 If none of the rules match, continue without `make bazel_prepare` and report the evidence.

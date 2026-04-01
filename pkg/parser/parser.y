@@ -203,6 +203,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	kill              "KILL"
 	lag               "LAG"
 	lastValue         "LAST_VALUE"
+	lateral           "LATERAL"
 	lead              "LEAD"
 	leading           "LEADING"
 	leave             "LEAVE"
@@ -526,6 +527,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	minRows                    "MIN_ROWS"
 	mode                       "MODE"
 	modify                     "MODIFY"
+	monitor                    "MONITOR"
 	month                      "MONTH"
 	names                      "NAMES"
 	national                   "NATIONAL"
@@ -7616,6 +7618,7 @@ UnReservedKeyword:
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEYFILE"
+|	"MONITOR"
 |	"AUTOEXTEND_SIZE"
 |	"PAGE_CHECKSUM"
 |	"PAGE_COMPRESSED"
@@ -10422,6 +10425,14 @@ TableFactor:
 	{
 		resultNode := $1.(*ast.SubqueryExpr).Query
 		$$ = &ast.TableSource{Source: resultNode, AsName: $2.(ast.CIStr)}
+	}
+|	"LATERAL" SubSelect TableAsName IdentListWithParenOpt
+	{
+		resultNode := $2.(*ast.SubqueryExpr).Query
+		ts := &ast.TableSource{Source: resultNode, AsName: $3.(ast.CIStr)}
+		ts.Lateral = true
+		ts.ColumnNames = $4.([]ast.CIStr)
+		$$ = ts
 	}
 |	'(' TableRefs ')'
 	{
@@ -15274,6 +15285,15 @@ PrivType:
 |	"REPLICATION" "CLIENT"
 	{
 		$$ = mysql.ReplicationClientPriv
+	}
+|	"BINLOG" "MONITOR"
+	{
+		if parser.enableMariaDB {
+			$$ = mysql.ReplicationClientPriv
+		} else {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
 	}
 |	"USAGE"
 	{

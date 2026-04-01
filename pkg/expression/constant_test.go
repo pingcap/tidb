@@ -245,6 +245,18 @@ func TestConstantFolding(t *testing.T) {
 			nullRejectCheck: true,
 			result:          "concat_ws(cast(Column#0, var_string(20)), <nil>)",
 		},
+		{
+			condition: func(ctx BuildContext) Expression {
+				expr := newFunction(ctx, ast.Field,
+					newColumn(0),
+					&Constant{Value: types.NewFloat64Datum(0), RetType: types.NewFieldType(mysql.TypeDouble)},
+					NewNull(),
+				)
+				return expr
+			},
+			nullRejectCheck: true,
+			result:          "field(cast(Column#0, double BINARY), 0, <nil>)",
+		},
 	}
 	for _, tt := range tests {
 		ctx := mock.NewContext().GetExprCtx()

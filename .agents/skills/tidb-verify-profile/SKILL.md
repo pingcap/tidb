@@ -22,13 +22,13 @@ Use while still iterating and not claiming the task is complete.
 
 ### `Ready` (completion gate)
 
-Use when claiming task completion, asking for review, or preparing a PR update.
+Use when claiming task completion or PR readiness.
 Mandatory trigger phrases are defined in `AGENTS.md` -> `Quick Decision Matrix`.
 
 1. Map changed paths to required test surfaces via `AGENTS.md` -> `Task -> Validation Matrix`.
 2. Run minimum required targeted tests for those surfaces.
 3. If code changed, run `make lint`.
-4. Report validation profile, exact commands, and what was not verified locally (`AGENTS.md` -> `Agent Output Contract`).
+4. Follow `AGENTS.md` -> `Agent Output Contract` for final reporting.
 
 ### `Heavy` (explicitly required)
 
@@ -36,9 +36,3 @@ Use only when scope or user request requires expensive checks.
 
 - Examples: CI reproduction, broad refactor confidence, change scope requiring RealTiKV.
 - Never run `make bazel_lint_changed` unless the user explicitly requests it.
-
-## Quick Selection Rule
-
-- Still coding: `WIP`
-- Claiming done / handing off: `Ready`
-- Asked to do broad confidence sweeps: `Heavy`

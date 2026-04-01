@@ -1,8 +1,5 @@
 name: Bazel Lint Crossbuild
 on:
-  push:
-    branches:
-      - master
   pull_request:
     branches:
       - master

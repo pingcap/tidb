@@ -734,7 +734,7 @@ func MergeTiFlashRUConsumption(executionSummaries []*tipb.ExecutorExecutionSumma
 			if err := tiflashRU.Unmarshal(summary.GetRuConsumption()); err != nil {
 				return err
 			}
-			newRUDetails.Update(tiflashRU, 0)
+			newRUDetails.UpdateTiFlash(tiflashRU)
 		}
 	}
 	ruDetails.Merge(newRUDetails)

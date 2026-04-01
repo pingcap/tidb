@@ -11,20 +11,11 @@ Use this workflow for changes under `tests/integrationtest/t/**` or when SQL beh
 Do not use `-record` for this suite.
 Canonical command details live in `docs/agents/testing-flow.md` -> `Integration tests (/tests/integrationtest)`.
 
-## Command
+## Workflow
 
-```bash
-pushd tests/integrationtest
-./run-tests.sh -r <TestName>
-popd
-```
-
-## Mapping and Review
-
-- `TestName` maps to the test file path without extension.
-- Example: `tests/integrationtest/t/planner/core/binary_plan.test` -> `planner/core/binary_plan`.
-- Review changed files in `tests/integrationtest/r/**`.
-- Keep result diffs minimal and confirm each line matches expected behavior.
+1. Use `docs/agents/testing-flow.md` -> `Integration tests (/tests/integrationtest)` for the recording command.
+2. Derive `TestName` from the path under `tests/integrationtest/t/` without the `.test` suffix (example: `planner/core/binary_plan`).
+3. Review changed files in `tests/integrationtest/r/**` and keep result diffs minimal.
 
 ## Guardrails
 

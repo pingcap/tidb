@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 set @@sql_mode='';
 drop table if exists t;
 set names utf8mb4;
@@ -125,6 +124,8 @@ select * from t61085 where a = cast(0x41414180424242 as char charset gbk);
 a
 AAA
 DROP TABLE t61085;
+set character_set_results = default;
+set SESSION sql_mode = default;
 create table a (id bigint primary key, name varchar(10) collate utf8mb4_general_ci, key(name));
 insert into a values (1, 'A�B');
 select hex(weight_string(name)) from a;
