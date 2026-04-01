@@ -16,10 +16,12 @@ package core
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/atomic"
@@ -43,9 +45,28 @@ type instancePCNode struct {
 	value    *PlanCacheValue
 	lastUsed atomic.Time
 	next     atomic.Pointer[instancePCNode]
-	deleted  atomic.Bool
+	// deleted marks a bucket head as logically removed before it is detached from the map.
+	// It is only meaningful on head nodes and prevents Get/Put from treating a deleted bucket
+	// as a normal empty bucket that can be reused immediately.
+	deleted atomic.Bool
+	// accountingState tracks whether a published node has finished updating totCost/totPlan.
+	// Delete must distinguish "detached but not counted yet" from "detached and already counted"
+	// to keep Size/MemUsage correct while racing with Put's publish path.
+	accountingState atomic.Uint32
 }
 
+const (
+	accountingNotCounted uint32 = iota
+	accountingInProgress
+	accountingCounted
+	accountingRemovedUncounted
+	accountingRemovedCounted
+)
+
+// deletedInstancePCNode is a unique sentinel used to mark that a bucket has been removed.
+// Traversals must stop on this exact pointer instead of treating it like an empty bucket:
+// Delete sets head.deleted before swapping the sentinel into head.next, so concurrent Get/Put
+// can reliably tell "deleted bucket" from "bucket with no cached plans" without ABA reuse.
 var deletedInstancePCNode = &instancePCNode{}
 
 // instancePlanCache is a lock-free implementation of InstancePlanCache interface.
@@ -142,8 +163,13 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 	currNode := pc.createNode(value)
 	currNode.next.Store(firstNode)
 	if headNode.next.CompareAndSwap(firstNode, currNode) { // if failed, some other thread has updated this node,
+		if !currNode.accountingState.CompareAndSwap(accountingNotCounted, accountingInProgress) {
+			return
+		}
+		failpoint.InjectCall("instancePlanCachePutAccountingPause")
 		pc.totCost.Add(vMem) // then skip this Put and wait for the next time.
 		pc.totPlan.Add(1)
+		currNode.accountingState.Store(accountingCounted)
 		succ = true
 	}
 	return
@@ -164,9 +190,26 @@ func (pc *instancePlanCache) Delete(key string) (numDeleted int) {
 	firstNode := headNode.next.Swap(deletedInstancePCNode)
 	pc.heads.Delete(key)
 	for node := firstNode; node != nil && node != deletedInstancePCNode; node = node.next.Load() {
-		pc.totCost.Sub(node.value.MemoryUsage())
-		pc.totPlan.Sub(1)
 		numDeleted++
+		done := false
+		for !done {
+			switch node.accountingState.Load() {
+			case accountingNotCounted:
+				if node.accountingState.CompareAndSwap(accountingNotCounted, accountingRemovedUncounted) {
+					done = true
+				}
+			case accountingInProgress:
+				runtime.Gosched()
+			case accountingCounted:
+				if node.accountingState.CompareAndSwap(accountingCounted, accountingRemovedCounted) {
+					pc.totCost.Sub(node.value.MemoryUsage())
+					pc.totPlan.Sub(1)
+					done = true
+				}
+			case accountingRemovedUncounted, accountingRemovedCounted:
+				done = true
+			}
+		}
 	}
 	return
 }

@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
@@ -81,6 +82,52 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	_put(pc, 1, 100, 0)
 	_put(pc, 1, 101, 0)
 	require.Equal(t, pc.MemUsage(), int64(100)) // the second one will be ignored
+
+	t.Run("delete waits for published put accounting", func(t *testing.T) {
+		pc = NewInstancePlanCache(1000, 1000)
+		published := make(chan struct{}, 1)
+		resume := make(chan struct{})
+		fpName := "github.com/pingcap/tidb/pkg/planner/core/instancePlanCachePutAccountingPause"
+		var once sync.Once
+		require.NoError(t, failpoint.EnableCall(fpName, func() {
+			once.Do(func() {
+				published <- struct{}{}
+				<-resume
+			})
+		}))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+		}()
+
+		putDone := make(chan bool, 1)
+		go func() {
+			putDone <- _put(pc, 1, 100, 0)
+		}()
+
+		select {
+		case <-published:
+		case <-time.After(time.Second):
+			t.Fatal("put did not reach the accounting pause")
+		}
+
+		deleteDone := make(chan int, 1)
+		go func() {
+			deleteDone <- pc.Delete("1-0")
+		}()
+
+		select {
+		case numDeleted := <-deleteDone:
+			t.Fatalf("delete finished too early with %d deleted entries", numDeleted)
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		close(resume)
+		require.True(t, <-putDone)
+		require.Equal(t, 1, <-deleteDone)
+		require.Equal(t, int64(0), pc.MemUsage())
+		require.Equal(t, int64(0), pc.Size())
+		_miss(t, pc, 1, 0)
+	})
 
 	// delete an exact key
 	pc = NewInstancePlanCache(1000, 1000)
