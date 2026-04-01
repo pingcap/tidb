@@ -57,6 +57,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/constants"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -1127,6 +1128,63 @@ func TestTiFlashFailureProgressAfterAvailable(t *testing.T) {
 		ddl.PollAvailableTableProgress(s.dom.InfoSchema(), sctx, pollTiflashContext)
 	}()
 	time.Sleep(ddl.PollTiFlashInterval)
+
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		wg.Wait()
+	}()
+	select {
+	case <-c:
+		return
+	case <-time.After(time.Second):
+		panic("DDL can't finish")
+	}
+}
+
+func TestTiFlashFailureProgressAfterAvailableWithClosedMockTiFlash(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailable(s.dom, t, 1, []string{})
+
+	tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+
+	pool := s.dom.SysSessionPool()
+	se, err := pool.Get()
+	require.NoError(t, err)
+	sctx := se.(sessionctx.Context)
+	defer pool.Put(se)
+
+	pollTiflashContext, err := ddl.NewTiFlashManagementContext()
+	require.NoError(t, err)
+	pollTiflashContext.UpdatingProgressTables.PushBack(ddl.AvailableTableID{
+		ID:          tb.Meta().ID,
+		IsPartition: false,
+	})
+	stats, err := infosync.GetTiFlashStoresStat(context.Background())
+	require.NoError(t, err)
+	pollTiflashContext.TiFlashStores = make(map[int64]pdhttp.StoreInfo, len(stats.Stores))
+	for _, store := range stats.Stores {
+		pollTiflashContext.TiFlashStores[store.Store.ID] = store
+	}
+
+	s.tiflash.StatusServer.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ddl.PollAvailableTableProgress(s.dom.InfoSchema(), sctx, pollTiflashContext)
+	}()
 
 	c := make(chan struct{})
 	go func() {

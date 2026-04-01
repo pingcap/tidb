@@ -21,7 +21,11 @@ package ddl
 import (
 	"container/list"
 	"context"
+	stderrors "errors"
 	"fmt"
+	"io"
+	"net"
+	"syscall"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -41,6 +45,16 @@ import (
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+func shouldPanicOnTiFlashProgressErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if stderrors.Is(err, io.EOF) || stderrors.Is(err, net.ErrClosed) || stderrors.Is(err, syscall.ECONNREFUSED) {
+		return false
+	}
+	return true
+}
 
 // TiFlashReplicaStatus records status for each TiFlash replica.
 type TiFlashReplicaStatus struct {
@@ -320,10 +334,10 @@ func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 
 		progress, _, err := infosync.CalculateTiFlashProgress(availableTableID.ID, tableInfo.TiFlashReplica.Count, pollTiFlashContext.TiFlashStores)
 		if err != nil {
-			if intest.EnableInternalCheck && err.Error() != "EOF" {
+			if intest.EnableInternalCheck && shouldPanicOnTiFlashProgressErr(err) {
 				// In the test, the server cannot start up because the port is occupied.
-				// Although the port is random. so we need to quickly return when to
-				// fail to get tiflash sync.
+				// Although the port is random. For teardown-time mock network errors, let the
+				// polling loop exit just like the missing-mock path instead of panicking.
 				// https://github.com/pingcap/tidb/issues/39949
 				panic(err)
 			}
