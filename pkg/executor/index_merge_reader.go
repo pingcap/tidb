@@ -2017,9 +2017,9 @@ type IndexMergeRuntimeStat struct {
 func (e *IndexMergeRuntimeStat) String() string {
 	var buf bytes.Buffer
 	if e.FetchIdxTime != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{fetch_handle:%s", time.Duration(e.FetchIdxTime)))
+		fmt.Fprintf(&buf, "index_task:{fetch_handle:%s", time.Duration(e.FetchIdxTime))
 		if e.IndexMergeProcess != 0 {
-			buf.WriteString(fmt.Sprintf(", merge:%s", e.IndexMergeProcess))
+			fmt.Fprintf(&buf, ", merge:%s", e.IndexMergeProcess)
 		}
 		buf.WriteByte('}')
 	}

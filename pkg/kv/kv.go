@@ -623,10 +623,15 @@ type Request struct {
 	ResourceGroupTagger *ResourceGroupTagBuilder
 	// Paging indicates whether the request is a paging request.
 	Paging struct {
+		// For coprocessor request in next-gen, the storage may return paging
+		// range even if paging is not enabled. coprocessor have a max_resp_size
+		// to control the response size, the default is 32MiB
 		Enable bool
 		// MinPagingSize is used when Paging is true.
 		MinPagingSize uint64
 		// MaxPagingSize is used when Paging is true.
+		// when enabled, this field is adjusted to be max(MaxPagingSize, paging.MinAllowedMaxPagingSize),
+		// see paging.GrowPagingSize
 		MaxPagingSize uint64
 	}
 	// RequestSource indicates whether the request is an internal request.
