@@ -2263,13 +2263,17 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 	}
 
 	escape := v.Escape
-	sessionVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(er.sctx.GetEvalCtx())
-	if err != nil {
-		er.err = err
-		return
-	}
-	if sessionVars.EnableNoBackslashEscapesInLike && !v.EscapeExplicit && er.sctx.GetEvalCtx().SQLMode().HasNoBackslashEscapesMode() {
-		escape = 0
+	evalCtx := er.sctx.GetEvalCtx()
+	if !v.EscapeExplicit && evalCtx.SQLMode().HasNoBackslashEscapesMode() &&
+		evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+		sessionVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if sessionVars.EnableNoBackslashEscapesInLike {
+			escape = 0
+		}
 	}
 
 	char, col := er.sctx.GetCharsetInfo()
