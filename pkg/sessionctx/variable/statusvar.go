@@ -19,12 +19,7 @@ import (
 	"crypto/tls"
 	"sync"
 
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/util"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
->>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
 )
 
 var statisticsList []Statistics
