@@ -155,7 +155,7 @@ func (uc *unicode0900AICICollator) Pattern() WildcardPattern {
 
 // ImmutablePrefixKey implements Collator interface
 func (uc *unicode0900AICICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	return uc.ImmutableKey(string(hack.String(stringutil.GetUtf8SubStringBytes(truncateTailingSpace(str), prefixCharCount))))
+	return uc.ImmutableKey(string(hack.String(stringutil.GetUtf8SubStringBytes(str, prefixCharCount))))
 }
 
 // MaxKeyLen implements Collator interface.
