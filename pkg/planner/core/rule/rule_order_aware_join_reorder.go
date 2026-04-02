@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package rule
 
 import (
 	"context"
@@ -209,15 +209,12 @@ func extractOrderingColumns(items []*plannerutil.ByItems) []*expression.Column {
 }
 
 func sameOrderingColumns(left, right []*expression.Column) bool {
-	if len(left) == 0 || len(right) == 0 || len(left) != len(right) {
+	if len(left) == 0 || len(right) == 0 {
 		return false
 	}
-	for i := range left {
-		if left[i] == nil || right[i] == nil || left[i].UniqueID != right[i].UniqueID {
-			return false
-		}
-	}
-	return true
+	return slices.EqualFunc(left, right, func(leftCol, rightCol *expression.Column) bool {
+		return leftCol != nil && rightCol != nil && leftCol.UniqueID == rightCol.UniqueID
+	})
 }
 
 func rewriteOrderingForProjection(

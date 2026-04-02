@@ -335,14 +335,16 @@ func extractEqualityColumns(expr expression.Expression, result map[int64]struct{
 		return
 	}
 
-	if sf.FuncName.L == ast.LogicAnd {
+	switch sf.FuncName.L {
+	case ast.LogicAnd:
 		for _, arg := range sf.GetArgs() {
 			extractEqualityColumns(arg, result)
 		}
 		return
-	}
-
-	if sf.FuncName.L == ast.EQ && len(sf.GetArgs()) == 2 {
+	case ast.EQ:
+		if len(sf.GetArgs()) != 2 {
+			return
+		}
 		// We only treat const equalities as index-prefix eliminators. For
 		// example, index(category, id) can satisfy "where category = 'hot'
 		// order by id". Keeping this conservative EQ-to-const case still helps
@@ -357,9 +359,7 @@ func extractEqualityColumns(expr expression.Expression, result map[int64]struct{
 			result[col.ID] = struct{}{}
 		}
 		return
-	}
-
-	if sf.FuncName.L == ast.In {
+	case ast.In:
 		args := sf.GetArgs()
 		// Only singleton IN behaves like a fixed prefix here. Multi-value IN still
 		// scans multiple point ranges on the leading index column, which does not
