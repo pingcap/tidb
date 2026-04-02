@@ -3650,7 +3650,7 @@ select * from t where id not in (-1,2);
 id
  A
 select * from t where id in (-1, -2);
-Error 1582 (42000): Incorrect parameter count in the call to native function 'in'
+id
 drop table if exists t;
 drop table if exists t1;
 create table t(k1 int, v bit(34) DEFAULT b'111010101111001001100111101111111', primary key(k1) clustered);

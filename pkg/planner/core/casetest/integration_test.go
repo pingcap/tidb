@@ -116,7 +116,13 @@ func TestVerboseExplain(t *testing.T) {
 			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
 
-		tk.MustExec("drop table if exists t1, t2, t3, t31240, partsupp, supplier, first_range")
+		tk.MustExec("drop table if exists t_bit")
+		tk.MustExec("create table t_bit(id bit(16), key idx(id))")
+		tk.MustExec("insert into t_bit values (65)")
+		tk.MustQuery("select hex(id) from t_bit where id in (-1, -2)").Check(testkit.Rows())
+		tk.MustQuery("select hex(id) from t_bit where id not in (-1, 2)").Check(testkit.Rows("41"))
+
+		tk.MustExec("drop table if exists t1, t2, t3, t31240, partsupp, supplier, first_range, t_bit")
 	})
 }
 
