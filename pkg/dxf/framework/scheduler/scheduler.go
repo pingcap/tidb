@@ -58,7 +58,12 @@ var (
 	// RetrySQLInterval is the initial interval between two SQL retries.
 	RetrySQLInterval = 3 * time.Second
 	// RetrySQLMaxInterval is the max interval between two SQL retries.
-	RetrySQLMaxInterval = 30 * time.Second
+	RetrySQLMaxInterval          = 30 * time.Second
+	schedulerSampleLoggerFactory = logutil.SampleErrVerboseLoggerFactory(
+		time.Minute,
+		10,
+		zap.String(logutil.LogFieldCategory, "dxf-scheduler"),
+	)
 )
 
 // Scheduler manages the lifetime of a task
@@ -146,6 +151,14 @@ func (s *BaseScheduler) getTaskClone() *proto.Task {
 	return &clone
 }
 
+func (s *BaseScheduler) sampledLogger() *zap.Logger {
+	task := s.GetTask()
+	return schedulerSampleLoggerFactory().With(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+	)
+}
+
 // refreshTaskIfNeeded fetch task state from tidb_global_task table.
 func (s *BaseScheduler) refreshTaskIfNeeded() error {
 	task := s.GetTask()
@@ -194,7 +207,7 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
 				return
 			}
-			s.logger.Error("refresh task failed", zap.Error(err))
+			s.sampledLogger().Error("refresh task failed", zap.Error(err))
 			continue
 		}
 		failpoint.InjectCall("afterRefreshTask", s.GetTask())
@@ -266,7 +279,7 @@ func (s *BaseScheduler) scheduleTask() {
 			return
 		}
 		if err != nil {
-			s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
+			s.sampledLogger().Info("schedule task meet err, reschedule it", zap.Error(err))
 		}
 
 		failpoint.InjectCall("mockOwnerChange")
@@ -285,7 +298,7 @@ func (s *BaseScheduler) onCancelling() error {
 // handle task in pausing state, cancel all running subtasks.
 func (s *BaseScheduler) onPausing() error {
 	task := s.getTaskClone()
-	s.logger.Info("on pausing state", zap.Stringer("state", task.State),
+	s.sampledLogger().Info("on pausing state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
@@ -319,7 +332,7 @@ func (s *BaseScheduler) onPaused() error {
 // handle task in resuming state.
 func (s *BaseScheduler) onResuming() error {
 	task := s.getTaskClone()
-	s.logger.Info("on resuming state", zap.Stringer("state", task.State),
+	s.sampledLogger().Info("on resuming state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
@@ -415,7 +428,7 @@ func (s *BaseScheduler) onRunning() error {
 // the first return value indicates whether the scheduler should be recreated.
 func (s *BaseScheduler) onModifying() (bool, error) {
 	task := s.getTaskClone()
-	s.logger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
+	s.sampledLogger().Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
 	recreateScheduler := false
 	metaModifies := make([]proto.Modification, 0, len(task.ModifyParam.Modifications))
 	for _, m := range task.ModifyParam.Modifications {

@@ -32,7 +32,12 @@ import (
 
 var (
 	// liveNodesCheckInterval is the tick interval of fetching all server infos from etcs.
-	nodesCheckInterval = 2 * CheckTaskFinishedInterval
+	nodesCheckInterval      = 2 * CheckTaskFinishedInterval
+	nodeManagerSampleLogger = logutil.SampleErrVerboseLoggerFactory(
+		time.Minute,
+		10,
+		zap.String(logutil.LogFieldCategory, "dxf-node-manager"),
+	)
 )
 
 // NodeManager maintains live TiDB nodes in the cluster, and maintains the nodes
@@ -79,7 +84,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 	// Safe to discard errors since this function can be called at regular intervals.
 	liveExecIDs, err := GetLiveExecIDs(ctx)
 	if err != nil {
-		nm.logger.Warn("generate task executor nodes met error", llog.ShortError(err))
+		nodeManagerSampleLogger().Warn("generate task executor nodes met error", llog.ShortError(err))
 		return
 	}
 	nodeChanged := len(liveExecIDs) != len(nm.prevLiveNodes)
@@ -96,7 +101,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 
 	oldNodes, err := taskMgr.GetAllNodes(ctx)
 	if err != nil {
-		nm.logger.Warn("get all nodes met error", llog.ShortError(err))
+		nodeManagerSampleLogger().Warn("get all nodes met error", llog.ShortError(err))
 		return
 	}
 
@@ -142,7 +147,7 @@ func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, sl
 	defer r.End()
 	newNodes, err := taskMgr.GetAllNodes(ctx)
 	if err != nil {
-		nm.logger.Warn("get managed nodes met error", llog.ShortError(err))
+		nodeManagerSampleLogger().Warn("get managed nodes met error", llog.ShortError(err))
 		return
 	}
 
