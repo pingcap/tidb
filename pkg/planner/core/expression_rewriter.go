@@ -2123,6 +2123,12 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 			break
 		}
 	}
+	if leftEt == types.ETDecimal {
+		if err := er.validateMutableDecimalInList(args[1:]); err != nil {
+			er.err = err
+			return
+		}
+	}
 	var function expression.Expression
 	if allSameType && l == 1 && lLen > 1 {
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
@@ -2172,6 +2178,25 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	}
 	er.ctxStackPop(lLen + 1)
 	er.ctxStackAppend(function, types.EmptyName)
+}
+
+func (er *expressionRewriter) validateMutableDecimalInList(args []expression.Expression) error {
+	for _, arg := range args {
+		if arg.ConstLevel() != expression.ConstOnlyInContext {
+			continue
+		}
+		if arg.GetType(er.sctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+			continue
+		}
+		normalizedArg := arg.Clone()
+		if err := expression.RemoveMutableConst(er.sctx, normalizedArg); err != nil {
+			return err
+		}
+		if _, _, err := normalizedArg.EvalDecimal(er.sctx.GetEvalCtx(), chunk.Row{}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // deriveCollationForIn derives collation for in expression.
