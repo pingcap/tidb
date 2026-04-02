@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -188,8 +189,18 @@ func TestAddIndexFailed(t *testing.T) {
 	tk.MustExec("use test_add_index_failed")
 
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+	const rowCount = 1000
+	const insertBatchSize = 200
+	for start := 0; start < rowCount; start += insertBatchSize {
+		end := start + insertBatchSize
+		if end > rowCount {
+			end = rowCount
+		}
+		values := make([]string, 0, end-start)
+		for i := start; i < end; i++ {
+			values = append(values, fmt.Sprintf("(%d, %d)", i, i))
+		}
+		tk.MustExec("insert into t values " + strings.Join(values, ","))
 	}
 
 	// Get table ID for split.
