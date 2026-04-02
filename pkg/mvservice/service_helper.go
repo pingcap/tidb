@@ -35,6 +35,7 @@ import (
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
@@ -111,22 +112,48 @@ func (*serviceHelper) getServerInfo() (serverInfo, error) {
 		return serverInfo{}, err
 	}
 	return serverInfo{
-		ID: localSrv.ID,
+		ID:             localSrv.ID,
+		IP:             localSrv.IP,
+		Port:           localSrv.Port,
+		StartTimestamp: localSrv.StartTimestamp,
 	}, nil
 }
 
 func (*serviceHelper) getAllServerInfo(ctx context.Context) (map[string]serverInfo, error) {
-	servers := make(map[string]serverInfo)
 	allServers, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return latestServerInfosByInstance(allServers), nil
+}
+
+func latestServerInfosByInstance(allServers map[string]*infosync.ServerInfo) map[string]serverInfo {
+	servers := make(map[string]serverInfo, len(allServers))
+	instanceToID := make(map[string]string, len(allServers))
 	for _, srv := range allServers {
-		servers[srv.ID] = serverInfo{
-			ID: srv.ID,
+		if srv == nil {
+			continue
 		}
+		instance := disttaskutil.GenerateExecID(srv)
+		info := serverInfo{
+			ID:             srv.ID,
+			IP:             srv.IP,
+			Port:           srv.Port,
+			StartTimestamp: srv.StartTimestamp,
+		}
+		if existingID, ok := instanceToID[instance]; ok {
+			existing := servers[existingID]
+			// A fast restart can leave both the old and new ddl_id visible in infosync.
+			// Keep the latest entry for the same IP:Port so ownership stays on the live node.
+			if info.StartTimestamp <= existing.StartTimestamp {
+				continue
+			}
+			delete(servers, existingID)
+		}
+		instanceToID[instance] = info.ID
+		servers[info.ID] = info
 	}
-	return servers, nil
+	return servers
 }
 
 func resolveMVIdentityByID(

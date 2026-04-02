@@ -25,7 +25,10 @@ import (
 )
 
 type serverInfo struct {
-	ID string
+	ID             string
+	IP             string
+	Port           uint
+	StartTimestamp int64
 }
 
 func int64KeyToBinaryBytes(key int64) []byte {

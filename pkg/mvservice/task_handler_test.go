@@ -25,6 +25,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -206,6 +207,52 @@ func buildMockMVBaseAndMVLogTables(baseTableID, mLogID int64, mViewIDs ...int64)
 		State: meta.StatePublic,
 	}
 	return baseTable, mlogTable
+}
+
+func TestLatestServerInfosByInstanceKeepsNewestDDLID(t *testing.T) {
+	allServers := map[string]*infosync.ServerInfo{
+		"old-node": {
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:             "old-node",
+				IP:             "127.0.0.1",
+				Port:           4000,
+				StartTimestamp: 100,
+			},
+		},
+		"new-node": {
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:             "new-node",
+				IP:             "127.0.0.1",
+				Port:           4000,
+				StartTimestamp: 200,
+			},
+		},
+		"peer-node": {
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:             "peer-node",
+				IP:             "127.0.0.2",
+				Port:           4000,
+				StartTimestamp: 150,
+			},
+		},
+	}
+
+	got := latestServerInfosByInstance(allServers)
+
+	require.Len(t, got, 2)
+	require.NotContains(t, got, "old-node")
+	require.Equal(t, serverInfo{
+		ID:             "new-node",
+		IP:             "127.0.0.1",
+		Port:           4000,
+		StartTimestamp: 200,
+	}, got["new-node"])
+	require.Equal(t, serverInfo{
+		ID:             "peer-node",
+		IP:             "127.0.0.2",
+		Port:           4000,
+		StartTimestamp: 150,
+	}, got["peer-node"])
 }
 
 func waitExecutorFinishedCount(t *testing.T, svc *MVService, expected int64) {
