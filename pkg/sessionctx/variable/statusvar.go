@@ -19,12 +19,7 @@ import (
 	"crypto/tls"
 	"sync"
 
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/util"
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
->>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
 )
 
 var statisticsList []Statistics
@@ -126,7 +121,6 @@ var tlsCiphers = []uint16{
 
 var tlsSupportedCiphers string
 
-<<<<<<< HEAD
 // Taken from https://github.com/openssl/openssl/blob/c784a838e0947fcca761ee62def7d077dc06d37f/include/openssl/ssl.h#L141 .
 var tlsVersionString = map[uint16]string{
 	tls.VersionTLS10: "TLSv1",
@@ -135,8 +129,6 @@ var tlsVersionString = map[uint16]string{
 	tls.VersionTLS13: "TLSv1.3",
 }
 
-=======
->>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
 var defaultStatus = map[string]*StatusVal{
 	"Ssl_cipher":      {ScopeGlobal | ScopeSession, ""},
 	"Ssl_cipher_list": {ScopeGlobal | ScopeSession, ""},

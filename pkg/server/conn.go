@@ -1012,17 +1012,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 		close(cc.quit)
 	}()
 
-<<<<<<< HEAD
 	parentCtx := ctx
-	var traceInfo *model.TraceInfo
-=======
 	cc.addConnMetrics()
+	var traceInfo *model.TraceInfo
 
-	var traceInfo *tracing.TraceInfo
-	trace := traceevent.NewTrace()
-	ctx = tracing.WithFlightRecorder(ctx, trace)
-
->>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.

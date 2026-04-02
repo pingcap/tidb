@@ -1140,8 +1140,6 @@ func (s *Server) KillNonFlashbackClusterConn() {
 		s.Kill(id, false, false)
 	}
 }
-<<<<<<< HEAD
-=======
 
 // GetStatusVars is getting the per process status variables from the server
 func (s *Server) GetStatusVars() map[uint64]map[string]string {
@@ -1161,9 +1159,3 @@ func (s *Server) GetStatusVars() map[uint64]map[string]string {
 	}
 	return rs
 }
-
-// Health returns if the server is healthy (begin to shut down)
-func (s *Server) Health() bool {
-	return s.health.Load()
-}
->>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))

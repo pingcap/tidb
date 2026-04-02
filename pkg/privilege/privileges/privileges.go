@@ -41,14 +41,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
-=======
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
->>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
 	"go.uber.org/zap"
 )
 
