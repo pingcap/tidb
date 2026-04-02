@@ -53,7 +53,8 @@ echo "restore start..."
 run_br restore db --db "$DB" -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 # Verify the table is restored
-table_count=$(run_sql "SELECT COUNT(*) FROM ${DB}.t;" | tail -n 1)
+# run_sql uses mysql -E output, so parse "COUNT(*): <num>" explicitly.
+table_count=$(run_sql "SELECT COUNT(*) FROM ${DB}.t;" | awk -F': ' '/COUNT\(\*\)/ {print $2; exit}' | tr -d '[:space:]')
 if [ "$table_count" != "2" ]; then
     echo "TEST: [$TEST_NAME] failed! Expected 2 rows, got $table_count"
     exit 1
