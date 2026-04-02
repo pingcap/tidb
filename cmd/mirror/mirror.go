@@ -84,6 +84,21 @@ func formatPublicURL(path, version string) string {
 	return fmt.Sprintf("https://storage.googleapis.com/pingcapmirror/%s", formatSubURL(path, version))
 }
 
+// formatProxyURL returns the proxy.golang.org download URL for a module version.
+// Go proxy encoding: each uppercase letter X becomes !x (e.g. ClamChowder → !clam!chowder).
+func formatProxyURL(path, version string) string {
+	var b strings.Builder
+	for _, c := range path {
+		if c >= 'A' && c <= 'Z' {
+			b.WriteByte('!')
+			b.WriteByte(byte(c + 32))
+		} else {
+			b.WriteRune(c)
+		}
+	}
+	return fmt.Sprintf("https://proxy.golang.org/%s/@v/%s.zip", b.String(), version)
+}
+
 func getSha256OfFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -370,22 +385,25 @@ def go_deps():
 		if err := dumpPatchArgsForRepo(repoName); err != nil {
 			return err
 		}
+		expectedProxyURL := formatProxyURL(replaced.Path, replaced.Version)
 		oldMirror, ok := existingMirrors[repoName]
 		if ok &&
 			slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
 			slices.Contains(oldMirror.URL, expectedCDNURL) &&
 			slices.Contains(oldMirror.URL, expectedPublicURL) &&
 			slices.Contains(oldMirror.URL, expectedVPCPublicURL) {
-			// The URL matches, so just reuse the old mirror.
+			// The URL matches, so just reuse the old mirror, preserving all
+			// URLs already present (including any proxy.golang.org fallback
+			// added by fix_go_mod.py for cherry-picked modules).
+			var urlLines strings.Builder
+			for _, u := range oldMirror.URL {
+				fmt.Fprintf(&urlLines, "            \"%s\",\n", u)
+			}
 			fmt.Printf(`        sha256 = "%s",
         strip_prefix = "%s@%s",
         urls = [
-			"%s",
-			"%s",
-			"%s",
-			"%s",
-        ],
-`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
+%s        ],
+`, oldMirror.Sha256, replaced.Path, replaced.Version, urlLines.String())
 		} else if isMirror {
 			// We'll have to mirror our copy of the zip ourselves.
 			d := downloaded[replaced.Path]
@@ -403,8 +421,9 @@ def go_deps():
             "%s",
             "%s",
             "%s",
+            "%s",
         ],
-`, sha, replaced.Path, replaced.Version, expectedVPCPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
+`, sha, replaced.Path, replaced.Version, expectedVPCPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL, expectedProxyURL)
 			g.Go(func() error {
 				return uploadFile(ctx, client, d.Zip, formatSubURL(replaced.Path, replaced.Version))
 			})
