@@ -4745,11 +4745,10 @@ func collectUpdateTargetTableIDs(update *ast.UpdateStmt, p base.LogicalPlan) (ma
 			continue
 		}
 		idx, err := expression.FindFieldName(outputNames, assign.Column)
-		if err != nil {
-			return nil, err
-		}
-		if idx < 0 {
-			return nil, plannererrors.ErrUnknownColumn.GenWithStackByArgs(assign.Column.Name.O, "field list")
+		if err != nil || idx < 0 {
+			// Keep target-ID collection as best effort: UPDATE semantic errors should be
+			// reported by the normal UPDATE build path (SET/WHERE/ORDER resolution), not here.
+			continue
 		}
 		if idx < len(schemaTableIDs) && schemaTableIDs[idx] != 0 {
 			ids[schemaTableIDs[idx]] = struct{}{}
@@ -6314,7 +6313,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.popTableHints()
 	}()
 
+	oldInUpdateStmt := b.inUpdateStmt
 	b.inUpdateStmt = true
+	defer func() { b.inUpdateStmt = oldInUpdateStmt }()
 	b.isForUpdateRead = true
 
 	if update.With != nil {
@@ -6765,7 +6766,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		b.popTableHints()
 	}()
 
+	oldInDeleteStmt := b.inDeleteStmt
 	b.inDeleteStmt = true
+	defer func() { b.inDeleteStmt = oldInDeleteStmt }()
 	b.isForUpdateRead = true
 
 	if ds.With != nil {
