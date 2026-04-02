@@ -4783,6 +4783,12 @@ func getSchemaTableIDs(p base.LogicalPlan) []int64 {
 		left, right := x.Children()[0], x.Children()[1]
 		leftIDs := getSchemaTableIDs(left)
 		rightIDs := getSchemaTableIDs(right)
+		if leftIDs == nil {
+			leftIDs = make([]int64, left.Schema().Len())
+		}
+		if rightIDs == nil {
+			rightIDs = make([]int64, right.Schema().Len())
+		}
 		return append(slices.Clip(leftIDs), rightIDs...)
 	case *logicalop.LogicalProjection:
 		ch := x.Children()[0]
