@@ -4740,7 +4740,7 @@ func RegisterMetaServiceServer(s *grpc.Server, srv MetaServiceServer) {
 	s.RegisterService(&_MetaService_serviceDesc, srv)
 }
 
-func _MetaService_WorkerNodeHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_WorkerNodeHeartbeat_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(WorkerNodeHeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4752,13 +4752,13 @@ func _MetaService_WorkerNodeHeartbeat_Handler(srv interface{}, ctx context.Conte
 		Server:     srv,
 		FullMethod: "/tici.MetaService/WorkerNodeHeartbeat",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).WorkerNodeHeartbeat(ctx, req.(*WorkerNodeHeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_ReaderNodeHeartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_ReaderNodeHeartbeat_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(ReaderNodeHeartbeatRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4770,13 +4770,13 @@ func _MetaService_ReaderNodeHeartbeat_Handler(srv interface{}, ctx context.Conte
 		Server:     srv,
 		FullMethod: "/tici.MetaService/ReaderNodeHeartbeat",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).ReaderNodeHeartbeat(ctx, req.(*ReaderNodeHeartbeatRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_CreateIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_CreateIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(CreateIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4788,13 +4788,13 @@ func _MetaService_CreateIndex_Handler(srv interface{}, ctx context.Context, dec 
 		Server:     srv,
 		FullMethod: "/tici.MetaService/CreateIndex",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).CreateIndex(ctx, req.(*CreateIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_DropIndex_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_DropIndex_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(DropIndexRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4806,13 +4806,13 @@ func _MetaService_DropIndex_Handler(srv interface{}, ctx context.Context, dec fu
 		Server:     srv,
 		FullMethod: "/tici.MetaService/DropIndex",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).DropIndex(ctx, req.(*DropIndexRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_AddPartition_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_AddPartition_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(AddPartitionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4824,13 +4824,13 @@ func _MetaService_AddPartition_Handler(srv interface{}, ctx context.Context, dec
 		Server:     srv,
 		FullMethod: "/tici.MetaService/AddPartition",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).AddPartition(ctx, req.(*AddPartitionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_DropPartition_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_DropPartition_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(DropPartitionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4842,13 +4842,13 @@ func _MetaService_DropPartition_Handler(srv interface{}, ctx context.Context, de
 		Server:     srv,
 		FullMethod: "/tici.MetaService/DropPartition",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).DropPartition(ctx, req.(*DropPartitionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetIndexProgress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_GetIndexProgress_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetIndexProgressRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4860,13 +4860,13 @@ func _MetaService_GetIndexProgress_Handler(srv interface{}, ctx context.Context,
 		Server:     srv,
 		FullMethod: "/tici.MetaService/GetIndexProgress",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).GetIndexProgress(ctx, req.(*GetIndexProgressRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_AppendDeltaFragMeta_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_AppendDeltaFragMeta_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(AppendDeltaFragMetaRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4878,13 +4878,13 @@ func _MetaService_AppendDeltaFragMeta_Handler(srv interface{}, ctx context.Conte
 		Server:     srv,
 		FullMethod: "/tici.MetaService/AppendDeltaFragMeta",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).AppendDeltaFragMeta(ctx, req.(*AppendDeltaFragMetaRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_AppendBaseFragMeta_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_AppendBaseFragMeta_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(AppendBaseFragMetaRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4896,13 +4896,13 @@ func _MetaService_AppendBaseFragMeta_Handler(srv interface{}, ctx context.Contex
 		Server:     srv,
 		FullMethod: "/tici.MetaService/AppendBaseFragMeta",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).AppendBaseFragMeta(ctx, req.(*AppendBaseFragMetaRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetShardLocalCacheInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_GetShardLocalCacheInfo_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetShardLocalCacheRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4914,13 +4914,13 @@ func _MetaService_GetShardLocalCacheInfo_Handler(srv interface{}, ctx context.Co
 		Server:     srv,
 		FullMethod: "/tici.MetaService/GetShardLocalCacheInfo",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).GetShardLocalCacheInfo(ctx, req.(*GetShardLocalCacheRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_DebugGetShardManifest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_DebugGetShardManifest_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(DebugGetShardManifestRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4932,13 +4932,13 @@ func _MetaService_DebugGetShardManifest_Handler(srv interface{}, ctx context.Con
 		Server:     srv,
 		FullMethod: "/tici.MetaService/DebugGetShardManifest",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).DebugGetShardManifest(ctx, req.(*DebugGetShardManifestRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_FinishCompactFragments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_FinishCompactFragments_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(FinishCompactFragRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4950,13 +4950,13 @@ func _MetaService_FinishCompactFragments_Handler(srv interface{}, ctx context.Co
 		Server:     srv,
 		FullMethod: "/tici.MetaService/FinishCompactFragments",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).FinishCompactFragments(ctx, req.(*FinishCompactFragRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_GetImportStoragePrefix_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_GetImportStoragePrefix_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetImportStoragePrefixRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4968,13 +4968,13 @@ func _MetaService_GetImportStoragePrefix_Handler(srv interface{}, ctx context.Co
 		Server:     srv,
 		FullMethod: "/tici.MetaService/GetImportStoragePrefix",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).GetImportStoragePrefix(ctx, req.(*GetImportStoragePrefixRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_PreSplitImportShards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_PreSplitImportShards_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(PreSplitImportShardsRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -4986,13 +4986,13 @@ func _MetaService_PreSplitImportShards_Handler(srv interface{}, ctx context.Cont
 		Server:     srv,
 		FullMethod: "/tici.MetaService/PreSplitImportShards",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).PreSplitImportShards(ctx, req.(*PreSplitImportShardsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_FinishImportPartitionUpload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_FinishImportPartitionUpload_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(FinishImportPartitionUploadRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -5004,13 +5004,13 @@ func _MetaService_FinishImportPartitionUpload_Handler(srv interface{}, ctx conte
 		Server:     srv,
 		FullMethod: "/tici.MetaService/FinishImportPartitionUpload",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).FinishImportPartitionUpload(ctx, req.(*FinishImportPartitionUploadRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_FinishImportPartitionBuild_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_FinishImportPartitionBuild_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(FinishImportPartitionBuildRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -5022,13 +5022,13 @@ func _MetaService_FinishImportPartitionBuild_Handler(srv interface{}, ctx contex
 		Server:     srv,
 		FullMethod: "/tici.MetaService/FinishImportPartitionBuild",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).FinishImportPartitionBuild(ctx, req.(*FinishImportPartitionBuildRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _MetaService_FinishImportIndexUpload_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _MetaService_FinishImportIndexUpload_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(FinishImportIndexUploadRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -5040,7 +5040,7 @@ func _MetaService_FinishImportIndexUpload_Handler(srv interface{}, ctx context.C
 		Server:     srv,
 		FullMethod: "/tici.MetaService/FinishImportIndexUpload",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(MetaServiceServer).FinishImportIndexUpload(ctx, req.(*FinishImportIndexUploadRequest))
 	}
 	return interceptor(ctx, in, info, handler)
@@ -5198,7 +5198,7 @@ func RegisterWorkerServiceServer(s *grpc.Server, srv WorkerServiceServer) {
 	s.RegisterService(&_WorkerService_serviceDesc, srv)
 }
 
-func _WorkerService_AddShard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _WorkerService_AddShard_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(AddShardRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -5210,13 +5210,13 @@ func _WorkerService_AddShard_Handler(srv interface{}, ctx context.Context, dec f
 		Server:     srv,
 		FullMethod: "/tici.WorkerService/AddShard",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(WorkerServiceServer).AddShard(ctx, req.(*AddShardRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _WorkerService_CompactFragments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _WorkerService_CompactFragments_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(CompactFragRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -5228,13 +5228,13 @@ func _WorkerService_CompactFragments_Handler(srv interface{}, ctx context.Contex
 		Server:     srv,
 		FullMethod: "/tici.WorkerService/CompactFragments",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(WorkerServiceServer).CompactFragments(ctx, req.(*CompactFragRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _WorkerService_ImportWrite_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _WorkerService_ImportWrite_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(ImportWriteRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -5246,7 +5246,7 @@ func _WorkerService_ImportWrite_Handler(srv interface{}, ctx context.Context, de
 		Server:     srv,
 		FullMethod: "/tici.WorkerService/ImportWrite",
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(WorkerServiceServer).ImportWrite(ctx, req.(*ImportWriteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
