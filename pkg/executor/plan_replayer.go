@@ -513,6 +513,12 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 		return err
 	}
 
+	// Notify users that PLAN REPLAYER LOAD disables auto—analyze to keep restored stats stable
+	e.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"`PLAN REPLAYER LOAD` sets @@global.%s=OFF to keep restored statistics stable; re-enable it manually if needed",
+		vardef.TiDBEnableAutoAnalyze,
+	))
+
 	// build schema and table first
 	var databaseSets map[string]struct{}
 	databaseSets, err = e.createTable(z)
