@@ -196,7 +196,11 @@ func main() {
 	if wf, wErr := createWorkFile(pkgDir); wErr != nil {
 		log.Printf("warning: could not create go.work for plugin build: %v", wErr)
 	} else if wf != "" {
-		defer os.Remove(wf)
+		defer func() {
+			if rmErr := os.Remove(wf); rmErr != nil {
+				log.Printf("remove tmp go.work %s failure, please clean up manually: %v", wf, rmErr)
+			}
+		}()
 		buildEnv = append(buildEnv, "GOWORK="+wf)
 	}
 	buildCmd.Env = buildEnv
