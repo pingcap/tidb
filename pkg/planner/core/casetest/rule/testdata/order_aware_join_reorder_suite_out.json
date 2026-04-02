@@ -213,6 +213,52 @@
           "  └─IndexReader(Probe) root  index:IndexRangeScan",
           "    └─IndexRangeScan cop[tikv] table:oa_order_t4, index:idx_payload_t3(payload, t3_id) range: decided by [eq(test.oa_order_t4.t3_id, test.oa_order_t3.id) eq(test.oa_order_t4.payload, 1)], keep order:false"
         ]
+      },
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans = 0",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select o.txt_val, o.label from obj o join relationship r on o.id = r.ref_ojb_id join obj o1 on o1.id = r.obj_id where o1.type_id = 1 order by o.label limit 1",
+        "Plan": [
+          "Projection root  test.obj.txt_val, test.obj.label",
+          "└─TopN root  test.obj.label, offset:0, count:1",
+          "  └─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.relationship.ref_ojb_id, inner key:test.obj.id, equal cond:eq(test.relationship.ref_ojb_id, test.obj.id)",
+          "    ├─HashJoin(Build) root  inner join, equal:[eq(test.relationship.obj_id, test.obj.id)]",
+          "    │ ├─IndexReader(Build) root  index:Selection",
+          "    │ │ └─Selection cop[tikv]  not(isnull(test.relationship.ref_ojb_id))",
+          "    │ │   └─IndexFullScan cop[tikv] table:r, index:idx_obj_id(obj_id, ref_ojb_id) keep order:false",
+          "    │ └─TableReader(Probe) root  data:Selection",
+          "    │   └─Selection cop[tikv]  eq(test.obj.type_id, 1)",
+          "    │     └─TableFullScan cop[tikv] table:o1 keep order:false",
+          "    └─IndexLookUp(Probe) root  ",
+          "      ├─IndexRangeScan(Build) cop[tikv] table:o, index:idx_id(id) range: decided by [eq(test.obj.id, test.relationship.ref_ojb_id)], keep order:false",
+          "      └─TableRowIDScan(Probe) cop[tikv] table:o keep order:false"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans = 1",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select o.txt_val, o.label from obj o join relationship r on o.id = r.ref_ojb_id join obj o1 on o1.id = r.obj_id where o1.type_id = 1 order by o.label limit 1",
+        "Plan": [
+          "Projection root  test.obj.txt_val, test.obj.label",
+          "└─Limit root  offset:0, count:1",
+          "  └─IndexJoin root  inner join, inner:IndexLookUp, outer key:test.relationship.obj_id, inner key:test.obj.id, equal cond:eq(test.relationship.obj_id, test.obj.id)",
+          "    ├─IndexJoin(Build) root  inner join, inner:IndexReader, outer key:test.obj.id, inner key:test.relationship.ref_ojb_id, equal cond:eq(test.obj.id, test.relationship.ref_ojb_id)",
+          "    │ ├─Projection(Build) root  test.obj.id, test.obj.label, test.obj.txt_val",
+          "    │ │ └─IndexLookUp root  ",
+          "    │ │   ├─IndexFullScan(Build) cop[tikv] table:o, index:idx_label(label) keep order:true",
+          "    │ │   └─TableRowIDScan(Probe) cop[tikv] table:o keep order:false",
+          "    │ └─IndexReader(Probe) root  index:Selection",
+          "    │   └─Selection cop[tikv]  not(isnull(test.relationship.ref_ojb_id))",
+          "    │     └─IndexRangeScan cop[tikv] table:r, index:idx_ref_obj_id(ref_ojb_id, obj_id) range: decided by [eq(test.relationship.ref_ojb_id, test.obj.id) not(isnull(test.relationship.obj_id))], keep order:false",
+          "    └─IndexLookUp(Probe) root  ",
+          "      ├─IndexRangeScan(Build) cop[tikv] table:o1, index:idx_id(id) range: decided by [eq(test.obj.id, test.relationship.obj_id)], keep order:false",
+          "      └─Selection(Probe) cop[tikv]  eq(test.obj.type_id, 1)",
+          "        └─TableRowIDScan cop[tikv] table:o1 keep order:false"
+        ]
       }
     ]
   }
