@@ -393,19 +393,62 @@ func (s *fileScanner) buildEstimateTableInfo(ctx context.Context, tblMeta *mydum
 	}
 	p := parser.New()
 	p.SetSQLMode(s.config.sqlMode)
-	stmt, err := p.ParseOneStmt(schemaSQL, "", "")
+	stmts, _, err := p.ParseSQL(schemaSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	createStmt, ok := stmt.(*ast.CreateTableStmt)
-	if !ok {
-		return nil, errors.Errorf("schema file %s does not contain a CREATE TABLE statement", tblMeta.SchemaFile.FileMeta.Path)
+	createStmt, err := buildEstimateCreateTableStmt(stmts, tblMeta)
+	if err != nil {
+		return nil, err
 	}
 	tableInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), createStmt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return tableInfo, nil
+}
+
+func buildEstimateCreateTableStmt(stmts []ast.StmtNode, tblMeta *mydump.MDTableMeta) (*ast.CreateTableStmt, error) {
+	var (
+		firstCreateStmt *ast.CreateTableStmt
+		createStmtCount int
+	)
+	for _, stmt := range stmts {
+		createStmt, ok := stmt.(*ast.CreateTableStmt)
+		if !ok {
+			continue
+		}
+		if firstCreateStmt == nil {
+			firstCreateStmt = createStmt
+		}
+		createStmtCount++
+		if estimateCreateTableStmtMatchesMeta(createStmt, tblMeta) {
+			return createStmt, nil
+		}
+	}
+	if createStmtCount == 1 {
+		return firstCreateStmt, nil
+	}
+	if createStmtCount == 0 {
+		return nil, errors.Errorf("schema file %s does not contain a CREATE TABLE statement", tblMeta.SchemaFile.FileMeta.Path)
+	}
+	return nil, errors.Errorf(
+		"schema file %s contains %d CREATE TABLE statements but none match table %s.%s",
+		tblMeta.SchemaFile.FileMeta.Path,
+		createStmtCount,
+		tblMeta.DB,
+		tblMeta.Name,
+	)
+}
+
+func estimateCreateTableStmtMatchesMeta(createStmt *ast.CreateTableStmt, tblMeta *mydump.MDTableMeta) bool {
+	if !strings.EqualFold(createStmt.Table.Name.String(), tblMeta.Name) {
+		return false
+	}
+	if createStmt.Table.Schema.String() == "" {
+		return true
+	}
+	return strings.EqualFold(createStmt.Table.Schema.String(), tblMeta.DB)
 }
 
 func sourceTypeToImportFormat(tp mydump.SourceType) (string, error) {
