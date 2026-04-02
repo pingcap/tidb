@@ -186,7 +186,7 @@ func (m *Manager) handleTasks() {
 	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
-		m.sampleLogger.Error("failed to get executable task", zap.String("server-id", m.id), zap.Error(err))
+		m.sampleLogger.Error("failed to get executable task", zap.Error(err))
 		return
 	}
 
