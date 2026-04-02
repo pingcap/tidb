@@ -27,6 +27,7 @@ import (
 	"github.com/dgryski/go-farm"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -44,20 +45,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	// separator argument for group_concat() test cases
-	separator = " "
-
-	letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-)
-
-func generateRandomString(length int) string {
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return string(b)
-}
+// separator argument for group_concat() test cases
+const separator = " "
 
 type aggTest struct {
 	keyType  *types.FieldType
@@ -170,7 +159,7 @@ func newParallelDistinctAggTestCase(funcName string, dataTypes []*types.FieldTyp
 	case mysql.TypeVarString:
 		dataGenFunc = func() types.Datum {
 			for {
-				newVal := generateRandomString(rand.Intn(100))
+				newVal := internalutil.GenerateRandomString(rand.Intn(100))
 				_, ok := stringDatums[newVal]
 				if ok {
 					continue

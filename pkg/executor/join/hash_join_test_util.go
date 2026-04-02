@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -30,8 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
-
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 type hashJoinInfo struct {
 	ctx                   sessionctx.Context
@@ -202,19 +201,11 @@ func buildJoinKeyIntDatums(num int) []any {
 	return datums
 }
 
-func getRandString() string {
-	b := make([]byte, 10)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return string(b)
-}
-
 func buildJoinKeyStringDatums(num int) []any {
 	datumSet := make(map[string]bool, num)
 	datums := make([]any, 0, num)
 	for len(datums) < num {
-		val := getRandString()
+		val := internalutil.GenerateRandomString(10)
 		if datumSet[val] {
 			continue
 		}

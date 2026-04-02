@@ -185,6 +185,17 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			RetType: types.NewFieldType(mysql.TypeString),
 		})
 		finalAggDesc.Args = args
+	case ast.AggFuncCount:
+		args := make([]expression.Expression, 0, 1)
+		if a.HasDistinct {
+			args = a.Args
+		} else {
+			args = append(args, &expression.Column{
+				Index:   ordinal[0],
+				RetType: a.RetTp,
+			})
+		}
+		finalAggDesc.Args = args
 	default:
 		args := make([]expression.Expression, 0, 1)
 		args = append(args, &expression.Column{

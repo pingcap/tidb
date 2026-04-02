@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
+	internalutil "github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -46,20 +47,10 @@ import (
 
 // Chunk schema in this test file: | column0: string | column1: float64 |
 
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-func getRandString() string {
-	b := make([]byte, 5)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return string(b)
-}
-
 func generateData(rowNum int, ndv int) ([]string, []float64) {
 	keys := make([]string, 0)
 	for range ndv {
-		keys = append(keys, getRandString())
+		keys = append(keys, internalutil.GenerateRandomString(5))
 	}
 
 	col0Data := make([]string, 0)
