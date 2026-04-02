@@ -481,6 +481,9 @@ const (
 	version254 = 254
 	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
 	version255 = 255
+	// version256 updates persisted binding digests/original SQL after
+	// WHERE-parentheses normalization change in binding normalization.
+	version256 = 256
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -494,7 +497,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version255
+var currentBootstrapVersion int64 = version256
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -674,6 +677,7 @@ var (
 		{version: version253, fn: upgradeToVer253},
 		{version: version254, fn: upgradeToVer254},
 		{version: version255, fn: upgradeToVer255},
+		{version: version256, fn: upgradeToVer256},
 	}
 )
 
@@ -2074,4 +2078,89 @@ func upgradeToVer255(s sessionapi.Session, _ int64) {
 	logutil.BgLogger().Warn(fmt.Sprintf("Rewriting persisted tidb_analyze_version from %s to %s during upgrade", oldValue, newValue))
 	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE=%? WHERE VARIABLE_NAME=%? AND VARIABLE_VALUE=%?;",
 		mysql.SystemDB, mysql.GlobalVariablesTable, newValue, vardef.TiDBAnalyzeVersion, oldValue)
+}
+
+func upgradeToVer256(s sessionapi.Session, _ int64) {
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+		mustExecute(s, "COMMIT")
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT _tidb_rowid, original_sql, bind_sql, sql_digest FROM mysql.bind_info WHERE source != 'builtin'")
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer256 error", zap.Error(err))
+		return
+	}
+	type bindDigestUpdate struct {
+		rowID          int64
+		oldOriginalSQL string
+		oldSQLDigest   string
+		newOriginalSQL string
+		newSQLDigest   string
+	}
+	req := rs.NewChunk(nil)
+	updates := make([]bindDigestUpdate, 0, 4)
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer256 error", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := range req.NumRows() {
+			row := req.GetRow(i)
+			rowID := row.GetInt64(0)
+			oldOriginalSQL, bindSQL := row.GetString(1), row.GetString(2)
+			oldSQLDigest := ""
+			if !row.IsNull(3) {
+				oldSQLDigest = row.GetString(3)
+			}
+			newOriginalSQL, newSQLDigest := parser.NormalizeDigestForBinding(bindSQL)
+			if oldOriginalSQL == newOriginalSQL && oldSQLDigest == newSQLDigest.String() {
+				continue
+			}
+			updates = append(updates, bindDigestUpdate{
+				rowID:          rowID,
+				oldOriginalSQL: oldOriginalSQL,
+				oldSQLDigest:   oldSQLDigest,
+				newOriginalSQL: newOriginalSQL,
+				newSQLDigest:   newSQLDigest.String(),
+			})
+		}
+		req.Reset()
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer256 error", zap.Error(err))
+	}
+	for _, update := range updates {
+		_, err = s.ExecuteInternal(ctx,
+			"UPDATE mysql.bind_info SET original_sql = %?, sql_digest = %? WHERE _tidb_rowid = %?",
+			update.newOriginalSQL, update.newSQLDigest, update.rowID)
+		if err == nil {
+			continue
+		}
+		if kv.ErrKeyExists.Equal(err) {
+			logutil.BgLogger().Warn(
+				"upgradeToVer256 found duplicated (plan_digest, sql_digest), keep original_sql but set sql_digest to NULL",
+				zap.Int64("row_id", update.rowID),
+				zap.String("old_original_sql", update.oldOriginalSQL),
+				zap.String("new_original_sql", update.newOriginalSQL),
+				zap.String("old_sql_digest", update.oldSQLDigest),
+				zap.String("new_sql_digest", update.newSQLDigest),
+			)
+			_, err = s.ExecuteInternal(ctx,
+				"UPDATE mysql.bind_info SET original_sql = %?, sql_digest = NULL WHERE _tidb_rowid = %?",
+				update.newOriginalSQL, update.rowID)
+		}
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer256 error", zap.Error(err))
+		}
+	}
 }

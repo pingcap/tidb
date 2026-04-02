@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1756,6 +1757,71 @@ func TestTiDBUpgradeToVer254(t *testing.T) {
 	require.Contains(t, createWatchSQL, "idx_start_time")
 	createWatchDoneSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch_done")
 	require.Contains(t, createWatchDoneSQL, "idx_done_time")
+}
+
+func TestTiDBUpgradeToVer256(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV255 := CreateSessionAndSetID(t, store)
+	MustExec(t, seV255, "USE test")
+	MustExec(t, seV255, "CREATE TABLE t (a INT, b INT)")
+	MustExec(t, seV255, "CREATE GLOBAL BINDING FOR SELECT * FROM t WHERE (a = 1 AND b = 1) USING SELECT * FROM t WHERE (a = 1 AND b = 1)")
+
+	res := MustExecToRecodeSet(t, seV255, "SELECT bind_sql FROM mysql.bind_info WHERE source='manual'")
+	chk := res.NewChunk(nil)
+	err := res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	bindSQL := chk.GetRow(0).GetString(0)
+	require.NoError(t, res.Close())
+
+	expectedNormalizedSQL, expectedSQLDigest := parser.NormalizeDigestForBinding(bindSQL)
+	staleNormalizedSQL, staleSQLDigest := parser.NormalizeDigest(bindSQL)
+	require.NotEqual(t, staleSQLDigest.String(), expectedSQLDigest.String())
+	require.NotEqual(t, staleNormalizedSQL, expectedNormalizedSQL)
+	MustExec(t, seV255,
+		"UPDATE mysql.bind_info SET original_sql = ?, sql_digest = ? WHERE source = 'manual' AND bind_sql = ?",
+		staleNormalizedSQL, staleSQLDigest.String(), bindSQL)
+
+	ver255 := version255
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver255))
+	require.NoError(t, err)
+	RevertVersionAndVariables(t, seV255, ver255)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	ver, err := GetBootstrapVersion(seV255)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver255), ver)
+
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	res = MustExecToRecodeSet(t, seCurVer,
+		"SELECT original_sql, sql_digest FROM mysql.bind_info WHERE source = 'manual' AND bind_sql = ?",
+		bindSQL)
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	updatedOriginalSQL := chk.GetRow(0).GetString(0)
+	updatedSQLDigest := chk.GetRow(0).GetString(1)
+	require.NoError(t, res.Close())
+
+	require.Equal(t, expectedNormalizedSQL, updatedOriginalSQL)
+	require.Equal(t, expectedSQLDigest.String(), updatedSQLDigest)
 }
 
 func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
