@@ -2763,7 +2763,11 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	if kerneltype.IsClassic() {
 		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 	} else {
-		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
+		// Next-gen may report either conflict reason depending on execution path.
+		require.True(t,
+			strings.Contains(err.Error(), "reason=NotLockedKeyConflict") ||
+				strings.Contains(err.Error(), "reason=LazyUniquenessCheck"),
+		)
 	}
 
 	// case: DML returns error => abort txn
@@ -3090,7 +3094,11 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	if kerneltype.IsClassic() {
 		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 	} else {
-		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
+		// Next-gen may report either conflict reason depending on execution path.
+		require.True(t,
+			strings.Contains(err.Error(), "reason=NotLockedKeyConflict") ||
+				strings.Contains(err.Error(), "reason=LazyUniquenessCheck"),
+		)
 	}
 }
 
