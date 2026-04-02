@@ -135,7 +135,3 @@ func (p *binPattern) Compile(patternStr string, escape byte) {
 func (p *binPattern) DoMatch(str string) bool {
 	return stringutil.DoMatchBinary(str, p.patChars, p.patTypes)
 }
-
-type utf8BinPaddingCollator struct {
-	binPaddingCollator
-}
