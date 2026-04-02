@@ -131,12 +131,12 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			// This makes `t` and `T` write to the same privilege row.
 			e.Level.TableName = tbl.Meta().Name.O
 		}
-		if db, succ := schema.SchemaByName(dbNameStr); succ {
+		db, succ := schema.SchemaByName(dbNameStr)
+		if succ {
 			dbName = db.Name.O
 		}
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
-			db, succ := schema.SchemaByName(dbNameStr)
 			if !succ || db.Name.L != dbNameStr.L {
 				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 			}
