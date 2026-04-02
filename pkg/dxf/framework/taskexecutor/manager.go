@@ -49,9 +49,14 @@ var (
 	SubtaskCheckInterval = 300 * time.Millisecond
 	// MaxSubtaskCheckInterval is the max interval to check whether there are subtasks to run.
 	// exported for testing.
-	MaxSubtaskCheckInterval = 2 * time.Second
-	maxChecksWhenNoSubtask  = 7
-	recoverMetaInterval     = 90 * time.Second
+	MaxSubtaskCheckInterval    = 2 * time.Second
+	maxChecksWhenNoSubtask     = 7
+	recoverMetaInterval        = 90 * time.Second
+	managerSampleLoggerFactory = logutil.SampleErrVerboseLoggerFactory(
+		time.Minute,
+		10,
+		zap.String(logutil.LogFieldCategory, "dxf-taskexecutor-manager"),
+	)
 )
 
 // Manager monitors the task table and manages the taskExecutors.
@@ -182,7 +187,7 @@ func (m *Manager) handleTasks() {
 	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
-		m.logger.Error("failed to get executable task", zap.Error(err))
+		managerSampleLoggerFactory().Error("failed to get executable task", zap.String("server-id", m.id), zap.Error(err))
 		return
 	}
 

@@ -56,7 +56,12 @@ var (
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.
-	DetectParamModifyInterval = 5 * time.Second
+	DetectParamModifyInterval       = 5 * time.Second
+	taskExecutorSampleLoggerFactory = logutil.SampleErrVerboseLoggerFactory(
+		time.Minute,
+		10,
+		zap.String(logutil.LogFieldCategory, "dxf-taskexecutor"),
+	)
 )
 
 var (
@@ -136,6 +141,14 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 	}
 	taskExecutorImpl.task.Store(task)
 	return taskExecutorImpl
+}
+
+func (e *BaseTaskExecutor) sampledLogger() *zap.Logger {
+	taskBase := e.GetTaskBase()
+	return taskExecutorSampleLoggerFactory().With(
+		zap.Int64("task-id", taskBase.ID),
+		zap.String("task-key", taskBase.Key),
+	)
 }
 
 // checkBalanceSubtask check whether the subtasks are balanced to or away from this node.
@@ -301,7 +314,7 @@ func (e *BaseTaskExecutor) Run() {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
 			}
-			e.logger.Error("refresh task failed", zap.Error(err))
+			e.sampledLogger().Error("refresh task failed", zap.Error(err))
 			continue
 		}
 
@@ -346,7 +359,7 @@ func (e *BaseTaskExecutor) Run() {
 		subtask, err := e.taskTable.GetFirstSubtaskInStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
-			e.logger.Warn("get first subtask meets error", zap.Error(err))
+			e.sampledLogger().Warn("get first subtask meets error", zap.Error(err))
 			continue
 		} else if subtask == nil {
 			failpoint.Inject("avoidTaskExecutorExitWhenNoSubtask", func() {
@@ -368,7 +381,7 @@ func (e *BaseTaskExecutor) Run() {
 		}
 		if e.stepExec == nil {
 			if err2 := e.createStepExecutor(); err2 != nil {
-				e.logger.Error("create step executor failed",
+				e.sampledLogger().Error("create step executor failed",
 					zap.String("step", proto.Step2Str(task.Type, task.Step)), zap.Error(err2))
 				continue
 			}
@@ -384,7 +397,7 @@ func (e *BaseTaskExecutor) Run() {
 			// task executor keeps running its subtasks even though some subtask
 			// might have failed, we rely on scheduler to detect the error, and
 			// notify task executor or manager to cancel.
-			e.logger.Error("run subtask failed", zap.Error(err))
+			e.sampledLogger().Error("run subtask failed", zap.Error(err))
 		} else {
 			// if we run a subtask successfully, we will try to run next subtask
 			// immediately for once.

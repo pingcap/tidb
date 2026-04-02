@@ -56,7 +56,12 @@ var (
 	// TaskChangedCh used to speed up task schedule, such as when task is submitted
 	// in the same node as the scheduler manager.
 	// put it here to avoid cyclic import.
-	TaskChangedCh = make(chan struct{}, 1)
+	TaskChangedCh       = make(chan struct{}, 1)
+	sampleLoggerFactory = logutil.SampleLoggerFactory(
+		time.Minute,
+		10,
+		zap.String(logutil.LogFieldCategory, "dxf-handle"),
+	)
 )
 
 const (
@@ -177,8 +182,6 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 	}
 	ticker := time.NewTicker(checkTaskFinishInterval)
 	defer ticker.Stop()
-
-	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
 	for {
 		select {
 		case <-ctx.Done():
@@ -186,7 +189,7 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 		case <-ticker.C:
 			task, err := taskManager.GetTaskBaseByIDWithHistory(ctx, id)
 			if err != nil {
-				logger.Error("cannot get task during waiting", zap.Error(err))
+				sampleLoggerFactory().Error("cannot get task during waiting", zap.Int64("task-id", id), zap.Error(err))
 				continue
 			}
 
