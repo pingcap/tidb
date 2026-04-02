@@ -1,0 +1,155 @@
+# This suite covers only the parameter-sensitive cases currently controlled by
+# the generic-rewrite switch:
+#   - non-outer-join constant propagation
+#   - predicate simplification
+#   - ranger same-slot Eq/In fallback
+# The first two are local predicate rewrites, and the third is range shaping.
+# Outer-join derivation and null-reject reasoning are intentionally excluded,
+# because they are no longer controlled by this switch.
+#
+# Generic rewrite switch should be part of the plan cache key.
+drop table if exists t_pc_key;
+create table t_pc_key (a int primary key);
+insert into t_pc_key values (1), (2);
+set @@tidb_enable_prepared_plan_cache=1;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select a from t_pc_key where a = ?';
+set @a=1;
+execute st using @a;
+select @@last_plan_from_cache;
+execute st using @a;
+select @@last_plan_from_cache;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+execute st using @a;
+select @@last_plan_from_cache;
+execute st using @a;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+# Range shaping: generic rewrite mode should not reuse unsafe point-get-like
+# plans derived from mutable ranges.
+drop table if exists t_gp_unique;
+create table t_gp_unique (a int, b int, c int, unique key(a, b));
+insert into t_gp_unique values (1, 1, 10), (1, 2, 20), (1, 3, 30);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select c from t_gp_unique where a=1 and b>=? and b<=? order by c';
+set @l=1, @r=1;
+execute st using @l, @r;
+select @@last_plan_from_cache;
+set @l=1, @r=2;
+execute st using @l, @r;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+# Generic rewrite mode can reuse conservative secondary-index range templates when only the range boundaries change.
+drop table if exists t_gp_range;
+create table t_gp_range (id int primary key, a int, b int, key idx_a(a));
+insert into t_gp_range values (1, 1, 10), (2, 1, 20), (3, 2, 30), (4, 3, 40);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select /*+ use_index(t_gp_range, idx_a) */ id from t_gp_range where a>=? and a<=? order by id';
+set @x=1, @y=1;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+set @x=2, @y=2;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+deallocate prepare st;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select /*+ use_index(t_gp_range, idx_a) */ id from t_gp_range where a>=? and a<=? order by id';
+set @x=1, @y=1;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+set @x=2, @y=2;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+# The same rewrite policy should also be available through statement-level SET_VAR.
+prepare st from 'select /*+ set_var(tidb_opt_enable_plan_cache_generic_rewrite=1) */ id from t_gp_range where a>=? and a<=? order by id';
+set @x=1, @y=1;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+set @x=2, @y=2;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+# Local predicate rewrite.
+drop table if exists t_gp_cp;
+create table t_gp_cp (a int, b int, key(a), key(b));
+insert into t_gp_cp values (1, 1), (2, 2);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select a, b from t_gp_cp where a=b and a=? and b=? order by a';
+set @x=1, @y=2;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+set @x=1, @y=1;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+deallocate prepare st;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select a, b from t_gp_cp where a=b and a=? and b=? order by a';
+set @x=1, @y=2;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+set @x=1, @y=1;
+execute st using @x, @y;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+# Generic rewrite mode should keep NE/IN simplification conservative but reusable.
+drop table if exists t_gp_in;
+create table t_gp_in (a int, key(a));
+insert into t_gp_in values (1), (2), (3);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select a from t_gp_in where a in (?, ?) and a <> ? order by a';
+set @x=1, @y=2, @z=1;
+execute st using @x, @y, @z;
+select @@last_plan_from_cache;
+set @x=1, @y=2, @z=2;
+execute st using @x, @y, @z;
+select @@last_plan_from_cache;
+deallocate prepare st;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select a from t_gp_in where a in (?, ?) and a <> ? order by a';
+set @x=1, @y=2, @z=1;
+execute st using @x, @y, @z;
+select @@last_plan_from_cache;
+set @x=1, @y=2, @z=2;
+execute st using @x, @y, @z;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+# Outer-join derivation and null-reject reasoning are no longer controlled by
+# this switch, so those scenarios are intentionally not tested here.
+#
+# Non-generic rewrite mode should skip cache when OR simplification depends on the scalar side.
+drop table if exists t_gp_or;
+create table t_gp_or (a int, key(a));
+insert into t_gp_or values (1), (2), (3);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select a from t_gp_or where a = ? and (a = 1 or a = 2) order by a';
+set @x=1;
+execute st using @x;
+select @@last_plan_from_cache;
+set @x=2;
+execute st using @x;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+# Generic rewrite mode should keep the original mutable Eq/In holder when a later same-slot predicate cannot stand alone.
+drop table if exists t_gp_fallback;
+create table t_gp_fallback (a int, key(a));
+insert into t_gp_fallback values (5), (20);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select /*+ use_index(t_gp_fallback, a) */ a from t_gp_fallback where a = ? and a < 10 order by a';
+set @x=5;
+execute st using @x;
+select @@last_plan_from_cache;
+set @x=20;
+execute st using @x;
+select @@last_plan_from_cache;
+deallocate prepare st;
+
+set @@tidb_opt_enable_plan_cache_generic_rewrite=default;
+set @@tidb_enable_prepared_plan_cache=default;

@@ -1,0 +1,223 @@
+drop table if exists t_pc_key;
+create table t_pc_key (a int primary key);
+insert into t_pc_key values (1), (2);
+set @@tidb_enable_prepared_plan_cache=1;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select a from t_pc_key where a = ?';
+set @a=1;
+execute st using @a;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute st using @a;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+execute st using @a;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute st using @a;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+deallocate prepare st;
+drop table if exists t_gp_unique;
+create table t_gp_unique (a int, b int, c int, unique key(a, b));
+insert into t_gp_unique values (1, 1, 10), (1, 2, 20), (1, 3, 30);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select c from t_gp_unique where a=1 and b>=? and b<=? order by c';
+set @l=1, @r=1;
+execute st using @l, @r;
+c
+10
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @l=1, @r=2;
+execute st using @l, @r;
+c
+10
+20
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st;
+drop table if exists t_gp_range;
+create table t_gp_range (id int primary key, a int, b int, key idx_a(a));
+insert into t_gp_range values (1, 1, 10), (2, 1, 20), (3, 2, 30), (4, 3, 40);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select /*+ use_index(t_gp_range, idx_a) */ id from t_gp_range where a>=? and a<=? order by id';
+set @x=1, @y=1;
+execute st using @x, @y;
+id
+1
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @x=2, @y=2;
+execute st using @x, @y;
+id
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select /*+ use_index(t_gp_range, idx_a) */ id from t_gp_range where a>=? and a<=? order by id';
+set @x=1, @y=1;
+execute st using @x, @y;
+id
+1
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @x=2, @y=2;
+execute st using @x, @y;
+id
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+deallocate prepare st;
+prepare st from 'select /*+ set_var(tidb_opt_enable_plan_cache_generic_rewrite=1) */ id from t_gp_range where a>=? and a<=? order by id';
+set @x=1, @y=1;
+execute st using @x, @y;
+id
+1
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @x=2, @y=2;
+execute st using @x, @y;
+id
+3
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+deallocate prepare st;
+drop table if exists t_gp_cp;
+create table t_gp_cp (a int, b int, key(a), key(b));
+insert into t_gp_cp values (1, 1), (2, 2);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select a, b from t_gp_cp where a=b and a=? and b=? order by a';
+set @x=1, @y=2;
+execute st using @x, @y;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @x=1, @y=1;
+execute st using @x, @y;
+a	b
+1	1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select a, b from t_gp_cp where a=b and a=? and b=? order by a';
+set @x=1, @y=2;
+execute st using @x, @y;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @x=1, @y=1;
+execute st using @x, @y;
+a	b
+1	1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+deallocate prepare st;
+drop table if exists t_gp_in;
+create table t_gp_in (a int, key(a));
+insert into t_gp_in values (1), (2), (3);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select a from t_gp_in where a in (?, ?) and a <> ? order by a';
+set @x=1, @y=2, @z=1;
+execute st using @x, @y, @z;
+a
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @x=1, @y=2, @z=2;
+execute st using @x, @y, @z;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select a from t_gp_in where a in (?, ?) and a <> ? order by a';
+set @x=1, @y=2, @z=1;
+execute st using @x, @y, @z;
+a
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @x=1, @y=2, @z=2;
+execute st using @x, @y, @z;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+deallocate prepare st;
+drop table if exists t_gp_or;
+create table t_gp_or (a int, key(a));
+insert into t_gp_or values (1), (2), (3);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=0;
+prepare st from 'select a from t_gp_or where a = ? and (a = 1 or a = 2) order by a';
+set @x=1;
+execute st using @x;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @x=2;
+execute st using @x;
+a
+2
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare st;
+drop table if exists t_gp_fallback;
+create table t_gp_fallback (a int, key(a));
+insert into t_gp_fallback values (5), (20);
+set @@tidb_opt_enable_plan_cache_generic_rewrite=1;
+prepare st from 'select /*+ use_index(t_gp_fallback, a) */ a from t_gp_fallback where a = ? and a < 10 order by a';
+set @x=5;
+execute st using @x;
+a
+5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @x=20;
+execute st using @x;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+deallocate prepare st;
+set @@tidb_opt_enable_plan_cache_generic_rewrite=default;
+set @@tidb_enable_prepared_plan_cache=default;

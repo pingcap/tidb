@@ -1862,6 +1862,76 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	}
 }
 
+func TestExtractEqAndInConditionKeepsStableGenericRewriteAccess(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session()
+
+	longlongType := types.NewFieldType(mysql.TypeLonglong)
+	col0 := &expression.Column{UniqueID: 0, ID: 0, RetType: longlongType}
+	col1 := &expression.Column{UniqueID: 1, ID: 1, RetType: longlongType}
+	cols := []*expression.Column{col0, col1}
+	lengths := []int{types.UnspecifiedLength, types.UnspecifiedLength}
+
+	constExpr := func(v int64) *expression.Constant {
+		return &expression.Constant{Value: types.NewIntDatum(v), RetType: longlongType}
+	}
+	mutableExpr := func(v int64) *expression.Constant {
+		return &expression.Constant{
+			Value:        types.NewIntDatum(v),
+			RetType:      longlongType,
+			DeferredExpr: &expression.Constant{Value: types.NewIntDatum(v), RetType: longlongType},
+		}
+	}
+
+	origGenericRewrite := sctx.GetSessionVars().EnablePlanCacheGenericRewrite
+	sctx.GetSessionVars().StmtCtx.EnablePlanCache()
+	sctx.GetSessionVars().EnablePlanCacheGenericRewrite = true
+	defer func() {
+		sctx.GetSessionVars().EnablePlanCacheGenericRewrite = origGenericRewrite
+	}()
+
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+	t.Run("do not synthesize derived point access from mutable merge", func(t *testing.T) {
+		conds := []expression.Expression{
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.GE, longlongType, col0, mutableExpr(5)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.LE, longlongType, col0, mutableExpr(5)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col1, constExpr(1)),
+		}
+		accesses, filters, newConds, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conds, cols, lengths)
+		require.False(t, emptyRange)
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, accesses))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, filters))
+		require.Equal(t, "[eq(Column#1, 1) ge(Column#0, 5) le(Column#0, 5)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	})
+
+	t.Run("keep mutable standalone holder when immutable replacement cannot survive", func(t *testing.T) {
+		conds := []expression.Expression{
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col0, mutableExpr(5)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.LT, longlongType, col0, constExpr(10)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col1, constExpr(1)),
+		}
+		accesses, filters, newConds, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conds, cols, lengths)
+		require.False(t, emptyRange)
+		require.Equal(t, "[eq(Column#0, 5) eq(Column#1, 1)]", expression.StringifyExpressionsWithCtx(ectx, accesses))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, filters))
+		require.Equal(t, "[lt(Column#0, 10)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	})
+
+	t.Run("prefer immutable standalone holder over mutable one", func(t *testing.T) {
+		conds := []expression.Expression{
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col0, mutableExpr(1)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.In, longlongType, col0, constExpr(1), constExpr(2)),
+			expression.NewFunctionInternal(sctx.GetExprCtx(), ast.EQ, longlongType, col1, constExpr(1)),
+		}
+		accesses, filters, newConds, _, emptyRange := ranger.ExtractEqAndInCondition(sctx.GetRangerCtx(), conds, cols, lengths)
+		require.False(t, emptyRange)
+		require.Equal(t, "[in(Column#0, 1, 2) eq(Column#1, 1)]", expression.StringifyExpressionsWithCtx(ectx, accesses))
+		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, filters))
+		require.Equal(t, "[eq(Column#0, 1)]", expression.StringifyExpressionsWithCtx(ectx, newConds))
+	})
+}
+
 func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *logicalop.LogicalSelection {
 	ctx := context.Background()
 	stmts, err := session.Parse(sctx, sql)

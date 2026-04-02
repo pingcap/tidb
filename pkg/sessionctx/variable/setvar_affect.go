@@ -113,6 +113,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_default_string_match_selectivity":           {},
 	"tidb_enable_prepared_plan_cache":                 {},
 	"tidb_enable_non_prepared_plan_cache":             {},
+	"tidb_opt_enable_plan_cache_generic_rewrite":      {},
 	"tidb_plan_cache_max_plan_size":                   {},
 	"tidb_opt_range_max_size":                         {},
 	"tidb_opt_advanced_join_hint":                     {},

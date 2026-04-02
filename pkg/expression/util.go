@@ -1703,6 +1703,33 @@ func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bo
 	return true
 }
 
+// PlanCacheGenericRewriteEnabled indicates whether TiDB should use the current narrow
+// plan-cache rewrite policy.
+//
+// It currently covers three parameter-sensitive cases:
+//   - non-outer-join constant propagation
+//   - predicate simplification
+//   - ranger same-slot Eq/In fallback
+//
+// The first two are local predicate rewrites, and the third is range shaping. Their
+// shared hazard is that the optimizer may otherwise cache a derived predicate or access
+// shape that depends on the current bind values. When this switch is ON, these call sites
+// should keep a more stable cache-preserving shape instead.
+//
+// It intentionally does not cover broader join reasoning, such as outer-join derivation
+// or null-reject inference. Those rewrites have a wider plan-quality impact and may need
+// separate control later.
+func PlanCacheGenericRewriteEnabled(ctx BuildContext) bool {
+	if ctx == nil || !ctx.IsUseCache() {
+		return false
+	}
+	sv, err := expropt.SessionVarsPropReader{}.GetSessionVars(ctx.GetEvalCtx())
+	if err != nil || sv == nil {
+		return false
+	}
+	return sv.EnablePlanCacheGenericRewrite
+}
+
 // MaybeOverOptimized4PlanCache used to check whether an optimization can work
 // for the statement when we enable the plan cache.
 // In some situations, some optimizations maybe over-optimize and cache an

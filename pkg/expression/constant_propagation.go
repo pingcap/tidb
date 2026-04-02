@@ -357,6 +357,13 @@ func (s *propConstSolver) Clear() {
 func (s *propConstSolver) propagateConstantEQ() {
 	intest.Assert(len(s.eqMapper) == 0 && s.eqMapper != nil)
 	visited := make([]bool, len(s.conditions))
+	if PlanCacheGenericRewriteEnabled(s.ctx) {
+		for i := range s.conditions {
+			if MaybeOverOptimized4PlanCache(s.ctx, s.conditions[i]) {
+				visited[i] = true
+			}
+		}
+	}
 	cols := make([]*Column, 0, 4)
 	cons := make([]Expression, 0, 4)
 	for range MaxPropagateColsCnt {
@@ -405,8 +412,18 @@ func (s *propConstSolver) propagateColumnEQ() {
 	} else {
 		s.unionSet.GrowNewIntSet(len(s.columns))
 	}
+	if PlanCacheGenericRewriteEnabled(s.ctx) {
+		for i := range s.conditions {
+			if MaybeOverOptimized4PlanCache(s.ctx, s.conditions[i]) {
+				visited[i] = true
+			}
+		}
+	}
 	allVisited := true
 	for i := range s.conditions {
+		if visited[i] {
+			continue
+		}
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, rCol, ok := IsColOpCol(fun)
 			// TODO: Enable hybrid types in ConstantPropagate.
