@@ -66,6 +66,20 @@ func checkCases(
 	}
 }
 
+func runLoadDataWithStringReader(t *testing.T, tk *testkit.TestKit, data, loadSQL string) error {
+	t.Helper()
+
+	ctx := tk.Session().(sessionctx.Context)
+	readerBuilder := executor.LoadDataReaderBuilder{
+		Build: func(_ string) (io.ReadCloser, error) {
+			return mydump.NewStringReader(data), nil
+		},
+		Wg: &sync.WaitGroup{},
+	}
+	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	return tk.ExecToErr(loadSQL)
+}
+
 func TestLoadDataInitParam(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -508,21 +522,42 @@ func TestLoadDataAutoRandomError(t *testing.T) {
 	tk.MustExec("drop table if exists t_auto_random")
 	tk.MustExec("create table t_auto_random (a bigint primary key auto_random(5), b int)")
 
+	// Reproduce the non-restrictive path where LOAD DATA would otherwise downgrade row errors to warnings.
+	tk.MustExec("set sql_mode = ''")
 	// Ensure allow_auto_random_explicit_insert is disabled (default)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
 
-	ctx := tk.Session().(sessionctx.Context)
-
-	// Create a reader with explicit value for auto_random column
-	var reader io.ReadCloser = mydump.NewStringReader("1,2\n")
-	var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
-		Build: func(_ string) (r io.ReadCloser, err error) {
-			return reader, nil
-		},
-		Wg: &sync.WaitGroup{},
-	}
-	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
-
-	err := tk.ExecToErr("load data local infile '/tmp/test.csv' into table t_auto_random")
+	err := runLoadDataWithStringReader(t, tk, "1,2\n", "load data local infile 'test.csv' into table t_auto_random")
 	require.ErrorIs(t, err, dbterror.ErrInvalidAutoRandom)
+}
+
+func TestLoadDataVectorNotNullError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_vector_not_null")
+	tk.MustExec("create table t_vector_not_null (id bigint primary key, v vector(3) not null)")
+	tk.MustExec("set sql_mode = ''")
+
+	err := runLoadDataWithStringReader(t, tk, "1\n", "load data local infile 'test.csv' into table t_vector_not_null")
+	require.ErrorContains(t, err, "VECTOR column 'v' cannot be null")
+	tk.MustQuery("select count(*) from t_vector_not_null").Check(testkit.Rows("0"))
+}
+
+func TestLoadDataNonVectorNotNullStillUsesWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_regular_not_null")
+	tk.MustExec("create table t_regular_not_null (id bigint primary key, v varchar(8) not null)")
+	tk.MustExec("set sql_mode = ''")
+
+	err := runLoadDataWithStringReader(t, tk, "1\n", "load data local infile 'test.csv' into table t_regular_not_null")
+	require.NoError(t, err)
+	require.Equal(t, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 2", tk.Session().LastMessage())
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1261 Row 1 doesn't contain data for all columns",
+		"Warning 1263 Column set to default value; NULL supplied to NOT NULL column 'v' at row 1",
+	))
+	tk.MustQuery("select id, length(v) from t_regular_not_null").Check(testkit.Rows("1 0"))
 }

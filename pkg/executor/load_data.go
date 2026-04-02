@@ -66,6 +66,11 @@ var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
 
+const (
+	vectorNotNullErrPrefix = "VECTOR column '"
+	vectorNotNullErrSuffix = "' cannot be null"
+)
+
 // LoadDataReaderBuilder stores a function to start background goroutines to read from connection and
 // a `Wg` to wait for all background goroutines to finish.
 type LoadDataReaderBuilder struct {
@@ -582,10 +587,9 @@ func (w *encodeWorker) parserData2TableData(
 		if w.controller.Restrictive {
 			return nil, err
 		}
-		// ErrInvalidAutoRandom should always be returned as a real error,
-		// not treated as a warning, because returning nil row causes panic
-		// when looking up index. See https://github.com/pingcap/tidb/issues/65585
-		if dbterror.ErrInvalidAutoRandom.Equal(err) {
+		// AUTO_RANDOM and VECTOR NOT NULL do not have a warning fallback.
+		// Returning nil rows for these errors will panic later during duplicate-key checking.
+		if shouldReturnLoadDataGetRowError(err) {
 			return nil, err
 		}
 		w.handleWarning(err)
@@ -595,6 +599,15 @@ func (w *encodeWorker) parserData2TableData(
 	}
 
 	return newRow, nil
+}
+
+func shouldReturnLoadDataGetRowError(err error) bool {
+	return dbterror.ErrInvalidAutoRandom.Equal(err) || isVectorNotNullError(err)
+}
+
+func isVectorNotNullError(err error) bool {
+	msg := err.Error()
+	return strings.HasPrefix(msg, vectorNotNullErrPrefix) && strings.HasSuffix(msg, vectorNotNullErrSuffix)
 }
 
 // commitWorker is a sub-worker of LoadDataWorker that dedicated to commit data.
