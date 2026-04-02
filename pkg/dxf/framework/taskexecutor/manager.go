@@ -53,9 +53,9 @@ var (
 	maxChecksWhenNoSubtask     = 7
 	recoverMetaInterval        = 90 * time.Second
 	managerSampleLoggerFactory = logutil.SampleErrVerboseLoggerFactory(
-		time.Minute,
-		10,
-		zap.String(logutil.LogFieldCategory, "dxf-taskexecutor-manager"),
+		handle.SampleLogTick,
+		handle.SampleLogFirst,
+		zap.String(logutil.LogFieldCategory, handle.DXFLogCategory),
 	)
 )
 

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -34,9 +35,9 @@ var (
 	// liveNodesCheckInterval is the tick interval of fetching all server infos from etcs.
 	nodesCheckInterval      = 2 * CheckTaskFinishedInterval
 	nodeManagerSampleLogger = logutil.SampleErrVerboseLoggerFactory(
-		time.Minute,
-		10,
-		zap.String(logutil.LogFieldCategory, "dxf-node-manager"),
+		handle.SampleLogTick,
+		handle.SampleLogFirst,
+		zap.String(logutil.LogFieldCategory, handle.DXFLogCategory),
 	)
 )
 
