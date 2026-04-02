@@ -60,6 +60,20 @@ func TestCreateMaterializedViewBuildReadTSQueryTypeAlignment(t *testing.T) {
 	require.Equal(t, expected, readTS)
 }
 
+func TestCreateMaterializedViewLogRejectsDuplicateColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t_dup (
+  id bigint not null primary key,
+  g1 int not null
+)`)
+
+	err := tk.ExecToErr("create materialized view log on t_dup (id, id)")
+	require.ErrorContains(t, err, "Duplicate column name")
+}
+
 func TestMaterializedViewDDLBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
