@@ -213,6 +213,9 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	ctx = clitutil.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return mgr.WithNewSession(func(se sessionctx.Context) (err error) {
+		// Keep BEGIN on the SQL path so the session enters transaction mode with the usual statement semantics.
+		// Commit / rollback use session methods instead, because cleanup still has to finish after caller
+		// cancellation and issuing SQL text there can leave the pooled internal session with a live txn.
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "begin")
 		if err != nil {
 			return err
