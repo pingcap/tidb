@@ -181,31 +181,33 @@ func schemaContainsAllOrderingColumns(plan base.LogicalPlan, orderingColUniqueID
 	return matched == len(orderingColUniqueIDs)
 }
 
-// PlanSatisfiesOrdering proves that one non-join subtree can provide the
-// requested ordering locally. This is used after the order-aware rule has
-// already chosen one carrier vertex and recursively descended into it.
-func PlanSatisfiesOrdering(
-	plan base.LogicalPlan,
+// DsSatisfiesOrdering proves that the chosen DataSource can provide the
+// requested ordering locally after the order-aware rule has recursively
+// descended to the carrier leaf.
+func DsSatisfiesOrdering(
+	ds *logicalop.DataSource,
 	orderingCols []*expression.Column,
 	parentFilters []expression.Expression,
 ) bool {
+	if ds == nil {
+		return false
+	}
 	orderingColIDs, orderingColUniqueIDs := normalizeOrderingColumns(orderingCols)
 	if len(orderingColIDs) == 0 || len(orderingColIDs) != len(orderingCols) {
 		return false
 	}
-	if !schemaContainsAllOrderingColumns(plan, orderingColUniqueIDs) {
+	if !schemaContainsAllOrderingColumns(ds, orderingColUniqueIDs) {
 		return false
 	}
-	return tableHasIndexMatchingOrdering(plan, orderingColIDs, nil, parentFilters)
+	return tableHasIndexMatchingOrdering(ds, orderingColIDs, nil, parentFilters)
 }
 
 func tableHasIndexMatchingOrdering(
-	plan base.LogicalPlan,
+	ds *logicalop.DataSource,
 	orderingColIDs []int64,
 	groupSelectionConds []expression.Expression,
 	parentFilters []expression.Expression,
 ) bool {
-	ds := findDataSource(plan)
 	if ds == nil {
 		return false
 	}
@@ -216,7 +218,7 @@ func tableHasIndexMatchingOrdering(
 	// Example:
 	//   where t.category = 'hot' order by t.id
 	// can still use index(category, id) to preserve the order of t.id.
-	equalityColIDs := collectEqualityPredicateColumnIDs(plan, groupSelectionConds, parentFilters)
+	equalityColIDs := collectEqualityPredicateColumnIDs(ds, groupSelectionConds, parentFilters)
 	for _, idx := range ds.TableInfo.Indices {
 		if idx.State != model.StatePublic || idx.Invisible {
 			continue
@@ -378,16 +380,4 @@ func extractEqualityColumns(expr expression.Expression, result map[int64]struct{
 
 func isDeterministicConstExpr(expr expression.Expression) bool {
 	return len(expression.ExtractColumns(expr)) == 0 && !expression.IsMutableEffectsExpr(expr)
-}
-
-func findDataSource(plan base.LogicalPlan) *logicalop.DataSource {
-	if ds, ok := plan.(*logicalop.DataSource); ok {
-		return ds
-	}
-	for _, child := range plan.Children() {
-		if ds := findDataSource(child); ds != nil {
-			return ds
-		}
-	}
-	return nil
 }

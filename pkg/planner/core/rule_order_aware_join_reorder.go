@@ -144,7 +144,7 @@ func (r *OrderAwareJoinReorder) optimizeRecursive(
 		if len(orderCols) == 0 {
 			return false, false, nil
 		}
-		return false, joinorder.PlanSatisfiesOrdering(node, orderCols, midFilters), nil
+		return false, joinorder.DsSatisfiesOrdering(node, orderCols, midFilters), nil
 	default:
 		childChanged, _, err := r.optimizeChildren(p.Children(), nil, nil, 0)
 		return changed || childChanged, false, err
