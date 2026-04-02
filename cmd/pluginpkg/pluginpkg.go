@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 	"time"
 
@@ -75,6 +76,49 @@ func init() {
 	flag.StringVar(&pkgDir, "pkg-dir", "", "plugin package folder path")
 	flag.StringVar(&outDir, "out-dir", "", "plugin packaged folder path")
 	flag.Usage = usage
+}
+
+// createWorkFile writes a temp go.work that points at pkgDir and carries all
+// replace directives from the current module so the plugin build uses the same
+// dependency replacements (e.g. forked versions of tikv/pd/client).
+// The caller is responsible for removing the returned file when done.
+func createWorkFile(pkgDir string) (string, error) {
+	out, err := exec.Command("go", "mod", "edit", "-json").Output()
+	if err != nil {
+		return "", fmt.Errorf("go mod edit -json: %w", err)
+	}
+	var mod struct {
+		Replace []struct {
+			Old struct{ Path, Version string }
+			New struct{ Path, Version string }
+		}
+	}
+	if err := json.Unmarshal(out, &mod); err != nil || len(mod.Replace) == 0 {
+		return "", err
+	}
+	tidbRoot, _ := os.Getwd()
+	f, err := os.CreateTemp("", "pluginpkg-go.work.*")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "go 1.21\n\nuse %s\n\n", pkgDir)
+	for _, r := range mod.Replace {
+		newPath := r.New.Path
+		if strings.HasPrefix(newPath, "./") || strings.HasPrefix(newPath, "../") {
+			newPath = filepath.Join(tidbRoot, newPath)
+		}
+		newSpec := newPath
+		if r.New.Version != "" {
+			newSpec += " " + r.New.Version
+		}
+		oldSpec := r.Old.Path
+		if r.Old.Version != "" {
+			oldSpec += " " + r.Old.Version
+		}
+		fmt.Fprintf(f, "replace %s => %s\n", oldSpec, newSpec)
+	}
+	return f.Name(), nil
 }
 
 func usage() {
@@ -148,7 +192,14 @@ func main() {
 	buildCmd.Dir = pkgDir
 	buildCmd.Stderr = os.Stderr
 	buildCmd.Stdout = os.Stdout
-	buildCmd.Env = append(os.Environ(), "GO111MODULE=on")
+	buildEnv := append(os.Environ(), "GO111MODULE=on")
+	if wf, wErr := createWorkFile(pkgDir); wErr != nil {
+		log.Printf("warning: could not create go.work for plugin build: %v", wErr)
+	} else if wf != "" {
+		defer os.Remove(wf)
+		buildEnv = append(buildEnv, "GOWORK="+wf)
+	}
+	buildCmd.Env = buildEnv
 	err = buildCmd.Run()
 	if err != nil {
 		log.Printf("compile plugin source code failure, %+v\n", err)
