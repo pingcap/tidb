@@ -426,9 +426,8 @@ def go_deps():
             "%s",
             "%s",
             "%s",
-            "%s",
         ],
-`, sha, replaced.Path, replaced.Version, expectedVPCPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL, expectedProxyURL)
+`, sha, replaced.Path, replaced.Version, expectedVPCPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
 			g.Go(func() error {
 				return uploadFile(ctx, client, d.Zip, formatSubURL(replaced.Path, replaced.Version))
 			})
