@@ -81,10 +81,13 @@ UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 FAILPOINT_ENABLE  := find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl enable
 FAILPOINT_DISABLE := find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl disable
 
+GITHASH := $(shell git rev-parse HEAD)
+GITBRANCH := $(shell git rev-parse --abbrev-ref HEAD)
+
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/parser/mysql.TiDBReleaseVersion=$(TIDB_RELEASE_VERSION)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
-LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitHash=$(GITHASH)"
+LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(GITBRANCH)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
 EXTENSION_FLAG =
@@ -131,8 +134,8 @@ DUMPLING_CHECKER := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.ReleaseVersion=$(TIDB_RELEASE_VERSION)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.BuildTimestamp=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
-DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(shell git rev-parse HEAD)"
-DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(GITHASH)"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(GITBRANCH)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GoVersion=$(shell go version)"
 
 DUMPLING_GOBUILD := CGO_ENABLED=1 ${GO} build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'

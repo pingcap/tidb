@@ -210,6 +210,11 @@ func TestJoinRegression(t *testing.T) {
 				`  └─Selection cop[tikv]  not(isnull(test.t0.c0))`,
 				`    └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo`))
 
+		tk.MustExec(`drop table if exists issue65325_t0, issue65325_t1`)
+		tk.MustExec(`create table issue65325_t0(c0 bool)`)
+		tk.MustExec(`create table issue65325_t1(c0 double)`)
+		tk.MustQuery(`SELECT /* issue:65325 */ issue65325_t1.c0, issue65325_t1.c0 FROM issue65325_t0 NATURAL JOIN issue65325_t1 ORDER BY CASE DEFAULT(issue65325_t1.c0) WHEN issue65325_t1.c0 THEN 397344251 ELSE issue65325_t0.c0 END`).Check(testkit.Rows())
+
 		tk.MustExec(`create table t1 (a int)`)
 		tk.MustExec(`create table t2 (a int, b int, c int, d int, key ab(a, b), key abcd(a, b, c, d))`)
 		tk.MustUseIndex(`select /* issue:63949 */ /*+ tidb_inlj(t2) */ t2.a from t1, t2 where t1.a=t2.a and t2.b=1 and t2.d=1`, "abcd")
@@ -315,5 +320,14 @@ JOIN
 			`      └─Selection cop[tikv]  not(isnull(test.t3_issue60076.b))`,
 			`        └─TableFullScan cop[tikv] table:t3_issue60076 keep order:false, stats:pseudo`))
 		tk.MustQuery(`show warnings`).Check(testkit.Rows())
+
+		tk.MustExec(`drop table if exists issue66859_t0, issue66859_t1, issue66859_t2`)
+		tk.MustExec(`create table issue66859_t0(c0 int)`)
+		tk.MustExec(`create table issue66859_t1 like issue66859_t0`)
+		tk.MustExec(`create index i0 on issue66859_t1((5))`)
+		tk.MustExec(`insert into issue66859_t0(c0) values(-1)`)
+		tk.MustQuery(`select /* issue:66859 */ issue66859_t0.c0 as ref0, issue66859_t1.c0 as ref2
+			from issue66859_t0 left join issue66859_t1 on issue66859_t0.c0 = issue66859_t1.c0
+			where 5 >= issue66859_t0.c0`).Check(testkit.Rows("-1 <nil>"))
 	})
 }

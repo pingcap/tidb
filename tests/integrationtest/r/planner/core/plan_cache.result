@@ -2595,6 +2595,75 @@ select @@last_plan_from_cache;
 0
 set tidb_enable_non_prepared_plan_cache=default;
 drop table if exists t;
+create table t(a int, b int, key idx_b(b));
+insert into t values (1,1),(2,2),(3,3);
+set tidb_plan_cache_invalidation_on_fresh_stats = ON;
+set tidb_plan_cache_skip_stats_on_binding = ON;
+prepare st from 'select * from t where b=?';
+set @v=1;
+execute st using @v;
+a	b
+1	1
+execute st using @v;
+a	b
+1	1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+analyze table t;
+execute st using @v;
+a	b
+1	1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+create binding for select * from t where b=1 using select /*+ use_index(t, idx_b) */ * from t where b=1;
+execute st using @v;
+a	b
+1	1
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	0
+execute st using @v;
+a	b
+1	1
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	1
+analyze table t;
+execute st using @v;
+a	b
+1	1
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	1
+set tidb_plan_cache_skip_stats_on_binding = OFF;
+execute st using @v;
+a	b
+1	1
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	0
+execute st using @v;
+a	b
+1	1
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	1
+analyze table t;
+execute st using @v;
+a	b
+1	1
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	0
+drop binding for select * from t where b=1;
+set tidb_plan_cache_invalidation_on_fresh_stats = DEFAULT;
+set tidb_plan_cache_skip_stats_on_binding = DEFAULT;
+select @@tidb_plan_cache_skip_stats_on_binding;
+@@tidb_plan_cache_skip_stats_on_binding
+1
+drop table if exists t;
 CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL);
 INSERT INTO t VALUES (1, current_date());
 PREPARE stmt FROM 'SELECT a FROM t WHERE b=current_date()';

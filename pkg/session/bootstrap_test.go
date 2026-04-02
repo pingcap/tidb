@@ -1759,17 +1759,17 @@ func TestTiDBUpgradeToVer254(t *testing.T) {
 	require.Contains(t, createWatchDoneSQL, "idx_done_time")
 }
 
-func TestTiDBUpgradeToVer256(t *testing.T) {
+func TestTiDBUpgradeToVer257(t *testing.T) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	seV255 := CreateSessionAndSetID(t, store)
-	MustExec(t, seV255, "USE test")
-	MustExec(t, seV255, "CREATE TABLE t (a INT, b INT)")
-	MustExec(t, seV255, "CREATE GLOBAL BINDING FOR SELECT * FROM t WHERE (a = 1 AND b = 1) USING SELECT * FROM t WHERE (a = 1 AND b = 1)")
+	seV256 := CreateSessionAndSetID(t, store)
+	MustExec(t, seV256, "USE test")
+	MustExec(t, seV256, "CREATE TABLE t (a INT, b INT)")
+	MustExec(t, seV256, "CREATE GLOBAL BINDING FOR SELECT * FROM t WHERE (a = 1 AND b = 1) USING SELECT * FROM t WHERE (a = 1 AND b = 1)")
 
-	res := MustExecToRecodeSet(t, seV255, "SELECT bind_sql FROM mysql.bind_info WHERE source='manual'")
+	res := MustExecToRecodeSet(t, seV256, "SELECT bind_sql FROM mysql.bind_info WHERE source='manual'")
 	chk := res.NewChunk(nil)
 	err := res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -1781,24 +1781,24 @@ func TestTiDBUpgradeToVer256(t *testing.T) {
 	staleNormalizedSQL, staleSQLDigest := parser.NormalizeDigest(bindSQL)
 	require.NotEqual(t, staleSQLDigest.String(), expectedSQLDigest.String())
 	require.NotEqual(t, staleNormalizedSQL, expectedNormalizedSQL)
-	MustExec(t, seV255,
+	MustExec(t, seV256,
 		"UPDATE mysql.bind_info SET original_sql = ?, sql_digest = ? WHERE source = 'manual' AND bind_sql = ?",
 		staleNormalizedSQL, staleSQLDigest.String(), bindSQL)
 
-	ver255 := version255
+	ver256 := version256
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver255))
+	err = m.FinishBootstrap(int64(ver256))
 	require.NoError(t, err)
-	RevertVersionAndVariables(t, seV255, ver255)
+	RevertVersionAndVariables(t, seV256, ver256)
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
 	store.SetOption(StoreBootstrappedKey, nil)
 
-	ver, err := GetBootstrapVersion(seV255)
+	ver, err := GetBootstrapVersion(seV256)
 	require.NoError(t, err)
-	require.Equal(t, int64(ver255), ver)
+	require.Equal(t, int64(ver256), ver)
 
 	dom.Close()
 	domCurVer, err := BootstrapSession(store)

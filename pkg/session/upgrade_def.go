@@ -481,9 +481,11 @@ const (
 	version254 = 254
 	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
 	version255 = 255
-	// version256 updates persisted binding digests/original SQL after
-	// WHERE-parentheses normalization change in binding normalization.
+	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
 	version256 = 256
+	// version257 updates persisted binding digests/original SQL after
+	// WHERE-parentheses normalization change in binding normalization.
+	version257 = 257
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -497,7 +499,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version256
+var currentBootstrapVersion int64 = version257
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -678,6 +680,7 @@ var (
 		{version: version254, fn: upgradeToVer254},
 		{version: version255, fn: upgradeToVer255},
 		{version: version256, fn: upgradeToVer256},
+		{version: version257, fn: upgradeToVer257},
 	}
 )
 
@@ -2081,6 +2084,10 @@ func upgradeToVer255(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer256(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheSkipStatsOnBinding, vardef.On)
+}
+
+func upgradeToVer257(s sessionapi.Session, _ int64) {
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
 	defer func() {
@@ -2093,7 +2100,7 @@ func upgradeToVer256(s sessionapi.Session, _ int64) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx, "SELECT _tidb_rowid, original_sql, bind_sql, sql_digest FROM mysql.bind_info WHERE source != 'builtin'")
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer256 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer257 error", zap.Error(err))
 		return
 	}
 	type bindDigestUpdate struct {
@@ -2108,7 +2115,7 @@ func upgradeToVer256(s sessionapi.Session, _ int64) {
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer256 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer257 error", zap.Error(err))
 			return
 		}
 		if req.NumRows() == 0 {
@@ -2137,7 +2144,7 @@ func upgradeToVer256(s sessionapi.Session, _ int64) {
 		req.Reset()
 	}
 	if err := rs.Close(); err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer256 error", zap.Error(err))
+		logutil.BgLogger().Fatal("upgradeToVer257 error", zap.Error(err))
 	}
 	for _, update := range updates {
 		_, err = s.ExecuteInternal(ctx,
@@ -2148,7 +2155,7 @@ func upgradeToVer256(s sessionapi.Session, _ int64) {
 		}
 		if kv.ErrKeyExists.Equal(err) {
 			logutil.BgLogger().Warn(
-				"upgradeToVer256 found duplicated (plan_digest, sql_digest), keep original_sql but set sql_digest to NULL",
+				"upgradeToVer257 found duplicated (plan_digest, sql_digest), keep original_sql but set sql_digest to NULL",
 				zap.Int64("row_id", update.rowID),
 				zap.String("old_original_sql", update.oldOriginalSQL),
 				zap.String("new_original_sql", update.newOriginalSQL),
@@ -2160,7 +2167,7 @@ func upgradeToVer256(s sessionapi.Session, _ int64) {
 				update.newOriginalSQL, update.rowID)
 		}
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer256 error", zap.Error(err))
+			logutil.BgLogger().Fatal("upgradeToVer257 error", zap.Error(err))
 		}
 	}
 }
