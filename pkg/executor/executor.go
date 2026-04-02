@@ -1847,10 +1847,10 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
-			result.err = errors.Errorf("%v", r)
-			e.resultPool <- result
+			logutil.Logger(ctx).Warn("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
+			result.err = util.GetRecoverError(r)
 			e.stopFetchData.Store(true)
+			_ = e.sendResult(result)
 		}
 		e.wg.Done()
 	}()
@@ -1863,7 +1863,9 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		if err := e.Children(childID).Open(ctx); err != nil {
 			result.err = err
 			e.stopFetchData.Store(true)
-			e.resultPool <- result
+			if !e.sendResult(result) {
+				return
+			}
 		}
 		failpoint.Inject("issue21441", func() {
 			atomic.AddInt32(&e.childInFlightForTest, 1)
@@ -1887,7 +1889,9 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 					panic("the count of child in flight is larger than e.concurrency unexpectedly")
 				}
 			})
-			e.resultPool <- result
+			if !e.sendResult(result) {
+				return
+			}
 			if result.err != nil {
 				e.stopFetchData.Store(true)
 				return
@@ -1896,6 +1900,15 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		failpoint.Inject("issue21441", func() {
 			atomic.AddInt32(&e.childInFlightForTest, -1)
 		})
+	}
+}
+
+func (e *UnionExec) sendResult(result *unionWorkerResult) bool {
+	select {
+	case <-e.finished:
+		return false
+	case e.resultPool <- result:
+		return true
 	}
 }
 
@@ -1926,7 +1939,9 @@ func (e *UnionExec) Next(ctx context.Context, req *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *UnionExec) Close() error {
 	if e.finished != nil {
+		e.stopFetchData.Store(true)
 		close(e.finished)
+		e.wg.Wait()
 	}
 	e.results = nil
 	if e.resultPool != nil {
