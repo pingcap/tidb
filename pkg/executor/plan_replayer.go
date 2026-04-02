@@ -512,13 +512,6 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		return err
 	}
-
-	// Notify users that PLAN REPLAYER LOAD disables auto—analyze to keep restored stats stable
-	e.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
-		"`PLAN REPLAYER LOAD` sets @@global.%s=OFF to keep restored statistics stable; re-enable it manually if needed",
-		vardef.TiDBEnableAutoAnalyze,
-	))
-
 	// build schema and table first
 	var databaseSets map[string]struct{}
 	databaseSets, err = e.createTable(z)
@@ -558,6 +551,13 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
+
+	// Notify users that PLAN REPLAYER LOAD disables auto-analyze to keep restored stats stable.
+	e.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"`PLAN REPLAYER LOAD` sets @@global.%s=OFF to keep restored statistics stable; re-enable it manually if needed",
+		vardef.TiDBEnableAutoAnalyze,
+	))
+
 	return nil
 }
 

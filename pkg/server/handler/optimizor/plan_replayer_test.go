@@ -202,6 +202,22 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	tk.MustExec("use planReplayer")
 	tk.MustExec("drop table planReplayer.t")
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
+
+	warnRows := tk.MustQuery("show warnings")
+	foundAutoAnalyzeWarning := false
+	warnMessages := make([]string, 0)
+	for warnRows.Next() {
+		var level, msg string
+		var code int64
+		require.NoError(t, warnRows.Scan(&level, &code, &msg))
+		warnMessages = append(warnMessages, msg)
+		if strings.Contains(msg, "tidb_enable_auto_analyze=OFF") {
+			foundAutoAnalyzeWarning = true
+		}
+	}
+	require.NoError(t, warnRows.Close())
+	require.True(t, foundAutoAnalyzeWarning, "warnings: %v", warnMessages)
+
 	autoAnalyzeRows = tk.MustQuery("select @@global.tidb_enable_auto_analyze")
 	require.True(t, autoAnalyzeRows.Next(), "unexpected data")
 	var autoAnalyzeValue int64
