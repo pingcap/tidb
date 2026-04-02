@@ -20,9 +20,6 @@ package collate
 
 import (
 	"unicode/utf8"
-
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
 // unicodeCICollator implements UCA. see http://unicode.org/reports/tr10/
@@ -151,11 +148,6 @@ func (uc *unicodeCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 // Pattern implements Collator interface.
 func (uc *unicodeCICollator) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
-}
-
-// ImmutablePrefixKey implements Collator interface
-func (uc *unicodeCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	return uc.ImmutableKey(string(hack.String(stringutil.GetUtf8SubStringBytes(str, prefixCharCount))))
 }
 
 // MaxKeyLen implements Collator interface.

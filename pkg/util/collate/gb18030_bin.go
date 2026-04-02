@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"golang.org/x/text/encoding"
 )
 
@@ -116,11 +115,6 @@ func (*gb18030BinCollator) MaxKeyLen(s string) int {
 // Pattern implements Collator interface.
 func (*gb18030BinCollator) Pattern() WildcardPattern {
 	return &gb18030BinPattern{}
-}
-
-// ImmutablePrefixKey implements Collator interface
-func (g *gb18030BinCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	return g.KeyWithoutTrimRightSpace(string(hack.String(stringutil.GetUtf8SubStringBytes(truncateTailingSpace(str), prefixCharCount))))
 }
 
 // use binPattern directly, they are totally same.

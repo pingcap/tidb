@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
 type truncateKey struct {
@@ -435,6 +436,7 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 }
 
 func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
+	var tmpDatum types.Datum
 	prefixKeys := make([]truncateKey, 0, e.RankInfo.truncateKeyCount)
 	for i := range e.RankInfo.truncateFieldCollators {
 		if row.IsNull(e.RankInfo.truncateKeyColIdxs[i]) {
@@ -452,7 +454,9 @@ func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
 				return nil, errors.Errorf("Get nil collator at idx %d", i)
 			}
 			key := row.GetString(e.RankInfo.truncateKeyColIdxs[i])
-			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.RankInfo.truncateFieldCollators[i].ImmutablePrefixKey(key, e.RankInfo.TruncateKeyPrefixCharCounts[i])))})
+			tmpDatum.SetValue(key, e.RankInfo.truncateFieldTypes[i])
+			ranger.CutDatumByPrefixLen(&tmpDatum, e.RankInfo.TruncateKeyPrefixCharCounts[i], e.RankInfo.truncateFieldTypes[i])
+			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.RankInfo.truncateFieldCollators[i].ImmutableKey(tmpDatum.GetString())))})
 		}
 	}
 	return prefixKeys, nil

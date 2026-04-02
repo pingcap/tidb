@@ -52,8 +52,3 @@ func (*zhPinyinTiDBASCSCollator) Pattern() WildcardPattern {
 func (*zhPinyinTiDBASCSCollator) Clone() Collator {
 	panic("implement me")
 }
-
-// ImmutablePrefixKey implements Collator interface
-func (*zhPinyinTiDBASCSCollator) ImmutablePrefixKey(string, int) []byte {
-	panic("implement me")
-}

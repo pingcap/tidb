@@ -17,7 +17,6 @@ package collate
 import (
 	"fmt"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/stretchr/testify/require"
@@ -144,95 +143,6 @@ func TestUTF8CollatorKey(t *testing.T) {
 		}},
 	}
 	testKeyTable(t, collations, tests)
-}
-
-func TestCollatorImmutablePrefixKey(t *testing.T) {
-	prefixes := []string{
-		"a",       // len=1
-		"a中",      // len=2
-		"a中🙂",     // len=3
-		"ab中🙂",    // len=4
-		"a中🙂你é",   // len=5
-		"ab中🙂你é",  // len=6
-		"ab中🙂你éZ", // len=7
-	}
-	suffixes := []string{
-		"a_tail", // first rune: ASCII
-		"é_tail", // first rune: UTF-8 2-byte
-		"中_tail", // first rune: UTF-8 3-byte
-		"अ_tail", // first rune: UTF-8 3-byte (different script)
-		"🙂_tail", // first rune: UTF-8 4-byte
-	}
-
-	testCases := []struct {
-		name        string
-		collator    Collator
-		shouldPanic bool
-		bytePrefix  bool
-	}{
-		{name: "binCollator", collator: &binCollator{}, bytePrefix: true},
-		{name: "derivedBinCollator", collator: &derivedBinCollator{}},
-		{name: "binPaddingCollator", collator: &binPaddingCollator{}, bytePrefix: true},
-		{name: "utf8BinPaddingCollator", collator: &utf8BinPaddingCollator{}},
-		{name: "generalCICollator", collator: &generalCICollator{}},
-		{name: "unicodeCICollator", collator: &unicodeCICollator{}},
-		{name: "unicode0900AICICollator", collator: &unicode0900AICICollator{}},
-		{name: "gbkBinCollator", collator: &gbkBinCollator{charset.NewCustomGBKEncoder()}},
-		{name: "gbkChineseCICollator", collator: &gbkChineseCICollator{}},
-		{name: "gb18030BinCollator", collator: &gb18030BinCollator{charset.NewCustomGB18030Encoder()}},
-		{name: "gb18030ChineseCICollator", collator: &gb18030ChineseCICollator{}},
-		{name: "zhPinyinTiDBASCSCollator", collator: &zhPinyinTiDBASCSCollator{}, shouldPanic: true},
-	}
-	seenPrefixLen := make(map[int]struct{})
-	seenPrefixCharCount := make(map[int]struct{})
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.shouldPanic {
-				require.Panics(t, func() {
-					_ = tc.collator.ImmutablePrefixKey("ab中🙂你éZ🙂_tail", 5)
-				})
-				return
-			}
-
-			for _, prefix := range prefixes {
-				prefixLen := utf8.RuneCountInString(prefix)
-				seenPrefixLen[prefixLen] = struct{}{}
-
-				for prefixCharCount := 1; prefixCharCount <= 5; prefixCharCount++ {
-					if prefixLen < prefixCharCount {
-						continue
-					}
-					seenPrefixCharCount[prefixCharCount] = struct{}{}
-					expectedPrefix := string([]rune(prefix)[:prefixCharCount])
-					if tc.bytePrefix {
-						expectedPrefix = string([]byte(prefix)[:min(prefixCharCount, len(prefix))])
-					}
-					expected := tc.collator.ImmutableKey(expectedPrefix)
-					for _, suffix := range suffixes {
-						input := prefix + suffix
-						require.Equal(t, expected, tc.collator.ImmutablePrefixKey(input, prefixCharCount), "input=%q, prefixCharCount=%d", input, prefixCharCount)
-					}
-				}
-
-				// Test when prefixCharCount exceeds input string length.
-				for _, suffix := range suffixes {
-					input := prefix + suffix
-					overLongExpected := tc.collator.ImmutableKey(input)
-					require.Equal(t, overLongExpected, tc.collator.ImmutablePrefixKey(input, len(input)+100), "input=%q, prefixCharCount=%d", input, len(input)+100)
-				}
-			}
-		})
-	}
-
-	for i := 1; i <= 7; i++ {
-		_, ok := seenPrefixLen[i]
-		require.True(t, ok, "missing prefix length %d", i)
-	}
-	for i := 1; i <= 5; i++ {
-		_, ok := seenPrefixCharCount[i]
-		require.True(t, ok, "missing prefix char count %d", i)
-	}
 }
 
 func TestSetNewCollateEnabled(t *testing.T) {
