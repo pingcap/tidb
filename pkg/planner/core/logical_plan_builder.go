@@ -6510,7 +6510,17 @@ func CheckUpdateList(assignFlags []int, updt *physicalop.Update, newTblID2Table 
 	updateFromOtherAlias := make(map[int64]tblUpdateInfo)
 	for _, content := range updt.TblColPosInfos {
 		tbl := newTblID2Table[content.TblID]
-		flags := assignFlags[content.Start:content.End]
+		if content.Start < 0 || content.Start > len(assignFlags) {
+			continue
+		}
+		end := content.End
+		if end < content.Start {
+			end = content.Start
+		}
+		if end > len(assignFlags) {
+			end = len(assignFlags)
+		}
+		flags := assignFlags[content.Start:end]
 		var update, updatePK, updatePartitionCol bool
 		var partitionColumnNames []ast.CIStr
 		if pt, ok := tbl.(table.PartitionedTable); ok && pt != nil {
@@ -6542,15 +6552,19 @@ func CheckUpdateList(assignFlags []int, updt *physicalop.Update, newTblID2Table 
 			}
 		}
 		if update {
+			tblAlias := tbl.Meta().Name.O
+			if content.Start >= 0 && content.Start < len(updt.OutputNames()) {
+				tblAlias = updt.OutputNames()[content.Start].TblName.O
+			}
 			// Check for multi-updates on primary key,
 			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
 			if otherTable, ok := updateFromOtherAlias[tbl.Meta().ID]; ok {
 				if otherTable.pkUpdated || updatePK || otherTable.partitionColUpdated || updatePartitionCol {
-					return plannererrors.ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, updt.OutputNames()[content.Start].TblName.O)
+					return plannererrors.ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, tblAlias)
 				}
 			} else {
 				updateFromOtherAlias[tbl.Meta().ID] = tblUpdateInfo{
-					name:                updt.OutputNames()[content.Start].TblName.O,
+					name:                tblAlias,
 					pkUpdated:           updatePK,
 					partitionColUpdated: updatePartitionCol,
 				}
