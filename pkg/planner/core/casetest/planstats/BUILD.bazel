@@ -9,7 +9,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -24,6 +24,11 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
+<<<<<<< HEAD
+=======
+        "//pkg/statistics/asyncload",
+        "//pkg/statistics/handle/ddl/testutil",
+>>>>>>> d66a66201e9 (planner, statistics: skip plan cache for sync-load fallback plans (#67411))
         "//pkg/statistics/handle/types",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
