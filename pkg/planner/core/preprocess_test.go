@@ -173,6 +173,7 @@ func TestValidator(t *testing.T) {
 		// issue pingcap-inc/tici#966
 		{"CREATE FULLTEXT INDEX idx ON t(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15,c16,c17) WITH PARSER STANDARD", true, errors.New(`[schema:1070]Too many key parts specified; max 16 parts allowed`)},
 		{"ALTER TABLE t ADD FULLTEXT INDEX idx(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15,c16,c17) WITH PARSER STANDARD", true, errors.New(`[schema:1070]Too many key parts specified; max 16 parts allowed`)},
+		{"CREATE TABLE t(c1 TEXT, c2 TEXT, c3 TEXT, c4 TEXT, c5 TEXT, c6 TEXT, c7 TEXT, c8 TEXT, c9 TEXT, c10 TEXT, c11 TEXT, c12 TEXT, c13 TEXT, c14 TEXT, c15 TEXT, c16 TEXT, c17 TEXT, FULLTEXT INDEX idx(c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14,c15,c16,c17) WITH PARSER STANDARD)", true, errors.New(`[schema:1070]Too many key parts specified; max 16 parts allowed`)},
 
 		// issue #4429
 		{"CREATE TABLE `t` (`a` date DEFAULT now());", false, types.ErrInvalidDefault},

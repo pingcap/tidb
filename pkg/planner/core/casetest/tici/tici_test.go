@@ -254,15 +254,17 @@ func TestTiCIMatchAgainstValidation(t *testing.T) {
 		"Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST",
 	)
 
-	// BOOLEAN MODE query limitations from RewriteMySQLMatchAgainstRecursively.
-	tk.MustContainErrMsg(
+	// BOOLEAN MODE should allow multiple SHOULD terms. With a no-score TiCI query,
+	// SHOULD terms are only kept as filters when there is no MUST term.
+	tk.MustQuery(
 		"explain format='brief' select * from t1 where match(title) against ('hello world' IN BOOLEAN MODE)",
-		"TiDB only supports multiple terms with +/- modifiers",
-	)
-	tk.MustContainErrMsg(
+	).CheckContain(`search func:or(istrue_with_null(fts_match_word("hello", test.t1.title)), istrue_with_null(fts_match_word("world", test.t1.title)))`)
+	tk.MustQuery(
 		"explain format='brief' select * from t1 where match(title) against ('+hello world' IN BOOLEAN MODE)",
-		"TiDB only supports multiple terms with +/- modifiers",
-	)
+	).CheckContain(`search func:fts_match_word("hello", test.t1.title)`)
+	tk.MustQuery(
+		"explain format='brief' select * from t1 where match(title) against ('+hello world' IN BOOLEAN MODE)",
+	).CheckNotContain(`world`)
 
 	// Parser should follow the fulltext index parser type.
 	tk.MustContainErrMsg(

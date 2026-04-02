@@ -1281,6 +1281,16 @@ func buildInvertedInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 
 func buildFullTextInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption,
 	tblInfo *model.TableInfo) (*model.FullTextIndexInfo, error) {
+	// The Default parser is STANDARD
+	parser := model.FullTextParserTypeStandardV1
+	if indexOption != nil && indexOption.ParserName.L != "" {
+		parser = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
+		if parser == model.FullTextParserTypeInvalid {
+			// Actually indexOption must be valid. It is already checked in preprocessor.
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index must specify a valid parser")
+		}
+	}
+
 	for _, idxPart := range indexPartSpecifications {
 		if idxPart.Column == nil {
 			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index must specific at least one column")
@@ -1302,18 +1312,15 @@ func buildFullTextInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 			if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
 				continue
 			}
-			return nil, dbterror.ErrDupKeyName.GenWithStack(
-				fmt.Sprintf("fulltext index '%s' already exist on column %s",
-					idx.Name, colInfo.Name))
-		}
-	}
-	// The Default parser is STANDARD
-	parser := model.FullTextParserTypeStandardV1
-	if indexOption != nil && indexOption.ParserName.L != "" {
-		parser = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
-		if parser == model.FullTextParserTypeInvalid {
-			// Actually indexOption must be valid. It is already checked in preprocessor.
-			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index must specify a valid parser")
+			existingParser := idx.FullTextInfo.ParserType
+			if existingParser == "" {
+				existingParser = model.FullTextParserTypeStandardV1
+			}
+			if existingParser != parser {
+				return nil, dbterror.ErrDupKeyName.GenWithStack(
+					fmt.Sprintf("fulltext index '%s' already exist on column %s",
+						idx.Name, colInfo.Name))
+			}
 		}
 	}
 	return &model.FullTextIndexInfo{

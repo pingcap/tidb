@@ -235,6 +235,7 @@ go_test(
     srcs = [
         "affinity_test.go",
         "attributes_sql_test.go",
+        "backfilling_dist_scheduler_internal_test.go",
         "backfilling_dist_scheduler_test.go",
         "backfilling_test.go",
         "backfilling_txn_executor_test.go",
@@ -329,6 +330,7 @@ go_test(
         "//pkg/domain/affinity",
         "//pkg/domain/infosync",
         "//pkg/domain/serverinfo",
+        "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/mock",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",

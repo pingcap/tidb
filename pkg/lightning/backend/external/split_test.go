@@ -70,7 +70,7 @@ func TestGeneralProperties(t *testing.T) {
 	require.NoError(t, err)
 	var lastEndKey []byte
 notExhausted:
-	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 
 	// endKey should be strictly greater than lastEndKey
@@ -170,7 +170,7 @@ func TestOnlyOneGroup(t *testing.T) {
 		ctx, multiFileStat, memStore, 1000, 30, 1000, 10, int64(math.MaxInt64), int64(math.MaxInt64),
 	)
 	require.NoError(t, err)
-	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Len(t, dataFiles, 1)
@@ -180,10 +180,43 @@ func TestOnlyOneGroup(t *testing.T) {
 	require.NoError(t, splitter.Close())
 
 	splitter, err = NewRangeSplitter(
+		ctx,
+		multiFileStat,
+		memStore,
+		int64(summary.TotalSize),
+		int64(summary.TotalCnt),
+		1000,
+		10,
+		int64(math.MaxInt64),
+		int64(math.MaxInt64),
+	)
+	require.NoError(t, err)
+	endKey, dataFiles, statFiles, groupSize, groupKeyCnt, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Len(t, dataFiles, 1)
+	require.Len(t, statFiles, 1)
+	require.Equal(t, summary.TotalSize, groupSize)
+	require.Equal(t, summary.TotalCnt, groupKeyCnt)
+	require.Len(t, rangeJobKeys, 0)
+	require.Len(t, regionSplitKeys, 0)
+
+	endKey, dataFiles, statFiles, groupSize, groupKeyCnt, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
+	require.NoError(t, err)
+	require.Nil(t, endKey)
+	require.Len(t, dataFiles, 0)
+	require.Len(t, statFiles, 0)
+	require.Zero(t, groupSize)
+	require.Zero(t, groupKeyCnt)
+	require.Len(t, rangeJobKeys, 0)
+	require.Len(t, regionSplitKeys, 0)
+	require.NoError(t, splitter.Close())
+
+	splitter, err = NewRangeSplitter(
 		ctx, multiFileStat, memStore, 1000, 30, 1000, 1, int64(math.MaxInt64), int64(math.MaxInt64),
 	)
 	require.NoError(t, err)
-	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Len(t, dataFiles, 1)
@@ -220,7 +253,7 @@ func TestSortedData(t *testing.T) {
 	require.NoError(t, err)
 
 notExhausted:
-	endKey, dataFiles, statFiles, _, _, err := splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, _, _, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(dataFiles), groupFileNumUpperBound)
 	require.LessOrEqual(t, len(statFiles), groupFileNumUpperBound)
@@ -317,7 +350,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Equal(t, multi2[0], multiFileStat[1])
 
 	// [key01, key03), split at key02
-	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key03"), endKey)
 	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0"}, removePartitionPrefix(t, dataFiles))
@@ -326,7 +359,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Equal(t, [][]byte{[]byte("key02")}, regionSplitKeys)
 
 	// [key03, key12), split at key11
-	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key12"), endKey)
 	require.Equal(t, []string{"/mock-test/1/0", "/mock-test/2/0", "/mock-test/3/0"}, removePartitionPrefix(t, dataFiles))
@@ -336,7 +369,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 
 	// [key12, key21), split at key13. the last key of "/mock-test/1/0" is "key11",
 	// so it's not used
-	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key21"), endKey)
 	require.Equal(t, []string{"/mock-test/2/0", "/mock-test/3/0"}, removePartitionPrefix(t, dataFiles))
@@ -347,7 +380,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	// [key21, key23), split at key22.
 	// the last key of "/mock-test/2/0" is "key12", and the last key of "/mock-test/3/0" is "key13",
 	// so they are not used
-	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.EqualValues(t, kv.Key("key23"), endKey)
 	require.Equal(t, []string{"/mock-test/1/1", "/mock-test/2/1"}, removePartitionPrefix(t, dataFiles))
@@ -356,7 +389,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Equal(t, [][]byte{[]byte("key22")}, regionSplitKeys)
 
 	// [key23, nil), no split key
-	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Equal(t, []string{"/mock-test/3/1"}, removePartitionPrefix(t, dataFiles))
@@ -365,7 +398,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, regionSplitKeys, 0)
 
 	// read after drain all data
-	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, dataFiles, statFiles, _, _, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Len(t, dataFiles, 0)
@@ -406,7 +439,7 @@ func TestExactlyKeyNum(t *testing.T) {
 		ctx, multiFileStat, memStore, 1000, 100, 1000, 3, 1000, 3,
 	)
 	require.NoError(t, err)
-	endKey, splitDataFiles, splitStatFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+	endKey, splitDataFiles, splitStatFiles, _, _, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Equal(t, dataFiles, splitDataFiles)
@@ -419,7 +452,7 @@ func TestExactlyKeyNum(t *testing.T) {
 		ctx, multiFileStat, memStore, 1000, 3, 1000, 1, 1000, 2,
 	)
 	require.NoError(t, err)
-	endKey, splitDataFiles, splitStatFiles, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
+	endKey, splitDataFiles, splitStatFiles, _, _, rangeJobKeys, regionSplitKeys, err = splitter.SplitOneRangesGroup()
 	require.NoError(t, err)
 	require.Nil(t, endKey)
 	require.Equal(t, dataFiles, splitDataFiles)
@@ -553,7 +586,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	require.NoError(t, err)
 	var lastEndKey []byte
 	for {
-		endKey, _, statFiles, _, _, err := splitter.SplitOneRangesGroup()
+		endKey, _, statFiles, _, _, _, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
 		require.Greater(t, len(statFiles), 0)
 		if endKey == nil {

@@ -535,7 +535,7 @@ func splitForOneSubtask(
 	startKey := tidbkv.Key(kvMeta.StartKey)
 	var endKey tidbkv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err2 := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, _, _, interiorRangeJobKeys, interiorRegionSplitKeys, err2 := splitter.SplitOneRangesGroup()
 		if err2 != nil {
 			return nil, err2
 		}

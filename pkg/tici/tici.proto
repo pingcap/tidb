@@ -273,6 +273,11 @@ service MetaService {
   rpc GetImportStoragePrefix(GetImportStoragePrefixRequest)
       returns (GetImportStoragePrefixResponse);
 
+  // Called before Add full index build to pre-split shards by
+  // aggregated SortedKV metadata groups.
+  rpc PreSplitImportShards(PreSplitImportShardsRequest)
+      returns (PreSplitImportShardsResponse);
+
   // Called by Import DXF to notify Meta Service after a partition for
   // the given index are uploaded.
   rpc FinishImportPartitionUpload(FinishImportPartitionUploadRequest)
@@ -634,6 +639,51 @@ message FinishImportPartitionUploadRequest {
   string storage_uri = 3;
   // Keyspace ID
   uint32 keyspace_id = 4;
+}
+
+// One merged SortedKVMeta group used for import pre-split analysis.
+message PreSplitImportShardMeta {
+  int64 ele_id = 1;
+  bytes start_key = 2;
+  bytes end_key = 3;
+  uint64 total_kv_size = 4;
+  uint64 total_kv_cnt = 5;
+  int32 data_file_count = 6;
+  int32 stat_file_count = 7;
+}
+
+message PreSplitImportShardsRequest {
+  // TiDB unique task ID for this Import Into/Index Backfilling job.
+  string tidb_task_id = 1;
+  // Table ID of the target table.
+  int64 table_id = 2;
+  // Index ID of the target index. If this is an Import Into job that relates
+  // to multiple indexes, this field should contain all the index IDs.
+  repeated int64 index_ids = 3;
+  uint64 scan_snapshot_ts = 4;
+  bytes start_key = 5;
+  bytes end_key = 6;
+  uint64 total_kv_size = 7;
+  uint64 total_kv_cnt = 8;
+  int32 data_file_count = 9;
+  int32 stat_file_count = 10;
+  repeated PreSplitImportShardMeta meta_groups = 11;
+  // Keyspace ID
+  uint32 keyspace_id = 12;
+}
+
+message PreSplitImportIndexResult {
+  int64 table_id = 1;
+  int64 index_id = 2;
+  uint32 split_count = 3;
+  uint32 shard_count_after_split = 4;
+}
+
+message PreSplitImportShardsResponse {
+  ErrorCode status = 1;
+  string error_message = 2;
+  repeated bytes split_keys = 3;
+  repeated PreSplitImportIndexResult index_results = 4;
 }
 
 // - If the index is built successfully, the `status` field should be 0,

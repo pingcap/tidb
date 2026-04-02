@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -63,6 +64,10 @@ func (m *MockMetaServiceClient) FinishImportPartitionUpload(ctx context.Context,
 func (m *MockMetaServiceClient) FinishImportIndexUpload(ctx context.Context, in *FinishImportIndexUploadRequest, opts ...grpc.CallOption) (*FinishImportResponse, error) {
 	args := m.Called(ctx, in)
 	return args.Get(0).(*FinishImportResponse), args.Error(1)
+}
+func (m *MockMetaServiceClient) PreSplitImportShards(ctx context.Context, in *PreSplitImportShardsRequest, opts ...grpc.CallOption) (*PreSplitImportShardsResponse, error) {
+	args := m.Called(ctx, in)
+	return args.Get(0).(*PreSplitImportShardsResponse), args.Error(1)
 }
 func (m *MockMetaServiceClient) GetIndexProgress(ctx context.Context, in *GetIndexProgressRequest, opts ...grpc.CallOption) (*GetIndexProgressResponse, error) {
 	args := m.Called(ctx, in)
@@ -331,6 +336,102 @@ func TestFinishIndexUpload(t *testing.T) {
 		Once()
 	err = ctx.FinishIndexUpload(context.Background(), taskID)
 	assert.Error(t, err)
+}
+
+func TestPreSplitImportShardsMock(t *testing.T) {
+	ResetMockTiCIPreSplitImportShardsRequest()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards", `return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockPreSplitImportShards"))
+		ResetMockTiCIPreSplitImportShardsRequest()
+	})
+
+	req := &PreSplitImportShardsRequest{
+		TidbTaskId:     "job-1",
+		TableId:        3,
+		IndexIds:       []int64{4},
+		ScanSnapshotTs: 123,
+		StartKey:       []byte("a"),
+		EndKey:         []byte("z"),
+		TotalKvSize:    100,
+		TotalKvCnt:     20,
+		DataFileCount:  1,
+		StatFileCount:  1,
+		MetaGroups: []*PreSplitImportShardMeta{{
+			EleId:         4,
+			StartKey:      []byte("a"),
+			EndKey:        []byte("z"),
+			TotalKvSize:   100,
+			TotalKvCnt:    20,
+			DataFileCount: 1,
+			StatFileCount: 1,
+		}},
+	}
+
+	err := PreSplitImportShards(context.Background(), nil, req)
+	require.NoError(t, err)
+
+	raw := GetMockTiCIPreSplitImportShardsRequest()
+	require.NotEmpty(t, raw)
+	var got PreSplitImportShardsRequest
+	require.NoError(t, json.Unmarshal(raw, &got))
+	require.Equal(t, req.TidbTaskId, got.TidbTaskId)
+	require.Equal(t, req.TableId, got.TableId)
+	require.Equal(t, req.IndexIds, got.IndexIds)
+	require.Equal(t, req.TotalKvSize, got.TotalKvSize)
+	require.Equal(t, req.TotalKvCnt, got.TotalKvCnt)
+	require.Equal(t, req.DataFileCount, got.DataFileCount)
+	require.Equal(t, req.StatFileCount, got.StatFileCount)
+	require.Len(t, got.MetaGroups, 1)
+	require.Equal(t, req.MetaGroups[0].EleId, got.MetaGroups[0].EleId)
+}
+
+func TestPreSplitImportShards(t *testing.T) {
+	mockClient := new(MockMetaServiceClient)
+	ctx := newTestTiCIManagerCtx(mockClient)
+	keyspaceID := uint32(654)
+	ctx.SetKeyspaceID(keyspaceID)
+	req := &PreSplitImportShardsRequest{
+		TidbTaskId:     "job-2",
+		TableId:        3,
+		IndexIds:       []int64{4, 5},
+		ScanSnapshotTs: 456,
+		StartKey:       []byte("a"),
+		EndKey:         []byte("z"),
+		TotalKvSize:    100,
+		TotalKvCnt:     20,
+		DataFileCount:  2,
+		StatFileCount:  2,
+		MetaGroups: []*PreSplitImportShardMeta{{
+			EleId:         4,
+			StartKey:      []byte("a"),
+			EndKey:        []byte("m"),
+			TotalKvSize:   50,
+			TotalKvCnt:    10,
+			DataFileCount: 1,
+			StatFileCount: 1,
+		}},
+	}
+
+	mockClient.
+		On("PreSplitImportShards", mock.Anything, mock.MatchedBy(matchKeyspace[*PreSplitImportShardsRequest](keyspaceID))).
+		Return(&PreSplitImportShardsResponse{Status: ErrorCode_SUCCESS}, nil).
+		Once()
+	require.NoError(t, ctx.PreSplitImportShards(context.Background(), req))
+
+	mockClient.
+		On("PreSplitImportShards", mock.Anything, mock.MatchedBy(matchKeyspace[*PreSplitImportShardsRequest](keyspaceID))).
+		Return(&PreSplitImportShardsResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
+		Once()
+	err := ctx.PreSplitImportShards(context.Background(), req)
+	require.ErrorContains(t, err, "fail")
+
+	mockClient.
+		On("PreSplitImportShards", mock.Anything, mock.MatchedBy(matchKeyspace[*PreSplitImportShardsRequest](keyspaceID))).
+		Return(&PreSplitImportShardsResponse{}, errors.New("rpc error")).
+		Once()
+	err = ctx.PreSplitImportShards(context.Background(), req)
+	require.ErrorContains(t, err, "rpc error")
 }
 
 func TestCheckAddIndexProgress(t *testing.T) {

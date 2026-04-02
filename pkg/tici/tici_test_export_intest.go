@@ -102,6 +102,15 @@ func (mockMetaServiceClient) GetImportStoragePrefix(context.Context, *GetImportS
 	}, nil
 }
 
+func (mockMetaServiceClient) PreSplitImportShards(_ context.Context, req *PreSplitImportShardsRequest, _ ...grpc.CallOption) (*PreSplitImportShardsResponse, error) {
+	if req != nil {
+		if data, err := req.Marshal(); err == nil {
+			mockTiCIPreSplitImportShardsRequest.Store(data)
+		}
+	}
+	return &PreSplitImportShardsResponse{Status: ErrorCode_SUCCESS}, nil
+}
+
 func (mockMetaServiceClient) FinishImportPartitionUpload(context.Context, *FinishImportPartitionUploadRequest, ...grpc.CallOption) (*FinishImportResponse, error) {
 	return &FinishImportResponse{Status: ErrorCode_SUCCESS}, nil
 }

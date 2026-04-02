@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -53,9 +54,10 @@ type addIndexProgressLogKey struct {
 
 var addIndexProgressLogState sync.Map // map[addIndexProgressLogKey]GetIndexProgressResponse_State
 
-var mockTiCICreateIndexRequest atomic.Value   // stores []byte of CreateIndexRequest for tests.
-var mockTiCIAddPartitionRequest atomic.Value  // stores []byte of AddPartitionRequest for tests.
-var mockTiCIDropPartitionRequest atomic.Value // stores []byte of DropPartitionRequest for tests.
+var mockTiCICreateIndexRequest atomic.Value          // stores []byte of CreateIndexRequest for tests.
+var mockTiCIAddPartitionRequest atomic.Value         // stores []byte of AddPartitionRequest for tests.
+var mockTiCIDropPartitionRequest atomic.Value        // stores []byte of DropPartitionRequest for tests.
+var mockTiCIPreSplitImportShardsRequest atomic.Value // stores []byte of PreSplitImportShardsRequest for tests.
 
 // GetMockTiCICreateIndexRequest returns the marshaled CreateIndexRequest bytes captured by the
 // `MockCreateTiCIIndexRequest` failpoint. It returns nil if nothing was captured.
@@ -114,9 +116,33 @@ func ResetMockTiCIDropPartitionRequest() {
 	mockTiCIDropPartitionRequest.Store([]byte{})
 }
 
+// GetMockTiCIPreSplitImportShardsRequest returns the marshaled PreSplitImportShardsRequest bytes captured by the
+// `MockPreSplitImportShards` failpoint. It returns nil if nothing was captured.
+func GetMockTiCIPreSplitImportShardsRequest() []byte {
+	v := mockTiCIPreSplitImportShardsRequest.Load()
+	if v == nil {
+		return nil
+	}
+	b, ok := v.([]byte)
+	if !ok || len(b) == 0 {
+		return nil
+	}
+	return append([]byte(nil), b...)
+}
+
+// ResetMockTiCIPreSplitImportShardsRequest clears the captured request for tests.
+func ResetMockTiCIPreSplitImportShardsRequest() {
+	mockTiCIPreSplitImportShardsRequest.Store([]byte{})
+}
+
 type metaClient struct {
 	conn   *grpc.ClientConn
 	client MetaServiceClient
+}
+
+// keyspaceStorage is the store capability needed to derive the keyspace for a TiCI request.
+type keyspaceStorage interface {
+	GetCodec() tikv.Codec
 }
 
 func newMetaClient(addr string) (*metaClient, error) {
@@ -540,6 +566,42 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	return resp.StorageUri, resp.JobId, nil
 }
 
+// PreSplitImportShards asks TiCI to pre-split internal shards for an incoming TiDB global-sort ingest job.
+func (t *ManagerCtx) PreSplitImportShards(ctx context.Context, req *PreSplitImportShardsRequest) error {
+	if handled, err := maybeMockPreSplitImportShards(req); handled {
+		return err
+	}
+	if req == nil {
+		return errors.New("pre split import shards request is nil")
+	}
+	req.KeyspaceId = t.getKeyspaceID()
+
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if err := t.checkMetaClient(); err != nil {
+		return err
+	}
+	resp, err := t.metaClient.client.PreSplitImportShards(ctx, req)
+	if err != nil {
+		return err
+	}
+	if resp.Status != ErrorCode_SUCCESS {
+		logutil.BgLogger().Error("PreSplitImportShards failed",
+			zap.String("tidbTaskID", req.TidbTaskId),
+			zap.Int64("tableID", req.TableId),
+			zap.Int64s("indexIDs", req.IndexIds),
+			zap.String("errorMessage", resp.ErrorMessage))
+		return fmt.Errorf("tici PreSplitImportShards error: %s", resp.ErrorMessage)
+	}
+	logutil.BgLogger().Info("PreSplitImportShards success",
+		zap.String("tidbTaskID", req.TidbTaskId),
+		zap.Int64("tableID", req.TableId),
+		zap.Int64s("indexIDs", req.IndexIds),
+		zap.Uint64("totalKvSize", req.TotalKvSize),
+		zap.Uint64("totalKvCnt", req.TotalKvCnt))
+	return nil
+}
+
 // FinishPartitionUpload notifies TiCI that one partition for the given key-range of
 // data has been uploaded.
 //
@@ -773,6 +835,48 @@ func maybeMockFinishIndexUpload(tidbTaskID string) (bool, error) {
 			err = errors.New("mock FinishIndexUpload failed")
 			logutil.BgLogger().Warn("MockFinishIndexUpload failpoint triggered with error",
 				zap.String("tidbTaskID", tidbTaskID),
+				zap.Error(err))
+		}
+	})
+	return handled, err
+}
+
+// maybeMockPreSplitImportShards intercepts TiCI pre-split requests in tests and stores the captured payload.
+func maybeMockPreSplitImportShards(req *PreSplitImportShardsRequest) (handled bool, err error) {
+	failpoint.Inject("MockPreSplitImportShards", func(val failpoint.Value) {
+		handled = true
+		var tidbTaskID string
+		var tableID int64
+		var indexIDs []int64
+		if req != nil {
+			tidbTaskID = req.TidbTaskId
+			tableID = req.TableId
+			indexIDs = req.IndexIds
+			data, marshalErr := json.Marshal(req)
+			if marshalErr == nil {
+				mockTiCIPreSplitImportShardsRequest.Store(data)
+			}
+		}
+		switch v := val.(type) {
+		case bool:
+			if v {
+				logutil.BgLogger().Info("MockPreSplitImportShards failpoint triggered",
+					zap.String("tidbTaskID", tidbTaskID),
+					zap.Int64("tableID", tableID),
+					zap.Int64s("indexIDs", indexIDs))
+				return
+			}
+			err = errors.New("mock PreSplitImportShards failed")
+		case string:
+			if v != "" {
+				err = errors.New(v)
+			}
+		}
+		if err != nil {
+			logutil.BgLogger().Warn("MockPreSplitImportShards failpoint triggered with error",
+				zap.String("tidbTaskID", tidbTaskID),
+				zap.Int64("tableID", tableID),
+				zap.Int64s("indexIDs", indexIDs),
 				zap.Error(err))
 		}
 	})
@@ -1266,6 +1370,31 @@ func FinishIndexUpload(ctx context.Context, store kv.Storage, tidbTaskID string)
 		ticiManager.SetKeyspaceID(keyspaceID)
 	}
 	return ticiManager.FinishIndexUpload(ctx, tidbTaskID)
+}
+
+// PreSplitImportShards asks TiCI to pre-split shards for an incoming global-sort ingest.
+func PreSplitImportShards(ctx context.Context, store keyspaceStorage, req *PreSplitImportShardsRequest) error {
+	if handled, err := maybeMockPreSplitImportShards(req); handled {
+		return err
+	}
+	etcdClient, err := getEtcdClientFunc()
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer closeEtcdClient(etcdClient)
+	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer ticiManager.Close()
+	if store != nil {
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
+	return ticiManager.PreSplitImportShards(ctx, req)
 }
 
 // CheckAddIndexProgress checks whether a TiCI index build has completed.

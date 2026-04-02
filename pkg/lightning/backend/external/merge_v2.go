@@ -112,7 +112,7 @@ func MergeOverlappingFilesV2(
 	var curEnd kv.Key
 
 	for {
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, _, err1 := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, _, _, _, err1 := splitter.SplitOneRangesGroup()
 		if err1 != nil {
 			logutil.Logger(ctx).Warn("split one ranges group failed", zap.Error(err1))
 			return
