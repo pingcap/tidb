@@ -496,50 +496,36 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		}
 
 		if x.AsName.L != "" {
-			if x.Lateral {
-				// LATERAL derived tables: clone output names to avoid mutating shared
-				// structs that may be referenced by the outer scope's schema.
-				clonedNames := make([]*types.FieldName, len(p.OutputNames()))
-				for i, name := range p.OutputNames() {
-					if name.Hidden {
-						clonedNames[i] = name
-						continue
-					}
-					// Clone the field name and update table name.
-					// For derived tables, clear DBName so that error messages (e.g. only_full_group_by)
-					// show "alias.col" not "db.alias.col".  The current-database qualifier needed for
-					// hint generation (leading()) is set separately on plannerSelectBlockAsName below.
-					// For base-table aliases (isTableName), inherit DBName for DEFAULT() resolution.
-					dbName := ast.NewCIStr("")
-					if isTableName {
-						dbName = name.DBName
-					}
-					clonedNames[i] = &types.FieldName{
-						DBName:            dbName,
-						OrigTblName:       name.OrigTblName,
-						OrigColName:       name.OrigColName,
-						TblName:           x.AsName,
-						ColName:           name.ColName,
-						NotExplicitUsable: name.NotExplicitUsable,
-						Redundant:         name.Redundant,
-						Hidden:            name.Hidden,
-					}
+			// Clone output names before modifying to avoid mutating shared structs.
+			// This is critical for CTEs whose output names are shared across multiple
+			// references — in-place mutation would corrupt other consumers.
+			clonedNames := make([]*types.FieldName, len(p.OutputNames()))
+			for i, name := range p.OutputNames() {
+				if name.Hidden {
+					clonedNames[i] = name
+					continue
 				}
-				p.SetOutputNames(clonedNames)
-			} else {
-				// Non-LATERAL: update TblName in place (original behavior).
+				// Clone the field name and update table name.
 				// For derived tables, clear DBName so that error messages (e.g. only_full_group_by)
-				// show "alias.col" not "db.alias.col".
-				for _, name := range p.OutputNames() {
-					if name.Hidden {
-						continue
-					}
-					name.TblName = x.AsName
-					if !isTableName {
-						name.DBName = ast.NewCIStr("")
-					}
+				// show "alias.col" not "db.alias.col".  The current-database qualifier needed for
+				// hint generation (leading()) is set separately on plannerSelectBlockAsName below.
+				// For base-table aliases (isTableName), inherit DBName for DEFAULT() resolution.
+				dbName := ast.NewCIStr("")
+				if isTableName {
+					dbName = name.DBName
+				}
+				clonedNames[i] = &types.FieldName{
+					DBName:            dbName,
+					OrigTblName:       name.OrigTblName,
+					OrigColName:       name.OrigColName,
+					TblName:           x.AsName,
+					ColName:           name.ColName,
+					NotExplicitUsable: name.NotExplicitUsable,
+					Redundant:         name.Redundant,
+					Hidden:            name.Hidden,
 				}
 			}
+			p.SetOutputNames(clonedNames)
 		}
 		// Apply column alias list from AS dt(c1, c2, ...) syntax.
 		// Only valid for derived tables (not table names); parser enforces this.
