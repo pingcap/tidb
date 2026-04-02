@@ -138,6 +138,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	hasUsePlanCacheHint := hint.ContainTableHintInStmtNode(paramStmt, hint.HintUsePlanCache)
 
 	var (
 		cacheable bool
@@ -222,6 +223,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		HasUsePlanCacheHint: hasUsePlanCacheHint,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
@@ -736,6 +738,8 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	// HasUsePlanCacheHint indicates whether this stmt contains the use_plan_cache() hint.
+	HasUsePlanCacheHint bool
 
 	limits      []*ast.Limit
 	hasSubquery bool

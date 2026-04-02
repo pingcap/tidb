@@ -1560,6 +1560,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableNonPreparedPlanCacheForDML = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheStrategy, Value: vardef.DefTiDBPlanCacheStrategy, Type: vardef.TypeEnum, PossibleValues: []string{vardef.TiDBPlanCacheStrategyAll, vardef.TiDBPlanCacheStrategyHintOnly}, SetSession: func(s *SessionVars, val string) error {
+		s.PlanCacheStrategy = val
+		return nil
+	}},
 	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    vardef.TiDBOptEnableFuzzyBinding,

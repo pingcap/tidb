@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -58,6 +59,19 @@ type PlanCacheKeyTestClone struct{}
 
 // PlanCacheKeyEnableInstancePlanCache is only for test.
 type PlanCacheKeyEnableInstancePlanCache struct{}
+
+const planCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
+
+func containUsePlanCacheHintInPreparedSQLOrBinding(sctx sessionctx.Context, stmt *PlanCacheStmt) bool {
+	if stmt.HasUsePlanCacheHint {
+		return true
+	}
+	if stmt.PreparedAst == nil || stmt.PreparedAst.Stmt == nil {
+		return false
+	}
+	binding, matched, _ := bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	return matched && binding != nil && binding.Hint != nil && binding.Hint.ContainTableHint(hint.HintUsePlanCache)
+}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -201,6 +215,12 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	} else {
 		stmtCtx.SetCacheType(contextutil.SessionPrepared)
 		cacheEnabled = sessVars.EnablePreparedPlanCache
+	}
+	if cacheEnabled && stmt.UncacheableReason == "" &&
+		sessVars.PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
+		!containUsePlanCacheHintInPreparedSQLOrBinding(sctx, stmt) {
+		cacheEnabled = false
+		stmtCtx.WarnSkipPlanCache(planCacheHintOnlyNoHintReason)
 	}
 	if stmt.StmtCacheable && cacheEnabled {
 		stmtCtx.EnablePlanCache()

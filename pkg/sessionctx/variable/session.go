@@ -1624,6 +1624,9 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	EnableNonPreparedPlanCacheForDML bool
 
+	// PlanCacheStrategy controls plan cache strategy.
+	PlanCacheStrategy string
+
 	// EnableFuzzyBinding indicates whether to enable fuzzy binding.
 	EnableFuzzyBinding bool
 
@@ -2407,6 +2410,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		WindowingUseHighPrecision:        true,
 		PrevFoundInPlanCache:             vardef.DefTiDBFoundInPlanCache,
 		FoundInPlanCache:                 vardef.DefTiDBFoundInPlanCache,
+		PlanCacheStrategy:                vardef.DefTiDBPlanCacheStrategy,
 		PrevFoundInBinding:               vardef.DefTiDBFoundInBinding,
 		FoundInBinding:                   vardef.DefTiDBFoundInBinding,
 		SelectLimit:                      math.MaxUint64,
