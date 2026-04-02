@@ -2763,7 +2763,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	if kerneltype.IsClassic() {
 		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 	} else {
-		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
+		requireNextGenLazyUniquenessConflictReason(t, err)
 	}
 
 	// case: DML returns error => abort txn
@@ -3090,8 +3090,21 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	if kerneltype.IsClassic() {
 		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 	} else {
-		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
+		requireNextGenLazyUniquenessConflictReason(t, err)
 	}
+}
+
+// Different next-gen engine families currently surface different write-conflict reasons
+// for lazy uniqueness checks, so the TiDB-side assertion should accept both.
+func requireNextGenLazyUniquenessConflictReason(t *testing.T, err error) {
+	t.Helper()
+	errMsg := err.Error()
+	require.Truef(
+		t,
+		strings.Contains(errMsg, "reason=LazyUniquenessCheck") || strings.Contains(errMsg, "reason=NotLockedKeyConflict"),
+		"expected next-gen lazy uniqueness conflict reason, got %s",
+		errMsg,
+	)
 }
 
 func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
