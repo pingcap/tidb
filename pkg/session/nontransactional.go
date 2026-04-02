@@ -455,9 +455,10 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	// The request_builder reduces concurrency to 2 for simple ordered scans
 	// when concurrency equals the default. Non-transactional DML internal scans
 	// need full concurrency to collect shard keys efficiently.
+	origFixed := se.GetSessionVars().FixedDistSQLConcurrency
 	se.GetSessionVars().FixedDistSQLConcurrency = true
 	defer func() {
-		se.GetSessionVars().FixedDistSQLConcurrency = false
+		se.GetSessionVars().FixedDistSQLConcurrency = origFixed
 	}()
 
 	// A NT-DML is not a SELECT. We ignore the SelectLimit for selectSQL so that it can read all values.
