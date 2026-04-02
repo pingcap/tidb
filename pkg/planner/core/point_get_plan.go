@@ -1280,10 +1280,12 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
 		}
-		// For unsigned integer columns, avoid wrapping assignment expressions with an implicit CAST.
-		// CAST semantics would wrap negative numbers to UINT64_MAX, while UPDATE assignments should
-		// follow assignment semantics (clip to 0 / overflow error depending on sql_mode). Let the
-		// executor handle conversion via table.CastValue.
+		// Point-update builds assignment expressions directly in the planner.
+		// Keep the implicit CAST for most target column types so the fast path stays
+		// aligned with normal UPDATE typing, but do not CAST unsigned integer targets:
+		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
+		// must be decided by executor-side table.CastValue under the current statement
+		// context and sql_mode.
 		if castToTP.EvalType() != types.ETInt || !mysql.HasUnsignedFlag(castToTP.GetFlag()) {
 			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
 		}
