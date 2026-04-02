@@ -387,14 +387,19 @@ def go_deps():
 		}
 		expectedProxyURL := formatProxyURL(replaced.Path, replaced.Version)
 		oldMirror, ok := existingMirrors[repoName]
-		if ok &&
-			slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
-			slices.Contains(oldMirror.URL, expectedCDNURL) &&
-			slices.Contains(oldMirror.URL, expectedPublicURL) &&
-			slices.Contains(oldMirror.URL, expectedVPCPublicURL) {
-			// The URL matches, so just reuse the old mirror, preserving all
-			// URLs already present (including any proxy.golang.org fallback
-			// added by fix_go_mod.py for cherry-picked modules).
+		reuseOldMirror := ok && (
+			// Standard case: all 4 PingCap mirror URLs present.
+			(slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
+				slices.Contains(oldMirror.URL, expectedCDNURL) &&
+				slices.Contains(oldMirror.URL, expectedPublicURL) &&
+				slices.Contains(oldMirror.URL, expectedVPCPublicURL)) ||
+			// Fallback: entry was written by fix_go_mod.py with only a proxy URL
+			// (e.g. ClamChowderTiDB fork modules not in PingCap's caches).
+			// Reuse as-is so the committed DEPS.bzl stays stable.
+			slices.Contains(oldMirror.URL, expectedProxyURL))
+		if reuseOldMirror {
+			// Reuse the old mirror entry verbatim, preserving all URLs
+			// (including any proxy.golang.org fallback added by fix_go_mod.py).
 			var urlLines strings.Builder
 			for _, u := range oldMirror.URL {
 				fmt.Fprintf(&urlLines, "            \"%s\",\n", u)
