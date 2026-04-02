@@ -1003,6 +1003,9 @@ func TestBindingMatchWithRedundantPredicateParentheses(t *testing.T) {
 	tk.MustQuery("select a, b from t where (a = 1) and b = 1")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
+	tk.MustQuery("select a, b from t where (a = 1 and b = 1)")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
 	stmtNoParen, err := parser.New().ParseOneStmt("select a, b from test.t where a = 1 and b = 1", "", "")
 	require.NoError(t, err)
 	_, digestNoParen := bindinfo.NormalizeStmtForBinding(stmtNoParen, "", true)
@@ -1011,6 +1014,11 @@ func TestBindingMatchWithRedundantPredicateParentheses(t *testing.T) {
 	require.NoError(t, err)
 	_, digestWithParen := bindinfo.NormalizeStmtForBinding(stmtWithParen, "", true)
 	require.Equal(t, digestNoParen, digestWithParen)
+
+	stmtWithOuterParen, err := parser.New().ParseOneStmt("select a, b from test.t where (a = 1 and b = 1)", "", "")
+	require.NoError(t, err)
+	_, digestWithOuterParen := bindinfo.NormalizeStmtForBinding(stmtWithOuterParen, "", true)
+	require.Equal(t, digestNoParen, digestWithOuterParen)
 
 	binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), digestWithParen, bindinfo.CollectTableNames(stmtWithParen))
 	require.True(t, matched)

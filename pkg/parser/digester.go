@@ -263,6 +263,9 @@ func (d *sqlDigester) normalize(sql string, redact string, keepHint bool, forBin
 		}
 	}
 	d.lexer.reset("")
+	if forBinding {
+		d.reduceOutermostWhereParenthesesForBinding()
+	}
 	for i, token := range d.tokens {
 		if i > 0 {
 			d.buffer.WriteRune(' ')
@@ -589,6 +592,61 @@ func (d *sqlDigester) isAtomicPredicateTokens(tokens []token) bool {
 func isComparisonOperator(op string) bool {
 	switch op {
 	case "=", ">", "<", ">=", "<=", "<>", "!=", "<=>", "in", "like", "is", "regexp", "rlike":
+		return true
+	default:
+		return false
+	}
+}
+
+// reduceOutermostWhereParenthesesForBinding removes redundant wrappers around whole WHERE conditions.
+// Example: `... WHERE (a = ? AND b = ?)` => `... WHERE a = ? AND b = ?`.
+// It intentionally keeps parentheses that are not the whole condition, such as:
+// `... WHERE (a = ? OR b = ?) AND c = ?`.
+func (d *sqlDigester) reduceOutermostWhereParenthesesForBinding() {
+	for i := 0; i < len(d.tokens)-1; i++ {
+		if d.tokens[i].lit != "where" {
+			continue
+		}
+		for {
+			condStart := i + 1
+			if condStart >= len(d.tokens) || !d.isLeftParen(d.tokens[condStart]) {
+				break
+			}
+			condEnd := findMatchedRightParen(d.tokens, condStart)
+			if condEnd == -1 || !isWhereClauseBoundaryToken(condEnd+1, d.tokens) {
+				break
+			}
+			d.tokens = append(d.tokens[:condEnd], d.tokens[condEnd+1:]...)
+			d.tokens = append(d.tokens[:condStart], d.tokens[condStart+1:]...)
+		}
+	}
+}
+
+func findMatchedRightParen(tokens []token, leftParenIdx int) int {
+	depth := 0
+	for i := leftParenIdx; i < len(tokens); i++ {
+		switch tokens[i].lit {
+		case "(":
+			depth++
+		case ")":
+			depth--
+			if depth == 0 {
+				return i
+			}
+			if depth < 0 {
+				return -1
+			}
+		}
+	}
+	return -1
+}
+
+func isWhereClauseBoundaryToken(idx int, tokens []token) bool {
+	if idx >= len(tokens) {
+		return true
+	}
+	switch tokens[idx].lit {
+	case "group", "order", "having", "limit", "window", "union", "except", "intersect", "for", ")", ";":
 		return true
 	default:
 		return false
