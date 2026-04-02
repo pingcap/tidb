@@ -92,6 +92,14 @@ func NotifyTaskChange() {
 	}
 }
 
+// NewSampleErrVerboseLogger creates a sampled logger with DXF defaults.
+func NewSampleErrVerboseLogger(fields ...zap.Field) *zap.Logger {
+	allFields := make([]zap.Field, 0, len(fields)+1)
+	allFields = append(allFields, zap.String(logutil.LogFieldCategory, DXFLogCategory))
+	allFields = append(allFields, fields...)
+	return logutil.SampleErrVerboseLoggerFactory(SampleLogTick, SampleLogFirst, allFields...)()
+}
+
 // GetCPUCountOfNode gets the CPU count of the managed node.
 func GetCPUCountOfNode(ctx context.Context) (int, error) {
 	manager, err := storage.GetDXFSvcTaskMgr()

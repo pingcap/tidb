@@ -124,11 +124,7 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 	)
-	sampleLogger := logutil.SampleErrVerboseLoggerFactory(
-		handle.SampleLogTick,
-		handle.SampleLogFirst,
-		zap.String(logutil.LogFieldCategory, handle.DXFLogCategory),
-	)().With(
+	sampleLogger := handle.NewSampleErrVerboseLogger(
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 	)
