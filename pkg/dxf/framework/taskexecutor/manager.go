@@ -52,7 +52,6 @@ var (
 	MaxSubtaskCheckInterval = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
-	managerSampleLogger     = handle.NewSampleErrVerboseLogger()
 )
 
 // Manager monitors the task table and manages the taskExecutors.
@@ -71,6 +70,7 @@ type Manager struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	logger       *zap.Logger
+	sampleLogger *zap.Logger
 	slotManager  *slotManager
 	nodeResource *proto.NodeResource
 	trace        *traceevent.Trace
@@ -79,8 +79,10 @@ type Manager struct {
 // NewManager creates a new task executor Manager.
 func NewManager(ctx context.Context, store kv.Storage, id string, taskTable TaskTable, resource *proto.NodeResource) (*Manager, error) {
 	logger := logutil.ErrVerboseLogger()
+	sampleLogger := handle.NewSampleErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
+		sampleLogger = sampleLogger.With(zap.String("server-id", id))
 	}
 
 	m := &Manager{
@@ -88,6 +90,7 @@ func NewManager(ctx context.Context, store kv.Storage, id string, taskTable Task
 		id:           id,
 		taskTable:    taskTable,
 		logger:       logger,
+		sampleLogger: sampleLogger,
 		slotManager:  newSlotManager(resource.TotalCPU),
 		nodeResource: resource,
 		trace:        traceevent.NewTrace(),
@@ -183,7 +186,7 @@ func (m *Manager) handleTasks() {
 	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
-		managerSampleLogger.Error("failed to get executable task", zap.String("server-id", m.id), zap.Error(err))
+		m.sampleLogger.Error("failed to get executable task", zap.String("server-id", m.id), zap.Error(err))
 		return
 	}
 
