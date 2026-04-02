@@ -528,6 +528,12 @@ func (d *sqlDigester) reduceRedundantParenthesesForBinding(currTok *token) (redu
 	return true
 }
 
+// findMatchedLeftParenForCurrentRightParen finds the matching `(` for the current right parenthesis token.
+// At call time, the current `)` is not pushed into d.tokens yet, so d.tokens only contains previous tokens.
+// We therefore start from depth=1 (for current `)`) and scan backward:
+// - each historical `)` increases depth,
+// - each `(` decreases depth.
+// The first `(` that drops depth to zero is the matching left parenthesis for current `)`.
 func (d *sqlDigester) findMatchedLeftParenForCurrentRightParen() int {
 	depth := 1
 	for i := len(d.tokens) - 1; i >= 0; i-- {
@@ -544,6 +550,18 @@ func (d *sqlDigester) findMatchedLeftParenForCurrentRightParen() int {
 	return -1
 }
 
+// isAtomicPredicateTokens reports whether tokens form a single predicate at top level.
+// This is used to decide whether removing an outer wrapper parenthesis is safe.
+//
+// Safe examples:
+//   - `a = ?`
+//   - `a in (...)`
+//   - `a = ? and (b = ?)` is NOT safe at this level because it contains top-level AND.
+//
+// Rules:
+//  1. Parentheses must be balanced.
+//  2. At depth 0, there must be no boolean connectors (`and`/`or`/`xor`) or comma.
+//  3. At depth 0, there must be at least one comparison operator.
 func (d *sqlDigester) isAtomicPredicateTokens(tokens []token) bool {
 	if len(tokens) == 0 {
 		return false

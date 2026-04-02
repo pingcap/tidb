@@ -96,6 +96,11 @@ func TestNormalize(t *testing.T) {
 		{"select * from t where (a = 1) and b = 1", "select * from `t` where `a` = ? and `b` = ?"},
 		{"select * from t where ((a = 1)) and b = 1", "select * from `t` where `a` = ? and `b` = ?"},
 		{"select * from t where (a in (1, 2, 3))", "select * from `t` where `a` in ( ... )"},
+		{"select * from t where (a = 1) and (b = 1) and c = 1", "select * from `t` where `a` = ? and `b` = ? and `c` = ?"},
+		{"select * from t where (a = 1) or (b = 1) or c = 1", "select * from `t` where `a` = ? or `b` = ? or `c` = ?"},
+		{"select * from t where (a = 1 and b = 1) or c = 1", "select * from `t` where ( `a` = ? and `b` = ? ) or `c` = ?"},
+		{"select * from t where a = 1 and (b = 1 or c = 1)", "select * from `t` where `a` = ? and ( `b` = ? or `c` = ? )"},
+		{"select * from t where ((a = 1) or (b = 1 and c = 1))", "select * from `t` where ( `a` = ? or ( `b` = ? and `c` = ? ) )"},
 	}
 	for _, test := range tests_for_binding_specific_rules {
 		normalized := parser.NormalizeForBinding(test.input, false)
