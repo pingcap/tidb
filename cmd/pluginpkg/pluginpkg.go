@@ -102,7 +102,16 @@ func createWorkFile(pkgDir string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "go 1.21\n\nuse %s\n\n", pkgDir)
+	// Use the running toolchain's minor version so go.work satisfies any module's go directive.
+	goVer := "1.21"
+	if out2, err2 := exec.Command("go", "env", "GOVERSION").Output(); err2 == nil {
+		// GOVERSION is e.g. "go1.23.6"; strip the leading "go" and patch component.
+		v := strings.TrimPrefix(strings.TrimSpace(string(out2)), "go")
+		if parts := strings.SplitN(v, ".", 3); len(parts) >= 2 {
+			goVer = parts[0] + "." + parts[1]
+		}
+	}
+	fmt.Fprintf(f, "go %s\n\nuse %s\n\n", goVer, pkgDir)
 	for _, r := range mod.Replace {
 		newPath := r.New.Path
 		if strings.HasPrefix(newPath, "./") || strings.HasPrefix(newPath, "../") {
