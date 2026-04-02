@@ -5,7 +5,11 @@ mkdir -p bin/
 
 # download lightning and sync_diff_inspector
 TOOLS_TAG="nightly"
-wget http://download.pingcap.org/tidb-toolkit-$TOOLS_TAG-linux-amd64.tar.gz -O tools.tar.gz
+<<<<<<< HEAD
+wget http://download.pingcap.com/tidb-toolkit-$TOOLS_TAG-linux-amd64.tar.gz -O tools.tar.gz
+=======
+wget http://download.pingcap.com/tidb-toolkit-$TOOLS_TAG-linux-$ARCH_SUFFIX.tar.gz -O tools.tar.gz
+>>>>>>> 2caf3752b (docs: replace deprecated PingCAP domains)
 tar -xzvf tools.tar.gz
 mv tidb-toolkit-$TOOLS_TAG-linux-amd64/bin/* bin/
 
