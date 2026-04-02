@@ -66,9 +66,9 @@ func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*s
 	return topNs, hists
 }
 
-var benchmarkSizes = []int{100, 1000, 2000, 5000, 10000, 100000}
+var benchmarkSizes = []int{100, 1000, 2000, 5000, 10000}
 
-func benchmarkMergePartTopNAndHistToGlobal(partitions int, b *testing.B) {
+func benchmarkGlobalStatsMerge(partitions int, b *testing.B) {
 	loc := time.UTC
 	killer := sqlkiller.SQLKiller{}
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
@@ -82,11 +82,16 @@ func benchmarkMergePartTopNAndHistToGlobal(partitions int, b *testing.B) {
 	}
 }
 
-// cmd: go test -run=^$ -bench=BenchmarkMergePartTopNAndHistToGlobal -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
-func BenchmarkMergePartTopNAndHistToGlobal(b *testing.B) {
+// BenchmarkGlobalStatsMerge benchmarks the full global stats merge pipeline.
+// On this branch it runs MergePartTopNAndHistToGlobal (combined merge).
+// On master, the same-named benchmark runs the old two-step flow for comparison.
+// Use benchstat to compare results across branches.
+//
+// cmd: go test -run=^$ -bench=BenchmarkGlobalStatsMerge -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
+func BenchmarkGlobalStatsMerge(b *testing.B) {
 	for _, size := range benchmarkSizes {
 		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			benchmarkMergePartTopNAndHistToGlobal(size, b)
+			benchmarkGlobalStatsMerge(size, b)
 		})
 	}
 }
