@@ -495,7 +495,7 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 
 	if slices.Equal(lastRowPrefixKeys, e.RankInfo.prevTruncateKeys) {
 		// Fast path: if the last row in the chunk is equal to the current prefix key,
-		// we can skip this chunk
+		// we can skip check and keep the whole chunk
 		return rowCnt, nil
 	}
 
