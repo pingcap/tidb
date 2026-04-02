@@ -56,12 +56,7 @@ var (
 	// DetectParamModifyInterval is the interval to detect whether task params
 	// are modified.
 	// exported for testing.
-	DetectParamModifyInterval       = 5 * time.Second
-	taskExecutorSampleLoggerFactory = logutil.SampleErrVerboseLoggerFactory(
-		time.Minute,
-		10,
-		zap.String(logutil.LogFieldCategory, "dxf-taskexecutor"),
-	)
+	DetectParamModifyInterval = 5 * time.Second
 )
 
 var (
@@ -100,10 +95,11 @@ type BaseTaskExecutor struct {
 	// table, but if the task has modified params, it might be updated in memory
 	// to reflect that some param modification have been applied successfully,
 	// see detectAndHandleParamModifyLoop for more detail.
-	task   atomic.Pointer[proto.Task]
-	logger *zap.Logger
-	ctx    context.Context
-	cancel context.CancelFunc
+	task         atomic.Pointer[proto.Task]
+	logger       *zap.Logger
+	sampleLogger *zap.Logger
+	ctx          context.Context
+	cancel       context.CancelFunc
 	Extension
 
 	currSubtaskID atomic.Int64
@@ -128,27 +124,29 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 	)
+	sampleLogger := logutil.SampleErrVerboseLoggerFactory(
+		handle.SampleLogTick,
+		handle.SampleLogFirst,
+		zap.String(logutil.LogFieldCategory, handle.DXFLogCategory),
+	)().With(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.execID))
+		sampleLogger = sampleLogger.With(zap.String("server-id", param.execID))
 	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
 	subCtx = logutil.WithLogger(subCtx, logger)
 	taskExecutorImpl := &BaseTaskExecutor{
-		Param:  param,
-		ctx:    subCtx,
-		cancel: cancelFunc,
-		logger: logger,
+		Param:        param,
+		ctx:          subCtx,
+		cancel:       cancelFunc,
+		logger:       logger,
+		sampleLogger: sampleLogger,
 	}
 	taskExecutorImpl.task.Store(task)
 	return taskExecutorImpl
-}
-
-func (e *BaseTaskExecutor) sampledLogger() *zap.Logger {
-	taskBase := e.GetTaskBase()
-	return taskExecutorSampleLoggerFactory().With(
-		zap.Int64("task-id", taskBase.ID),
-		zap.String("task-key", taskBase.Key),
-	)
 }
 
 // checkBalanceSubtask check whether the subtasks are balanced to or away from this node.
@@ -314,7 +312,7 @@ func (e *BaseTaskExecutor) Run() {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
 			}
-			e.sampledLogger().Error("refresh task failed", zap.Error(err))
+			e.sampleLogger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
 
@@ -359,7 +357,7 @@ func (e *BaseTaskExecutor) Run() {
 		subtask, err := e.taskTable.GetFirstSubtaskInStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
-			e.sampledLogger().Warn("get first subtask meets error", zap.Error(err))
+			e.sampleLogger.Warn("get first subtask meets error", zap.Error(err))
 			continue
 		} else if subtask == nil {
 			failpoint.Inject("avoidTaskExecutorExitWhenNoSubtask", func() {
@@ -381,7 +379,7 @@ func (e *BaseTaskExecutor) Run() {
 		}
 		if e.stepExec == nil {
 			if err2 := e.createStepExecutor(); err2 != nil {
-				e.sampledLogger().Error("create step executor failed",
+				e.sampleLogger.Error("create step executor failed",
 					zap.String("step", proto.Step2Str(task.Type, task.Step)), zap.Error(err2))
 				continue
 			}
@@ -397,7 +395,7 @@ func (e *BaseTaskExecutor) Run() {
 			// task executor keeps running its subtasks even though some subtask
 			// might have failed, we rely on scheduler to detect the error, and
 			// notify task executor or manager to cancel.
-			e.sampledLogger().Error("run subtask failed", zap.Error(err))
+			e.sampleLogger.Error("run subtask failed", zap.Error(err))
 		} else {
 			// if we run a subtask successfully, we will try to run next subtask
 			// immediately for once.

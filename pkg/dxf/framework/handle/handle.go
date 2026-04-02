@@ -58,13 +58,20 @@ var (
 	// put it here to avoid cyclic import.
 	TaskChangedCh       = make(chan struct{}, 1)
 	sampleLoggerFactory = logutil.SampleLoggerFactory(
-		time.Minute,
-		10,
-		zap.String(logutil.LogFieldCategory, "dxf-handle"),
+		SampleLogTick,
+		SampleLogFirst,
+		zap.String(logutil.LogFieldCategory, DXFLogCategory),
 	)
 )
 
 const (
+	// DXFLogCategory is the shared log category used by DXF sampled logs.
+	DXFLogCategory = "dxf"
+	// SampleLogTick is the common sampling window used by DXF sampled logs.
+	SampleLogTick = time.Minute
+	// SampleLogFirst is the max number of logs with same level/message in each SampleLogTick.
+	SampleLogFirst = 10
+
 	// NextGenTargetScope is the target scope for new tasks in nextgen kernel.
 	// on nextgen, DXF works as a service and runs only on node with scope 'dxf_service',
 	// so all tasks must be submitted to that scope.
