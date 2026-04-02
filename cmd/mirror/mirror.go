@@ -268,6 +268,13 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 }
 
 func getExistingMirrors() (map[string]DownloadableArtifact, error) {
+	// Read DEPS.bzl from the committed git HEAD so that proxy URLs added by
+	// fix_go_mod.py are preserved even after gazelle rewrites the file (gazelle
+	// strips urls= entries before the mirror runs in make bazel_ci_prepare).
+	if out, err := exec.Command("git", "show", "HEAD:DEPS.bzl").Output(); err == nil {
+		return downloadableArtifactsFromDepsBzl(strings.NewReader(string(out)))
+	}
+	// Fall back to the Bazel runfile if git is unavailable.
 	depsbzl, err := bazel.Runfile("DEPS.bzl")
 	if err != nil {
 		return nil, err
