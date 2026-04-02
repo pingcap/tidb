@@ -1495,7 +1495,9 @@ TableReader	root	partition:p2	data:Selection
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t where a in (0.12, 3.47);
 id	task	access object	operator info
-TableDual	root		rows:0
+TableReader	root	partition:all	data:Selection
+└─Selection	cop[tikv]		in(cast(planner__core__casetest__integration.t.a, decimal(10,0) BINARY), 0.12, 3.47)
+  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t where a in (14, floor(3.47));
 id	task	access object	operator info
 TableReader	root	partition:p0,p2	data:Selection
