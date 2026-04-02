@@ -18,9 +18,7 @@
 
 package collate
 
-import (
-	"unicode/utf8"
-)
+import "unicode/utf8"
 
 // {{.Name}} implements UCA. see http://unicode.org/reports/tr10/
 type {{.Name}} struct {
