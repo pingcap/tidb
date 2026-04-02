@@ -285,7 +285,8 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			// reference in DELETE FROM t WHERE EXISTS (... FROM t ...)). Decorrelate would replace CorCol
 			// with Column, but TableDual has no columns, so the plan would be invalid.
 			if len(proj.Children()) == 1 {
-				if _, isDual := proj.Children()[0].(*logicalop.LogicalTableDual); isDual && expression.ContainCorrelatedColumn(proj.Exprs...) {
+				if _, isDual := proj.Children()[0].(*logicalop.LogicalTableDual); isDual &&
+					expression.ContainCorrelatedColumn(proj.Exprs...) {
 					goto NoOptimize
 				}
 			}

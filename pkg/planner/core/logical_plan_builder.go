@@ -4672,7 +4672,9 @@ type dmlTargetTableName struct {
 	errName string
 }
 
-func (b *PlanBuilder) resolveDMLTargetTableIDs(tableRefs *ast.Join, targets []dmlTargetTableName, stmtType string) (map[int64]struct{}, error) {
+func (b *PlanBuilder) resolveDMLTargetTableIDs(
+	tableRefs *ast.Join, targets []dmlTargetTableName, stmtType string,
+) (map[int64]struct{}, error) {
 	updatableList := make(map[string]bool)
 	tbInfoList := make(map[string]*ast.TableName)
 	collectTableName(tableRefs, &updatableList, &tbInfoList)
@@ -4816,7 +4818,9 @@ func getSchemaTableIDs(p base.LogicalPlan) []int64 {
 // TblName or OrigTblName, then return outerInstanceTbl = that column's TblName so only that
 // alias's columns are projected (avoids merging t AS a JOIN t AS b into one pseudo-table).
 // Returns (empty, empty, false) if no match.
-func findOuterScopeTable(b *PlanBuilder, refDbName, refTblName ast.CIStr, targetTableID int64) (outerScopeInfo, ast.CIStr, bool) {
+func findOuterScopeTable(
+	b *PlanBuilder, refDbName, refTblName ast.CIStr, targetTableID int64,
+) (outerScopeInfo, ast.CIStr, bool) {
 	if len(b.outerScopes) == 0 {
 		return outerScopeInfo{}, ast.CIStr{}, false
 	}
@@ -4830,7 +4834,8 @@ func findOuterScopeTable(b *PlanBuilder, refDbName, refTblName ast.CIStr, target
 				continue
 			}
 			dbMatch := refDbName.L == "" || refDbName.L == name.DBName.L ||
-				(name.DBName.L == "" && len(b.ctx.GetSessionVars().CurrentDB) > 0 && refDbName.L == b.ctx.GetSessionVars().CurrentDB)
+				(name.DBName.L == "" && len(b.ctx.GetSessionVars().CurrentDB) > 0 &&
+					refDbName.L == b.ctx.GetSessionVars().CurrentDB)
 			tblMatch := refTblName.L == name.TblName.L || refTblName.L == name.OrigTblName.L
 			if dbMatch && tblMatch {
 				return scope, name.TblName, true
