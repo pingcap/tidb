@@ -62,15 +62,14 @@ type PlanCacheKeyEnableInstancePlanCache struct{}
 
 const planCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
 
-func containUsePlanCacheHintInPreparedSQLOrBinding(sctx sessionctx.Context, stmt *PlanCacheStmt) bool {
+func containUsePlanCacheHintInPreparedSQLOrBinding(stmt *PlanCacheStmt, matchedBinding *bindinfo.Binding, bindingMatched bool) bool {
 	if stmt.HasUsePlanCacheHint {
 		return true
 	}
-	if stmt.PreparedAst == nil || stmt.PreparedAst.Stmt == nil {
-		return false
-	}
-	binding, matched, _ := bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
-	return matched && binding != nil && binding.Hint != nil && binding.Hint.ContainTableHint(hint.HintUsePlanCache)
+	return bindingMatched &&
+		matchedBinding != nil &&
+		matchedBinding.Hint != nil &&
+		matchedBinding.Hint.ContainTableHint(hint.HintUsePlanCache)
 }
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
@@ -209,6 +208,10 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cacheEnabled := false
+	var (
+		matchedBinding *bindinfo.Binding
+		bindingMatched bool
+	)
 	if isNonPrepared {
 		stmtCtx.SetCacheType(contextutil.SessionNonPrepared)
 		cacheEnabled = sessVars.EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
@@ -218,9 +221,14 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 	if cacheEnabled && stmt.UncacheableReason == "" &&
 		sessVars.PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
-		!containUsePlanCacheHintInPreparedSQLOrBinding(sctx, stmt) {
-		cacheEnabled = false
-		stmtCtx.WarnSkipPlanCache(planCacheHintOnlyNoHintReason)
+		!stmt.HasUsePlanCacheHint {
+		if stmt.PreparedAst != nil {
+			matchedBinding, bindingMatched, _ = bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+		}
+		if !containUsePlanCacheHintInPreparedSQLOrBinding(stmt, matchedBinding, bindingMatched) {
+			cacheEnabled = false
+			stmtCtx.WarnSkipPlanCache(planCacheHintOnlyNoHintReason)
+		}
 	}
 	if stmt.StmtCacheable && cacheEnabled {
 		stmtCtx.EnablePlanCache()
@@ -232,7 +240,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	var cacheKey, binding, reason string
 	var cacheable bool
 	if stmtCtx.UseCache() {
-		cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
+		cacheKey, binding, cacheable, reason, err = newPlanCacheKeyWithMatchedBinding(sctx, stmt, matchedBinding, bindingMatched)
 		if err != nil {
 			return nil, nil, err
 		}
