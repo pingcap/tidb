@@ -90,9 +90,9 @@ func TestVectorLong(t *testing.T) {
 		return vb.String()
 	}
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
 	}()
 
 	runWorkload := func() {
@@ -453,12 +453,11 @@ func TestVectorConstantExplain(t *testing.T) {
 	))
 	tk.MustQuery(`EXPLAIN format = 'brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
 		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─Projection 10.00 root  test.t.c",
-		"  └─TopN 10.00 root  Column#4, offset:0, count:10",
-		"    └─Projection 10.00 root  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
-		"      └─TableReader 10.00 root  data:TopN",
-		"        └─TopN 10.00 cop[tikv]  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...]), offset:0, count:10",
-		"          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─TopN 10.00 root  Column#4, offset:0, count:10",
+		"  └─TableReader 10.00 root  data:TopN",
+		"    └─TopN 10.00 cop[tikv]  Column#4, offset:0, count:10",
+		"      └─Projection 10.00 cop[tikv]  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"        └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// Prepare a large Vector string
@@ -499,21 +498,7 @@ func TestVectorConstantExplain(t *testing.T) {
 
 func TestVectorIndexExplain(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
-
 	tk := testkit.NewTestKit(t, store)
-
-	tiflash := infosync.NewMockTiFlash()
-	infosync.SetMockTiFlash(tiflash)
-	defer func() {
-		tiflash.Lock()
-		tiflash.StatusServer.Close()
-		tiflash.Unlock()
-	}()
-
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess"))
-	}()
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -522,13 +507,30 @@ func TestVectorIndexExplain(t *testing.T) {
 			vec vector(100)
 		)
 	`)
-	tk.MustExec("alter table t1 set tiflash replica 1;")
-	tk.MustExec("alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;")
-	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
 		Available: true,
 	}
+	tbl.Meta().Indices = append(tbl.Meta().Indices, &model.IndexInfo{
+		ID:    1,
+		Name:  pmodel.NewCIStr("vector_index"),
+		Table: tbl.Meta().Name,
+		Columns: []*model.IndexColumn{{
+			Name:   pmodel.NewCIStr("vec"),
+			Offset: 0,
+			Length: types.UnspecifiedLength,
+		}},
+		State: model.StatePublic,
+		Tp:    pmodel.IndexTypeHNSW,
+		VectorInfo: &model.VectorIndexInfo{
+			Kind:           model.VectorIndexKindHNSW,
+			Dimension:      100,
+			DistanceMetric: model.DistanceMetricCosine,
+		},
+	})
 
 	vb := strings.Builder{}
 	vb.WriteString("[")
@@ -541,15 +543,12 @@ func TestVectorIndexExplain(t *testing.T) {
 	vb.WriteString("]")
 
 	tk.MustQuery(fmt.Sprintf("explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '%s') limit 1", vb.String())).Check(testkit.Rows(
-		`Projection 1.00 root  test.t1.vec`,
-		`└─TopN 1.00 root  Column#4, offset:0, count:1`,
-		`  └─Projection 1.00 root  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#4`,
-		`    └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender`,
-		`      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
-		`        └─Projection 1.00 mpp[tiflash]  test.t1.vec`,
-		`          └─TopN 1.00 mpp[tiflash]  Column#3, offset:0, count:1`,
-		`            └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#3`,
-		`              └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
+		`TopN 1.00 root  Column#5, offset:0, count:1`,
+		`└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender`,
+		`  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1`,
+		`      └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#5`,
+		`        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
 	))
 }
 

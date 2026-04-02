@@ -241,6 +241,38 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 		buffer.WriteString(", ")
 	}
+	if p.FTSQueryInfo != nil {
+		buffer.WriteString("textSearch:(")
+		if p.FTSQueryInfo.TopK != nil && *p.FTSQueryInfo.TopK < 4294967295 {
+			buffer.WriteString("top")
+			if normalized {
+				buffer.WriteString("K")
+			} else {
+				buffer.WriteString(fmt.Sprint(*p.FTSQueryInfo.TopK))
+			}
+			buffer.WriteString(" ")
+		}
+		if normalized {
+			buffer.WriteString("?")
+		} else {
+			buffer.WriteString(p.FTSQueryInfo.QueryText)
+		}
+		buffer.WriteString(" IN ")
+		buffer.WriteString(p.FTSQueryInfo.ColumnNames[0])
+		buffer.WriteString(")->")
+		cols := p.Schema().Columns
+		buffer.WriteString(cols[len(cols)-1].String())
+		buffer.WriteString(", ")
+		// For FTS, print the actual column name to scan
+		buffer.WriteString("columns: [")
+		for i, col := range p.Columns {
+			if i != 0 {
+				buffer.WriteString(", ")
+			}
+			buffer.WriteString(col.Name.O)
+		}
+		buffer.WriteString("], ")
+	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
@@ -293,6 +325,11 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(fmt.Sprint(p.AnnIndexExtra.PushDownQueryInfo.TopK))
 		}
 		buffer.WriteString(")")
+		if p.AnnIndexExtra.PushDownQueryInfo.EnableDistanceProj {
+			buffer.WriteString("->")
+			cols := p.Schema().Columns
+			buffer.WriteString(cols[len(cols)-1].String())
+		}
 	}
 	return buffer.String()
 }

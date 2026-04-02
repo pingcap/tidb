@@ -3605,7 +3605,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
+		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt), store)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3638,7 +3638,7 @@ func InitMDLTable(store kv.Storage) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
+		tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt), store)
 		if err != nil {
 			return errors.Trace(err)
 		}

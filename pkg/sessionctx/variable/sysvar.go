@@ -3154,6 +3154,12 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return strconv.Itoa(int(TTLRunningTasks.Load())), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableFullTextIndex, Value: BoolToOnOff(DefTiDBEnableFullTextIndex), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableFullTextIndex.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		EnableFullTextIndex.Store(TiDBOptOn(val))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptOrderingIdxSelThresh, Value: strconv.FormatFloat(DefTiDBOptOrderingIdxSelThresh, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1,
 		SetSession: func(s *SessionVars, val string) error {
 			s.OptOrderingIdxSelThresh = tidbOptFloat64(val, DefTiDBOptOrderingIdxSelThresh)
@@ -3666,6 +3672,42 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBExpEmbedJinaAIAPIKey, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EmbedJinaAPIKey.Store(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return maskEmbedAPIKey(EmbedJinaAPIKey.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBExpEmbedOpenAIAPIKey, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EmbedOpenAIAPIKey.Store(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return maskEmbedAPIKey(EmbedOpenAIAPIKey.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBExpEmbedCohereAPIKey, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EmbedCohereAPIKey.Store(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return maskEmbedAPIKey(EmbedCohereAPIKey.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBExpEmbedHuggingFaceAPIKey, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EmbedHuggingFaceAPIKey.Store(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return maskEmbedAPIKey(EmbedHuggingFaceAPIKey.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBExpEmbedNvidiaNIMAPIKey, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EmbedNvidiaNIMAPIKey.Store(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return maskEmbedAPIKey(EmbedNvidiaNIMAPIKey.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBExpEmbedGeminiAPIKey, Value: "", Type: TypeStr, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		EmbedGeminiAPIKey.Store(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return maskEmbedAPIKey(EmbedGeminiAPIKey.Load()), nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableLoginHistory, Value: BoolToOnOff(DefTiDBEnableLoginHistory), Type: TypeBool,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
 			EnableLoginHistory.Store(TiDBOptOn(val))
@@ -3756,6 +3798,17 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+}
+
+func maskEmbedAPIKey(key string) string {
+	if key == "" {
+		return ""
+	}
+	// only reveal the last 4 characters of the API key
+	if len(key) <= 4 {
+		return "******"
+	}
+	return "******" + key[len(key)-4:]
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

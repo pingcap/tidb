@@ -1023,7 +1023,8 @@ type PhysicalTableScan struct {
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 	maxWaitTimeMs     int
 
-	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+	AnnIndexExtra *VectorIndexExtra  `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+	FTSQueryInfo  *tipb.FTSQueryInfo `plan-cache-clone:"must-nil"` // FTS plan should not be cached.
 
 	// TableSplit is a split (range) of the table to read.
 	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
@@ -1066,6 +1067,10 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 			clonedRF := rf.Clone()
 			clonedScan.runtimeFilterList[i] = clonedRF
 		}
+	}
+	if ts.FTSQueryInfo != nil {
+		clonedFTSQueryInfo := *ts.FTSQueryInfo
+		clonedScan.FTSQueryInfo = &clonedFTSQueryInfo
 	}
 	return clonedScan, nil
 }
@@ -1270,7 +1275,7 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 
 // PhysicalTopN is the physical operator of topN.
 type PhysicalTopN struct {
-	physicalop.BasePhysicalPlan
+	physicalSchemaProducer
 
 	ByItems     []*util.ByItems
 	PartitionBy []property.SortItem
@@ -1288,11 +1293,11 @@ func (lt *PhysicalTopN) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error
 	cloned := new(PhysicalTopN)
 	*cloned = *lt
 	cloned.SetSCtx(newCtx)
-	base, err := lt.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
+	base, err := lt.physicalSchemaProducer.cloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.BasePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
@@ -1319,7 +1324,7 @@ func (lt *PhysicalTopN) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = lt.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	sum = lt.physicalSchemaProducer.MemoryUsage() + size.SizeOfSlice + int64(cap(lt.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
 	for _, byItem := range lt.ByItems {
 		sum += byItem.MemoryUsage()
 	}

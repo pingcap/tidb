@@ -39,3 +39,13 @@ func IsTiFlashHTTPResp(store *pdhttp.MetaStore) bool {
 	}
 	return false
 }
+
+// IsTiFlashWriteNodeHTTPResp tests whether the store is a tiflash write node from a PD HTTP response.
+func IsTiFlashWriteNodeHTTPResp(store *pdhttp.MetaStore) bool {
+	for _, label := range store.Labels {
+		if label.Key == "engine" && label.Value == "tiflash" {
+			return true
+		}
+	}
+	return false
+}

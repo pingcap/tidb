@@ -37,7 +37,7 @@ func GetTableInfoBySQL(createTableSQL string, parser2 *parser.Parser) (table *mo
 
 	s, ok := stmt.(*ast.CreateTableStmt)
 	if ok {
-		table, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), s)
+		table, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), s, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

@@ -50,7 +50,7 @@ func Init() {
 			if err != nil {
 				panic(err)
 			}
-			meta, err := ddl.BuildTableInfoFromAST(ctx, stmt.(*ast.CreateTableStmt))
+			meta, err := ddl.BuildTableInfoFromAST(ctx, stmt.(*ast.CreateTableStmt), nil)
 			if err != nil {
 				panic(err)
 			}

@@ -2254,6 +2254,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
 	// If we can generate MPP task and there's vector distance function in the order by column.
@@ -2292,6 +2293,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
 	return ret

@@ -45,6 +45,7 @@ require (
 	github.com/fatih/color v1.17.0
 	github.com/felixge/fgprof v0.9.3
 	github.com/fsouza/fake-gcs-server v1.44.0
+	github.com/go-json-experiment/json v0.0.0-20250626171732-1a886bd29d1b
 	github.com/go-ldap/ldap/v3 v3.4.4
 	github.com/go-resty/resty/v2 v2.11.0
 	github.com/go-sql-driver/mysql v1.7.1
@@ -318,7 +319,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
-	k8s.io/utils v0.0.0-20230726121419-3b25d923346b // indirect
+	k8s.io/utils v0.0.0-20230726121419-3b25d923346b
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.4.1 // indirect
 	sigs.k8s.io/yaml v1.4.0 // indirect

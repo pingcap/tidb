@@ -292,6 +292,15 @@ type Column struct {
 
 	hashcode []byte
 
+	// GeneratedExprString is the original generated column definition
+	// (for both stored or not stored).
+	// Normally we only need the generation expression for virtual columns, which has been covered
+	// by VirtualExpr. However in rare cases, we even need the generation expression for stored
+	// generated columns. Currently the only case is auto embedding, where we would like to know
+	// what kind of model user has been specified when a generated column has been used in the
+	// query.
+	GeneratedExprString string
+
 	// VirtualExpr is used to save expression for virtual column
 	VirtualExpr Expression
 

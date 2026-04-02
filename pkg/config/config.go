@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/tikvutil"
@@ -109,6 +110,14 @@ const (
 	DefSchemaLease = 45 * time.Second
 )
 
+const (
+	engineLabelKey                  = "engine"
+	engineLabelTiFlash              = "tiflash"
+	engineRoleLabelKey              = "engine_role"
+	engineRoleLabelTiFlashWriteNode = "write"
+	defTiFlashRuleGroupID           = "tiflash"
+)
+
 // Valid config maps
 var (
 	ValidStorage = map[string]bool{
@@ -123,6 +132,30 @@ var (
 	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
 	tempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
+
+var (
+	defaultTiFlashConstraints = []Constraint{
+		{
+			Key:    engineLabelKey,
+			Op:     string(pdtypes.In),
+			Values: []string{engineLabelTiFlash},
+		},
+		{
+			Key:    engineRoleLabelKey,
+			Op:     string(pdtypes.NotIn),
+			Values: []string{engineRoleLabelTiFlashWriteNode},
+		},
+	}
+	allowOps = map[string]bool{
+		string(pdtypes.In):        true,
+		string(pdtypes.NotIn):     true,
+		string(pdtypes.Exists):    true,
+		string(pdtypes.NotExists): true,
+	}
+)
+
+// FTSFunctionIsUsedKey is the context key for FTS function is used.
+var FTSFunctionIsUsedKey = struct{}{}
 
 // InstanceConfigSection indicates a config session that has options moved to [instance] session.
 type InstanceConfigSection struct {
@@ -313,6 +346,19 @@ type Config struct {
 	AutoScalerClusterID          string `toml:"autoscaler-cluster-id" json:"autoscaler-cluster-id"`
 	UseAutoScaler                bool   `toml:"use-autoscaler" json:"use-autoscaler"`
 
+	// ForceEnableFullTextIndex controls whether adding fulltext index is forcibly allowed. (CSE ONLY)
+	// Override the variable of TIDB_ENABLE_FULLTEXT_INDEX.
+	ForceEnableFullTextIndex bool `toml:"force-enable-fulltext-index" json:"force-enable-fulltext-index"`
+
+	// HostedEmbedding is used to control the hosted embedding service. (CSE only)
+	HostedEmbedding HostedEmbedding `toml:"hosted-embedding" json:"hosted-embedding"`
+
+	// TiFlashReplicas is used to control the format of TiFlash placement rules committed to PD.
+	TiFlashReplicas TiFlashReplicas `toml:"tiflash-replicas" json:"tiflash-replicas"`
+
+	// CSE is the config collection for the cloud storage engine.
+	CSE CSE `toml:"cse" json:"cse"`
+
 	// TiDBMaxReuseChunk indicates max cached chunk num
 	TiDBMaxReuseChunk uint32 `toml:"tidb-max-reuse-chunk" json:"tidb-max-reuse-chunk"`
 	// TiDBMaxReuseColumn indicates max cached column num
@@ -324,6 +370,67 @@ type Config struct {
 	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
 	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
+}
+
+// TiFlashReplicas is used to control the format of TiFlash placement rules committed to PD.
+type TiFlashReplicas struct {
+	Constraints []Constraint `toml:"constraints" json:"constraints"`
+	MinCount    uint64       `toml:"min-count" json:"min-count"`
+	GroupID     string       `toml:"group-id" json:"group-id"`
+
+	// This config was used for data migration from non-S3 tiflash arch to S3 tiflash arch.
+	// It can be deprecated.
+	ExtraS3Rule bool `toml:"extra-s3-rule" json:"extra-s3-rule"`
+}
+
+// Constraints is a slice of constraints.
+type Constraints []Constraint
+
+// Constraint is used to store the constraints for tiflash.
+type Constraint struct {
+	Key    string   `toml:"key" json:"key"`
+	Op     string   `toml:"op" json:"op"`
+	Values []string `toml:"values" json:"values"`
+}
+
+// CSE is the config collection for the cloud storage engine.
+type CSE struct {
+	// EnableRegionClient indicates whether to enable region client.
+	EnableRegionClient     bool          `toml:"enable-region-client" json:"enable-region-client"`
+	ColumnarStoreType      string        `toml:"columnar-store-type" json:"columnar-store-type"`
+	ColumnarCollectTimeout time.Duration `toml:"columnar-collect-timeout" json:"columnar-collect-timeout"`
+}
+
+// HostedEmbedding is the config for TiDB Cloud hosted embedding provider (tidbcloud_free/ prefix in EMBED_TEXT).
+type HostedEmbedding struct {
+	// Enabled indicates whether the hosted embedding service is enabled.
+	// When enabled, tidbcloud_free/ prefix in EMBED_TEXT will be supported.
+	Enabled bool `toml:"enabled" json:"enabled"`
+
+	// APIEndpoint is the endpoint for the hosted embedding service.
+	// e.g. https://xxxxx.com
+	APIEndpoint string `toml:"api-endpoint" json:"api-endpoint"`
+
+	// APIKeyPath is the path to the Bearer API key file for accessing the hosted embedding service.
+	APIKeyPath string `toml:"api-key-path" json:"api-key-path"`
+}
+
+// IsTiFlashEnabled checks if TiFlash is enabled
+func (c *CSE) IsTiFlashEnabled() bool {
+	return c.ColumnarStoreType == "tiflash" || c.ColumnarStoreType == "both"
+}
+
+// IsColumnarStoreEnabled checks if Columnar store is enabled
+func (c *CSE) IsColumnarStoreEnabled() bool {
+	return c.ColumnarStoreType == "columnar" || c.ColumnarStoreType == "both"
+}
+
+// Valid checks if the Columnar store type is valid
+func (c *CSE) Valid() bool {
+	if c.ColumnarStoreType != "tiflash" && c.ColumnarStoreType != "columnar" && c.ColumnarStoreType != "both" {
+		return false
+	}
+	return true
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -1102,11 +1209,23 @@ var defaultConf = Config{
 	IsTiFlashComputeFixedPool:            false,
 	AutoScalerClusterID:                  "",
 	UseAutoScaler:                        false,
-	TiDBMaxReuseChunk:                    64,
-	TiDBMaxReuseColumn:                   256,
-	TiDBEnableExitCheck:                  false,
-	InMemSlowQueryTopNNum:                30,
-	InMemSlowQueryRecentNum:              500,
+	ForceEnableFullTextIndex:             false,
+	TiFlashReplicas: TiFlashReplicas{
+		Constraints: defaultTiFlashConstraints,
+		MinCount:    1,
+		GroupID:     defTiFlashRuleGroupID,
+		ExtraS3Rule: false,
+	},
+	CSE: CSE{
+		EnableRegionClient:     false,
+		ColumnarStoreType:      "tiflash",
+		ColumnarCollectTimeout: 5 * time.Second,
+	},
+	TiDBMaxReuseChunk:       64,
+	TiDBMaxReuseColumn:      256,
+	TiDBEnableExitCheck:     false,
+	InMemSlowQueryTopNNum:   30,
+	InMemSlowQueryRecentNum: 500,
 }
 
 var (
@@ -1439,6 +1558,17 @@ func (c *Config) Valid() error {
 		if c.TiFlashComputeAutoScalerAddr == "" {
 			return fmt.Errorf("autoscaler-addr cannot be empty when disaggregated-tiflash mode is true")
 		}
+	}
+
+	// Check tiflash constraints
+	for _, constraint := range c.TiFlashReplicas.Constraints {
+		if _, ok := allowOps[constraint.Op]; !ok {
+			return fmt.Errorf("invalid tiflash constraint op %s, only supports %v", constraint.Op, allowOps)
+		}
+	}
+
+	if !c.CSE.Valid() {
+		return fmt.Errorf("invalid columnar-store-type=%s, valid types=%v", c.CSE.ColumnarStoreType, []string{"tiflash", "columnar", "both"})
 	}
 
 	// test log level

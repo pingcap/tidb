@@ -131,6 +131,16 @@ func getModifyColumnType(
 	return model.ModifyTypeIndexReorg
 }
 
+func hasColumnarIndex(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
+	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
+	for _, idx := range indexesToChange {
+		if idx.IndexInfo.IsColumnarIndex() {
+			return true
+		}
+	}
+	return false
+}
+
 func getChangingCol(
 	args *model.ModifyColumnArgs,
 	tblInfo *model.TableInfo,
@@ -243,7 +253,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		columns := getReplacedColumns(tblInfo, oldCol, args.Column)
 		allIdxs := buildRelatedIndexInfos(tblInfo, oldCol.ID)
 		for _, idx := range allIdxs {
-			if err := checkIndexInModifiableColumns(columns, idx.Columns, idx.VectorInfo != nil); err != nil {
+			if err := checkIndexInModifiableColumns(columns, idx.Columns, idx.GetColumnarIndexType()); err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
@@ -329,9 +339,9 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if isColumnarIndexColumn(tblInfo, oldCol) {
+	if hasColumnarIndex(tblInfo, oldCol) {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column"))
+		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column"))
 	}
 	if mysql.HasPriKeyFlag(oldCol.GetFlag()) {
 		job.State = model.JobStateCancelled
@@ -1669,8 +1679,8 @@ func GetModifiableColumnJob(
 		if err = isGeneratedRelatedColumn(t.Meta(), newCol.ColumnInfo, col.ColumnInfo); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if isColumnarIndexColumn(t.Meta(), col.ColumnInfo) {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column")
+		if hasColumnarIndex(t.Meta(), col.ColumnInfo) {
+			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("column has columnar index, drop columnar index first")
 		}
 		// new col's origin default value be the same as the new default value.
 		originDefVal, err := generateOriginDefaultValue(newCol.ColumnInfo, sctx, false)
@@ -1933,11 +1943,11 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.VectorInfo != nil)
+		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
 		if err != nil {
 			return
 		}
-		err = checkIndexPrefixLength(columns, indexInfo.Columns)
+		err = checkIndexPrefixLength(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
 		return
 	}
 
@@ -1966,7 +1976,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, isVectorIndex bool) error {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, columnarIndexType pmodel.ColumnarIndexType) error {
 	for _, ic := range idxColumns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
@@ -1979,7 +1989,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(col, prefixLength, false, isVectorIndex); err != nil {
+		if err := checkIndexColumn(col, prefixLength, false, columnarIndexType); err != nil {
 			return err
 		}
 	}

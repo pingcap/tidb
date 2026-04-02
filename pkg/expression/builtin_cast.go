@@ -2788,8 +2788,8 @@ func WrapWithCastAsString(ctx BuildContext, expr Expression) Expression {
 		}
 	}
 
-	// Because we can't control the length of cast(float as char) for now, we can't determine the argLen.
-	if exprTp.GetType() == mysql.TypeFloat || exprTp.GetType() == mysql.TypeDouble {
+	// Like float, we cannot determine the length of a vector after stringification, so set it to -1.
+	if exprTp.GetType() == mysql.TypeFloat || exprTp.GetType() == mysql.TypeDouble || exprTp.GetType() == mysql.TypeTiDBVectorFloat32 {
 		argLen = -1
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)

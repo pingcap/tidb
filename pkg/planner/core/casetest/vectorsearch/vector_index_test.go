@@ -62,7 +62,7 @@ func TestTiFlashANNIndex(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -127,7 +127,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	getNormalizedPlan := func() ([]string, string) {
 		info := tk.Session().ShowProcess()
@@ -175,12 +175,11 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[0,0,0]') limit 1")
 	p1, d1 := getNormalizedPlan()
 	require.Equal(t, []string{
-		" Projection              root test.t.vec",
-		" └─TopN                  root ?",
-		"   └─Projection          root test.t.vec, vec_cosine_distance(test.t.vec, ?)",
-		"     └─TableReader       root ",
-		"       └─TopN            cop  vec_cosine_distance(test.t.vec, ?)",
-		"         └─TableFullScan cop  table:t, range:[?,?], keep order:false",
+		" TopN                  root ?",
+		" └─TableReader         root ",
+		"   └─TopN              cop  ?",
+		"     └─Projection      cop  test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"       └─TableFullScan cop  table:t, range:[?,?], keep order:false",
 	}, p1)
 
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
@@ -204,12 +203,11 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
 	p2, _ := getNormalizedPlan()
 	require.Equal(t, []string{
-		" Projection              root test.t.vec",
-		" └─TopN                  root ?",
-		"   └─Projection          root test.t.vec, vec_cosine_distance(test.t.vec, ?)",
-		"     └─TableReader       root ",
-		"       └─TopN            cop  vec_cosine_distance(test.t.vec, ?)",
-		"         └─TableFullScan cop  table:t, range:[?,?], keep order:false",
+		" TopN                  root ?",
+		" └─TableReader         root ",
+		"   └─TopN              cop  ?",
+		"     └─Projection      cop  test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"       └─TableFullScan cop  table:t, range:[?,?], keep order:false",
 	}, p2)
 	tbl.Meta().TiFlashReplica.Available = true
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
@@ -230,7 +228,7 @@ func TestANNInexWithSimpleCBO(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -263,7 +261,7 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")

@@ -406,7 +406,6 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		for _, warning := range r.selectResp.Warnings {
 			r.ctx.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
-
 		r.partialCount++
 
 		hasStats, ok := resultSubset.(CopRuntimeStats)

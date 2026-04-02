@@ -923,24 +923,30 @@ func (e *ShowExec) fetchShowIndex() error {
 				ndv = colStats.NDV
 			}
 
+			// CSE compatibility: keep VECTOR indexes displayed as HNSW.
+			indexType := idx.Meta().Tp.String()
+			if indexType == "VECTOR" {
+				indexType = "HNSW"
+				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("currently vector indexes are displayed as Index_Type=HNSW. The behavior will be changed to displaying as Index_Type=VECTOR in a release after Aug 1st, 2025"))
+			}
 			e.appendRow([]any{
-				tb.Meta().Name.O,       // Table
-				nonUniq,                // Non_unique
-				idx.Meta().Name.O,      // Key_name
-				i + 1,                  // Seq_in_index
-				colName,                // Column_name
-				"A",                    // Collation
-				ndv,                    // Cardinality
-				subPart,                // Sub_part
-				nil,                    // Packed
-				nullVal,                // Null
-				idx.Meta().Tp.String(), // Index_type
-				"",                     // Comment
-				idx.Meta().Comment,     // Index_comment
-				visible,                // Index_visible
-				expression,             // Expression
-				isClustered,            // Clustered
-				isGlobalIndex,          // Global_index
+				tb.Meta().Name.O,   // Table
+				nonUniq,            // Non_unique
+				idx.Meta().Name.O,  // Key_name
+				i + 1,              // Seq_in_index
+				colName,            // Column_name
+				"A",                // Collation
+				ndv,                // Cardinality
+				subPart,            // Sub_part
+				nil,                // Packed
+				nullVal,            // Null
+				indexType,          // Index_type
+				"",                 // Comment
+				idx.Meta().Comment, // Index_comment
+				visible,            // Index_visible
+				expression,         // Expression
+				isClustered,        // Clustered
+				isGlobalIndex,      // Global_index
 			})
 		}
 	}
@@ -1269,6 +1275,8 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, "  FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
@@ -1291,6 +1299,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
 		} else {
 			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
+		}
+		if idxInfo.FullTextInfo != nil {
+			fmt.Fprintf(buf, " WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
 		}
 		if idxInfo.Invisible {
 			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
@@ -1368,6 +1379,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
+	if len(tableInfo.EngineAttribute) > 0 {
+		fmt.Fprintf(buf, " ENGINE_ATTRIBUTE='%s'", format.OutputFormat(tableInfo.EngineAttribute))
+	}
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {

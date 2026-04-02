@@ -701,6 +701,24 @@ func GetModifyTableCharsetAndCollateArgs(job *Job) (*ModifyTableCharsetAndCollat
 	return getOrDecodeArgs[*ModifyTableCharsetAndCollateArgs](&ModifyTableCharsetAndCollateArgs{}, job)
 }
 
+// ModifyTableEngineAttributeArgs is the arguments for ActionModifyTableEngineAttribute ddl.
+type ModifyTableEngineAttributeArgs struct {
+	EngineAttribute string `json:"engine_attribute,omitempty"`
+}
+
+func (a *ModifyTableEngineAttributeArgs) getArgsV1(*Job) []any {
+	return []any{a.EngineAttribute}
+}
+
+func (a *ModifyTableEngineAttributeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.EngineAttribute))
+}
+
+// GetModifyTableEngineAttributeArgs gets the args for ActionModifyTableEngineAttribute.
+func GetModifyTableEngineAttributeArgs(job *Job) (*ModifyTableEngineAttributeArgs, error) {
+	return getOrDecodeArgs[*ModifyTableEngineAttributeArgs](&ModifyTableEngineAttributeArgs{}, job)
+}
+
 // AlterIndexVisibilityArgs is the arguments for ActionAlterIndexVisibility ddl.
 type AlterIndexVisibilityArgs struct {
 	IndexName pmodel.CIStr `json:"index_name,omitempty"`
@@ -1382,9 +1400,9 @@ const (
 //
 //	Adding NonPK: Unique, IndexName, IndexPartSpecifications, IndexOption, SQLMode, Warning(not stored, always nil), Global
 //	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
-//	Adding vector index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
+//	Adding columnar index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
 //	Drop index: IndexName, IfExist, IndexID
-//	Rollback add index: IndexName, IfExist, IsVector
+//	Rollback add index: IndexName, IfExist, IsColumnar
 //	Rename index: IndexName
 type IndexArg struct {
 	// Global is never used, we only use Global in IndexOption. Can be deprecated later.
@@ -1395,9 +1413,14 @@ type IndexArg struct {
 	IndexOption             *ast.IndexOption              `json:"index_option,omitempty"`
 	HiddenCols              []*ColumnInfo                 `json:"hidden_cols,omitempty"`
 
-	// For vector index
-	FuncExpr string `json:"func_expr,omitempty"`
-	IsVector bool   `json:"is_vector,omitempty"`
+	// For columnar index
+	FuncExpr   string `json:"func_expr,omitempty"`
+	IsColumnar bool   `json:"is_columnar,omitempty"`
+	// ColumnarIndexType is used to distinguish different columnar index types.
+	// Only used for job args v2.
+	// Note: 1. when you want to read it, always calling `GetColumnarIndexType`` rather than using it directly.
+	//       2. when you set it, make sure IsColumnar = ColumnarIndexType != ColumnarIndexTypeNA.
+	ColumnarIndexType pmodel.ColumnarIndexType `json:"columnar_index_type,omitempty"`
 
 	// For PK
 	IsPK    bool          `json:"is_pk,omitempty"`
@@ -1409,8 +1432,26 @@ type IndexArg struct {
 	IsGlobal bool  `json:"is_global,omitempty"`
 }
 
+// GetColumnarIndexType gets the real columnar index type in a backward compatibility way.
+func (a *IndexArg) GetColumnarIndexType() pmodel.ColumnarIndexType {
+	// For compatibility, if columnar index type is not set, and it's a columnar index, it's a vector index.
+
+	// If the columnar index type is NA and it's not a columnar index, it's a general index.
+	if a.ColumnarIndexType == pmodel.ColumnarIndexTypeNA && !a.IsColumnar {
+		return pmodel.ColumnarIndexTypeNA
+	}
+	// If the columnar index type is NA and it's a columnar index, it's a vector index.
+	if a.ColumnarIndexType == pmodel.ColumnarIndexTypeNA && a.IsColumnar {
+		return pmodel.ColumnarIndexTypeVector
+	}
+	if a.ColumnarIndexType == pmodel.ColumnarIndexTypeFulltext && a.IsColumnar {
+		return pmodel.ColumnarIndexTypeFulltext
+	}
+	return a.ColumnarIndexType
+}
+
 // ModifyIndexArgs is the argument for add/drop/rename index jobs,
-// which includes PK and vector index.
+// which includes PK and columnar index.
 type ModifyIndexArgs struct {
 	IndexArgs []*IndexArg `json:"index_args,omitempty"`
 
@@ -1442,8 +1483,8 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 		return []any{indexNames, ifExists}
 	}
 
-	// Add vector index
-	if job.Type == ActionAddVectorIndex {
+	// Add columnar index
+	if job.Type == ActionAddColumnarIndex {
 		arg := a.IndexArgs[0]
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
 	}
@@ -1493,7 +1534,7 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeRenameIndexV1(job)
 	case ActionAddIndex:
 		err = a.decodeAddIndexV1(job)
-	case ActionAddVectorIndex:
+	case ActionAddColumnarIndex:
 		err = a.decodeAddVectorIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
@@ -1595,7 +1636,7 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
 		IndexOption:             indexOption,
 		FuncExpr:                funcExpr,
-		IsVector:                true,
+		IsColumnar:              true,
 	}}
 	return nil
 }
@@ -1603,7 +1644,7 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	// Add index
 	if a.OpType == OpAddIndex {
-		if job.Type == ActionAddVectorIndex {
+		if job.Type == ActionAddColumnarIndex {
 			return []any{a.IndexArgs[0].IndexID, a.IndexArgs[0].IfExist, a.PartitionIDs, a.IndexArgs[0].IsGlobal}
 		}
 
@@ -1633,7 +1674,7 @@ func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	}
 
 	idxArg := a.IndexArgs[0]
-	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsVector}
+	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsColumnar}
 }
 
 // GetRenameIndexes get name of renamed index.
@@ -1697,9 +1738,9 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		a.IndexArgs = make([]*IndexArg, len(indexNames))
 		for i, indexName := range indexNames {
 			a.IndexArgs[i] = &IndexArg{
-				IndexName: indexName,
-				IfExist:   ifExists[i],
-				IsVector:  isVector,
+				IndexName:  indexName,
+				IfExist:    ifExists[i],
+				IsColumnar: isVector,
 			}
 		}
 		// For drop index, store index id in IndexArgs, no impact on other situations.

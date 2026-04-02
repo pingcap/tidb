@@ -358,6 +358,11 @@ func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 
 // TiFlash Table shall be eventually available.
 func TestTiFlashReplicaAvailable(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarReplicaAvailability", `return(1)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarReplicaAvailability")
+		require.NoError(t, err)
+	}()
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)

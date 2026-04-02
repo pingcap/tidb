@@ -2598,6 +2598,7 @@ func GetPhysicalScan4LogicalTableScan(s *logicalop.LogicalTableScan, schema *exp
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 		TableSplit:      ds.TableSplit,
+		FTSQueryInfo:    ds.FtsPushDown,
 	}.Init(s.SCtx(), s.QueryBlockOffset())
 	ts.SetStats(stats)
 	ts.SetSchema(schema.Clone())
@@ -2715,6 +2716,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 					ColumnName:     ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
 					IndexId:        candidate.path.Index.ID,
 					RefVecF32:      prop.VectorProp.Vec.SerializeTo(nil),
+					Column:         *tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), true, false),
 				},
 			}
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
@@ -3069,6 +3071,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 		prop:            prop,
 		filterCondition: slices.Clone(path.TableFilters),
 		TableSplit:      ds.TableSplit,
+		FTSQueryInfo:    ds.FtsPushDown,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema().Clone())
 	rowCount := path.CountAfterAccess

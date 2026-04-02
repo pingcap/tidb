@@ -1166,10 +1166,10 @@ func TestParallelAlterAddVectorIndex(t *testing.T) {
 	tk.MustExec("use test_db_state")
 	tk.MustExec("create table tt (a int, b vector, c vector(3), d vector(4));")
 	tk.MustExec("alter table tt set tiflash replica 2 location labels 'a','b';")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/"+
-			"ddl/MockCheckVectorIndexProcess"))
+			"ddl/MockCheckColumnarIndexProcess"))
 	}()
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
@@ -1183,7 +1183,7 @@ func TestParallelAlterAddVectorIndex(t *testing.T) {
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
 		require.EqualError(t, err2,
-			"[ddl:1061]DDL job rollback, error msg: vector index vecIdx function vec_cosine_distance already exist on column c")
+			"[ddl:1061]DDL job rollback, error msg: vector index 'vecIdx' with vec_cosine_distance already exist on column c")
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }

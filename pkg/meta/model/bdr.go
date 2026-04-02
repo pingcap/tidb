@@ -103,6 +103,7 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionAlterTablePartitioning,
 		ActionRemovePartitioning,
 		ActionAddVectorIndex,
+		ActionAddColumnarIndex,
 		ActionAlterTableMode,
 		ActionRefreshMeta,
 	},
@@ -116,6 +117,9 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionCreateTableGroup,
 		ActionDropTableGroup,
 		ActionAlterTableGroup,
+		// storage class will not be replicated to allow different settings in primary/secondary clusters
+		// Note: need to change if ENGINE_ATTRIBUTE contains other fields in the future.
+		ActionModifyEngineAttribute,
 	},
 	UnknownDDL: {
 		_DEPRECATEDActionAlterTableAlterPartition,

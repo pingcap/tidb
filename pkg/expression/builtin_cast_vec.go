@@ -2078,3 +2078,35 @@ func (b *builtinCastDurationAsJSONSig) vecEvalJSON(ctx EvalContext, input *chunk
 	}
 	return nil
 }
+
+func (*builtinCastVectorFloat32AsStringSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinCastVectorFloat32AsStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalVectorFloat32(ctx, input, buf); err != nil {
+		return err
+	}
+
+	var res string
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		vec := buf.GetVectorFloat32(i)
+		res, err = types.ProduceStrWithSpecifiedTp(vec.String(), b.tp, typeCtx(ctx), false)
+		if err != nil {
+			return err
+		}
+		result.AppendString(res)
+	}
+	return nil
+}

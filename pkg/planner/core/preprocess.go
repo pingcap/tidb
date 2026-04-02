@@ -441,6 +441,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.AnalyzeTableStmt:
 		p.flag |= inAnalyze
+	case *ast.Constraint:
+		// Used in ALTER TABLE or CREATE TABLE
+		p.checkConstraintGrammar(node)
 	case *ast.CreateProcedureInfo:
 		p.flag |= inCreateRoutine
 	case *ast.VariableExpr:
@@ -1151,6 +1154,78 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]any) 
 	return nil
 }
 
+func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
+	if isColumnar && indexOptions == nil {
+		return dbterror.ErrUnsupportedIndexType.FastGen("COLUMNAR INDEX must specify 'USING <index_type>'")
+	}
+	if indexOptions == nil {
+		return nil
+	}
+	if isColumnar {
+		switch indexOptions.Tp {
+		case pmodel.IndexTypeVector /* , model.IndexTypeInverted */ :
+			// Accepted
+		case pmodel.IndexTypeFulltext:
+			// Begin CSE only =====
+			if !variable.EnableFullTextIndex.Load() && !config.GetGlobalConfig().ForceEnableFullTextIndex {
+				return dbterror.ErrUnsupportedIndexType.FastGen("Unsupported FULLTEXT index")
+			}
+			// End CSE only =======
+			if indexOptions.ParserName.L != "" && pmodel.GetFullTextParserTypeBySQLName(indexOptions.ParserName.L) == pmodel.FullTextParserTypeInvalid {
+				return dbterror.ErrUnsupportedIndexType.FastGen("Unsupported parser '%s'", indexOptions.ParserName.O)
+			}
+		case pmodel.IndexTypeInvalid:
+			return dbterror.ErrUnsupportedIndexType.FastGen("COLUMNAR INDEX must specify 'USING <index_type>'")
+		default:
+			return dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for COLUMNAR INDEX", indexOptions.Tp)
+		}
+		if indexOptions.Visibility == ast.IndexVisibilityInvisible {
+			return dbterror.ErrUnsupportedIndexType.FastGen("INVISIBLE can not be used in %s INDEX", indexOptions.Tp)
+		}
+	} else {
+		if indexOptions.AddColumnarReplicaOnDemand > 0 {
+			return dbterror.ErrUnsupportedIndexType.FastGen("ADD_COLUMNAR_REPLICA_ON_DEMAND can be only used in columnar index")
+		}
+		switch indexOptions.Tp {
+		case pmodel.IndexTypeHNSW:
+			return dbterror.ErrUnsupportedIndexType.FastGen("'USING HNSW' can be only used for VECTOR INDEX")
+		case pmodel.IndexTypeVector /* , model.IndexTypeInverted */, pmodel.IndexTypeFulltext:
+			return dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' can be only used for COLUMNAR INDEX", indexOptions.Tp)
+		default:
+			// Accepted
+		}
+	}
+
+	return nil
+}
+
+func checkIndexSpecs(indexOptions *ast.IndexOption, partSpecs []*ast.IndexPartSpecification) error {
+	if indexOptions == nil {
+		return nil
+	}
+	switch indexOptions.Tp {
+	case pmodel.IndexTypeVector:
+		if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))")
+		}
+	// case pmodel.IndexTypeInverted:
+	// 	if len(partSpecs) != 1 || partSpecs[0].Column == nil {
+	// 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("COLUMNAR INDEX of INVERTED type must specify one column name")
+	// 	}
+	case pmodel.IndexTypeFulltext:
+		if len(partSpecs) != 1 || partSpecs[0].Column == nil {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index must specify one column name")
+		}
+		if partSpecs[0].Length > 0 {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support prefix length")
+		}
+		if partSpecs[0].Desc {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support DESC order")
+		}
+	}
+	return nil
+}
+
 func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) {
 	isPrimary, isGenerated, isStored := 0, 0, false
 
@@ -1186,6 +1261,61 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+	if p.err != nil {
+		return
+	}
+
+	// Rewrite CREATE VECTOR INDEX into CREATE COLUMNAR INDEX
+	if stmt.KeyType == ast.IndexKeyTypeVector {
+		if stmt.IndexOption.Tp != pmodel.IndexTypeInvalid && stmt.IndexOption.Tp != pmodel.IndexTypeHNSW {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for VECTOR INDEX", stmt.IndexOption.Tp)
+			return
+		}
+		stmt.KeyType = ast.IndexKeyTypeColumnar
+		stmt.IndexOption.Tp = pmodel.IndexTypeVector
+	}
+	// Rewrite CREATE FULLTEXT INDEX into CREATE COLUMNAR INDEX
+	if stmt.KeyType == ast.IndexKeyTypeFulltext {
+		if stmt.IndexOption.Tp != pmodel.IndexTypeInvalid {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for FULLTEXT INDEX", stmt.IndexOption.Tp)
+			return
+		}
+		stmt.KeyType = ast.IndexKeyTypeColumnar
+		stmt.IndexOption.Tp = pmodel.IndexTypeFulltext
+	}
+
+	p.err = checkIndexOptions(stmt.KeyType == ast.IndexKeyTypeColumnar, stmt.IndexOption)
+	if p.err != nil {
+		return
+	}
+	p.err = checkIndexSpecs(stmt.IndexOption, stmt.IndexPartSpecifications)
+}
+
+func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
+	// Rewrite VECTOR INDEX into COLUMNAR INDEX
+	if stmt.Tp == ast.ConstraintVector {
+		if stmt.Option.Tp != pmodel.IndexTypeInvalid && stmt.Option.Tp != pmodel.IndexTypeHNSW {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for VECTOR INDEX", stmt.Option.Tp)
+			return
+		}
+		stmt.Tp = ast.ConstraintColumnar
+		stmt.Option.Tp = pmodel.IndexTypeVector
+	}
+	// Rewrite FULLTEXT INDEX into COLUMNAR INDEX
+	if stmt.Tp == ast.ConstraintFulltext {
+		if stmt.Option.Tp != pmodel.IndexTypeInvalid {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for FULLTEXT INDEX", stmt.Option.Tp)
+			return
+		}
+		stmt.Tp = ast.ConstraintColumnar
+		stmt.Option.Tp = pmodel.IndexTypeFulltext
+	}
+
+	p.err = checkIndexOptions(stmt.Tp == ast.ConstraintColumnar, stmt.Option)
+	if p.err != nil {
+		return
+	}
+	p.err = checkIndexSpecs(stmt.Option, stmt.Keys)
 }
 
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {

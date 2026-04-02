@@ -1601,6 +1601,16 @@ error = '''
 Invalid AFFINITY %s
 '''
 
+["ddl:8270"]
+error = '''
+Invalid engine attribute format: %s
+'''
+
+["ddl:8271"]
+error = '''
+Invalid storage class: %s
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s

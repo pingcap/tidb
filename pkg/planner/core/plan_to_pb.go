@@ -273,11 +273,24 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		tsExec.PushedDownFilterConditions = conditions
 	}
 
-	// todo: fix this later
-	//if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
-	//	annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
-	//	tsExec.AnnQuery = &annQueryCopy
-	//}
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
+		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
+		tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
+			IndexType: tipb.ColumnarIndexType_TypeVector,
+			Index: &tipb.ColumnarIndexInfo_AnnQueryInfo{
+				AnnQueryInfo: &annQueryCopy,
+			},
+		})
+	}
+	if p.FTSQueryInfo != nil {
+		ftsQueryCopy := *p.FTSQueryInfo
+		tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
+			IndexType: tipb.ColumnarIndexType_TypeFulltext,
+			Index: &tipb.ColumnarIndexInfo_FtsQueryInfo{
+				FtsQueryInfo: &ftsQueryCopy,
+			},
+		})
+	}
 
 	var err error
 	tsExec.RuntimeFilterList, err = RuntimeFilterListToPB(ctx, p.runtimeFilterList, ctx.GetClient())
@@ -319,10 +332,24 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 
 	ptsExec.Desc = p.Desc
 
-	//if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
-	//	annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
-	//	ptsExec.AnnQuery = &annQueryCopy
-	//}
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
+		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
+		ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
+			IndexType: tipb.ColumnarIndexType_TypeVector,
+			Index: &tipb.ColumnarIndexInfo_AnnQueryInfo{
+				AnnQueryInfo: &annQueryCopy,
+			},
+		})
+	}
+	if p.FTSQueryInfo != nil {
+		ftsQueryCopy := *p.FTSQueryInfo
+		ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
+			IndexType: tipb.ColumnarIndexType_TypeFulltext,
+			Index: &tipb.ColumnarIndexInfo_FtsQueryInfo{
+				FtsQueryInfo: &ftsQueryCopy,
+			},
+		})
+	}
 
 	executorID := p.ExplainID().String()
 	err = tables.SetPBColumnsDefaultValue(ctx.GetExprCtx(), ptsExec.Columns, p.Columns)

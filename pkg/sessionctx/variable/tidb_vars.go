@@ -1068,6 +1068,18 @@ const (
 	TiDBGCMaxWaitTime = "tidb_gc_max_wait_time"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
+	// TiDBExpEmbedJinaAIAPIKey is the API key to use when calling JINA embedding API.
+	TiDBExpEmbedJinaAIAPIKey = "tidb_exp_embed_jina_ai_api_key"
+	// TiDBExpEmbedOpenAIAPIKey is the API key to use when calling OpenAI embedding API.
+	TiDBExpEmbedOpenAIAPIKey = "tidb_exp_embed_openai_api_key"
+	// TiDBExpEmbedCohereAPIKey is the API key to use when calling Cohere embedding API.
+	TiDBExpEmbedCohereAPIKey = "tidb_exp_embed_cohere_api_key"
+	// TiDBExpEmbedHuggingFaceAPIKey is the API key to use when calling HuggingFace embedding API.
+	TiDBExpEmbedHuggingFaceAPIKey = "tidb_exp_embed_huggingface_api_key"
+	// TiDBExpEmbedNvidiaNIMAPIKey is the API key to use when calling Nvidia NIM embedding API.
+	TiDBExpEmbedNvidiaNIMAPIKey = "tidb_exp_embed_nvidia_nim_api_key"
+	// TiDBExpEmbedGeminiAPIKey is the API key to use when calling Gemini embedding API.
+	TiDBExpEmbedGeminiAPIKey = "tidb_exp_embed_gemini_api_key"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
 	// TiDBPersistAnalyzeOptions persists analyze options for later analyze and auto-analyze
@@ -1197,6 +1209,8 @@ const (
 	// TiDBTTLRunningTasks limits the count of running ttl tasks. Default to 0, means 3 times the count of TiKV (or no
 	// limitation, if the storage is not TiKV).
 	TiDBTTLRunningTasks = "tidb_ttl_running_tasks"
+	// TiDBEnableFullTextIndex indicates whether to enable FULLTEXT index. (CSE ONLY)
+	TiDBEnableFullTextIndex = "tidb_enable_fulltext_index"
 	// AuthenticationLDAPSASLAuthMethodName defines the authentication method used by LDAP SASL authentication plugin
 	AuthenticationLDAPSASLAuthMethodName = "authentication_ldap_sasl_auth_method_name"
 	// AuthenticationLDAPSASLCAPath defines the ca certificate to verify LDAP connection in LDAP SASL authentication plugin
@@ -1709,6 +1723,7 @@ const (
 	DefTiDBAdvancerCheckPointLagLimit                      = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                       = IndexLookUpPushDownPolicyHintOnly
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio              = 0.0
+	DefTiDBEnableFullTextIndex                             = false
 )
 
 // Process global variables.
@@ -1781,6 +1796,7 @@ var (
 	EnableRCReadCheckTS = atomic.NewBool(false)
 	// EnableRowLevelChecksum indicates whether to append checksum to row values.
 	EnableRowLevelChecksum         = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
+	EnableFullTextIndex            = atomic.NewBool(DefTiDBEnableFullTextIndex)
 	LowResolutionTSOUpdateInterval = atomic.NewUint32(DefTiDBLowResolutionTSOUpdateInterval)
 
 	// DefTiDBServerMemoryLimit indicates the default value of TiDBServerMemoryLimit(TotalMem * 80%).
@@ -1827,6 +1843,12 @@ var (
 	ServiceScope                    = atomic.NewString("")
 	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI                 = atomic.NewString("")
+	EmbedJinaAPIKey                 = atomic.NewString("")
+	EmbedOpenAIAPIKey               = atomic.NewString("")
+	EmbedCohereAPIKey               = atomic.NewString("")
+	EmbedHuggingFaceAPIKey          = atomic.NewString("")
+	EmbedNvidiaNIMAPIKey            = atomic.NewString("")
+	EmbedGeminiAPIKey               = atomic.NewString("")
 	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 

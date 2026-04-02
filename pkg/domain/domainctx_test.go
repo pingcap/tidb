@@ -17,17 +17,24 @@ package domain
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain/domainctx"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDomainCtx(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.BindDomain(nil)
+	require.NotEqual(t, "", domainctx.DomainKey.String())
+
+	BindDomain(ctx, nil)
 	v := GetDomain(ctx)
 	require.Nil(t, v)
 
-	ctx.BindDomain(&Domain{})
+	ctx.ClearValue(domainctx.DomainKey)
+	v = GetDomain(ctx)
+	require.Nil(t, v)
+
+	BindDomain(ctx, &Domain{})
 	v = GetDomain(ctx)
 	require.NotNil(t, v)
 }

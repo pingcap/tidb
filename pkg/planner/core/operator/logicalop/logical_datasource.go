@@ -44,6 +44,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -65,6 +66,8 @@ type DataSource struct {
 	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
 	AllConds []expression.Expression
+	// FtsPushDown contains full text search info to be pushed down.
+	FtsPushDown *tipb.FTSQueryInfo
 
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
@@ -254,6 +257,10 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 			// it can't prune the generated column of shard index
 			if ds.ContainExprPrefixUk &&
 				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
+				continue
+			}
+			if ds.Columns[i].ID == model.VirtualColFTSScoreID {
+				// Keep FTS score column in TableScan to enable FTS pushdown.
 				continue
 			}
 			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])

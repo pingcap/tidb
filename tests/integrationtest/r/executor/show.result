@@ -664,6 +664,7 @@ des_decrypt
 des_encrypt
 div
 elt
+embed_text
 encode
 encrypt
 eq
@@ -680,6 +681,7 @@ found_rows
 from_base64
 from_days
 from_unixtime
+fts_match_word
 ge
 get_format
 get_lock

@@ -475,9 +475,9 @@ func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName string) (in
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
-func BuildTableInfoFromAST(ctx *metabuild.Context, s *ast.CreateTableStmt) (*model.TableInfo, error) {
+func BuildTableInfoFromAST(ctx *metabuild.Context, s *ast.CreateTableStmt, store kv.Storage) (*model.TableInfo, error) {
 	// TODO: Support the vector index for this function.
-	return buildTableInfoWithCheck(ctx, nil, s, mysql.DefaultCharset, "", nil)
+	return buildTableInfoWithCheck(ctx, store, s, mysql.DefaultCharset, "", nil)
 }
 
 // buildTableInfoWithCheck builds model.TableInfo from a SQL statement.
@@ -551,6 +551,9 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, table
 				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
 					return errors.Trace(err)
 				}
+				if err := checkGeneratedColForAutoEmbedding(colDef.Name.Name.L, option.Expr, option.Stored); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 		if containsColumnOption(colDef, ast.ColumnOptionAutoIncrement) {
@@ -591,18 +594,71 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, table
 			return errors.Trace(err)
 		}
 	}
+
+	// CSE only: check if a generated column is generated from another auto-embedding columns.
+	// This is forbidden because we will always evaluates auto-embedding columns at last in parallel
+	// so that auto-embedding columns cannot be used as a dependency of another generated column.
+	// TODO: Currently this restriction applies to both STORED and VIRTUAL columns.
+	// Actually for VIRTUAL columns it should be fine. We could support it later.
+	{
+		autoEmbeddingCols := make(map[string]struct{})
+		for _, colDef := range colDefs {
+			for _, option := range colDef.Options {
+				if option.Tp == ast.ColumnOptionGenerated {
+					if expression.IsAutoEmbedFnCallAST(option.Expr) {
+						autoEmbeddingCols[colDef.Name.Name.L] = struct{}{}
+					}
+				}
+			}
+		}
+		for colName, colInfo := range colName2Generation {
+			if !colInfo.generated {
+				continue
+			}
+			for key := range colInfo.dependences {
+				if _, ok := autoEmbeddingCols[key]; ok {
+					return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("generated column on an auto-embedding column is not supported: column '%s' is generated from '%s'", colName, key)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
-func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr, tblInfo *model.TableInfo) error {
-	var hasVectorIndex bool
+func setTableDefaultReplicaNumForLocalIndex(store kv.Storage, tblInfo *model.TableInfo) error {
+	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+	if tiflashEnabled {
+		replicas, err := infoschema.GetTiFlashStoreCount(store)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if replicas == 0 {
+			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("columnar store (TiFlash) must be deployed in the cluster in order to use columnar index like vector or fulltext"))
+		}
+	}
+
+	// Always set the TiFlashReplicaInfo.count to 1 which is default.
+	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:          1,
+		LocationLabels: make([]string, 0),
+	}
+	err := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, 1, &tblInfo.TiFlashReplica.LocationLabels)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr, tblInfo *model.TableInfo) error {
+	hasColumnarIndex := false
 	for _, idx := range tblInfo.Indices {
-		if idx.VectorInfo != nil {
-			hasVectorIndex = true
+		if idx.IsColumnarIndex() {
+			hasColumnarIndex = true
 			break
 		}
 	}
-	if !hasVectorIndex {
+	if !hasColumnarIndex {
 		return nil
 	}
 	if store == nil {
@@ -613,23 +669,13 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr,
 	}
 
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		replicas, err := infoschema.GetTiFlashStoreCount(store)
+		err := setTableDefaultReplicaNumForLocalIndex(store, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if replicas == 0 {
-			return errors.Trace(dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
-		}
-
-		// Always try to set to 1 as the default replica count.
-		defaultReplicas := uint64(1)
-		tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-			Count:          defaultReplicas,
-			LocationLabels: make([]string, 0),
-		}
 	}
 
-	return errors.Trace(checkTableTypeForVectorIndex(tblInfo))
+	return errors.Trace(checkTableTypeForColumnarIndex(tblInfo))
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -660,7 +706,7 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName pmodel
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkVectorIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
+	if err := checkColumnarIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -958,6 +1004,10 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.PlacementPolicyRef = &model.PolicyRefInfo{
 				Name: pmodel.NewCIStr(op.StrValue),
 			}
+		case ast.TableOptionEngineAttribute:
+			if err := handleEngineAttributeForCreateTable(op.StrValue, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
 		case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 			if ttlOptionsHandled {
 				continue
@@ -1073,7 +1123,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
+				colName = getAnonymousIndexPrefix(constr.Option != nil && constr.Option.Tp == pmodel.IndexTypeVector)
 			}
 		}
 		if colName == "" {
@@ -1333,7 +1383,7 @@ func BuildTableInfo(
 
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
-		if constr.Tp != ast.ConstraintVector {
+		if constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
 			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, pmodel.NewCIStr(constr.Name), tbInfo, tblColumns)
 			if err != nil {
@@ -1401,14 +1451,10 @@ func BuildTableInfo(
 			}
 		}
 
-		if constr.Tp == ast.ConstraintFulltext {
-			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
-			continue
-		}
-
 		var (
-			indexName               = constr.Name
-			primary, unique, vector bool
+			indexName         = constr.Name
+			primary, unique   bool
+			columnarIndexType pmodel.ColumnarIndexType = pmodel.ColumnarIndexTypeNA
 		)
 
 		// Check if the index is primary, unique or vector.
@@ -1419,11 +1465,15 @@ func BuildTableInfo(
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
-		case ast.ConstraintVector:
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+		case ast.ConstraintColumnar:
+			switch constr.Option.Tp {
+			case pmodel.IndexTypeVector:
+				columnarIndexType = pmodel.ColumnarIndexTypeVector
+			case pmodel.IndexTypeFulltext:
+				columnarIndexType = pmodel.ColumnarIndexTypeFulltext
+			default:
+				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
 			}
-			vector = true
 		}
 
 		// check constraint
@@ -1496,7 +1546,7 @@ func BuildTableInfo(
 			pmodel.NewCIStr(indexName),
 			primary,
 			unique,
-			vector,
+			columnarIndexType,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,
@@ -1661,7 +1711,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, pmodel.ColumnarIndexTypeNA, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}

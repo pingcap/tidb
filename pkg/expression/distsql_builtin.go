@@ -1149,6 +1149,8 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecCosineDistanceSig{base}
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
+	case scalarFuncSigFTSMatchWord:
+		f = &builtinFtsMatchWordSig{base}
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e

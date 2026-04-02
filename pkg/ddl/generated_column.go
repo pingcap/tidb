@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 )
 
 // columnGenerationInDDL is a struct for validating generated columns in DDL.
@@ -258,6 +259,9 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName pmodel.CIStr
 		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr.Internal()); err != nil {
 			return errors.Trace(err)
 		}
+		if err := checkGeneratedColForAutoEmbedding(newCol.Name.L, newCol.GeneratedExpr.Internal(), newCol.GeneratedStored); err != nil {
+			return errors.Trace(err)
+		}
 
 		// rule 4.
 		_, dependColNames, err := findDependedColumnNames(schemaName, tbl.Meta().Name, newColDef)
@@ -268,6 +272,9 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName pmodel.CIStr
 			if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
 				return errors.Trace(err)
 			}
+		}
+		if err := checkGeneratedColumnDependsOnAutoEmbeddingColumn(newCol.Name.L, dependColNames, originCols); err != nil {
+			return errors.Trace(err)
 		}
 
 		// rule 5.
@@ -428,4 +435,58 @@ func checkExpressionIndexAutoIncrement(name string, dependencies map[string]stru
 		}
 	}
 	return nil
+}
+
+func checkGeneratedColForAutoEmbedding(name string, expr ast.ExprNode, isStored bool) error {
+	if !expression.ContainsAutoEmbedFnAST(expr) {
+		return nil
+	}
+	if !expression.IsAutoEmbedFnCallAST(expr) {
+		// The expr contains auto-embedding function, but not the top-level call.
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("EMBED_TEXT() function must be the top-level function call in generated column expression. It cannot be nested inside other functions or expressions.")
+	}
+	if !isStored {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("EMBED_TEXT() can be only used as stored generated column. It cannot be used as virtual generated column.")
+	}
+	_, err := expression.ExtractAutoEmbedInfoFromAST(expr)
+	if err != nil {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("unsupported EMBED_TEXT() usage in auto-embedding column: %v", err)
+	}
+	return nil
+}
+
+func checkGeneratedColumnDependsOnAutoEmbeddingColumn(name string, dependColNames map[string]struct{}, cols []*table.Column) error {
+	for _, col := range cols {
+		if _, ok := dependColNames[col.Name.L]; !ok {
+			continue
+		}
+		if !col.IsGenerated() {
+			continue
+		}
+		isAutoEmbed, err := isAutoEmbeddingGeneratedColumn(col)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isAutoEmbed {
+			return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("generated column on an auto-embedding column is not supported: column '%s' is generated from '%s'", name, col.Name.L)
+		}
+	}
+	return nil
+}
+
+func isAutoEmbeddingGeneratedColumn(col *table.Column) (bool, error) {
+	var expr ast.ExprNode
+	switch {
+	case col.GeneratedExpr != nil:
+		expr = col.GeneratedExpr.Internal()
+	case len(col.GeneratedExprString) > 0:
+		var err error
+		expr, err = generatedexpr.ParseExpression(col.GeneratedExprString)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+	default:
+		return false, nil
+	}
+	return expression.IsAutoEmbedFnCallAST(expr), nil
 }

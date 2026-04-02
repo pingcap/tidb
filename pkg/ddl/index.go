@@ -74,6 +74,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
@@ -101,7 +102,7 @@ var DefaultCumulativeTimeout = 1 * time.Minute
 // exported for testing.
 var DefaultAnalyzeCheckInterval = 10 * time.Second
 
-func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
+func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType pmodel.ColumnarIndexType) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -114,12 +115,8 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		if col == nil {
 			return nil, false, dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ip.Column.Name)
 		}
-		if isVector && col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
-			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
-		}
-
 		// return error in strict sql mode
-		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), isVector); err != nil {
+		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), columnarIndexType); err != nil {
 			return nil, false, err
 		}
 		if col.FieldType.IsArray() {
@@ -134,7 +131,7 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 			indexColLen == col.FieldType.GetFlen() {
 			indexColLen = types.UnspecifiedLength
 		}
-		indexColumnLength, err := getIndexColumnLength(col, indexColLen)
+		indexColumnLength, err := getIndexColumnLength(col, indexColLen, columnarIndexType)
 		if err != nil {
 			return nil, false, err
 		}
@@ -149,7 +146,7 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(sumLength, maxIndexLength)
 			}
 			// truncate index length and produce warning message in non-restrict sql mode.
-			colLenPerUint, err := getIndexColumnLength(col, 1)
+			colLenPerUint, err := getIndexColumnLength(col, 1, columnarIndexType)
 			if err != nil {
 				return nil, false, err
 			}
@@ -188,8 +185,8 @@ func CheckPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 	return lastCol, nil
 }
 
-func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
-	idxLen, err := indexColumnsLen(columns, idxColumns)
+func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, columnarIndexType pmodel.ColumnarIndexType) error {
+	idxLen, err := indexColumnsLen(columns, idxColumns, columnarIndexType)
 	if err != nil {
 		return err
 	}
@@ -199,7 +196,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 	return nil
 }
 
-func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
+func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn, columnarIndexType pmodel.ColumnarIndexType) (colLen int, err error) {
 	for _, idxCol := range idxCols {
 		col := model.FindColumnInfo(cols, idxCol.Name.L)
 		if col == nil {
@@ -207,7 +204,7 @@ func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (co
 			return
 		}
 		var l int
-		l, err = getIndexColumnLength(col, idxCol.Length)
+		l, err = getIndexColumnLength(col, idxCol.Length, columnarIndexType)
 		if err != nil {
 			return
 		}
@@ -216,12 +213,37 @@ func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (co
 	return
 }
 
-func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLongKeyErr, isVectorIndex bool) error {
+func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLongKeyErr bool, columnarIndexType pmodel.ColumnarIndexType) error {
+	if columnarIndexType != pmodel.ColumnarIndexTypeNA {
+		if col.Hidden {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("cannot add a %s on hidden column %s", columnarIndexType.SQLName(), col.Name))
+		}
+		switch columnarIndexType {
+		case pmodel.ColumnarIndexTypeVector:
+			if col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
+				return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("vector index can only be added on a vector column")
+			}
+		case pmodel.ColumnarIndexTypeFulltext:
+			if !types.IsString(col.FieldType.GetType()) {
+				return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("fulltext index can only be added on a string-like column")
+			}
+		default:
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("unknown columnar index type %s", columnarIndexType)
+		}
+
+		// Other checks are usually for normal index, not needed.
+		return nil
+	}
+
 	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {
 			return errors.Trace(dbterror.ErrWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
 		}
 		return errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
+	}
+
+	if col.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("vector column only support add vector index")
 	}
 
 	// JSON column cannot index.
@@ -230,16 +252,6 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLong
 			return dbterror.ErrFunctionalIndexOnJSONOrGeometryFunction
 		}
 		return errors.Trace(dbterror.ErrJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
-	}
-
-	// Vector column cannot index, for now.
-	if col.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
-		if col.Hidden {
-			return errors.Errorf("Cannot create an expression index on a function that returns a VECTOR value")
-		}
-		if !isVectorIndex {
-			return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported adding a general index on a vector column")
-		}
 	}
 
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
@@ -290,7 +302,14 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLong
 }
 
 // getIndexColumnLength calculate the bytes number required in an index column.
-func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
+func getIndexColumnLength(col *model.ColumnInfo, colLen int, columnarIndexType pmodel.ColumnarIndexType) (int, error) {
+	if columnarIndexType != pmodel.ColumnarIndexTypeNA {
+		// Columnar index does not actually create KV index, so it has length of 0.
+		// however 0 may cause some issues in other calculations, so we use 1 here.
+		// 1 is also minimal enough anyway.
+		return 1, nil
+	}
+
 	length := types.UnspecifiedLength
 	if colLen != types.UnspecifiedLength {
 		length = colLen
@@ -299,11 +318,6 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	}
 
 	switch col.GetType() {
-	case mysql.TypeTiDBVectorFloat32:
-		// Vector Index does not actually create KV index, so it has length of 0.
-		// however 0 may cause some issues in other calculations, so we use 1 here.
-		// 1 is also minimal enough anyway.
-		return 1, nil
 	case mysql.TypeBit:
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
@@ -339,7 +353,8 @@ func BuildIndexInfo(
 	ctx *metabuild.Context,
 	tblInfo *model.TableInfo,
 	indexName pmodel.CIStr,
-	isPrimary, isUnique, isVector bool,
+	isPrimary, isUnique bool,
+	columnarIndexType pmodel.ColumnarIndexType,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	state model.SchemaState,
@@ -356,17 +371,28 @@ func BuildIndexInfo(
 		Unique:  isUnique,
 	}
 
-	if isVector {
-		vectorInfo, _, err := buildVectorInfoWithCheck(indexPartSpecifications, tblInfo)
+	switch columnarIndexType {
+	case pmodel.ColumnarIndexTypeNA:
+		// Do nothing.
+	case pmodel.ColumnarIndexTypeVector:
+		vectorInfo, _, err := buildVectorInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		idxInfo.VectorInfo = vectorInfo
+	case pmodel.ColumnarIndexTypeFulltext:
+		ftsInfo, err := buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.FullTextInfo = ftsInfo
+	default:
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("unknown columnar index type %s", columnarIndexType)
 	}
 
 	var err error
 	allTableColumns := tblInfo.Columns
-	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, isVector)
+	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, columnarIndexType)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -379,8 +405,6 @@ func BuildIndexInfo(
 		if indexOption.Tp == pmodel.IndexTypeInvalid {
 			// Use btree as default index type.
 			idxInfo.Tp = pmodel.IndexTypeBtree
-		} else if !isVector && indexOption.Tp == pmodel.IndexTypeHNSW {
-			return nil, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("Only support vector index with HNSW type, but it's non-vector index")
 		} else {
 			idxInfo.Tp = indexOption.Tp
 		}
@@ -406,24 +430,24 @@ func BuildIndexInfo(
 	return idxInfo, nil
 }
 
-func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
+func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption,
 	tblInfo *model.TableInfo) (*model.VectorIndexInfo, string, error) {
 	if len(indexPartSpecifications) != 1 {
-		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported no function")
+		return nil, "", dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("a vector distance function must be specified")
 	}
 
 	idxPart := indexPartSpecifications[0]
 	f, ok := idxPart.Expr.(*ast.FuncCallExpr)
 	if !ok {
-		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("unsupported function: %v", idxPart.Expr))
+		return nil, "", dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("a vector distance function must be specified")
 	}
 	distanceMetric, ok := model.IndexableFnNameToDistanceMetric[f.FnName.L]
 	if !ok {
-		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("currently only L2 and Cosine distance is indexable")
+		return nil, "", dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("currently only VEC_L2_DISTANCE and VEC_COSINE_DISTANCE is supported in vector index")
 	}
 	colExpr, ok := f.Args[0].(*ast.ColumnNameExpr)
 	if !ok {
-		return nil, "", dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("unsupported function args: %v", f.Args[0]))
+		return nil, "", dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("vector column must be specified as the args, but got %v", f.Args[0]))
 	}
 	colInfo := findColumnByName(colExpr.Name.Name.L, tblInfo)
 	if colInfo == nil {
@@ -440,12 +464,12 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 		}
 		if idx.VectorInfo.DistanceMetric == distanceMetric {
 			return nil, "", dbterror.ErrDupKeyName.GenWithStack(
-				fmt.Sprintf("vector index %s function %s already exist on column %s",
+				fmt.Sprintf("vector index '%s' with %s already exist on column %s",
 					idx.Name, f.FnName, colInfo.Name))
 		}
 	}
 	if colInfo.FieldType.GetFlen() <= 0 {
-		return nil, "", errors.Errorf("add vector index can only be defined on fixed-dimension vector columns")
+		return nil, "", dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("vector index can only be defined on fixed-dimension vector columns")
 	}
 
 	exprStr, err := restoreFuncCall(f)
@@ -458,9 +482,57 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 	idxPart.Length = types.UnspecifiedLength
 
 	return &model.VectorIndexInfo{
+		Kind:           model.VectorIndexKindHNSW,
 		Dimension:      uint64(colInfo.FieldType.GetFlen()),
 		DistanceMetric: distanceMetric,
 	}, exprStr, nil
+}
+
+func buildFullTextInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption,
+	tblInfo *model.TableInfo) (*pmodel.FullTextIndexInfo, error) {
+	if len(indexPartSpecifications) == 0 {
+		return nil, fmt.Errorf("fulltext index must specify a string column")
+	}
+	if len(indexPartSpecifications) > 1 {
+		return nil, fmt.Errorf("currently fulltext index only supports one column")
+	}
+	idxPart := indexPartSpecifications[0]
+	if idxPart.Expr != nil {
+		return nil, fmt.Errorf("fulltext index can not be defined using an expression")
+	}
+	if idxPart.Length != types.UnspecifiedLength {
+		return nil, fmt.Errorf("fulltext index does not support prefix length")
+	}
+	if idxPart.Desc {
+		return nil, fmt.Errorf("fulltext index does not support DESC order")
+	}
+	// The Default parser is STANDARD
+	parser := pmodel.FullTextParserTypeStandardV1
+	if indexOption != nil && indexOption.ParserName.L != "" {
+		parser = pmodel.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
+		if parser == pmodel.FullTextParserTypeInvalid {
+			// Actually indexOption must be valid. It is already checked in checkIndexOptions.
+			return nil, fmt.Errorf("fulltext index must specify a valid parser")
+		}
+	}
+	colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+	if colInfo == nil {
+		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name.L, tblInfo.Name)
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.FullTextInfo == nil {
+			continue
+		}
+		if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
+			continue
+		}
+		return nil, dbterror.ErrDupKeyName.GenWithStack(
+			fmt.Sprintf("fulltext index '%s' already exist on column %s",
+				idx.Name, colInfo.Name))
+	}
+	return &pmodel.FullTextIndexInfo{
+		ParserType: parser,
+	}, nil
 }
 
 // AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
@@ -562,8 +634,8 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName pmodel.CIStr
 			return true, nil
 		}
 	}
-	if idx.VectorInfo != nil {
-		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+	if idx.IsColumnarIndex() {
+		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set columnar index as invisible")
 	}
 	return false, nil
 }
@@ -674,7 +746,7 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 
 func checkAndBuildIndexInfo(
 	job *model.Job, tblInfo *model.TableInfo,
-	isVector bool, isPK bool, args *model.IndexArg,
+	columnarIndexType pmodel.ColumnarIndexType, isPK bool, args *model.IndexArg,
 ) (*model.IndexInfo, error) {
 	var err error
 	indexInfo := tblInfo.FindIndexByName(args.IndexName.L)
@@ -712,7 +784,7 @@ func checkAndBuildIndexInfo(
 		args.IndexName,
 		isPK,
 		args.Unique,
-		isVector,
+		columnarIndexType,
 		args.IndexPartSpecifications,
 		args.IndexOption,
 		model.StateNone,
@@ -740,7 +812,7 @@ func checkAndBuildIndexInfo(
 	return indexInfo, nil
 }
 
-func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropIndex(jobCtx, job)
@@ -756,7 +828,7 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
+	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -766,16 +838,36 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 	a := args.IndexArgs[0]
-	a.IndexPartSpecifications[0].Expr, err = generatedexpr.ParseExpression(a.FuncExpr)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	defer func() {
-		a.IndexPartSpecifications[0].Expr = nil
-	}()
 
-	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, true, false, a)
+	// Note: job does not have the `columnarIndexType` arg,
+	// so that `columnarIndexType` will not be included in args (set as ColumnarIndexTypeVector default).
+	columnarIndexType := a.GetColumnarIndexType()
+	// if a.ColumnarIndexType == pmodel.ColumnarIndexTypeNA {
+	// 	job.State = model.JobStateCancelled
+	// 	return ver, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("internal error, failed to decode columnar index type")
+	// }
+
+	if a.IndexOption.AddColumnarReplicaOnDemand == 0 {
+		if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("columnar replica must exist to create %s. Try explicitly specify ADD_COLUMNAR_REPLICA_ON_DEMAND like: `ALTER TABLE <TABLE> ADD %s (...) ADD_COLUMNAR_REPLICA_ON_DEMAND;`, or add a columnar replica first like: `ALTER TABLE <TABLE> SET TIFLASH REPLICA 1;`",
+				columnarIndexType.SQLName(),
+				strings.ToUpper(columnarIndexType.SQLName())))
+		}
+	}
+
+	if columnarIndexType == pmodel.ColumnarIndexTypeVector {
+		a.IndexPartSpecifications[0].Expr, err = generatedexpr.ParseExpression(a.FuncExpr)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		defer func() {
+			a.IndexPartSpecifications[0].Expr = nil
+		}()
+	}
+
+	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, columnarIndexType, false, a)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -783,6 +875,22 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
+		// Handle with AddColumnarReplicaOnDemand
+		// When adding index, add a replica by default as well, if there is no replica.
+		if tblInfo.TiFlashReplica == nil {
+			sctx, err := w.sessPool.Get()
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			defer w.sessPool.Put(sctx)
+
+			err = setTableDefaultReplicaNumForLocalIndex(sctx.GetStore(), tblInfo)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
 		indexInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
@@ -834,7 +942,7 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 
 		// Check the progress of the TiFlash backfill index.
 		var done bool
-		done, ver, err = w.checkVectorIndexProcessOnTiFlash(jobCtx, job, tbl, indexInfo)
+		done, ver, err = w.checkColumnarIndexProcessOnTiFlash(jobCtx, job, tbl, indexInfo)
 		if err != nil || !done {
 			return ver, err
 		}
@@ -854,7 +962,7 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		logutil.DDLLogger().Info("[ddl] run add vector index job done",
+		logutil.DDLLogger().Info("[ddl] run add columnar index job done",
 			zap.Int64("ver", ver),
 			zap.String("charset", job.Charset),
 			zap.String("collation", job.Collate))
@@ -865,15 +973,15 @@ func (w *worker) onCreateVectorIndex(jobCtx *jobContext, job *model.Job) (ver in
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) checkVectorIndexProcessOnTiFlash(jobCtx *jobContext, job *model.Job, tbl table.Table, indexInfo *model.IndexInfo,
+func (w *worker) checkColumnarIndexProcessOnTiFlash(jobCtx *jobContext, job *model.Job, tbl table.Table, indexInfo *model.IndexInfo,
 ) (done bool, ver int64, err error) {
-	err = w.checkVectorIndexProcess(jobCtx, tbl, job, indexInfo)
+	err = w.checkColumnarIndexProcess(jobCtx, tbl, job, indexInfo)
 	if err != nil {
 		if dbterror.ErrWaitReorgTimeout.Equal(err) {
 			return false, ver, nil
 		}
 		if !isRetryableJobError(err, job.ErrorCount) {
-			logutil.DDLLogger().Warn("run add vector index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
+			logutil.DDLLogger().Warn("run add columnar index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
 		}
 		return false, ver, errors.Trace(err)
@@ -882,54 +990,100 @@ func (w *worker) checkVectorIndexProcessOnTiFlash(jobCtx *jobContext, job *model
 	return true, ver, nil
 }
 
-func (w *worker) checkVectorIndexProcess(jobCtx *jobContext, tbl table.Table, job *model.Job, index *model.IndexInfo) error {
-	waitTimeout := 500 * time.Millisecond
-	ticker := time.NewTicker(waitTimeout)
-	defer ticker.Stop()
-	notAddedRowCnt := int64(-1)
-	for {
+func (w *worker) checkColumnarIndexProcess(jobCtx *jobContext, tbl table.Table, job *model.Job, index *model.IndexInfo) error {
+	const waitTimeout = 500 * time.Millisecond
+	start := time.Now()
+
+	if w.ddlCtx.ctx.Err() != nil {
+		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
+	}
+	if !w.ddlCtx.isOwner() {
+		// If it's not the owner, we will try later, so here just returns an error.
+		logutil.DDLLogger().Info("DDL is not the DDL owner", zap.String("ID", w.ddlCtx.uuid))
+		return errors.Trace(dbterror.ErrNotOwner)
+	}
+
+	isDone, notAddedIndexCnt, addedIndexCnt, err := w.checkColumnarIndexProcessOnce(jobCtx, tbl, index.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job.RowCount = addedIndexCnt
+
+	if isDone {
+		return nil
+	}
+
+	stepCtx := jobCtx.stepCtx
+	if stepCtx != nil && stepCtx.Err() != nil {
+		cause := context.Cause(stepCtx)
+		if cause == nil {
+			cause = stepCtx.Err()
+		}
+		return errors.Trace(cause)
+	}
+
+	// The caller will treat ErrWaitReorgTimeout as a non-error and retry quickly, so we block here
+	// to avoid tight polling when TiFlash is still backfilling.
+	remaining := waitTimeout - time.Since(start)
+	if remaining > 0 {
+		timer := time.NewTimer(remaining)
+		defer timer.Stop()
+
+		var stepDone <-chan struct{}
+		if stepCtx != nil && stepCtx != w.ddlCtx.ctx {
+			stepDone = stepCtx.Done()
+		}
 		select {
 		case <-w.ddlCtx.ctx.Done():
 			return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
-		case <-ticker.C:
-			logutil.DDLLogger().Info(
-				"index backfill state running, check vector index process",
-				zap.Stringer("job", job),
-				zap.Stringer("index name", index.Name),
-				zap.Int64("index ID", index.ID),
-				zap.Duration("wait time", waitTimeout),
-				zap.Int64("total added row count", job.RowCount),
-				zap.Int64("not added row count", notAddedRowCnt))
-			return dbterror.ErrWaitReorgTimeout
-		default:
-		}
-
-		if !w.ddlCtx.isOwner() {
-			// If it's not the owner, we will try later, so here just returns an error.
-			logutil.DDLLogger().Info("DDL is not the DDL owner", zap.String("ID", w.ddlCtx.uuid))
-			return errors.Trace(dbterror.ErrNotOwner)
-		}
-
-		isDone, notAddedIndexCnt, addedIndexCnt, err := w.checkVectorIndexProcessOnce(jobCtx, tbl, index.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		notAddedRowCnt = notAddedIndexCnt
-		job.RowCount = addedIndexCnt
-
-		if isDone {
-			break
+		case <-stepDone:
+			cause := context.Cause(stepCtx)
+			if cause == nil {
+				cause = stepCtx.Err()
+			}
+			return errors.Trace(cause)
+		case <-timer.C:
 		}
 	}
-	return nil
+
+	logutil.DDLLogger().Info(
+		"index backfill state running, check columnar index process",
+		zap.Stringer("job", job),
+		zap.Stringer("index name", index.Name),
+		zap.Int64("index ID", index.ID),
+		zap.Duration("wait time", waitTimeout),
+		zap.Int64("total added row count", job.RowCount),
+		zap.Int64("not added row count", notAddedIndexCnt))
+	return dbterror.ErrWaitReorgTimeout
 }
 
-// checkVectorIndexProcessOnce checks the backfill process of a vector index from TiFlash once.
-func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table, indexID int64) (
+// checkColumnarIndexProcessFromTiKV checks the backfill process of a columnar index from TiKV.
+func (w *worker) checkColumnarIndexProcessFromTiKV(_d *jobContext, tbl table.Table, indexID int64) (bool, int64, error) {
+	// TODO: Cache the TiKV stores stat.
+	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
+	if err != nil {
+		return false, 0, err
+	}
+	tikvStores := make(map[int64]pdHttp.StoreInfo)
+	for _, store := range tikvStats.Stores {
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			continue
+		}
+		tikvStores[store.Store.ID] = store
+	}
+	progress, err := infosync.CalculateColumnarIndexProgress(tbl.Meta().ID, indexID, tikvStores)
+	if err != nil {
+		return false, 0, err
+	}
+	return progress >= 1.0, 0, nil
+}
+
+// checkColumnarIndexProcessOnce checks the backfill process of a columnar index from TiFlash once.
+func (w *worker) checkColumnarIndexProcessOnce(jobCtx *jobContext, tbl table.Table, indexID int64) (
 	isDone bool, notAddedIndexCnt, addedIndexCnt int64, err error) {
-	failpoint.Inject("MockCheckVectorIndexProcess", func(val failpoint.Value) {
+	failpoint.Inject("MockCheckColumnarIndexProcess", func(val failpoint.Value) {
 		if valInt, ok := val.(int); ok {
-			logutil.DDLLogger().Info("MockCheckVectorIndexProcess", zap.Int("val", valInt))
+			logutil.DDLLogger().Info("MockCheckColumnarIndexProcess", zap.Int("val", valInt))
 			if valInt < 0 {
 				failpoint.Return(false, 0, 0, dbterror.ErrTiFlashBackfillIndex.FastGenByArgs("mock a check error"))
 			} else if valInt == 0 {
@@ -940,9 +1094,26 @@ func (w *worker) checkVectorIndexProcessOnce(jobCtx *jobContext, tbl table.Table
 		}
 	})
 
+	var done bool = true
+
+	columnarEnabled := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
+	// If columnar store is enabled, we check the columnar index process from TiKV.
+	if columnarEnabled {
+		done, _, err = w.checkColumnarIndexProcessFromTiKV(jobCtx, tbl, indexID)
+		if err != nil {
+			return false, 0, 0, errors.Trace(err)
+		}
+	}
+
+	// If TiFlash is not enabled, we return the result directly.
+	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+	if !tiflashEnabled {
+		return done, 0, 0, nil
+	}
+
 	sql := fmt.Sprintf("select rows_stable_not_indexed, rows_stable_indexed, error_message from information_schema.tiflash_indexes where table_id = %d and index_id = %d;",
 		tbl.Meta().ID, indexID)
-	rows, err := w.sess.Execute(jobCtx.stepCtx, sql, "add_vector_index_check_result")
+	rows, err := w.sess.Execute(jobCtx.stepCtx, sql, "add_columnar_index_check_result")
 	if err != nil || len(rows) == 0 {
 		return false, 0, 0, errors.Trace(err)
 	}
@@ -996,7 +1167,7 @@ func (w *worker) onCreateIndex(jobCtx *jobContext, job *model.Job, isPK bool) (v
 
 	allIndexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))
 	for _, arg := range args.IndexArgs {
-		indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, false, job.Type == model.ActionAddPrimaryKey, arg)
+		indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, pmodel.ColumnarIndexTypeNA, job.Type == model.ActionAddPrimaryKey, arg)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -1888,7 +2059,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		isTiFlashIndex := false
 		indexIDs := make([]int64, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
-			if indexInfo.IsTiFlashLocalIndex() {
+			if indexInfo.IsColumnarIndex() {
 				isTiFlashIndex = true
 			}
 			indexInfo.State = model.StateNone
@@ -1952,7 +2123,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 				return ver, errors.Trace(err)
 			}
 			dropArgs.IndexArgs[0].IndexID = indexIDs[0]
-			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].VectorInfo != nil
+			dropArgs.IndexArgs[0].IsColumnar = allIndexInfos[0].IsColumnarIndex()
 			if !allIndexInfos[0].Global {
 				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
 			}
@@ -3400,7 +3571,7 @@ func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {
-		if index.Meta().IsTiFlashLocalIndex() {
+		if index.Meta().IsColumnarIndex() {
 			continue
 		}
 		if index.Meta().Global {
@@ -3619,17 +3790,6 @@ func FindRelatedIndexesToChange(tblInfo *model.TableInfo, colName pmodel.CIStr) 
 		}
 	}
 	return result
-}
-
-// isColumnarIndexColumn checks if any index contains the given column is a columnar index.
-func isColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
-	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
-	for _, idx := range indexesToChange {
-		if idx.IndexInfo.VectorInfo != nil {
-			return true
-		}
-	}
-	return false
 }
 
 // isTempIndex checks whether the index is a temp index created by modify column.

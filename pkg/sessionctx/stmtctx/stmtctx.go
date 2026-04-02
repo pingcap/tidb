@@ -265,6 +265,7 @@ type StatementContext struct {
 	InShowWarning          bool
 	InDiagnostics          bool
 	LastWarningNum         int
+	FTSFunctionIsUsed      bool
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler

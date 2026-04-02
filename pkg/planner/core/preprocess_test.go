@@ -282,6 +282,21 @@ func TestValidator(t *testing.T) {
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(23 percent) repeatable (23);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
+
+		// Invalid usages of columnar indexes
+		// Note: USING VECTOR is currently not introduced yet.
+		// Note: USING COLUMNAR is currently not supported in CSE.
+		{"ALTER TABLE t ADD VECTOR INDEX (a, (VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HYPO COMMENT 'a'", false, errors.New(`[ddl:8200]'USING HYPO' is not supported for VECTOR INDEX`)},
+		// {"ALTER TABLE t ADD COLUMNAR INDEX (a)", false, errors.New(`[ddl:8200]COLUMNAR INDEX must specify 'USING <index_type>'`)},
+		// {"ALTER TABLE t ADD COLUMNAR INDEX (a, b) USING INVERTED COMMENT 'a'", false, errors.New(`[ddl:8200]COLUMNAR INDEX of INVERTED type must specify one column name`)},
+		// {"ALTER TABLE t ADD COLUMNAR INDEX (a) USING HYPO COMMENT 'a'", false, errors.New(`[ddl:8200]'USING HYPO' is not supported for COLUMNAR INDEX`)},
+		// {"ALTER TABLE t ADD COLUMNAR INDEX ((a - 1)) USING HYPO COMMENT 'a'", false, errors.New(`[ddl:8200]'USING HYPO' is not supported for COLUMNAR INDEX`)},
+		{"ALTER TABLE t ADD INDEX (a) USING HNSW", false, errors.New(`[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX`)},
+		// {"ALTER TABLE t ADD INDEX (a) USING INVERTED", false, errors.New(`[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX`)},
+		// {"ALTER TABLE t ADD INDEX (a) USING VECTOR", false, errors.New(`[ddl:8200]'USING VECTOR' can be only used for COLUMNAR INDEX`)},
+		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
+		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
 	}
 
 	store := testkit.CreateMockStore(t)

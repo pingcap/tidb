@@ -87,6 +87,7 @@ var optRuleList = []base.LogicalOptRule{
 	&ProjectionEliminator{},
 	&MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
+	&FullTextIndexResolverWhere{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
 	&OuterJoinEliminator{},
@@ -96,11 +97,14 @@ var optRuleList = []base.LogicalOptRule{
 	&DeriveTopNFromWindow{},
 	&PredicateSimplification{},
 	&PushDownTopNOptimizer{},
+	&FullTextIndexResolverTopN{},
+	&FullTextIndexResolverProjection{},
 	&SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&ResolveExpand{},
+	&FullTextIndexResolverRejectRemaining{},
 }
 
 // Interaction Rule List
@@ -315,6 +319,10 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^rule.FlagJoinReOrder
 	}
+	flag |= rule.FlagFullTextIndexResolveWhere
+	flag |= rule.FlagFullTextIndexResolveTopN
+	flag |= rule.FlagFullTextIndexResolveProjection
+	flag |= rule.FlagFullTextIndexResolveReject
 	// InternalSQLScanUserTable is for ttl scan.
 	if !logic.SCtx().GetSessionVars().InRestrictedSQL || logic.SCtx().GetSessionVars().InternalSQLScanUserTable {
 		flag |= rule.FlagCollectPredicateColumnsPoint

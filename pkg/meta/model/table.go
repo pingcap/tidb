@@ -45,6 +45,15 @@ const ExtraPhysTblID = -3
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
 const ExtraRowChecksumID = -4
 
+// VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
+// When read column by vector index, sometimes there is no need to read vector column just need distance,
+// so a distance column will be added to table_scan. this field is used in the action.
+const VirtualColVecSearchDistanceID int64 = -2000
+
+// VirtualColFTSScoreID is the ID of the column who holds the score of Full Text Search.
+// This acts as a column that can be produced by TiFlashTableScan.
+const VirtualColFTSScoreID int64 = -2050
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -202,6 +211,13 @@ type TableInfo struct {
 	DBID int64 `json:"-"`
 
 	Mode TableMode `json:"mode,omitempty"`
+	// EngineAttribute is the ENGINE_ATTRIBUTE for the table.
+	EngineAttribute string `json:"engine_attribute,omitempty"`
+
+	// StorageClassTier is the storage class tier of the table level.
+	StorageClassTier string `json:"storage_class_tier,omitempty"`
+	// StorageClassTransitions is the storage class transition rules of the table level.
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
@@ -574,6 +590,21 @@ func (t *TableInfo) GetNonTempColumns() []*ColumnInfo {
 		result = append(result, col)
 	}
 	return result
+}
+
+// StorageClassString return string presentation of the storage class tier and transitions.
+func (t *TableInfo) StorageClassString() string {
+	return buildStorageClassString(t.StorageClassTier, t.StorageClassTransitions)
+}
+
+// FindColumnByName finds the column by name.
+func (t *TableInfo) FindColumnByName(name string) *ColumnInfo {
+	for _, col := range t.Columns {
+		if col.Name.L == name {
+			return col
+		}
+	}
+	return nil
 }
 
 // FindFKInfoByName finds FKInfo in fks by lowercase name.
@@ -1156,12 +1187,14 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                 int64          `json:"id"`
-	Name               model.CIStr    `json:"name"`
-	LessThan           []string       `json:"less_than"`
-	InValues           [][]string     `json:"in_values"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
-	Comment            string         `json:"comment,omitempty"`
+	ID                      int64                     `json:"id"`
+	Name                    model.CIStr               `json:"name"`
+	LessThan                []string                  `json:"less_than"`
+	InValues                [][]string                `json:"in_values"`
+	PlacementPolicyRef      *PolicyRefInfo            `json:"policy_ref_info"`
+	Comment                 string                    `json:"comment,omitempty"`
+	StorageClassTier        string                    `json:"storage_class_tier,omitempty"`
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 }
 
 // Clone clones PartitionDefinition.
@@ -1194,6 +1227,11 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 		}
 	}
 	return
+}
+
+// StorageClassString return string presentation of the storage class tier and transitions.
+func (ci *PartitionDefinition) StorageClassString() string {
+	return buildStorageClassString(ci.StorageClassTier, ci.StorageClassTransitions)
 }
 
 // ConstraintInfo provides meta data describing check-expression constraint.

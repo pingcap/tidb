@@ -186,3 +186,23 @@ func TestScalarFunctionHash64Equals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, sf0.Equals(sf4))
 }
+
+func TestScalarFunctionClonePreservesEmbedVecSearchFlag(t *testing.T) {
+	sf, ok := newFunctionWithMockCtx(
+		ast.EmbedText,
+		newColumnWithType(1, types.NewFieldType(mysql.TypeVarchar)),
+		newColumnWithType(2, types.NewFieldType(mysql.TypeVarchar)),
+	).(*ScalarFunction)
+	require.True(t, ok)
+
+	sig, ok := sf.Function.(*BuiltinEmbedTextSig)
+	require.True(t, ok)
+	sig.IsFromVecSearch = true
+
+	cloned, ok := sf.Clone().(*ScalarFunction)
+	require.True(t, ok)
+
+	clonedSig, ok := cloned.Function.(*BuiltinEmbedTextSig)
+	require.True(t, ok)
+	require.True(t, clonedSig.IsFromVecSearch)
+}

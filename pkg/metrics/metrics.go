@@ -31,6 +31,9 @@ var (
 
 	// MemoryUsage measures the usage gauge of memory.
 	MemoryUsage *prometheus.GaugeVec
+
+	// ServerlessClusterID is the cluster ID used in serverless environments.
+	ServerlessClusterID string
 )
 
 // metrics labels.
@@ -91,6 +94,7 @@ func InitMetrics() {
 	InitSessionMetrics()
 	InitSliMetrics()
 	InitStatsMetrics()
+	InitVectorSearchMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitDistTaskMetrics()

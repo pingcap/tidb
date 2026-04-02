@@ -28,6 +28,7 @@ const (
 	FlagEliminateProjection
 	FlagMaxMinEliminate
 	FlagConstantPropagation
+	FlagFullTextIndexResolveWhere
 	FlagConvertOuterToInnerJoin
 	FlagPredicatePushDown
 	FlagEliminateOuterJoin
@@ -37,11 +38,14 @@ const (
 	FlagDeriveTopNFromWindow
 	FlagPredicateSimplification
 	FlagPushDownTopN
+	FlagFullTextIndexResolveTopN
+	FlagFullTextIndexResolveProjection
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagResolveExpand
+	FlagFullTextIndexResolveReject
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {

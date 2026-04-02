@@ -159,6 +159,7 @@ func TestRestrictedAuditAdmin(t *testing.T) {
 
 func TestEventClass(t *testing.T) {
 	audit.Register4Test()
+	tempDir := t.TempDir()
 	store := testkit.CreateMockStore(t)
 	srv := server.CreateMockServer(t, store)
 	defer srv.Close()
@@ -166,15 +167,19 @@ func TestEventClass(t *testing.T) {
 	defer conn.Close()
 
 	defer func() {
-		_, err := deleteAllAuditLogs(workDir, "tidb-audit", ".log")
+		_, err := deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
 		require.NoError(t, err)
 	}()
-	logPath := filepath.Join(workDir, audit.DefAuditLogName)
-	_, err := deleteAllAuditLogs(workDir, "tidb-audit", ".log")
+	logPath := filepath.Join(tempDir, audit.DefAuditLogName)
+	_, err := deleteAllAuditLogs(tempDir, "tidb-audit", ".log")
 	require.NoError(t, err)
+	require.NoError(t, conn.HandleQuery(context.Background(), fmt.Sprintf("SET global tidb_audit_log = '%s'", logPath)))
 	require.NoError(t, conn.HandleQuery(context.Background(), "SET global tidb_audit_enabled = 1"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "SELECT audit_log_create_filter('all', '{}')"))
 	require.NoError(t, conn.HandleQuery(context.Background(), "SELECT audit_log_create_rule('%@%', 'all')"))
+
+	// Rotate once to isolate setup logs from the actual testcases below.
+	require.NoError(t, conn.HandleQuery(context.Background(), "SELECT audit_log_rotate()"))
 
 	// test QUERY and AUDIT
 	testcases := []struct {
@@ -210,7 +215,6 @@ func TestEventClass(t *testing.T) {
 		require.NoError(t, err, "%s\n%s\n%s", tc.sql, eventClassesStr, log)
 		require.True(t, ok, "%s\n%s\n%s", tc.sql, eventClassesStr, log)
 		require.NoError(t, conn.HandleQuery(context.Background(), "SELECT audit_log_rotate()"), "%s\n%s\n%s", tc.sql, eventClassesStr, log)
-		time.Sleep(time.Second)
 	}
 }
 

@@ -20,8 +20,11 @@ import (
 	"cmp"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -928,4 +931,110 @@ func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, 
 		logutil.BgLogger().Error("close body failed", zap.Error(err))
 	}
 	return nil
+}
+
+// IsTiFlashWriteNode checks whether the store is a tiflash write node.
+func IsTiFlashWriteNode(store pd.MetaStore) bool {
+	for _, label := range store.Labels {
+		if label.Key == "engine" && label.Value == "tiflash" {
+			return true
+		}
+	}
+	return false
+}
+
+// ColumnarStatusResp is the response from the TiKV's status API.
+type ColumnarStatusResp struct {
+	Ready            uint `json:"ready"`
+	VectorIndexReady uint `json:"vector-index-ready"`
+	Total            uint `json:"total"`
+}
+
+var columnarStatusNotReadyLogger = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "columnar"))
+
+// CollectColumnarStatus collects the columnar status from the TiKV's status API.
+func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
+	statURL := fmt.Sprintf("%s://%s/kvengine/columnar_status?keyspace_id=%d&table_id=%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+		tableID,
+	)
+	if indexID != nil {
+		statURL += fmt.Sprintf("&index_id=%d", *indexID)
+	}
+	var columnarStatus ColumnarStatusResp
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close body failed", zap.Error(err))
+		}
+	}()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return columnarStatus, errors.Trace(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return columnarStatus, errors.Errorf("columnar status http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	err = json.Unmarshal(body, &columnarStatus)
+	if err != nil {
+		return columnarStatus, errors.Wrapf(err, "invalid columnar status response: %s", strings.TrimSpace(string(body)))
+	}
+	if columnarStatus.Ready != columnarStatus.Total {
+		columnarStatusNotReadyLogger().Info("columnar status not ready",
+			zap.String("statusAddress", statusAddress),
+			zap.Uint32("keyspaceID", uint32(keyspaceID)),
+			zap.Int64("tableID", tableID),
+			zap.Int64p("indexID", indexID),
+			zap.Uint("ready", columnarStatus.Ready),
+			zap.Uint("total", columnarStatus.Total),
+			zap.Uint("vectorIndexReady", columnarStatus.VectorIndexReady),
+		)
+	}
+
+	return columnarStatus, nil
+}
+
+// ColumnarIndexStats is the response of TiKV columnar index stats API.
+// It contains stats for all columnar indexes for all shards in the store.
+type ColumnarIndexStats struct {
+	TableID               int64  `json:"table_id"`
+	IndexID               int64  `json:"index_id"`
+	IndexKind             string `json:"index_kind"`
+	TotalColumnarRows     int64  `json:"total_columnar_rows"`
+	UnindexedColumnarRows int64  `json:"unindexed_columnar_rows"`
+	IndexedColumnarRows   int64  `json:"indexed_columnar_rows"`
+}
+
+// CollectColumnarIndexStats gets the columnar index stats from the TiKV's status API.
+func CollectColumnarIndexStats(statusAddress string, keyspaceID tikv.KeyspaceID) ([]ColumnarIndexStats, error) {
+	// Use /kvengine/columnar_index_stats to fetch per-index row counts.
+	statURL := fmt.Sprintf("%s://%s/kvengine/columnar_index_stats?keyspace_id=%d",
+		util.InternalHTTPSchema(),
+		statusAddress,
+		keyspaceID,
+	)
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.Errorf("columnar index stats http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var columnarIndexStats []ColumnarIndexStats
+	err = json.Unmarshal(body, &columnarIndexStats)
+	if err != nil {
+		return nil, errors.Wrapf(err, "invalid columnar index stats response: %s", strings.TrimSpace(string(body)))
+	}
+	return columnarIndexStats, nil
 }

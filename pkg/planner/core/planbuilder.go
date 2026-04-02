@@ -1338,10 +1338,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			if index.VectorInfo != nil {
+			if index.IsColumnarIndex() {
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
-				// So the current way to use the vector indexes is to require the TiFlash Replica to be available.
-				if !tblInfo.TiFlashReplica.Available {
+				// So the current way to use the columnar indexes is to require the TiFlash Replica to be available.
+				if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available {
 					continue
 				}
 				path := genTiFlashPath(tblInfo)
@@ -2281,7 +2281,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 				// for an index in state WriteReorg, we can only analyze it under variable EnableDDLAnalyze is on.
 				indexStateAnalyzable := idx.State == model.StatePublic ||
 					(idx.State == model.StateWriteReorganization && b.ctx.GetSessionVars().EnableDDLAnalyzeExecOpt)
-				if idx.MVIndex || idx.VectorInfo != nil || !indexStateAnalyzable {
+				if idx.MVIndex || idx.IsColumnarIndex() || !indexStateAnalyzable {
 					continue
 				}
 				for _, idxCol := range idx.Columns {
@@ -2577,6 +2577,10 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		if originIdx.VectorInfo != nil {
 			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", originIdx.Name.L))
+			continue
+		}
+		if originIdx.IsColumnarIndex() {
+			sCtx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -3057,8 +3061,8 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
-			if idx.VectorInfo != nil {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
+			if idx.IsColumnarIndex() {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", idx.Name.L))
 				continue
 			}
 			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tnW.TableInfo, partitionNames, physicalIDs, version)...)
@@ -3137,8 +3141,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 			continue
 		}
-		if idx.VectorInfo != nil {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
+		if idx.IsColumnarIndex() {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", idx.Name.L))
 			continue
 		}
 		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
@@ -3171,8 +3175,8 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
-			if idx.VectorInfo != nil {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing vector index is not supported, skip %s", idx.Name.L))
+			if idx.IsColumnarIndex() {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", idx.Name.L))
 				continue
 			}
 

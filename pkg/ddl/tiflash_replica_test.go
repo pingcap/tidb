@@ -377,8 +377,11 @@ func TestCreateTableWithLike2(t *testing.T) {
 
 	// Test for table has tiflash  replica.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarReplicaAvailability", `return(1)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarReplicaAvailability")
 		require.NoError(t, err)
 	}()
 

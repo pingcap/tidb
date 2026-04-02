@@ -17,6 +17,7 @@ package expression
 import (
 	"math"
 
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -110,6 +111,9 @@ func (c *vecL1DistanceFunctionClass) getFunction(ctx BuildContext, args []Expres
 	}
 	sig := &builtinVecL1DistanceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_VecL1DistanceSig)
+
+	metrics.VectorSearchDistanceFnL1UsageCounter.Inc()
+
 	return sig, nil
 }
 
@@ -162,6 +166,9 @@ func (c *vecL2DistanceFunctionClass) getFunction(ctx BuildContext, args []Expres
 	}
 	sig := &builtinVecL2DistanceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_VecL2DistanceSig)
+
+	metrics.VectorSearchDistanceFnL2UsageCounter.Inc()
+
 	return sig, nil
 }
 
@@ -214,6 +221,9 @@ func (c *vecNegativeInnerProductFunctionClass) getFunction(ctx BuildContext, arg
 	}
 	sig := &builtinVecNegativeInnerProductSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_VecNegativeInnerProductSig)
+
+	metrics.VectorSearchDistanceFnInnerProductUsageCounter.Inc()
+
 	return sig, nil
 }
 
@@ -266,6 +276,9 @@ func (c *vecCosineDistanceFunctionClass) getFunction(ctx BuildContext, args []Ex
 	}
 	sig := &builtinVecCosineDistanceSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_VecCosineDistanceSig)
+
+	metrics.VectorSearchDistanceFnCosineUsageCounter.Inc()
+
 	return sig, nil
 }
 

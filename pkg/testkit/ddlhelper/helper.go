@@ -24,5 +24,5 @@ import (
 // BuildTableInfoFromASTForTest builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
 func BuildTableInfoFromASTForTest(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return ddl.BuildTableInfoFromAST(metabuild.NewContext(), s)
+	return ddl.BuildTableInfoFromAST(metabuild.NewContext(), s, nil)
 }

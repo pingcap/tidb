@@ -1162,6 +1162,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrResourceGroupQueryRunawayQuarantine:    mysql.Message("Quarantined and interrupted because of being in runaway watch list", nil),
 	ErrResourceGroupInvalidBackgroundTaskName: mysql.Message("Unknown background task name '%-.192s'", nil),
 
+	ErrEngineAttributeInvalidFormat: mysql.Message("Invalid engine attribute format: %s", nil),
+	ErrStorageClassInvalidSpec:      mysql.Message("Invalid storage class: %s", nil),
+
 	ErrTableGroupExists:               mysql.Message("Tablegroup '%-.192s' already exists", nil),
 	ErrTableGroupNotExists:            mysql.Message("Unknown tablegroup '%-.192s'", nil),
 	ErrTableGroupNotSupported:         mysql.Message("Tablegroup not supported, reason: %-.192s", nil),

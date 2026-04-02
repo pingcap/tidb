@@ -584,6 +584,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		dispatchPolicy = e.ctx.GetSessionVars().TiFlashComputeDispatchPolicy
 	}
 	tiflashReplicaRead := e.ctx.GetSessionVars().TiFlashReplicaRead
+	ctx = context.WithValue(ctx, config.FTSFunctionIsUsedKey, ts.FTSQueryInfo != nil)
 
 	var metas []kv.MPPTaskMeta
 	if val := req.ToString(); e.tableReaderCache[val] != nil {

@@ -15,14 +15,28 @@
 package domain
 
 import (
+	"github.com/pingcap/tidb/pkg/domain/domainctx"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
+// BindDomain binds domain to context.
+func BindDomain(ctx contextutil.ValueStoreContext, domain *Domain) {
+	domainctx.BindDomain(ctx, domain)
+}
+
 // GetDomain gets domain from context.
 func GetDomain(ctx contextutil.ValueStoreContext) *Domain {
-	v, ok := ctx.GetDomain().(*Domain)
-	if ok {
-		return v
+	// Prefer the built-in method on ValueStoreContext. The domain stored in the
+	// session context may not be bound via SetValue/Value.
+	if ctx != nil {
+		if v, ok := ctx.GetDomain().(*Domain); ok {
+			return v
+		}
 	}
-	return nil
+
+	v, ok := domainctx.GetDomain(ctx).(*Domain)
+	if !ok {
+		return nil
+	}
+	return v
 }

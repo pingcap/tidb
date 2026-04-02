@@ -1,0 +1,662 @@
+[
+  {
+    "Name": "TestTiFlashFTSIndexWhere",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  test.t1.id, test.t1.title, test.t1.body",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#4, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', body)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  test.t1.id, test.t1.title, test.t1.body",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.body)->Column#4, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10",
+        "Plan": [
+          "TableReader 3333.33 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  test.t1.id, test.t1.title, test.t1.body",
+          "    └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], textSearch:(hello IN test.t1.title)->Column#4, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+        "Plan": [
+          "TableReader 2666.67 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  test.t1.id, test.t1.title, test.t1.body",
+          "    └─Selection 2666.67 mpp[tiflash]  gt(length(test.t1.title), 1)",
+          "      └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#4, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select title from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+        "Plan": [
+          "TableReader 2666.67 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  test.t1.title",
+          "    └─Selection 2666.67 mpp[tiflash]  gt(length(test.t1.title), 1)",
+          "      └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#4, columns: [id, title, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(id) from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t1.id)->Column#6",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#5, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(Column#5)->Column#6",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#5, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  test.t1.id",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#4, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10",
+        "Plan": [
+          "TableReader 3333.33 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  test.t1.id",
+          "    └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], textSearch:(hello IN test.t1.title)->Column#4, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  test.t1.id",
+          "    └─Selection 8000.00 mpp[tiflash]  gt(length(test.t1.body), 10)",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#4, columns: [id, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#5, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title) as score1, fts_match_word('hello', title) as score2 from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  Column#6->Column#4, Column#6->Column#5",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#6, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', body) from t1 where fts_match_word('hello', body)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.body)->Column#5, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10",
+        "Plan": [
+          "TableReader 3333.33 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  Column#5->Column#4",
+          "    └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], textSearch:(hello IN test.t1.title)->Column#5, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+        "Plan": [
+          "TableReader 2666.67 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  Column#5->Column#4",
+          "    └─Selection 2666.67 mpp[tiflash]  gt(length(test.t1.title), 1)",
+          "      └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#5, columns: [id, title, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#5, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select *, fts_match_word('hello', body) from t1 where fts_match_word('hello', body)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.body)->Column#5, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10",
+        "Plan": [
+          "TableReader 3333.33 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], textSearch:(hello IN test.t1.title)->Column#5, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+        "Plan": [
+          "TableReader 2666.67 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 2666.67 mpp[tiflash]  gt(length(test.t1.title), 1)",
+          "    └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#5, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select title, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 AND LENGTH(title) > 1",
+        "Plan": [
+          "TableReader 2666.67 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 2666.67 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 2666.67 mpp[tiflash]  test.t1.title, Column#5->Column#4",
+          "    └─Selection 2666.67 mpp[tiflash]  gt(length(test.t1.title), 1)",
+          "      └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#5, columns: [id, title, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(id) from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t1.id)->Column#6",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#5, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(Column#5)->Column#6",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#5, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#5, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10",
+        "Plan": [
+          "TableReader 3333.33 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], textSearch:(hello IN test.t1.title)->Column#5, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  test.t1.id, Column#5->Column#4",
+          "    └─Selection 8000.00 mpp[tiflash]  gt(length(test.t1.body), 10)",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#5, columns: [id, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  Column#5->Column#4, test.t1.id",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#5, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND id > 10",
+        "Plan": [
+          "TableReader 3333.33 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 3333.33 mpp[tiflash]  Column#5->Column#4, test.t1.id",
+          "    └─TableRangeScan 3333.33 mpp[tiflash] table:t1 range:(10,+inf], textSearch:(hello IN test.t1.title)->Column#5, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND LENGTH(body) > 10",
+        "Plan": [
+          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 8000.00 mpp[tiflash]  Column#5->Column#4, test.t1.id",
+          "    └─Selection 8000.00 mpp[tiflash]  gt(length(test.t1.body), 10)",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#5, columns: [id, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestTiFlashFTSIndexTopN",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10",
+        "Plan": [
+          "TopN 10.00 root  Column#5, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#5, offset:0, count:10",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#5, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "TopN 10.00 root  Column#5:desc, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#5:desc, offset:0, count:10",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#5, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+        "Plan": [
+          "TopN 10.00 root  Column#5:desc, offset:100, count:10",
+          "└─TableReader 110.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 110.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 110.00 mpp[tiflash]  Column#5:desc, offset:0, count:110",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top110 hello IN test.t1.title)->Column#5, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+        "Plan": [
+          "TopN 10.00 root  Column#5:desc, offset:100, count:10",
+          "└─TableReader 110.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 110.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 110.00 mpp[tiflash]  Column#5:desc, offset:0, count:110",
+          "      └─Selection 3333.33 mpp[tiflash]  gt(test.t1.id, 10)",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#5, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "TopN 10.00 root  Column#6:desc, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#6:desc, offset:0, count:10",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#6, columns: [body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from (select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10) AS tmp",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#6",
+          "└─TopN 10.00 root  Column#7:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#7:desc, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#7, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "TopN 10.00 root  Column#6:desc, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#6:desc, offset:0, count:10",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#6, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "TopN 10.00 root  Column#6:desc, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#6:desc, offset:0, count:10",
+          "      └─Selection 3333.33 mpp[tiflash]  gt(test.t1.id, 10)",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#6, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id, body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "TopN 10.00 root  Column#7:desc, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#7:desc, offset:0, count:10",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#7, columns: [id, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "TopN 10.00 root  Column#6:desc, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#6:desc, offset:0, count:10",
+          "      └─Selection 8000.00 mpp[tiflash]  gt(length(test.t1.body), 10)",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#6, columns: [id, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  Column#5->Column#6",
+          "└─TopN 10.00 root  Column#7, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#7, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#7, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  Column#5->Column#6",
+          "└─TopN 10.00 root  Column#7:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#7:desc, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#7, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+        "Plan": [
+          "Projection 10.00 root  Column#5->Column#6",
+          "└─TopN 10.00 root  Column#7:desc, offset:100, count:10",
+          "  └─TableReader 110.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 110.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 110.00 mpp[tiflash]  Column#7:desc, offset:0, count:110",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top110 hello IN test.t1.title)->Column#7, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+        "Plan": [
+          "Projection 10.00 root  Column#5->Column#6",
+          "└─TopN 10.00 root  Column#7:desc, offset:100, count:10",
+          "  └─TableReader 110.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 110.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 110.00 mpp[tiflash]  Column#7:desc, offset:0, count:110",
+          "        └─Selection 3333.33 mpp[tiflash]  gt(test.t1.id, 10)",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#7, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) LIMIT 10",
+        "Plan": [
+          "TopN 10.00 root  Column#6, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#6, offset:0, count:10",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(hello IN test.t1.title)->Column#6, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "TopN 10.00 root  Column#6:desc, offset:0, count:10",
+          "└─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 10.00 mpp[tiflash]  Column#6:desc, offset:0, count:10",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#6, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+        "Plan": [
+          "TopN 10.00 root  Column#6:desc, offset:100, count:10",
+          "└─TableReader 110.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 110.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 110.00 mpp[tiflash]  Column#6:desc, offset:0, count:110",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top110 hello IN test.t1.title)->Column#6, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select *, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10 OFFSET 100",
+        "Plan": [
+          "TopN 10.00 root  Column#6:desc, offset:100, count:10",
+          "└─TableReader 110.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 110.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TopN 110.00 mpp[tiflash]  Column#6:desc, offset:0, count:110",
+          "      └─Selection 3333.33 mpp[tiflash]  gt(test.t1.id, 10)",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#6, columns: [id, title, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title), body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  Column#8->Column#6, test.t1.body",
+          "└─TopN 10.00 root  Column#8:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#8:desc, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#8, columns: [body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select body, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.body, Column#5->Column#7",
+          "└─TopN 10.00 root  Column#8:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#8:desc, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#8, columns: [body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select count(*) from (select id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10) AS tmp",
+        "Plan": [
+          "StreamAgg 1.00 root  funcs:count(1)->Column#6",
+          "└─TopN 10.00 root  Column#7:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#7:desc, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#7, columns: [_FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  Column#8->Column#6, test.t1.id",
+          "└─TopN 10.00 root  Column#8:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#8:desc, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#8, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  Column#8->Column#6, test.t1.id",
+          "└─TopN 10.00 root  Column#8:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#8:desc, offset:0, count:10",
+          "        └─Selection 3333.33 mpp[tiflash]  gt(test.t1.id, 10)",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#8, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title), id, body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  Column#9->Column#6, test.t1.id, test.t1.body",
+          "└─TopN 10.00 root  Column#9:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#9:desc, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#9, columns: [id, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select fts_match_word('hello', title), id from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  Column#8->Column#6, test.t1.id",
+          "└─TopN 10.00 root  Column#8:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#8:desc, offset:0, count:10",
+          "        └─Selection 8000.00 mpp[tiflash]  gt(length(test.t1.body), 10)",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#8, columns: [id, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, Column#5->Column#7",
+          "└─TopN 10.00 root  Column#8:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#8:desc, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#8, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND id > 10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, Column#5->Column#7",
+          "└─TopN 10.00 root  Column#8:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#8:desc, offset:0, count:10",
+          "        └─Selection 3333.33 mpp[tiflash]  gt(test.t1.id, 10)",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#8, columns: [id, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id, fts_match_word('hello', title), body from t1 where fts_match_word('hello', title) ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, Column#9->Column#7, test.t1.body",
+          "└─TopN 10.00 root  Column#9:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#9:desc, offset:0, count:10",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 textSearch:(top10 hello IN test.t1.title)->Column#9, columns: [id, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id, fts_match_word('hello', title) from t1 where fts_match_word('hello', title) AND LENGTH(body)>10 ORDER BY fts_match_word('hello', title) DESC LIMIT 10",
+        "Plan": [
+          "Projection 10.00 root  test.t1.id, Column#5->Column#7",
+          "└─TopN 10.00 root  Column#8:desc, offset:0, count:10",
+          "  └─TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
+          "    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─TopN 10.00 mpp[tiflash]  Column#8:desc, offset:0, count:10",
+          "        └─Selection 8000.00 mpp[tiflash]  gt(length(test.t1.body), 10)",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, textSearch:(hello IN test.t1.title)->Column#8, columns: [id, body, _FTS_SCORE], keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestTiFlashFTSIndexJoin",
+    "Cases": [
+      {
+        "SQL": "explain format='brief' select * from files WHERE file_id IN (SELECT file_id FROM file_chunks c WHERE fts_match_word('hello', c.body) ORDER BY fts_match_word('hello', c.body) DESC LIMIT 5)",
+        "Plan": [
+          "HashJoin 5.00 root  inner join, equal:[eq(test.files.file_id, test.file_chunks.file_id)]",
+          "├─HashAgg(Build) 4.00 root  group by:test.file_chunks.file_id, funcs:firstrow(test.file_chunks.file_id)->test.file_chunks.file_id",
+          "│ └─Selection 4.00 root  not(isnull(test.file_chunks.file_id))",
+          "│   └─TopN 5.00 root  Column#9:desc, offset:0, count:5",
+          "│     └─TableReader 5.00 root  MppVersion: 2, data:ExchangeSender",
+          "│       └─ExchangeSender 5.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "│         └─TopN 5.00 mpp[tiflash]  Column#9:desc, offset:0, count:5",
+          "│           └─TableFullScan 10000.00 mpp[tiflash] table:c textSearch:(top5 hello IN test.file_chunks.body)->Column#9, columns: [file_id, _FTS_SCORE], keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 9990.00 root  data:Selection",
+          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.files.file_id))",
+          "    └─TableFullScan 10000.00 cop[tikv] table:files keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  }
+]

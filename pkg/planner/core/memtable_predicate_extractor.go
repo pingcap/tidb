@@ -1605,9 +1605,13 @@ type TiFlashSystemTableExtractor struct {
 	// TidbDatabases represents tidbDatabases applied to, and we should apply all tidb database if there is no database specified.
 	// e.g: SELECT * FROM information_schema.<table_name> WHERE tidb_database in ('test', 'test2').
 	TiDBDatabases string
+	// TiDBDatabasesSet stores parsed tidb_database filter values (lowercased).
+	TiDBDatabasesSet set.StringSet
 	// TidbTables represents tidbTables applied to, and we should apply all tidb table if there is no table specified.
 	// e.g: SELECT * FROM information_schema.<table_name> WHERE tidb_table in ('t', 't2').
 	TiDBTables string
+	// TiDBTablesSet stores parsed tidb_table filter values (lowercased).
+	TiDBTablesSet set.StringSet
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1629,6 +1633,8 @@ func (e *TiFlashSystemTableExtractor) Extract(ctx base.PlanContext,
 	e.TiFlashInstances = tiflashInstances
 	e.TiDBDatabases = extractStringFromStringSet(tidbDatabases)
 	e.TiDBTables = extractStringFromStringSet(tidbTables)
+	e.TiDBDatabasesSet = tidbDatabases
+	e.TiDBTablesSet = tidbTables
 	return remained
 }
 

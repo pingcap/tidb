@@ -107,6 +107,12 @@ var vecBuiltinCastCases = map[string][]vecExprBenchCase{
 	},
 }
 
+var vecBuiltinCast4VectorCase = map[string][]vecExprBenchCase{
+	ast.Cast: {
+		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETVectorFloat32}, geners: []dataGenerator{newVectorFloat32RandGener(3)}},
+	},
+}
+
 type dateTimeGenerWithFsp struct {
 	defaultGener
 	fsp int
@@ -301,4 +307,12 @@ func BenchmarkVectorizedBuiltinCastEvalOneVec(b *testing.B) {
 
 func BenchmarkVectorizedBuiltinCastFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinCastCases)
+}
+
+func TestVectorizedBuiltinVectorCastAsStringFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinCast4VectorCase)
+}
+
+func BenchmarkVectorizedBuiltinVectorCastAsStringFunc(b *testing.B) {
+	benchmarkVectorizedBuiltinFunc(b, vecBuiltinCast4VectorCase)
 }

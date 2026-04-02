@@ -172,7 +172,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
+	tblInfo, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt), nil)
 	require.NoError(t, err)
 	return tblInfo
 }

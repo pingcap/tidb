@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -1441,6 +1442,25 @@ func CollectFilters4MVIndexMutations(sctx base.PlanContext, filters []expression
 		}
 	}
 	return accessFilters, remainingFilters, mvColOffset, mvFilterMutations
+}
+
+func cleanAccessPathForFTS(ds *logicalop.DataSource) error {
+	if ds.FtsPushDown == nil {
+		return nil
+	}
+	// When there is a fts push down, only accept TiFlash access path.
+	validPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
+	for _, p := range ds.PossibleAccessPaths {
+		if p.StoreType != kv.TiFlash {
+			continue
+		}
+		validPaths = append(validPaths, p)
+	}
+	if len(validPaths) == 0 {
+		return plannererrors.ErrInternal.GenWithStack("Full text search can be only executed in a columnar storage (TiFlash), but it is not available. Possible reasons: TiFlash is not reployed; columnar replica is not set on this table; columnar replica is not available due to SQL hint /*+ read_from_storage */ or tidb_isolation_read_engines variable.")
+	}
+	ds.PossibleAccessPaths = validPaths
+	return nil
 }
 
 // cleanAccessPathForMVIndexHint removes all other access path if there is a multi-valued index hint, and this hint

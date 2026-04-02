@@ -111,6 +111,7 @@ const (
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
+	ActionAddColumnarIndex       ActionType = 74
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
 	_                            ActionType = 77 // reserve for database read-only feature
@@ -118,6 +119,7 @@ const (
 	ActionCreateTableGroup       ActionType = 79
 	ActionDropTableGroup         ActionType = 80
 	ActionAlterTableGroup        ActionType = 81
+	ActionModifyEngineAttribute  ActionType = 82
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -190,12 +192,14 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
+	ActionAddColumnarIndex:              "add columnar index",
 	ActionAlterTableMode:                "alter table mode",
 	ActionRefreshMeta:                   "refresh meta",
 	ActionAlterTableAffinity:            "alter table affinity",
 	ActionCreateTableGroup:              "create tablegroup",
 	ActionDropTableGroup:                "drop tablegroup",
 	ActionAlterTableGroup:               "alter tablegroup",
+	ActionModifyEngineAttribute:         "modify engine attribute",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -795,7 +799,7 @@ func (job *Job) IsPausing() bool {
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
 	// TODO: We can remove it after TiFlash supports the pause operation.
-	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+	if job.Type == ActionAddColumnarIndex && job.SchemaState == StateWriteReorganization {
 		return false
 	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())

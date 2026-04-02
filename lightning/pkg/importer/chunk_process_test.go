@@ -711,7 +711,7 @@ func TestCompressChunkRestore(t *testing.T) {
 	)
 `, "", "")
 	require.NoError(t, err)
-	core, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), node.(*ast.CreateTableStmt))
+	core, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), node.(*ast.CreateTableStmt), nil)
 	require.NoError(t, err)
 	core.State = model.StatePublic
 

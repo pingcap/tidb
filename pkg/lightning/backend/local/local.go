@@ -102,7 +102,7 @@ var (
 	localMinTiKVVersion    = *semver.New("4.0.0")
 	localMinPDVersion      = *semver.New("4.0.0")
 	localMaxTiDBVersion    = version.NextMajorVersion()
-	localMaxTiKVVersion    = version.NextMajorVersion()
+	localMaxTiKVVersion    = semver.Version{Major: math.MaxInt64, PreRelease: "nightly"}
 	localMaxPDVersion      = version.NextMajorVersion()
 	tiFlashMinVersion      = *semver.New("4.0.5")
 	tikvSideFreeSpaceCheck = *semver.New("8.0.0")

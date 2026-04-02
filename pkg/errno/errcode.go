@@ -1173,6 +1173,9 @@ const (
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
 
+	ErrEngineAttributeInvalidFormat = 8270
+	ErrStorageClassInvalidSpec      = 8271
+
 	// Enterprise Edit errors.
 	ErrRowLabelUnAccessible = 8800
 

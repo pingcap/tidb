@@ -23,6 +23,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util/slice"
 	pd "github.com/tikv/pd/client/http"
 	"gopkg.in/yaml.v2"
 )
@@ -166,4 +169,67 @@ func constraintToString(c *pd.LabelConstraint) string {
 	sort.Strings(sortedValues)
 	sortedValuesStr := strings.Join(sortedValues, ",")
 	return c.Key + "|" + string(c.Op) + "|" + sortedValuesStr
+}
+
+func getLabelValues(labels []pd.StoreLabel, key string) string {
+	for _, label := range labels {
+		if strings.EqualFold(label.Key, key) {
+			return label.Value
+		}
+	}
+	return ""
+}
+
+func match(c *pd.LabelConstraint, labels []pd.StoreLabel) bool {
+	switch c.Op {
+	case pd.In:
+		label := getLabelValues(labels, c.Key)
+		return label != "" && slice.AnyOf(c.Values, func(i int) bool { return c.Values[i] == label })
+	case pd.NotIn:
+		label := getLabelValues(labels, c.Key)
+		return label == "" || slice.NoneOf(c.Values, func(i int) bool { return c.Values[i] == label })
+	case pd.Exists:
+		return getLabelValues(labels, c.Key) != ""
+	case pd.NotExists:
+		return getLabelValues(labels, c.Key) == ""
+	}
+	return false
+}
+
+// MatchConstraints checks if the store matches the constraints.
+func MatchConstraints(s any, constraints []pd.LabelConstraint) bool {
+	if s == nil {
+		return false
+	}
+
+	labels := []pd.StoreLabel{}
+	switch store := s.(type) {
+	case *pd.MetaStore:
+		labels = store.Labels
+	case *metapb.Store:
+		for _, label := range store.Labels {
+			labels = append(labels, pd.StoreLabel{Key: label.Key, Value: label.Value})
+		}
+	default:
+		return false
+	}
+
+	return slice.AllOf(constraints, func(i int) bool {
+		return match(&constraints[i], labels)
+	})
+}
+
+// GetTiFlashConstraintsFromConfig returns the constraints from config.
+func GetTiFlashConstraintsFromConfig() []pd.LabelConstraint {
+	constraints := config.GetGlobalConfig().TiFlashReplicas.Constraints
+	res := make([]pd.LabelConstraint, len(constraints))
+	for i, c := range constraints {
+		res[i] = pd.LabelConstraint{Key: c.Key, Op: pd.LabelConstraintOp(c.Op), Values: c.Values}
+	}
+	return res
+}
+
+// GetTiFlashRuleGroupIDByConfig returns the gropu id from config.
+func GetTiFlashRuleGroupIDByConfig() string {
+	return config.GetGlobalConfig().TiFlashReplicas.GroupID
 }

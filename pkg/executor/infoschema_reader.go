@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -719,6 +720,10 @@ func (e *memtableRetriever) setDataFromOneTable(
 		if table.PlacementPolicyRef != nil {
 			policyName = table.PlacementPolicyRef.Name.O
 		}
+		var storageClass any
+		if storageClassStr := table.StorageClassString(); storageClassStr != "" {
+			storageClass = storageClassStr
+		}
 
 		var affinity any
 		if info := table.Affinity; info != nil {
@@ -755,6 +760,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
 			table.Mode.String(),   // TIDB_TABLE_MODE
 			affinity,              // TIDB_AFFINITY
+			storageClass,          // TIDB_STORAGE_CLASS
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -787,6 +793,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
 			nil,                   // TIDB_TABLE_MODE
 			nil,                   // TIDB_AFFINITY
+			nil,                   // TIDB_STORAGE_CLASS
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -893,6 +900,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
 					nil,                   // TIDB_TABLE_MODE
 					nil,                   // TIDB_AFFINITY
+					nil,                   // TIDB_STORAGE_CLASS
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -1362,6 +1370,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			if rowCount != 0 {
 				avgRowLength = dataLength / rowCount
 			}
+			var storageClass any
+			if storageClassStr := table.StorageClassString(); storageClassStr != "" {
+				storageClass = storageClassStr
+			}
 			// If there are any condition on the `PARTITION_NAME` in the extractor, this record should be ignored
 			if ex.HasPartitionPred() {
 				continue
@@ -1395,6 +1407,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				nil,                   // TIDB_PARTITION_ID
 				nil,                   // TIDB_PLACEMENT_POLICY_NAME
 				affinity,              // TIDB_AFFINITY
+				storageClass,          // TIDB_STORAGE_CLASS
 			)
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)
@@ -1461,6 +1474,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				if pi.PlacementPolicyRef != nil {
 					policyName = pi.PlacementPolicyRef.Name.O
 				}
+				var storageClass any
+				if storageClassStr := pi.StorageClassString(); storageClassStr != "" {
+					storageClass = storageClassStr
+				}
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.O,              // TABLE_SCHEMA
@@ -1490,6 +1507,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 					pi.ID,                 // TIDB_PARTITION_ID
 					policyName,            // TIDB_PLACEMENT_POLICY_NAME
 					affinity,              // TIDB_AFFINITY
+					storageClass,          // TIDB_STORAGE_CLASS
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -2954,6 +2972,14 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 		rows          [][]types.Datum
 		tiFlashStores map[int64]pd.StoreInfo
 	)
+	var tikvStores *map[int64]pd.StoreInfo
+	enableColumnarStore := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
+	if enableColumnarStore {
+		tikvStores = &map[int64]pd.StoreInfo{}
+	} else {
+		tikvStores = nil
+	}
+	var globalCircuitBreakerTriggered bool
 	rs := e.is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, schema := range rs {
 		for _, tbl := range schema.TableInfos {
@@ -2961,20 +2987,44 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx s
 				continue
 			}
 			var progress float64
-			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-				for _, p := range pi.Definitions {
-					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
-					if err != nil {
-						logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
-					}
-					progress += progressOfPartition
-				}
-				progress = progress / float64(len(pi.Definitions))
+			circuitBreakerProgress := 1.0
+			if !tbl.TiFlashReplica.Available {
+				circuitBreakerProgress = 0.0
+			}
+			// If the circuit breaker is triggered from previous table, set progress of this table directly.
+			if globalCircuitBreakerTriggered {
+				logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+				progress = circuitBreakerProgress
 			} else {
-				var err error
-				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
-				if err != nil {
-					logutil.BgLogger().Warn("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					for _, p := range pi.Definitions {
+						progressOfPartition, circuitBreakerTriggered, err := infosync.MustGetTiFlashProgressWithCircuitBreaker(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores, tikvStores)
+						if err != nil {
+							logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+						}
+						progress += progressOfPartition
+						if circuitBreakerTriggered {
+							globalCircuitBreakerTriggered = true
+							// If circuit breaker is triggered, break the loop for partitions.
+							break
+						}
+					}
+					if globalCircuitBreakerTriggered {
+						progress = circuitBreakerProgress
+						logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+					} else {
+						progress = progress / float64(len(pi.Definitions))
+					}
+				} else {
+					var err error
+					progress, globalCircuitBreakerTriggered, err = infosync.MustGetTiFlashProgressWithCircuitBreaker(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores, tikvStores)
+					if err != nil {
+						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+					}
+					if globalCircuitBreakerTriggered {
+						logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+						progress = circuitBreakerProgress
+					}
 				}
 			}
 			progressString := types.TruncateFloatToString(progress, 2)
@@ -3679,6 +3729,7 @@ type TiFlashSystemTableRetriever struct {
 }
 
 func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	// Fall back to TiKV columnar stats for tiflash_indexes when no TiFlash instances exist.
 	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
@@ -3688,7 +3739,18 @@ func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx session
 			return nil, err
 		}
 	}
-	if e.instanceCount == 0 || e.instanceIdx >= e.instanceCount {
+	if e.instanceCount == 0 {
+		e.retrieved = true
+		if e.table.Name.L == "tiflash_indexes" && config.GetGlobalConfig().CSE.IsColumnarStoreEnabled() {
+			rows, err := e.dataForColumnarIndexesFromTiKV(ctx, sctx)
+			if err != nil {
+				return nil, err
+			}
+			return rows, nil
+		}
+		return nil, nil
+	}
+	if e.instanceIdx >= e.instanceCount {
 		e.retrieved = true
 		return nil, nil
 	}
@@ -3883,6 +3945,158 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 		e.rowIdx = 0
 	}
 	return outputRows, nil
+}
+
+func (e *TiFlashSystemTableRetriever) dataForColumnarIndexesFromTiKV(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	// Build tiflash_indexes rows from TiKV columnar index stats in columnar-only clusters.
+	storeInfo, err := infoschema.GetStoreServerInfo(sctx.GetStore())
+	if err != nil {
+		return nil, err
+	}
+	tikvStores := make([]infoschema.ServerInfo, 0, len(storeInfo))
+	for _, info := range storeInfo {
+		if info.ServerType != tikvrpc.TiKV.Name() {
+			continue
+		}
+		if len(e.extractor.TiFlashInstances) > 0 && !e.extractor.TiFlashInstances.Exist(info.Address) {
+			continue
+		}
+		if info.StatusAddr == "" {
+			continue
+		}
+		tikvStores = append(tikvStores, info)
+	}
+	if len(tikvStores) == 0 {
+		return nil, nil
+	}
+
+	dbFilter := e.extractor.TiDBDatabasesSet
+	tableFilter := e.extractor.TiDBTablesSet
+
+	outputColIndexMap := map[string]int{}
+	for idx, c := range e.outputCols {
+		outputColIndexMap[c.Name.L] = idx
+	}
+	keyspaceID := sctx.GetStore().GetCodec().GetKeyspaceID()
+	storeErrors := make(map[string]error, len(tikvStores))
+	storeStats := make(map[string]map[int64]map[int64]helper.ColumnarIndexStats, len(tikvStores))
+	for _, store := range tikvStores {
+		stats, err := helper.CollectColumnarIndexStats(store.StatusAddr, keyspaceID)
+		if err != nil {
+			storeErrors[store.Address] = err
+			continue
+		}
+		tableStats := make(map[int64]map[int64]helper.ColumnarIndexStats)
+		for _, s := range stats {
+			indexStats, ok := tableStats[s.TableID]
+			if !ok {
+				indexStats = make(map[int64]helper.ColumnarIndexStats)
+				tableStats[s.TableID] = indexStats
+			}
+			indexStats[s.IndexID] = s
+		}
+		storeStats[store.Address] = tableStats
+	}
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	rows := make([][]types.Datum, 0)
+	for _, schema := range is.AllSchemas() {
+		if !matchTiFlashIndexesNameFilter(dbFilter, schema.Name.L) {
+			continue
+		}
+		tables, err := is.SchemaTableInfos(ctx, schema.Name)
+		if err != nil {
+			return nil, err
+		}
+		for _, tbl := range tables {
+			if !matchTiFlashIndexesNameFilter(tableFilter, tbl.Name.L) {
+				continue
+			}
+			for _, idx := range tbl.Indices {
+				if !idx.IsColumnarIndex() || idx.GetColumnarIndexType() != pmodel.ColumnarIndexTypeVector {
+					continue
+				}
+				if idx.State == model.StateNone {
+					continue
+				}
+				columnName, columnID := columnInfoForColumnarIndex(tbl, idx)
+				for _, store := range tikvStores {
+					outputRow := make([]types.Datum, len(e.outputCols))
+					setTiFlashIndexesStringDatum(outputRow, outputColIndexMap, "tidb_database", schema.Name.O)
+					setTiFlashIndexesStringDatum(outputRow, outputColIndexMap, "tidb_table", tbl.Name.O)
+					setTiFlashIndexesIntDatum(outputRow, outputColIndexMap, "table_id", tbl.ID)
+					setTiFlashIndexesStringDatum(outputRow, outputColIndexMap, "column_name", columnName)
+					setTiFlashIndexesStringDatum(outputRow, outputColIndexMap, "index_name", idx.Name.O)
+					setTiFlashIndexesIntDatum(outputRow, outputColIndexMap, "column_id", columnID)
+					setTiFlashIndexesIntDatum(outputRow, outputColIndexMap, "index_id", idx.ID)
+					setTiFlashIndexesStringDatum(outputRow, outputColIndexMap, "index_kind", "Vector")
+					setTiFlashIndexesIntDatum(outputRow, outputColIndexMap, "rows_stable_indexed", 0)
+					setTiFlashIndexesIntDatum(outputRow, outputColIndexMap, "rows_stable_not_indexed", 0)
+					if err, ok := storeErrors[store.Address]; ok {
+						setTiFlashIndexesStringDatum(outputRow, outputColIndexMap, "error_message", err.Error())
+						setTiFlashIndexesStringDatum(outputRow, outputColIndexMap, "tiflash_instance", store.Address)
+						rows = append(rows, outputRow)
+						continue
+					}
+					if tableStats, ok := storeStats[store.Address]; ok {
+						if indexStats, ok := tableStats[tbl.ID]; ok {
+							if stats, ok := indexStats[idx.ID]; ok {
+								// columnar_index_stats returns row counts; map to rows_stable_*.
+								setTiFlashIndexesIntDatum(outputRow, outputColIndexMap, "rows_stable_indexed", stats.IndexedColumnarRows)
+								setTiFlashIndexesIntDatum(outputRow, outputColIndexMap, "rows_stable_not_indexed", stats.UnindexedColumnarRows)
+							}
+						}
+					}
+
+					// Tikv columnar does not have a delta layer when constructing a vector index.
+					setTiFlashIndexesIntDatum(outputRow, outputColIndexMap, "rows_delta_indexed", 0)
+					setTiFlashIndexesIntDatum(outputRow, outputColIndexMap, "rows_delta_not_indexed", 0)
+
+					setTiFlashIndexesStringDatum(outputRow, outputColIndexMap, "error_message", "")
+					setTiFlashIndexesStringDatum(outputRow, outputColIndexMap, "tiflash_instance", fmt.Sprintf("tikv-%d", store.ServerID))
+					rows = append(rows, outputRow)
+				}
+			}
+		}
+	}
+	return rows, nil
+}
+
+func matchTiFlashIndexesNameFilter(filter set.StringSet, nameL string) bool {
+	// Match against optional filter set; empty filter means all names match.
+	if len(filter) == 0 {
+		return true
+	}
+	return filter.Exist(nameL)
+}
+
+func columnInfoForColumnarIndex(tbl *model.TableInfo, idx *model.IndexInfo) (string, int64) {
+	// Best-effort column name/id for a columnar index (uses the first index column).
+	if len(idx.Columns) == 0 {
+		return "", 0
+	}
+	colOffset := idx.Columns[0].Offset
+	if colOffset >= 0 && colOffset < len(tbl.Columns) {
+		col := tbl.Columns[colOffset]
+		return col.Name.O, col.ID
+	}
+	if col := model.FindColumnInfo(tbl.Columns, idx.Columns[0].Name.L); col != nil {
+		return col.Name.O, col.ID
+	}
+	return idx.Columns[0].Name.O, 0
+}
+
+func setTiFlashIndexesStringDatum(row []types.Datum, colIndex map[string]int, colName, value string) {
+	// Set a string datum if the column exists in the output schema.
+	if idx, ok := colIndex[colName]; ok {
+		row[idx].SetString(value, mysql.DefaultCollationName)
+	}
+}
+
+func setTiFlashIndexesIntDatum(row []types.Datum, colIndex map[string]int, colName string, value int64) {
+	// Set an int datum if the column exists in the output schema.
+	if idx, ok := colIndex[colName]; ok {
+		row[idx].SetInt64(value)
+	}
 }
 
 func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema) error {

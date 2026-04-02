@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -112,6 +114,7 @@ type InfoSyncer struct {
 	unprefixedEtcdCli *clientv3.Client
 	pdHTTPCli         pdhttp.Client
 	info              atomic.Pointer[ServerInfo]
+	tikvCodec         tikv.Codec
 
 	serverInfoPath string
 	minStartTS     uint64
@@ -266,6 +269,7 @@ func GlobalInfoSyncerInit(
 		etcdCli:           etcdCli,
 		unprefixedEtcdCli: unprefixedEtcdCli,
 		pdHTTPCli:         pdHTTPCli,
+		tikvCodec:         codec,
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 		infoCache:         infoCache,
@@ -528,8 +532,40 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	return nil
 }
 
+// MustGetTiFlashProgressWithCircuitBreaker is a wrapper of MustGetTiFlashProgress, it will trigger circuit breaker if timedout.
+func MustGetTiFlashProgressWithCircuitBreaker(tableID int64, replicaCount uint64, tiFlashStores *map[int64]pdhttp.StoreInfo, tikvStores *map[int64]pdhttp.StoreInfo) (float64, bool /* is circuit breaker triggered */, error) {
+	// Create a context with timeout
+	timeout := config.GetGlobalConfig().CSE.ColumnarCollectTimeout
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	// Create a channel to receive the result
+	resultCh := make(chan struct {
+		progress float64
+		err      error
+	}, 1)
+
+	// Execute MustGetTiFlashProgress in a goroutine
+	go func() {
+		progress, err := MustGetTiFlashProgress(tableID, replicaCount, tiFlashStores, tikvStores)
+		resultCh <- struct {
+			progress float64
+			err      error
+		}{progress: progress, err: err}
+	}()
+
+	// Wait for either the result or timeout
+	select {
+	case result := <-resultCh:
+		return result.progress, false, result.err
+	case <-ctx.Done():
+		// Circuit breaker triggered - return progress 1.0 as requested
+		return 1.0, true, nil
+	}
+}
+
 // MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache not exist, it calculates progress from PD and TiFlash and inserts progress into cache.
-func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]pdhttp.StoreInfo) (float64, error) {
+func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]pdhttp.StoreInfo, tikvStores *map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, err
@@ -538,7 +574,7 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 	if isExist {
 		return progressCache, nil
 	}
-	if *tiFlashStores == nil {
+	if *tiFlashStores == nil || (tikvStores != nil && *tikvStores == nil) {
 		// We need the up-to-date information about TiFlash stores.
 		// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
 		tikvStats, err := is.tiflashReplicaManager.GetStoresStat(context.Background())
@@ -547,18 +583,42 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 			return 0, err
 		}
 		stores := make(map[int64]pdhttp.StoreInfo)
+		tikvStoresInfo := make(map[int64]pdhttp.StoreInfo)
 		for _, store := range tikvStats.Stores {
 			if engine.IsTiFlashHTTPResp(&store.Store) {
+				// Ignore the TiFlash read node.
+				if !engine.IsTiFlashWriteNodeHTTPResp(&store.Store) {
+					continue
+				}
 				stores[store.Store.ID] = store
+			} else {
+				tikvStoresInfo[store.Store.ID] = store
 			}
 		}
 		*tiFlashStores = stores
-		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
+		if tikvStores != nil {
+			*tikvStores = tikvStoresInfo
+		}
+		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)), zap.Int("TiKV store count", len(tikvStoresInfo)))
 	}
-	progress, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
-	if err != nil {
-		return 0, err
+
+	var tiflashProgress float64 = 1.0
+	var columnarProgress float64 = 1.0
+	if len(*tiFlashStores) > 0 {
+		tiflashProgress, _, err = is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
+		if err != nil {
+			return 0, err
+		}
+		logutil.BgLogger().Debug("tiflashProgress", zap.Float64("progress", tiflashProgress))
 	}
+	if tikvStores != nil && len(*tikvStores) > 0 {
+		columnarProgress, err = CalculateColumnarProgress(tableID, *tikvStores)
+		if err != nil {
+			return 0, err
+		}
+		logutil.BgLogger().Debug("columnarProgress", zap.Float64("progress", columnarProgress))
+	}
+	progress := math.Min(tiflashProgress, columnarProgress)
 	is.tiflashReplicaManager.UpdateTiFlashProgressCache(tableID, progress)
 	return progress, nil
 }
@@ -1254,20 +1314,51 @@ func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
 	}
 	tiflashStores := make([]pdhttp.StoreInfo, 0, len(tikvStats.Stores))
 	for _, store := range tikvStats.Stores {
-		if engine.IsTiFlashHTTPResp(&store.Store) {
+		if engine.IsTiFlashWriteNodeHTTPResp(&store.Store) {
 			tiflashStores = append(tiflashStores, store)
 		}
 	}
 	return is.tiflashReplicaManager.SyncTiFlashTableSchema(tableID, tiflashStores)
 }
 
-// CalculateTiFlashProgress calculates TiFlash replica progress
-func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (float64, error) {
+// CalculateTiFlashProgress calculates TiFlash replica progress.
+// It returns (progress, available, error).
+func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (float64, float64, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	return is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, tiFlashStores)
+}
+
+// CalculateColumnarProgress calculates columnar progress.
+func CalculateColumnarProgress(tableID int64, TiKVStores map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, tiFlashStores)
+	keyspaceID := is.tikvCodec.GetKeyspaceID()
+	var ready uint = 0
+	var total uint = 0
+	for _, storeStat := range TiKVStores {
+		addr := storeStat.Store.StatusAddress
+		columnarStatus, err := helper.CollectColumnarStatus(addr, keyspaceID, tableID, nil)
+		if err != nil {
+			logutil.BgLogger().Error("Fail to get columnar status from TiKV.", zap.Int64("tableID", tableID), zap.String("addr", addr))
+			// If the store is not tombstone, return error
+			if storeStat.Store.StateName != "Tombstone" {
+				return 0, errors.Errorf("Failed to get columnar status from TiKV, store %s is %s", addr, storeStat.Store.StateName)
+			}
+			continue
+		}
+		ready += columnarStatus.Ready
+		total += columnarStatus.Total
+	}
+	if total == 0 {
+		return 0, nil
+	}
+
+	return float64(ready) / float64(total), nil
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache
@@ -1299,6 +1390,37 @@ func CleanTiFlashProgressCache() {
 	is.tiflashReplicaManager.CleanTiFlashProgressCache()
 }
 
+// CalculateColumnarIndexProgress calculates columnar index progress.
+func CalculateColumnarIndexProgress(tableID, indexID int64, TiKVStores map[int64]pdhttp.StoreInfo) (float64, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	keyspaceID := is.tikvCodec.GetKeyspaceID()
+	var indexReady uint = 0
+	var total uint = 0
+	for _, storeStat := range TiKVStores {
+		addr := storeStat.Store.StatusAddress
+		columnarStatus, err := helper.CollectColumnarStatus(addr, keyspaceID, tableID, &indexID)
+		if err != nil {
+			logutil.BgLogger().Error("Fail to get columnar status from TiKV.", zap.Int64("tableID", tableID), zap.String("addr", addr))
+			// If the store is not tombstone, return error
+			if storeStat.Store.StateName != "Tombstone" {
+				return 0, errors.Errorf("Failed to get columnar status from TiKV, store %s is %s", addr, storeStat.Store.StateName)
+			}
+			continue
+		}
+		indexReady += columnarStatus.VectorIndexReady
+		total += columnarStatus.Total
+	}
+	if total == 0 {
+		return 0, nil
+	}
+	logutil.BgLogger().Debug("CalculateColumnarIndexProgress", zap.Int64("tableID", tableID), zap.Int64("indexID", indexID), zap.Uint("indexReady", indexReady), zap.Uint("total", total), zap.Float64("progress", float64(indexReady)/float64(total)))
+
+	return float64(indexReady) / float64(total), nil
+}
+
 // SetTiFlashGroupConfig is a helper function to set tiflash rule group config
 func SetTiFlashGroupConfig(ctx context.Context) error {
 	is, err := getGlobalInfoSyncer()
@@ -1319,6 +1441,15 @@ func SetTiFlashPlacementRule(ctx context.Context, rule pdhttp.Rule) error {
 	}
 	logutil.BgLogger().Info("SetTiFlashPlacementRule", zap.String("ruleID", rule.ID))
 	return is.tiflashReplicaManager.SetPlacementRule(ctx, &rule)
+}
+
+// GetPlacementRule is a helper function to get placement rule by table id.
+func GetPlacementRule(ctx context.Context, tableID int64) (*pdhttp.Rule, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.tiflashReplicaManager.GetPlacementRule(ctx, tableID)
 }
 
 // DeleteTiFlashPlacementRules is a helper function to delete TiFlash placement rules of given physical table IDs.
@@ -1375,6 +1506,10 @@ func CloseTiFlashManager(ctx context.Context) {
 
 // ConfigureTiFlashPDForTable configures pd rule for unpartitioned tables.
 func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string) error {
+	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+	if !tiflashEnabled {
+		return nil
+	}
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
@@ -1390,6 +1525,10 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 
 // ConfigureTiFlashPDForPartitions configures pd rule for all partition in partitioned tables.
 func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string, tableID int64) error {
+	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+	if !tiflashEnabled {
+		return nil
+	}
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)

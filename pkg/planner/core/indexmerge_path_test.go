@@ -462,7 +462,7 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tblInfo.Meta().ID, true)
 	require.NoError(t, err)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
 	tk.MustExec("alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW")
 
@@ -482,15 +482,15 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec("set tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx"))
 	tk.MustExec("analyze table t index a")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustExec("analyze table t index a, idx, idx2")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 }

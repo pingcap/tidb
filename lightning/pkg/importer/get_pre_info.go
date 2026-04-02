@@ -432,7 +432,7 @@ func newTableInfo(createTblSQL string, tableID int64) (*model.TableInfo, error) 
 	if !ok {
 		return nil, errors.New("cannot transfer the parsed SQL as an CREATE TABLE statement")
 	}
-	info, err := ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), createTableStmt)
+	info, err := ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), createTableStmt, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
