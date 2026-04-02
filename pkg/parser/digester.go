@@ -603,7 +603,10 @@ func isComparisonOperator(op string) bool {
 // It intentionally keeps parentheses that are not the whole condition, such as:
 // `... WHERE (a = ? OR b = ?) AND c = ?`.
 func (d *sqlDigester) reduceOutermostWhereParenthesesForBinding() {
-	for i := 0; i < len(d.tokens)-1; i++ {
+	for i := range len(d.tokens) - 1 {
+		if i >= len(d.tokens)-1 {
+			break
+		}
 		if d.tokens[i].lit != "where" {
 			continue
 		}
