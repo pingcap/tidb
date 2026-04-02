@@ -528,11 +528,16 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 				p.SetOutputNames(clonedNames)
 			} else {
 				// Non-LATERAL: update TblName in place (original behavior).
+				// For derived tables, clear DBName so that error messages (e.g. only_full_group_by)
+				// show "alias.col" not "db.alias.col".
 				for _, name := range p.OutputNames() {
 					if name.Hidden {
 						continue
 					}
 					name.TblName = x.AsName
+					if !isTableName {
+						name.DBName = ast.NewCIStr("")
+					}
 				}
 			}
 		}
