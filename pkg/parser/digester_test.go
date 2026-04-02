@@ -93,6 +93,9 @@ func TestNormalize(t *testing.T) {
 		{"select * from t where (a, b) in ((1, 1), (2, 2))", "select * from `t` where ( `a` , `b` ) in ( ( ... ) )"},
 		{"select * from t where a in(1, 2)", "select * from `t` where `a` in ( ... )"},
 		{"select * from t where a in(1, 2, 3)", "select * from `t` where `a` in ( ... )"},
+		{"select * from t where (a = 1) and b = 1", "select * from `t` where `a` = ? and `b` = ?"},
+		{"select * from t where ((a = 1)) and b = 1", "select * from `t` where `a` = ? and `b` = ?"},
+		{"select * from t where (a in (1, 2, 3))", "select * from `t` where `a` in ( ... )"},
 	}
 	for _, test := range tests_for_binding_specific_rules {
 		normalized := parser.NormalizeForBinding(test.input, false)

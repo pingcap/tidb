@@ -986,6 +986,37 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	require.NotNil(t, binding.UpdateTime)
 }
 
+func TestBindingMatchWithRedundantPredicateParentheses(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
+	tk.MustExec("insert into t value(1, 1);")
+
+	tk.MustExec(`create global binding for select a, b from t where a = 1 and b = 1 using select /*+ use_index(t, ib) */ a, b from t where a = 1 and b = 1`)
+
+	tk.MustQuery("select a, b from t where a = 1 and b = 1")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustQuery("select a, b from t where (a = 1) and b = 1")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	stmtNoParen, err := parser.New().ParseOneStmt("select a, b from test.t where a = 1 and b = 1", "", "")
+	require.NoError(t, err)
+	_, digestNoParen := bindinfo.NormalizeStmtForBinding(stmtNoParen, "", true)
+
+	stmtWithParen, err := parser.New().ParseOneStmt("select a, b from test.t where (a = 1) and b = 1", "", "")
+	require.NoError(t, err)
+	_, digestWithParen := bindinfo.NormalizeStmtForBinding(stmtWithParen, "", true)
+	require.Equal(t, digestNoParen, digestWithParen)
+
+	binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), digestWithParen, bindinfo.CollectTableNames(stmtWithParen))
+	require.True(t, matched)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? and `b` = ?", binding.OriginalSQL)
+}
+
 func utilCleanBindingEnv(tk *testkit.TestKit) {
 	tk.MustExec("update mysql.bind_info set status='deleted' where source != 'builtin'")
 	tk.MustExec(`admin reload bindings`)

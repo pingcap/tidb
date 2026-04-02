@@ -230,6 +230,7 @@ func (d *sqlDigester) normalize(sql string, redact string, keepHint bool, forBin
 			continue
 		}
 
+		shouldAppend := true
 		d.reduceLit(&currTok, redact, forBinding, forPlanReplayerReload)
 		if forPlanReplayerReload {
 			// Apply for plan replayer to match specific rules, changing IN (...) to IN (?). This can avoid plan replayer load failures caused by parse errors.
@@ -239,6 +240,8 @@ func (d *sqlDigester) normalize(sql string, redact string, keepHint bool, forBin
 			d.reduceInListWithSingleLiteral(&currTok)
 			// In (Row(...)) => In (...) #51222
 			d.reduceInRowListWithSingleLiteral(&currTok)
+			// Remove redundant predicate wrappers: `(a = ?)` => `a = ?`.
+			shouldAppend = !d.reduceRedundantParenthesesForBinding(&currTok)
 		}
 
 		if currTok.tok == identifier {
@@ -255,7 +258,9 @@ func (d *sqlDigester) normalize(sql string, redact string, keepHint bool, forBin
 			}
 		}
 	APPEND:
-		d.tokens.pushBack(currTok)
+		if shouldAppend {
+			d.tokens.pushBack(currTok)
+		}
 	}
 	d.lexer.reset("")
 	for i, token := range d.tokens {
@@ -502,6 +507,73 @@ func (d *sqlDigester) reduceInRowListWithSingleLiteral(currTok *token) {
 		d.tokens.popBack(4)
 		d.tokens.pushBack(token{genericSymbolList, "..."})
 		return
+	}
+}
+
+// reduceRedundantParenthesesForBinding removes wrapper parentheses around a single atomic predicate.
+// For example: `(a = ?)` => `a = ?`.
+// It only applies to binding normalization, and skips forms that may change boolean grouping semantics.
+func (d *sqlDigester) reduceRedundantParenthesesForBinding(currTok *token) (reduced bool) {
+	if !d.isRightParen(*currTok) {
+		return false
+	}
+	leftParenIdx := d.findMatchedLeftParenForCurrentRightParen()
+	if leftParenIdx < 0 {
+		return false
+	}
+	if !d.isAtomicPredicateTokens(d.tokens[leftParenIdx+1:]) {
+		return false
+	}
+	d.tokens = append(d.tokens[:leftParenIdx], d.tokens[leftParenIdx+1:]...)
+	return true
+}
+
+func (d *sqlDigester) findMatchedLeftParenForCurrentRightParen() int {
+	depth := 1
+	for i := len(d.tokens) - 1; i >= 0; i-- {
+		switch {
+		case d.isRightParen(d.tokens[i]):
+			depth++
+		case d.isLeftParen(d.tokens[i]):
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func (d *sqlDigester) isAtomicPredicateTokens(tokens []token) bool {
+	if len(tokens) == 0 {
+		return false
+	}
+	depth := 0
+	hasComparison := false
+	for _, tok := range tokens {
+		switch {
+		case d.isLeftParen(tok):
+			depth++
+		case d.isRightParen(tok):
+			if depth == 0 {
+				return false
+			}
+			depth--
+		case depth == 0 && (tok.lit == "and" || tok.lit == "or" || tok.lit == "xor" || tok.lit == ","):
+			return false
+		case depth == 0 && isComparisonOperator(tok.lit):
+			hasComparison = true
+		}
+	}
+	return depth == 0 && hasComparison
+}
+
+func isComparisonOperator(op string) bool {
+	switch op {
+	case "=", ">", "<", ">=", "<=", "<>", "!=", "<=>", "in", "like", "is", "regexp", "rlike":
+		return true
+	default:
+		return false
 	}
 }
 
