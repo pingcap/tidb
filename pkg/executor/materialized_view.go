@@ -2280,6 +2280,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return err
 	}
+	refreshHistFailedReadTSO := refreshHistReadTSOOnFailure(s, targetRefreshReadTSO)
 	stepSet, err := newMVRefreshStepSet(refreshMode)
 	if err != nil {
 		return err
@@ -2309,6 +2310,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			releaseCtx,
 			mviewID,
 			refreshMethod,
+			refreshHistFailedReadTSO,
 			&refreshJobID,
 			taskCancelController,
 			err,
@@ -2415,7 +2417,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 					refreshJobID,
 					mviewID,
 					refreshHistStatusFailed,
-					nil,
+					refreshHistFailedReadTSO,
 					nil,
 					&refreshErrMsg,
 				)
@@ -2591,7 +2593,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				refreshJobID,
 				mviewID,
 				refreshHistStatusFailed,
-				nil,
+				refreshHistFailedReadTSO,
 				nil,
 				&refreshErrMsg,
 			)
@@ -3225,6 +3227,9 @@ func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isI
 	case ast.RefreshMaterializedViewModeFast:
 		// Framework is supported; actual execution happens via RefreshMaterializedViewImplementStmt.
 		methodType = "fast"
+		if s.AsOf != nil {
+			methodType = "bounded fast"
+		}
 	case ast.RefreshMaterializedViewModeCompleteDeltaApply:
 		methodType = "complete delta apply"
 	case ast.RefreshMaterializedViewModeCompleteInPlace:
@@ -3245,6 +3250,14 @@ func validateRefreshMaterializedViewStmt(s *ast.RefreshMaterializedViewStmt, isI
 		return 0, "", errors.New("refresh materialized view: AS OF TIMESTAMP is only supported for FAST refresh")
 	}
 	return mode, methodType + " " + methodOrigin, nil
+}
+
+func refreshHistReadTSOOnFailure(s *ast.RefreshMaterializedViewStmt, targetRefreshReadTSO uint64) *uint64 {
+	if s == nil || s.AsOf == nil || targetRefreshReadTSO == 0 {
+		return nil
+	}
+	failedReadTSO := targetRefreshReadTSO
+	return &failedReadTSO
 }
 
 func evaluateRefreshMaterializedViewTargetTSO(
@@ -3872,8 +3885,13 @@ func insertRefreshHistFailed(
 	refreshJobID uint64,
 	mviewID int64,
 	refreshMethod string,
+	refreshReadTSO *uint64,
 	refreshFailedReason *string,
 ) error {
+	var refreshReadTSOArg any
+	if refreshReadTSO != nil {
+		refreshReadTSOArg = *refreshReadTSO
+	}
 	var refreshFailedReasonArg any
 	if refreshFailedReason != nil {
 		refreshFailedReasonArg = *refreshFailedReason
@@ -3907,7 +3925,7 @@ func insertRefreshHistFailed(
 		refreshMethod,
 		refreshHistStatusFailed,
 		nil,
-		nil,
+		refreshReadTSOArg,
 		refreshFailedReasonArg,
 	); err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -3923,6 +3941,7 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 	releaseCtx context.Context,
 	mviewID int64,
 	refreshMethod string,
+	refreshReadTSO *uint64,
 	refreshJobID *uint64,
 	taskCancelController *mvTaskCancelController,
 	refreshErr error,
@@ -3952,6 +3971,7 @@ func (e *RefreshMaterializedViewExec) insertRefreshHistFailedFallback(
 		*refreshJobID,
 		mviewID,
 		refreshMethod,
+		refreshReadTSO,
 		&refreshErrMsg,
 	); err != nil {
 		return errors.Annotatef(err, "refresh materialized view: failed to insert failed refresh history after error %v", finalErr)
