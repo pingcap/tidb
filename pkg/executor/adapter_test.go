@@ -533,6 +533,42 @@ func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
 			"update `stmt_summary_retry`%",
 		).Check(testkit.Rows("0 0"))
 	})
+
+	t.Run("bypass ru skips final reporting", func(t *testing.T) {
+		reporter := &mockRUV2ConsumptionReporter{}
+		ctx := &mockRUV2ReportingContext{
+			Context:  mock.NewContext(),
+			reporter: reporter,
+		}
+		sessVars := ctx.GetSessionVars()
+		sessVars.StartTime = time.Now()
+		sessVars.StmtCtx.StmtType = "Select"
+		sessVars.StmtCtx.OriginalSQL = "select 1"
+		sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+		sessVars.StmtCtx.ResourceGroupName = "rg1"
+
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, sessVars.RUV2Metrics)
+		sessVars.RUV2Metrics.SetBypass(true)
+		sessVars.RUV2Metrics.AddResultChunkCells(100)
+
+		ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+		ruDetails.AddTiKVRUV2(12345)
+		ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 10, WRU: 20})
+
+		execStmt := &executor.ExecStmt{
+			Ctx:      ctx,
+			GoCtx:    goCtx,
+			StmtNode: &ast.SelectStmt{},
+		}
+		execStmt.FinishExecuteStmt(0, nil, false)
+
+		require.Empty(t, reporter.group)
+		require.Zero(t, reporter.tikvRUV2)
+		require.Zero(t, reporter.tidbRUV2)
+		require.Zero(t, reporter.tiflashRU)
+	})
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {

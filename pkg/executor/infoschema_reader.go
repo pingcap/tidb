@@ -2102,11 +2102,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 	}
 	if !requestByTableRange {
-		pdCli, err := tikvHelper.TryGetPDHTTPClient()
-		if err != nil {
-			return err
-		}
-		allRegionsInfo, err = pdCli.GetRegions(ctx)
+		allRegionsInfo, err = tikvHelper.GetRegions(ctx)
 		if err != nil {
 			return err
 		}
@@ -2146,16 +2142,16 @@ func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helpe
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableID)
 	}
 
-	pt := tbl.Meta().GetPartitionInfo()
-	if pt == nil {
-		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, tableID)
-		if err != nil {
-			return nil, err
-		}
-		return regionsInfo, nil
+	allRegionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, tableID)
+	if err != nil {
+		return nil, err
 	}
 
-	var allRegionsInfo *pd.RegionsInfo
+	pt := tbl.Meta().GetPartitionInfo()
+	if pt == nil {
+		return allRegionsInfo, nil
+	}
+
 	for _, def := range pt.Definitions {
 		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, def.ID)
 		if err != nil {
@@ -2171,7 +2167,9 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	if err != nil {
 		return nil, err
 	}
-	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
+	// Query the whole table prefix so both record and index regions are covered.
+	sk := tablecodec.EncodeTablePrefix(tableID)
+	ek := sk.PrefixNext()
 	start, end := helper.Store.GetCodec().EncodeRegionRange(sk, ek)
 	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), -1)
 }
@@ -2548,11 +2546,15 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 		jobInfo := chunkRow.GetString(3)
 		processedRows := chunkRow.GetInt64(4)
 		var startTime, endTime any
+		// startTime and endTime use the local timezone for displaying.
+		// startTimeUTC is used to calculate the remaining duration of the job.
+		var startTimeUTC *time.Time
 		if !chunkRow.IsNull(5) {
 			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
 			if err != nil {
 				return nil, err
 			}
+			startTimeUTC = &t
 			startTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
 		if !chunkRow.IsNull(6) {
@@ -2576,11 +2578,10 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 
 		var remainDurationStr, progressDouble, estimatedRowCntStr any
 		if state == statistics.AnalyzeRunning && !strings.HasPrefix(jobInfo, "merge global stats") {
-			startTime, ok := startTime.(types.Time)
-			if !ok {
+			if startTimeUTC == nil {
 				return nil, errors.New("invalid start time")
 			}
-			remainingDuration, progress, estimatedRowCnt, remainDurationErr := getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
+			remainingDuration, progress, estimatedRowCnt, remainDurationErr := getRemainDurationForAnalyzeStatusHelper(ctx, sctx, startTimeUTC,
 				dbName, tableName, partitionName, processedRows)
 			if remainDurationErr != nil {
 				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(remainDurationErr))
@@ -2617,16 +2618,13 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
-	sctx sessionctx.Context, startTime *types.Time,
+	sctx sessionctx.Context, startTimeUTC *time.Time,
 	dbName, tableName, partitionName string, processedRows int64,
 ) (_ *time.Duration, percentage, totalCnt float64, err error) {
 	remainingDuration := time.Duration(0)
-	if startTime != nil {
-		start, err := startTime.GoTime(time.UTC)
-		if err != nil {
-			return nil, percentage, totalCnt, err
-		}
-		duration := time.Now().UTC().Sub(start)
+	if startTimeUTC != nil {
+		// time.Time.Sub uses the actual instant.
+		duration := time.Since(*startTimeUTC)
 		if intest.InTest {
 			if val := ctx.Value(AnalyzeProgressTest); val != nil {
 				remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
