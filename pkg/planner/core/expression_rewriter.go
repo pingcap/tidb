@@ -2133,21 +2133,43 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	if allSameType && l == 1 && lLen > 1 {
 		function = er.notToExpression(not, ast.In, tp, er.ctxStack[stkLen-lLen-1:]...)
 	} else if allSameCmpType && hasCommonCmpType && l == 1 && lLen > 1 {
-		normalizedArgs := slices.Clone(args)
-		// Preserve a single IN when every element uses the same numeric comparison type with the left operand.
-		// The IN builtin will cast the remaining arguments and fold constant casts for us.
-		switch commonCmpType {
-		case types.ETInt:
-			normalizedArgs[0] = expression.WrapWithCastAsInt(er.sctx, normalizedArgs[0], nil)
-		case types.ETReal:
-			normalizedArgs[0] = expression.WrapWithCastAsReal(er.sctx, normalizedArgs[0])
-		case types.ETDecimal:
-			normalizedArgs[0] = expression.WrapWithCastAsDecimal(er.sctx, normalizedArgs[0])
-		default:
-			normalizedArgs = nil
+		preserveArgs := args
+		if !not && leftEt == types.ETInt && (commonCmpType == types.ETReal || commonCmpType == types.ETDecimal) {
+			// For integer columns, preserving a single IN over a shared decimal/real comparison type can hide
+			// the old OR-of-EQ simplification path. Example: `int_col IN (0.12, 3.47)` would become
+			// `in(cast(int_col as decimal), 0.12, 3.47)`, even though every RHS constant is impossible to match.
+			// Prune those impossible constants first so we can still return `false` / `eq(...)` for the degenerate cases.
+			var pruned bool
+			preserveArgs, pruned = er.pruneImpossibleIntInList(leftFt, args)
+			if pruned {
+				switch len(preserveArgs) {
+				case 1:
+					function = expression.NewZero()
+				case 2:
+					function, er.err = er.constructBinaryOpFunction(preserveArgs[0], preserveArgs[1], ast.EQ)
+					if er.err != nil {
+						return
+					}
+				}
+			}
 		}
-		if normalizedArgs != nil {
-			function = er.notToExpression(not, ast.In, tp, normalizedArgs...)
+		if function == nil {
+			normalizedArgs := slices.Clone(preserveArgs)
+			// Preserve a single IN when every element uses the same numeric comparison type with the left operand.
+			// The IN builtin will cast the remaining arguments and fold constant casts for us.
+			switch commonCmpType {
+			case types.ETInt:
+				normalizedArgs[0] = expression.WrapWithCastAsInt(er.sctx, normalizedArgs[0], nil)
+			case types.ETReal:
+				normalizedArgs[0] = expression.WrapWithCastAsReal(er.sctx, normalizedArgs[0])
+			case types.ETDecimal:
+				normalizedArgs[0] = expression.WrapWithCastAsDecimal(er.sctx, normalizedArgs[0])
+			default:
+				normalizedArgs = nil
+			}
+			if normalizedArgs != nil {
+				function = er.notToExpression(not, ast.In, tp, normalizedArgs...)
+			}
 		}
 	}
 	if function == nil {
@@ -2178,6 +2200,35 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	}
 	er.ctxStackPop(lLen + 1)
 	er.ctxStackAppend(function, types.EmptyName)
+}
+
+func (er *expressionRewriter) pruneImpossibleIntInList(leftFt *types.FieldType, args []expression.Expression) ([]expression.Expression, bool) {
+	prunedArgs := make([]expression.Expression, 1, len(args))
+	prunedArgs[0] = args[0]
+	changed := false
+	for _, arg := range args[1:] {
+		c, ok := arg.(*expression.Constant)
+		if !ok {
+			prunedArgs = append(prunedArgs, arg)
+			continue
+		}
+		_, isExceptional := expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
+		if isExceptional {
+			changed = true
+			continue
+		}
+		prunedArgs = append(prunedArgs, arg)
+	}
+	// `nullable_int_col IN (0.12, 3.47)` is not the constant `false`: it evaluates to NULL for NULL input rows.
+	// So when every RHS element is impossible, we only collapse to an empty list for NOT NULL columns.
+	// For nullable columns, keep the original expression and let normal execution preserve SQL NULL semantics.
+	if len(prunedArgs) == 1 && !mysql.HasNotNullFlag(leftFt.GetFlag()) {
+		return args, false
+	}
+	if !changed {
+		return args, false
+	}
+	return prunedArgs, true
 }
 
 func (er *expressionRewriter) validateMutableDecimalInList(args []expression.Expression) error {
