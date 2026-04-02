@@ -14,9 +14,13 @@
 package export
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -88,7 +92,7 @@ func newConf() *Config {
 
 func TestFormatPrint(t *testing.T) {
 	conf := newConf()
-	am := newAccessMeta(conf)
+	am := newAccessMeta(conf, nil)
 	am.grants = &userGrants{
 		defaultRoleName: "NONE",
 		privilegesLists: "grant all privileges on *.* to root@'127.0.0.1' with grant option",
@@ -98,4 +102,31 @@ func TestFormatPrint(t *testing.T) {
 	expStr := "user info: root@127.0.0.1\nrole info: NONE\nprivileges info:\ngrant all privileges on *.* to root@'127.0.0.1' with grant option\n\ndump table info:\ntest.aaa test.bbb \n\ndump data conditions: where id>10;\n"
 
 	require.True(t, strings.Contains(strings.ReplaceAll(fmtStr, " ", ""), strings.ReplaceAll(expStr, " ", "")))
+}
+
+func TestWriteAccessMeta(t *testing.T) {
+	conf := newConf()
+	tempDir := t.TempDir()
+
+	extStore, err := storage.NewLocalStorage(tempDir)
+	require.NoError(t, err)
+	t.Cleanup(extStore.Close)
+
+	am := newAccessMeta(conf, extStore)
+	am.grants = &userGrants{
+		defaultRoleName: "NONE",
+		privilegesLists: "grant all privileges on *.* to root@'127.0.0.1' with grant option",
+	}
+	am.setDumpEndTime()
+
+	err = am.writeAccessMeta(context.Background())
+	require.NoError(t, err)
+
+	metaPath := filepath.Join(tempDir, "accessmeta")
+	require.FileExists(t, metaPath)
+
+	content, err := os.ReadFile(metaPath)
+	require.NoError(t, err)
+	require.NotEmpty(t, content)
+	require.Contains(t, string(content), "user info: root@127.0.0.1")
 }

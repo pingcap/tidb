@@ -312,7 +312,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	})
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
-	am := newAccessMeta(conf)
+	am := newAccessMeta(conf, d.extStore)
 	err = am.getUserGrants(metaConn)
 	if err != nil {
 		return err
@@ -340,9 +340,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 	summary.SetSuccessStatus(true)
 	m.recordFinishTime(time.Now())
 	am.setDumpEndTime()
-	err = am.writeAccessMeta()
+	err = am.writeAccessMeta(d.tctx)
 	if err != nil {
-		tctx.L().Error("write access meta fail ," + err.Error())
+		tctx.L().Error("write access meta fail, " + err.Error())
 		return err
 	}
 	return nil

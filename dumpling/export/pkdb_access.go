@@ -16,9 +16,10 @@ package export
 import (
 	"context"
 	"database/sql"
-	"os"
 	"strings"
 	"time"
+
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 type dumpTableList struct {
@@ -42,7 +43,7 @@ type accessMeta struct {
 	grants        *userGrants
 	where         string
 	dumpEndTime   time.Time
-	output        string
+	extStore      storage.ExternalStorage
 }
 
 func getTableList(conf *Config) *dumpTableList {
@@ -134,7 +135,7 @@ func (am *accessMeta) setDumpEndTime() {
 	am.dumpEndTime = time.Now()
 }
 
-func newAccessMeta(conf *Config) *accessMeta {
+func newAccessMeta(conf *Config, extStore storage.ExternalStorage) *accessMeta {
 	user := &userInfo{
 		userName: conf.User,
 		host:     conf.Host,
@@ -144,8 +145,8 @@ func newAccessMeta(conf *Config) *accessMeta {
 		user:          user,
 		where:         conf.Where,
 		dumpTableList: tables,
-		output:        conf.OutputDirPath,
 		dumpStartTime: time.Now(),
+		extStore:      extStore,
 	}
 }
 
@@ -169,8 +170,15 @@ func (am *accessMeta) formatPrint() string {
 	return output
 }
 
-func (am *accessMeta) writeAccessMeta() error {
-	accessMetaFileName := am.output + "/accessmeta"
+func (am *accessMeta) writeAccessMeta(ctx context.Context) error {
 	accessMetaStr := am.formatPrint()
-	return os.WriteFile(accessMetaFileName, []byte(accessMetaStr), 0644)
+	w, err := am.extStore.Create(ctx, "accessmeta", nil)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(ctx, []byte(accessMetaStr))
+	if err != nil {
+		return err
+	}
+	return w.Close(ctx)
 }
