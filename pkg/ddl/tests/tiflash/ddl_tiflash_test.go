@@ -494,6 +494,26 @@ func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count ui
 	require.ElementsMatch(t, labels, replica.LocationLabels)
 }
 
+func WaitTablesAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, tables []string, timeout time.Duration) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, tableName := range tables {
+			tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(tableName))
+			if err != nil {
+				return false
+			}
+			replica := tb.Meta().TiFlashReplica
+			if replica == nil || !replica.Available {
+				return false
+			}
+		}
+		return true
+	}, timeout, ddl.PollTiFlashInterval/2)
+	for _, tableName := range tables {
+		CheckTableAvailableWithTableName(dom, t, count, labels, db, tableName)
+	}
+}
+
 func CheckTableAvailable(dom *domain.Domain, t *testing.T, count uint64, labels []string) {
 	CheckTableAvailableWithTableName(dom, t, count, labels, "test", "ddltiflash")
 }
@@ -538,18 +558,16 @@ func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
 
+	tableNames := make([]string, 100)
 	tk.MustExec("use test")
 	for i := range 100 {
-		tk.MustExec(fmt.Sprintf("drop table if exists ddltiflash%v", i))
-		tk.MustExec(fmt.Sprintf("create table ddltiflash%v(z int)", i))
-		tk.MustExec(fmt.Sprintf("alter table ddltiflash%v set tiflash replica 1", i))
+		tableNames[i] = fmt.Sprintf("ddltiflash%v", i)
+		tk.MustExec(fmt.Sprintf("drop table if exists %s", tableNames[i]))
+		tk.MustExec(fmt.Sprintf("create table %s(z int)", tableNames[i]))
+		tk.MustExec(fmt.Sprintf("alter table %s set tiflash replica 1", tableNames[i]))
 	}
 
-	time.Sleep(ddl.PollTiFlashInterval * 10)
-	// Should get schema right now
-	for i := range 100 {
-		CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", fmt.Sprintf("ddltiflash%v", i))
-	}
+	WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", tableNames, 30*time.Second)
 }
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.

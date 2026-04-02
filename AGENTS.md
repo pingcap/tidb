@@ -17,6 +17,13 @@ This file provides guidance to agents working in this repository.
 4. Leave verifiable evidence. Run targeted checks and report exact commands.
 5. Respect generated code artifacts. Do not hand-edit generated code outputs; regenerate from source inputs.
 
+## Agent Interaction Overrides (Repo-Local)
+
+- For short non-code questions (definitions, acronyms, quick explanations), consider repository context first.
+- If a term may be repo-specific or appears in local docs/code, verify from repository files before answering.
+- If a term is clearly general and not repo-specific, answer directly without extra lookup.
+- When uncertain, prefer checking the repository.
+
 ## ExecPlans
 
 When writing complex features or significant refactors, use an ExecPlan from design to implementation.

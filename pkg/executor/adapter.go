@@ -1563,6 +1563,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.checkPlanReplayerCapture(txnTS)
 
 	sessVars := a.Ctx.GetSessionVars()
+	sessVars.StmtCtx.ExecRetryCount += uint64(a.retryCount)
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
 	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil || execDetail.SharedLockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
@@ -1591,6 +1592,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
+	a.recordInsertRows2Metrics()
+	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
@@ -1675,6 +1678,70 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
 		}
 	}
+}
+
+func (a *ExecStmt) recordInsertRows2Metrics() {
+	recordInsertRows2Metrics(a.Ctx.GetSessionVars())
+}
+
+func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
+	stmtCtx := sessVars.StmtCtx
+	if stmtCtx.StmtType != "Insert" {
+		return
+	}
+	// EXPLAIN ANALYZE INSERT snapshots RU before FinishExecuteStmt runs, while the final statement reporting
+	// still goes through FinishExecuteStmt. Keep this accounting idempotent so both paths can share it safely.
+	if stmtCtx.InsertRowsAsRUV2Recorded {
+		return
+	}
+
+	affectedRows := stmtCtx.AffectedRows()
+	if affectedRows <= 0 {
+		return
+	}
+
+	if sessVars.RUV2Metrics != nil {
+		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
+	}
+	stmtCtx.InsertRowsAsRUV2Recorded = true
+}
+
+func (a *ExecStmt) finalizeStatementRUV2Metrics() {
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
+		return
+	}
+
+	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
+	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
+	if ruDetail == nil {
+		return
+	}
+
+	weights := sessVars.RUV2Weights()
+	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
+
+	dctx := a.Ctx.GetDistSQLCtx()
+	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
+		return
+	}
+	tikvRU := ruDetail.TiKVRUV2()
+	tiflashRU := ruDetail.TiflashRU()
+	if tikvRU > 0 || tidbRU > 0 || tiflashRU > 0 {
+		dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, tikvRU, tidbRU, tiflashRU)
+	}
+}
+
+func calculateStatementTotalRUV2(metrics *execdetails.RUV2Metrics, weights execdetails.RUV2Weights, ruDetail *util.RUDetails) float64 {
+	var tiKVRU, tiFlashRU float64
+	if ruDetail != nil {
+		tiKVRU = ruDetail.TiKVRUV2()
+		tiFlashRU = ruDetail.TiflashRU()
+	}
+	if metrics == nil {
+		return tiKVRU + tiFlashRU
+	}
+	return metrics.TotalRU(weights, tiKVRU, tiFlashRU)
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
@@ -1791,7 +1858,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 
 		sessVars.StmtCtx.ExecSuccess = succ
-		sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
 		globalRules := vardef.GlobalSlowLogRules.Load()
 		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
 		// EffectiveFields is not empty (unique fields for this session including global rules),
@@ -1841,10 +1907,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
 		executor_metrics.TotalCopProcHistogramInternal.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
 		executor_metrics.TotalCopWaitHistogramInternal.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+		executor_metrics.SlowQueryCounterInternal.Inc()
 	} else {
 		executor_metrics.TotalQueryProcHistogramGeneral.Observe(costTime.Seconds())
 		executor_metrics.TotalCopProcHistogramGeneral.Observe(execDetail.TimeDetail.ProcessTime.Seconds())
 		executor_metrics.TotalCopWaitHistogramGeneral.Observe(execDetail.TimeDetail.WaitTime.Seconds())
+		executor_metrics.SlowQueryCounterGeneral.Inc()
 		if execDetail.ScanDetail != nil && execDetail.ScanDetail.ProcessedKeys != 0 {
 			executor_metrics.CopMVCCRatioHistogramGeneral.Observe(float64(execDetail.ScanDetail.TotalKeys) / float64(execDetail.ScanDetail.ProcessedKeys))
 		}
@@ -2120,6 +2188,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.KeyspaceName = keyspaceName
 	stmtExecInfo.KeyspaceID = keyspaceID
 	stmtExecInfo.RUDetail = ruDetail
+	stmtExecInfo.TotalRUV2 = calculateStatementTotalRUV2(sessVars.RUV2Metrics, sessVars.RUV2Weights(), ruDetail)
 	stmtExecInfo.ResourceGroupName = sessVars.StmtCtx.ResourceGroupName
 	stmtExecInfo.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	stmtExecInfo.PlanCacheUnqualified = sessVars.StmtCtx.PlanCacheUnqualified()
@@ -2263,8 +2332,14 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 		}
 		if topRU {
 			beginInfo.Ctx = a.GoCtx
+			beginInfo.RUV2Metrics = vars.RUV2Metrics
+			beginInfo.RUV2Weights = vars.RUV2Weights()
 			if vars.User != nil {
 				beginInfo.User = vars.User.String()
+			}
+			beginInfo.RUVersion = stmtstats.DefaultRUVersion()
+			if do := domain.GetDomain(a.Ctx); do != nil {
+				beginInfo.RUVersion = stmtstats.NormalizeRUVersion(do.GetRUVersion())
 			}
 		}
 	}

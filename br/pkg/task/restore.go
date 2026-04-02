@@ -1018,15 +1018,18 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer restoreRegistry.Close()
 	cfg.RestoreRegistry = restoreRegistry
 
-	if IsStreamRestore(cmdName) {
-		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBRPiTR); err != nil {
+	if cfg.CheckRequirements {
+		verChecker := version.CheckVersionForBR
+		if IsStreamRestore(cmdName) {
+			verChecker = version.CheckVersionForBRPiTR
+		}
+		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), verChecker); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	if IsStreamRestore(cmdName) {
 		restoreErr = RunStreamRestore(c, mgr, g, cfg)
 	} else {
-		if err := version.CheckClusterVersion(c, mgr.GetPDClient(), version.CheckVersionForBR); err != nil {
-			return errors.Trace(err)
-		}
 		snapshotRestoreConfig := SnapshotRestoreConfig{
 			RestoreConfig: cfg,
 		}

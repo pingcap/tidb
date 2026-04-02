@@ -48,9 +48,7 @@ func TestSemiJoinOrder(t *testing.T) {
 			"  └─TableReader(Probe) root  data:Selection",
 			"    └─Selection cop[tikv]  not(isnull(test.t2.col0))",
 			"      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"))
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
 		tk.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 			"Sort root  test.t1.col0, test.t1.col1",
 			"└─HashJoin root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
@@ -75,10 +73,7 @@ func TestSemiJoinOrder(t *testing.T) {
 			"    └─Selection cop[tikv]  not(isnull(test.t1.col0))",
 			"      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"))
 		tk.MustQuery("show warnings").Check(testkit.Rows(
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints"))
 		tk.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 			"Sort root  test.t1.col0, test.t1.col1",
@@ -215,6 +210,11 @@ func TestJoinRegression(t *testing.T) {
 				`  └─Selection cop[tikv]  not(isnull(test.t0.c0))`,
 				`    └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo`))
 
+		tk.MustExec(`drop table if exists issue65325_t0, issue65325_t1`)
+		tk.MustExec(`create table issue65325_t0(c0 bool)`)
+		tk.MustExec(`create table issue65325_t1(c0 double)`)
+		tk.MustQuery(`SELECT /* issue:65325 */ issue65325_t1.c0, issue65325_t1.c0 FROM issue65325_t0 NATURAL JOIN issue65325_t1 ORDER BY CASE DEFAULT(issue65325_t1.c0) WHEN issue65325_t1.c0 THEN 397344251 ELSE issue65325_t0.c0 END`).Check(testkit.Rows())
+
 		tk.MustExec(`create table t1 (a int)`)
 		tk.MustExec(`create table t2 (a int, b int, c int, d int, key ab(a, b), key abcd(a, b, c, d))`)
 		tk.MustUseIndex(`select /* issue:63949 */ /*+ tidb_inlj(t2) */ t2.a from t1, t2 where t1.a=t2.a and t2.b=1 and t2.d=1`, "abcd")
@@ -320,5 +320,14 @@ JOIN
 			`      └─Selection cop[tikv]  not(isnull(test.t3_issue60076.b))`,
 			`        └─TableFullScan cop[tikv] table:t3_issue60076 keep order:false, stats:pseudo`))
 		tk.MustQuery(`show warnings`).Check(testkit.Rows())
+
+		tk.MustExec(`drop table if exists issue66859_t0, issue66859_t1, issue66859_t2`)
+		tk.MustExec(`create table issue66859_t0(c0 int)`)
+		tk.MustExec(`create table issue66859_t1 like issue66859_t0`)
+		tk.MustExec(`create index i0 on issue66859_t1((5))`)
+		tk.MustExec(`insert into issue66859_t0(c0) values(-1)`)
+		tk.MustQuery(`select /* issue:66859 */ issue66859_t0.c0 as ref0, issue66859_t1.c0 as ref2
+			from issue66859_t0 left join issue66859_t1 on issue66859_t0.c0 = issue66859_t1.c0
+			where 5 >= issue66859_t0.c0`).Check(testkit.Rows("-1 <nil>"))
 	})
 }
