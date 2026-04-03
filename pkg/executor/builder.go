@@ -5101,13 +5101,22 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			if err != nil {
 				return nil, err
 			}
-			// Provide row-count hints (1 per KV range) so the store-batch coprocessor
-			// can batch these tasks just as it does for integer-handle tables.
-			hints := make([]int, len(kvRanges))
-			for i := range hints {
-				hints[i] = 1
+			// Only provide row-count hints when each KV range is guaranteed to be a
+			// full-length point range (exactly 1 row). This requires all PK columns to
+			// be covered by the join keys (keyOff2IdxOff) with no dynamic range
+			// expansion (cwc == nil). A partial join key leaves trailing PK columns
+			// unconstrained, producing a prefix range that spans multiple rows; using
+			// hint=1 in that case would misclassify large tasks as small tasks and cause
+			// over-batching in the store-batch coprocessor.
+			pk := tbInfo.GetPrimaryKey()
+			if cwc == nil && pk != nil && len(keyOff2IdxOff) == len(pk.Columns) {
+				hints := make([]int, len(kvRanges))
+				for i := range hints {
+					hints[i] = 1
+				}
+				return builder.buildTableReaderFromKvRangesWithHints(ctx, e, kvRanges, hints)
 			}
-			return builder.buildTableReaderFromKvRangesWithHints(ctx, e, kvRanges, hints)
+			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
 		handles, _ := dedupHandles(lookUpContents)
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
@@ -5128,13 +5137,16 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	if v.IsCommonHandle {
-		// Provide row-count hints (1 per KV range) so the store-batch coprocessor
-		// can batch these tasks just as it does for integer-handle tables.
-		hints := make([]int, len(kvRanges))
-		for i := range hints {
-			hints[i] = 1
+		// See the non-partitioned IsCommonHandle branch above for the rationale.
+		pk := tbInfo.GetPrimaryKey()
+		if cwc == nil && pk != nil && len(keyOff2IdxOff) == len(pk.Columns) {
+			hints := make([]int, len(kvRanges))
+			for i := range hints {
+				hints[i] = 1
+			}
+			return builder.buildTableReaderFromKvRangesWithHints(ctx, e, kvRanges, hints)
 		}
-		return builder.buildTableReaderFromKvRangesWithHints(ctx, e, kvRanges, hints)
+		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 	}
 	return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 }

@@ -1116,3 +1116,18 @@ select /*+ INL_JOIN(t67150_inner) */ t67150_outer.id from t67150_outer left join
 select /*+ INL_JOIN(t67150_inner) */ t67150_outer.id from t67150_outer join t67150_inner on t67150_outer.id = t67150_inner.ref_id order by t67150_outer.id;
 set tidb_store_batch_size = default;
 drop table if exists t67150_outer, t67150_inner;
+
+# TestIssue67150CompositePKPartialJoin
+# For a composite PK (a, b), joining only on column a produces a prefix-range lookup
+# that covers multiple rows per join key. Row-count hints must NOT be applied in this
+# case to avoid misclassifying large-range tasks as small tasks.
+# Verify that all matching rows across both b values are returned correctly.
+drop table if exists t67150_cpk_outer, t67150_cpk_inner;
+create table t67150_cpk_outer (a varchar(32) primary key, val int);
+create table t67150_cpk_inner (a varchar(32), b int, data int, primary key(a, b));
+insert into t67150_cpk_outer values ('x', 100), ('y', 200), ('z', 300);
+insert into t67150_cpk_inner values ('x', 1, 10), ('x', 2, 20), ('y', 1, 30);
+set tidb_store_batch_size = 4;
+select /*+ INL_JOIN(t67150_cpk_inner) */ t67150_cpk_outer.a, t67150_cpk_inner.b, t67150_cpk_inner.data from t67150_cpk_outer join t67150_cpk_inner on t67150_cpk_outer.a = t67150_cpk_inner.a order by t67150_cpk_outer.a, t67150_cpk_inner.b;
+set tidb_store_batch_size = default;
+drop table if exists t67150_cpk_outer, t67150_cpk_inner;
