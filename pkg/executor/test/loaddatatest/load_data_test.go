@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/executor"
-	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 type testCase struct {
@@ -51,7 +53,7 @@ func checkCases(
 ) {
 	for _, tt := range tests {
 		var reader io.ReadCloser = mydump.NewStringReader(string(tt.data))
-		var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
+		var readerBuilder = executor.LoadDataReaderBuilder{
 			Build: func(_ string) (
 				r io.ReadCloser, err error,
 			) {
@@ -521,7 +523,7 @@ func TestLoadDataAutoRandomError(t *testing.T) {
 
 	// Create a reader with explicit value for auto_random column
 	var reader io.ReadCloser = mydump.NewStringReader("1,2\n")
-	var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
+	var readerBuilder = executor.LoadDataReaderBuilder{
 		Build: func(_ string) (r io.ReadCloser, err error) {
 			return reader, nil
 		},
@@ -584,8 +586,13 @@ func TestLoadDataLowPrioritySetsKVLowPriority(t *testing.T) {
 	tk.MustExec("create table load_data_low_prio (a int primary key, b int unique)")
 
 	var reader io.ReadCloser = mydump.NewStringReader("1\t10\n")
-	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (io.ReadCloser, error) {
-		return reader, nil
+	var readerBuilder = executor.LoadDataReaderBuilder{
+		Build: func(_ string) (
+			r io.ReadCloser, err error,
+		) {
+			return reader, nil
+		},
+		Wg: &sync.WaitGroup{},
 	}
 	sctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 
