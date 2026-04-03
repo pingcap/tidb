@@ -890,8 +890,15 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 	tk.MustExec("purge materialized view log on t_purge_batch_delete")
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_batch_delete`").Check(testkit.Rows("0"))
-	tk.MustQuery(fmt.Sprintf("select PURGE_STATUS, PURGE_ROWS from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
-		Check(testkit.Rows("success 5"))
+	tk.MustQuery(fmt.Sprintf(
+		"select PURGE_STATUS, PURGE_ROWS, PURGE_DURATION_SEC = cast(timestampdiff(microsecond, PURGE_TIME, PURGE_ENDTIME) as decimal(18,6)) / 1000000, PURGE_DURATION_SEC >= 0 "+
+			"from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		mlogID,
+	)).Check(testkit.Rows("success 5 1 1"))
+	tk.MustQuery(fmt.Sprintf("select BASE_TABLE_SCHEMA, BASE_TABLE_NAME from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1", mlogID)).
+		Check(testkit.Rows("test t_purge_batch_delete"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where BASE_TABLE_SCHEMA = 'TEST' and BASE_TABLE_NAME = 'T_PURGE_BATCH_DELETE' and MLOG_ID = %d", mlogID)).
+		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO is not null, LAST_PURGED_TSO >= %d from mysql.tidb_mlog_purge_info where MLOG_ID = %d", maxCommitTS, mlogID)).
 		Check(testkit.Rows("1 1"))
 }
@@ -1003,9 +1010,11 @@ func TestPurgeMaterializedViewLogEarlyFailureWritesHist(t *testing.T) {
 		mlogID,
 	)).Check(testkit.Rows(fmt.Sprintf("%d", histCountBefore+1)))
 	tk.MustQuery(fmt.Sprintf(
-		"select PURGE_STATUS, PURGE_METHOD, PURGE_ROWS, PURGE_ENDTIME is not null, PURGE_FAILED_REASON is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		"select PURGE_STATUS, PURGE_METHOD = 'manual', PURGE_ROWS, PURGE_TIME is not null, PURGE_ENDTIME is not null, "+
+			"PURGE_DURATION_SEC = cast(timestampdiff(microsecond, PURGE_TIME, PURGE_ENDTIME) as decimal(18,6)) / 1000000, PURGE_FAILED_REASON is not null "+
+			"from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
 		mlogID,
-	)).Check(testkit.Rows("failed manual 0 1 1"))
+	)).Check(testkit.Rows("failed 1 0 1 1 1 1"))
 	tk.MustQuery(fmt.Sprintf(
 		"select count(*) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running'",
 		mlogID,

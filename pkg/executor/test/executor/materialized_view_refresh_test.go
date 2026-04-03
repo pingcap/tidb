@@ -367,8 +367,16 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
 		Check(testkit.Rows("1"))
-	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_ROWS is null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
-		Check(testkit.Rows("success complete delta apply manual 1 1 1 1"))
+	tk.MustQuery(fmt.Sprintf("select MV_SCHEMA, MV_NAME from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("test mv"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MV_SCHEMA = 'TEST' and MV_NAME = 'MV' and MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, REFRESH_METHOD = 'complete delta apply manual', REFRESH_ENDTIME is not null, REFRESH_ROWS is null, "+
+			"REFRESH_DURATION_SEC = cast(timestampdiff(microsecond, REFRESH_TIME, REFRESH_ENDTIME) as decimal(18,6)) / 1000000, REFRESH_DURATION_SEC >= 0, "+
+			"REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
+		mviewID,
+	)).Check(testkit.Rows("success 1 1 1 1 1 1 1"))
 }
 
 func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
@@ -1178,10 +1186,12 @@ func TestMaterializedViewRefreshFastAsOfTimestampEarlyFailureWritesHistReadTSO(t
 	require.ErrorContains(t, err, "mock as-of early refresh failure")
 
 	tk.MustQuery(fmt.Sprintf(
-		"select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		"select REFRESH_STATUS, REFRESH_METHOD = 'bounded fast manual', REFRESH_TIME is not null, REFRESH_ENDTIME is not null, "+
+			"REFRESH_DURATION_SEC = cast(timestampdiff(microsecond, REFRESH_TIME, REFRESH_ENDTIME) as decimal(18,6)) / 1000000, REFRESH_READ_TSO = %d, REFRESH_FAILED_REASON is not null "+
+			"from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		targetTSO,
 		mvID,
-	)).Check(testkit.Rows("failed bounded fast manual 1 1 1"))
+	)).Check(testkit.Rows("failed 1 1 1 1 1 1"))
 }
 
 func TestMaterializedViewRefreshFastAsOfTimestampDryRunUsesRefreshInfoWindow(t *testing.T) {

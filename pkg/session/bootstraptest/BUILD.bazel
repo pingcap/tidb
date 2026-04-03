@@ -9,7 +9,7 @@ go_test(
         "mview_systable_test.go",
     ],
     flaky = True,
-    shard_count = 15,
+    shard_count = 16,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
