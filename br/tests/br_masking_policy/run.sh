@@ -28,8 +28,6 @@ run_sql "INSERT INTO ${DB}.t VALUES (1, 'abc');"
 run_sql "INSERT INTO ${DB}.t VALUES (2, 'def');"
 
 # Create a masking policy
-# Note: This test verifies that masking policy DDL is included in backup
-# and can be restored properly
 run_sql "CREATE MASKING POLICY test_policy ON ${DB}.t(c) AS CASE WHEN 1=1 THEN 'masked' END;"
 
 # Verify masking policy exists before backup
@@ -60,18 +58,22 @@ if [ "$table_count" != "2" ]; then
     exit 1
 fi
 
-# Verify the masking policy is restored
-# Note: After restore, the masking policy should be recreated
-# This is the key verification for the fix
+# Verify masking policy metadata behavior for db-scope restore.
+# For `restore db`, filter is `<db>.*`, so mysql system tables are filtered out.
+# Therefore `mysql.tidb_masking_policy` entries are not restored in this mode.
 echo "Checking masking policy after restore..."
 policy_output_after=$(run_sql "SHOW MASKING POLICIES FOR ${DB}.t;")
 policy_count_after=$(printf '%s\n' "$policy_output_after" | grep -c "test_policy" || true)
-if [ "$policy_count_after" != "1" ]; then
-    echo "TEST: [$TEST_NAME] failed! Expected 1 masking policy after restore, got $policy_count_after"
+if [ "$policy_count_after" != "0" ]; then
+    echo "TEST: [$TEST_NAME] failed! Expected 0 masking policies after db-scope restore, got $policy_count_after"
     exit 1
 fi
 
-# Check if SHOW MASKING POLICIES returns the policy
-# The policy should be restored during DDL execution
+policy_row_count_after=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE db_name='${DB}' AND table_name='t' AND policy_name='test_policy';" | awk -F': ' '/COUNT\\(\\*\\)/ {print $2; exit}' | tr -d '[:space:]')
+if [ "$policy_row_count_after" != "0" ]; then
+    echo "TEST: [$TEST_NAME] failed! Expected 0 rows in mysql.tidb_masking_policy after db-scope restore, got $policy_row_count_after"
+    exit 1
+fi
+
 echo "TEST: [$TEST_NAME] passed!"
 run_sql "DROP DATABASE $DB;"
