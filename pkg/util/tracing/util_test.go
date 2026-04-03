@@ -24,6 +24,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testTraceBuf struct {
+	traceID []byte
+	events  []tracing.Event
+}
+
+func (t *testTraceBuf) Record(_ context.Context, event tracing.Event) {
+	t.events = append(t.events, event)
+}
+
+func (t *testTraceBuf) GetTraceID() []byte {
+	return t.traceID
+}
+
 func TestSpanFromContext(t *testing.T) {
 	ctx := context.TODO()
 	noopSp := tracing.SpanFromContext(ctx)
@@ -148,4 +161,25 @@ func TestTraceInfoFromContext(t *testing.T) {
 	require.NoError(t, ctx.Err())
 	cancel()
 	require.Error(t, ctx.Err())
+}
+
+func TestStartRegionCarriesTraceID(t *testing.T) {
+	prevIsEnabled := tracing.IsEnabled
+	tracing.IsEnabled = func(category tracing.TraceCategory) bool {
+		return category == tracing.General
+	}
+	t.Cleanup(func() {
+		tracing.IsEnabled = prevIsEnabled
+	})
+
+	traceBuf := &testTraceBuf{traceID: []byte{0x01, 0x02, 0x03, 0x04}}
+	ctx := tracing.WithTraceBuf(context.Background(), traceBuf)
+	region := tracing.StartRegion(ctx, "test-region")
+	region.End()
+
+	require.Len(t, traceBuf.events, 2)
+	require.Equal(t, tracing.PhaseBegin, traceBuf.events[0].Phase)
+	require.Equal(t, tracing.PhaseEnd, traceBuf.events[1].Phase)
+	require.Equal(t, traceBuf.traceID, traceBuf.events[0].TraceID)
+	require.Equal(t, traceBuf.traceID, traceBuf.events[1].TraceID)
 }

@@ -1849,9 +1849,9 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
-	if sink := tracing.GetSink(ctx); sink == nil {
-		trace := traceevent.NewTrace()
-		ctx = tracing.WithFlightRecorder(ctx, trace)
+	if traceevent.GetTraceBuf(ctx) == nil {
+		trace := traceevent.NewTraceBuf()
+		ctx = traceevent.WithTraceBuf(ctx, trace)
 		defer trace.DiscardOrFlush(ctx)
 
 		// A developer debugging event so we can see what trace is missing!
@@ -2900,7 +2900,10 @@ func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte
 	// The trace ID is generated from transaction start_ts and statement count
 	startTS := se.sessionVars.TxnCtx.StartTS
 	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
-	traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
+	traceID := traceevent.GenerateTraceID(startTS, stmtCount, rand.Uint32())
+	if traceBuf := traceevent.GetTraceBuf(ctx); traceBuf != nil {
+		traceBuf.SetTraceID(traceID)
+	}
 	ctx = trace.ContextWithTraceID(ctx, traceID)
 	se.currentCtx = ctx
 	// Store trace ID for next statement
