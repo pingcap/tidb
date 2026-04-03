@@ -384,11 +384,11 @@ type ReportData struct {
 
 ## Limitation
 
-1. **Data Loss Due to Bounded Buffer in Collection Pipeline**: Collection pipeline uses bounded channel (capacity=2) to pass data, using non-blocking send to avoid affecting SQL execution. When `collectWorker` cannot process in time (e.g., GC pause, processing logic takes time) causing channel to be full, new sampling batches will be dropped, observable via `IgnoreCollectRUChannelFullCounter` metric.
+1. **Data Loss Due to Bounded Buffer in Collection Pipeline**: Collection pipeline uses bounded channel (capacity=2) to pass data, using non-blocking send to avoid affecting SQL execution. When `collectWorker` cannot process in time (e.g., GC pause, processing logic takes time) causing channel to be full, new sampling batches will be dropped, observable via `IgnoreCollectRUChannelFullCounter` metric. In addition, `stmtstats.aggregator.drainAndPushRU()` caps distinct RU keys per aggregate (`maxRUKeysPerAggregate=10000`); keys beyond the cap are dropped directly (not merged into "_others_"), observable via `IgnoreExceedRUKeysCounter` / `IgnoreExceedRUTotalCounter`.
 
 2. **Data Precision Impact**:
-   - **Historical Data of Boundary SQLs May Be Lost**: If a SQL does not enter Top 100 in one output slice, its RU data in that slice is aggregated to global "_others_"; if that SQL enters Top 100 in later slices/windows, previously aggregated slice data cannot be recovered.
-   - **TopN Boundary Fluctuation**: SQLs ranked around 99-102 may repeatedly enter/exit Top 100 between adjacent slices/windows, causing some slice data to be aggregated into "_others_".
+   - **Historical Data of Boundary SQLs May Be Lost**: If a SQL does not enter Top 100 in one output slice, its RU data in that slice is compacted into per-user `others SQL` when the user still remains in TopN users, and only falls into global `<others>` when the user is also squeezed out of TopN users; if that SQL enters Top 100 in later slices/windows, previously compacted slice data cannot be recovered.
+   - **TopN Boundary Fluctuation**: SQLs ranked around 99-102 may repeatedly enter/exit Top 100 between adjacent slices/windows, causing some slice data to be compacted into per-user `others SQL` or global `<others>`.
 
 3. **Cross-Node Limitation**: Data is only collected on the current TiDB node, reuses TopSQL's existing cross-node limitations
 
