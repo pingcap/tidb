@@ -137,6 +137,7 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
+	pairCh = e.countConflictPairs(egCtx, eg, pairCh)
 	for i := range concurrency {
 		encoder := encoders[i]
 		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e.GetMeterRecorder())
@@ -160,6 +161,35 @@ func (e *conflictResolutionStepExecutor) RealtimeSummary() *execute.SubtaskSumma
 
 func (e *conflictResolutionStepExecutor) ResetSummary() {
 	e.summary.Reset()
+}
+
+func (e *conflictResolutionStepExecutor) countConflictPairs(
+	ctx context.Context,
+	eg *tidbutil.ErrorGroupWithRecover,
+	pairCh <-chan *external.KVPair,
+) chan *external.KVPair {
+	progressPairCh := make(chan *external.KVPair, 128)
+	eg.Go(func() error {
+		defer close(progressPairCh)
+		forwardProgress := true
+		for pair := range pairCh {
+			if pair != nil {
+				e.summary.Bytes.Inc()
+			}
+			if !forwardProgress {
+				continue
+			}
+			select {
+			case progressPairCh <- pair:
+			case <-ctx.Done():
+				// Keep draining source pairs to prevent producer goroutines from
+				// blocking when downstream exits early on context cancelation.
+				forwardProgress = false
+			}
+		}
+		return nil
+	})
+	return progressPairCh
 }
 
 // when create encoder, if the table have generated column, when calling

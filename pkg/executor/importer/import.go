@@ -376,6 +376,10 @@ type Summary struct {
 
 	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
 
+	CollectConflictsSummary StepSummary `json:"collect-conflicts-summary,omitempty"`
+
+	ResolveConflictsSummary StepSummary `json:"resolve-conflicts-summary,omitempty"`
+
 	// ImportedRows is the number of rows imported into TiKV.
 	// conflicted rows are excluded from this count if using global-sort.
 	ImportedRows   int64  `json:"row-count,omitempty"`

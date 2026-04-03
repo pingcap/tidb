@@ -297,6 +297,14 @@ func TestShowImportProgress(t *testing.T) {
 
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
+	var taskMetaMap map[string]any
+	require.NoError(t, json.Unmarshal(bytes, &taskMetaMap))
+	summaryMap, ok := taskMetaMap["Summary"].(map[string]any)
+	require.True(t, ok)
+	summaryMap["collect-conflicts-summary"] = map[string]any{"input-bytes": int64(1000)}
+	summaryMap["resolve-conflicts-summary"] = map[string]any{"input-bytes": int64(500)}
+	bytes, err = json.Marshal(taskMetaMap)
+	require.NoError(t, err)
 
 	conn := tk.Session().GetSQLExecutor()
 	jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
@@ -395,6 +403,22 @@ func TestShowImportProgress(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/mockSpeedDuration", "return(10000)")
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
 	checkShowInfo("ingest", "500B", "1000B", "50", "50B/s", "00:00:10", 50)
+
+	// collect-conflicts step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepCollectConflicts)
+	for _, s := range subtasks {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepCollectConflicts,
+			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
+	}
+	checkShowInfo("collect-conflicts", "500 conflicts", "1000 conflicts", "50", "50 conflicts/s", "00:00:10", 0)
+
+	// conflict-resolution step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepConflictResolution)
+	for _, s := range subtasks {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepConflictResolution,
+			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
+	}
+	checkShowInfo("conflict-resolution", "500 conflicts", "500 conflicts", "100", "50 conflicts/s", "00:00:00", 0)
 
 	// Post-process step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepPostProcess)
