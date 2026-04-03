@@ -1228,6 +1228,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	InstanceOption                         "Instance option"
 	FulltextSearchModifierOpt              "Fulltext modifier"
 	PluginNameList                         "Plugin Name List"
+	ShowImportJobTarget                    "IMPORT JOB target with optional RAW keyword"
+	ShowImportJobsTarget                   "IMPORT JOBS target with optional RAW keyword"
 	TableRefsClause                        "Table references clause"
 	FieldItem                              "Field item for load data clause"
 	FieldItemList                          "Field items for load data clause"
@@ -12223,21 +12225,13 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
-|	"SHOW" "IMPORT" "JOB" Int64Num
+|	"SHOW" ShowImportJobTarget Int64Num
 	{
-		v := $4.(int64)
-		$$ = &ast.ShowStmt{
-			Tp:          ast.ShowImportJobs,
-			ImportJobID: &v,
-		}
-	}
-|	"SHOW" "RAW" "IMPORT" "JOB" Int64Num
-	{
-		v := $5.(int64)
+		v := $3.(int64)
 		$$ = &ast.ShowStmt{
 			Tp:           ast.ShowImportJobs,
 			ImportJobID:  &v,
-			ImportJobRaw: true,
+			ImportJobRaw: $2.(bool),
 		}
 	}
 |	"SHOW" "DISTRIBUTION" "JOB" Int64Num
@@ -12603,13 +12597,9 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
 	}
-|	"IMPORT" "JOBS"
+|	ShowImportJobsTarget
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
-	}
-|	"RAW" "IMPORT" "JOBS"
-	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: true}
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: $1.(bool)}
 	}
 |	"DISTRIBUTION" "JOBS"
 	{
@@ -12631,6 +12621,26 @@ ShowLikeOrWhereOpt:
 |	"WHERE" Expression
 	{
 		$$ = $2
+	}
+
+ShowImportJobTarget:
+	"IMPORT" "JOB"
+	{
+		$$ = false
+	}
+|	"RAW" "IMPORT" "JOB"
+	{
+		$$ = true
+	}
+
+ShowImportJobsTarget:
+	"IMPORT" "JOBS"
+	{
+		$$ = false
+	}
+|	"RAW" "IMPORT" "JOBS"
+	{
+		$$ = true
 	}
 
 GlobalScope:
