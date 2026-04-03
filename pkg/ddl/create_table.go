@@ -616,13 +616,7 @@ func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.Ta
 	// Build uses current visible data of the source query directly.
 	selectSQL := mvTblInfo.MaterializedView.SQLContent
 	prefix := sqlescape.MustEscapeSQL("IMPORT INTO %n.%n FROM ", schemaName, mvTblInfo.Name.O)
-	options := []string{"disable_precheck"}
-	if threadCnt > 0 {
-		options = append(options, fmt.Sprintf("thread=%d", threadCnt))
-	}
-	if diskQuota != "" {
-		options = append(options, sqlescape.MustEscapeSQL("disk_quota=%?", diskQuota))
-	}
+	options := BuildMViewImportIntoOptions(threadCnt, diskQuota)
 	return prefix + "(" + selectSQL + ") WITH " + strings.Join(options, ", "), nil
 }
 
@@ -742,24 +736,55 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 	return len(rows) > 0, nil
 }
 
-func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta, currentDB string) (func(), error) {
-	if reorgMeta == nil {
+func initCreateMaterializedViewBuildSession(sessCtx sessionctx.Context, job *model.Job, currentDB string) (func(), error) {
+	if job == nil || job.ReorgMeta == nil {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: missing reorg metadata")
 	}
 	restore := restoreSessCtx(sessCtx)
 	origInMaterializedViewMaintenance := sessCtx.GetSessionVars().InMaterializedViewMaintenance
 	origCurrentDB := sessCtx.GetSessionVars().CurrentDB
-	if err := initSessCtx(sessCtx, reorgMeta); err != nil {
+	if err := initSessCtx(sessCtx, job.ReorgMeta); err != nil {
 		// initSessCtx may mutate session vars before returning error (for example invalid timezone).
 		// Restore immediately to avoid leaking partial state into the pooled session.
 		restore(sessCtx)
 		return nil, errors.Trace(err)
 	}
+	targetExecutionVars, err := MViewExecutionSessionVarsFromJob(job, sessCtx.GetSessionVars())
+	if err != nil {
+		restore(sessCtx)
+		return nil, errors.Trace(err)
+	}
+	restoreExecutionVars, err := ApplyMViewExecutionSessionVars(sessCtx.GetSessionVars(), targetExecutionVars)
+	if err != nil {
+		restore(sessCtx)
+		return nil, err
+	}
 	sessCtx.GetSessionVars().CurrentDB = currentDB
 	// MV init build should follow the same TiFlash strict-mode bypass path as MV refresh.
 	// Also marks the session as MV maintenance context so writes bypass the explicit-DML guard.
 	sessCtx.GetSessionVars().InMaterializedViewMaintenance = true
+	failpoint.InjectCall("createMaterializedViewBuildMaintainMemQuotaApplied", sessCtx.GetSessionVars().MemQuotaQuery)
+	failpoint.InjectCall(
+		"createMaterializedViewBuildTiFlashSessionVarsApplied",
+		sessCtx.GetSessionVars().TiFlashMaxThreads,
+		sessCtx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount,
+		sessCtx.GetSessionVars().TiFlashFineGrainedShuffleBatchSize,
+	)
+	failpoint.InjectCall(
+		"createMaterializedViewBuildTiFlashSpillSessionVarsApplied",
+		sessCtx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin,
+		sessCtx.GetSessionVars().TiFlashMaxBytesBeforeExternalGroupBy,
+		sessCtx.GetSessionVars().TiFlashMaxBytesBeforeExternalSort,
+		sessCtx.GetSessionVars().TiFlashMaxQueryMemoryPerNode,
+		sessCtx.GetSessionVars().TiFlashQuerySpillRatio,
+	)
+	failpoint.InjectCall(
+		"createMaterializedViewBuildImportSessionVarsApplied",
+		sessCtx.GetSessionVars().MViewMaintainImportThreads,
+		sessCtx.GetSessionVars().MViewMaintainImportDiskQuota,
+	)
 	return func() {
+		restoreExecutionVars()
 		restore(sessCtx)
 		sessCtx.GetSessionVars().InMaterializedViewMaintenance = origInMaterializedViewMaintenance
 		sessCtx.GetSessionVars().CurrentDB = origCurrentDB
@@ -780,7 +805,7 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta, job.SchemaName)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)
@@ -792,13 +817,7 @@ func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, jo
 
 	ddlSess := sess.NewSession(sessCtx)
 	threadCnt := sessCtx.GetSessionVars().MViewMaintainImportThreads
-	if val, ok := job.GetSessionVars(variable.TiDBMViewMaintainImportThreads); ok {
-		threadCnt = variable.TidbOptInt(val, threadCnt)
-	}
 	diskQuota := sessCtx.GetSessionVars().MViewMaintainImportDiskQuota
-	if val, ok := job.GetSessionVars(variable.TiDBMViewMaintainImportDiskQuota); ok {
-		diskQuota = val
-	}
 	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo, threadCnt, diskQuota)
 	if err != nil {
 		return errors.Trace(err)
@@ -907,7 +926,7 @@ func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, jo
 	if err != nil {
 		return errors.Trace(err)
 	}
-	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job.ReorgMeta, job.SchemaName)
+	restoreSess, err := initCreateMaterializedViewBuildSession(sessCtx, job, job.SchemaName)
 	if err != nil {
 		w.sessPool.Put(sessCtx)
 		return errors.Trace(err)

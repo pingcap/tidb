@@ -52,6 +52,143 @@ const (
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
 )
 
+// ApplyMViewExecutionSessionVars applies MV execution vars onto a session and returns a restore closure.
+func ApplyMViewExecutionSessionVars(sessVars *variable.SessionVars, target variable.MViewExecutionSessionVars) (func(), error) {
+	return applyMViewExecutionSessionVars(sessVars, target, false)
+}
+
+// ApplyMViewExecutionSessionVarsBestEffort applies MV execution vars onto a session and falls back
+// to the session's current value for any individual variable that fails to apply.
+func ApplyMViewExecutionSessionVarsBestEffort(sessVars *variable.SessionVars, target variable.MViewExecutionSessionVars) (func(), error) {
+	return applyMViewExecutionSessionVars(sessVars, target, true)
+}
+
+func applyMViewExecutionSessionVars(
+	sessVars *variable.SessionVars,
+	target variable.MViewExecutionSessionVars,
+	bestEffort bool,
+) (func(), error) {
+	return variable.ApplyMViewExecutionSessionVarsWithConfig(
+		sessVars,
+		target,
+		variable.MViewExecutionSessionVarsApplyConfig{
+			MaintainMemQuotaVarName: variable.TiDBMemQuotaQuery,
+			CaptureAppliedVars:      variable.CaptureAppliedMViewExecutionSessionVars,
+			BestEffort:              bestEffort,
+			InjectApplyError:        maybeMockMViewExecutionSessionVarApplyError,
+			OnApplyError: func(name, value string, err error) {
+				logutil.DDLLogger().Warn(
+					"mv execution: failed to apply session var, fallback to current session value",
+					zap.String("var", name),
+					zap.String("value", value),
+					zap.Error(err),
+				)
+			},
+			OnRestoreError: func(name, originValue, currentValue string, err error) {
+				logutil.DDLLogger().Warn(
+					"mv execution: failed to restore session var",
+					zap.String("var", name),
+					zap.String("origin", originValue),
+					zap.String("current", currentValue),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+}
+
+func maybeMockMViewExecutionSessionVarApplyError(varName string) error {
+	var err error
+	failpoint.Inject("mockMViewExecutionSessionVarApplyError", func(val failpoint.Value) {
+		targetVar, ok := val.(string)
+		if ok && targetVar == varName {
+			err = errors.Errorf("mock mv execution session var apply error: %s", varName)
+		}
+	})
+	return err
+}
+
+// AddMViewExecutionSessionVarsToJob snapshots MV execution vars into the DDL job.
+func AddMViewExecutionSessionVarsToJob(job *model.Job, sessVars *variable.SessionVars) {
+	if job == nil || sessVars == nil {
+		return
+	}
+	if job.SessionVars == nil {
+		job.SessionVars = make(map[string]string)
+	}
+	target := variable.CaptureMViewExecutionSessionVars(sessVars)
+	job.AddSessionVars(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(target.MaintainMemQuota, 10))
+	job.AddSessionVars(variable.TiDBMaxTiFlashThreads, strconv.FormatInt(target.TiFlashMaxThreads, 10))
+	job.AddSessionVars(variable.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtJoin, 10))
+	job.AddSessionVars(variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtAgg, 10))
+	job.AddSessionVars(variable.TiDBMaxBytesBeforeTiFlashExternalSort, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtSort, 10))
+	job.AddSessionVars(variable.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(target.TiFlashMemQuotaQueryPerNode, 10))
+	job.AddSessionVars(variable.TiFlashQuerySpillRatio, strconv.FormatFloat(target.TiFlashQuerySpillRatio, 'f', -1, 64))
+	job.AddSessionVars(variable.TiFlashFineGrainedShuffleStreamCount, strconv.FormatInt(target.FineGrainedStreamCount, 10))
+	job.AddSessionVars(variable.TiFlashFineGrainedShuffleBatchSize, strconv.FormatUint(target.FineGrainedBatchSize, 10))
+	job.AddSessionVars(variable.TiDBMViewMaintainImportThreads, strconv.Itoa(target.ImportThreads))
+	job.AddSessionVars(variable.TiDBMViewMaintainImportDiskQuota, target.ImportDiskQuota)
+}
+
+// MViewExecutionSessionVarsFromJob reconstructs MV execution vars from a DDL job.
+func MViewExecutionSessionVarsFromJob(job *model.Job, defaultSessVars *variable.SessionVars) (variable.MViewExecutionSessionVars, error) {
+	target := variable.CaptureAppliedMViewExecutionSessionVars(defaultSessVars)
+	if job == nil {
+		return target, nil
+	}
+
+	if val, ok := job.GetSessionVars(variable.TiDBMVMaintainMemQuota); ok {
+		target.MaintainMemQuota = variable.TidbOptInt64(val, target.MaintainMemQuota)
+	}
+	if val, ok := job.GetSessionVars(variable.TiDBMaxTiFlashThreads); ok {
+		target.TiFlashMaxThreads = variable.TidbOptInt64(val, target.TiFlashMaxThreads)
+	}
+	if val, ok := job.GetSessionVars(variable.TiDBMaxBytesBeforeTiFlashExternalJoin); ok {
+		target.TiFlashMaxBytesBeforeExtJoin = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtJoin)
+	}
+	if val, ok := job.GetSessionVars(variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy); ok {
+		target.TiFlashMaxBytesBeforeExtAgg = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtAgg)
+	}
+	if val, ok := job.GetSessionVars(variable.TiDBMaxBytesBeforeTiFlashExternalSort); ok {
+		target.TiFlashMaxBytesBeforeExtSort = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtSort)
+	}
+	if val, ok := job.GetSessionVars(variable.TiFlashMemQuotaQueryPerNode); ok {
+		target.TiFlashMemQuotaQueryPerNode = variable.TidbOptInt64(val, target.TiFlashMemQuotaQueryPerNode)
+	}
+	if val, ok := job.GetSessionVars(variable.TiFlashQuerySpillRatio); ok {
+		ratio, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			return variable.MViewExecutionSessionVars{}, errors.Annotatef(err, "invalid %s", variable.TiFlashQuerySpillRatio)
+		}
+		target.TiFlashQuerySpillRatio = ratio
+	}
+	if val, ok := job.GetSessionVars(variable.TiFlashFineGrainedShuffleStreamCount); ok {
+		target.FineGrainedStreamCount = variable.TidbOptInt64(val, target.FineGrainedStreamCount)
+	}
+	if val, ok := job.GetSessionVars(variable.TiFlashFineGrainedShuffleBatchSize); ok {
+		target.FineGrainedBatchSize = uint64(variable.TidbOptInt64(val, int64(target.FineGrainedBatchSize)))
+	}
+	if val, ok := job.GetSessionVars(variable.TiDBMViewMaintainImportThreads); ok {
+		target.ImportThreads = variable.TidbOptInt(val, target.ImportThreads)
+	}
+	if val, ok := job.GetSessionVars(variable.TiDBMViewMaintainImportDiskQuota); ok {
+		target.ImportDiskQuota = val
+	}
+	return target, nil
+}
+
+// BuildMViewImportIntoOptions builds the WITH options shared by MV IMPORT INTO execution.
+func BuildMViewImportIntoOptions(importThreads int, importDiskQuota string) []string {
+	options := []string{"disable_precheck"}
+	if importThreads > 0 {
+		options = append(options, fmt.Sprintf("thread=%d", importThreads))
+	}
+	if importDiskQuota != "" {
+		options = append(options, sqlescape.MustEscapeSQL("disk_quota=%?", importDiskQuota))
+	}
+	return options
+}
+
 func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateMaterializedViewStmt) error {
 	is := e.infoCache.GetLatest()
 	schemaName := s.ViewName.Schema
@@ -227,8 +364,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		return err
 	}
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
-	job.AddSessionVars(variable.TiDBMViewMaintainImportThreads, strconv.Itoa(ctx.GetSessionVars().MViewMaintainImportThreads))
-	job.AddSessionVars(variable.TiDBMViewMaintainImportDiskQuota, ctx.GetSessionVars().MViewMaintainImportDiskQuota)
+	AddMViewExecutionSessionVarsToJob(job, ctx.GetSessionVars())
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{
 		TableInfo:    mvTableInfo,
 		MLogTableIDs: []int64{mlogTable.Meta().ID},

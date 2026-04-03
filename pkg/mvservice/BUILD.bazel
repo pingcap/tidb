@@ -33,6 +33,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/cpu",
+        "//pkg/util/disttask",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/sqlexec",
@@ -59,6 +60,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/ddl/notifier",
+        "//pkg/domain/infosync",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/kv",

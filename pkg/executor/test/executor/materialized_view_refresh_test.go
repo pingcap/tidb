@@ -87,30 +87,190 @@ func requireRefreshTiFlashSessionVarsApplied(
 	t *testing.T,
 	refresh func(),
 	expectedMaxThreads int64,
+	expectedMaxBytesBeforeExternalJoin int64,
+	expectedMaxBytesBeforeExternalGroupBy int64,
+	expectedMaxBytesBeforeExternalSort int64,
+	expectedMemQuotaQueryPerNode int64,
+	expectedQuerySpillRatio float64,
 	expectedFineGrainedStreamCount int64,
 	expectedFineGrainedBatchSize uint64,
 ) {
 	t.Helper()
 
-	applied := false
+	sessionVarsApplied := false
 	var gotMaxThreads int64
+	spillVarsApplied := false
+	var gotMaxBytesBeforeExternalJoin int64
+	var gotMaxBytesBeforeExternalGroupBy int64
+	var gotMaxBytesBeforeExternalSort int64
+	var gotMemQuotaQueryPerNode int64
+	var gotQuerySpillRatio float64
 	var gotFineGrainedStreamCount int64
 	var gotFineGrainedBatchSize uint64
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewTiFlashSessionVarsApplied",
 		func(maxThreads int64, fineGrainedStreamCount int64, fineGrainedBatchSize uint64) {
-			applied = true
+			sessionVarsApplied = true
 			gotMaxThreads = maxThreads
 			gotFineGrainedStreamCount = fineGrainedStreamCount
 			gotFineGrainedBatchSize = fineGrainedBatchSize
 		},
 	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewTiFlashSpillSessionVarsApplied",
+		func(maxBytesBeforeExternalJoin int64, maxBytesBeforeExternalGroupBy int64, maxBytesBeforeExternalSort int64, memQuotaQueryPerNode int64, querySpillRatio float64) {
+			spillVarsApplied = true
+			gotMaxBytesBeforeExternalJoin = maxBytesBeforeExternalJoin
+			gotMaxBytesBeforeExternalGroupBy = maxBytesBeforeExternalGroupBy
+			gotMaxBytesBeforeExternalSort = maxBytesBeforeExternalSort
+			gotMemQuotaQueryPerNode = memQuotaQueryPerNode
+			gotQuerySpillRatio = querySpillRatio
+		},
+	)
 
 	refresh()
 
-	require.True(t, applied)
+	require.True(t, sessionVarsApplied)
+	require.True(t, spillVarsApplied)
 	require.Equal(t, expectedMaxThreads, gotMaxThreads)
+	require.Equal(t, expectedMaxBytesBeforeExternalJoin, gotMaxBytesBeforeExternalJoin)
+	require.Equal(t, expectedMaxBytesBeforeExternalGroupBy, gotMaxBytesBeforeExternalGroupBy)
+	require.Equal(t, expectedMaxBytesBeforeExternalSort, gotMaxBytesBeforeExternalSort)
+	require.Equal(t, expectedMemQuotaQueryPerNode, gotMemQuotaQueryPerNode)
+	require.Equal(t, expectedQuerySpillRatio, gotQuerySpillRatio)
 	require.Equal(t, expectedFineGrainedStreamCount, gotFineGrainedStreamCount)
 	require.Equal(t, expectedFineGrainedBatchSize, gotFineGrainedBatchSize)
+}
+
+func requireTiFlashSessionVarsAppliedWithFailpoint(
+	t *testing.T,
+	failpointName string,
+	spillFailpointName string,
+	refresh func(),
+	expectedMaxThreads int64,
+	expectedMaxBytesBeforeExternalJoin int64,
+	expectedMaxBytesBeforeExternalGroupBy int64,
+	expectedMaxBytesBeforeExternalSort int64,
+	expectedMemQuotaQueryPerNode int64,
+	expectedQuerySpillRatio float64,
+	expectedFineGrainedStreamCount int64,
+	expectedFineGrainedBatchSize uint64,
+) {
+	t.Helper()
+
+	sessionVarsApplied := false
+	var gotMaxThreads int64
+	spillVarsApplied := false
+	var gotMaxBytesBeforeExternalJoin int64
+	var gotMaxBytesBeforeExternalGroupBy int64
+	var gotMaxBytesBeforeExternalSort int64
+	var gotMemQuotaQueryPerNode int64
+	var gotQuerySpillRatio float64
+	var gotFineGrainedStreamCount int64
+	var gotFineGrainedBatchSize uint64
+	testfailpoint.EnableCall(t, failpointName, func(maxThreads int64, fineGrainedStreamCount int64, fineGrainedBatchSize uint64) {
+		sessionVarsApplied = true
+		gotMaxThreads = maxThreads
+		gotFineGrainedStreamCount = fineGrainedStreamCount
+		gotFineGrainedBatchSize = fineGrainedBatchSize
+	})
+	testfailpoint.EnableCall(t, spillFailpointName, func(maxBytesBeforeExternalJoin int64, maxBytesBeforeExternalGroupBy int64, maxBytesBeforeExternalSort int64, memQuotaQueryPerNode int64, querySpillRatio float64) {
+		spillVarsApplied = true
+		gotMaxBytesBeforeExternalJoin = maxBytesBeforeExternalJoin
+		gotMaxBytesBeforeExternalGroupBy = maxBytesBeforeExternalGroupBy
+		gotMaxBytesBeforeExternalSort = maxBytesBeforeExternalSort
+		gotMemQuotaQueryPerNode = memQuotaQueryPerNode
+		gotQuerySpillRatio = querySpillRatio
+	})
+
+	refresh()
+
+	require.True(t, sessionVarsApplied)
+	require.True(t, spillVarsApplied)
+	require.Equal(t, expectedMaxThreads, gotMaxThreads)
+	require.Equal(t, expectedMaxBytesBeforeExternalJoin, gotMaxBytesBeforeExternalJoin)
+	require.Equal(t, expectedMaxBytesBeforeExternalGroupBy, gotMaxBytesBeforeExternalGroupBy)
+	require.Equal(t, expectedMaxBytesBeforeExternalSort, gotMaxBytesBeforeExternalSort)
+	require.Equal(t, expectedMemQuotaQueryPerNode, gotMemQuotaQueryPerNode)
+	require.Equal(t, expectedQuerySpillRatio, gotQuerySpillRatio)
+	require.Equal(t, expectedFineGrainedStreamCount, gotFineGrainedStreamCount)
+	require.Equal(t, expectedFineGrainedBatchSize, gotFineGrainedBatchSize)
+}
+
+func requireImportSessionVarsAppliedWithFailpoint(
+	t *testing.T,
+	failpointName string,
+	run func(),
+	expectedImportThreads int,
+	expectedImportDiskQuota string,
+) {
+	t.Helper()
+
+	applied := false
+	gotImportThreads := 0
+	gotImportDiskQuota := ""
+	testfailpoint.EnableCall(t, failpointName, func(importThreads int, importDiskQuota string) {
+		applied = true
+		gotImportThreads = importThreads
+		gotImportDiskQuota = importDiskQuota
+	})
+
+	run()
+
+	require.True(t, applied)
+	require.Equal(t, expectedImportThreads, gotImportThreads)
+	require.Equal(t, expectedImportDiskQuota, gotImportDiskQuota)
+}
+
+func prepareRefreshTiFlashSessionVarsForTest(t *testing.T, tk *testkit.TestKit) {
+	t.Helper()
+
+	tk.MustExec(fmt.Sprintf("set @@global.%s = 2", variable.TiDBMaxTiFlashThreads))
+	tk.MustExec(fmt.Sprintf("set @@global.%s = 111", variable.TiDBMaxBytesBeforeTiFlashExternalJoin))
+	tk.MustExec(fmt.Sprintf("set @@global.%s = 222", variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy))
+	tk.MustExec(fmt.Sprintf("set @@global.%s = 333", variable.TiDBMaxBytesBeforeTiFlashExternalSort))
+	tk.MustExec(fmt.Sprintf("set @@global.%s = 444", variable.TiFlashMemQuotaQueryPerNode))
+	tk.MustExec(fmt.Sprintf("set @@global.%s = 0.25", variable.TiFlashQuerySpillRatio))
+	tk.MustExec(fmt.Sprintf("set @@global.%s = 4", variable.TiFlashFineGrainedShuffleStreamCount))
+	tk.MustExec(fmt.Sprintf("set @@global.%s = 1024", variable.TiFlashFineGrainedShuffleBatchSize))
+	tk.MustExec(fmt.Sprintf("set @@global.%s = 3", variable.TiDBMViewMaintainImportThreads))
+	tk.MustExec(fmt.Sprintf("set @@global.%s = '32gib'", variable.TiDBMViewMaintainImportDiskQuota))
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiDBMaxTiFlashThreads, variable.DefTiFlashMaxThreads))
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiDBMaxBytesBeforeTiFlashExternalJoin, variable.DefTiFlashMaxBytesBeforeExternalJoin))
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, variable.DefTiFlashMaxBytesBeforeExternalGroupBy))
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiDBMaxBytesBeforeTiFlashExternalSort, variable.DefTiFlashMaxBytesBeforeExternalSort))
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiFlashMemQuotaQueryPerNode, variable.DefTiFlashMemQuotaQueryPerNode))
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %s", variable.TiFlashQuerySpillRatio, strconv.FormatFloat(variable.DefTiFlashQuerySpillRatio, 'f', -1, 64)))
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiFlashFineGrainedShuffleStreamCount, variable.DefTiFlashFineGrainedShuffleStreamCount))
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiFlashFineGrainedShuffleBatchSize, variable.DefTiFlashFineGrainedShuffleBatchSize))
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiDBMViewMaintainImportThreads, variable.DefTiDBMViewMaintainImportThreads))
+		tk.MustExec(fmt.Sprintf("set @@global.%s = ''", variable.TiDBMViewMaintainImportDiskQuota))
+	})
+
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 8", variable.TiDBMaxTiFlashThreads))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 101", variable.TiDBMaxBytesBeforeTiFlashExternalJoin))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 202", variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 303", variable.TiDBMaxBytesBeforeTiFlashExternalSort))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 404", variable.TiFlashMemQuotaQueryPerNode))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 0.75", variable.TiFlashQuerySpillRatio))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 16", variable.TiFlashFineGrainedShuffleStreamCount))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 4096", variable.TiFlashFineGrainedShuffleBatchSize))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 12", variable.TiDBMViewMaintainImportThreads))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = '64gib'", variable.TiDBMViewMaintainImportDiskQuota))
+}
+
+func requireCurrentSessionTiFlashSessionVarsRestored(t *testing.T, sessVars *variable.SessionVars) {
+	t.Helper()
+
+	require.Equal(t, int64(8), sessVars.TiFlashMaxThreads)
+	require.Equal(t, int64(101), sessVars.TiFlashMaxBytesBeforeExternalJoin)
+	require.Equal(t, int64(202), sessVars.TiFlashMaxBytesBeforeExternalGroupBy)
+	require.Equal(t, int64(303), sessVars.TiFlashMaxBytesBeforeExternalSort)
+	require.Equal(t, int64(404), sessVars.TiFlashMaxQueryMemoryPerNode)
+	require.Equal(t, float64(0.75), sessVars.TiFlashQuerySpillRatio)
+	require.Equal(t, int64(16), sessVars.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(4096), sessVars.TiFlashFineGrainedShuffleBatchSize)
+	require.Equal(t, 12, sessVars.MViewMaintainImportThreads)
+	require.Equal(t, "64gib", sessVars.MViewMaintainImportDiskQuota)
 }
 
 func requireRowsContainAnyPrefix(t *testing.T, rows [][]any, prefixes ...string) {
@@ -323,7 +483,7 @@ func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {
 	tk.MustExec("insert into t_mv_quota_refresh values (4, 40)")
 	mustExecInternal(t, tk, "refresh materialized view mv_mv_quota_refresh complete out of place")
 	require.True(t, buildApplied)
-	require.Equal(t, int64(536870912), lastBuildAppliedMaintainQuota)
+	require.Equal(t, int64(268435456), lastBuildAppliedMaintainQuota)
 	require.Equal(t, lastBuildAppliedMaintainQuota, lastBuildAppliedMemQuotaQuery)
 }
 
@@ -335,28 +495,12 @@ func TestMaterializedViewRefreshManualSQLUsesCurrentSessionTiFlashSessionVars(t 
 	tk.MustExec("insert into t_mv_refresh_tiflash_vars values (1, 10), (2, 20)")
 	tk.MustExec("create materialized view log on t_mv_refresh_tiflash_vars (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_mv_refresh_tiflash_vars (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_refresh_tiflash_vars group by a")
-	tk.MustExec(fmt.Sprintf("set @@global.%s = 2", variable.TiDBMaxTiFlashThreads))
-	tk.MustExec(fmt.Sprintf("set @@global.%s = 4", variable.TiFlashFineGrainedShuffleStreamCount))
-	tk.MustExec(fmt.Sprintf("set @@global.%s = 1024", variable.TiFlashFineGrainedShuffleBatchSize))
-	t.Cleanup(func() {
-		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiDBMaxTiFlashThreads, variable.DefTiFlashMaxThreads))
-		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiFlashFineGrainedShuffleStreamCount, variable.DefTiFlashFineGrainedShuffleStreamCount))
-		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiFlashFineGrainedShuffleBatchSize, variable.DefTiFlashFineGrainedShuffleBatchSize))
-	})
-
-	tk.MustExec(fmt.Sprintf("set @@session.%s = 8", variable.TiDBMaxTiFlashThreads))
-	tk.MustExec(fmt.Sprintf("set @@session.%s = 16", variable.TiFlashFineGrainedShuffleStreamCount))
-	tk.MustExec(fmt.Sprintf("set @@session.%s = 4096", variable.TiFlashFineGrainedShuffleBatchSize))
+	prepareRefreshTiFlashSessionVarsForTest(t, tk)
 
 	requireRefreshTiFlashSessionVarsApplied(t, func() {
 		tk.MustExec("refresh materialized view mv_mv_refresh_tiflash_vars complete")
-	}, int64(8), int64(16), uint64(4096))
-	tk.MustQuery(fmt.Sprintf(
-		"select @@session.%s, @@session.%s, @@session.%s",
-		variable.TiDBMaxTiFlashThreads,
-		variable.TiFlashFineGrainedShuffleStreamCount,
-		variable.TiFlashFineGrainedShuffleBatchSize,
-	)).Check(testkit.Rows("8 16 4096"))
+	}, int64(8), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
+	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
 }
 
 func TestMaterializedViewRefreshInternalSQLUsesCurrentSessionTiFlashSessionVars(t *testing.T) {
@@ -367,28 +511,227 @@ func TestMaterializedViewRefreshInternalSQLUsesCurrentSessionTiFlashSessionVars(
 	tk.MustExec("insert into t_mv_refresh_tiflash_vars values (1, 10), (2, 20)")
 	tk.MustExec("create materialized view log on t_mv_refresh_tiflash_vars (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_mv_refresh_tiflash_vars (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_refresh_tiflash_vars group by a")
-	tk.MustExec(fmt.Sprintf("set @@global.%s = 2", variable.TiDBMaxTiFlashThreads))
-	tk.MustExec(fmt.Sprintf("set @@global.%s = 4", variable.TiFlashFineGrainedShuffleStreamCount))
-	tk.MustExec(fmt.Sprintf("set @@global.%s = 1024", variable.TiFlashFineGrainedShuffleBatchSize))
-	t.Cleanup(func() {
-		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiDBMaxTiFlashThreads, variable.DefTiFlashMaxThreads))
-		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiFlashFineGrainedShuffleStreamCount, variable.DefTiFlashFineGrainedShuffleStreamCount))
-		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiFlashFineGrainedShuffleBatchSize, variable.DefTiFlashFineGrainedShuffleBatchSize))
-	})
-
-	tk.MustExec(fmt.Sprintf("set @@session.%s = 8", variable.TiDBMaxTiFlashThreads))
-	tk.MustExec(fmt.Sprintf("set @@session.%s = 16", variable.TiFlashFineGrainedShuffleStreamCount))
-	tk.MustExec(fmt.Sprintf("set @@session.%s = 4096", variable.TiFlashFineGrainedShuffleBatchSize))
+	prepareRefreshTiFlashSessionVarsForTest(t, tk)
 
 	requireRefreshTiFlashSessionVarsApplied(t, func() {
 		mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_tiflash_vars complete")
-	}, int64(8), int64(16), uint64(4096))
-	tk.MustQuery(fmt.Sprintf(
-		"select @@session.%s, @@session.%s, @@session.%s",
-		variable.TiDBMaxTiFlashThreads,
-		variable.TiFlashFineGrainedShuffleStreamCount,
-		variable.TiFlashFineGrainedShuffleBatchSize,
-	)).Check(testkit.Rows("8 16 4096"))
+	}, int64(8), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
+	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
+}
+
+func TestMaterializedViewRefreshManualSQLFailsWhenApplyExecutionSessionVarsFails(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_apply_vars_manual (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_apply_vars_manual values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_apply_vars_manual (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_apply_vars_manual (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_apply_vars_manual group by a")
+
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mockRefreshExecutionSessionVarsApplyError"
+	require.NoError(t, failpoint.Enable(failpointName, "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	err := tk.ExecToErr("refresh materialized view mv_mv_refresh_apply_vars_manual complete")
+	require.ErrorContains(t, err, "mock refresh execution session vars apply error")
+}
+
+func TestMaterializedViewRefreshInternalSQLFallsBackWhenApplyExecutionSessionVarsFails(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_apply_vars_internal (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_apply_vars_internal values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_apply_vars_internal (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_apply_vars_internal (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_apply_vars_internal group by a")
+
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mockRefreshExecutionSessionVarsApplyError"
+	require.NoError(t, failpoint.Enable(failpointName, "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	tk.MustExec("insert into t_mv_refresh_apply_vars_internal values (3, 30)")
+	mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_apply_vars_internal complete")
+	tk.MustQuery("select * from mv_mv_refresh_apply_vars_internal order by a").Check(testkit.Rows("1 10 1", "2 20 1", "3 30 1"))
+}
+
+func TestMaterializedViewRefreshManualSQLFailsWhenSingleExecutionSessionVarApplyFails(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_single_apply_var_manual (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_single_apply_var_manual values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_single_apply_var_manual (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_single_apply_var_manual (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_single_apply_var_manual group by a")
+	prepareRefreshTiFlashSessionVarsForTest(t, tk)
+
+	failpointName := "github.com/pingcap/tidb/pkg/ddl/mockMViewExecutionSessionVarApplyError"
+	require.NoError(t, failpoint.Enable(failpointName, fmt.Sprintf("return(%q)", variable.TiDBMaxTiFlashThreads)))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	err := tk.ExecToErr("refresh materialized view mv_mv_refresh_single_apply_var_manual complete")
+	require.ErrorContains(t, err, variable.TiDBMaxTiFlashThreads)
+}
+
+func TestMaterializedViewRefreshInternalSQLFallsBackPerVarWhenExecutionSessionVarApplyFails(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_single_apply_var_internal (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_single_apply_var_internal values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_single_apply_var_internal (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_single_apply_var_internal (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_single_apply_var_internal group by a")
+	prepareRefreshTiFlashSessionVarsForTest(t, tk)
+
+	failpointName := "github.com/pingcap/tidb/pkg/ddl/mockMViewExecutionSessionVarApplyError"
+	require.NoError(t, failpoint.Enable(failpointName, fmt.Sprintf("return(%q)", variable.TiDBMaxTiFlashThreads)))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	tk.MustExec("insert into t_mv_refresh_single_apply_var_internal values (3, 30)")
+	requireRefreshTiFlashSessionVarsApplied(t, func() {
+		mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_single_apply_var_internal complete")
+	}, int64(variable.DefTiFlashMaxThreads), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
+	tk.MustQuery("select * from mv_mv_refresh_single_apply_var_internal order by a").Check(testkit.Rows("1 10 1", "2 20 1", "3 30 1"))
+	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
+}
+
+func TestMaterializedViewRefreshInternalSQLOutOfPlaceFallsBackWhenApplyExecutionSessionVarsFails(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_apply_vars_internal_oop (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_apply_vars_internal_oop values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_apply_vars_internal_oop (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_apply_vars_internal_oop (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_apply_vars_internal_oop group by a")
+
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mockRefreshExecutionSessionVarsApplyError"
+	require.NoError(t, failpoint.Enable(failpointName, "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	tk.MustExec("insert into t_mv_refresh_apply_vars_internal_oop values (3, 30)")
+	mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_apply_vars_internal_oop complete out of place")
+	tk.MustQuery("select * from mv_mv_refresh_apply_vars_internal_oop order by a").Check(testkit.Rows("1 10 1", "2 20 1", "3 30 1"))
+}
+
+func TestMaterializedViewRefreshInternalSQLOutOfPlaceFallsBackPerVarWhenExecutionSessionVarApplyFails(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_single_apply_var_internal_oop (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_single_apply_var_internal_oop values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_single_apply_var_internal_oop (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_single_apply_var_internal_oop (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_single_apply_var_internal_oop group by a")
+	prepareRefreshTiFlashSessionVarsForTest(t, tk)
+
+	failpointName := "github.com/pingcap/tidb/pkg/ddl/mockMViewExecutionSessionVarApplyError"
+	require.NoError(t, failpoint.Enable(failpointName, fmt.Sprintf("return(%q)", variable.TiDBMaxTiFlashThreads)))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	tk.MustExec("insert into t_mv_refresh_single_apply_var_internal_oop values (3, 30)")
+	requireTiFlashSessionVarsAppliedWithFailpoint(
+		t,
+		"github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceBuildTiFlashSessionVarsApplied",
+		"github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceBuildTiFlashSpillSessionVarsApplied",
+		func() {
+			mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_single_apply_var_internal_oop complete out of place")
+		},
+		int64(variable.DefTiFlashMaxThreads), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096),
+	)
+	tk.MustQuery("select * from mv_mv_refresh_single_apply_var_internal_oop order by a").Check(testkit.Rows("1 10 1", "2 20 1", "3 30 1"))
+	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
+}
+
+func TestMaterializedViewRefreshOutOfPlaceUsesCurrentSessionTiFlashSessionVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_oop_tiflash_vars (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_oop_tiflash_vars values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_oop_tiflash_vars (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_oop_tiflash_vars (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_refresh_oop_tiflash_vars group by a")
+	prepareRefreshTiFlashSessionVarsForTest(t, tk)
+
+	failpointName := "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceBuildTiFlashSessionVarsApplied"
+	spillFailpointName := "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceBuildTiFlashSpillSessionVarsApplied"
+	importFailpointName := "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceBuildImportSessionVarsApplied"
+	requireImportSessionVarsAppliedWithFailpoint(t, importFailpointName, func() {
+		requireTiFlashSessionVarsAppliedWithFailpoint(t, failpointName, spillFailpointName, func() {
+			tk.MustExec("refresh materialized view mv_mv_refresh_oop_tiflash_vars complete out of place")
+		}, int64(8), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
+	}, 12, "64gib")
+
+	tk.MustExec("insert into t_mv_refresh_oop_tiflash_vars values (3, 30)")
+	requireImportSessionVarsAppliedWithFailpoint(t, importFailpointName, func() {
+		requireTiFlashSessionVarsAppliedWithFailpoint(t, failpointName, spillFailpointName, func() {
+			mustExecInternal(t, tk, "refresh materialized view mv_mv_refresh_oop_tiflash_vars complete out of place")
+		}, int64(8), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
+	}, 12, "64gib")
+	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
+}
+
+func TestCreateMaterializedViewInitBuildUsesCurrentSessionExecutionSessionVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_create_build_vars (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_create_build_vars values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_create_build_vars (a, b)")
+	prepareRefreshTiFlashSessionVarsForTest(t, tk)
+	tk.MustExec("set @@session.tidb_mem_quota_query = 1073741824")
+	tk.MustExec("set @@global.tidb_mv_maintain_mem_quota = 536870912")
+	tk.MustExec("set @@session.tidb_mv_maintain_mem_quota = 268435456")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.%s = %d", variable.TiDBMVMaintainMemQuota, 2*1024*1024*1024))
+	})
+
+	memQuotaApplied := false
+	gotMemQuotaQuery := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/createMaterializedViewBuildMaintainMemQuotaApplied", func(memQuotaQuery int64) {
+		memQuotaApplied = true
+		gotMemQuotaQuery = memQuotaQuery
+	})
+	importFailpointName := "github.com/pingcap/tidb/pkg/ddl/createMaterializedViewBuildImportSessionVarsApplied"
+	tiflashFailpointName := "github.com/pingcap/tidb/pkg/ddl/createMaterializedViewBuildTiFlashSessionVarsApplied"
+	spillFailpointName := "github.com/pingcap/tidb/pkg/ddl/createMaterializedViewBuildTiFlashSpillSessionVarsApplied"
+
+	requireImportSessionVarsAppliedWithFailpoint(t, importFailpointName, func() {
+		requireTiFlashSessionVarsAppliedWithFailpoint(t, tiflashFailpointName, spillFailpointName, func() {
+			tk.MustExec("create materialized view mv_mv_create_build_vars (a, s, cnt) refresh fast as select a, sum(b), count(1) from t_mv_create_build_vars group by a")
+		}, int64(8), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
+	}, 12, "64gib")
+	require.True(t, memQuotaApplied)
+	require.Equal(t, int64(268435456), gotMemQuotaQuery)
+	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
+	require.Equal(t, int64(268435456), tk.Session().GetSessionVars().MVMaintainMemQuota)
+	require.Equal(t, int64(1073741824), tk.Session().GetSessionVars().MemQuotaQuery)
+	tk.MustQuery("select * from mv_mv_create_build_vars order by a").Check(testkit.Rows("1 10 1", "2 20 1"))
+}
+
+func TestMaterializedViewRefreshDryRunUsesCurrentSessionTiFlashSessionVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_dry_run_tiflash_vars (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_dry_run_tiflash_vars values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_dry_run_tiflash_vars (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_dry_run_tiflash_vars (a, s, cnt) refresh fast next now() as select a, sum(b), count(1) from t_mv_refresh_dry_run_tiflash_vars group by a")
+	prepareRefreshTiFlashSessionVarsForTest(t, tk)
+
+	requireRefreshTiFlashSessionVarsApplied(t, func() {
+		tk.MustQuery("refresh materialized view mv_mv_refresh_dry_run_tiflash_vars complete delta apply dry run").Rows()
+	}, int64(8), int64(101), int64(202), int64(303), int64(404), float64(0.75), int64(16), uint64(4096))
+	requireCurrentSessionTiFlashSessionVarsRestored(t, tk.Session().GetSessionVars())
 }
 
 func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) {

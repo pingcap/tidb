@@ -727,6 +727,18 @@ func TestBuildCreateMaterializedViewImportSQLDiskQuota(t *testing.T) {
 	require.Contains(t, sql, "WITH disable_precheck, disk_quota='100gib'")
 }
 
+func TestBuildCreateMaterializedViewImportSQLThreadAndDiskQuota(t *testing.T) {
+	mvTblInfo := &model.TableInfo{
+		Name: pmodel.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 12, "64gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "WITH disable_precheck, thread=12, disk_quota='64gib'")
+}
+
 func TestNormalizeMVDefinitionHintDBNames(t *testing.T) {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt("select /*+ read_from_storage(tiflash[src]) hash_join_probe(src) */ a, count(1) from t src group by a", "", "")

@@ -260,11 +260,17 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 	return nextRefresh, nil
 }
 
-type refreshSessionVars struct {
-	maintainMemQuota       int64
-	tiFlashMaxThreads      int64
-	fineGrainedStreamCount int64
-	fineGrainedBatchSize   uint64
+func getGlobalSystemVarBestEffort(ctx context.Context, sessVars *variable.SessionVars, varName string) (string, bool) {
+	val, err := sessVars.GetGlobalSystemVar(ctx, varName)
+	if err != nil {
+		logutil.BgLogger().Warn(
+			"mv service: failed to read global session var, fallback to current session value",
+			zap.String("var", varName),
+			zap.Error(err),
+		)
+		return "", false
+	}
+	return val, true
 }
 
 func applyMVRefreshSessionVarsFromGlobal(ctx context.Context, sessVars *variable.SessionVars) (func(), error) {
@@ -272,34 +278,49 @@ func applyMVRefreshSessionVarsFromGlobal(ctx context.Context, sessVars *variable
 		return nil, errors.New("mv service: session vars is nil")
 	}
 
-	maintainMemQuotaVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiDBMVMaintainMemQuota)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tidb_mv_maintain_mem_quota: %w", err)
+	target := variable.CaptureMViewExecutionSessionVars(sessVars)
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMVMaintainMemQuota); ok {
+		target.MaintainMemQuota = variable.TidbOptInt64(val, target.MaintainMemQuota)
 	}
-	maxThreadsVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiDBMaxTiFlashThreads)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tidb_max_tiflash_threads: %w", err)
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMaxTiFlashThreads); ok {
+		target.TiFlashMaxThreads = variable.TidbOptInt64(val, target.TiFlashMaxThreads)
 	}
-	fineGrainedStreamCountVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiFlashFineGrainedShuffleStreamCount)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tiflash_fine_grained_shuffle_stream_count: %w", err)
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMaxBytesBeforeTiFlashExternalJoin); ok {
+		target.TiFlashMaxBytesBeforeExtJoin = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtJoin)
 	}
-	fineGrainedBatchSizeVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiFlashFineGrainedShuffleBatchSize)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tiflash_fine_grained_shuffle_batch_size: %w", err)
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy); ok {
+		target.TiFlashMaxBytesBeforeExtAgg = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtAgg)
 	}
-
-	target := refreshSessionVars{
-		maintainMemQuota:  variable.TidbOptInt64(maintainMemQuotaVal, variable.DefTiDBMVMaintainMemQuota),
-		tiFlashMaxThreads: variable.TidbOptInt64(maxThreadsVal, variable.DefTiFlashMaxThreads),
-		fineGrainedStreamCount: variable.TidbOptInt64(
-			fineGrainedStreamCountVal,
-			variable.DefTiFlashFineGrainedShuffleStreamCount,
-		),
-		fineGrainedBatchSize: uint64(variable.TidbOptInt64(
-			fineGrainedBatchSizeVal,
-			variable.DefTiFlashFineGrainedShuffleBatchSize,
-		)),
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMaxBytesBeforeTiFlashExternalSort); ok {
+		target.TiFlashMaxBytesBeforeExtSort = variable.TidbOptInt64(val, target.TiFlashMaxBytesBeforeExtSort)
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiFlashMemQuotaQueryPerNode); ok {
+		target.TiFlashMemQuotaQueryPerNode = variable.TidbOptInt64(val, target.TiFlashMemQuotaQueryPerNode)
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiFlashQuerySpillRatio); ok {
+		querySpillRatio, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			logutil.BgLogger().Warn(
+				"mv service: failed to parse global session var, fallback to current session value",
+				zap.String("var", variable.TiFlashQuerySpillRatio),
+				zap.String("value", val),
+				zap.Error(err),
+			)
+		} else {
+			target.TiFlashQuerySpillRatio = querySpillRatio
+		}
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiFlashFineGrainedShuffleStreamCount); ok {
+		target.FineGrainedStreamCount = variable.TidbOptInt64(val, target.FineGrainedStreamCount)
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiFlashFineGrainedShuffleBatchSize); ok {
+		target.FineGrainedBatchSize = uint64(variable.TidbOptInt64(val, int64(target.FineGrainedBatchSize)))
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMViewMaintainImportThreads); ok {
+		target.ImportThreads = variable.TidbOptInt(val, target.ImportThreads)
+	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMViewMaintainImportDiskQuota); ok {
+		target.ImportDiskQuota = val
 	}
 	return applyRefreshSessionVars(sessVars, target)
 }
@@ -309,18 +330,23 @@ func applyMVMaintainMemQuotaFromGlobal(ctx context.Context, sessVars *variable.S
 		return nil, errors.New("mv service: session vars is nil")
 	}
 
-	maintainMemQuotaVal, err := sessVars.GetGlobalSystemVar(ctx, variable.TiDBMVMaintainMemQuota)
-	if err != nil {
-		return nil, fmt.Errorf("mv service: failed to read global tidb_mv_maintain_mem_quota: %w", err)
-	}
-	targetMaintainMemQuota := variable.TidbOptInt64(maintainMemQuotaVal, variable.DefTiDBMVMaintainMemQuota)
 	originMaintainMemQuota := sessVars.MVMaintainMemQuota
+	targetMaintainMemQuota := originMaintainMemQuota
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMVMaintainMemQuota); ok {
+		targetMaintainMemQuota = variable.TidbOptInt64(val, originMaintainMemQuota)
+	}
 	if originMaintainMemQuota == targetMaintainMemQuota {
 		return func() {}, nil
 	}
 
 	if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(targetMaintainMemQuota, 10)); err != nil {
-		return nil, fmt.Errorf("mv service: failed to apply tidb_mv_maintain_mem_quota on maintenance session: %w", err)
+		logutil.BgLogger().Warn(
+			"mv service: failed to apply maintenance session var from global setting, fallback to current session value",
+			zap.String("var", variable.TiDBMVMaintainMemQuota),
+			zap.Int64("value", targetMaintainMemQuota),
+			zap.Error(err),
+		)
+		return func() {}, nil
 	}
 	return func() {
 		if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(originMaintainMemQuota, 10)); err != nil {
@@ -334,79 +360,33 @@ func applyMVMaintainMemQuotaFromGlobal(ctx context.Context, sessVars *variable.S
 	}, nil
 }
 
-func captureRefreshSessionVars(sessVars *variable.SessionVars) refreshSessionVars {
-	return refreshSessionVars{
-		maintainMemQuota:       sessVars.MVMaintainMemQuota,
-		tiFlashMaxThreads:      sessVars.TiFlashMaxThreads,
-		fineGrainedStreamCount: sessVars.TiFlashFineGrainedShuffleStreamCount,
-		fineGrainedBatchSize:   sessVars.TiFlashFineGrainedShuffleBatchSize,
-	}
-}
-
-func applyRefreshSessionVars(sessVars *variable.SessionVars, target refreshSessionVars) (func(), error) {
-	if sessVars == nil {
-		return nil, errors.New("mv service: session vars is nil")
-	}
-
-	origin := captureRefreshSessionVars(sessVars)
-	if origin == target {
-		return func() {}, nil
-	}
-
-	if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(target.maintainMemQuota, 10)); err != nil {
-		return nil, fmt.Errorf("mv service: failed to apply tidb_mv_maintain_mem_quota on refresh session: %w", err)
-	}
-	if err := sessVars.SetSystemVar(variable.TiDBMaxTiFlashThreads, strconv.FormatInt(target.tiFlashMaxThreads, 10)); err != nil {
-		restoreRefreshSessionVars(sessVars, origin, captureRefreshSessionVars(sessVars))
-		return nil, fmt.Errorf("mv service: failed to apply tidb_max_tiflash_threads on refresh session: %w", err)
-	}
-	if err := sessVars.SetSystemVar(variable.TiFlashFineGrainedShuffleStreamCount, strconv.FormatInt(target.fineGrainedStreamCount, 10)); err != nil {
-		restoreRefreshSessionVars(sessVars, origin, captureRefreshSessionVars(sessVars))
-		return nil, fmt.Errorf("mv service: failed to apply tiflash_fine_grained_shuffle_stream_count on refresh session: %w", err)
-	}
-	if err := sessVars.SetSystemVar(variable.TiFlashFineGrainedShuffleBatchSize, strconv.FormatUint(target.fineGrainedBatchSize, 10)); err != nil {
-		restoreRefreshSessionVars(sessVars, origin, captureRefreshSessionVars(sessVars))
-		return nil, fmt.Errorf("mv service: failed to apply tiflash_fine_grained_shuffle_batch_size on refresh session: %w", err)
-	}
-
-	return func() {
-		restoreRefreshSessionVars(sessVars, origin, target)
-	}, nil
-}
-
-func restoreRefreshSessionVars(sessVars *variable.SessionVars, origin, current refreshSessionVars) {
-	if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(origin.maintainMemQuota, 10)); err != nil {
-		logutil.BgLogger().Warn(
-			"mv service: failed to restore tidb_mv_maintain_mem_quota after refresh",
-			zap.Int64("originMaintainMemQuota", origin.maintainMemQuota),
-			zap.Int64("currentMaintainMemQuota", current.maintainMemQuota),
-			zap.Error(err),
-		)
-	}
-	if err := sessVars.SetSystemVar(variable.TiDBMaxTiFlashThreads, strconv.FormatInt(origin.tiFlashMaxThreads, 10)); err != nil {
-		logutil.BgLogger().Warn(
-			"mv service: failed to restore tidb_max_tiflash_threads after refresh",
-			zap.Int64("originMaxThreads", origin.tiFlashMaxThreads),
-			zap.Int64("currentMaxThreads", current.tiFlashMaxThreads),
-			zap.Error(err),
-		)
-	}
-	if err := sessVars.SetSystemVar(variable.TiFlashFineGrainedShuffleStreamCount, strconv.FormatInt(origin.fineGrainedStreamCount, 10)); err != nil {
-		logutil.BgLogger().Warn(
-			"mv service: failed to restore tiflash_fine_grained_shuffle_stream_count after refresh",
-			zap.Int64("originFineGrainedStreamCount", origin.fineGrainedStreamCount),
-			zap.Int64("currentFineGrainedStreamCount", current.fineGrainedStreamCount),
-			zap.Error(err),
-		)
-	}
-	if err := sessVars.SetSystemVar(variable.TiFlashFineGrainedShuffleBatchSize, strconv.FormatUint(origin.fineGrainedBatchSize, 10)); err != nil {
-		logutil.BgLogger().Warn(
-			"mv service: failed to restore tiflash_fine_grained_shuffle_batch_size after refresh",
-			zap.Uint64("originFineGrainedBatchSize", origin.fineGrainedBatchSize),
-			zap.Uint64("currentFineGrainedBatchSize", current.fineGrainedBatchSize),
-			zap.Error(err),
-		)
-	}
+func applyRefreshSessionVars(sessVars *variable.SessionVars, target variable.MViewExecutionSessionVars) (func(), error) {
+	return variable.ApplyMViewExecutionSessionVarsWithConfig(
+		sessVars,
+		target,
+		variable.MViewExecutionSessionVarsApplyConfig{
+			MaintainMemQuotaVarName: variable.TiDBMVMaintainMemQuota,
+			CaptureAppliedVars:      variable.CaptureMViewExecutionSessionVars,
+			BestEffort:              true,
+			OnApplyError: func(name, value string, err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply refresh session var from global setting, fallback to current session value",
+					zap.String("var", name),
+					zap.String("value", value),
+					zap.Error(err),
+				)
+			},
+			OnRestoreError: func(name, originValue, currentValue string, err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore refresh session var after refresh",
+					zap.String("var", name),
+					zap.String("origin", originValue),
+					zap.String("current", currentValue),
+					zap.Error(err),
+				)
+			},
+		},
+	)
 }
 
 // PurgeMVLog runs one auto-purge round for the specified MV log ID.
