@@ -19,6 +19,8 @@ import (
 	"iter"
 	"path"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -26,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
-
-const snapshotDeleteBatchSize = 1024
 
 type PendingBackupState string
 
@@ -132,6 +132,37 @@ func WalkSnapshotOrphans(ctx context.Context, storage storeapi.Storage) iter.Seq
 		completedSet[id] = struct{}{}
 	}
 
+	if !supportsRepoStartAfter(storage) {
+		return walkSnapshotOrphansByFullScan(ctx, storage, completedSet)
+	}
+
+	return func(yield func(string, error) bool) {
+		for head, err := range walkSnapshotStoreBackupHeads(ctx, storage) {
+			if err != nil {
+				yield("", errors.Trace(err))
+				return
+			}
+			if _, ok := completedSet[head.BackupID]; ok {
+				continue
+			}
+			for dataFile, err := range walkSnapshotDataFilesForStoreBackup(ctx, storage, head.StoreID, head.BackupID) {
+				if err != nil {
+					yield("", errors.Trace(err))
+					return
+				}
+				if !yield(dataFile.Path, nil) {
+					return
+				}
+			}
+		}
+	}
+}
+
+func walkSnapshotOrphansByFullScan(
+	ctx context.Context,
+	storage storeapi.Storage,
+	completedSet map[BackupID]struct{},
+) iter.Seq2[string, error] {
 	return func(yield func(string, error) bool) {
 		for dataFile, err := range WalkSnapshotDataFiles(ctx, storage) {
 			if err != nil {
@@ -149,49 +180,28 @@ func WalkSnapshotOrphans(ctx context.Context, storage storeapi.Storage) iter.Seq
 }
 
 func DeleteSnapshotOrphans(ctx context.Context, storage storeapi.Storage) (int, error) {
-	paths := make([]string, 0, snapshotDeleteBatchSize)
-	deleted := 0
-	flush := func() error {
-		if len(paths) == 0 {
-			return nil
-		}
-		if err := storage.DeleteFiles(ctx, paths); err != nil {
-			return errors.Trace(err)
-		}
-		deleted += len(paths)
-		paths = paths[:0]
-		return nil
-	}
-
+	paths := make([]string, 0)
 	for orphanPath, err := range WalkSnapshotOrphans(ctx, storage) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
 		paths = append(paths, orphanPath)
-		if len(paths) < snapshotDeleteBatchSize {
-			continue
-		}
-		if err := flush(); err != nil {
-			return 0, errors.Trace(err)
-		}
 	}
-	if err := flush(); err != nil {
-		return 0, errors.Trace(err)
-	}
-	return deleted, nil
+	return deleteSpecificFiles(ctx, storage, paths)
 }
 
 func DeleteSnapshot(ctx context.Context, storage storeapi.Storage, backupID BackupID) (*SnapshotDeleteResult, error) {
 	result := &SnapshotDeleteResult{BackupID: backupID}
+	if err := requireRepoStartAfter(storage); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	var err error
 	result.MetadataDeleted, err = deletePrefixFiles(ctx, storage, snapshotMetadataDir(backupID))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.DataDeleted, err = deleteSnapshotDataFiles(ctx, storage, func(dataFile SnapshotDataFile) bool {
-		return dataFile.BackupID == backupID
-	})
+	result.DataDeleted, err = deleteSnapshotDataFilesForBackup(ctx, storage, backupID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -200,6 +210,21 @@ func DeleteSnapshot(ctx context.Context, storage storeapi.Storage, backupID Back
 		return nil, errors.Trace(err)
 	}
 	return result, nil
+}
+
+func supportsRepoStartAfter(storage storeapi.Storage) bool {
+	uri := strings.ToLower(storage.URI())
+	return strings.HasPrefix(uri, "s3://") || strings.HasPrefix(uri, "ks3://") || strings.HasPrefix(uri, "file://")
+}
+
+func requireRepoStartAfter(storage storeapi.Storage) error {
+	if supportsRepoStartAfter(storage) {
+		return nil
+	}
+	return errors.Errorf(
+		"storage %s does not support WalkDir StartAfter required by repo-v1 snapshot deletion",
+		storage.URI(),
+	)
 }
 
 func DiscardPendingSnapshot(
@@ -217,13 +242,14 @@ func DiscardPendingSnapshot(
 		}
 		result.StalePending = true
 	case PendingBackupStateUnfinished:
+		if err := requireRepoStartAfter(storage); err != nil {
+			return nil, errors.Trace(err)
+		}
 		result.MetadataDeleted, err = deletePrefixFiles(ctx, storage, snapshotMetadataDir(target.BackupID))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		result.DataDeleted, err = deleteSnapshotDataFiles(ctx, storage, func(dataFile SnapshotDataFile) bool {
-			return dataFile.BackupID == target.BackupID
-		})
+		result.DataDeleted, err = deleteSnapshotDataFilesForBackup(ctx, storage, target.BackupID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -258,94 +284,163 @@ func deletePendingMarkersForBackup(ctx context.Context, storage storeapi.Storage
 }
 
 func deletePrefixFiles(ctx context.Context, storage storeapi.Storage, prefix string) (int, error) {
-	paths := make([]string, 0, snapshotDeleteBatchSize)
-	deleted := 0
-	flush := func() error {
-		if len(paths) == 0 {
-			return nil
-		}
-		if err := storage.DeleteFiles(ctx, paths); err != nil {
-			return errors.Trace(err)
-		}
-		deleted += len(paths)
-		paths = paths[:0]
-		return nil
-	}
-
+	paths := make([]string, 0)
 	err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(filePath string, _ int64) error {
 		paths = append(paths, filePath)
-		if len(paths) < snapshotDeleteBatchSize {
-			return nil
-		}
-		return flush()
+		return nil
 	})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if err := flush(); err != nil {
-		return 0, errors.Trace(err)
-	}
-	return deleted, nil
+	return deleteSpecificFiles(ctx, storage, paths)
 }
 
 func deleteSpecificFiles(ctx context.Context, storage storeapi.Storage, paths []string) (int, error) {
 	if len(paths) == 0 {
 		return 0, nil
 	}
-	paths = slices.Clone(paths)
+	if err := storage.DeleteFiles(ctx, paths); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return len(paths), nil
+}
+
+func deleteSnapshotDataFilesForBackup(ctx context.Context, storage storeapi.Storage, backupID BackupID) (int, error) {
 	deleted := 0
-	for len(paths) > 0 {
-		n := min(len(paths), snapshotDeleteBatchSize)
-		batch := paths[:n]
-		if err := storage.DeleteFiles(ctx, batch); err != nil {
+	for head, err := range walkSnapshotStoreHeads(ctx, storage) {
+		if err != nil {
 			return deleted, errors.Trace(err)
 		}
-		deleted += len(batch)
-		paths = paths[n:]
+		storeDeleted, err := deleteSnapshotDataFilesForStoreBackup(ctx, storage, head.StoreID, backupID)
+		if err != nil {
+			return deleted, errors.Trace(err)
+		}
+		deleted += storeDeleted
 	}
 	return deleted, nil
 }
 
-func deleteSnapshotDataFiles(
+func deleteSnapshotDataFilesForStoreBackup(
 	ctx context.Context,
 	storage storeapi.Storage,
-	match func(SnapshotDataFile) bool,
+	storeID uint64,
+	backupID BackupID,
 ) (int, error) {
-	paths := make([]string, 0, snapshotDeleteBatchSize)
-	deleted := 0
-	flush := func() error {
-		if len(paths) == 0 {
-			return nil
-		}
-		if err := storage.DeleteFiles(ctx, paths); err != nil {
-			return errors.Trace(err)
-		}
-		deleted += len(paths)
-		paths = paths[:0]
-		return nil
-	}
-
-	for dataFile, err := range WalkSnapshotDataFiles(ctx, storage) {
+	paths := make([]string, 0)
+	for dataFile, err := range walkSnapshotDataFilesForStoreBackup(ctx, storage, storeID, backupID) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if !match(dataFile) {
-			continue
-		}
 		paths = append(paths, dataFile.Path)
-		if len(paths) < snapshotDeleteBatchSize {
-			continue
-		}
-		if err := flush(); err != nil {
-			return 0, errors.Trace(err)
+	}
+	return deleteSpecificFiles(ctx, storage, paths)
+}
+
+func walkSnapshotStoreHeads(ctx context.Context, storage storeapi.Storage) iter.Seq2[SnapshotDataFile, error] {
+	return func(yield func(SnapshotDataFile, error) bool) {
+		cursor := ""
+		for {
+			found := false
+			for dataFile, err := range walkSnapshotDataFilesAfter(ctx, storage, cursor) {
+				if err != nil {
+					yield(SnapshotDataFile{}, errors.Trace(err))
+					return
+				}
+				found = true
+				cursor = snapshotStoreEndAnchor(dataFile.StoreID)
+				if !yield(dataFile, nil) {
+					return
+				}
+				break
+			}
+			if !found {
+				return
+			}
 		}
 	}
-	if err := flush(); err != nil {
-		return 0, errors.Trace(err)
+}
+
+func walkSnapshotStoreBackupHeads(ctx context.Context, storage storeapi.Storage) iter.Seq2[SnapshotDataFile, error] {
+	return func(yield func(SnapshotDataFile, error) bool) {
+		cursor := ""
+		for {
+			found := false
+			for dataFile, err := range walkSnapshotDataFilesAfter(ctx, storage, cursor) {
+				if err != nil {
+					yield(SnapshotDataFile{}, errors.Trace(err))
+					return
+				}
+				found = true
+				cursor = snapshotStoreBackupEndAnchor(dataFile.StoreID, dataFile.BackupID)
+				if !yield(dataFile, nil) {
+					return
+				}
+				break
+			}
+			if !found {
+				return
+			}
+		}
 	}
-	return deleted, nil
+}
+
+func walkSnapshotDataFilesForStoreBackup(
+	ctx context.Context,
+	storage storeapi.Storage,
+	storeID uint64,
+	backupID BackupID,
+) iter.Seq2[SnapshotDataFile, error] {
+	return func(yield func(SnapshotDataFile, error) bool) {
+		for dataFile, err := range walkSnapshotDataFilesAfter(ctx, storage, snapshotStoreBackupAnchor(storeID, backupID)) {
+			if err != nil {
+				yield(SnapshotDataFile{}, errors.Trace(err))
+				return
+			}
+			if dataFile.StoreID != storeID || dataFile.BackupID != backupID {
+				return
+			}
+			if !yield(dataFile, nil) {
+				return
+			}
+		}
+	}
+}
+
+func walkSnapshotDataFilesAfter(
+	ctx context.Context,
+	storage storeapi.Storage,
+	startAfter string,
+) iter.Seq2[SnapshotDataFile, error] {
+	return walkParsedSeq(
+		ctx,
+		storage,
+		&storeapi.WalkOption{SubDir: snapshotDataDir(), StartAfter: startAfter},
+		ParseSnapshotDataFilePath,
+	)
 }
 
 func snapshotMetadataDir(backupID BackupID) string {
 	return path.Join("_meta", "snapshot", backupID.StorageName())
+}
+
+func snapshotDataDir() string {
+	return path.Join("_data", "snapshot")
+}
+
+func snapshotStoreBackupAnchor(storeID uint64, backupID BackupID) string {
+	return path.Join(snapshotStoreDir(storeID), backupID.StorageName())
+}
+
+func snapshotStoreBackupEndAnchor(storeID uint64, backupID BackupID) string {
+	// '/' sorts before digits, so appending '0' skips the entire `backupID/` subtree.
+	return snapshotStoreBackupAnchor(storeID, backupID) + "0"
+}
+
+func snapshotStoreEndAnchor(storeID uint64) string {
+	// '/' sorts before digits, so appending '0' skips the entire `storeID/` subtree.
+	return snapshotStoreDir(storeID) + "0"
+}
+
+func snapshotStoreDir(storeID uint64) string {
+	return path.Join(snapshotDataDir(), strconv.FormatUint(storeID, 10))
 }

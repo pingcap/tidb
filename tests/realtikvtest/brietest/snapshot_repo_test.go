@@ -16,6 +16,7 @@ package brietest
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -53,6 +54,11 @@ type snapshotRepoSuite struct {
 	repoDir string
 	repoURI string
 	dbName  string
+}
+
+type repoSnapshotTableView struct {
+	DBName    string `json:"db-name"`
+	TableName string `json:"table-name"`
 }
 
 func newSnapshotRepoSuite(t *testing.T, dbName string) *snapshotRepoSuite {
@@ -105,6 +111,13 @@ func (s *snapshotRepoSuite) restoreConfig(backupID repo.BackupID) task.RestoreCo
 	var err error
 	cfg.TableFilter, err = filter.Parse(cfg.FilterStr)
 	require.NoError(s.t, err)
+	return cfg
+}
+
+func (s *snapshotRepoSuite) taskConfig() task.Config {
+	s.t.Helper()
+	cfg := task.DefaultConfig()
+	cfg.Storage = s.repoURI
 	return cfg
 }
 
@@ -319,4 +332,103 @@ func TestSnapshotRepoSuitePendingIndexBehavior(t *testing.T) {
 	err = task.RunBackup(context.Background(), &TestKitGlue{tk: suite.tk}, task.FullBackupCmd, &ambiguousCfg)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "multiple unfinished repo-v1 backups")
+}
+
+func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
+	suite := newSnapshotRepoSuite(t, "br_repo_v1_task_ops")
+	suite.createSimpleTable()
+	suite.tk.MustExec("insert into " + suite.dbName + ".t values (1, 10), (2, 20), (3, 30)")
+
+	backupID1 := suite.backup()
+	suite.tk.MustExec("insert into " + suite.dbName + ".t values (4, 40)")
+	backupID2 := suite.backup()
+
+	cfg := suite.taskConfig()
+	ctx := context.Background()
+
+	backupIDs, err := task.RunRepoSnapshotList(ctx, task.RepoSnapshotListConfig{Config: cfg})
+	require.NoError(t, err)
+	require.Equal(t, []repo.BackupID{backupID1, backupID2}, backupIDs)
+
+	tablesPayload, err := task.RunRepoSnapshotGet(ctx, task.RepoSnapshotGetConfig{
+		Config:   cfg,
+		BackupID: backupID2,
+		View:     "tables",
+	})
+	require.NoError(t, err)
+	var tables []repoSnapshotTableView
+	require.NoError(t, json.Unmarshal(tablesPayload, &tables))
+	require.Len(t, tables, 1)
+	require.Equal(t, repoSnapshotTableView{
+		DBName:    suite.dbName,
+		TableName: "t",
+	}, tables[0])
+
+	result, err := task.RunRepoSnapshotDelete(ctx, task.RepoSnapshotDeleteConfig{
+		Config:   cfg,
+		BackupID: backupID1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, backupID1, result.BackupID)
+	require.Greater(t, result.MetadataDeleted, 0)
+	require.Greater(t, result.DataDeleted, 0)
+	require.Zero(t, result.PendingDeleted)
+	suite.requirePathMissing(snapshotpaths.MetadataFile(backupID1))
+	require.Empty(t, suite.sstFiles(backupID1))
+	suite.requirePathExists(snapshotpaths.MetadataFile(backupID2))
+	require.NotEmpty(t, suite.sstFiles(backupID2))
+
+	backupIDs, err = task.RunRepoSnapshotList(ctx, task.RepoSnapshotListConfig{Config: cfg})
+	require.NoError(t, err)
+	require.Equal(t, []repo.BackupID{backupID2}, backupIDs)
+
+	suite.tk.MustExec("drop database " + suite.dbName)
+	suite.restore(backupID2)
+	suite.tk.MustQuery("select count(*) from " + suite.dbName + ".t").Check(testkit.Rows("4"))
+}
+
+func TestSnapshotRepoSuiteTaskCleanupArtifacts(t *testing.T) {
+	suite := newSnapshotRepoSuite(t, "br_repo_v1_task_pending")
+	suite.createSimpleTable()
+	suite.tk.MustExec("insert into " + suite.dbName + ".t values (1, 10), (2, 20)")
+
+	backupID := suite.backup()
+	cfg := suite.taskConfig()
+	ctx := context.Background()
+
+	stalePendingFile := snapshotpaths.PendingFile([]byte("stale"), backupID)
+	suite.writeRepoFile(stalePendingFile, []byte("{}"))
+
+	discardResult, err := task.RunRepoSnapshotPendingDiscard(ctx, task.RepoSnapshotPendingDiscardConfig{
+		Config:   cfg,
+		BackupID: backupID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, backupID, discardResult.BackupID)
+	require.True(t, discardResult.StalePending)
+	require.Equal(t, 1, discardResult.PendingDeleted)
+	require.Zero(t, discardResult.MetadataDeleted)
+	require.Zero(t, discardResult.DataDeleted)
+	suite.requirePathMissing(stalePendingFile)
+	suite.requirePathExists(snapshotpaths.MetadataFile(backupID))
+	require.NotEmpty(t, suite.sstFiles(backupID))
+
+	orphanID := repo.BackupID(0xDEAD)
+	orphanPath := filepath.ToSlash(filepath.Join(snapshotpaths.StoreDataPrefix(9, orphanID), "orphan.sst"))
+	suite.writeRepoFile(orphanPath, []byte("orphan"))
+
+	orphans, err := task.RunRepoSnapshotOrphansList(ctx, task.RepoSnapshotOrphansConfig{Config: cfg})
+	require.NoError(t, err)
+	require.Equal(t, []string{orphanPath}, orphans)
+
+	deleted, err := task.RunRepoSnapshotOrphansDelete(ctx, task.RepoSnapshotOrphansConfig{Config: cfg})
+	require.NoError(t, err)
+	require.Equal(t, 1, deleted)
+	suite.requirePathMissing(orphanPath)
+	suite.requirePathExists(snapshotpaths.MetadataFile(backupID))
+	require.NotEmpty(t, suite.sstFiles(backupID))
+
+	backupIDs, err := task.RunRepoSnapshotList(ctx, task.RepoSnapshotListConfig{Config: cfg})
+	require.NoError(t, err)
+	require.Equal(t, []repo.BackupID{backupID}, backupIDs)
 }
