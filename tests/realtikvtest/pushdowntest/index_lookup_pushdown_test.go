@@ -213,8 +213,8 @@ func TestCorrelatedIndexLookUpPushDownPreservesParentIdx(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table touter (a int, b int, key idx_a(a))")
 	tk.MustExec("create table tinner (a int, b int, key idx_a(a))")
-	tk.MustExec("insert into touter values (10,1),(20,5),(30,9)")
-	tk.MustExec("insert into tinner values (1,100),(3,200),(6,300),(10,400),(12,500),(15,600),(25,700)")
+	tk.MustExec("insert into touter values (20,1),(24,5),(23,9)")
+	tk.MustExec("insert into tinner values (1,1),(3,2),(6,3),(10,4),(12,5),(15,6),(25,7)")
 
 	sql := `select *
 from touter
@@ -234,7 +234,7 @@ order by touter.a, touter.b`
 		}
 	}
 	require.True(t, foundLocalIndexLookUp)
-	tk.MustQuery(sql).Check(testkit.Rows("10 1", "20 5", "30 9"))
+	tk.MustQuery(sql).Check(testkit.Rows("20 1", "24 5"))
 }
 
 func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
