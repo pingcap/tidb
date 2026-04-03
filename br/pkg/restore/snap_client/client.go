@@ -171,7 +171,7 @@ type SnapClient struct {
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
 
-	checkPrivilegeTableRowsCollateCompatiblity bool
+	privilegeTableRowsCollateCompatibility bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -274,16 +274,16 @@ func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
-// SetCheckPrivilegeTableRowsCollateCompatiblity set switch to check
+// SetCheckPrivilegeTableRowsCollateCompatibility set switch to check
 // privilege tables with different collate columns
-func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatiblity(v bool) {
-	rc.checkPrivilegeTableRowsCollateCompatiblity = v
+func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatibility(v bool) {
+	rc.privilegeTableRowsCollateCompatibility = v
 }
 
-// GetCheckPrivilegeTableRowsCollateCompatiblity get switch to check
+// GetCheckPrivilegeTableRowsCollateCompatibility get switch to check
 // privilege tables with different collate columns
-func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatiblity() bool {
-	return rc.checkPrivilegeTableRowsCollateCompatiblity
+func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatibility() bool {
+	return rc.privilegeTableRowsCollateCompatibility
 }
 
 func (rc *SnapClient) updateConcurrency() {
