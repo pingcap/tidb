@@ -571,6 +571,11 @@ func buildAndOptimizeLogicalPlanRound(
 		optErr    error
 	)
 	optFlag := builder.GetOptFlag()
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		optFlag&rule.FlagPushDownTopN > 0 &&
+		optFlag&rule.FlagJoinReOrder > 0 {
+		sctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
+	}
 	if optFlagAdjust != nil {
 		optFlag = optFlagAdjust(optFlag)
 	}
@@ -608,6 +613,10 @@ func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
 		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
 }
 
+func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans && sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
+}
+
 // alternativeRound describes one alternative logical-plan round.
 // adjustFlag adjusts the optimization flags for the round.
 // enabled returns true when the round should be attempted.
@@ -635,6 +644,11 @@ var alternativeRounds = [...]alternativeRound{
 			sv.EnableCorrelateSubquery = true
 			return func() { sv.EnableCorrelateSubquery = previous }
 		},
+	},
+	{
+		name:       "order-aware-join-reorder",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+		enabled:    shouldTryOrderAwareReorderRound,
 	},
 }
 
