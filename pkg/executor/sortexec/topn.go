@@ -336,26 +336,28 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 		return err
 	}
 
-	e.RankInfo.truncateKeyCount = len(e.RankInfo.TruncateKeyExprs)
-	e.RankInfo.truncateFieldCollators = make([]collate.Collator, 0, e.RankInfo.truncateKeyCount)
-	e.RankInfo.truncateFieldTypes = make([]*types.FieldType, 0, e.RankInfo.truncateKeyCount)
-	e.RankInfo.truncateKeyColIdxs = make([]int, 0, e.RankInfo.truncateKeyCount)
-	for i := range e.RankInfo.TruncateKeyExprs {
-		fieldType := e.RankInfo.TruncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
-		e.RankInfo.truncateFieldTypes = append(e.RankInfo.truncateFieldTypes, fieldType)
-		switch fieldType.GetType() {
-		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			collateName := fieldType.GetCollate()
-			e.RankInfo.truncateFieldCollators = append(e.RankInfo.truncateFieldCollators, collate.GetCollator(collateName))
-		default:
-			e.RankInfo.truncateFieldCollators = append(e.RankInfo.truncateFieldCollators, nil)
-		}
+	if len(e.RankInfo.TruncateKeyExprs) > 0 {
+		e.RankInfo.truncateKeyCount = len(e.RankInfo.TruncateKeyExprs)
+		e.RankInfo.truncateFieldCollators = make([]collate.Collator, 0, e.RankInfo.truncateKeyCount)
+		e.RankInfo.truncateFieldTypes = make([]*types.FieldType, 0, e.RankInfo.truncateKeyCount)
+		e.RankInfo.truncateKeyColIdxs = make([]int, 0, e.RankInfo.truncateKeyCount)
+		for i := range e.RankInfo.TruncateKeyExprs {
+			fieldType := e.RankInfo.TruncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
+			e.RankInfo.truncateFieldTypes = append(e.RankInfo.truncateFieldTypes, fieldType)
+			switch fieldType.GetType() {
+			case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+				collateName := fieldType.GetCollate()
+				e.RankInfo.truncateFieldCollators = append(e.RankInfo.truncateFieldCollators, collate.GetCollator(collateName))
+			default:
+				e.RankInfo.truncateFieldCollators = append(e.RankInfo.truncateFieldCollators, nil)
+			}
 
-		switch col := e.RankInfo.TruncateKeyExprs[i].(type) {
-		case *expression.Column:
-			e.RankInfo.truncateKeyColIdxs = append(e.RankInfo.truncateKeyColIdxs, col.Index)
-		default:
-			return errors.NewNoStackError("Get unexpected expression")
+			switch col := e.RankInfo.TruncateKeyExprs[i].(type) {
+			case *expression.Column:
+				e.RankInfo.truncateKeyColIdxs = append(e.RankInfo.truncateKeyColIdxs, col.Index)
+			default:
+				return errors.NewNoStackError("Get unexpected expression")
+			}
 		}
 	}
 
