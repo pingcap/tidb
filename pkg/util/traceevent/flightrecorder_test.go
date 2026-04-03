@@ -333,25 +333,9 @@ func testFlightRecorderConfigBadCase(t *testing.T) {
 	}
 }
 
-func testSamplingCounterDeterministic(t *testing.T) {
-	recorder := &HTTPFlightRecorder{}
-	conf := &DumpTriggerConfig{
-		Type:     "sampling",
-		Sampling: 5,
-	}
-	sampledCount := 0
-	for i := 0; i < 10; i++ {
-		if recorder.CheckSampling(conf) {
-			sampledCount++
-		}
-	}
-	require.Equal(t, 2, sampledCount)
-}
-
 func TestFlightRecorderConfig(t *testing.T) {
 	testFlightRecorderConfigGoodCase(t)
 	testFlightRecorderConfigBadCase(t)
-	testSamplingCounterDeterministic(t)
 }
 
 func TestParseTraceCategory(t *testing.T) {

@@ -81,6 +81,20 @@ func waitTraceEvents(t *testing.T, eventCh <-chan []tracing.Event, traceID []byt
 	}
 }
 
+func eventsBelongToAnyTrace(events []tracing.Event, traceIDs map[string]struct{}) bool {
+	if len(events) == 0 || len(traceIDs) == 0 {
+		return false
+	}
+	for _, event := range events {
+		if len(event.TraceID) == 0 {
+			continue
+		}
+		_, ok := traceIDs[string(event.TraceID)]
+		return ok
+	}
+	return false
+}
+
 func TestPrevTraceIDPersistence(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("trace events only work for next-gen kernel")
@@ -310,14 +324,28 @@ func TestFlightRecorder(t *testing.T) {
 		}
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
+		drainEvents(eventCh)
+		traceIDs := make(map[string]struct{}, 10)
 		for i := 0; i < 10; i++ {
 			tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
+			traceID := bytes.Clone(tk.Session().GetSessionVars().PrevTraceID)
+			require.NotEmpty(t, traceID)
+			traceIDs[string(traceID)] = struct{}{}
 			sink.DiscardOrFlush(ctx)
 		}
-		// The recorder state is process-global in this package, so unrelated traces can
-		// race into this channel. Keep this integration check as a smoke test and verify
-		// exact sampling math in unit tests.
-		require.GreaterOrEqual(t, len(eventCh), 1)
+		matchedEvents := make([][]tracing.Event, 0, 2)
+		draining := true
+		for draining {
+			select {
+			case events := <-eventCh:
+				if eventsBelongToAnyTrace(events, traceIDs) {
+					matchedEvents = append(matchedEvents, events)
+				}
+			default:
+				draining = false
+			}
+		}
+		require.Len(t, matchedEvents, 2)
 		flightRecorder.Close()
 		drainEvents(eventCh)
 	}
