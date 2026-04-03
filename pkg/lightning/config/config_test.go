@@ -1074,6 +1074,16 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	require.Equal(t, ReplaceOnDup, cfg.Conflict.Strategy)
 
 	cfg.TikvImporter.Backend = BackendLocal
+	cfg.Conflict.Strategy = CustomizeOnDup
+	require.ErrorContains(t, cfg.Adjust(ctx), `customize on duplication without providing the on duplication customize statement`)
+
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.Conflict.Strategy = CustomizeOnDup
+	cfg.Conflict.CustomizeOnDupStatement = "a = VALUES(a)"
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, CustomizeOnDup, cfg.Conflict.Strategy)
+
+	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = true
 	cfg.Conflict.PrecheckConflictBeforeImport = true

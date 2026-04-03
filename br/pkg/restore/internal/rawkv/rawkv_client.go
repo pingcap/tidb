@@ -8,6 +8,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/rawkv"
@@ -92,7 +93,10 @@ func (c *RawKVBatchClient) Put(ctx context.Context, key, value []byte, originTs 
 			keys = append(keys, kv.key)
 			values = append(values, kv.value)
 		}
+		start := time.Now()
 		err := c.rawkvClient.BatchPut(ctx, keys, values, rawkv.SetColumnFamily(c.cf))
+		metrics.RawKVBatchPutBatchSize.WithLabelValues(c.cf).Observe(float64(len(c.kvs)))
+		metrics.RawKVBatchPutDurationSeconds.WithLabelValues(c.cf).Observe(time.Since(start).Seconds())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -111,7 +115,10 @@ func (c *RawKVBatchClient) PutRest(ctx context.Context) error {
 			keys = append(keys, kv.key)
 			values = append(values, kv.value)
 		}
+		start := time.Now()
 		err := c.rawkvClient.BatchPut(ctx, keys, values, rawkv.SetColumnFamily(c.cf))
+		metrics.RawKVBatchPutBatchSize.WithLabelValues(c.cf).Observe(float64(len(c.kvs)))
+		metrics.RawKVBatchPutDurationSeconds.WithLabelValues(c.cf).Observe(time.Since(start).Seconds())
 		if err != nil {
 			return errors.Trace(err)
 		}

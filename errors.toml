@@ -1191,6 +1191,11 @@ error = '''
 A primary key index cannot be invisible
 '''
 
+["ddl:3552"]
+error = '''
+Access to system schema '%s' is rejected.
+'''
+
 ["ddl:3593"]
 error = '''
 You cannot use the window function '%s' in this context.'
@@ -2869,6 +2874,11 @@ Unable to create or change a table without a primary key, when the system variab
 ["schema:3822"]
 error = '''
 Duplicate check constraint name '%s'.
+'''
+
+["schema:3989"]
+error = '''
+Schema '%s' is in read only mode.
 '''
 
 ["schema:4139"]

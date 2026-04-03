@@ -84,6 +84,21 @@ func formatPublicURL(path, version string) string {
 	return fmt.Sprintf("https://storage.googleapis.com/pingcapmirror/%s", formatSubURL(path, version))
 }
 
+// formatProxyURL returns the proxy.golang.org download URL for a module version.
+// Go proxy encoding: each uppercase letter X becomes !x (e.g. ClamChowder → !clam!chowder).
+func formatProxyURL(path, version string) string {
+	var b strings.Builder
+	for _, c := range path {
+		if c >= 'A' && c <= 'Z' {
+			b.WriteByte('!')
+			b.WriteByte(byte(c + 32))
+		} else {
+			b.WriteRune(c)
+		}
+	}
+	return fmt.Sprintf("https://proxy.golang.org/%s/@v/%s.zip", b.String(), version)
+}
+
 func getSha256OfFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -253,6 +268,13 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 }
 
 func getExistingMirrors() (map[string]DownloadableArtifact, error) {
+	// Read DEPS.bzl from the committed git HEAD so that proxy URLs added by
+	// fix_go_mod.py are preserved even after gazelle rewrites the file (gazelle
+	// strips urls= entries before the mirror runs in make bazel_ci_prepare).
+	if out, err := exec.Command("git", "show", "HEAD:DEPS.bzl").Output(); err == nil {
+		return downloadableArtifactsFromDepsBzl(strings.NewReader(string(out)))
+	}
+	// Fall back to the Bazel runfile if git is unavailable.
 	depsbzl, err := bazel.Runfile("DEPS.bzl")
 	if err != nil {
 		return nil, err
@@ -370,22 +392,30 @@ def go_deps():
 		if err := dumpPatchArgsForRepo(repoName); err != nil {
 			return err
 		}
+		expectedProxyURL := formatProxyURL(replaced.Path, replaced.Version)
 		oldMirror, ok := existingMirrors[repoName]
-		if ok &&
-			slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
+		reuseOldMirror := ok && (
+		// Standard case: all 4 PingCap mirror URLs present.
+		(slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
 			slices.Contains(oldMirror.URL, expectedCDNURL) &&
 			slices.Contains(oldMirror.URL, expectedPublicURL) &&
-			slices.Contains(oldMirror.URL, expectedVPCPublicURL) {
-			// The URL matches, so just reuse the old mirror.
+			slices.Contains(oldMirror.URL, expectedVPCPublicURL)) ||
+			// Fallback: entry was written by fix_go_mod.py with only a proxy URL
+			// (e.g. ClamChowderTiDB fork modules not in PingCap's caches).
+			// Reuse as-is so the committed DEPS.bzl stays stable.
+			slices.Contains(oldMirror.URL, expectedProxyURL))
+		if reuseOldMirror {
+			// Reuse the old mirror entry verbatim, preserving all URLs
+			// (including any proxy.golang.org fallback added by fix_go_mod.py).
+			var urlLines strings.Builder
+			for _, u := range oldMirror.URL {
+				fmt.Fprintf(&urlLines, "            \"%s\",\n", u)
+			}
 			fmt.Printf(`        sha256 = "%s",
         strip_prefix = "%s@%s",
         urls = [
-			"%s",
-			"%s",
-			"%s",
-			"%s",
-        ],
-`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
+%s        ],
+`, oldMirror.Sha256, replaced.Path, replaced.Version, urlLines.String())
 		} else if isMirror {
 			// We'll have to mirror our copy of the zip ourselves.
 			d := downloaded[replaced.Path]

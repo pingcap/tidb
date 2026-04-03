@@ -92,6 +92,9 @@ const (
 
 	FlagResetSysUsers = "reset-sys-users"
 
+	FlagTikvPostRestoreConfigOverrideFile = "tikv-post-restore-config-overrides-file"
+	FlagTikvRestoreConfigOverrideFile     = "tikv-restore-config-overrides-file"
+
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
@@ -272,6 +275,9 @@ type RestoreConfig struct {
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
+
+	TikvPostRestoreConfigOverridesFile string `json:"tikv-post-restore-config-overrides-file" toml:"tikv-post-restore-config-overrides-file"`
+	TikvRestoreConfigOverridesFile     string `json:"tikv-restore-config-overrides-file" toml:"tikv-restore-config-overrides-file"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -306,6 +312,8 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
+	command.Flags().String(FlagTikvPostRestoreConfigOverrideFile, "", "Configuration file containing TiKV configuration which should be applied after Stream Restore operation completes.")
+	command.Flags().String(FlagTikvRestoreConfigOverrideFile, "", "Configuration file containing TiKV configuration which should be applied during Stream Restore operation.")
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -341,6 +349,13 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.TikvPostRestoreConfigOverridesFile, err = flags.GetString(FlagTikvPostRestoreConfigOverrideFile); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.TikvRestoreConfigOverridesFile, err = flags.GetString(FlagTikvRestoreConfigOverrideFile); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -660,8 +675,9 @@ func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
 }
 
 // RunRestore starts a restore task inside the current goroutine.
-func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
-	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
+func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (err error) {
+	var etcdCLI *clientv3.Client
+	etcdCLI, err = dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
 		return err
 	}
@@ -691,6 +707,36 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	// Enable restore mode in PD before starting restore.
+	// Older PD versions (e.g. v8.5.x) may not implement this endpoint; treat
+	// a 404 response as "not supported" and proceed without the mark.
+	pitrMarkSet := true
+	if err := mgr.GetPDHTTPClient().SetPitrRestoreMark(ctx); err != nil {
+		if !strings.Contains(err.Error(), "404") {
+			return errors.Annotate(err, "failed to enable restore mode in PD")
+		}
+		log.Warn("[BR] PD does not support pitr-restore-mark endpoint, skipping",
+			zap.Error(err))
+		pitrMarkSet = false
+	}
+
+	// Ensure restore mode is disabled when function exits, fail restore if we cannot disable restore mode
+	defer func() {
+		if !pitrMarkSet {
+			return
+		}
+		if disableErr := mgr.GetPDHTTPClient().DeletePitrRestoreMark(ctx); disableErr != nil {
+			if err == nil {
+				err = errors.Annotate(disableErr, "failed to disable restore mode in PD")
+			} else {
+				log.Error("failed to disable restore mode in PD", zap.Error(disableErr))
+			}
+		}
+	}()
 
 	var restoreError error
 	if IsStreamRestore(cmdName) {
@@ -732,7 +778,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Info("all the checkpoint data is removed.")
 		}
 	}
-	return nil
+
+	return err
 }
 
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *PiTRTaskInfo) error {

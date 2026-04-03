@@ -18,6 +18,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -42,6 +44,20 @@ const (
 
 	streamBackupGlobalCheckpointPrefix = "v1/global_checkpoint"
 )
+
+// metaPattern is a regular expression used to match backup metadata filenames.
+// The expected filename format is:
+//
+//	{flushTs}-{minDefaultTs}-{minTs}-{maxTs}.meta
+//
+// where each part is a hexadecimal string (0-9, a-f, A-F).
+// Example:
+//
+//	0000000000000001-0000000000003039-065CCFF1D8AC0000-065CCFF1D8AC0006.meta
+//
+// The pattern captures all four parts as separate groups.
+// Leading zeros are necessary for the pattern to match.
+var metaPattern = regexp.MustCompile(`^([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})-([0-9a-fA-F]{16})$`)
 
 func GetStreamBackupMetaPrefix() string {
 	return streamBackupMetaPrefix
@@ -356,11 +372,58 @@ func (*MetadataHelper) Marshal(meta *backuppb.Metadata) ([]byte, error) {
 	return meta.Marshal()
 }
 
+func (m *MetadataHelper) Close() {
+	if m.decoder != nil {
+		m.decoder.Close()
+	}
+	if m.encryptionManager != nil {
+		m.encryptionManager.Close()
+	}
+}
+
+func FilterPathByTs(path string, left, right uint64) string {
+	filename := strings.TrimSuffix(path, ".meta")
+	filename = filename[strings.LastIndex(filename, "/")+1:]
+
+	if metaPattern.MatchString(filename) {
+		matches := metaPattern.FindStringSubmatch(filename)
+		if len(matches) < 5 {
+			log.Warn("invalid meta file name format", zap.String("file", path))
+			// consider compatible with future file path change
+			return path
+		}
+
+		flushTs, _ := strconv.ParseUint(matches[1], 16, 64)
+		minDefaultTs, _ := strconv.ParseUint(matches[2], 16, 64)
+		minTs, _ := strconv.ParseUint(matches[3], 16, 64)
+		maxTs, _ := strconv.ParseUint(matches[4], 16, 64)
+
+		if minDefaultTs == 0 || minDefaultTs > minTs {
+			log.Warn("minDefaultTs is not correct, fallback to minTs",
+				zap.String("file", path),
+				zap.Uint64("flushTs", flushTs),
+				zap.Uint64("minTs", minTs),
+				zap.Uint64("minDefaultTs", minDefaultTs),
+			)
+			minDefaultTs = minTs
+		}
+
+		if right < minDefaultTs || maxTs < left {
+			return ""
+		}
+	}
+
+	// keep consistency with old behaviour
+	return path
+}
+
 // FastUnmarshalMetaData used a 128 worker pool to speed up
 // read metadata content from external_storage.
 func FastUnmarshalMetaData(
 	ctx context.Context,
 	s storage.ExternalStorage,
+	startTS uint64,
+	endTS uint64,
 	metaDataWorkerPoolSize uint,
 	fn func(path string, rawMetaData []byte) error,
 ) error {
@@ -372,7 +435,15 @@ func FastUnmarshalMetaData(
 		if !strings.HasSuffix(path, metaSuffix) {
 			return nil
 		}
-		readPath := path
+		readPath := FilterPathByTs(path, startTS, endTS)
+		if len(readPath) == 0 {
+			log.Info("skip download meta file out of range",
+				zap.String("file", path),
+				zap.Uint64("startTs", startTS),
+				zap.Uint64("endTs", endTS),
+			)
+			return nil
+		}
 		pool.ApplyOnErrorGroup(eg, func() error {
 			b, err := s.ReadFile(ectx, readPath)
 			if err != nil {

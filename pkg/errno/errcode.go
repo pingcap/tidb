@@ -866,6 +866,7 @@ const (
 	ErrPKIndexCantBeInvisible                                = 3522
 	ErrGrantRole                                             = 3523
 	ErrRoleNotGranted                                        = 3530
+	ErrAccessSysDBRejected                                   = 3552
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
 	ErrCTERecursiveRequiresUnion                             = 3573
 	ErrCTERecursiveRequiresNonRecursiveFirst                 = 3574
@@ -942,6 +943,7 @@ const (
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
 	ErrDependentByCheckConstraint                            = 3959
 	ErrJSONInBooleanContext                                  = 3986
+	ErrSchemaInReadOnlyMode                                  = 3989
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030

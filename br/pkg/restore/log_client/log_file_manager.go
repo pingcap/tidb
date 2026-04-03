@@ -124,24 +124,30 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 		value  uint64
 		exists bool
 	}{}
-	err := stream.FastUnmarshalMetaData(ctx, rc.storage, rc.metadataDownloadBatchSize, func(path string, raw []byte) error {
-		m, err := rc.helper.ParseToMetadata(raw)
-		if err != nil {
-			return err
-		}
-		log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
-			zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-		ts, ok := stream.UpdateShiftTS(m, rc.startTS, rc.restoreTS)
-		shiftTS.Lock()
-		if ok && (!shiftTS.exists || shiftTS.value > ts) {
-			shiftTS.value = ts
-			shiftTS.exists = true
-		}
-		shiftTS.Unlock()
+	err := stream.FastUnmarshalMetaData(ctx,
+		rc.storage,
+		// use start ts to calculate shift start ts
+		rc.startTS,
+		rc.restoreTS,
+		rc.metadataDownloadBatchSize, func(path string, raw []byte) error {
+			m, err := rc.helper.ParseToMetadata(raw)
+			if err != nil {
+				return err
+			}
+			log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
+				zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-		return nil
-	})
+			ts, ok := stream.UpdateShiftTS(m, rc.startTS, rc.restoreTS)
+			shiftTS.Lock()
+			if ok && (!shiftTS.exists || shiftTS.value > ts) {
+				shiftTS.value = ts
+				shiftTS.exists = true
+			}
+			shiftTS.Unlock()
+
+			return nil
+		})
 	if err != nil {
 		return err
 	}
@@ -175,7 +181,10 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 		if !strings.HasSuffix(path, ".meta") {
 			return nil
 		}
-		names = append(names, path)
+		newPath := stream.FilterPathByTs(path, rc.shiftStartTS, rc.restoreTS)
+		if len(newPath) > 0 {
+			names = append(names, newPath)
+		}
 		return nil
 	})
 	if err != nil {

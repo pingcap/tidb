@@ -249,6 +249,12 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 		}
 		if len(referredFKCascades) > 0 {
 			fkCascades[tid] = append(fkCascades[tid], referredFKCascades...)
+			for _, fk := range referredFKCascades {
+				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
+				if ok && fkDBInfo.ReadOnly {
+					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
+			}
 		}
 		childFKChecks, err := buildOnUpdateChildFKChecks(ctx, is, dbInfo.Name.L, tblInfo, updateCols)
 		if err != nil {
@@ -288,6 +294,10 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.I
 			}
 			if fkCascade != nil {
 				fkCascades[tid] = append(fkCascades[tid], fkCascade)
+				fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
+				if ok && fkDBInfo.ReadOnly {
+					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
+				}
 			}
 		}
 	}

@@ -388,6 +388,32 @@
         ]
       },
       {
+        "SQL": "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (44, 70, 76) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "Plan": [
+          "Projection 43.33 root  1->Column#5",
+          "└─IndexReader 54.17 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 54.17 cop[tikv] table:t_inlist_test, index:twoColIndex(a1, b1) range:(70 41,70 +inf], [76,76], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (44,45) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "Plan": [
+          "Projection 6.71 root  1->Column#5",
+          "└─TableDual 6.71 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (70, 73, 76) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "Plan": [
+          "Projection 53.33 root  1->Column#5",
+          "└─IndexReader 53.33 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 53.33 cop[tikv] table:t_inlist_test, index:twoColIndex(a1, b1) range:(70 41,70 +inf], [73,73], [76,76], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
         "SQL": "select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (0, 20)",
         "Plan": [
           "HashAgg 1.00 root  funcs:count(1)->Column#5",

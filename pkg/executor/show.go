@@ -1607,6 +1607,10 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 		// add placement ref info here
 		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
 	}
+
+	if dbInfo.ReadOnly {
+		fmt.Fprint(buf, " /* READ ONLY = 1 */")
+	}
 	return nil
 }
 

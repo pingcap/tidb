@@ -76,7 +76,30 @@ start_services() {
     return 1
 }
 
+download_clamchowder_pd() {
+    local arch
+    case "$(uname -m)" in
+        x86_64)  arch="amd64" ;;
+        aarch64) arch="arm64" ;;
+        *)       echo "Unsupported arch $(uname -m), skipping ClamChowderTiDB pd download"; return 0 ;;
+    esac
+    local asset="pd-server-linux-${arch}"
+    local url
+    url=$(curl -sf "https://api.github.com/repos/ClamChowderTiDB/pd/releases/latest" \
+        | grep "browser_download_url" | grep "${asset}" | head -1 \
+        | sed 's/.*"browser_download_url": "\(.*\)".*/\1/')
+    if [ -z "$url" ]; then
+        echo "WARNING: could not find ClamChowderTiDB pd release asset ${asset}, using default pd-server"
+        return 0
+    fi
+    echo "Downloading ClamChowderTiDB pd-server from ${url}..."
+    curl -fsSL "$url" -o bin/pd-server
+    chmod +x bin/pd-server
+    echo "ClamChowderTiDB pd-server ready."
+}
+
 start_pd() {
+    download_clamchowder_pd
     echo "Starting PD..."
     mkdir -p "$TEST_DIR/pd" -m 700
     pd-server \
