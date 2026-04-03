@@ -137,12 +137,12 @@ TopRU is controlled in a **subscription-driven, reference-counted** way.
 
 | Collection Point | Frequency | Location | Purpose |
 |------------------|-----------|----------|---------|
-| Local Periodic Sampling | 1s | `aggregator.ruAggregate()` | Collect RU increments of executing SQLs |
-| Execution Completion Collection | Real-time | `observeStmtFinishedForTopSQL()` | Supplement final data, ensure accuracy |
+| Local Periodic Sampling | 1s | `drainAndPushRU()` | Pull incremental RU snapshots from currently running SQLs in the 1s tick |
+| Execution Completion Collection | Real-time | `observeStmtFinishedForTopProfiling()` | Flush finish-path deltas at statement end to reduce undercount of short-lived SQLs |
 
 #### ExecutionContext Design
 
-Add `ExecutionContext` field in `StatementStats` to store sampling state of executing SQLs:
+Add `ExecutionContext` in `StatementStats` to store per-statement sampling state, and use a buffered RU-delta map for finish-path supplements:
 
 ```go
 // ExecutionContext stores the execution context of the currently executing SQL in the session
@@ -163,8 +163,15 @@ type StatementStats struct {
     finishedRUBuffer RUIncrementMap
 }
 
-// RUIncrementMap stores RU increments in a lightweight map
-type RUIncrementMap map[UserSQLPlanDigest]float64
+// RUIncrement stores RU deltas collected in one aggregation interval
+type RUIncrement struct {
+    TotalRU       float64 // Delta RU in current interval
+    ExecCount     uint64  // Number of finished executions in current interval
+    SumDurationNs uint64  // Delta execution duration in current interval
+}
+
+// RUIncrementMap stores per-key RU delta payloads
+type RUIncrementMap map[UserSQLPlanDigest]RUIncrement
 ```
 
 **Lifecycle Management**:
@@ -312,7 +319,7 @@ TopRU reporting data interacts with external components through Protobuf protoco
 // TopRURecord represents RU statistics for a single (user, sql_digest, plan_digest) combination
 message TopRURecord {
     bytes  keyspace_name = 1;  // Keyspace identifier
-    string user          = 2;  // Executing user
+    string user          = 2;  // Auth identity in user@host form
     bytes  sql_digest    = 3;  // SQL Digest
     bytes  plan_digest   = 4;  // Plan Digest
     repeated TopRURecordItem items = 5;  // Time series data
@@ -393,7 +400,7 @@ type ReportData struct {
 
 ### Upgrade Compatibility
 
-- **Version Upgrade**: TopRU is automatically available as a new feature, no additional configuration required
+- **Version Upgrade**: TopRU capability is available after upgrade, but collection/reporting starts only when the subscriber explicitly registers `COLLECTOR_TYPE_TOPRU` (opt-in)
 - **Protobuf**: RU fields use optional, old clients can ignore new fields
 - **Data**: In-memory data is not persisted, re-collected after upgrade
 
