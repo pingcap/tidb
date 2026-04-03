@@ -27,6 +27,224 @@ import (
 	"golang.org/x/exp/maps"
 )
 
+// MViewExecutionSessionVars captures the execution-scoped session variables shared by MV build,
+// refresh, and mvservice maintenance orchestration.
+type MViewExecutionSessionVars struct {
+	MaintainMemQuota             int64
+	TiFlashMaxThreads            int64
+	TiFlashMaxBytesBeforeExtJoin int64
+	TiFlashMaxBytesBeforeExtAgg  int64
+	TiFlashMaxBytesBeforeExtSort int64
+	TiFlashMemQuotaQueryPerNode  int64
+	TiFlashQuerySpillRatio       float64
+	FineGrainedStreamCount       int64
+	FineGrainedBatchSize         uint64
+	ImportThreads                int
+	ImportDiskQuota              string
+}
+
+// MViewExecutionSessionVarsApplyConfig describes how MV execution vars should be applied onto a
+// session. The caller chooses which mem-quota sysvar should receive MaintainMemQuota and how apply
+// / restore errors should be reported.
+type MViewExecutionSessionVarsApplyConfig struct {
+	MaintainMemQuotaVarName string
+	CaptureAppliedVars      func(*SessionVars) MViewExecutionSessionVars
+	BestEffort              bool
+	InjectApplyError        func(string) error
+	OnApplyError            func(name, value string, err error)
+	OnRestoreError          func(name, originValue, currentValue string, err error)
+}
+
+type mViewExecutionSessionVarAssignment struct {
+	name           string
+	value          string
+	failureMessage string
+}
+
+// CaptureMViewExecutionSessionVars captures the user-facing MV execution knobs that should be
+// inherited by a later MV build/refresh job.
+func CaptureMViewExecutionSessionVars(sessVars *SessionVars) MViewExecutionSessionVars {
+	if sessVars == nil {
+		return MViewExecutionSessionVars{}
+	}
+	return MViewExecutionSessionVars{
+		MaintainMemQuota:             sessVars.MVMaintainMemQuota,
+		TiFlashMaxThreads:            sessVars.TiFlashMaxThreads,
+		TiFlashMaxBytesBeforeExtJoin: sessVars.TiFlashMaxBytesBeforeExternalJoin,
+		TiFlashMaxBytesBeforeExtAgg:  sessVars.TiFlashMaxBytesBeforeExternalGroupBy,
+		TiFlashMaxBytesBeforeExtSort: sessVars.TiFlashMaxBytesBeforeExternalSort,
+		TiFlashMemQuotaQueryPerNode:  sessVars.TiFlashMaxQueryMemoryPerNode,
+		TiFlashQuerySpillRatio:       sessVars.TiFlashQuerySpillRatio,
+		FineGrainedStreamCount:       sessVars.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedBatchSize:         sessVars.TiFlashFineGrainedShuffleBatchSize,
+		ImportThreads:                sessVars.MViewMaintainImportThreads,
+		ImportDiskQuota:              sessVars.MViewMaintainImportDiskQuota,
+	}
+}
+
+// CaptureAppliedMViewExecutionSessionVars captures the execution-related values that are currently
+// in effect on a session after MV execution vars have been applied to tidb_mem_quota_query.
+func CaptureAppliedMViewExecutionSessionVars(sessVars *SessionVars) MViewExecutionSessionVars {
+	if sessVars == nil {
+		return MViewExecutionSessionVars{}
+	}
+	return MViewExecutionSessionVars{
+		MaintainMemQuota:             sessVars.MemQuotaQuery,
+		TiFlashMaxThreads:            sessVars.TiFlashMaxThreads,
+		TiFlashMaxBytesBeforeExtJoin: sessVars.TiFlashMaxBytesBeforeExternalJoin,
+		TiFlashMaxBytesBeforeExtAgg:  sessVars.TiFlashMaxBytesBeforeExternalGroupBy,
+		TiFlashMaxBytesBeforeExtSort: sessVars.TiFlashMaxBytesBeforeExternalSort,
+		TiFlashMemQuotaQueryPerNode:  sessVars.TiFlashMaxQueryMemoryPerNode,
+		TiFlashQuerySpillRatio:       sessVars.TiFlashQuerySpillRatio,
+		FineGrainedStreamCount:       sessVars.TiFlashFineGrainedShuffleStreamCount,
+		FineGrainedBatchSize:         sessVars.TiFlashFineGrainedShuffleBatchSize,
+		ImportThreads:                sessVars.MViewMaintainImportThreads,
+		ImportDiskQuota:              sessVars.MViewMaintainImportDiskQuota,
+	}
+}
+
+// ApplyMViewExecutionSessionVarsWithConfig applies MV execution vars onto a session and returns a
+// restore closure. In best-effort mode, individual apply failures fall back to the session's
+// current value for that variable while keeping successfully applied variables in effect.
+func ApplyMViewExecutionSessionVarsWithConfig(
+	sessVars *SessionVars,
+	target MViewExecutionSessionVars,
+	cfg MViewExecutionSessionVarsApplyConfig,
+) (func(), error) {
+	if sessVars == nil {
+		return nil, errors.New("mv execution: session vars is nil")
+	}
+
+	captureApplied := cfg.CaptureAppliedVars
+	if captureApplied == nil {
+		captureApplied = CaptureMViewExecutionSessionVars
+	}
+	maintainMemQuotaVarName := cfg.MaintainMemQuotaVarName
+	if maintainMemQuotaVarName == "" {
+		maintainMemQuotaVarName = TiDBMVMaintainMemQuota
+	}
+
+	origin := captureApplied(sessVars)
+	if origin == target {
+		return func() {}, nil
+	}
+
+	for _, assignment := range buildMViewExecutionSessionVarAssignments(target, maintainMemQuotaVarName) {
+		err := error(nil)
+		if cfg.InjectApplyError != nil {
+			err = cfg.InjectApplyError(assignment.name)
+		}
+		if err == nil {
+			err = sessVars.SetSystemVar(assignment.name, assignment.value)
+		}
+		if err == nil {
+			continue
+		}
+		if !cfg.BestEffort {
+			restoreMViewExecutionSessionVars(
+				sessVars,
+				origin,
+				captureApplied(sessVars),
+				maintainMemQuotaVarName,
+				cfg.OnRestoreError,
+			)
+			return nil, errors.Annotate(err, assignment.failureMessage)
+		}
+		if cfg.OnApplyError != nil {
+			cfg.OnApplyError(assignment.name, assignment.value, err)
+		}
+	}
+
+	applied := captureApplied(sessVars)
+	return func() {
+		restoreMViewExecutionSessionVars(
+			sessVars,
+			origin,
+			applied,
+			maintainMemQuotaVarName,
+			cfg.OnRestoreError,
+		)
+	}, nil
+}
+
+func buildMViewExecutionSessionVarAssignments(
+	target MViewExecutionSessionVars,
+	maintainMemQuotaVarName string,
+) []mViewExecutionSessionVarAssignment {
+	return []mViewExecutionSessionVarAssignment{
+		{
+			name:           maintainMemQuotaVarName,
+			value:          strconv.FormatInt(target.MaintainMemQuota, 10),
+			failureMessage: "mv execution: failed to apply maintain mem quota",
+		},
+		{
+			name:           TiDBMaxTiFlashThreads,
+			value:          strconv.FormatInt(target.TiFlashMaxThreads, 10),
+			failureMessage: "mv execution: failed to apply tidb_max_tiflash_threads",
+		},
+		{
+			name:           TiDBMaxBytesBeforeTiFlashExternalJoin,
+			value:          strconv.FormatInt(target.TiFlashMaxBytesBeforeExtJoin, 10),
+			failureMessage: "mv execution: failed to apply tidb_max_bytes_before_tiflash_external_join",
+		},
+		{
+			name:           TiDBMaxBytesBeforeTiFlashExternalGroupBy,
+			value:          strconv.FormatInt(target.TiFlashMaxBytesBeforeExtAgg, 10),
+			failureMessage: "mv execution: failed to apply tidb_max_bytes_before_tiflash_external_group_by",
+		},
+		{
+			name:           TiDBMaxBytesBeforeTiFlashExternalSort,
+			value:          strconv.FormatInt(target.TiFlashMaxBytesBeforeExtSort, 10),
+			failureMessage: "mv execution: failed to apply tidb_max_bytes_before_tiflash_external_sort",
+		},
+		{
+			name:           TiFlashMemQuotaQueryPerNode,
+			value:          strconv.FormatInt(target.TiFlashMemQuotaQueryPerNode, 10),
+			failureMessage: "mv execution: failed to apply tiflash_mem_quota_query_per_node",
+		},
+		{
+			name:           TiFlashQuerySpillRatio,
+			value:          strconv.FormatFloat(target.TiFlashQuerySpillRatio, 'f', -1, 64),
+			failureMessage: "mv execution: failed to apply tiflash_query_spill_ratio",
+		},
+		{
+			name:           TiFlashFineGrainedShuffleStreamCount,
+			value:          strconv.FormatInt(target.FineGrainedStreamCount, 10),
+			failureMessage: "mv execution: failed to apply tiflash_fine_grained_shuffle_stream_count",
+		},
+		{
+			name:           TiFlashFineGrainedShuffleBatchSize,
+			value:          strconv.FormatUint(target.FineGrainedBatchSize, 10),
+			failureMessage: "mv execution: failed to apply tiflash_fine_grained_shuffle_batch_size",
+		},
+		{
+			name:           TiDBMViewMaintainImportThreads,
+			value:          strconv.Itoa(target.ImportThreads),
+			failureMessage: "mv execution: failed to apply tidb_mview_maintain_import_threads",
+		},
+		{
+			name:           TiDBMViewMaintainImportDiskQuota,
+			value:          target.ImportDiskQuota,
+			failureMessage: "mv execution: failed to apply tidb_mview_maintain_import_disk_quota",
+		},
+	}
+}
+
+func restoreMViewExecutionSessionVars(
+	sessVars *SessionVars,
+	origin, current MViewExecutionSessionVars,
+	maintainMemQuotaVarName string,
+	onRestoreError func(name, originValue, currentValue string, err error),
+) {
+	originAssignments := buildMViewExecutionSessionVarAssignments(origin, maintainMemQuotaVarName)
+	currentAssignments := buildMViewExecutionSessionVarAssignments(current, maintainMemQuotaVarName)
+	for idx, assignment := range originAssignments {
+		if err := sessVars.SetSystemVar(assignment.name, assignment.value); err != nil && onRestoreError != nil {
+			onRestoreError(assignment.name, assignment.value, currentAssignments[idx].value, err)
+		}
+	}
+}
+
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
 type ScopeFlag uint8
 
