@@ -54,7 +54,9 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	require.NoError(t, err)
 
 	var canLoadSysTablePhysical bool
-	// user table in cluster have more columns(failed)
+	// user table in cluster have more columns: still compatible, but should fall
+	// back to non-physical loading because direct physical loading can fail
+	// checksum validation when the backup snapshot lacks the new columns.
 	mockedUserTI := userTI.Clone()
 	userTI.Columns = append(userTI.Columns, &model.ColumnInfo{Name: pmodel.NewCIStr("new-name")})
 	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
@@ -393,7 +395,7 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(230), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(231), session.CurrentBootstrapVersion)
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {

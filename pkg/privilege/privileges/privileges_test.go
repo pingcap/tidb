@@ -2148,6 +2148,11 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
+	pm := privilege.GetPrivilegeManager(tk.Session())
+	require.Empty(t, pm.(interface{ GetEncodedPassword(string, string) string }).GetEncodedPassword("root", `%`))
+	maxUserConnections, err := pm.GetUserResources("root", `%`)
+	require.NoError(t, err)
+	require.Zero(t, maxUserConnections)
 }
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
