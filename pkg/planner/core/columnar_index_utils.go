@@ -61,4 +61,3 @@ func DistanceMetricToTipb(dm model.DistanceMetric) tipb.VectorDistanceMetric {
 		return tipb.VectorDistanceMetric_INVALID_DISTANCE_METRIC
 	}
 }
-
