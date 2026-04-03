@@ -711,13 +711,25 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
-	// Enable restore mode in PD before starting restore
+	// Enable restore mode in PD before starting restore.
+	// Older PD versions (e.g. v8.5.x) may not implement this endpoint; treat
+	// a 404 response as "not supported" and proceed without the mark.
+	pitrMarkSet := true
 	if err := mgr.GetPDHTTPClient().SetPitrRestoreMark(ctx); err != nil {
-		return errors.Annotate(err, "failed to enable restore mode in PD")
+		if strings.Contains(err.Error(), "404") {
+			log.Warn("[BR] PD does not support pitr-restore-mark endpoint, skipping",
+				zap.Error(err))
+			pitrMarkSet = false
+		} else {
+			return errors.Annotate(err, "failed to enable restore mode in PD")
+		}
 	}
 
 	// Ensure restore mode is disabled when function exits, fail restore if we cannot disable restore mode
 	defer func() {
+		if !pitrMarkSet {
+			return
+		}
 		if disableErr := mgr.GetPDHTTPClient().DeletePitrRestoreMark(ctx); disableErr != nil {
 			if err == nil {
 				err = errors.Annotate(disableErr, "failed to disable restore mode in PD")
