@@ -39,6 +39,8 @@ type SnapshotDataFile struct {
 	Path     string
 }
 
+type TrySeq[T any] = iter.Seq2[error, T]
+
 var errStopWalkSeq = errors.New("stop walk seq")
 
 func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]BackupID, error) {
@@ -64,7 +66,7 @@ func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]
 	return out, nil
 }
 
-func WalkPendingMarkers(ctx context.Context, storage storeapi.Storage) iter.Seq2[PendingMarker, error] {
+func WalkPendingMarkers(ctx context.Context, storage storeapi.Storage) TrySeq[PendingMarker] {
 	return walkParsedSeq(
 		ctx,
 		storage,
@@ -76,7 +78,7 @@ func WalkPendingMarkers(ctx context.Context, storage storeapi.Storage) iter.Seq2
 func WalkSnapshotDataFiles(
 	ctx context.Context,
 	storage storeapi.Storage,
-) iter.Seq2[SnapshotDataFile, error] {
+) TrySeq[SnapshotDataFile] {
 	return walkParsedSeq(
 		ctx,
 		storage,
@@ -90,25 +92,25 @@ func walkParsedSeq[T any](
 	storage storeapi.Storage,
 	opt *storeapi.WalkOption,
 	parse func(string) (T, bool, error),
-) iter.Seq2[T, error] {
-	return func(yield func(T, error) bool) {
+) TrySeq[T] {
+	return func(yield func(error, T) bool) {
 		err := storage.WalkDir(ctx, opt, func(filePath string, _ int64) error {
 			item, ok, err := parse(filePath)
 			if err != nil {
-				yield(item, errors.Trace(err))
+				yield(errors.Trace(err), item)
 				return errStopWalkSeq
 			}
 			if !ok {
 				return nil
 			}
-			if yield(item, nil) {
+			if yield(nil, item) {
 				return nil
 			}
 			return errStopWalkSeq
 		})
 		if err != nil && !errors.ErrorEqual(err, errStopWalkSeq) {
 			var zero T
-			yield(zero, errors.Trace(err))
+			yield(errors.Trace(err), zero)
 		}
 	}
 }

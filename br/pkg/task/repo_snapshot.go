@@ -126,7 +126,7 @@ func RunRepoSnapshotGet(ctx context.Context, cfg RepoSnapshotGetConfig) ([]byte,
 
 func RunRepoSnapshotDelete(ctx context.Context, cfg RepoSnapshotDeleteConfig) (*RepoSnapshotDeleteResult, error) {
 	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotDeleteResult, error) {
-		return repo.DeleteSnapshot(ctx, storage, cfg.BackupID)
+		return repo.SnapshotOpsExtension(storage).DeleteSnapshot(ctx, cfg.BackupID)
 	})
 }
 
@@ -135,7 +135,8 @@ func RunRepoSnapshotPendingDiscard(
 	cfg RepoSnapshotPendingDiscardConfig,
 ) (*RepoSnapshotPendingDiscardResult, error) {
 	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotPendingDiscardResult, error) {
-		pendingBackups, err := repo.ListPendingBackups(ctx, storage)
+		snapshotOps := repo.SnapshotOpsExtension(storage)
+		pendingBackups, err := snapshotOps.ListPendingBackups(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -143,7 +144,7 @@ func RunRepoSnapshotPendingDiscard(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return repo.DiscardPendingSnapshot(ctx, storage, *target)
+		return snapshotOps.DiscardPendingSnapshot(ctx, *target)
 	})
 }
 
@@ -152,24 +153,24 @@ func RunRepoSnapshotOrphansList(
 	cfg RepoSnapshotOrphansConfig,
 ) ([]string, error) {
 	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]string, error) {
-		return repo.ListSnapshotOrphans(ctx, storage)
+		return repo.SnapshotOpsExtension(storage).ListSnapshotOrphans(ctx)
 	})
 }
 
 func WalkRepoSnapshotOrphans(
 	ctx context.Context,
 	cfg RepoSnapshotOrphansConfig,
-) iter.Seq2[string, error] {
+) iter.Seq2[error, string] {
 	storage, err := openSnapshotRepoStorage(ctx, &cfg.Config)
 	if err != nil {
-		return func(yield func(string, error) bool) {
-			yield("", errors.Trace(err))
+		return func(yield func(error, string) bool) {
+			yield(errors.Trace(err), "")
 		}
 	}
-	return func(yield func(string, error) bool) {
+	return func(yield func(error, string) bool) {
 		defer storage.Close()
-		for orphanPath, err := range repo.WalkSnapshotOrphans(ctx, storage) {
-			if !yield(orphanPath, err) {
+		for err, orphanPath := range repo.SnapshotOpsExtension(storage).WalkSnapshotOrphans(ctx) {
+			if !yield(err, orphanPath) {
 				return
 			}
 		}
@@ -181,7 +182,7 @@ func RunRepoSnapshotOrphansDelete(
 	cfg RepoSnapshotOrphansConfig,
 ) (int, error) {
 	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (int, error) {
-		return repo.DeleteSnapshotOrphans(ctx, storage)
+		return repo.SnapshotOpsExtension(storage).DeleteSnapshotOrphans(ctx)
 	})
 }
 

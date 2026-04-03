@@ -34,6 +34,7 @@ import (
 func TestListPendingBackupsClassifiesStates(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	staleID := repo.BackupID(0x1111)
 	unfinishedID := repo.BackupID(0x2222)
@@ -45,7 +46,7 @@ func TestListPendingBackupsClassifiesStates(t *testing.T) {
 	createPendingCheckpoint(t, ctx, storage, unfinishedID)
 	createPendingMarker(t, ctx, storage, inconsistentID)
 
-	backups, err := repo.ListPendingBackups(ctx, storage)
+	backups, err := snapshotOps.ListPendingBackups(ctx)
 	require.NoError(t, err)
 	require.Len(t, backups, 3)
 	require.Equal(t, repo.PendingBackupStateStale, backups[0].State)
@@ -59,13 +60,14 @@ func TestListPendingBackupsClassifiesStates(t *testing.T) {
 func TestDiscardPendingSnapshotStalePendingRemovesOnlyMarker(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x1234)
 	createPendingMarker(t, ctx, storage, backupID)
 	createBackupMeta(t, ctx, storage, backupID)
 	createDataFile(t, ctx, storage, 1, backupID, "stale.sst")
 
-	result, err := repo.DiscardPendingSnapshot(ctx, storage, mustFindPendingBackup(t, ctx, storage, backupID))
+	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(t, ctx, storage, backupID))
 	require.NoError(t, err)
 	require.True(t, result.StalePending)
 	require.Equal(t, 1, result.PendingDeleted)
@@ -80,6 +82,7 @@ func TestDiscardPendingSnapshotStalePendingRemovesOnlyMarker(t *testing.T) {
 func TestDiscardPendingSnapshotUnfinishedRemovesMetadataAndData(t *testing.T) {
 	ctx := context.Background()
 	storage := newStartAfterLocalStorage(t, true)
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x2345)
 	createPendingCheckpoint(t, ctx, storage, backupID)
@@ -87,7 +90,7 @@ func TestDiscardPendingSnapshotUnfinishedRemovesMetadataAndData(t *testing.T) {
 	createDataFile(t, ctx, storage, 2, backupID, "b.sst")
 	createDataFile(t, ctx, storage, 9, repo.BackupID(0x9999), "keep.sst")
 
-	result, err := repo.DiscardPendingSnapshot(ctx, storage, mustFindPendingBackup(t, ctx, storage, backupID))
+	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(t, ctx, storage, backupID))
 	require.NoError(t, err)
 	require.False(t, result.StalePending)
 	require.Equal(t, 1, result.MetadataDeleted)
@@ -104,12 +107,13 @@ func TestDiscardPendingSnapshotUnfinishedRemovesMetadataAndData(t *testing.T) {
 func TestDiscardPendingSnapshotUnfinishedRejectsUnsupportedStorage(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x2456)
 	createPendingCheckpoint(t, ctx, storage, backupID)
 	createDataFile(t, ctx, storage, 1, backupID, "a.sst")
 
-	result, err := repo.DiscardPendingSnapshot(ctx, storage, mustFindPendingBackup(t, ctx, storage, backupID))
+	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(t, ctx, storage, backupID))
 	require.Nil(t, result)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "does not support WalkDir StartAfter")
@@ -121,11 +125,12 @@ func TestDiscardPendingSnapshotUnfinishedRejectsUnsupportedStorage(t *testing.T)
 func TestDiscardPendingSnapshotRejectsInconsistent(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x3456)
 	createPendingMarker(t, ctx, storage, backupID)
 
-	_, err := repo.DiscardPendingSnapshot(ctx, storage, mustFindPendingBackup(t, ctx, storage, backupID))
+	_, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(t, ctx, storage, backupID))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "inconsistent repo-v1 pending backup")
 }
@@ -133,6 +138,7 @@ func TestDiscardPendingSnapshotRejectsInconsistent(t *testing.T) {
 func TestDeleteSnapshotWithoutMetadataUsesStartAfter(t *testing.T) {
 	ctx := context.Background()
 	storage := newStartAfterLocalStorage(t, true)
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x4567)
 	for i := 0; i < 1025; i++ {
@@ -142,7 +148,7 @@ func TestDeleteSnapshotWithoutMetadataUsesStartAfter(t *testing.T) {
 	createDataFile(t, ctx, storage, 1, repo.BackupID(0xFFFF), "keep-other.sst")
 	createPendingMarker(t, ctx, storage, backupID)
 
-	result, err := repo.DeleteSnapshot(ctx, storage, backupID)
+	result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
 	require.NoError(t, err)
 	require.Zero(t, result.MetadataDeleted)
 	require.Equal(t, 1025, result.DataDeleted)
@@ -156,13 +162,14 @@ func TestDeleteSnapshotWithoutMetadataUsesStartAfter(t *testing.T) {
 func TestDeleteSnapshotRejectsUnsupportedStorage(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x6789)
 	createBackupMeta(t, ctx, storage, backupID)
 	createDataFile(t, ctx, storage, 1, backupID, "a.sst")
 	createPendingMarker(t, ctx, storage, backupID)
 
-	result, err := repo.DeleteSnapshot(ctx, storage, backupID)
+	result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
 	require.Nil(t, result)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "does not support WalkDir StartAfter")
@@ -174,6 +181,7 @@ func TestDeleteSnapshotRejectsUnsupportedStorage(t *testing.T) {
 func TestListAndDeleteSnapshotOrphans(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	completedID := repo.BackupID(0x5678)
 	orphanID := repo.BackupID(0x6789)
@@ -186,14 +194,14 @@ func TestListAndDeleteSnapshotOrphans(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []repo.BackupID{completedID}, backupIDs)
 
-	orphans, err := repo.ListSnapshotOrphans(ctx, storage)
+	orphans, err := snapshotOps.ListSnapshotOrphans(ctx)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{
 		snapshotpaths.StoreDataPrefix(1, orphanID) + "/orphan-a.sst",
 		snapshotpaths.StoreDataPrefix(2, orphanID) + "/orphan-b.sst",
 	}, orphans)
 
-	deleted, err := repo.DeleteSnapshotOrphans(ctx, storage)
+	deleted, err := snapshotOps.DeleteSnapshotOrphans(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, deleted)
 	requireFileExists(t, ctx, storage, snapshotpaths.StoreDataPrefix(1, completedID)+"/keep.sst")
@@ -204,6 +212,7 @@ func TestListAndDeleteSnapshotOrphans(t *testing.T) {
 func TestWalkSnapshotOrphansStreamsPaths(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	completedID := repo.BackupID(0x7777)
 	orphanID := repo.BackupID(0x8888)
@@ -212,7 +221,7 @@ func TestWalkSnapshotOrphansStreamsPaths(t *testing.T) {
 	createDataFile(t, ctx, storage, 1, orphanID, "orphan.sst")
 
 	var orphanPaths []string
-	for orphanPath, err := range repo.WalkSnapshotOrphans(ctx, storage) {
+	for err, orphanPath := range snapshotOps.WalkSnapshotOrphans(ctx) {
 		require.NoError(t, err)
 		orphanPaths = append(orphanPaths, orphanPath)
 	}
@@ -222,6 +231,7 @@ func TestWalkSnapshotOrphansStreamsPaths(t *testing.T) {
 func TestListAndDeleteSnapshotOrphansUsesStartAfterWhenAvailable(t *testing.T) {
 	ctx := context.Background()
 	storage := newStartAfterLocalStorage(t, true)
+	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	completedID := repo.BackupID(0x5678)
 	orphanID := repo.BackupID(0x6789)
@@ -231,14 +241,14 @@ func TestListAndDeleteSnapshotOrphansUsesStartAfterWhenAvailable(t *testing.T) {
 	createDataFile(t, ctx, storage, 1, orphanID, "orphan-a.sst")
 	createDataFile(t, ctx, storage, 2, orphanID, "orphan-b.sst")
 
-	orphans, err := repo.ListSnapshotOrphans(ctx, storage)
+	orphans, err := snapshotOps.ListSnapshotOrphans(ctx)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{
 		snapshotpaths.StoreDataPrefix(1, orphanID) + "/orphan-a.sst",
 		snapshotpaths.StoreDataPrefix(2, orphanID) + "/orphan-b.sst",
 	}, orphans)
 
-	deleted, err := repo.DeleteSnapshotOrphans(ctx, storage)
+	deleted, err := snapshotOps.DeleteSnapshotOrphans(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, deleted)
 	requireFileExists(t, ctx, storage, snapshotpaths.StoreDataPrefix(1, completedID)+"/keep-a.sst")
@@ -296,7 +306,7 @@ func mustFindPendingBackup(
 	backupID repo.BackupID,
 ) repo.PendingBackup {
 	t.Helper()
-	backups, err := repo.ListPendingBackups(ctx, storage)
+	backups, err := repo.SnapshotOpsExtension(storage).ListPendingBackups(ctx)
 	require.NoError(t, err)
 	for _, backup := range backups {
 		if backup.BackupID == backupID {
