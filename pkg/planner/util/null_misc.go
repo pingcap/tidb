@@ -54,6 +54,15 @@ import (
 // opportunities but cannot cause incorrect join simplification. When adding a
 // builtin to either table, also update TestNullRejectBuiltinRegistrySnapshot
 // which guards against silent registry drift.
+//
+// The proof works in two phases. First it reasons symbolically using the two
+// proof bits above. Before giving up on a sub-expression, it also tries a
+// "nullify then fold" bridge via tryFoldNullifiedConstant: replace inner-side
+// columns with typed SQL NULL, and if the result becomes an immutable constant,
+// classify that exact value. This recovers cases such as COALESCE/IF/IFNULL
+// that may hide NULL but still collapse after nullification. The bridge stays
+// conservative for plan-cache-sensitive expressions by refusing to treat
+// ParamMarker/DeferredExpr values as static fold results.
 
 // nullRejectProof holds the two proof results for a sub-expression.
 // See the file-level comment above for the full model.
