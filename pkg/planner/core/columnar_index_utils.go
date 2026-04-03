@@ -107,6 +107,9 @@ func buildTiCIVectorQueryInfo(
 	if matchedSpec.IndexInfo != nil && matchedSpec.IndexInfo.Dimension != nil {
 		dim = uint32(*matchedSpec.IndexInfo.Dimension)
 	}
+	if dim != uint32(vsInfo.Vec.Len()) {
+		return nil
+	}
 
 	return &tipb.TiCIVectorQueryInfo{
 		IndexId:        indexInfo.ID,
@@ -118,4 +121,3 @@ func buildTiCIVectorQueryInfo(
 		ColumnName:     vecColInfo.Name.L,
 	}
 }
-

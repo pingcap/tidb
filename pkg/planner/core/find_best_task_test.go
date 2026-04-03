@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -185,6 +186,91 @@ func TestConvertToIndexScanRejectsPlainTiCIHybridVectorPath(t *testing.T) {
 				},
 			},
 		},
+	}
+
+	task, err := convertToIndexScan(ds, prop, candidate)
+	require.NoError(t, err)
+	require.True(t, task.Invalid())
+}
+
+func TestConvertToIndexScanRejectsTiCIVectorPathWithResidualFilters(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	ds := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
+	prop := property.NewPhysicalProperty(property.CopSingleReadTaskType, nil, false, 0, false)
+	prop.VectorProp.VSInfo = &expression.VSInfo{
+		DistanceFnName: ast.NewCIStr(ast.VecL2Distance),
+		Vec:            types.MustCreateVectorFloat32([]float32{1, 2, 3}),
+		Column:         &expression.Column{ID: 1},
+	}
+	prop.VectorProp.TopK = 10
+	candidate := &candidatePath{
+		path: &util.AccessPath{
+			Index: &model.IndexInfo{
+				Name:  ast.NewCIStr("idx_hybrid"),
+				State: model.StatePublic,
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{}},
+				},
+			},
+			IsSingleScan: true,
+			IndexFilters: []expression.Expression{&expression.Constant{}},
+		},
+		matchPropResult: property.PropMatched,
+	}
+
+	task, err := convertToIndexScan(ds, prop, candidate)
+	require.NoError(t, err)
+	require.True(t, task.Invalid())
+}
+
+func TestConvertToIndexScanRejectsTiCIVectorPathWithDimensionMismatch(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	ds := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
+	ds.TableInfo = &model.TableInfo{
+		Columns: []*model.ColumnInfo{{
+			ID:   1,
+			Name: ast.NewCIStr("v"),
+		}},
+	}
+
+	dim := uint64(3)
+	prop := property.NewPhysicalProperty(property.CopSingleReadTaskType, nil, false, 0, false)
+	prop.VectorProp.VSInfo = &expression.VSInfo{
+		DistanceFnName: ast.NewCIStr(ast.VecL2Distance),
+		Vec:            types.MustCreateVectorFloat32([]float32{1, 2}),
+		Column:         &expression.Column{ID: 1},
+	}
+	prop.VectorProp.TopK = 10
+	candidate := &candidatePath{
+		path: &util.AccessPath{
+			Index: &model.IndexInfo{
+				ID:    2,
+				Name:  ast.NewCIStr("idx_hybrid"),
+				State: model.StatePublic,
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{
+						Columns: []*model.IndexColumn{{
+							Name:   ast.NewCIStr("v"),
+							Offset: 0,
+						}},
+						IndexInfo: &model.HybridVectorIndexInfo{
+							DistanceMetric: string(model.DistanceMetricL2),
+							Dimension:      &dim,
+						},
+					}},
+				},
+			},
+			IsSingleScan: true,
+		},
+		matchPropResult: property.PropMatched,
 	}
 
 	task, err := convertToIndexScan(ds, prop, candidate)

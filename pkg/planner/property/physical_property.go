@@ -665,6 +665,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		VectorProp:            p.VectorProp,
 		NoCopPushDown:         p.NoCopPushDown,
 		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
 		// we default not to clone basic indexJoinProp by default.

@@ -18,7 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/stretchr/testify/require"
 )
@@ -175,4 +177,21 @@ func buildFD2() *funcdep.FDSet {
 	fd.AddEquivalence(intset.NewFastIntSet(2), intset.NewFastIntSet(4))
 	fd.AddEquivalence(intset.NewFastIntSet(2), intset.NewFastIntSet(5))
 	return fd
+}
+
+func TestCloneEssentialFieldsKeepsVectorProp(t *testing.T) {
+	col := &expression.Column{UniqueID: 1, ID: 11}
+	prop := &PhysicalProperty{
+		TaskTp: CopSingleReadTaskType,
+	}
+	prop.VectorProp.VSInfo = &expression.VSInfo{
+		DistanceFnName: ast.NewCIStr(ast.VecL2Distance),
+		Vec:            types.MustCreateVectorFloat32([]float32{1, 2, 3}),
+		Column:         col,
+	}
+	prop.VectorProp.TopK = 10
+
+	cloned := prop.CloneEssentialFields()
+	require.Same(t, prop.VectorProp.VSInfo, cloned.VectorProp.VSInfo)
+	require.Equal(t, prop.VectorProp.TopK, cloned.VectorProp.TopK)
 }
