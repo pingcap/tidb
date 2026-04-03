@@ -2063,8 +2063,6 @@ admin reload opt_rule_blacklist;
 select distinct avg(nullif(77.15, PI()));
 avg(nullif(77.15, PI()))
 77.150000
-Level	Code	Message
-Warning	1265	Data truncated for column '%s' at row %d
 drop table if exists t_a;
 CREATE TABLE `t_a` (
 `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',
