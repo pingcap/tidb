@@ -26,6 +26,35 @@ import (
 
 var errUnknownFieldType = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
 
+func parseLengthEncodedParamValueHeader(paramValues []byte, pos int) (length uint64, isNull bool, nextPos int, err error) {
+	if len(paramValues) <= pos {
+		return 0, false, pos, mysql.ErrMalformPacket
+	}
+	need := 1
+	switch paramValues[pos] {
+	case 0xfc:
+		need = 3
+	case 0xfd:
+		need = 4
+	case 0xfe:
+		need = 9
+	}
+	if len(paramValues)-pos < need {
+		return 0, false, pos, mysql.ErrMalformPacket
+	}
+	var n int
+	length, isNull, n = util2.ParseLengthEncodedInt(paramValues[pos:])
+	return length, isNull, pos + n, nil
+}
+
+func takeBinaryParamValue(paramValues []byte, pos int, length uint64) ([]byte, int, error) {
+	if pos > len(paramValues) || length > uint64(len(paramValues)-pos) {
+		return nil, pos, mysql.ErrMalformPacket
+	}
+	end := pos + int(length)
+	return paramValues[pos:end], end, nil
+}
+
 // parseBinaryParams decodes the binary params according to the protocol
 func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (err error) {
 	pos := 0
@@ -106,42 +135,36 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 			length = uint64(paramValues[pos])
 			pos++
 		case mysql.TypeNewDecimal, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
+			length, isNull, pos, err = parseLengthEncodedParamValueHeader(paramValues, pos)
+			if err != nil {
 				return
 			}
-			var n int
-			length, isNull, n = util2.ParseLengthEncodedInt(paramValues[pos:])
-			pos += n
 		case mysql.TypeUnspecified, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
 			mysql.TypeEnum, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeBit:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
+			length, isNull, pos, err = parseLengthEncodedParamValueHeader(paramValues, pos)
+			if err != nil {
 				return
 			}
-			var n int
-			length, isNull, n = util2.ParseLengthEncodedInt(paramValues[pos:])
-			pos += n
 			decodeWithDecoder = true
 		default:
 			err = errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
 			return
 		}
 
-		if len(paramValues) < (pos + int(length)) {
-			err = mysql.ErrMalformPacket
-			return
+		val, nextPos, err := takeBinaryParamValue(paramValues, pos, length)
+		if err != nil {
+			return err
 		}
 		params[i] = param.BinaryParam{
 			Tp:         tp,
 			IsUnsigned: isUnsigned,
 			IsNull:     isNull,
-			Val:        paramValues[pos : pos+int(length)],
+			Val:        val,
 		}
 		if decodeWithDecoder {
 			params[i].Val = enc.DecodeInput(params[i].Val)
 		}
-		pos += int(length)
+		pos = nextPos
 	}
 	return
 }
