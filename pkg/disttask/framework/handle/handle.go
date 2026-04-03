@@ -57,6 +57,13 @@ var (
 )
 
 const (
+	// DXFLogCategory is the shared log category used by DXF sampled logs.
+	DXFLogCategory = "dxf"
+	// SampleLogTick is the common sampling window used by DXF sampled logs.
+	SampleLogTick = time.Minute
+	// SampleLogFirst is the max number of logs with same level/message in each SampleLogTick.
+	SampleLogFirst = 10
+
 	// NextGenTargetScope is the target scope for new tasks in nextgen kernel.
 	// on nextgen, DXF works as a service and runs only on node with scope 'dxf_service',
 	// so all tasks must be submitted to that scope.
@@ -75,6 +82,14 @@ func NotifyTaskChange() {
 	case TaskChangedCh <- struct{}{}:
 	default:
 	}
+}
+
+// NewSampleErrVerboseLogger creates a sampled logger with DXF defaults.
+func NewSampleErrVerboseLogger(fields ...zap.Field) *zap.Logger {
+	allFields := make([]zap.Field, 0, len(fields)+1)
+	allFields = append(allFields, zap.String(logutil.LogFieldCategory, DXFLogCategory))
+	allFields = append(allFields, fields...)
+	return logutil.SampleErrVerboseLoggerFactory(SampleLogTick, SampleLogFirst, allFields...)()
 }
 
 // GetCPUCountOfNode gets the CPU count of the managed node.
@@ -172,8 +187,12 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 	}
 	ticker := time.NewTicker(checkTaskFinishInterval)
 	defer ticker.Stop()
-
-	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
+	sampleLogger := logutil.SampleLoggerFactory(
+		SampleLogTick,
+		SampleLogFirst,
+		zap.String(logutil.LogFieldCategory, DXFLogCategory),
+		zap.Int64("task-id", id),
+	)()
 	for {
 		select {
 		case <-ctx.Done():
@@ -181,7 +200,7 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 		case <-ticker.C:
 			task, err := taskManager.GetTaskBaseByIDWithHistory(ctx, id)
 			if err != nil {
-				logger.Error("cannot get task during waiting", zap.Error(err))
+				sampleLogger.Error("cannot get task during waiting", zap.Error(err))
 				continue
 			}
 

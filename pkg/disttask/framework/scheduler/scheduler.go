@@ -85,8 +85,9 @@ type BaseScheduler struct {
 	Param
 	// task might be accessed by multiple goroutines, so don't change its fields
 	// directly, make a copy, update and store it back to the atomic pointer.
-	task   atomic.Pointer[proto.Task]
-	logger *zap.Logger
+	task         atomic.Pointer[proto.Task]
+	logger       *zap.Logger
+	sampleLogger *zap.Logger
 	// when RegisterSchedulerFactory, the factory MUST initialize this fields.
 	Extension
 
@@ -97,15 +98,21 @@ type BaseScheduler struct {
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
 	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
+	sampleLogger := handle.NewSampleErrVerboseLogger(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.serverID))
+		sampleLogger = sampleLogger.With(zap.String("server-id", param.serverID))
 	}
 	ctx = logutil.WithLogger(ctx, logger)
 	s := &BaseScheduler{
-		ctx:    ctx,
-		Param:  param,
-		logger: logger,
-		rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
+		ctx:          ctx,
+		Param:        param,
+		logger:       logger,
+		sampleLogger: sampleLogger,
+		rand:         rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	s.task.Store(task)
 	logger.Info("create base scheduler", zap.Stringer("task-type", task.Type), zap.Bool("allocated-slots", param.allocatedSlots))
@@ -189,7 +196,7 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
 				return
 			}
-			s.logger.Error("refresh task failed", zap.Error(err))
+			s.sampleLogger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
 		failpoint.InjectCall("afterRefreshTask", s.GetTask())
@@ -261,7 +268,7 @@ func (s *BaseScheduler) scheduleTask() {
 			return
 		}
 		if err != nil {
-			s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
+			s.sampleLogger.Info("schedule task meet err, reschedule it", zap.Error(err))
 		}
 
 		failpoint.InjectCall("mockOwnerChange")
@@ -280,7 +287,7 @@ func (s *BaseScheduler) onCancelling() error {
 // handle task in pausing state, cancel all running subtasks.
 func (s *BaseScheduler) onPausing() error {
 	task := s.getTaskClone()
-	s.logger.Info("on pausing state", zap.Stringer("state", task.State),
+	s.sampleLogger.Info("on pausing state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
@@ -314,7 +321,7 @@ func (s *BaseScheduler) onPaused() error {
 // handle task in resuming state.
 func (s *BaseScheduler) onResuming() error {
 	task := s.getTaskClone()
-	s.logger.Info("on resuming state", zap.Stringer("state", task.State),
+	s.sampleLogger.Info("on resuming state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
@@ -410,7 +417,7 @@ func (s *BaseScheduler) onRunning() error {
 // the first return value indicates whether the scheduler should be recreated.
 func (s *BaseScheduler) onModifying() (bool, error) {
 	task := s.getTaskClone()
-	s.logger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
+	s.sampleLogger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
 	recreateScheduler := false
 	metaModifies := make([]proto.Modification, 0, len(task.ModifyParam.Modifications))
 	for _, m := range task.ModifyParam.Modifications {
