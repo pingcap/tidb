@@ -19,6 +19,7 @@ go_library(
         "find_best_task.go",
         "flat_plan.go",
         "hint_utils.go",
+        "index_join_partition_pruning.go",
         "index_join_path.go",
         "indexmerge_path.go",
         "indexmerge_unfinished_path.go",

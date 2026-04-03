@@ -363,10 +363,20 @@ type PartialOrderMatchResult struct {
 	PrefixLen int
 }
 
+// ProbePartitionPruningCondGroup groups derived coarse probe-side partition
+// pruning conditions by the partition column they apply to.
+type ProbePartitionPruningCondGroup struct {
+	InnerPartColUID int64
+	Conds           []expression.Expression
+}
+
 // IndexJoinRuntimeProp is the inner runtime property for index join.
 type IndexJoinRuntimeProp struct {
 	// for complete the last col range access, cuz its runtime constant.
 	OtherConditions []expression.Expression
+	// ProbePartitionPruningConds keeps the derived coarse pruning conditions grouped
+	// by the probe-side partition column they apply to.
+	ProbePartitionPruningConds []ProbePartitionPruningCondGroup
 	// for filling the range msg info
 	OuterJoinKeys []*expression.Column
 	// for inner ds/index to detect the range, cuz its runtime constant.
@@ -387,6 +397,24 @@ type IndexJoinRuntimeProp struct {
 // CloneEssentialFields clone the essential fields for IndexJoinRuntimeProp.
 func (ijr *IndexJoinRuntimeProp) CloneEssentialFields() *IndexJoinRuntimeProp {
 	one := *ijr
+	if len(ijr.OtherConditions) > 0 {
+		one.OtherConditions = append([]expression.Expression(nil), ijr.OtherConditions...)
+	}
+	if len(ijr.ProbePartitionPruningConds) > 0 {
+		one.ProbePartitionPruningConds = make([]ProbePartitionPruningCondGroup, len(ijr.ProbePartitionPruningConds))
+		for i, group := range ijr.ProbePartitionPruningConds {
+			one.ProbePartitionPruningConds[i] = ProbePartitionPruningCondGroup{
+				InnerPartColUID: group.InnerPartColUID,
+				Conds:           append([]expression.Expression(nil), group.Conds...),
+			}
+		}
+	}
+	if len(ijr.OuterJoinKeys) > 0 {
+		one.OuterJoinKeys = append([]*expression.Column(nil), ijr.OuterJoinKeys...)
+	}
+	if len(ijr.InnerJoinKeys) > 0 {
+		one.InnerJoinKeys = append([]*expression.Column(nil), ijr.InnerJoinKeys...)
+	}
 	return &one
 }
 
@@ -618,6 +646,14 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.IndexJoinProp != nil {
 		for _, expr := range p.IndexJoinProp.OtherConditions {
 			p.hashcode = append(p.hashcode, expr.HashCode()...)
+		}
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(len(p.IndexJoinProp.ProbePartitionPruningConds)))
+		for _, group := range p.IndexJoinProp.ProbePartitionPruningConds {
+			p.hashcode = codec.EncodeInt(p.hashcode, group.InnerPartColUID)
+			p.hashcode = codec.EncodeInt(p.hashcode, int64(len(group.Conds)))
+			for _, expr := range group.Conds {
+				p.hashcode = append(p.hashcode, expr.HashCode()...)
+			}
 		}
 		for _, col := range p.IndexJoinProp.OuterJoinKeys {
 			p.hashcode = append(p.hashcode, col.HashCode()...)
