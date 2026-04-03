@@ -23,6 +23,7 @@
 package expression
 
 import (
+	stderrors "errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -1908,6 +1909,22 @@ type builtinCastStringAsTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
+func normalizeCastStringAsTimeError(err error, val string) error {
+	if err == nil {
+		return nil
+	}
+	if types.ErrWrongValue.Equal(err) || types.ErrWrongValueForType.Equal(err) ||
+		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
+		types.ErrDatetimeFunctionOverflow.Equal(err) || types.ErrIncorrectDatetimeValue.Equal(err) ||
+		types.ErrTimestampInDSTTransition.Equal(err) {
+		return err
+	}
+	if stderrors.Is(err, strconv.ErrSyntax) || stderrors.Is(err, strconv.ErrRange) {
+		return types.ErrIncorrectDatetimeValue.GenWithStackByArgs(val)
+	}
+	return types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, val)
+}
+
 func (b *builtinCastStringAsTimeSig) Clone() builtinFunc {
 	newSig := &builtinCastStringAsTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
@@ -1921,7 +1938,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (r
 	}
 	res, err = types.ParseTime(typeCtx(ctx), val, b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
-		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, normalizeCastStringAsTimeError(err, val))
 	}
 	if res.IsZero() && sqlMode(ctx).HasNoZeroDateMode() {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, res.String()))

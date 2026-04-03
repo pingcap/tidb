@@ -108,7 +108,30 @@ func canFuncBePushed(ctx EvalContext, sf *ScalarFunction, storeType kv.StoreType
 	return ret
 }
 
+func shouldKeepDateDiffWithBitAtRoot(sf *ScalarFunction) bool {
+	if sf.FuncName.L != ast.DateDiff {
+		return false
+	}
+	for _, arg := range sf.GetArgs() {
+		for _, col := range ExtractColumns(arg) {
+			if col.GetStaticType().GetType() == mysql.TypeBit {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func canScalarFuncPushDown(ctx PushDownContext, scalarFunc *ScalarFunction, storeType kv.StoreType) bool {
+	if shouldKeepDateDiffWithBitAtRoot(scalarFunc) {
+		storageName := storeType.Name()
+		if storeType == kv.UnSpecified {
+			storageName = "storage layer"
+		}
+		warnErr := errors.NewNoStackError("Scalar function '" + scalarFunc.FuncName.L + "' can not be pushed down to " + storageName + " when its arguments contain BIT columns.")
+		ctx.AppendWarning(warnErr)
+		return false
+	}
 	pbCode := scalarFunc.Function.PbCode()
 	// Check whether this function can be pushed.
 	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(ctx.EvalCtx(), scalarFunc, storeType) {

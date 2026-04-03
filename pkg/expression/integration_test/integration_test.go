@@ -2213,6 +2213,26 @@ func TestIssue16697(t *testing.T) {
 	}
 }
 
+func TestIssue67002(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table2")
+	tk.MustExec("create table table2 (count int, status bit(1), ts datetime)")
+	tk.MustExec(`insert into table2(count, status, ts) values(100, 1, '2023-12-01 10:00:00')`)
+
+	tk.MustQuery("explain format = 'brief' select datediff(concat_ws(100, 100, tom12.status), tom12.ts) as c11 from table2 as tom12").Check(testkit.Rows(
+		"Projection 10000.00 root  datediff(cast(concat_ws(100, 100, cast(test.table2.status, var_string(1))), datetime(6) BINARY), test.table2.ts)->Column#6",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:tom12 keep order:false, stats:pseudo",
+	))
+
+	tk.MustQuery("select datediff(concat_ws(100, 100, tom12.status), tom12.ts) as c11 from table2 as tom12").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select datediff(concat_ws(100, 100, 1), tom12.ts) as c11 from table2 as tom12").Check(testkit.Rows("<nil>"))
+	tk.MustExec("drop table if exists table2")
+}
+
 func TestSecurityEnhancedMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

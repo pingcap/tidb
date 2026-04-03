@@ -1400,6 +1400,35 @@ func TestWrapWithCastAsTime(t *testing.T) {
 	}
 }
 
+func TestCastStringAsTimeTreatsInternalParserErrorsAsWarnings(t *testing.T) {
+	ctx := createContext(t)
+	col := &Column{RetType: types.NewFieldType(mysql.TypeVarString), Index: 0}
+	expr := WrapWithCastAsTime(ctx, col, types.NewFieldType(mysql.TypeDatetime))
+
+	_, isNull, err := expr.EvalTime(ctx, chunk.MutRowFromValues("100100\x01").ToRow())
+	require.NoError(t, err)
+	require.True(t, isNull)
+
+	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
+	require.NotEmpty(t, warnings)
+	require.True(t, types.ErrWrongValue.Equal(warnings[len(warnings)-1].Err) || types.ErrIncorrectDatetimeValue.Equal(warnings[len(warnings)-1].Err))
+}
+
+func TestCastStringAsTimestampPreservesDSTTransitionError(t *testing.T) {
+	ctx := createContext(t)
+	loc, err := time.LoadLocation("Europe/Amsterdam")
+	require.NoError(t, err)
+	ctx.ResetSessionAndStmtTimeZone(loc)
+
+	col := &Column{RetType: types.NewFieldType(mysql.TypeVarString), Index: 0}
+	expr := WrapWithCastAsTime(ctx, col, types.NewFieldType(mysql.TypeTimestamp))
+
+	_, isNull, err := expr.EvalTime(ctx, chunk.MutRowFromValues("2025-03-30 02:30:00").ToRow())
+	require.Error(t, err)
+	require.True(t, isNull)
+	require.True(t, types.ErrTimestampInDSTTransition.Equal(err))
+}
+
 func TestWrapWithCastAsDuration(t *testing.T) {
 	ctx := createContext(t)
 
