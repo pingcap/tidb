@@ -137,12 +137,12 @@ TopRU is controlled in a **subscription-driven, reference-counted** way.
 
 | Collection Point | Frequency | Location | Purpose |
 |------------------|-----------|----------|---------|
-| Local Periodic Sampling | 1s | `aggregator.ruAggregate()` | Collect RU increments of executing SQLs |
-| Execution Completion Collection | Real-time | `observeStmtFinishedForTopSQL()` | Supplement final data, ensure accuracy |
+| Local Periodic Sampling | 1s | `drainAndPushRU()` | Pull incremental RU snapshots from currently running SQLs in the 1s tick |
+| Execution Completion Collection | Real-time | `observeStmtFinishedForTopProfiling()` | Flush finish-path deltas at statement end to reduce undercount of short-lived SQLs |
 
 #### ExecutionContext Design
 
-Add `ExecutionContext` field in `StatementStats` to store sampling state of executing SQLs:
+Add `ExecutionContext` in `StatementStats` to store per-statement sampling state, and use a buffered RU-delta map for finish-path supplements:
 
 ```go
 // ExecutionContext stores the execution context of the currently executing SQL in the session
@@ -321,7 +321,7 @@ TopRU reporting data interacts with external components through Protobuf protoco
 // TopRURecord represents RU statistics for a single (user, sql_digest, plan_digest) combination
 message TopRURecord {
     bytes  keyspace_name = 1;  // Keyspace identifier
-    string user          = 2;  // Executing user
+    string user          = 2;  // Auth identity in user@host form
     bytes  sql_digest    = 3;  // SQL Digest
     bytes  plan_digest   = 4;  // Plan Digest
     repeated TopRURecordItem items = 5;  // Time series data
