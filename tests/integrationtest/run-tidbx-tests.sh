@@ -234,6 +234,11 @@ function start_tidb_server()
 pipelined = false
 EOF
 
+    cat <<EOF > pd.toml
+[keyspace]
+pre-alloc = ["a"]
+EOF
+
     echo "start tidbx-server, log file: $mysql_tester_log"
     $tidb_server \
         --pd.name=pd-0 \

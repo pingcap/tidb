@@ -14,6 +14,7 @@
 
 lease = "0"
 host = "127.0.0.1"
+keyspace-name = "a"
 new_collations_enabled_on_first_bootstrap = false
 enable-table-lock = true
 
