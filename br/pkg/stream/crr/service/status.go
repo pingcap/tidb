@@ -15,7 +15,10 @@
 package service
 
 import (
+	"fmt"
 	"maps"
+	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +33,26 @@ const (
 
 	phaseIdle = "idle"
 )
+
+func normalizeStorageSubDir(subDir string) (string, error) {
+	trimmed := strings.Trim(subDir, "/")
+	if trimmed == "" {
+		return "", fmt.Errorf("state storage subdir must not be empty")
+	}
+	cleaned := path.Clean(trimmed)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("state storage subdir must stay within upstream storage, got %q", subDir)
+	}
+	return cleaned, nil
+}
+
+func GetStatusFileName(subDir string) (string, error) {
+	normalizedSubDir, err := normalizeStorageSubDir(subDir)
+	if err != nil {
+		return "", err
+	}
+	return path.Join(normalizedSubDir, "resume-state.json"), nil
+}
 
 // StatusStatistic summarizes the current round's file-related work.
 type StatusStatistic struct {

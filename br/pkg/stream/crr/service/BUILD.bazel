@@ -25,7 +25,7 @@ go_test(
     srcs = ["service_test.go"],
     embed = [":service"],
     flaky = True,
-    shard_count = 12,
+    shard_count = 13,
     deps = [
         "//br/pkg/stream/crr/internal/checkpoint",
         "//br/pkg/streamhelper/config",

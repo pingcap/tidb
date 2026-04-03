@@ -17,11 +17,8 @@ package operator
 import (
 	"context"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"path"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -95,7 +92,7 @@ func NewCRRCheckpointService(
 		mgr.Close()
 		return nil, nil, err
 	}
-	stateStore, err := buildResumeStateStore(cfg.CRRConfig.TaskName, upstreamStorage, cfg.CRRConfig.StateStorageSubDir)
+	stateStore, err := buildResumeStateStore(upstreamStorage, cfg.CRRConfig.StateStorageSubDir)
 	if err != nil {
 		if downstreamStorage != nil {
 			downstreamStorage.Close()
@@ -164,37 +161,20 @@ type storageResumeStateStore struct {
 }
 
 func buildResumeStateStore(
-	taskName string,
 	upstreamStorage storeapi.Storage,
 	subDir string,
 ) (service.ResumeStateStore, error) {
 	if subDir == "" {
 		return nil, nil
 	}
-	normalizedSubDir, err := normalizeStorageSubDir(subDir)
+	path, err := service.GetStatusFileName(subDir)
 	if err != nil {
 		return nil, err
 	}
 	return &storageResumeStateStore{
 		storage: upstreamStorage,
-		path:    path.Join(normalizedSubDir, encodeStoragePathComponent(taskName), "resume-state.json"),
+		path:    path,
 	}, nil
-}
-
-func normalizeStorageSubDir(subDir string) (string, error) {
-	trimmed := strings.Trim(subDir, "/")
-	if trimmed == "" {
-		return "", fmt.Errorf("state storage subdir must not be empty")
-	}
-	cleaned := path.Clean(trimmed)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", fmt.Errorf("state storage subdir must stay within upstream storage, got %q", subDir)
-	}
-	return cleaned, nil
-}
-
-func encodeStoragePathComponent(component string) string {
-	return hex.EncodeToString([]byte(component))
 }
 
 func (s *storageResumeStateStore) LoadState(ctx context.Context) (*service.PersistentState, error) {

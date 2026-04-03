@@ -567,6 +567,67 @@ func TestStatusStorePreservesFailureStoreCountAndTracksZeroAliveStores(t *testin
 	require.Equal(t, 0, snapshot.AliveStoreCount)
 }
 
+func TestGetStatusFileName(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name      string
+		subDir    string
+		expect    string
+		errSubstr string
+	}{
+		{
+			name:   "valid subdir",
+			subDir: "state/subdir",
+			expect: "state/subdir/resume-state.json",
+		},
+		{
+			name:   "leading and trailing slashes",
+			subDir: "/state/subdir/",
+			expect: "state/subdir/resume-state.json",
+		},
+		{
+			name:   "clean dot segments",
+			subDir: "state/./subdir/../subdir2",
+			expect: "state/subdir2/resume-state.json",
+		},
+		{
+			name:      "empty subdir",
+			subDir:    "",
+			errSubstr: "must not be empty",
+		},
+		{
+			name:      "only slash",
+			subDir:    "/",
+			errSubstr: "must not be empty",
+		},
+		{
+			name:      "parent directory",
+			subDir:    "../state",
+			errSubstr: "must stay within upstream storage",
+		},
+		{
+			name:      "clean to parent directory",
+			subDir:    "state/../../escape",
+			errSubstr: "must stay within upstream storage",
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			actual, err := GetStatusFileName(tc.subDir)
+			if tc.errSubstr != "" {
+				require.Error(t, err)
+				require.ErrorContains(t, err, tc.errSubstr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expect, actual)
+		})
+	}
+}
+
 func TestServiceRegisterPanicsOnNilMux(t *testing.T) {
 	svc := &Service{}
 	require.PanicsWithValue(t, "service: nil mux", func() {
