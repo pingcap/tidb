@@ -39,7 +39,7 @@ type TraceBuf struct {
 // GetTraceID gets the traceID field.
 func (t *TraceBuf) GetTraceID() []byte {
 	t.mu.RLock()
-	traceID := t.traceID
+	traceID := slices.Clone(t.traceID)
 	t.mu.RUnlock()
 	return traceID
 }
@@ -47,7 +47,7 @@ func (t *TraceBuf) GetTraceID() []byte {
 // SetTraceID sets the traceID field.
 func (t *TraceBuf) SetTraceID(traceID []byte) {
 	t.mu.Lock()
-	t.traceID = traceID
+	t.traceID = slices.Clone(traceID)
 	t.mu.Unlock()
 }
 
@@ -482,6 +482,7 @@ func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, e
 	}
 
 	categories := parseCategories(config.EnabledCategories)
+	SetEnabledCategories(categories)
 	ret := &HTTPFlightRecorder{
 		enabledCategories:         categories,
 		Config:                    config,

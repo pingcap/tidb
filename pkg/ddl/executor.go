@@ -6797,7 +6797,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		defer r.End()
 		if v := tracing.GetTraceBuf(traceCtx); v != nil {
 			if traceBuf, ok := v.(*traceevent.TraceBuf); ok && traceBuf != nil {
-				traceID = traceBuf.GetTraceID()
+				traceID = append([]byte(nil), traceBuf.GetTraceID()...)
 			}
 		}
 	}

@@ -100,15 +100,12 @@ func StartRegionWithNewRootSpan(ctx context.Context, regionType string) (Region,
 // TraceBuf records trace events.
 type TraceBuf interface {
 	Record(ctx context.Context, event Event)
+	GetTraceID() []byte
 }
 
 type traceBufKeyType struct{}
 
 var traceBufKey traceBufKeyType = struct{}{}
-
-type traceIDProvider interface {
-	GetTraceID() []byte
-}
 
 func copyTraceID(traceID []byte) []byte {
 	if len(traceID) == 0 {
@@ -117,13 +114,6 @@ func copyTraceID(traceID []byte) []byte {
 	copied := make([]byte, len(traceID))
 	copy(copied, traceID)
 	return copied
-}
-
-func traceIDFromTraceBuf(traceBuf TraceBuf) []byte {
-	if provider, ok := traceBuf.(traceIDProvider); ok {
-		return copyTraceID(provider.GetTraceID())
-	}
-	return nil
 }
 
 // GetTraceBuf returns the TraceBuf from the context.
@@ -152,13 +142,16 @@ func StartRegion(ctx context.Context, regionType string) Region {
 	}
 	if IsEnabled(General) {
 		if tmp := GetTraceBuf(ctx); tmp != nil {
-			traceBuf := tmp.(TraceBuf)
+			traceBuf, ok := tmp.(TraceBuf)
+			if !ok {
+				return ret
+			}
 			event := Event{
 				Category:  General,
 				Name:      regionType,
 				Phase:     PhaseBegin,
 				Timestamp: time.Now(),
-				TraceID:   traceIDFromTraceBuf(traceBuf),
+				TraceID:   copyTraceID(traceBuf.GetTraceID()),
 			}
 			traceBuf.Record(ctx, event)
 			ret.span.event = &event
@@ -334,7 +327,7 @@ func (r Region) End() {
 	r.Region.End()
 	if r.span.event != nil {
 		if len(r.span.event.TraceID) == 0 {
-			r.span.event.TraceID = traceIDFromTraceBuf(r.span.traceBuf)
+			r.span.event.TraceID = copyTraceID(r.span.traceBuf.GetTraceID())
 		}
 		r.span.event.Phase = PhaseEnd
 		r.span.event.Timestamp = time.Now()

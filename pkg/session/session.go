@@ -1849,7 +1849,7 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
-	if sink := tracing.GetTraceBuf(ctx); sink == nil {
+	if traceevent.GetTraceBuf(ctx) == nil {
 		trace := traceevent.NewTraceBuf()
 		ctx = traceevent.WithTraceBuf(ctx, trace)
 		defer trace.DiscardOrFlush(ctx)
@@ -2900,7 +2900,7 @@ func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte
 	// The trace ID is generated from transaction start_ts and statement count
 	startTS := se.sessionVars.TxnCtx.StartTS
 	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
-	traceID := traceevent.GenerateTraceID(startTS, stmtCount)
+	traceID := traceevent.GenerateTraceID(startTS, stmtCount, rand.Uint32())
 	if traceBuf := traceevent.GetTraceBuf(ctx); traceBuf != nil {
 		traceBuf.SetTraceID(traceID)
 	}

@@ -569,7 +569,7 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 func (s *jobScheduler) getJobRunCtx(trace *traceevent.TraceBuf, jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	newCtx := traceevent.WithTraceBuf(s.schCtx, trace)
-	if len(traceInfo.TraceID) > 0 {
+	if traceInfo != nil && len(traceInfo.TraceID) > 0 {
 		trace.SetTraceID(traceInfo.TraceID)
 		newCtx = clientgotrace.ContextWithTraceID(newCtx, traceInfo.TraceID)
 	}

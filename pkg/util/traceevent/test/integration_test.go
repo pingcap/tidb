@@ -386,7 +386,7 @@ func TestFlightRecorder(t *testing.T) {
 		drainEvents(eventCh)
 		traceIDs := make([][]byte, 0, 10)
 		for i := 0; i < 10; i++ {
-			traceID := traceevent.GenerateTraceID(uint64(i+1), uint64(i))
+			traceID := traceevent.GenerateTraceID(uint64(i+1), uint64(i), uint32(i))
 			traceIDs = append(traceIDs, traceID)
 			traceBuf.SetTraceID(traceID)
 			traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", flightRecorder.CheckSampling)

@@ -20,7 +20,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math/rand/v2"
 	"strconv"
 	"strings"
 	"sync"
@@ -71,10 +70,12 @@ const (
 // recorderEnabled controls whether the flight recorder is active.
 // loggingEnabled controls whether the log sink emits logs.
 // lastDumpTime stores the Unix timestamp of the last flight recorder dump.
+// enabledCategories stores the globally enabled trace categories.
 var (
-	recorderEnabled atomic.Bool
-	loggingEnabled  atomic.Bool
-	lastDumpTime    atomic.Int64
+	recorderEnabled   atomic.Bool
+	loggingEnabled    atomic.Bool
+	lastDumpTime      atomic.Int64
+	enabledCategories atomic.Uint64
 )
 
 // DefaultFlightRecorderCapacity controls the number of events retained in the in-memory recorder.
@@ -125,11 +126,12 @@ func IsEnabled(category tracing.TraceCategory) bool {
 
 // GetEnabledCategories returns the currently enabled categories.
 func GetEnabledCategories() TraceCategory {
-	fr := GetFlightRecorder()
-	if fr == nil {
-		return TraceCategory(0)
-	}
-	return fr.enabledCategories
+	return TraceCategory(enabledCategories.Load())
+}
+
+// SetEnabledCategories sets the globally enabled trace categories.
+func SetEnabledCategories(categories TraceCategory) {
+	enabledCategories.Store(uint64(categories))
 }
 
 // NormalizeMode converts a user-supplied tracing mode string into its canonical representation.
@@ -233,6 +235,9 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 	if !IsEnabled(category) {
 		return
 	}
+	if !recorderEnabled.Load() && !loggingEnabled.Load() {
+		return
+	}
 
 	traceBuf := GetTraceBuf(ctx)
 	if traceBuf == nil {
@@ -265,16 +270,17 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 	}
 }
 
-// GenerateTraceID creates a trace ID from transaction start timestamp and statement count.
+// GenerateTraceID creates a trace ID from transaction start timestamp, statement count, and random suffix.
 // The trace ID is 20 bytes: [start_ts (8 bytes)][stmt_count (8 bytes)][random (4 bytes)] in big-endian format.
 // The random suffix distinguishes different statement executions.
 // This function should be called ONCE per statement execution, not per retry.
 // If no transaction has started, start_ts will be 0.
-func GenerateTraceID(startTS uint64, stmtCount uint64) []byte {
+// This is a pure function - the caller is responsible for generating the random value.
+func GenerateTraceID(startTS uint64, stmtCount uint64, randSuffix uint32) []byte {
 	traceID := make([]byte, 20)
 	binary.BigEndian.PutUint64(traceID[0:8], startTS)
 	binary.BigEndian.PutUint64(traceID[8:16], stmtCount)
-	binary.BigEndian.PutUint32(traceID[16:20], rand.Uint32())
+	binary.BigEndian.PutUint32(traceID[16:20], randSuffix)
 	return traceID
 }
 
@@ -536,7 +542,7 @@ func ConvertEventsForRendering(events []Event) []RenderEvent {
 			}
 		} else if len(event.TraceID) > 0 {
 			logutil.BgLogger().Info("wrong traceid format",
-				zap.String("trace_id", string(event.TraceID)))
+				zap.String("trace_id", hex.EncodeToString(event.TraceID)))
 		}
 
 		if len(event.Fields) > 0 {
