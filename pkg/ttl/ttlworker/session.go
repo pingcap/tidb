@@ -95,14 +95,14 @@ func getSession(pool util.SessionPool) (session.Session, error) {
 			logutil.BgLogger().Warn("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
 		}
 
-		if !originalEnable1PC {
-			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=OFF")
+		if originalEnable1PC {
+			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=ON")
 			intest.AssertNoError(err)
 			terror.Log(err)
 		}
 
-		if !originalEnableAsyncCommit {
-			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=OFF")
+		if originalEnableAsyncCommit {
+			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=ON")
 			intest.AssertNoError(err)
 			terror.Log(err)
 		}
@@ -133,15 +133,15 @@ func getSession(pool util.SessionPool) (session.Session, error) {
 		return nil, err
 	}
 
-	// set enable 1pc to ON
-	_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=ON")
+	// set disable 1pc to OFF
+	_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=OFF")
 	if err != nil {
 		se.Close()
 		return nil, err
 	}
 
-	// set enable async commit to ON
-	_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=ON")
+	// set disable async commit to OFF
+	_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=OFF")
 	if err != nil {
 		se.Close()
 		return nil, err
@@ -340,6 +340,10 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 	err := s.RunInTxn(ctx, func() error {
 		tracer.EnterPhase(metrics.PhaseQuery)
 		defer tracer.EnterPhase(tracer.Phase())
+		// In active-active scene, disable async commit for avoid some
+		// unexpected (unknown) issues caused by stale locks.
+		intest.Assert(!s.GetSessionVars().EnableAsyncCommit)
+		intest.Assert(!s.GetSessionVars().Enable1PC)
 		rows, err := s.ExecuteSQL(ctx, sql)
 		tracer.EnterPhase(metrics.PhaseCheckTTL)
 		// We must check the configuration after ExecuteSQL because of MDL and the meta the current transaction used
