@@ -77,7 +77,9 @@ func CheckBackupMetaUnknownFields(
 
 	err := errors.Annotatef(
 		berrors.ErrVersionMismatch,
-		"backupmeta contains unknown protobuf fields. restoring with an older BR may silently ignore newer backup metadata. backup cluster version: %s, backup BR version: %s. use --check-requirements=false to skip this check",
+		"backupmeta contains unknown protobuf fields. restoring with an older BR may silently ignore "+
+			"newer backup metadata. backup cluster version: %s, backup BR version: %s. use "+
+			"--check-requirements=false to skip this check",
 		backupMeta.GetClusterVersion(),
 		backupMeta.GetBrVersion(),
 	)
@@ -98,7 +100,9 @@ func CheckBackupMetaCompatibility(
 	if backupMeta.GetBackupSchemaVersion() > CurrentBackupSchemaVersion {
 		err := errors.Annotatef(
 			berrors.ErrVersionMismatch,
-			"backupmeta requires schema version %d, current BR supports up to %d. restoring with an older BR may silently ignore newer backup metadata semantics. backup cluster version: %s, backup BR version: %s. use --check-requirements=false to skip this check",
+			"backupmeta requires schema version %d, current BR supports up to %d. restoring with an older BR "+
+				"may silently ignore newer backup metadata semantics. backup cluster version: %s, backup BR "+
+				"version: %s. use --check-requirements=false to skip this check",
 			backupMeta.GetBackupSchemaVersion(),
 			CurrentBackupSchemaVersion,
 			backupMeta.GetClusterVersion(),
