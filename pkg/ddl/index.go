@@ -2659,28 +2659,9 @@ func writeChunk(
 	copChunk *chunk.Chunk,
 	tblInfo *model.TableInfo,
 ) (rowCnt int, bytes int, err error) {
-	iter := chunk.NewIterator4Chunk(copChunk)
 	c := copCtx.GetBase()
-	ectx := c.ExprCtx.GetEvalCtx()
-
-	maxIdxColCnt := maxIndexColumnCount(indexes)
-	idxDataBuf := make([]types.Datum, maxIdxColCnt)
-	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
-	var restoreDataBuf []types.Datum
-	count := 0
-	totalBytes := 0
-
-	unlockFns := make([]func(), 0, len(writers))
-	for _, w := range writers {
-		unlock := w.LockForWrite()
-		unlockFns = append(unlockFns, unlock)
-	}
-	defer func() {
-		for _, unlock := range unlockFns {
-			unlock()
-		}
-	}()
 	needRestoreForIndexes := make([]bool, len(indexes))
+	var restoreDataBuf []types.Datum
 	restore, pkNeedRestore := false, false
 	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
 		pkNeedRestore = tables.NeedRestoredData(c.PrimaryKeyInfo.Columns, c.TableInfo.Columns)
@@ -2692,6 +2673,35 @@ func writeChunk(
 	}
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
+	}
+
+	unlockWriters := lockChunkWriters(writers)
+	defer unlockWriters()
+
+	iter := chunk.NewIterator4Chunk(copChunk)
+	ectx := c.ExprCtx.GetEvalCtx()
+	maxIdxColCnt := maxIndexColumnCount(indexes)
+	idxDataBuf := make([]types.Datum, maxIdxColCnt)
+	handleDataBuf := make([]types.Datum, len(c.HandleOutputOffsets))
+	count := 0
+	totalBytes := 0
+	if len(indexes) == 1 {
+		return writeChunkSingleIndex(
+			ctx,
+			iter,
+			writers[0],
+			indexes[0],
+			indexConditionCheckers,
+			copCtx,
+			loc,
+			errCtx,
+			writeStmtBufs,
+			tblInfo,
+			handleDataBuf,
+			idxDataBuf,
+			restoreDataBuf,
+			needRestoreForIndexes[0],
+		)
 	}
 
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -2737,6 +2747,82 @@ func writeChunk(
 		count++
 	}
 	return count, totalBytes, nil
+}
+
+func lockChunkWriters(writers []ingest.Writer) func() {
+	unlockFns := make([]func(), 0, len(writers))
+	for _, w := range writers {
+		unlockFns = append(unlockFns, w.LockForWrite())
+	}
+	return func() {
+		for _, unlock := range unlockFns {
+			unlock()
+		}
+	}
+}
+
+func writeChunkSingleIndex(
+	ctx context.Context,
+	iter *chunk.Iterator4Chunk,
+	writer ingest.Writer,
+	index table.Index,
+	indexConditionCheckers []func(row chunk.Row) (bool, error),
+	copCtx copr.CopContext,
+	loc *time.Location,
+	errCtx errctx.Context,
+	writeStmtBufs *variable.WriteStmtBufs,
+	tblInfo *model.TableInfo,
+	handleDataBuf, idxDataBuf, restoreDataBuf []types.Datum,
+	needRestore bool,
+) (rowCnt int, bytes int, err error) {
+	c := copCtx.GetBase()
+	ectx := c.ExprCtx.GetEvalCtx()
+	idxMeta := index.Meta()
+	idxID := idxMeta.ID
+	idxOffsets := copCtx.IndexColumnOutputOffsets(idxID)
+	var indexConditionChecker func(row chunk.Row) (bool, error)
+	if idxMeta.HasCondition() && indexConditionCheckers != nil {
+		indexConditionChecker = indexConditionCheckers[0]
+	}
+
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		handleDataBuf = ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
+		if restoreDataBuf != nil {
+			// restoreDataBuf should not truncate index values.
+			for i, datum := range handleDataBuf {
+				restoreDataBuf[i] = *datum.Clone()
+			}
+		}
+		handle, err := BuildHandle(handleDataBuf, c.TableInfo, c.PrimaryKeyInfo, loc, errCtx)
+		if err != nil {
+			return 0, bytes, errors.Trace(err)
+		}
+		if indexConditionChecker != nil {
+			ok, err := indexConditionChecker(row)
+			if err != nil {
+				return 0, 0, errors.Trace(err)
+			}
+			if !ok {
+				rowCnt++
+				continue
+			}
+		}
+
+		idxData := ExtractDatumByOffsets(ectx, row, idxOffsets, c.ExprColumnInfos, idxDataBuf)
+		idxData = idxData[:len(idxMeta.Columns)]
+		var rsData []types.Datum
+		if needRestore {
+			rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
+		}
+		kvBytes, err := writeOneKV(ctx, writer, index, loc, errCtx, writeStmtBufs, idxData, rsData, handle)
+		if err != nil {
+			err = ingest.TryConvertToKeyExistsErr(err, idxMeta, tblInfo)
+			return 0, bytes, errors.Trace(err)
+		}
+		bytes += int(kvBytes)
+		rowCnt++
+	}
+	return rowCnt, bytes, nil
 }
 
 func maxIndexColumnCount(indexes []table.Index) int {
