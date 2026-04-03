@@ -107,7 +107,7 @@ func (rc *LogClient) saveIDMap2Storage(
 
 func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.PitrDBMap) error {
 	backupmeta := &backuppb.BackupMeta{
-		BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion,
+		BackupSchemaVersion: metautil.CurrentBackupSchemaVersion,
 		DbMaps:              dbMaps,
 	}
 	data, err := proto.Marshal(backupmeta)

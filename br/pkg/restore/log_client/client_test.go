@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
@@ -1498,7 +1499,7 @@ func TestPITRIDMap(t *testing.T) {
 	}
 
 	t.Run("reject newer backup schema version", func(t *testing.T) {
-		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.CurrentBackupSchemaVersion+1)
+		data := mustMarshalPITRIDMapBackupMeta(t, metautil.CurrentBackupSchemaVersion+1)
 		err = se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %?;",
 			uint64(0), uint64(2), uint64(3))
 		require.NoError(t, err)
@@ -1581,7 +1582,7 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 		require.NoError(t, err)
 		err = client.SetStorage(ctx, backend, nil)
 		require.NoError(t, err)
-		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.CurrentBackupSchemaVersion+1)
+		data := mustMarshalPITRIDMapBackupMeta(t, metautil.CurrentBackupSchemaVersion+1)
 		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), data))
 
 		_, err = client.TEST_initSchemasMap(ctx, 2, nil)

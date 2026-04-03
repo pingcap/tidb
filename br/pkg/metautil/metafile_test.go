@@ -267,3 +267,86 @@ func TestMetaFileSize(t *testing.T) {
 	t.Logf("needFlush: %v, %+v", needFlush, metafiles)
 	require.True(t, needFlush)
 }
+
+func TestCheckBackupMetaCompatibility(t *testing.T) {
+	baseMeta := &backuppb.BackupMeta{
+		BackupSchemaVersion: CurrentBackupSchemaVersion,
+		ClusterVersion:      "8.5.6",
+		BrVersion:           "v8.5.6",
+	}
+
+	// Cover the compatibility contract for backupmeta:
+	// 1. current schema version should pass;
+	// 2. newer schema version should be rejected unless requirements checks are disabled;
+	// 3. unknown protobuf fields should still be guarded by the same switch.
+	cases := []struct {
+		name              string
+		backupMeta        *backuppb.BackupMeta
+		checkRequirements bool
+		expectedErr       string
+	}{
+		{
+			name:              "compatible backupmeta",
+			backupMeta:        baseMeta,
+			checkRequirements: true,
+		},
+		{
+			name: "reject newer schema version",
+			backupMeta: &backuppb.BackupMeta{
+				BackupSchemaVersion: CurrentBackupSchemaVersion + 1,
+				ClusterVersion:      "8.5.6",
+				BrVersion:           "v8.5.6",
+			},
+			checkRequirements: true,
+			expectedErr:       "requires schema version",
+		},
+		{
+			name: "warn for newer schema version when requirements disabled",
+			backupMeta: &backuppb.BackupMeta{
+				BackupSchemaVersion: CurrentBackupSchemaVersion + 1,
+				ClusterVersion:      "8.5.6",
+				BrVersion:           "v8.5.6",
+			},
+			checkRequirements: false,
+		},
+		{
+			name: "reject unknown fields",
+			backupMeta: &backuppb.BackupMeta{
+				BackupSchemaVersion: CurrentBackupSchemaVersion,
+				ClusterVersion:      "8.5.6",
+				BrVersion:           "v8.5.6",
+				XXX_unrecognized:    []byte{0x08, 0x01},
+			},
+			checkRequirements: true,
+			expectedErr:       "unknown protobuf fields",
+		},
+		{
+			name: "warn for unknown fields when requirements disabled",
+			backupMeta: &backuppb.BackupMeta{
+				BackupSchemaVersion: CurrentBackupSchemaVersion,
+				ClusterVersion:      "8.5.6",
+				BrVersion:           "v8.5.6",
+				XXX_unrecognized:    []byte{0x08, 0x01},
+			},
+			checkRequirements: false,
+		},
+	}
+
+	for _, ca := range cases {
+		t.Run(ca.name, func(t *testing.T) {
+			err := CheckBackupMetaCompatibility(ca.backupMeta, ca.checkRequirements)
+			if ca.expectedErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, ca.expectedErr)
+		})
+	}
+}
+
+func TestNewMetaWriterInitializesBackupSchemaVersion(t *testing.T) {
+	// New backupmeta files should carry the current compatibility version by default
+	// so readers can distinguish new semantics from pre-versioned backups.
+	writer := NewMetaWriter(nil, MetaFileSize, false, "", nil)
+	require.Equal(t, CurrentBackupSchemaVersion, writer.backupMeta.BackupSchemaVersion)
+}

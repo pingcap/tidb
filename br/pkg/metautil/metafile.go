@@ -58,6 +58,13 @@ const (
 	MetaV2
 )
 
+const (
+	// CurrentBackupSchemaVersion is the newest backup metadata compatibility
+	// version this BR binary knows how to read. Version 0 is reserved for
+	// backups created before the field existed.
+	CurrentBackupSchemaVersion uint32 = 1
+)
+
 // CheckBackupMetaUnknownFields blocks restore when backup metadata contains
 // protobuf fields the current BR binary does not recognize.
 func CheckBackupMetaUnknownFields(
@@ -88,12 +95,12 @@ func CheckBackupMetaCompatibility(
 	backupMeta *backuppb.BackupMeta,
 	checkRequirements bool,
 ) error {
-	if backupMeta.GetBackupSchemaVersion() > backuppb.CurrentBackupSchemaVersion {
+	if backupMeta.GetBackupSchemaVersion() > CurrentBackupSchemaVersion {
 		err := errors.Annotatef(
 			berrors.ErrVersionMismatch,
 			"backupmeta requires schema version %d, current BR supports up to %d. restoring with an older BR may silently ignore newer backup metadata semantics. backup cluster version: %s, backup BR version: %s. use --check-requirements=false to skip this check",
 			backupMeta.GetBackupSchemaVersion(),
-			backuppb.CurrentBackupSchemaVersion,
+			CurrentBackupSchemaVersion,
 			backupMeta.GetClusterVersion(),
 			backupMeta.GetBrVersion(),
 		)
@@ -753,7 +760,7 @@ func NewMetaWriter(
 		useV2Meta:         useV2Meta,
 		// keep the compatibility for old backupmeta.Ddls
 		// old version: Ddls, _ := json.Marshal(make([]*model.Job, 0))
-		backupMeta:     &backuppb.BackupMeta{Ddls: []byte("[]"), BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion},
+		backupMeta:     &backuppb.BackupMeta{Ddls: []byte("[]"), BackupSchemaVersion: CurrentBackupSchemaVersion},
 		metafileSizes:  make(map[string]int),
 		metafiles:      NewSizedMetaFile(metafileSizeLimit),
 		metafileSeqNum: make(map[string]int),
@@ -868,7 +875,7 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 	} else {
 		writer.backupMeta.Version = MetaV1
 	}
-	writer.backupMeta.BackupSchemaVersion = max(writer.backupMeta.BackupSchemaVersion, backuppb.CurrentBackupSchemaVersion)
+	writer.backupMeta.BackupSchemaVersion = max(writer.backupMeta.BackupSchemaVersion, CurrentBackupSchemaVersion)
 
 	// update the total size of backup files (include data files and meta files)
 	writer.backupMeta.BackupSize = writer.MetaFilesSize() + writer.ArchiveSize() + uint64(writer.backupMeta.Size())

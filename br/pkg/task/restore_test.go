@@ -251,7 +251,7 @@ func TestCheckNewCollationEnable(t *testing.T) {
 
 	t.Run("backup meta unknown fields", func(t *testing.T) {
 		baseMeta := &backuppb.BackupMeta{
-			BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion,
+			BackupSchemaVersion: metautil.CurrentBackupSchemaVersion,
 			ClusterVersion:      "8.5.6",
 			BrVersion:           "v8.5.6",
 		}
@@ -272,7 +272,7 @@ func TestCheckNewCollationEnable(t *testing.T) {
 			{
 				name: "newer backup schema version",
 				backupMeta: &backuppb.BackupMeta{
-					BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion + 1,
+					BackupSchemaVersion: metautil.CurrentBackupSchemaVersion + 1,
 					ClusterVersion:      "8.5.6",
 					BrVersion:           "v8.5.6",
 				},
@@ -283,7 +283,7 @@ func TestCheckNewCollationEnable(t *testing.T) {
 			{
 				name: "newer backup schema version warning path when requirements disabled",
 				backupMeta: &backuppb.BackupMeta{
-					BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion + 1,
+					BackupSchemaVersion: metautil.CurrentBackupSchemaVersion + 1,
 					ClusterVersion:      "8.5.6",
 					BrVersion:           "v8.5.6",
 				},
@@ -293,7 +293,7 @@ func TestCheckNewCollationEnable(t *testing.T) {
 			{
 				name: "unknown top level fields",
 				backupMeta: &backuppb.BackupMeta{
-					BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion,
+					BackupSchemaVersion: metautil.CurrentBackupSchemaVersion,
 					ClusterVersion:      "8.5.6",
 					BrVersion:           "v8.5.6",
 					XXX_unrecognized:    []byte{0x08, 0x01},
@@ -305,7 +305,7 @@ func TestCheckNewCollationEnable(t *testing.T) {
 			{
 				name: "warning path when requirements disabled",
 				backupMeta: &backuppb.BackupMeta{
-					BackupSchemaVersion: backuppb.CurrentBackupSchemaVersion,
+					BackupSchemaVersion: metautil.CurrentBackupSchemaVersion,
 					ClusterVersion:      "8.5.6",
 					BrVersion:           "v8.5.6",
 					XXX_unrecognized:    []byte{0x08, 0x01},
@@ -379,7 +379,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	// check the schema version
 	require.Equal(t, int32(metautil.MetaV1), mockMeta.Version)
-	require.Equal(t, backuppb.CurrentBackupSchemaVersion, mockMeta.BackupSchemaVersion)
+	require.Equal(t, metautil.CurrentBackupSchemaVersion, mockMeta.BackupSchemaVersion)
 	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	require.NoError(t, err)
@@ -445,7 +445,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	require.NoError(t, err)
 	// check the schema version
 	require.Equal(t, int32(metautil.MetaV2), mockMeta.Version)
-	require.Equal(t, backuppb.CurrentBackupSchemaVersion, mockMeta.BackupSchemaVersion)
+	require.Equal(t, metautil.CurrentBackupSchemaVersion, mockMeta.BackupSchemaVersion)
 	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	require.NoError(t, err)
