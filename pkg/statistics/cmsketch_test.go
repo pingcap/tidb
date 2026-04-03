@@ -247,6 +247,9 @@ func TestEstimateNDVByGEE(t *testing.T) {
 		require.PanicsWithValue(t, "assert failed, sampleSize should be greater than 0", func() {
 			EstimateNDVByGEE(1, 1, 0, 1)
 		})
+		require.PanicsWithValue(t, "assert failed, sampleNDV should be greater than 0", func() {
+			EstimateNDVByGEE(0, 0, 1, 1)
+		})
 		require.PanicsWithValue(t, "assert failed, rowCount should be greater than or equal to sampleNDV", func() {
 			EstimateNDVByGEE(10, 3, 20, 9)
 		})
