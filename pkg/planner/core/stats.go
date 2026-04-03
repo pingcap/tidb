@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -152,7 +151,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if err := generateIndexMergePath(ds); err != nil {
 		return nil, false, err
 	}
-	metrics.RUV2PlanDeriveStatsPaths.Add(float64(len(ds.PossibleAccessPaths)))
 	if vars := ds.SCtx().GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
 		vars.RUV2Metrics.AddPlanDeriveStatsPaths(int64(len(ds.PossibleAccessPaths)))
 	}
@@ -724,7 +722,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			if selected.Index.Unique {
 				sb.WriteString("unique ")
 			}
-			sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
+			fmt.Fprintf(&sb, "index %s of %s is selected since the path", selected.Index.Name.O, tableName)
 			if isRefinedPath {
 				sb.WriteString(" only fetches limited number of rows")
 			} else {

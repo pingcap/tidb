@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"math"
 	"strconv"
 
 	"github.com/gogo/protobuf/proto"
@@ -137,9 +138,19 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 		tp = tipb.ExprType_Bytes
 		val = d.GetBytes()
 	case types.KindFloat32:
+		if d.GetFloat64() == 0 && math.Signbit(d.GetFloat64()) {
+			// PB float constants reuse mem-comparable encoding, which normalizes -0 to +0.
+			// Keep negative-zero constants at root to avoid semantic drift after pushdown.
+			return tp, nil, false
+		}
 		tp = tipb.ExprType_Float32
 		val = codec.EncodeFloat(nil, d.GetFloat64())
 	case types.KindFloat64:
+		if d.GetFloat64() == 0 && math.Signbit(d.GetFloat64()) {
+			// PB float constants reuse mem-comparable encoding, which normalizes -0 to +0.
+			// Keep negative-zero constants at root to avoid semantic drift after pushdown.
+			return tp, nil, false
+		}
 		tp = tipb.ExprType_Float64
 		val = codec.EncodeFloat(nil, d.GetFloat64())
 	case types.KindMysqlDuration:

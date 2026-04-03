@@ -4391,7 +4391,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	// buildSort is after buildProjection, so we need get OutputNames before BuildProjection and store in allNames.
 	// Otherwise, we will get select fields instead of all OutputNames, so that we can't find the column b in the
 	// above example.
-	b.allNames = append(b.allNames, p.OutputNames())
+	//
+	// For USING/NATURAL JOIN, the canonical OutputNames coalesce common columns and may hide qualified base-table
+	// names like t1.a. DEFAULT(t1.a) still needs the base-table field name, so prefer FullNames when available.
+	namesForDefault := p.OutputNames()
+	if _, fullNames := findJoinFullSchema(p); fullNames != nil {
+		namesForDefault = fullNames
+	}
+	b.allNames = append(b.allNames, namesForDefault)
 	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
 
 	if sel.Where != nil {

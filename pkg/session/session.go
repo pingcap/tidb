@@ -1127,15 +1127,19 @@ func (*session) isTxnRetryableError(err error) bool {
 }
 
 func isEndTxnStmt(stmt ast.StmtNode, vars *variable.SessionVars) (bool, error) {
-	switch n := stmt.(type) {
+	resolvedStmt, err := resolvePreparedStmt(stmt, vars)
+	if err != nil {
+		return false, err
+	}
+	if resolvedStmt == nil {
+		return false, nil
+	}
+	if resolvedStmt != stmt {
+		return isEndTxnStmt(resolvedStmt, vars)
+	}
+	switch resolvedStmt.(type) {
 	case *ast.RollbackStmt, *ast.CommitStmt:
 		return true, nil
-	case *ast.ExecuteStmt:
-		ps, err := plannercore.GetPreparedStmt(n, vars)
-		if err != nil {
-			return false, err
-		}
-		return isEndTxnStmt(ps.PreparedAst.Stmt, vars)
 	}
 	return false, nil
 }
@@ -1156,7 +1160,9 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 	var retryCnt uint
+	originalStmtCtx := s.sessionVars.StmtCtx
 	defer func() {
+		s.sessionVars.StmtCtx = originalStmtCtx
 		s.sessionVars.RetryInfo.Retrying = false
 		// retryCnt only increments on retryable error, so +1 here.
 		if s.sessionVars.InRestrictedSQL {
@@ -1220,6 +1226,16 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			_, digest := s.sessionVars.StmtCtx.SQLDigest()
 			s.txn.onStmtStart(digest.String())
 			if err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx, st.GetStmtNode()); err == nil {
+				failpoint.Inject("txnRetryPreExecError", func(val failpoint.Value) {
+					if val.(bool) {
+						err = errors.New("mock txn retry pre-exec error")
+					}
+				})
+			}
+			if err == nil {
+				// Only surface the optimistic retry count after replay actually reaches statement execution.
+				s.sessionVars.StmtCtx.ExecRetryCount = uint64(retryCnt + 1)
+				originalStmtCtx.ExecRetryCount = uint64(retryCnt + 1)
 				_, err = st.Exec(ctx)
 			}
 			s.txn.onStmtEnd()
@@ -1951,7 +1967,6 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
-		metrics.RUV2SessionParserTotal.Inc()
 		s.sessionVars.RUV2PendingSessionParserTotal.Add(1)
 	}
 	for _, warn := range warns {
@@ -1999,7 +2014,6 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 		session_metrics.SessionExecuteParseDurationInternal.Observe(durParse.Seconds())
 	} else {
 		session_metrics.SessionExecuteParseDurationGeneral.Observe(durParse.Seconds())
-		metrics.RUV2SessionParserTotal.Inc()
 		s.sessionVars.RUV2PendingSessionParserTotal.Add(1)
 	}
 	for _, warn := range warns {
@@ -2218,6 +2232,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	prevSQL := s.sessionVars.StmtCtx.OriginalSQL
 	prevStmtType := s.sessionVars.StmtCtx.StmtType
 	prevTables := s.sessionVars.StmtCtx.Tables
+	prevRUV2Metrics := s.sessionVars.RUV2Metrics
 	return s, func() {
 		s.sessionVars.AnalyzeVersion = prevStatsVer
 		s.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
@@ -2230,6 +2245,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
+		s.sessionVars.RUV2Metrics = prevRUV2Metrics
 		s.sessionVars.MemTracker.Detach()
 	}, nil
 }
@@ -2431,6 +2447,10 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		ctx = context.WithValue(ctx, execdetails.RUV2MetricsCtxKey, ruv2Metrics)
 	}
 	sessVars.RUV2Metrics = ruv2Metrics
+	bypass := shouldBypass(ctx, stmtNode, sessVars)
+	if ruv2Metrics != nil {
+		ruv2Metrics.SetBypass(bypass)
+	}
 	if pending := sessVars.RUV2PendingSessionParserTotal.Swap(0); pending > 0 && ruv2Metrics != nil {
 		ruv2Metrics.AddSessionParserTotal(pending)
 	}
@@ -2479,11 +2499,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	})
 
 	var stmtLabel string
-	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
-		if err == nil && prepareStmt.PreparedAst != nil {
-			stmtLabel = stmtctx.GetStmtLabel(ctx, prepareStmt.PreparedAst.Stmt)
-		}
+	if resolvedStmt, err := resolvePreparedStmt(stmtNode, s.sessionVars); err == nil && resolvedStmt != nil {
+		stmtLabel = stmtctx.GetStmtLabel(ctx, resolvedStmt)
 	}
 	if stmtLabel == "" {
 		stmtLabel = stmtctx.GetStmtLabel(ctx, stmtNode)
@@ -2583,8 +2600,13 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			if !variable.ErrUnknownSystemVar.Equal(err) {
 				sql := stmtNode.Text()
 				sql = parser.Normalize(sql, s.sessionVars.EnableRedactLog)
-				logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
-					zap.String("SQL", sql))
+				if sql == `select $$` {
+					logutil.Logger(ctx).Debug("compile SQL failed, expected for this query", zap.Error(err),
+						zap.String("SQL", sql))
+				} else {
+					logutil.Logger(ctx).Warn("compile SQL failed", zap.Error(err),
+						zap.String("SQL", sql))
+				}
 			}
 		}
 		return nil, err
@@ -2716,6 +2738,52 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}
 	}
 	return recordSet, nil
+}
+
+var isNextGenForRUV2 = kerneltype.IsNextGen
+
+func resolvePreparedStmt(stmt ast.StmtNode, vars *variable.SessionVars) (ast.StmtNode, error) {
+	if stmt == nil {
+		return nil, nil
+	}
+	execStmt, ok := stmt.(*ast.ExecuteStmt)
+	if !ok {
+		return stmt, nil
+	}
+	if vars == nil {
+		return nil, nil
+	}
+	prepareStmt, err := plannercore.GetPreparedStmt(execStmt, vars)
+	if err != nil {
+		return nil, err
+	}
+	if prepareStmt == nil || prepareStmt.PreparedAst == nil {
+		return nil, nil
+	}
+	return prepareStmt.PreparedAst.Stmt, nil
+}
+
+func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
+	switch kv.GetInternalSourceType(ctx) {
+	case kv.InternalTxnOthers:
+		return true
+	case kv.InternalTxnStats:
+		return isNextGenForRUV2() && isAnalyzeStatementForRUV2(stmtNode, sessVars)
+	default:
+		return false
+	}
+}
+
+func isAnalyzeStatementForRUV2(stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
+	if stmtNode == nil || sessVars == nil {
+		return false
+	}
+	resolvedStmt, err := resolvePreparedStmt(stmtNode, sessVars)
+	if err != nil || resolvedStmt == nil {
+		return false
+	}
+	_, ok := resolvedStmt.(*ast.AnalyzeTableStmt)
+	return ok
 }
 
 func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
@@ -4755,20 +4823,11 @@ func (s *session) shouldUsePessimisticAutoCommit(stmtNode ast.StmtNode) bool {
 }
 
 // isDMLStatement checks if the given statement should use pessimistic-auto-commit.
-// It handles EXECUTE unwrapping and properly handles EXPLAIN statements by checking their inner statement.
+// It unwraps EXECUTE statements and properly handles EXPLAIN statements by checking their inner statement.
 func (s *session) isDMLStatement(stmtNode ast.StmtNode) bool {
-	if stmtNode == nil {
+	actualStmt, err := resolvePreparedStmt(stmtNode, s.GetSessionVars())
+	if err != nil || actualStmt == nil {
 		return false
-	}
-
-	// Handle EXECUTE statements - unwrap to get the actual prepared statement
-	actualStmt := stmtNode
-	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
-		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.GetSessionVars())
-		if err != nil || prepareStmt == nil {
-			return false
-		}
-		actualStmt = prepareStmt.PreparedAst.Stmt
 	}
 
 	// For EXPLAIN statements, check the underlying statement
@@ -4989,7 +5048,6 @@ func (s *session) recordOnTransactionExecution(err error, counter int, duration 
 			}
 		}
 	}
-	metrics.RUV2TxnCnt.Inc()
 	if s.sessionVars.RUV2Metrics != nil {
 		s.sessionVars.RUV2Metrics.AddTxnCnt(1)
 	}

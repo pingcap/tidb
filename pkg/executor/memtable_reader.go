@@ -917,7 +917,7 @@ func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx
 	storeMap := make(map[int64]struct{})
 
 	if len(e.extractor.StoreIDs) == 0 && len(e.extractor.RegionIDs) == 0 {
-		regionsInfo, err := pdCli.GetRegions(ctx)
+		regionsInfo, err := tikvHelper.GetRegions(ctx)
 		if err != nil {
 			return nil, err
 		}

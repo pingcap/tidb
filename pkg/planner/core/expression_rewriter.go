@@ -2453,9 +2453,15 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 				retTp.SetDecimal(0)
 				types.SetBinChsClnFlag(retTp)
 			}
+			lhsTp := lhs.GetType(er.sctx.GetEvalCtx())
+			// Keep the IFNULL call when its inferred return type differs from the non-null column.
+			// Replacing it with CAST can change comparison semantics for mixed-type expressions.
+			if lhsTp.GetType() != retTp.GetType() || lhsTp.GetCharset() != retTp.GetCharset() || lhsTp.GetCollate() != retTp.GetCollate() ||
+				lhsTp.GetFlen() != retTp.GetFlen() || lhsTp.GetDecimal() != retTp.GetDecimal() || lhsTp.GetFlag() != retTp.GetFlag() {
+				return false
+			}
 			er.ctxStackPop(len(v.Args))
-			casted := expression.BuildCastFunction(er.sctx, lhs, retTp)
-			er.ctxStackAppend(casted, types.EmptyName)
+			er.ctxStackAppend(lhs, types.EmptyName)
 			return true
 		}
 

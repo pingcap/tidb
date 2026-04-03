@@ -1656,17 +1656,17 @@ func (e *IndexLookUpRunTimeStats) String() string {
 	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
 	concurrency := e.Concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task: {total_time: %s, fetch_handle: %s, build: %s, wait: %s}",
+		fmt.Fprintf(&buf, "index_task: {total_time: %s, fetch_handle: %s, build: %s, wait: %s}",
 			execdetails.FormatDuration(time.Duration(fetchHandle)),
 			execdetails.FormatDuration(time.Duration(indexScan)),
 			execdetails.FormatDuration(time.Duration(fetchHandle-indexScan-taskWait)),
-			execdetails.FormatDuration(time.Duration(taskWait))))
+			execdetails.FormatDuration(time.Duration(taskWait)))
 	}
 	if tableScan != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task: {total_time: %v, num: %d, concurrency: %d}", execdetails.FormatDuration(time.Duration(tableScan)), tableTaskNum, concurrency))
+		fmt.Fprintf(&buf, " table_task: {total_time: %v, num: %d, concurrency: %d}", execdetails.FormatDuration(time.Duration(tableScan)), tableTaskNum, concurrency)
 	}
 	if e.NextWaitIndexScan > 0 || e.NextWaitTableLookUpBuild > 0 || e.NextWaitTableLookUpResp > 0 {
 		if buf.Len() > 0 {

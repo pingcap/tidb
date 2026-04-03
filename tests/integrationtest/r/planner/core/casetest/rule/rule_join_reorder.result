@@ -5269,7 +5269,7 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 │ │ │       └─TableFullScan	cop[tikv]	table:t3	keep order:false
 │ │ └─IndexLookUp(Probe)	root		
 │ │   ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
-│ │   │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column#17)], keep order:false, stats:pseudo
+│ │   │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)], keep order:false, stats:pseudo
 │ │   └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │ │     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │ └─IndexLookUp(Probe)	root		
@@ -5295,7 +5295,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
   │ └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   │   ├─IndexLookUp(Build)	root		
   │   │ ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
-  │   │ │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column#17)], keep order:false, stats:pseudo
+  │   │ │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)], keep order:false, stats:pseudo
   │   │ └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
   │   │   └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   │   └─TableReader(Probe)	root		data:Selection
@@ -5317,7 +5317,7 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 │ │ │       └─TableFullScan	cop[tikv]	table:t3	keep order:false
 │ │ └─IndexLookUp(Probe)	root		
 │ │   ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
-│ │   │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column#17)], keep order:false, stats:pseudo
+│ │   │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)], keep order:false, stats:pseudo
 │ │   └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │ │     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │ └─IndexLookUp(Probe)	root		
@@ -5341,7 +5341,7 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_re
 │ │ │       └─TableFullScan	cop[tikv]	table:t3	keep order:false
 │ │ └─IndexLookUp(Probe)	root		
 │ │   ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
-│ │   │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column#17)], keep order:false, stats:pseudo
+│ │   │ └─IndexRangeScan	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)], keep order:false, stats:pseudo
 │ │   └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │ │     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │ └─IndexLookUp(Probe)	root		
