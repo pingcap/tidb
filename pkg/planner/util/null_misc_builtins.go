@@ -75,7 +75,6 @@ var nullRejectNullPreservingFunctions = map[string]struct{}{
 	ast.Round:           {},
 	ast.Sign:            {},
 	ast.Sqrt:            {},
-	ast.Truncate:        {},
 	ast.ASCII:           {},
 	ast.Bin:             {},
 	ast.BitLength:       {},

@@ -36,7 +36,8 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 	innerB := newNullRejectIntColumn(2)
 	outerC := newNullRejectIntColumn(3)
 	innerS := newNullRejectStringColumn(4)
-	innerSchema := expression.NewSchema(innerA, innerB, innerS)
+	innerUnsignedD := newNullRejectUintColumn(5)
+	innerSchema := expression.NewSchema(innerA, innerB, innerS, innerUnsignedD)
 
 	gtInnerAZero := newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
 	eqInnerAZero := newNullRejectFunc(t, exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), innerA, expression.NewZero())
@@ -70,6 +71,14 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		newNullRejectFunc(t, exprCtx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), innerA),
 		expression.NewZero(),
 		outerC,
+	)
+	truncateUnsignedByNullableScale := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.Truncate,
+		newNullRejectUintFieldType(mysql.TypeLonglong),
+		newNullRejectUintConst(123),
+		innerUnsignedD,
 	)
 
 	cases := []struct {
@@ -170,6 +179,18 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 			expr:     newNullRejectFunc(t, exprCtx, ast.GT, types.NewFieldType(mysql.TypeTiny), ifInnerANullThenZeroElseOuterC, expression.NewZero()),
 			expected: true,
 		},
+		{
+			name: "truncate_with_unsigned_nullable_scale_is_not_null_preserving",
+			expr: newNullRejectFunc(
+				t,
+				exprCtx,
+				ast.GT,
+				types.NewFieldType(mysql.TypeTiny),
+				truncateUnsignedByNullableScale,
+				expression.NewZero(),
+			),
+			expected: false,
+		},
 	}
 
 	for _, tt := range cases {
@@ -213,6 +234,15 @@ func newNullRejectStringColumn(id int64) *expression.Column {
 	}
 }
 
+func newNullRejectUintColumn(id int64) *expression.Column {
+	return &expression.Column{
+		UniqueID: id,
+		ID:       id,
+		Index:    int(id),
+		RetType:  newNullRejectUintFieldType(mysql.TypeLonglong),
+	}
+}
+
 func newNullRejectStringConst(value string) *expression.Constant {
 	return &expression.Constant{
 		Value:   types.NewStringDatum(value),
@@ -225,6 +255,19 @@ func newNullRejectIntConst(value int64) *expression.Constant {
 		Value:   types.NewIntDatum(value),
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
+}
+
+func newNullRejectUintConst(value uint64) *expression.Constant {
+	return &expression.Constant{
+		Value:   types.NewUintDatum(value),
+		RetType: newNullRejectUintFieldType(mysql.TypeLonglong),
+	}
+}
+
+func newNullRejectUintFieldType(tp byte) *types.FieldType {
+	fieldType := types.NewFieldType(tp)
+	fieldType.AddFlag(mysql.UnsignedFlag)
+	return fieldType
 }
 
 func newNullRejectFunc(t *testing.T, ctx expression.BuildContext, name string, retType *types.FieldType, args ...expression.Expression) expression.Expression {

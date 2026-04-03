@@ -262,7 +262,11 @@ func tryFoldNullifiedConstant(
 	switch x := expr.(type) {
 	case *expression.Column:
 		if innerSchema.Contains(x) {
-			return expression.NewNull(), true
+			// Keep the original type/flags so constant folding still dispatches
+			// through the same builtin signature after nullification.
+			retType := x.RetType.Clone()
+			retType.DelFlag(mysql.NotNullFlag)
+			return expression.NewNullWithFieldType(retType), true
 		}
 	case *expression.Constant:
 		if x.ParamMarker == nil && x.DeferredExpr == nil {
