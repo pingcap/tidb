@@ -1909,6 +1909,9 @@ type builtinCastStringAsTimeSig struct {
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
+// normalizeCastStringAsTimeError preserves the SQL-visible error contract for
+// CAST(... AS DATE/DATETIME/TIMESTAMP). Parser failures are downgraded to
+// invalid-time errors, but ErrTimestampInDSTTransition must stay a hard error.
 func normalizeCastStringAsTimeError(err error, val string) error {
 	if err == nil {
 		return nil
