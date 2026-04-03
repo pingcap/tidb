@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -283,17 +282,6 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, "0", rs.Rows()[0][2])
 	require.Equal(t, "LIST", rs.Rows()[0][3])
 	require.Equal(t, colIDStrsAB, rs.Rows()[0][4])
-	if kerneltype.IsNextGen() {
-		t.Log("analyze V1 cannot support in the next gen")
-		return
-	}
-	// set analyze version back to 1, will not use persisted
-	tk.MustExec("set @@session.tidb_analyze_version = 1")
-	tk.MustExec("analyze table t partition p2")
-	pi = tableInfo.GetPartitionInfo()
-	p2 = h.GetPhysicalTableStats(pi.Definitions[2].ID, tableInfo)
-	require.NotEqual(t, 2, len(p2.GetCol(tableInfo.Columns[0].ID).Buckets))
-
 	// drop column
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 	tk.MustExec("alter table t drop column b")

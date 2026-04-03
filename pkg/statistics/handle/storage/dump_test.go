@@ -33,7 +33,6 @@ import (
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -407,49 +406,6 @@ func TestDumpAlteredTable(t *testing.T) {
 	require.NoError(t, err)
 	_, err = h.DumpStatsToJSON("test", table.Meta(), nil, true)
 	require.NoError(t, err)
-}
-
-func TestDumpCMSketchWithTopN(t *testing.T) {
-	// Just test if we can store and recover the Top N elements stored in database.
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t(a int)")
-	testKit.MustExec("insert into t values (1),(3),(4),(2),(5)")
-	testKit.MustExec("set @@tidb_analyze_version=1")
-	testKit.MustExec("analyze table t")
-
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	h := dom.StatsHandle()
-	require.Nil(t, h.Update(context.Background(), is))
-
-	// Insert 30 fake data
-	fakeData := make([][]byte, 0, 30)
-	for i := range 30 {
-		fakeData = append(fakeData, fmt.Appendf(nil, "%01024d", i))
-	}
-	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
-
-	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	err = h.SaveColOrIdxStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.GetCol(tableInfo.Columns[0].ID).Histogram, cms, nil, statistics.Version1, false, handleutil.StatsMetaHistorySourceLoadStats)
-	require.NoError(t, err)
-	require.Nil(t, h.Update(context.Background(), is))
-
-	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	cmsFromStore := stat.GetCol(tableInfo.Columns[0].ID).CMSketch
-	require.NotNil(t, cmsFromStore)
-	require.True(t, cms.Equal(cmsFromStore))
-
-	jsonTable, err := h.DumpStatsToJSON("test", tableInfo, nil, true)
-	require.NoError(t, err)
-	err = h.LoadStatsFromJSON(context.Background(), is, jsonTable, 0)
-	require.NoError(t, err)
-	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
-	cmsFromJSON := stat.GetCol(tableInfo.Columns[0].ID).CMSketch.Copy()
-	require.True(t, cms.Equal(cmsFromJSON))
 }
 
 func TestDumpPseudoColumns(t *testing.T) {

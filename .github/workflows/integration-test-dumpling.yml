@@ -49,11 +49,9 @@ jobs:
       fail-fast: true
       matrix:
         mysql_version:
-          - 5.7.35
-          - 8.0.22
-          - 8.0.26
-          - 8.0.37
-          - 8.4.3
+          - 5.7.35 # Note that OpenSSL is upgraded from 1.1.1 to 3.0.x in 5.7.43
+          - 8.0.45
+          - 8.4.8
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:

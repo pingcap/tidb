@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -452,9 +451,6 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 }
 
 func TestEstimationForUnknownValues(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("next-gen kernel don't support the analyze version 1")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
@@ -1803,7 +1799,7 @@ func TestOrderingIdxSelectivityRatio(t *testing.T) {
 }
 
 func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 
 	testKit.MustExec("use test")
@@ -1812,6 +1808,8 @@ func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
 	testKit.MustExec("insert into t values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
 	testKit.MustExec("insert into t select a,b,c from t")
 	testKit.MustExec("analyze table t")
+	// Ensure stats are fully loaded into cache to avoid nondeterminism from stale cache.
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
 	// Discourage merge join and hash join to encourage index join, and discourage topn to encourage limit.
 	testKit.MustExec("set @@session.tidb_opt_merge_join_cost_factor = 1000")
@@ -1840,22 +1838,138 @@ func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
 	require.Less(t, planCost3, planCost4)
 }
 
-func TestCrossValidationSelectivity(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("analyze V1 cannot support in the next gen")
+func TestOrderingIdxSelectivityRatioForApply(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1, t2")
+	testKit.MustExec("create table t1(a int, b int, c int, index ibc(b, c))")
+	testKit.MustExec("create table t2(a int, b int, c int)")
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+
+	is := dom.InfoSchema()
+	tb1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl1 := tb1.Meta()
+	tb2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl2 := tb2.Meta()
+
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+
+	// Mock stats for t1: 1000 rows, 1000 NDV.
+	mockStatsTbl1 := mockStatsTable(tbl1, 1000)
+	colValues1, err := generateIntDatum(1, 1000)
+	require.NoError(t, err)
+	idxValues1 := make([]types.Datum, 0, len(colValues1))
+	for _, val := range colValues1 {
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, val)
+		require.NoError(t, err)
+		idxValues1 = append(idxValues1, types.NewBytesDatum(b))
 	}
+	for i, col := range tbl1.Columns {
+		mockStatsTbl1.SetCol(col.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(col.ID, colValues1, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tbl1.Columns[i],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	mockStatsTbl1.SetIdx(tbl1.Indices[0].ID, &statistics.Index{
+		Histogram:         *mockStatsHistogram(tbl1.Indices[0].ID, idxValues1, 1, types.NewFieldType(mysql.TypeBlob)),
+		Info:              tbl1.Indices[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	})
+	generateMapsForMockStatsTbl(mockStatsTbl1)
+	stat1 := h.GetPhysicalTableStats(tbl1.ID, tbl1)
+	stat1.HistColl = mockStatsTbl1.HistColl
+
+	// Mock stats for t2: 1000 rows, 1000 NDV.
+	mockStatsTbl2 := mockStatsTable(tbl2, 1000)
+	colValues2, err := generateIntDatum(1, 1000)
+	require.NoError(t, err)
+	for i, col := range tbl2.Columns {
+		mockStatsTbl2.SetCol(col.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(col.ID, colValues2, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tbl2.Columns[i],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	generateMapsForMockStatsTbl(mockStatsTbl2)
+	stat2 := h.GetPhysicalTableStats(tbl2.ID, tbl2)
+	stat2.HistColl = mockStatsTbl2.HistColl
+
+	// Discourage merge join, hash join, and topn to steer the plan toward Apply + Limit.
+	testKit.MustExec("set @@session.tidb_opt_merge_join_cost_factor = 1000")
+	testKit.MustExec("set @@session.tidb_opt_hash_join_cost_factor = 1000")
+	testKit.MustExec("set @@session.tidb_opt_topn_cost_factor = 1000")
+
+	// Correlated subquery with ORDER BY + LIMIT triggers the Apply plan
+	// with the ordering index selectivity ratio affecting cost.
+	query := "select * from t1 where exists (select /*+ no_decorrelate() */ 1 from t2 where t2.b = t1.b and t2.c > 1) order by t1.b limit 2"
+
+	// hasApply checks that at least one operator in the plan is an Apply.
+	hasApply := func(rows [][]any) bool {
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "Apply") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Disable idx_selectivity_ratio using -1 and 0 - both should have no effect.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = -1")
+	rs := testKit.MustQuery("explain format=verbose " + query).Rows()
+	require.True(t, hasApply(rs), "expected Apply in plan")
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0")
+	rs = testKit.MustQuery("explain format=verbose " + query).Rows()
+	require.True(t, hasApply(rs), "expected Apply in plan")
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	require.Equal(t, planCost1, planCost2)
+
+	// Increasing the ratio should increase the cost of Apply, so the plan cost should increase.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.5")
+	rs = testKit.MustQuery("explain format=verbose " + query).Rows()
+	require.True(t, hasApply(rs), "expected Apply in plan")
+	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	require.Less(t, planCost2, planCost3)
+
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 1")
+	rs = testKit.MustQuery("explain format=verbose " + query).Rows()
+	require.True(t, hasApply(rs), "expected Apply in plan")
+	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err4)
+	require.Less(t, planCost3, planCost4)
+}
+
+func TestCrossValidationSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered)")
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1,2,3), (1,4,5)")
 	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t")
+	// Ensure stats are fully loaded into cache to avoid nondeterminism from stale cache.
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
 		"TableReader 1.00 root  data:Selection",
 		"└─Selection 1.00 cop[tikv]  gt(test.t.c, 1000)",
@@ -1932,7 +2046,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 }
 
 func TestSubsetIdxCardinality(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 
 	testKit.MustExec("use test")
@@ -1951,6 +2065,7 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	testKit.MustExec("insert into t select a, b + 10, c from t")
 	testKit.MustExec("flush stats_delta")
 	testKit.MustExec(`analyze table t`)
+	h := dom.StatsHandle()
 
 	var (
 		input  []string
@@ -1961,6 +2076,9 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	)
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
+	// Trigger async stats loading for the subset-index columns before checking the recorded plans.
+	testKit.MustExec("explain format = 'brief' select distinct a, b, c from t")
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]

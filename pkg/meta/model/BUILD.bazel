@@ -53,6 +53,7 @@ go_test(
         "table_test.go",
     ],
     embed = [":model"],
+    embedsrcs = ["job.go"],
     flaky = True,
     shard_count = 50,
     deps = [

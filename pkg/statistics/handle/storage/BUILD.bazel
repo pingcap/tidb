@@ -60,10 +60,9 @@ go_test(
         "stats_read_writer_test.go",
     ],
     flaky = True,
-    shard_count = 27,
+    shard_count = 26,
     deps = [
         ":storage",
-        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/meta/model",
         "//pkg/parser/ast",

@@ -189,10 +189,18 @@ func TestGetTS(t *testing.T) {
 	require.Regexp(t, ".*GC safepoint [0-9]+ exceed TS [0-9]+.*", err.Error())
 
 	// timeago and backupts both exists, use backupts
-	backupts := oracle.ComposeTS(p+10, l)
+	p2, l2, err := s.mockPDClient.GetTS(s.ctx)
+	require.NoError(t, err)
+	backupts := oracle.ComposeTS(p2, l2)
 	ts, err = s.backupClient.GetTS(s.ctx, time.Minute, backupts)
 	require.NoError(t, err)
 	require.Equal(t, backupts, ts)
+
+	// backupts in the future should be rejected
+	futureTS := oracle.ComposeTS(time.Now().UnixMilli()+60*1000, 0) // 1 minute in the future
+	_, err = s.backupClient.GetTS(s.ctx, 0, futureTS)
+	require.Error(t, err)
+	require.Regexp(t, ".*must not be later than current timestamp.*", err.Error())
 }
 
 func TestGetHistoryDDLJobs(t *testing.T) {

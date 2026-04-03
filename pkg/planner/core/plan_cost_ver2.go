@@ -800,6 +800,18 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	// TODO: remove this empirical value.
 	batchRatio := 6.0
 	probeCost := costusage.DivCostVer2(costusage.MulCostVer2(probeChildCost, buildRows), batchRatio)
+	// For semi/anti-semi joins, all IndexJoin variants batch lookup keys and read
+	// ALL matching inner rows for the entire batch. Unlike Apply which executes
+	// per outer row and can short-circuit
+	// after finding the first match (EXISTS), IndexJoin cannot terminate early per
+	// key. Each key reads probeRowsOne inner rows but only 1 match is needed.
+	// Scale probeCost by the average inner rows per key to reflect this over-read.
+	if probeRowsOne > 1 {
+		if p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin ||
+			p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
+			probeCost = costusage.MulCostVer2(probeCost, probeRowsOne)
+		}
+	}
 
 	// Double Read Cost
 	doubleReadCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))

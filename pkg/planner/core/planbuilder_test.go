@@ -42,7 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -127,6 +129,34 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
+
+	t.Run("ignore exact and prefix-resolved long index without removing shorter sibling", func(t *testing.T) {
+		shortPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no")}}
+		longPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no_delete_flag")}}
+		paths := []*util.AccessPath{shortPath, longPath}
+
+		tblInfo := &model.TableInfo{
+			Indices: []*model.IndexInfo{shortPath.Index, longPath.Index},
+		}
+
+		ignored := []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete_flag"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained := removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+
+		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained = removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+
+		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("Idx_Contract_Sys_No_Delete_Flag"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained = removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+	})
 }
 
 func TestRewriterPool(t *testing.T) {
@@ -159,6 +189,39 @@ func TestRewriterPool(t *testing.T) {
 	require.Zero(t, cleanRewriter.disableFoldCounter)
 	require.Len(t, cleanRewriter.ctxStack, 0)
 	builder.rewriterCounter--
+}
+
+func TestGetInsertColExprDeepCopiesValueExprFieldType(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+
+	valueExpr, ok := ast.NewValueExpr(1, "", "").(*driver.ValueExpr)
+	require.True(t, ok)
+	valueExpr.Type.AddFlag(mysql.NotNullFlag)
+
+	col := &table.Column{
+		ColumnInfo: &model.ColumnInfo{
+			Name:      ast.NewCIStr("a"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+	}
+	expr, err := builder.getInsertColExpr(context.TODO(), &physicalop.Insert{}, nil, col, valueExpr, nil)
+	require.NoError(t, err)
+
+	constExpr, ok := expr.(*expression.Constant)
+	require.True(t, ok)
+	require.NotSame(t, valueExpr.GetType(), constExpr.RetType)
+	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
+	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
+
+	constExpr.RetType.SetType(mysql.TypeString)
+	constExpr.RetType.DelFlag(mysql.NotNullFlag)
+
+	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
+	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
 }
 
 func TestDisableFold(t *testing.T) {
@@ -635,7 +698,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := handleAnalyzeOptionsV2(tt.opts)
+			_, err := handleAnalyzeOptions(tt.opts)
 			if tt.ExpectedErr != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.ExpectedErr)

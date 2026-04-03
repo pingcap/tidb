@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -170,6 +171,7 @@ func NewRestoreCommand() *cobra.Command {
 			logutil.LogEnvVariables()
 			task.LogArguments(c)
 			session.DisableStats4Test()
+			kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
 
 			summary.SetUnit(summary.RestoreUnit)
 			return nil

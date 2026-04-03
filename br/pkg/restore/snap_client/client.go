@@ -77,7 +77,7 @@ const (
 	ignorePlacementPolicyMode = "IGNORE"
 
 	resetSpeedLimitRetryTimes = 3
-	defaultDDLConcurrency     = 100
+	defaultDDLConcurrency     = 64
 	maxSplitKeysOnce          = 10240
 )
 
@@ -93,11 +93,12 @@ type SnapClient struct {
 	pdHTTPClient pdhttp.Client
 
 	// User configurable parameters
-	cipher              *backuppb.CipherInfo
-	concurrencyPerStore uint
-	keepaliveConf       keepalive.ClientParameters
-	rateLimit           uint64
-	tlsConf             *tls.Config
+	cipher                *backuppb.CipherInfo
+	concurrencyPerStore   uint
+	regionScanConcurrency uint
+	keepaliveConf         keepalive.ClientParameters
+	rateLimit             uint64
+	tlsConf               *tls.Config
 
 	switchCh chan struct{}
 
@@ -142,6 +143,8 @@ type SnapClient struct {
 	policyMap *sync.Map
 
 	batchDdlSize uint
+
+	txnTotalSizeLimit uint64
 
 	// if fullClusterRestore = true:
 	// - if there's system tables in the backup(backup data since br 5.1.0), the cluster should be a fresh cluster
@@ -303,8 +306,23 @@ func (rc *SnapClient) SetConcurrencyPerStore(c uint) {
 	rc.concurrencyPerStore = c
 }
 
+// SetRegionScanConcurrency sets max in-flight region scan requests during import.
+func (rc *SnapClient) SetRegionScanConcurrency(c uint) {
+	log.Info("region scan request concurrency", zap.Uint("size", c))
+	rc.regionScanConcurrency = c
+}
+
+// GetRegionScanConcurrency returns max in-flight region scan requests during import.
+func (rc *SnapClient) GetRegionScanConcurrency() uint {
+	return rc.regionScanConcurrency
+}
+
 func (rc *SnapClient) SetBatchDdlSize(batchDdlsize uint) {
 	rc.batchDdlSize = batchDdlsize
+}
+
+func (rc *SnapClient) SetTxnTotalSizeLimit(txnTotalSizeLimit uint64) {
+	rc.txnTotalSizeLimit = txnTotalSizeLimit
 }
 
 func (rc *SnapClient) GetBatchDdlSize() uint {
@@ -740,7 +758,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
 	)
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw

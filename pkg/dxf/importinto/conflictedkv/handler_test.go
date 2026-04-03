@@ -43,6 +43,19 @@ func (h mockHandleEncodedRowFn) HandleEncodedRow(ctx context.Context, handle tid
 	return h(ctx, handle, row, kvPairs)
 }
 
+type mockTrafficRecorder struct {
+	readBytes  atomic.Uint64
+	writeBytes atomic.Uint64
+}
+
+func (r *mockTrafficRecorder) IncClusterReadBytes(n uint64) {
+	r.readBytes.Add(n)
+}
+
+func (r *mockTrafficRecorder) IncClusterWriteBytes(n uint64) {
+	r.writeBytes.Add(n)
+}
+
 func getEncoder(t *testing.T, tbl table.Table) *importer.TableKVEncoder {
 	t.Helper()
 	encodeCfg := &encode.EncodingConfig{
@@ -165,9 +178,10 @@ func TestHandler(t *testing.T) {
 			})
 			var targetIndexID int64 = 2
 			baseHdl := conflictedkv.NewBaseHandler(tbl, external.IndexID2KVGroup(targetIndexID), encoder, mockEncodedKVHdl, logger)
+			trafficRec := &mockTrafficRecorder{}
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
-				conflictedkv.NewLazyRefreshedSnapshot(store),
+				conflictedkv.NewLazyRefreshedSnapshot(store, trafficRec),
 				conflictedkv.NewHandleFilter(alreadyProcessedHandles),
 			)
 			require.NoError(t, indexKVHdl.PreRun())
@@ -210,6 +224,7 @@ func TestHandler(t *testing.T) {
 				return nil
 			})
 			require.NoError(t, eg.Wait())
+			require.Greater(t, trafficRec.readBytes.Load(), uint64(0))
 			require.EqualValues(t, 3, rowCnt)
 			require.EqualValues(t, expectedKVs, kvPairCnt)
 			require.EqualValues(t, map[string]struct{}{"2": {}, "4": {}, "5": {}}, handledHandles)

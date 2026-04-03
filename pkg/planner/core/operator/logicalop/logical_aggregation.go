@@ -45,8 +45,8 @@ type LogicalAggregation struct {
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties [][]*expression.Column `hash64-equals:"true" shallow-ref:"true"`
-	InputCount         float64                // InputCount is the input count of this plan.
+	PossibleProperties base.PossiblePropertiesInfo `hash64-equals:"true" shallow-ref:"true"`
+	InputCount         float64                     // InputCount is the input count of this plan.
 
 	// Deprecated: NoCopPushDown is substituted by prop.NoCopPushDown.
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
@@ -265,25 +265,38 @@ func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*ex
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	childProps := childrenProperties[0]
+	la.hasTiFlash = childProps != nil && childProps.HasTiFlash
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
-		la.PossibleProperties = [][]*expression.Column{nil}
-		return nil
+		la.PossibleProperties = base.PossiblePropertiesInfo{
+			Orders:     [][]*expression.Column{nil},
+			HasTiFlash: la.hasTiFlash,
+		}
+		return &la.PossibleProperties
 	}
-	resultProperties := make([][]*expression.Column, 0, len(childProps))
+	if childProps == nil {
+		la.PossibleProperties = base.PossiblePropertiesInfo{
+			HasTiFlash: la.hasTiFlash,
+		}
+		return &la.PossibleProperties
+	}
+	resultProperties := make([][]*expression.Column, 0, len(childProps.Orders))
 	groupByCols := la.GetGroupByCols()
-	for _, possibleChildProperty := range childProps {
+	for _, possibleChildProperty := range childProps.Orders {
 		sortColOffsets := util.GetMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
 			prop := possibleChildProperty[:len(groupByCols)]
 			resultProperties = append(resultProperties, prop)
 		}
 	}
-	la.PossibleProperties = resultProperties
-	return resultProperties
+	la.PossibleProperties = base.PossiblePropertiesInfo{
+		Orders:     resultProperties,
+		HasTiFlash: la.hasTiFlash,
+	}
+	return &la.PossibleProperties
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -622,22 +635,23 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
 	aggFirstRowColumns := expression.NewSchema(la.getAggFuncsColsForFirstRow()...)
-	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
 	for _, cond := range predicates {
-		subCondsToPush, subRet := la.pushDownDNFPredicates(cond, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
-		if len(subCondsToPush) > 0 {
-			condsToPush = append(condsToPush, subCondsToPush...)
-		}
-		if len(subRet) > 0 {
-			// If we cannot find columns that can be pushed down in the GROUP BY clause,
-			// we will then look for columns that can be pushed down in the aggregate functions.
-			// Currently, only the first row is supported.
-			for _, s := range subRet {
-				subCondsToPush1, subRet1 := la.pushDownDNFPredicates(s, aggFirstRowColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
-				if len(subCondsToPush1) > 0 {
-					condsToPush = append(condsToPush, subCondsToPush1...)
+		for _, cnfItem := range expression.SplitCNFItems(cond) {
+			subCondsToPush, subRet := la.pushDownDNFPredicates(cnfItem, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
+			if len(subCondsToPush) > 0 {
+				condsToPush = append(condsToPush, subCondsToPush...)
+			}
+			if len(subRet) > 0 {
+				// If we cannot find columns that can be pushed down in the GROUP BY clause,
+				// we will then look for columns that can be pushed down in the aggregate functions.
+				// Currently, only the first row is supported.
+				for _, s := range subRet {
+					subCondsToPush1, subRet1 := la.pushDownDNFPredicates(s, aggFirstRowColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
+					if len(subCondsToPush1) > 0 {
+						condsToPush = append(condsToPush, subCondsToPush1...)
+					}
+					ret = append(ret, subRet1...)
 				}
-				ret = append(ret, subRet1...)
 			}
 		}
 	}
