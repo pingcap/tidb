@@ -62,142 +62,6 @@ type nullRejectProof struct {
 	mustNull bool
 }
 
-type nullRejectTestMode uint8
-
-const (
-	nullRejectTestReturnsFalse nullRejectTestMode = iota // f(NULL) = FALSE; nonTrue but not mustNull
-	nullRejectTestKeepsNull                              // f(NULL) = NULL; both nonTrue and mustNull
-)
-
-// nullRejectNullPreservingFunctions lists builtins that return NULL when any
-// argument is NULL. See the file-level comment for how this drives the proof.
-var nullRejectNullPreservingFunctions = map[string]struct{}{
-	ast.Cast:            {},
-	ast.GE:              {},
-	ast.LE:              {},
-	ast.EQ:              {},
-	ast.NE:              {},
-	ast.LT:              {},
-	ast.GT:              {},
-	ast.Plus:            {},
-	ast.Minus:           {},
-	ast.Mod:             {},
-	ast.Div:             {},
-	ast.Mul:             {},
-	ast.IntDiv:          {},
-	ast.BitNeg:          {},
-	ast.And:             {},
-	ast.LeftShift:       {},
-	ast.RightShift:      {},
-	ast.Or:              {},
-	ast.Xor:             {},
-	ast.UnaryMinus:      {},
-	ast.LogicXor:        {},
-	ast.Like:            {},
-	ast.Ilike:           {},
-	ast.Regexp:          {},
-	ast.RegexpLike:      {},
-	ast.RegexpSubstr:    {},
-	ast.RegexpInStr:     {},
-	ast.RegexpReplace:   {},
-	ast.Strcmp:          {},
-	ast.Abs:             {},
-	ast.Ceil:            {},
-	ast.Ceiling:         {},
-	ast.CRC32:           {},
-	ast.Degrees:         {},
-	ast.Exp:             {},
-	ast.Floor:           {},
-	ast.Ln:              {},
-	ast.Log:             {},
-	ast.Log2:            {},
-	ast.Log10:           {},
-	ast.Pow:             {},
-	ast.Power:           {},
-	ast.Radians:         {},
-	ast.Round:           {},
-	ast.Sign:            {},
-	ast.Sqrt:            {},
-	ast.Truncate:        {},
-	ast.ASCII:           {},
-	ast.Bin:             {},
-	ast.BitLength:       {},
-	ast.CharLength:      {},
-	ast.CharacterLength: {},
-	ast.Concat:          {},
-	ast.FindInSet:       {},
-	ast.FromBase64:      {},
-	ast.Hex:             {},
-	ast.InsertFunc:      {},
-	ast.Lcase:           {},
-	ast.Left:            {},
-	ast.Length:          {},
-	ast.Locate:          {},
-	ast.Lower:           {},
-	ast.LTrim:           {},
-	ast.Mid:             {},
-	ast.Oct:             {},
-	ast.Ord:             {},
-	ast.Position:        {},
-	ast.Repeat:          {},
-	ast.Replace:         {},
-	ast.Reverse:         {},
-	ast.Right:           {},
-	ast.RTrim:           {},
-	ast.Space:           {},
-	ast.Substring:       {},
-	ast.SubstringIndex:  {},
-	ast.Trim:            {},
-	ast.Ucase:           {},
-	ast.Unhex:           {},
-	ast.Upper:           {},
-	ast.AddDate:         {},
-	ast.DateAdd:         {},
-	ast.SubDate:         {},
-	ast.DateSub:         {},
-	ast.AddTime:         {},
-	ast.ConvertTz:       {},
-	ast.Date:            {},
-	ast.DateFormat:      {},
-	ast.DateDiff:        {},
-	ast.Day:             {},
-	ast.DayOfMonth:      {},
-	ast.DayOfWeek:       {},
-	ast.DayOfYear:       {},
-	ast.Extract:         {},
-	ast.FromDays:        {},
-	ast.FromUnixTime:    {},
-	ast.Hour:            {},
-	ast.MakeDate:        {},
-	ast.MakeTime:        {},
-	ast.MicroSecond:     {},
-	ast.Minute:          {},
-	ast.Month:           {},
-	ast.PeriodAdd:       {},
-	ast.PeriodDiff:      {},
-	ast.Quarter:         {},
-	ast.SecToTime:       {},
-	ast.Second:          {},
-	ast.StrToDate:       {},
-	ast.SubTime:         {},
-	ast.Time:            {},
-	ast.TimeDiff:        {},
-	ast.TimestampDiff:   {},
-	ast.ToDays:          {},
-	ast.ToSeconds:       {},
-	ast.UnixTimestamp:   {},
-	ast.Year:            {},
-}
-
-// nullRejectRejectNullTests lists IS-TRUE / IS-FALSE style builtins that
-// convert a NULL input into a definite boolean. The mode records whether the
-// output is FALSE (ReturnsFalse) or stays NULL (KeepsNull).
-var nullRejectRejectNullTests = map[string]nullRejectTestMode{
-	ast.IsTruthWithoutNull: nullRejectTestReturnsFalse,
-	ast.IsTruthWithNull:    nullRejectTestKeepsNull,
-	ast.IsFalsity:          nullRejectTestReturnsFalse,
-}
-
 // allConstants checks whether the expression tree consists entirely of constants.
 func allConstants(ctx expression.BuildContext, expr expression.Expression) bool {
 	if expression.MaybeOverOptimized4PlanCache(ctx, expr) {
@@ -234,11 +98,17 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 // the top-level builtin alone.
 //
 // Example:
-//   COALESCE(t2.a, 2) > 2
+//
+//	COALESCE(t2.a, 2) > 2
+//
 // becomes
-//   COALESCE(NULL, 2) > 2
+//
+//	COALESCE(NULL, 2) > 2
+//
 // then folds to
-//   2 > 2
+//
+//	2 > 2
+//
 // so the predicate is nonTrue.
 func proveNullRejected(
 	ctx base.PlanContext,
@@ -273,9 +143,9 @@ func proveNullRejected(
 // child proofs plus SQL three-valued logic.
 //
 // Most builtins fall into one of two conservative buckets:
-//   1. NULL-preserving builtins: any mustNull child makes the result NULL.
-//   2. NULL-tests such as IS TRUE / IS FALSE: they turn NULL into a definite
-//      boolean, so they only contribute nonTrue, not always mustNull.
+//  1. NULL-preserving builtins: any mustNull child makes the result NULL.
+//  2. NULL-tests such as IS TRUE / IS FALSE: they turn NULL into a definite
+//     boolean, so they only contribute nonTrue, not always mustNull.
 //
 // A few builtins need bespoke rules because their truth tables are more subtle
 // than either bucket, notably AND / OR / NOT / IN / IS NULL.
@@ -424,11 +294,17 @@ func tryFoldStaticConstant(ctx base.PlanContext, expr expression.Expression) (*e
 // NULL and still collapse to a constant after nullification.
 //
 // Example:
-//   COALESCE(t2.a, 2) > 2
+//
+//	COALESCE(t2.a, 2) > 2
+//
 // becomes
-//   COALESCE(NULL, 2) > 2
+//
+//	COALESCE(NULL, 2) > 2
+//
 // then
-//   2 > 2
+//
+//	2 > 2
+//
 // so the predicate is provably nonTrue even though COALESCE itself is not
 // NULL-preserving.
 func tryFoldNullifiedScalarFunc(

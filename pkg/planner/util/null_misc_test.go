@@ -182,7 +182,7 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 // TestNullRejectBuiltinRegistrySnapshot guards against silent builtin registry
 // drift. When this hash breaks, the builtin set has changed — review whether
 // new functions should be added to nullRejectNullPreservingFunctions or
-// nullRejectRejectNullTests in null_misc.go.
+// nullRejectRejectNullTests in null_misc_builtins.go.
 func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
 	names := expression.RegisteredBuiltinFunctionNames()
 	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))

@@ -11,6 +11,7 @@ go_library(
         "handle_cols.go",
         "misc.go",
         "null_misc.go",
+        "null_misc_builtins.go",
         "path.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/util",
