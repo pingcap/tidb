@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -30,6 +31,7 @@ import (
 
 func TestIsNullRejectedProofModes(t *testing.T) {
 	sctx := mock.NewContext()
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb"))
 	exprCtx := sctx.GetExprCtx()
 
 	innerA := newNullRejectIntColumn(1)
@@ -79,6 +81,89 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		newNullRejectUintFieldType(mysql.TypeLonglong),
 		newNullRejectUintConst(123),
 		innerUnsignedD,
+	)
+	aesEncryptIgnoringNullableIV := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.AesEncrypt,
+		types.NewFieldType(mysql.TypeVarString),
+		newNullRejectStringConst("pingcap"),
+		newNullRejectStringConst("123"),
+		innerS,
+	)
+	aesDecryptIgnoringNullableIV := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.AesDecrypt,
+		types.NewFieldType(mysql.TypeVarString),
+		newNullRejectFunc(t, exprCtx, ast.Unhex, types.NewFieldType(mysql.TypeVarString), newNullRejectStringConst("996E0CA8688D7AD20819B90B273E01C6")),
+		newNullRejectStringConst("123"),
+		innerS,
+	)
+	jsonSetNullableValue := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.JSONSet,
+		types.NewFieldType(mysql.TypeJSON),
+		newNullRejectJSONConst(t, `{}`),
+		newNullRejectStringConst("$.a"),
+		innerS,
+	)
+	jsonInsertNullableValue := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.JSONInsert,
+		types.NewFieldType(mysql.TypeJSON),
+		newNullRejectJSONConst(t, `{}`),
+		newNullRejectStringConst("$.a"),
+		innerS,
+	)
+	jsonReplaceNullableValue := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.JSONReplace,
+		types.NewFieldType(mysql.TypeJSON),
+		newNullRejectJSONConst(t, `{"a": 1}`),
+		newNullRejectStringConst("$.a"),
+		innerS,
+	)
+	jsonArrayAppendNullableValue := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.JSONArrayAppend,
+		types.NewFieldType(mysql.TypeJSON),
+		newNullRejectJSONConst(t, `[]`),
+		newNullRejectStringConst("$"),
+		innerS,
+	)
+	jsonArrayInsertNullableValue := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.JSONArrayInsert,
+		types.NewFieldType(mysql.TypeJSON),
+		newNullRejectJSONConst(t, `[]`),
+		newNullRejectStringConst("$[0]"),
+		innerS,
+	)
+	jsonMergePatchNullableDoc := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.JSONMergePatch,
+		types.NewFieldType(mysql.TypeJSON),
+		expression.BuildCastFunction(exprCtx, innerS, types.NewFieldType(mysql.TypeJSON)),
+		newNullRejectJSONConst(t, `null`),
+		newNullRejectJSONConst(t, `{"a": 1}`),
+		newNullRejectJSONConst(t, `[1, 2, 3]`),
+	)
+	jsonSearchNullableEscape := newNullRejectFunc(
+		t,
+		exprCtx,
+		ast.JSONSearch,
+		types.NewFieldType(mysql.TypeJSON),
+		newNullRejectJSONConst(t, `["abc"]`),
+		newNullRejectStringConst("one"),
+		newNullRejectStringConst("abc"),
+		innerS,
 	)
 
 	cases := []struct {
@@ -191,6 +276,51 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 			),
 			expected: false,
 		},
+		{
+			name:     "aes_encrypt_ignores_nullable_iv_in_ecb_mode",
+			expr:     newNullRejectNotNull(t, exprCtx, aesEncryptIgnoringNullableIV),
+			expected: false,
+		},
+		{
+			name:     "aes_decrypt_ignores_nullable_iv_in_ecb_mode",
+			expr:     newNullRejectNotNull(t, exprCtx, aesDecryptIgnoringNullableIV),
+			expected: false,
+		},
+		{
+			name:     "json_set_nullable_value_becomes_json_null",
+			expr:     newNullRejectNotNull(t, exprCtx, jsonSetNullableValue),
+			expected: false,
+		},
+		{
+			name:     "json_insert_nullable_value_becomes_json_null",
+			expr:     newNullRejectNotNull(t, exprCtx, jsonInsertNullableValue),
+			expected: false,
+		},
+		{
+			name:     "json_replace_nullable_value_becomes_json_null",
+			expr:     newNullRejectNotNull(t, exprCtx, jsonReplaceNullableValue),
+			expected: false,
+		},
+		{
+			name:     "json_array_append_nullable_value_becomes_json_null",
+			expr:     newNullRejectNotNull(t, exprCtx, jsonArrayAppendNullableValue),
+			expected: false,
+		},
+		{
+			name:     "json_array_insert_nullable_value_becomes_json_null",
+			expr:     newNullRejectNotNull(t, exprCtx, jsonArrayInsertNullableValue),
+			expected: false,
+		},
+		{
+			name:     "json_merge_patch_nullable_argument_can_still_return_document",
+			expr:     newNullRejectNotNull(t, exprCtx, jsonMergePatchNullableDoc),
+			expected: false,
+		},
+		{
+			name:     "json_search_nullable_escape_falls_back_to_default_escape",
+			expr:     newNullRejectNotNull(t, exprCtx, jsonSearchNullableEscape),
+			expected: false,
+		},
 	}
 
 	for _, tt := range cases {
@@ -274,6 +404,25 @@ func newNullRejectFunc(t *testing.T, ctx expression.BuildContext, name string, r
 	expr, err := expression.NewFunction(ctx, name, retType, args...)
 	require.NoError(t, err)
 	return expr
+}
+
+func newNullRejectJSONConst(t *testing.T, value string) *expression.Constant {
+	jsonValue, err := types.ParseBinaryJSONFromString(value)
+	require.NoError(t, err)
+	return &expression.Constant{
+		Value:   types.NewJSONDatum(jsonValue),
+		RetType: types.NewFieldType(mysql.TypeJSON),
+	}
+}
+
+func newNullRejectNotNull(t *testing.T, ctx expression.BuildContext, arg expression.Expression) expression.Expression {
+	return newNullRejectFunc(
+		t,
+		ctx,
+		ast.UnaryNot,
+		types.NewFieldType(mysql.TypeTiny),
+		newNullRejectFunc(t, ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), arg),
+	)
 }
 
 func newNullRejectLike(t *testing.T, ctx expression.BuildContext, arg expression.Expression) expression.Expression {
