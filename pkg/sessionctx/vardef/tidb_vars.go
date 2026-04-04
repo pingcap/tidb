@@ -1674,23 +1674,27 @@ const (
 	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
 	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize                  int32  = 10240
-	MinDDLReorgBatchSize                  int32  = 32
-	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
-	MinExpensiveTxnTimeThreshold          uint64 = 60 // 60s
-	DefTiDBAutoBuildStatsConcurrency             = 1
-	DefTiDBSysProcScanConcurrency                = 1
-	DefTiDBRcWriteCheckTs                        = false
-	DefTiDBForeignKeyChecks                      = true
-	DefTiDBForeignKeyCheckInSharedLock           = false
-	DefTiDBOptAdvancedJoinHint                   = true
-	DefTiDBAnalyzePartitionConcurrency           = 2
-	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
-	DefTiDBCostModelVer                          = 2
-	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20
-	DefTiDBMergePartitionStatsConcurrency        = 1
-	DefTiDBServerMemoryLimitGCTrigger            = 0.7
-	DefTiDBEnableGOGCTuner                       = true
+	MaxDDLReorgBatchSize             int32  = 10240
+	MinDDLReorgBatchSize             int32  = 32
+	MinExpensiveQueryTimeThreshold   uint64 = 10 // 10s
+	MinExpensiveTxnTimeThreshold     uint64 = 60 // 60s
+	DefTiDBAutoBuildStatsConcurrency        = 1
+	// DefTiDBSysProcScanConcurrency is the default value of TiDBSysProcScanConcurrency.
+	// It controls the scan concurrency used by backend system processes such as auto-analyze.
+	// NOTE: 0 enables adaptive concurrency; the actual scan concurrency is chosen
+	// from the TiKV store count, with fallback to DefAnalyzeDistSQLScanConcurrency.
+	DefTiDBSysProcScanConcurrency         = 0
+	DefTiDBRcWriteCheckTs                 = false
+	DefTiDBForeignKeyChecks               = true
+	DefTiDBForeignKeyCheckInSharedLock    = false
+	DefTiDBOptAdvancedJoinHint            = true
+	DefTiDBAnalyzePartitionConcurrency    = 2
+	DefTiDBOptRangeMaxSize                = 64 * int64(size.MB) // 64 MB
+	DefTiDBCostModelVer                   = 2
+	DefTiDBServerMemoryLimitSessMinSize   = 128 << 20
+	DefTiDBMergePartitionStatsConcurrency = 1
+	DefTiDBServerMemoryLimitGCTrigger     = 0.7
+	DefTiDBEnableGOGCTuner                = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold                 float64 = 0.6
 	DefTiDBGOGCMaxValue                               = 500
