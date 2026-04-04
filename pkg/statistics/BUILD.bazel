@@ -87,7 +87,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 50,
+=======
+    shard_count = 43,
+>>>>>>> 9670037035a (statistics: refine GEE estimator helper (#67518))
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
