@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -2066,6 +2067,8 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	testKit.MustExec("flush stats_delta")
 	testKit.MustExec(`analyze table t`)
 	h := dom.StatsHandle()
+	// Refresh the stats cache metadata before warming query-specific histograms.
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	var (
 		input  []string
@@ -2076,9 +2079,14 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	)
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	// Trigger async stats loading for the subset-index columns before checking the recorded plans.
-	testKit.MustExec("explain format = 'brief' select distinct a, b, c from t")
+	// Trigger every explain once so all lazily-needed subset-index stats are queued before we assert plans.
+	for _, query := range input {
+		if strings.HasPrefix(query, "explain") {
+			testKit.MustExec(query)
+		}
+	}
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.Empty(t, asyncload.AsyncLoadHistogramNeededItems.AllItems())
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]
@@ -2091,6 +2099,7 @@ func TestSubsetIdxCardinality(t *testing.T) {
 			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+		require.Empty(t, asyncload.AsyncLoadHistogramNeededItems.AllItems())
 	}
 }
 
