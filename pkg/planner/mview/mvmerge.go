@@ -72,7 +72,9 @@ type BuildResult struct {
 	SourceColumnCount int
 	// FullUpdateLookupTemplateSelect is an optional intermediate SELECT template for MIN/MAX fallback.
 	// It is built in outer+inner IndexJoin shape so the planner can later optimize it and extract only
-	// the inner lookup child plus lookup metadata for full recomputation.
+	// the inner lookup child plus lookup metadata for full recomputation. We intentionally do not keep
+	// a plain full-inner scan here: fallback refresh needs to bind one changed group-key tuple at a
+	// time, and reusing IndexJoin lets us inherit the existing key-to-range plumbing for that probe.
 	FullUpdateLookupTemplateSelect *ast.SelectStmt
 	// FullUpdateLookupColumnCount is the expected output column count of FullUpdateLookupTemplateSelect.
 	FullUpdateLookupColumnCount int
@@ -1450,9 +1452,14 @@ func buildMergeSourceSelect(
 //   - outer side carries probe keys only
 //   - inner side carries the recomputed group keys + MIN/MAX columns
 //
+// We do not build a standalone full_inner_scan here. MIN/MAX fallback must recompute one changed
+// group at a time, so executor needs the optimizer to derive the lookup key positions and index-range
+// template for those runtime group-key values. Reusing IndexJoin gives us that binding mechanism.
+//
 // The returned SELECT is only an intermediate shape. After optimization, the outer side is discarded;
 // only the inner lookup child, lookup metadata, and output-column to MV-offset mapping are kept for
-// fallback full recomputation.
+// fallback full recomputation. Executor refills the probe group-key tuple directly instead of running
+// the outer child.
 func buildFullUpdateLookupTemplateSelect(
 	sctx planctx.PlanContext,
 	dbName pmodel.CIStr,
