@@ -1528,6 +1528,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 func (a *ExecStmt) recordAffectedRows2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if affectedRows := sessVars.StmtCtx.AffectedRows(); affectedRows > 0 {
+		if shouldSkipAffectedRowsMetricForInternalMVMaintenance(sessVars) {
+			return
+		}
 		switch sessVars.StmtCtx.StmtType {
 		case "Insert":
 			metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
@@ -1545,7 +1548,26 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 			metrics.AffectedRowsCounterNTDMLInsert.Add(float64(affectedRows))
 		case "NTDML-Replace":
 			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
+		case "RefreshMaterializedView":
+			metrics.AffectedRowsCounterRefreshMV.Add(float64(affectedRows))
+		case "PurgeMaterializedViewLog":
+			metrics.AffectedRowsCounterPurgeMVLog.Add(float64(affectedRows))
 		}
+	}
+}
+
+func shouldSkipAffectedRowsMetricForInternalMVMaintenance(sessVars *variable.SessionVars) bool {
+	if sessVars == nil || !sessVars.InRestrictedSQL || !sessVars.InMaterializedViewMaintenance {
+		return false
+	}
+	switch sessVars.StmtCtx.StmtType {
+	case "Insert", "Replace", "Delete", "Update",
+		"NTDML-Delete", "NTDML-Update", "NTDML-Insert", "NTDML-Replace":
+		// Internal MV maintenance DMLs are already rolled up and reported by the outer
+		// REFRESH MATERIALIZED VIEW / PURGE MATERIALIZED VIEW LOG statement.
+		return true
+	default:
+		return false
 	}
 }
 

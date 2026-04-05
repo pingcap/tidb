@@ -27,11 +27,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,6 +42,16 @@ func mustExecInternal(t *testing.T, tk *testkit.TestKit, sql string) {
 	rs, err := tk.Session().ExecuteInternal(ctx, sql)
 	require.NoError(t, err)
 	require.Nil(t, rs)
+}
+
+func readAffectedRowsMetricValue(t *testing.T, label string) float64 {
+	t.Helper()
+
+	counter, err := metrics.AffectedRowsCounter.GetMetricWithLabelValues(label)
+	require.NoError(t, err)
+	pb := &dto.Metric{}
+	require.NoError(t, counter.Write(pb))
+	return pb.GetCounter().GetValue()
 }
 
 func TestCreateMaterializedViewLogBasic(t *testing.T) {
@@ -887,7 +899,13 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 	maxCommitTS, err := strconv.ParseUint(fmt.Sprint(tk.MustQuery("select max(_tidb_commit_ts) from `$mlog$t_purge_batch_delete`").Rows()[0][0]), 10, 64)
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 2")
+	beforeDelete := readAffectedRowsMetricValue(t, "Delete")
+	beforePurgeMVLog := readAffectedRowsMetricValue(t, "PurgeMVLog")
 	tk.MustExec("purge materialized view log on t_purge_batch_delete")
+	require.Equal(t, uint64(5), tk.Session().AffectedRows())
+	tk.CheckLastMessage("Rows inserted: 0  Updated: 0  Deleted: 5")
+	require.Equal(t, 0.0, readAffectedRowsMetricValue(t, "Delete")-beforeDelete)
+	require.Equal(t, 5.0, readAffectedRowsMetricValue(t, "PurgeMVLog")-beforePurgeMVLog)
 
 	tk.MustQuery("select count(*) from `$mlog$t_purge_batch_delete`").Check(testkit.Rows("0"))
 	tk.MustQuery(fmt.Sprintf(

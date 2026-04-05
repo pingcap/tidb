@@ -63,6 +63,10 @@ var (
 	AffectedRowsCounterNTDMLInsert prometheus.Counter
 	// AffectedRowsCounterNTDMLReplace records the number of NT-DML replace affected rows.
 	AffectedRowsCounterNTDMLReplace prometheus.Counter
+	// AffectedRowsCounterRefreshMV records the number of refresh materialized view affected rows.
+	AffectedRowsCounterRefreshMV prometheus.Counter
+	// AffectedRowsCounterPurgeMVLog records the number of purge materialized view log affected rows.
+	AffectedRowsCounterPurgeMVLog prometheus.Counter
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -143,4 +147,6 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterNTDMLDelete = AffectedRowsCounter.WithLabelValues("NTDML-Delete")
 	AffectedRowsCounterNTDMLInsert = AffectedRowsCounter.WithLabelValues("NTDML-Insert")
 	AffectedRowsCounterNTDMLReplace = AffectedRowsCounter.WithLabelValues("NTDML-Replace")
+	AffectedRowsCounterRefreshMV = AffectedRowsCounter.WithLabelValues("RefreshMV")
+	AffectedRowsCounterPurgeMVLog = AffectedRowsCounter.WithLabelValues("PurgeMVLog")
 }

@@ -17,6 +17,7 @@ package mvdeltamergeagg
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -239,6 +240,19 @@ func (s *mvDeltaMergeAggWriterStats) merge(other mvDeltaMergeAggWriterStats) {
 	s.deleteRows += other.deleteRows
 }
 
+func (s mvDeltaMergeAggWriterStats) affectedRows() uint64 {
+	return uint64(s.insertRows + s.updateRows + s.deleteRows)
+}
+
+func (s mvDeltaMergeAggWriterStats) stmtMessage() string {
+	return fmt.Sprintf(
+		"Rows inserted: %d  Updated: %d  Deleted: %d",
+		s.insertRows,
+		s.updateRows,
+		s.deleteRows,
+	)
+}
+
 func newMVDeltaMergeAggRuntimeStats(workerCnt int) *mvDeltaMergeAggRuntimeStats {
 	if workerCnt < 0 {
 		workerCnt = 0
@@ -419,7 +433,16 @@ func (e *Exec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.runtimeStats)
 	}
-	return e.runMergePipeline(ctx)
+	pipelineStats, err := e.runMergePipeline(ctx)
+	if err != nil {
+		return err
+	}
+	stmtCtx := e.Ctx().GetSessionVars().StmtCtx
+	if stmtCtx != nil {
+		stmtCtx.SetAffectedRows(pipelineStats.writerDetail.affectedRows())
+		stmtCtx.SetMessage(pipelineStats.writerDetail.stmtMessage())
+	}
+	return nil
 }
 
 // Close implements the Executor interface.
@@ -433,22 +456,18 @@ func (e *Exec) Close() error {
 	return e.BaseExecutor.Close()
 }
 
-func (e *Exec) runMergePipeline(ctx context.Context) error {
+func (e *Exec) runMergePipeline(ctx context.Context) (*mvDeltaMergeAggPipelineStats, error) {
 	workerCnt := e.WorkerCnt
 	if workerCnt <= 0 {
 		workerCnt = 1
 	}
-	var pipelineStats *mvDeltaMergeAggPipelineStats
+	pipelineStats := &mvDeltaMergeAggPipelineStats{}
 	if e.runtimeStats != nil {
-		pipelineStats = &mvDeltaMergeAggPipelineStats{
-			mergeWorkerTime: make([]time.Duration, workerCnt),
-		}
-		if statsWriter, ok := e.Writer.(writerRuntimeStatsAware); ok {
-			statsWriter.setRuntimeStats(&pipelineStats.writerDetail)
-		}
+		pipelineStats.mergeWorkerTime = make([]time.Duration, workerCnt)
 		defer e.runtimeStats.fillFromPipelineStats(pipelineStats)
-	} else if statsWriter, ok := e.Writer.(writerRuntimeStatsAware); ok {
-		statsWriter.setRuntimeStats(nil)
+	}
+	if statsWriter, ok := e.Writer.(writerRuntimeStatsAware); ok {
+		statsWriter.setRuntimeStats(&pipelineStats.writerDetail)
 	}
 
 	inputBufSize := max(workerCnt*2, 2)
@@ -485,7 +504,7 @@ func (e *Exec) runMergePipeline(ctx context.Context) error {
 		return e.runWriter(gctx, resultCh, freeInputCh, pipelineStats)
 	})
 
-	return g.Wait()
+	return pipelineStats, g.Wait()
 }
 
 func (e *Exec) runReader(
