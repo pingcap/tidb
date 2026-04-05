@@ -34,14 +34,17 @@ import (
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	tidbcfg "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -58,6 +61,9 @@ const (
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
+	// BackendRemote is a constant for choosing the "Remote" backend in the configuration.
+	// In this mode, we write kv pairs to the remote worker.
+	BackendRemote = "remote"
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -103,6 +109,11 @@ const (
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
 
 	DefaultSwitchTiKVModeInterval = 5 * time.Minute
+
+	defaultMaxSourceDataSize       = 25 * 1024 * 1024 * 1024  // 25GB
+	defaultMaxSourceDataSizeForVip = 256 * 1024 * 1024 * 1024 // 256GB
+
+	defaultMaxScanFileConcurrency = 16
 )
 
 var (
@@ -159,7 +170,7 @@ func (d *DBStore) adjust(
 	s *Security,
 	tlsObj *common.TLS,
 ) error {
-	if i.Backend == BackendLocal {
+	if i.Backend == BackendLocal || i.Backend == BackendRemote {
 		if d.BuildStatsConcurrency == 0 {
 			d.BuildStatsConcurrency = defaultBuildStatsConcurrency
 		}
@@ -222,7 +233,7 @@ func (d *DBStore) adjust(
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
 
-	mustHaveInternalConnections := i.Backend == BackendLocal
+	mustHaveInternalConnections := (i.Backend == BackendLocal || i.Backend == BackendRemote)
 	// automatically determine the TiDB port & PD address from TiDB settings
 	if mustHaveInternalConnections && (d.Port <= 0 || len(d.PdAddr) == 0) {
 		var settings tidbcfg.Config
@@ -276,7 +287,7 @@ func (r *Routes) adjust(m *MydumperRuntime) error {
 
 // Config is the configuration.
 type Config struct {
-	TaskID int64 `toml:"-" json:"id"`
+	TaskID int64 `toml:"id" json:"id"`
 
 	App  Lightning `toml:"lightning" json:"lightning"`
 	TiDB DBStore   `toml:"tidb" json:"tidb"`
@@ -337,6 +348,8 @@ type Lightning struct {
 	// deprecated, use Conflict.MaxRecordRows instead
 	MaxErrorRecords    int64  `toml:"max-error-records" json:"max-error-records"`
 	TaskInfoSchemaName string `toml:"task-info-schema-name" json:"task-info-schema-name"`
+
+	MaxScanFileConcurrency int `toml:"max-scan-file-concurrency" json:"max-scan-file-concurrency"`
 }
 
 // adjust assigns default values and check illegal values. The input TikvImporter
@@ -365,6 +378,23 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		cpuCount := runtime.NumCPU()
 		if l.RegionConcurrency > cpuCount {
 			l.RegionConcurrency = cpuCount
+		}
+		if l.MaxScanFileConcurrency == 0 {
+			l.MaxScanFileConcurrency = defaultMaxScanFileConcurrency
+		}
+	case BackendRemote:
+		if l.IndexConcurrency == 0 {
+			l.IndexConcurrency = defaultIndexConcurrency
+		}
+		if l.TableConcurrency == 0 {
+			l.TableConcurrency = DefaultTableConcurrency
+		}
+
+		if len(l.MetaSchemaName) == 0 {
+			l.MetaSchemaName = defaultMetaSchemaName
+		}
+		if l.MaxScanFileConcurrency == 0 {
+			l.MaxScanFileConcurrency = defaultMaxScanFileConcurrency
 		}
 	}
 }
@@ -900,6 +930,10 @@ type MydumperRuntime struct {
 	// DataInvalidCharReplace is the replacement characters for non-compatible characters, which shouldn't duplicate with the separators or line breaks.
 	// Changing the default value will result in increased parsing time. Non-compatible characters do not cause an increase in error.
 	DataInvalidCharReplace string `toml:"data-invalid-char-replace" json:"data-invalid-char-replace"`
+	// MaxSourceDataSize is the maximum size of the source data to be processed, in bytes.
+	MaxSourceDataSize       int64   `toml:"max-source-data-size" json:"max-source-data-size"`
+	MaxSourceDataSizeForVip int64   `toml:"max-source-data-size-for-vip" json:"max-source-data-size-for-vip"`
+	EmpiricalCompressRatio  float64 `toml:"empirical-compress-ratio" json:"empirical-compress-ratio"`
 }
 
 func (m *MydumperRuntime) adjust() error {
@@ -1118,6 +1152,8 @@ type TikvImporter struct {
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
+	ChunkCacheDir         string                `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
+	ChunkCacheInMemory    bool                  `toml:"chunk-cache-in-memory" json:"chunk-cache-in-memory"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1141,7 +1177,7 @@ func (t *TikvImporter) adjust() error {
 				"`tikv-importer.logical-import-batch-rows` got %d, should be larger than 0",
 				t.LogicalImportBatchRows)
 		}
-	case BackendLocal:
+	case BackendLocal, BackendRemote:
 		if t.RegionSplitBatchSize <= 0 {
 			return common.ErrInvalidConfig.GenWithStack(
 				"`tikv-importer.region-split-batch-size` got %d, should be larger than 0",
@@ -1494,6 +1530,9 @@ func NewConfig() *Config {
 			Filter:                 GetDefaultFilter(),
 			DataCharacterSet:       defaultCSVDataCharacterSet,
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
+
+			MaxSourceDataSize:       defaultMaxSourceDataSize,
+			MaxSourceDataSizeForVip: defaultMaxSourceDataSizeForVip,
 		},
 		TikvImporter: TikvImporter{
 			Backend:                 "",
@@ -1543,6 +1582,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.Mydumper.SourceDir = global.Mydumper.SourceDir
 	cfg.Mydumper.Filter = global.Mydumper.Filter
 	cfg.TikvImporter.Backend = global.TikvImporter.Backend
+	cfg.TikvImporter.Addr = global.TikvImporter.RemoteAddr
 	cfg.TikvImporter.SortedKVDir = global.TikvImporter.SortedKVDir
 	cfg.Checkpoint.Enable = global.Checkpoint.Enable
 	cfg.PostRestore.Checksum = global.PostRestore.Checksum
@@ -1626,6 +1666,12 @@ iterateUnusedKeys:
 func (cfg *Config) Adjust(ctx context.Context) error {
 	// note that the argument of `adjust` should be `adjust`ed before using it.
 
+	if !intest.InTest {
+		if err := cfg.AdjustTaskID(); err != nil {
+			return err
+		}
+	}
+
 	if err := cfg.TikvImporter.adjust(); err != nil {
 		return err
 	}
@@ -1646,4 +1692,36 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return err
 	}
 	return cfg.Conflict.adjust(&cfg.TikvImporter)
+}
+
+// AdjustTaskID adjusts the task ID if it is not set to make sure it is unique in the cluster.
+func (cfg *Config) AdjustTaskID() error {
+	if cfg.TaskID != 0 {
+		return nil
+	}
+
+	tls, err := cfg.ToTLS()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	pdCtl, err := pdutil.NewPdController(ctx, strings.Split(cfg.TiDB.PdAddr, ","), tls.TLSConfig(), tls.ToPDSecurityOption())
+	if err != nil {
+		log.L().Error("fail to create PD controller", zap.Error(err))
+		return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
+	}
+	defer pdCtl.Close()
+
+	physical, logical, err := pdCtl.GetPDClient().GetTS(ctx)
+	if err != nil {
+		log.L().Error("fail to get TS", zap.Error(err))
+		return err
+	}
+	ts := oracle.ComposeTS(physical, logical)
+	cfg.TaskID = int64(ts)
+	if cfg.TaskID < 0 {
+		cfg.TaskID = -cfg.TaskID
+	}
+	return nil
 }

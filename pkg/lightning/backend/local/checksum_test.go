@@ -194,7 +194,7 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		kvClient.onSendReq = func(req *kv.Request) {
 			checksumTS = req.StartTs
 		}
-		checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+		checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient, nil), client: kvClient}
 		physicalTS, logicalTS, err := pdClient.GetTS(ctx)
 		require.NoError(t, err)
 		_, err = checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
@@ -223,7 +223,7 @@ func TestDoChecksumWithTikv(t *testing.T) {
 	})
 	pdClient.leaderChanging = true
 	kvClient.maxErrCount = 0
-	checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
+	checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient, nil), client: kvClient}
 	_, err := checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 	require.NoError(t, err)
 }
@@ -352,7 +352,7 @@ func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 
 func TestGcTTLManagerSingle(t *testing.T) {
 	pdClient := &testPDClient{}
-	manager := newGCTTLManager(pdClient)
+	manager := newGCTTLManager(pdClient, nil)
 	require.NotEqual(t, "", manager.serviceID)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -382,7 +382,7 @@ func TestGcTTLManagerSingle(t *testing.T) {
 }
 
 func TestGcTTLManagerMulti(t *testing.T) {
-	manager := newGCTTLManager(&testPDClient{})
+	manager := newGCTTLManager(&testPDClient{}, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -413,9 +413,9 @@ func TestGcTTLManagerMulti(t *testing.T) {
 
 func TestPdServiceID(t *testing.T) {
 	pdCli := &testPDClient{}
-	gcTTLManager1 := newGCTTLManager(pdCli)
+	gcTTLManager1 := newGCTTLManager(pdCli, nil)
 	require.Regexp(t, "lightning-.*", gcTTLManager1.serviceID)
-	gcTTLManager2 := newGCTTLManager(pdCli)
+	gcTTLManager2 := newGCTTLManager(pdCli, nil)
 	require.Regexp(t, "lightning-.*", gcTTLManager2.serviceID)
 
 	require.True(t, gcTTLManager1.serviceID != gcTTLManager2.serviceID)

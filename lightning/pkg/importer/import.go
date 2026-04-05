@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -208,6 +210,8 @@ type Controller struct {
 	db            *sql.DB
 	pdCli         pd.Client
 	pdHTTPCli     pdhttp.Client
+	etcdCli       *clientv3.Client
+	kvstore       tidbkv.Storage
 
 	sysVars       map[string]string
 	tls           *common.TLS
@@ -345,6 +349,8 @@ func NewImportControllerWithPauser(
 	var backendObj backend.Backend
 	var pdCli pd.Client
 	var pdHTTPCli pdhttp.Client
+	var etcdCli *clientv3.Client
+	var kvstore tidbkv.Storage
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		encodingBuilder = tidb.NewEncodingBuilder()
@@ -423,19 +429,47 @@ func NewImportControllerWithPauser(
 		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, p.TaskType, raftKV2SwitchModeDuration)
 		backendObj, err = local.NewBackend(ctx, tls, backendConfig, pdCli.GetServiceDiscovery())
 		if err != nil {
+			log.L().Error("fail to create remote backend", zap.Error(err))
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
 		err = verifyLocalFile(ctx, cpdb, cfg.TikvImporter.SortedKVDir)
 		if err != nil {
 			return nil, err
 		}
+	case config.BackendRemote:
+		pdCli, err = pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
+			"lightning",
+			pdCli.GetServiceDiscovery(),
+			pdhttp.WithTLSConfig(tls.TLSConfig()),
+		).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
+
+		encodingBuilder = local.NewEncodingBuilder(ctx)
+
+		initGlobalConfig(tls.ToTiKVSecurityConfig())
+
+		backendConfig := remote.NewBackendConfig(cfg, p.KeyspaceName)
+		backendObj, err = remote.NewBackend(ctx, tls, backendConfig, pdCli.GetServiceDiscovery())
+		if err != nil {
+			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
+		}
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	p.Status.backend = cfg.TikvImporter.Backend
 
+	if isPhysicalBackend(cfg) {
+		etcdCli, kvstore, err = getEtcdCliByPDCli(pdCli, tls, p.KeyspaceName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
 	var metaBuilder metaMgrBuilder
-	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal
+	isSSTImport := isPhysicalBackend(cfg)
 	switch {
 	case isSSTImport && cfg.TikvImporter.ParallelImport:
 		metaBuilder = &dbMetaMgrBuilder{
@@ -453,8 +487,8 @@ func NewImportControllerWithPauser(
 	}
 
 	var wrapper backend.TargetInfoGetter
-	if cfg.TikvImporter.Backend == config.BackendLocal {
-		wrapper = local.NewTargetInfoGetter(tls, db, pdHTTPCli)
+	if isPhysicalBackend(cfg) {
+		wrapper = local.NewTargetInfoGetter(tls, db, pdHTTPCli, kvstore)
 	} else {
 		wrapper = tidb.NewTargetInfoGetter(db)
 	}
@@ -495,6 +529,8 @@ func NewImportControllerWithPauser(
 		backend:       backendObj,
 		pdCli:         pdCli,
 		pdHTTPCli:     pdHTTPCli,
+		etcdCli:       etcdCli,
+		kvstore:       kvstore,
 		db:            db,
 		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,
@@ -535,6 +571,12 @@ func (rc *Controller) Close() {
 	_ = rc.db.Close()
 	if rc.pdCli != nil {
 		rc.pdCli.Close()
+	}
+	if rc.etcdCli != nil {
+		_ = rc.etcdCli.Close()
+	}
+	if rc.kvstore != nil {
+		_ = rc.kvstore.Close()
 	}
 }
 
@@ -606,13 +648,13 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		return err
 	}
 
-	dbInfos, err := rc.preInfoGetter.GetAllTableStructures(ctx)
+	dbInfos, err := rc.preInfoGetter.GetAllTableStructures(ctx, ropts.ForceReloadCache(true))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// For local backend, we need DBInfo.ID to operate the global autoid allocator.
-	if isLocalBackend(rc.cfg) {
-		dbs, err := tikv.FetchRemoteDBModelsFromTLS(ctx, rc.tls)
+	// For physical backend, we need DBInfo.ID to operate the global autoid allocator.
+	if isPhysicalBackend(rc.cfg) {
+		dbs, err := rc.preInfoGetter.FetchRemoteDBModels(ctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1245,6 +1287,41 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	return exitCh, nil
 }
 
+func getEtcdCliByPDCli(pdCli pd.Client, tls *common.TLS, keyspaceName string) (*clientv3.Client, tidbkv.Storage, error) {
+	if pdCli == nil {
+		log.FromContext(context.Background()).Warn("pd client is nil, return nil", zap.String("keyspaceName", keyspaceName))
+		return nil, nil, nil
+	}
+	urlsWithScheme := pdCli.GetServiceDiscovery().GetServiceURLs()
+	urlsWithoutScheme := make([]string, 0, len(urlsWithScheme))
+	for _, u := range urlsWithScheme {
+		u = strings.TrimPrefix(u, "http://")
+		u = strings.TrimPrefix(u, "https://")
+		urlsWithoutScheme = append(urlsWithoutScheme, u)
+	}
+	kvStore, err := driver.TiKVDriver{}.OpenWithOptions(
+		fmt.Sprintf(
+			"tikv://%s?disableGC=true&keyspaceName=%s",
+			strings.Join(urlsWithoutScheme, ","),
+			keyspaceName,
+		),
+		driver.WithSecurity(tls.ToTiKVSecurityConfig()),
+	)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	etcdCli, err := clientv3.New(clientv3.Config{
+		Endpoints:        urlsWithScheme,
+		AutoSyncInterval: 30 * time.Second,
+		TLS:              tls.TLSConfig(),
+	})
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
+	return etcdCli, kvStore, nil
+}
+
 func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	// output error summary
 	defer rc.outputErrorSummary()
@@ -1284,10 +1361,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	switchBack := false
 	cleanup := false
 	postProgress := func() error { return nil }
-	var kvStore tidbkv.Storage
-	var etcdCli *clientv3.Client
 
-	if isLocalBackend(rc.cfg) {
+	if isPhysicalBackend(rc.cfg) {
 		var (
 			restoreFn pdutil.UndoFunc
 			err       error
@@ -1335,27 +1410,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			u = strings.TrimPrefix(u, "https://")
 			urlsWithoutScheme = append(urlsWithoutScheme, u)
 		}
-		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf(
-				"tikv://%s?disableGC=true&keyspaceName=%s",
-				strings.Join(urlsWithoutScheme, ","), rc.keyspaceName,
-			),
-			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
-		)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		etcdCli, err = clientv3.New(clientv3.Config{
-			Endpoints:        urlsWithScheme,
-			AutoSyncInterval: 30 * time.Second,
-			TLS:              rc.tls.TLSConfig(),
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
-		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
 
-		manager, err := NewChecksumManager(ctx, rc, kvStore)
+		manager, err := NewChecksumManager(ctx, rc, rc.kvstore)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1410,16 +1466,6 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 				logTask.Warn("failed to clean table task metas, you may need to restore them manually", zap.Error(err))
 			}
 		}
-		if kvStore != nil {
-			if err := kvStore.Close(); err != nil {
-				logTask.Warn("failed to close kv store", zap.Error(err))
-			}
-		}
-		if etcdCli != nil {
-			if err := etcdCli.Close(); err != nil {
-				logTask.Warn("failed to close etcd client", zap.Error(err))
-			}
-		}
 	}()
 
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
@@ -1469,7 +1515,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableImporter(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, etcdCli, log.FromContext(ctx))
+			tr, err := NewTableImporter(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), rc.kvstore, rc.etcdCli, log.FromContext(ctx))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1548,12 +1594,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 }
 
 func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ error) {
-	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetServiceDiscovery().GetServiceURLs())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	register := utils.NewTaskRegister(etcdCli, utils.RegisterLightning, fmt.Sprintf("lightning-%s", uuid.New()))
+	register := utils.NewTaskRegister(rc.etcdCli, utils.RegisterLightning, fmt.Sprintf("lightning-%s", uuid.New()))
 
 	undo = func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1561,9 +1602,6 @@ func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ erro
 
 		if err := register.Close(closeCtx); err != nil {
 			log.L().Warn("failed to unregister task", zap.Error(err))
-		}
-		if err := etcdCli.Close(); err != nil {
-			log.L().Warn("failed to close etcd client", zap.Error(err))
 		}
 	}
 	if err := register.RegisterTask(ctx); err != nil {
@@ -1794,6 +1832,14 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 	return nil
 }
 
+func isRemoteBackend(cfg *config.Config) bool {
+	return cfg.TikvImporter.Backend == config.BackendRemote
+}
+
+func isPhysicalBackend(cfg *config.Config) bool {
+	return cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendRemote
+}
+
 func isLocalBackend(cfg *config.Config) bool {
 	return cfg.TikvImporter.Backend == config.BackendLocal
 }
@@ -1848,12 +1894,13 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if rc.status != nil {
 		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
-	if isLocalBackend(rc.cfg) {
+	if isPhysicalBackend(rc.cfg) {
 		pdAddrs := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
-		pdController, err := pdutil.NewPdController(
-			ctx, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
-		)
+			pdController, err := pdutil.NewPdController(
+				ctx, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
+			)
 		if err != nil {
+			log.L().Error("fail to create PD controller", zap.Error(err))
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 		}
 
@@ -1884,9 +1931,11 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				err = rc.localResource(ctx)
-				if err != nil {
-					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
+				if isLocalBackend(rc.cfg) {
+					err = rc.localResource(ctx)
+					if err != nil {
+						return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
+					}
 				}
 				if err := rc.clusterResource(ctx); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
@@ -1917,7 +1966,8 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		}
 		return common.ErrPreCheckFailed.GenWithStackByArgs(rc.checkTemplate.FailedMsg())
 	}
-	return nil
+
+	return rc.TruncateTable(ctx)
 }
 
 // DataCheck checks the data schema which needs #rc.restoreSchema finished.
@@ -1926,6 +1976,10 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 		if err := rc.HasLargeCSV(ctx); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	if err := rc.checkSoureDataSize(ctx); err != nil {
+		return errors.Trace(err)
 	}
 
 	if err := rc.checkCheckpoints(ctx); err != nil {
@@ -1988,6 +2042,7 @@ func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *che
 			Key:               chunk.Key,
 			Checksum:          chunk.Checksum,
 			Pos:               chunk.Chunk.Offset,
+			RealPos:           chunk.Chunk.RealOffset,
 			RowID:             chunk.Chunk.PrevRowIDMax,
 			ColumnPermutation: chunk.ColumnPermutation,
 			EndOffset:         chunk.Chunk.EndOffset,

@@ -73,7 +73,7 @@ const (
 	CheckpointTableNameTask   = "task_v2"
 	CheckpointTableNameTable  = "table_v10"
 	CheckpointTableNameEngine = "engine_v5"
-	CheckpointTableNameChunk  = "chunk_v5"
+	CheckpointTableNameChunk  = "chunk_v6"
 )
 
 const (
@@ -140,6 +140,7 @@ const (
 			should_include_row_id BOOL NOT NULL,
 			end_offset bigint NOT NULL,
 			pos bigint NOT NULL,
+			real_pos bigint NOT NULL,
 			prev_rowid_max bigint NOT NULL,
 			rowid_max bigint NOT NULL,
 			kvc_bytes bigint unsigned NOT NULL DEFAULT 0,
@@ -165,7 +166,7 @@ const (
 	ReadChunkTemplate = `
 		SELECT
 			engine_id, path, offset, type, compression, sort_key, file_size, columns,
-			pos, end_offset, prev_rowid_max, rowid_max,
+			pos, real_pos, end_offset, prev_rowid_max, rowid_max,
 			kvc_bytes, kvc_kvs, kvc_checksum, unix_timestamp(create_time)
 		FROM %s.%s WHERE table_name = ?
 		ORDER BY engine_id, path, offset;`
@@ -178,16 +179,16 @@ const (
 		REPLACE INTO %s.%s (
 				table_name, engine_id,
 				path, offset, type, compression, sort_key, file_size, columns, should_include_row_id,
-				pos, end_offset, prev_rowid_max, rowid_max,
+				pos, real_pos, end_offset, prev_rowid_max, rowid_max,
 				kvc_bytes, kvc_kvs, kvc_checksum, create_time
 			) VALUES (
 				?, ?,
 				?, ?, ?, ?, ?, ?, ?, FALSE,
-				?, ?, ?, ?,
+				?, ?, ?, ?, ?,
 				0, 0, 0, from_unixtime(?)
 			);`
 	UpdateChunkTemplate = `
-		UPDATE %s.%s SET pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?, columns = ?
+		UPDATE %s.%s SET pos = ?, real_pos = ?, prev_rowid_max = ?, kvc_bytes = ?, kvc_kvs = ?, kvc_checksum = ?, columns = ?
 		WHERE (table_name, engine_id, path, offset) = (?, ?, ?, ?);`
 	UpdateTableRebaseTemplate = `
 		UPDATE %s.%s
@@ -295,29 +296,80 @@ func (ccp *ChunkCheckpoint) DeepCopy() *ChunkCheckpoint {
 }
 
 // UnfinishedSize returns the size of the unfinished part of the chunk.
+//
+// For Parquet files:
+// - Use the remaining rows to estimate unfinished size proportionally from total file size.
+// - EndOffset is total rows; Offset is current row progress.
+//
+// For uncompressed files:
+// - Offset and EndOffset are byte offsets, so subtract them directly.
+//
+// For compressed files:
+// - Use RealOffset to track actual bytes read.
 func (ccp *ChunkCheckpoint) UnfinishedSize() int64 {
-	if ccp.FileMeta.Compression == mydump.CompressionNone {
+	switch {
+	case ccp.FileMeta.Type == mydump.SourceTypeParquet:
+		if ccp.Chunk.EndOffset == 0 {
+			return 0
+		}
+		remaining := float64(ccp.Chunk.EndOffset-ccp.Chunk.Offset) / float64(ccp.Chunk.EndOffset)
+		return int64(remaining * float64(ccp.FileMeta.RealSize))
+
+	case ccp.FileMeta.Compression == mydump.CompressionNone:
 		return ccp.Chunk.EndOffset - ccp.Chunk.Offset
+
+	default:
+		return ccp.FileMeta.FileSize - ccp.Chunk.RealOffset
 	}
-	return ccp.FileMeta.FileSize - ccp.Chunk.RealOffset
 }
 
 // TotalSize returns the total size of the chunk.
+//
+// For uncompressed files:
+// - Use byte offset difference between EndOffset and Key.Offset.
+//
+// For compressed and Parquet files:
+// - Files are not split into chunks due to lack of efficient seeking.
+// - We use RealSize directly.
+// - TODO :Adjust this logic if we support chunk-splitting for compressed formats or parquet in the future.
 func (ccp *ChunkCheckpoint) TotalSize() int64 {
-	if ccp.FileMeta.Compression == mydump.CompressionNone {
+	switch {
+	case ccp.FileMeta.Type == mydump.SourceTypeParquet || ccp.FileMeta.Compression != mydump.CompressionNone:
+		return ccp.FileMeta.RealSize
+	default:
 		return ccp.Chunk.EndOffset - ccp.Key.Offset
 	}
-	// TODO: compressed file won't be split into chunks, so using FileSize as TotalSize is ok
-	//  change this when we support split compressed file into chunks
-	return ccp.FileMeta.FileSize
 }
 
 // FinishedSize returns the size of the finished part of the chunk.
+//
+// For Parquet files:
+//   - Offset represents the number of rows processed.
+//   - EndOffset represents the total number of rows in the file.
+//   - Since Parquet files are columnar and not efficiently splittable,
+//     we approximate the finished size by the proportion of rows processed
+//     multiplied by the total file size.
+//
+// For uncompressed files:
+// - Offset and Key.Offset are in bytes, so we simply subtract them.
+//
+// For compressed files (non-parquet):
+// - We use RealOffset to track how many bytes have actually been read.
 func (ccp *ChunkCheckpoint) FinishedSize() int64 {
-	if ccp.FileMeta.Compression == mydump.CompressionNone {
+	switch {
+	case ccp.FileMeta.Type == mydump.SourceTypeParquet:
+		if ccp.Chunk.EndOffset == 0 {
+			return 0
+		}
+		progress := float64(ccp.Chunk.Offset) / float64(ccp.Chunk.EndOffset)
+		return int64(progress * float64(ccp.FileMeta.RealSize))
+
+	case ccp.FileMeta.Compression == mydump.CompressionNone:
 		return ccp.Chunk.Offset - ccp.Key.Offset
+
+	default:
+		return ccp.Chunk.RealOffset - ccp.Key.Offset
 	}
-	return ccp.Chunk.RealOffset - ccp.Key.Offset
 }
 
 // GetKey returns the key of the chunk checkpoint.
@@ -391,6 +443,7 @@ func (cp *TableCheckpoint) CountChunks() int {
 
 type chunkCheckpointDiff struct {
 	pos               int64
+	realPos           int64
 	rowID             int64
 	checksum          verify.KVChecksum
 	columnPermutation []int
@@ -476,6 +529,7 @@ func (cp *TableCheckpoint) Apply(cpd *TableCheckpointDiff) {
 				continue
 			}
 			chunk.Chunk.Offset = diff.pos
+			chunk.Chunk.RealOffset = diff.realPos
 			chunk.Chunk.PrevRowIDMax = diff.rowID
 			chunk.Checksum = diff.checksum
 		}
@@ -524,6 +578,7 @@ type ChunkCheckpointMerger struct {
 	Key               ChunkCheckpointKey
 	Checksum          verify.KVChecksum
 	Pos               int64
+	RealPos           int64
 	RowID             int64
 	ColumnPermutation []int
 	EndOffset         int64 // For test only.
@@ -535,6 +590,7 @@ func (merger *ChunkCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 		chunks: map[ChunkCheckpointKey]chunkCheckpointDiff{
 			merger.Key: {
 				pos:               merger.Pos,
+				realPos:           merger.RealPos,
 				rowID:             merger.RowID,
 				checksum:          merger.Checksum,
 				columnPermutation: merger.ColumnPermutation,
@@ -931,8 +987,8 @@ func (cpdb *MySQLCheckpointsDB) Get(ctx context.Context, tableName string) (*Tab
 			)
 			if err := chunkRows.Scan(
 				&engineID, &value.Key.Path, &value.Key.Offset, &value.FileMeta.Type, &value.FileMeta.Compression,
-				&value.FileMeta.SortKey, &value.FileMeta.FileSize, &colPerm, &value.Chunk.Offset, &value.Chunk.EndOffset,
-				&value.Chunk.PrevRowIDMax, &value.Chunk.RowIDMax, &kvcBytes, &kvcKVs, &kvcChecksum,
+				&value.FileMeta.SortKey, &value.FileMeta.FileSize, &colPerm, &value.Chunk.Offset, &value.Chunk.RealOffset,
+				&value.Chunk.EndOffset, &value.Chunk.PrevRowIDMax, &value.Chunk.RowIDMax, &kvcBytes, &kvcKVs, &kvcChecksum,
 				&value.Timestamp,
 			); err != nil {
 				return errors.Trace(err)
@@ -1015,8 +1071,8 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context,
 				_, err = chunkStmt.ExecContext(
 					c, tableName, engineID,
 					value.Key.Path, value.Key.Offset, value.FileMeta.Type, value.FileMeta.Compression,
-					value.FileMeta.SortKey, value.FileMeta.FileSize, columnPerm, value.Chunk.Offset, value.Chunk.EndOffset,
-					value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax, value.Timestamp,
+					value.FileMeta.SortKey, value.FileMeta.FileSize, columnPerm, value.Chunk.Offset, value.Chunk.RealOffset,
+					value.Chunk.EndOffset, value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax, value.Timestamp,
 				)
 				if err != nil {
 					return errors.Trace(err)
@@ -1102,7 +1158,7 @@ func (cpdb *MySQLCheckpointsDB) Update(taskCtx context.Context, checkpointDiffs 
 					}
 					if _, e := chunkStmt.ExecContext(
 						c,
-						diff.pos, diff.rowID, diff.checksum.SumSize(), diff.checksum.SumKVS(), diff.checksum.Sum(),
+						diff.pos, diff.realPos, diff.rowID, diff.checksum.SumSize(), diff.checksum.SumKVS(), diff.checksum.Sum(),
 						columnPerm, tableName, engineID, key.Path, key.Offset,
 					); e != nil {
 						return errors.Trace(e)
@@ -1394,6 +1450,7 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 				ColumnPermutation: colPerm,
 				Chunk: mydump.Chunk{
 					Offset:       chunkModel.Pos,
+					RealOffset:   chunkModel.RealPos,
 					EndOffset:    chunkModel.EndOffset,
 					PrevRowIDMax: chunkModel.PrevRowidMax,
 					RowIDMax:     chunkModel.RowidMax,
@@ -1439,6 +1496,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 			chunk.SortKey = value.FileMeta.SortKey
 			chunk.FileSize = value.FileMeta.FileSize
 			chunk.Pos = value.Chunk.Offset
+			chunk.RealPos = value.Chunk.RealOffset
 			chunk.EndOffset = value.Chunk.EndOffset
 			chunk.PrevRowidMax = value.Chunk.PrevRowIDMax
 			chunk.RowidMax = value.Chunk.RowIDMax
@@ -1482,6 +1540,7 @@ func (cpdb *FileCheckpointsDB) Update(_ context.Context, checkpointDiffs map[str
 			for key, diff := range engineDiff.chunks {
 				chunkModel := engineModel.Chunks[key.String()]
 				chunkModel.Pos = diff.pos
+				chunkModel.RealPos = diff.realPos
 				chunkModel.PrevRowidMax = diff.rowID
 				chunkModel.KvcBytes = diff.checksum.SumSize()
 				chunkModel.KvcKvs = diff.checksum.SumKVS()
@@ -1836,6 +1895,7 @@ func (cpdb *MySQLCheckpointsDB) DumpChunks(ctx context.Context, writer io.Writer
 			file_size,
 			columns,
 			pos,
+			real_pos,
 			end_offset,
 			prev_rowid_max,
 			rowid_max,

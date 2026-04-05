@@ -53,7 +53,7 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 			backoffWeight = local.DefaultBackoffWeight
 		}
 
-		manager = local.NewTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, rc.taskType)
+		manager = local.NewTiKVChecksumManager(store.GetClient(), store, rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, rc.taskType)
 	} else {
 		manager = local.NewTiDBChecksumExecutor(rc.db)
 	}

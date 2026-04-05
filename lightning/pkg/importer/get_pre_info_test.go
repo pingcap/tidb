@@ -754,7 +754,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	lnConfig := config.NewConfig()
 	lnConfig.TikvImporter.Backend = config.BackendLocal
-	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db, nil)
+	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db, nil, nil)
 	require.NoError(t, err)
 	mock.ExpectQuery("SELECT version()").
 		WillReturnRows(sqlmock.NewRows([]string{"version()"}).AddRow("8.0.11-TiDB-v8.2.0-alpha-256-qweqweqw"))
@@ -763,7 +763,7 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 
 	lnConfig.TikvImporter.Backend = config.BackendTiDB
-	targetGetter, err = NewTargetInfoGetterImpl(lnConfig, db, nil)
+	targetGetter, err = NewTargetInfoGetterImpl(lnConfig, db, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, lnConfig, targetGetter.cfg)
 

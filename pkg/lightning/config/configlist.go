@@ -47,15 +47,17 @@ func NewConfigList() *List {
 // Push adds a configuration to the end of the list. The field `cfg.TaskID` will
 // be modified to include a unique ID to identify this task.
 func (cl *List) Push(cfg *Config) {
-	id := time.Now().UnixNano()
-	cl.cond.L.Lock()
-	defer cl.cond.L.Unlock()
-	if id <= cl.lastID {
-		id = cl.lastID + 1
+	if cfg.TaskID == 0 {
+		id := time.Now().UnixNano()
+		cl.cond.L.Lock()
+		defer cl.cond.L.Unlock()
+		if id <= cl.lastID {
+			id = cl.lastID + 1
+		}
+		cfg.TaskID = id
+		cl.lastID = id
 	}
-	cfg.TaskID = id
-	cl.lastID = id
-	cl.taskIDMap[id] = cl.nodes.PushBack(cfg)
+	cl.taskIDMap[cfg.TaskID] = cl.nodes.PushBack(cfg)
 	cl.cond.Broadcast()
 }
 

@@ -239,10 +239,11 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 	conflictErrRemain := atomic.NewInt64(cfg.Conflict.Threshold)
 	conflictRecordsRemain := atomic.NewInt64(cfg.Conflict.MaxRecordRows)
 	em := &ErrorManager{
-		taskID:                cfg.TaskID,
-		configError:           &cfg.App.MaxError,
-		remainingError:        cfg.App.MaxError,
-		conflictV1Enabled:     cfg.TikvImporter.Backend == config.BackendLocal && cfg.Conflict.Strategy != config.NoneOnDup,
+		taskID:         cfg.TaskID,
+		configError:    &cfg.App.MaxError,
+		remainingError: cfg.App.MaxError,
+		conflictV1Enabled: (cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendRemote) &&
+			cfg.Conflict.Strategy != config.NoneOnDup,
 		configConflict:        &cfg.Conflict,
 		conflictErrRemain:     conflictErrRemain,
 		conflictRecordsRemain: conflictRecordsRemain,
@@ -250,7 +251,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 		recordErrorOnce:       atomic.NewBool(false),
 	}
 	switch cfg.TikvImporter.Backend {
-	case config.BackendLocal:
+	case config.BackendLocal, config.BackendRemote:
 		if cfg.Conflict.PrecheckConflictBeforeImport && cfg.Conflict.Strategy != config.NoneOnDup {
 			em.conflictV2Enabled = true
 		}

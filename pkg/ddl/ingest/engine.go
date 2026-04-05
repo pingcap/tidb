@@ -17,12 +17,14 @@ package ingest
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -51,6 +53,7 @@ type engineInfo struct {
 	indexID      int64
 	unique       bool
 	openedEngine *backend.OpenedEngine
+	closedEngine *backend.ClosedEngine
 
 	uuid        uuid.UUID
 	cfg         *backend.EngineConfig
@@ -125,7 +128,37 @@ func (ei *engineInfo) Close(cleanup bool) {
 			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
 				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		}
+		closedEngine = nil
 	}
+	ei.closedEngine = closedEngine
+}
+
+func (ei *engineInfo) Import() error {
+	if ei.closedEngine == nil {
+		return nil
+	}
+	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
+	regionSplitKeys := int64(lightning.SplitRegionKeys)
+	if err := ei.closedEngine.Import(ei.ctx, regionSplitSize, regionSplitKeys); err != nil {
+		logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+		return err
+	}
+	return nil
+}
+
+func (ei *engineInfo) Cleanup() {
+	if ei.closedEngine == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := ei.closedEngine.Cleanup(ctx)
+	if err != nil {
+		logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+	}
+	ei.closedEngine = nil
 }
 
 // writerContext is used to keep a lightning local writer for each backfill worker.

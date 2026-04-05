@@ -1059,6 +1059,31 @@ func (m *dupeDetector) collectDuplicateRowsFromTiKV(
 	return errors.Trace(g.Wait())
 }
 
+// NewDupeController creates a new DupeController.
+func NewDupeController(
+	dupeConcurrency int,
+	errorMgr *errormanager.ErrorManager,
+	splitCli split.SplitClient,
+	tikvCli *tikv.KVStore,
+	tikvCodec tikv.Codec,
+	duplicateDB *pebble.DB,
+	keyAdapter common.KeyAdapter,
+	importClientFactory ImportClientFactory,
+	needCollectRemoteDupRows bool,
+) *DupeController {
+	return &DupeController{
+		splitCli:                 splitCli,
+		tikvCli:                  tikvCli,
+		tikvCodec:                tikvCodec,
+		errorMgr:                 errorMgr,
+		dupeConcurrency:          dupeConcurrency,
+		duplicateDB:              duplicateDB,
+		keyAdapter:               keyAdapter,
+		importClientFactory:      importClientFactory,
+		needCollectRemoteDupRows: needCollectRemoteDupRows,
+	}
+}
+
 // DupeController is used to collect duplicate keys from local and remote data source and resolve duplication.
 type DupeController struct {
 	splitCli  split.SplitClient
@@ -1073,6 +1098,8 @@ type DupeController struct {
 	importClientFactory ImportClientFactory
 	resourceGroupName   string
 	taskType            string
+
+	needCollectRemoteDupRows bool
 }
 
 // CollectLocalDuplicateRows collect duplicate keys from local db. We will store the duplicate keys which
@@ -1109,6 +1136,10 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 		logger.End(zap.ErrorLevel, err)
 	}()
 
+	if !local.needCollectRemoteDupRows {
+		logger.Warn("[detect-dupe] skipping remote duplicate detection due to configuration")
+		return false, nil
+	}
 	duplicateManager, err := NewDupeDetector(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
 		local.errorMgr, opts, local.dupeConcurrency, log.FromContext(ctx), local.resourceGroupName, local.taskType)
 	if err != nil {

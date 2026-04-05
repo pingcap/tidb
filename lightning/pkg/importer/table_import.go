@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -96,6 +97,7 @@ func NewTableImporter(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+
 	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
@@ -159,7 +161,7 @@ func (tr *TableImporter) importTable(
 		versionInfo := version.ParseServerInfo(versionStr)
 
 		// "show table next_row_id" is only available after tidb v4.0.0
-		if versionInfo.ServerVersion.Major >= 4 && isLocalBackend(rc.cfg) {
+		if versionInfo.ServerVersion.Major >= 4 && isPhysicalBackend(rc.cfg) {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
 				return false, err
@@ -442,7 +444,11 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 
 	handleDataEngineThisRun := false
 	idxEngineCfg := &backend.EngineConfig{
-		TableInfo: tr.tableInfo,
+		EngineID:          common.IndexEngineID,
+		TaskID:            rc.cfg.TaskID,
+		TableInfo:         tr.tableInfo,
+		EstimatedDataSize: estimateDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
+		ValidCheckpoint:   isValidEngineCp(indexEngineCp),
 	}
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
 		handleDataEngineThisRun = true
@@ -631,7 +637,11 @@ func (tr *TableImporter) preprocessEngine(
 	// all data has finished written, we can close the engine directly.
 	if cp.Status >= checkpoints.CheckpointStatusAllWritten {
 		engineCfg := &backend.EngineConfig{
-			TableInfo: tr.tableInfo,
+			EngineID:          engineID,
+			TaskID:            rc.cfg.TaskID,
+			TableInfo:         tr.tableInfo,
+			EstimatedDataSize: estimateDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
+			ValidCheckpoint:   isValidEngineCp(cp),
 		}
 		closedEngine, err := rc.engineMgr.UnsafeCloseEngine(ctx, engineCfg, tr.tableName, engineID)
 		// If any error occurred, recycle worker immediately
@@ -666,6 +676,10 @@ func (tr *TableImporter) preprocessEngine(
 		Local: backend.LocalEngineConfig{
 			BlockSize: int(rc.cfg.TikvImporter.BlockSize),
 		},
+		EngineID:          engineID,
+		TaskID:            rc.cfg.TaskID,
+		EstimatedDataSize: estimateDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
+		ValidCheckpoint:   isValidEngineCp(cp),
 	}
 	if !tr.tableMeta.IsRowOrdered {
 		dataEngineCfg.Local.Compact = true
@@ -872,10 +886,10 @@ ChunkLoop:
 		return nil
 	}
 
-	// in local mode, this check-point make no sense, because we don't do flush now,
+	// in physical mode, this check-point make no sense, because we don't do flush now,
 	// so there may be data lose if exit at here. So we don't write this checkpoint
 	// here like other mode.
-	if !isLocalBackend(rc.cfg) {
+	if !isPhysicalBackend(rc.cfg) {
 		if saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusAllWritten); saveCpErr != nil {
 			return nil, errors.Trace(firstErr(err, saveCpErr))
 		}
@@ -898,7 +912,7 @@ ChunkLoop:
 	closedDataEngine, err := dataEngine.Close(ctx)
 	// For local backend, if checkpoint is enabled, we must flush index engine to avoid data loss.
 	// this flush action impact up to 10% of the performance, so we only do it if necessary.
-	if err == nil && rc.cfg.Checkpoint.Enable && isLocalBackend(rc.cfg) {
+	if err == nil && rc.cfg.Checkpoint.Enable && isPhysicalBackend(rc.cfg) {
 		if err = indexEngine.Flush(ctx); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -968,7 +982,7 @@ func (tr *TableImporter) postProcess(
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			if isLocalBackend(rc.cfg) {
+			if isPhysicalBackend(rc.cfg) {
 				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
 				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
 				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
@@ -1029,8 +1043,14 @@ func (tr *TableImporter) postProcess(
 		// if we came here, it must be a local backend.
 		// todo: remove this cast after we refactor the backend interface. Physical mode is so different, we shouldn't
 		// try to abstract it with logical mode.
-		localBackend := rc.backend.(*local.Backend)
-		dupeController := localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		var dupeController *local.DupeController
+		if rc.cfg.TikvImporter.Backend == config.BackendLocal {
+			localBackend := rc.backend.(*local.Backend)
+			dupeController = localBackend.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		} else {
+			remoteBakcned := rc.backend.(*remote.Backend)
+			dupeController = remoteBakcned.GetDupeController(rc.cfg.TikvImporter.RangeConcurrency*2, rc.errorMgr)
+		}
 		hasDupe := false
 		if rc.cfg.Conflict.Strategy != config.NoneOnDup {
 			opts := &encode.SessionOptions{
@@ -1360,6 +1380,11 @@ func (tr *TableImporter) compareChecksum(remoteChecksum *local.RemoteChecksum, l
 }
 
 func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
+	// Add a timeout to implement async analyze.
+	// If the timeout is reached, the analyze will continue in the background.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
 	exec := common.SQLWithRetry{
 		DB:     db,
@@ -1790,4 +1815,45 @@ func (tr *TableImporter) preDeduplicate(
 		ctx, tr.logger, tr.tableName, secondConflictPath, -1, err.Error(), rowID[1], "<unknown-data>",
 	)
 	return err
+}
+
+func estimateDataSize(tblMeta *mydump.MDTableMeta, tblInfo *checkpoints.TidbTableInfo, isIndexEngine bool, logger log.Logger) int64 {
+	if tblMeta == nil || tblInfo == nil {
+		// if we can't get table meta or table info, we can't estimate data size.
+		return 0
+	}
+	if isIndexEngine {
+		if len(tblInfo.Core.Indices) == 0 || (tblInfo.Core.IsCommonHandle && len(tblInfo.Core.Indices) == 1) {
+			return 0
+		}
+	}
+
+	totalSize := int64(0)
+	for _, dataFile := range tblMeta.DataFiles {
+		totalSize += dataFile.FileMeta.RealSize
+	}
+	if tblMeta.IndexRatio > 1 {
+		totalSize = int64(float64(totalSize) * tblMeta.IndexRatio)
+	}
+	logger.Info("estimate data size",
+		zap.Int64("estimatedDataSize", totalSize),
+		zap.String("db", tblInfo.DB),
+		zap.String("table", tblInfo.Name),
+		zap.Bool("IsIndexEngine", isIndexEngine),
+	)
+	return totalSize
+}
+
+func isValidEngineCp(cp *checkpoints.EngineCheckpoint) bool {
+	if cp.Status <= checkpoints.CheckpointStatusMaxInvalid ||
+		cp.Status >= checkpoints.CheckpointStatusImported {
+		return false
+	}
+
+	for _, chunk := range cp.Chunks {
+		if chunk.FinishedSize() > 0 {
+			return true
+		}
+	}
+	return false
 }

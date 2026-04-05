@@ -16,13 +16,21 @@ package importer
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"sync"
 
+	"github.com/cznic/mathutil"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -41,6 +49,13 @@ const (
 
 func (rc *Controller) isSourceInLocal() bool {
 	return strings.HasPrefix(rc.store.URI(), storage.LocalURIPrefix)
+}
+
+func (rc *Controller) checkSoureDataSize(ctx context.Context) error {
+	if rc.cfg.Mydumper.MaxSourceDataSize == 0 {
+		return nil
+	}
+	return rc.doPreCheckOnItem(ctx, precheck.CheckSourceDataSize)
 }
 
 func (rc *Controller) doPreCheckOnItem(ctx context.Context, checkItemID precheck.CheckItemID) error {
@@ -158,4 +173,179 @@ func (rc *Controller) checkCDCPiTR(ctx context.Context) error {
 		return nil
 	}
 	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetUsingCDCPITR)
+}
+
+// TruncateTable Deleting all records from the table and then importing into the remote backend may cause data overlap.
+// To prevent this, truncate the table in advance.
+// Truncating the table assigns a new table ID, ensuring no overlap occurs.
+func (rc *Controller) TruncateTable(ctx context.Context) error {
+	if !rc.shouldTruncateTables() {
+		return nil
+	}
+
+	logger := log.FromContext(ctx)
+	if rc.cfg.Checkpoint.Enable {
+		shouldSkip, err := rc.shouldSkipTruncateByCheckpoint(ctx, logger)
+		if err != nil {
+			return err
+		}
+		if shouldSkip {
+			return nil
+		}
+	}
+
+	task := logger.Begin(zap.InfoLevel, "truncating tables to avoid data overlap")
+	truncatedTables, err := rc.performTableTruncation(ctx)
+	if err != nil {
+		task.End(zap.ErrorLevel, err)
+		return errors.Annotate(err, "failed to truncate table")
+	}
+
+	if len(truncatedTables) == 0 {
+		task.End(zap.InfoLevel, nil, zap.Int("tables", len(truncatedTables)))
+		return nil
+	}
+
+	if err := rc.updateTruncatedTableIDs(ctx, truncatedTables); err != nil {
+		task.End(zap.ErrorLevel, err)
+		return err
+	}
+
+	task.End(zap.InfoLevel, nil, zap.Int("tables", len(truncatedTables)))
+	return nil
+}
+
+// shouldTruncateTables checks if table truncation should be performed based on configuration
+func (rc *Controller) shouldTruncateTables() bool {
+	return rc.cfg.TikvImporter.Backend == config.BackendRemote && !rc.cfg.TikvImporter.ParallelImport
+}
+
+// shouldSkipTruncateByCheckpoint checks if truncation should be skipped due to existing checkpoints
+func (rc *Controller) shouldSkipTruncateByCheckpoint(ctx context.Context, logger log.Logger) (bool, error) {
+	task, err := rc.checkpointsDB.TaskCheckpoint(ctx)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if task != nil {
+		// If there are existing checkpoints, the table has already been truncated.
+		logger.Info("skipping truncating tables due to existing checkpoints")
+		return true, nil
+	}
+	return false, nil
+}
+
+// performTableTruncation executes the actual table truncation with concurrent workers
+func (rc *Controller) performTableTruncation(ctx context.Context) (map[string]bool, error) {
+	tableCount := rc.countTotalTables()
+	// Use up to 4 concurrent workers to truncate tables.
+	// If there are too many tables, using too many connections to truncate tables may overload the TiDB server.
+	concurrency := mathutil.Min(tableCount, 4)
+
+	ch := make(chan string)
+	eg, gCtx := errgroup.WithContext(ctx)
+
+	// Record which tables were actually truncated
+	truncatedTables := make(map[string]bool)
+	var truncatedTablesMutex sync.Mutex
+
+	// Start worker goroutines to consume table names
+	for i := 0; i < concurrency; i++ {
+		eg.Go(func() error {
+			return rc.truncateWorker(gCtx, ch, truncatedTables, &truncatedTablesMutex)
+		})
+	}
+
+	// Start a separate goroutine to send table names to avoid blocking at sending when all workers return error.
+	eg.Go(func() error {
+		return rc.sendTableNamesForTruncation(gCtx, ch)
+	})
+
+	return truncatedTables, eg.Wait()
+}
+
+// countTotalTables counts the total number of tables across all databases
+func (rc *Controller) countTotalTables() int {
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		tableCount += len(db.Tables)
+	}
+	return tableCount
+}
+
+// truncateWorker handles the actual truncation of tables in a worker goroutine
+func (rc *Controller) truncateWorker(ctx context.Context, ch <-chan string, truncatedTables map[string]bool, mutex *sync.Mutex) error {
+	logger := log.FromContext(ctx)
+	for {
+		select {
+		case tblName, ok := <-ch:
+			if !ok {
+				return nil // channel closed
+			}
+			_, err := rc.db.Exec(fmt.Sprintf("TRUNCATE TABLE %s", tblName))
+			if err != nil {
+				logger.Error("failed to truncate table", zap.String("table", tblName), zap.Error(err))
+				return errors.Trace(err)
+			}
+			// Record the truncated table
+			mutex.Lock()
+			truncatedTables[tblName] = true
+			mutex.Unlock()
+
+			logger.Info("truncated table", zap.String("table", tblName))
+		case <-ctx.Done():
+			return errors.Wrap(ctx.Err(), "context canceled when truncating tables")
+		}
+	}
+}
+
+// sendTableNamesForTruncation sends table names to the channel for worker goroutines to process
+func (rc *Controller) sendTableNamesForTruncation(ctx context.Context, ch chan<- string) error {
+	defer close(ch)
+	for _, dbMeta := range rc.dbMetas {
+		for _, tableMeta := range dbMeta.Tables {
+			tableName := common.UniqueTable(dbMeta.Name, tableMeta.Name)
+			select {
+			case ch <- tableName:
+			case <-ctx.Done():
+				return errors.Wrap(ctx.Err(), "context canceled when truncating tables")
+			}
+		}
+	}
+	return nil
+}
+
+// updateTruncatedTableIDs updates the table IDs for tables that were actually truncated
+func (rc *Controller) updateTruncatedTableIDs(ctx context.Context, truncatedTables map[string]bool) error {
+	for _, dbInfo := range rc.dbInfos {
+		if len(dbInfo.Tables) == 0 {
+			continue
+		}
+
+		tables, err := rc.preInfoGetter.FetchRemoteTableModels(ctx, dbInfo.Name)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		tableMap := make(map[string]*model.TableInfo, len(tables))
+		for _, table := range tables {
+			tableMap[table.Name.L] = table
+		}
+
+		for _, tableInfo := range dbInfo.Tables {
+			// Only update ID if this table was actually truncated
+			tableName := common.UniqueTable(dbInfo.Name, tableInfo.Name)
+			if !truncatedTables[tableName] {
+				continue
+			}
+
+			tInfo, exist := tableMap[strings.ToLower(tableInfo.Name)]
+			if !exist {
+				return errors.NotFoundf("table %s.%s", dbInfo.Name, tableInfo.Name)
+			}
+			tableInfo.ID = tInfo.ID
+			tableInfo.Desired = tInfo
+			tableInfo.Core = tInfo
+		}
+	}
+	return nil
 }

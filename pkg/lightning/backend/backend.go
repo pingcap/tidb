@@ -88,10 +88,14 @@ type LocalWriterConfig struct {
 
 // EngineConfig defines configuration used for open engine
 type EngineConfig struct {
+	// EngineID is the ID of the engine
+	EngineID int32
 	// TableInfo is the corresponding tidb table info
 	TableInfo *checkpoints.TidbTableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
+	// TaskID is the ID of the current import job, it shounld not change when retrying
+	TaskID int64
 	// local backend external engine specified configuration
 	External *ExternalEngineConfig
 	// KeepSortDir indicates whether to keep the temporary sort directory
@@ -103,6 +107,10 @@ type EngineConfig struct {
 	// - engineManager.openEngine
 	// - engineManager.closeEngine only for an external engine
 	TS uint64
+	// EstimatedDataSize is the estimated data size for this engine
+	EstimatedDataSize int64
+	// ValidCheckpoint indicates whether the checkpoint is valid
+	ValidCheckpoint bool
 }
 
 // LocalEngineConfig is the configuration used for local backend in OpenEngine.

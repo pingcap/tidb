@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
+	kv2 "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -50,6 +51,7 @@ func NewPrecheckItemBuilderFromConfig(
 	ctx context.Context,
 	cfg *config.Config,
 	pdHTTPCli pdhttp.Client,
+	kvstore kv2.Storage,
 	opts ...ropts.PrecheckItemBuilderOption,
 ) (*PrecheckItemBuilder, error) {
 	var gerr error
@@ -57,12 +59,12 @@ func NewPrecheckItemBuilderFromConfig(
 	for _, o := range opts {
 		o(builderCfg)
 	}
-	builderCfg.MDLoaderSetupOptions = append(builderCfg.MDLoaderSetupOptions, mydump.WithScanFileConcurrency(cfg.App.RegionConcurrency*2))
+	builderCfg.MDLoaderSetupOptions = append(builderCfg.MDLoaderSetupOptions, mydump.WithScanFileConcurrency(min(cfg.App.RegionConcurrency*2, cfg.App.MaxScanFileConcurrency)))
 	targetDB, err := DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdHTTPCli)
+	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdHTTPCli, kvstore)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -140,6 +142,8 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (p
 		return NewTableEmptyCheckItem(b.cfg, b.preInfoGetter, b.dbMetas, b.checkpointsDB), nil
 	case precheck.CheckSourceSchemaValid:
 		return NewSchemaCheckItem(b.cfg, b.preInfoGetter, b.dbMetas, b.checkpointsDB), nil
+	case precheck.CheckSourceDataSize:
+		return NewSourceDataSizeCheckItem(b.cfg, b.preInfoGetter), nil
 	case precheck.CheckCheckpoints:
 		return NewCheckpointCheckItem(b.cfg, b.preInfoGetter, b.dbMetas, b.checkpointsDB), nil
 	case precheck.CheckCSVHeader:

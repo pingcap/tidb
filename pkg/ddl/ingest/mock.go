@@ -77,6 +77,18 @@ func (m *MockBackendCtx) FinishAndUnregisterEngines(_ UnregisterOpt) error {
 	return nil
 }
 
+// FinishAndImport implements BackendCtx interface.
+func (*MockBackendCtx) FinishAndImport(_ UnregisterOpt) error {
+	logutil.DDLIngestLogger().Info("mock backend ctx import")
+	return nil
+}
+
+// Cleanup implements BackendCtx interface.
+func (*MockBackendCtx) Cleanup() error {
+	logutil.DDLIngestLogger().Info("mock backend ctx cleanup")
+	return nil
+}
+
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
 func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
 	logutil.DDLIngestLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))

@@ -276,6 +276,7 @@ func NewTargetInfoGetter(
 	tls *common.TLS,
 	db *sql.DB,
 	pdHTTPCli pdhttp.Client,
+	_ kv.Storage,
 ) backend.TargetInfoGetter {
 	return &targetInfoGetter{
 		tls:       tls,
@@ -599,12 +600,6 @@ func NewBackend(
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 
-	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
-	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
-	}
-
 	if config.KeyspaceName == "" {
 		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli)
 	} else {
@@ -612,6 +607,12 @@ func NewBackend(
 		if err != nil {
 			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
 		}
+	}
+
+	// The following copies tikv.NewTxnClient without creating yet another pdClient.
+	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
+	if err != nil {
+		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 
 	tikvCodec := pdCliForTiKV.GetCodec()

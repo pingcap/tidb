@@ -605,6 +605,50 @@ func (ci *localTempKVDirCheckItem) Check(ctx context.Context) (*precheck.CheckRe
 	return theResult, nil
 }
 
+type soureceDataSizeCheckItem struct {
+	cfg           *config.Config
+	preInfoGetter PreImportInfoGetter
+}
+
+// NewSourceDataSizeCheckItem creates a new soureceDataSizeCheckItem.
+func NewSourceDataSizeCheckItem(cfg *config.Config, preInfoGetter PreImportInfoGetter) precheck.Checker {
+	return &soureceDataSizeCheckItem{
+		cfg:           cfg,
+		preInfoGetter: preInfoGetter,
+	}
+}
+
+// GetCheckItemID implements Checker.GetCheckItemID.
+func (ci *soureceDataSizeCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckSourceDataSize
+}
+
+// Check implements Checker.Check.
+func (ci *soureceDataSizeCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	estimatedDataSizeResult, err := ci.preInfoGetter.EstimateSourceDataSize(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	estimatedDataSize := estimatedDataSizeResult.SizeWithoutIndex
+	theResult := &precheck.CheckResult{
+		Item:     ci.GetCheckItemID(),
+		Severity: precheck.Critical,
+		Passed:   true,
+		Message:  "the source file size is valid",
+	}
+
+	if estimatedDataSize > ci.cfg.Mydumper.MaxSourceDataSize {
+		theResult.Passed = false
+		theResult.Message = fmt.Sprintf("Source data size %s is too large, limit is %s. Set a spending limit to import a maximum of %s data at once.",
+			units.BytesSize(float64(estimatedDataSize)),
+			units.BytesSize(float64(ci.cfg.Mydumper.MaxSourceDataSize)),
+			units.BytesSize(float64(ci.cfg.Mydumper.MaxSourceDataSizeForVip)),
+		)
+	}
+
+	return theResult, nil
+}
+
 type checkpointCheckItem struct {
 	cfg           *config.Config
 	preInfoGetter PreImportInfoGetter
@@ -932,7 +976,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 
 	info, ok := dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if !ok {
-		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't exists,"+
+		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't exists, "+
 			"please give a schema file in source dir or create table manually", tableInfo.DB, tableInfo.Name))
 		return msgs, nil
 	}
@@ -1043,8 +1087,8 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 		// so the last several columns either can be ignored or has a default value.
 		for i := len(row); i < colCountFromTiDB; i++ {
 			if _, ok := defaultCols[core.Columns[i].Name.L]; !ok {
-				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns,"+
-					"and data file has %d columns, but column %s are missing the default value,"+
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns, "+
+					"and data file has %d columns, but column %s is missing the default value, "+
 					"please give column a default value to skip this check",
 					tableInfo.DB, tableInfo.Name, colCountFromTiDB, len(row), core.Columns[i].Name.L))
 			}
@@ -1064,7 +1108,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 			// tidb's column is ignored
 			// we need ensure this column has the default value.
 			if _, hasDefault := defaultCols[col.Name.L]; !hasDefault {
-				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored,"+
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored, "+
 					"because it doesn't have a default value, please set tables.ignoreColumns properly",
 					tableInfo.DB, tableInfo.Name, col.Name.L))
 			}

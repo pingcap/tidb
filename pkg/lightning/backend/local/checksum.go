@@ -283,10 +283,10 @@ type TiKVChecksumManager struct {
 var _ ChecksumManager = &TiKVChecksumManager{}
 
 // NewTiKVChecksumManager return a new tikv checksum manager
-func NewTiKVChecksumManager(client kv.Client, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName, explicitRequestSourceType string) *TiKVChecksumManager {
+func NewTiKVChecksumManager(client kv.Client, kvStore kv.Storage, pdClient pd.Client, distSQLScanConcurrency uint, backoffWeight int, resourceGroupName, explicitRequestSourceType string) *TiKVChecksumManager {
 	return &TiKVChecksumManager{
 		client:                    client,
-		manager:                   newGCTTLManager(pdClient),
+		manager:                   newGCTTLManager(pdClient, kvStore),
 		distSQLScanConcurrency:    distSQLScanConcurrency,
 		backoffWeight:             backoffWeight,
 		resourceGroupName:         resourceGroupName,
@@ -407,6 +407,7 @@ func (m *gcTTLManager) Pop() any {
 
 type gcTTLManager struct {
 	lock     sync.Mutex
+	kvStore  kv.Storage
 	pdClient pd.Client
 	// tableGCSafeTS is a binary heap that stored active checksum jobs GC safe point ts
 	tableGCSafeTS []*tableChecksumTS
@@ -416,8 +417,9 @@ type gcTTLManager struct {
 	started atomic.Bool
 }
 
-func newGCTTLManager(pdClient pd.Client) gcTTLManager {
+func newGCTTLManager(pdClient pd.Client, kvStore kv.Storage) gcTTLManager {
 	return gcTTLManager{
+		kvStore:   kvStore,
 		pdClient:  pdClient,
 		serviceID: fmt.Sprintf("lightning-%s", uuid.New()),
 	}
@@ -482,8 +484,7 @@ func (m *gcTTLManager) doUpdateGCTTL(ctx context.Context, ts uint64) error {
 		zap.Uint64("currnet_ts", ts))
 	var err error
 	if ts > 0 {
-		_, err = m.pdClient.UpdateServiceGCSafePoint(ctx,
-			m.serviceID, serviceSafePointTTL, ts)
+		_, err = m.pdClient.UpdateServiceGCSafePoint(ctx, m.serviceID, serviceSafePointTTL, ts)
 	}
 	return err
 }
