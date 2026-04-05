@@ -687,7 +687,7 @@ func (p *MVDeltaMerge) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfInt*4 + size.SizeOfSlice*3
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfInt*4 + size.SizeOfSlice*5
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
 	sum += int64(cap(p.FullUpdateKeyOff2IdxOff)) * size.SizeOfInt
