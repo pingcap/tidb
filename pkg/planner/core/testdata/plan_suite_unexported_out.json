@@ -148,7 +148,7 @@
       "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a))->Limit->Projection",
       "DataScan(t)->Aggr(count(test.t.b),firstrow(test.t.a),firstrow(test.t.c))->TopN([test.t.c],0,5)->Projection",
       "Join{DataScan(t)->DataScan(s)}->TopN([test.t.a],0,5)->Projection",
-      "Join{DataScan(t)->DataScan(s)}->Limit->Projection",
+      "Join{DataScan(t)->Limit->DataScan(s)->Limit}->Limit->Projection",
       "DataScan(t)->Projection->TopN([Column#14 true],0,1)->Projection",
       "Join{DataScan(t)->TopN([test.t.a],0,5)->DataScan(s)}(test.t.a,test.t.a)->Sort->Projection",
       "Join{DataScan(t)->TopN([test.t.a],5,5)->DataScan(s)}(test.t.a,test.t.a)->Sort->Projection",

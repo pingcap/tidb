@@ -510,6 +510,27 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logica
 	case base.RightOuterJoin:
 		p.Children()[1], topnEliminated = p.pushDownTopNToChild(topN, 1)
 		p.Children()[0] = p.Children()[0].PushDownTopN(nil)
+	case base.InnerJoin:
+		if p.canPushLimitDownToCartesianChildren(topN) {
+			limitCount, carry := bits.Add64(topN.Count, topN.Offset, 0)
+			if carry > 0 {
+				limitCount = math.MaxUint64
+			}
+			leftLimit := LogicalTopN{
+				Count:            limitCount,
+				Offset:           0,
+				PreferLimitToCop: topN.PreferLimitToCop,
+			}.Init(topN.SCtx(), topN.QueryBlockOffset())
+			rightLimit := LogicalTopN{
+				Count:            limitCount,
+				Offset:           0,
+				PreferLimitToCop: topN.PreferLimitToCop,
+			}.Init(topN.SCtx(), topN.QueryBlockOffset())
+			p.Children()[0] = p.Children()[0].PushDownTopN(leftLimit)
+			p.Children()[1] = p.Children()[1].PushDownTopN(rightLimit)
+			return topN.AttachChild(p.Self())
+		}
+		return p.BaseLogicalPlan.PushDownTopN(topN)
 	default:
 		return p.BaseLogicalPlan.PushDownTopN(topN)
 	}
@@ -529,6 +550,20 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logica
 		return topN.AttachChild(p.Self())
 	}
 	return p.Self()
+}
+
+func (p *LogicalJoin) canPushLimitDownToCartesianChildren(topN *LogicalTopN) bool {
+	if topN == nil || !topN.IsLimit() {
+		return false
+	}
+	if _, isApply := p.Self().(*LogicalApply); isApply {
+		return false
+	}
+	return len(p.EqualConditions) == 0 &&
+		len(p.NAEQConditions) == 0 &&
+		len(p.LeftConditions) == 0 &&
+		len(p.RightConditions) == 0 &&
+		len(p.OtherConditions) == 0
 }
 
 // DeriveTopN inherits the BaseLogicalPlan.LogicalPlan.<6th> implementation.
