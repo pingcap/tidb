@@ -369,6 +369,92 @@ func TestBuildMLogDeltaSelectTiFlashHint(t *testing.T) {
 	}
 }
 
+func TestBuildMLogDeltaSelectCommitTSWindow(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(1111)
+	mlogID := int64(2222)
+	mvID := int64(3333)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res.MergeSourceSelect)
+	require.NotNil(t, res.MergeSourceSelect.From)
+	require.NotNil(t, res.MergeSourceSelect.From.TableRefs)
+
+	deltaSrc, ok := res.MergeSourceSelect.From.TableRefs.Left.(*ast.TableSource)
+	require.True(t, ok)
+	deltaSel, ok := deltaSrc.Source.(*ast.SelectStmt)
+	require.True(t, ok)
+	require.NotNil(t, deltaSel.Where)
+
+	predicates := collectAndPredicates(t, deltaSel.Where)
+	tsValueByOp := make(map[opcode.Op]any, 2)
+	for _, pred := range predicates {
+		left, ok := pred.L.(*ast.ColumnNameExpr)
+		if !ok {
+			continue
+		}
+		if left.Name.Name.L != model.ExtraCommitTSName.L {
+			continue
+		}
+		valueExpr, ok := pred.R.(ast.ValueExpr)
+		require.True(t, ok)
+		tsValueByOp[pred.Op] = valueExpr.GetValue()
+	}
+
+	require.EqualValues(t, 10, tsValueByOp[opcode.GT])
+	require.EqualValues(t, 20, tsValueByOp[opcode.LE])
+}
+
 func TestBuildMergeSourceSelectJoinOperatorByMVNullability(t *testing.T) {
 	sctx := core.MockContext()
 
