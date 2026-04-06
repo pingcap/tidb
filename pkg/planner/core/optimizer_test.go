@@ -15,6 +15,7 @@
 package core
 
 import (
+	"math"
 	"math/bits"
 	"reflect"
 	"strings"
