@@ -134,7 +134,6 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context, se sessionctx.
 
 func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) error {
 	// we need read/put/delete/list privileges on global sort store.
-	// only support S3 now.
 	target := "cloud storage"
 	cloudStorageURL, err3 := objstore.ParseRawURL(e.Plan.CloudStorageURI)
 	if err3 != nil {
@@ -145,8 +144,7 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
-	if b.GetS3() == nil && b.GetGcs() == nil {
-		// we only support S3 now, but in test we are using GCS.
+	if !isSupportedCloudStorageBackend(b) {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("unsupported cloud storage uri scheme: " + cloudStorageURL.Scheme)
 	}
 

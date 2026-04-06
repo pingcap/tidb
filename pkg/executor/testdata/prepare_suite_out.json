@@ -19,7 +19,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  1->Column#1, 2->Column#2",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -40,7 +40,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  1->Column#1, abc->Column#2",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -61,7 +61,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  10->Column#1, cba->Column#2",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -82,9 +82,9 @@
               }
             ],
             "Plan": [
-              "IndexReader_10 10.00 root  index:Projection_6",
-              "└─Projection_6 10.00 cop[tikv]  test.t1.a",
-              "  └─IndexRangeScan_9 10.00 cop[tikv] table:t1, index:b(b, a) range:[3,3], keep order:false, stats:pseudo"
+              "IndexReader_9 10.00 root  index:Projection_5",
+              "└─Projection_5 10.00 cop[tikv]  test.t1.a",
+              "  └─IndexRangeScan_8 10.00 cop[tikv] table:t1, index:b(b, a) range:[3,3], keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -100,9 +100,9 @@
               }
             ],
             "Plan": [
-              "IndexReader_10 10.00 root  index:Projection_6",
-              "└─Projection_6 10.00 cop[tikv]  test.t1.a",
-              "  └─IndexRangeScan_9 10.00 cop[tikv] table:t1, index:b(b, a) range:[2,2], keep order:false, stats:pseudo"
+              "IndexReader_9 10.00 root  index:Projection_5",
+              "└─Projection_5 10.00 cop[tikv]  test.t1.a",
+              "  └─IndexRangeScan_8 10.00 cop[tikv] table:t1, index:b(b, a) range:[2,2], keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "1",
             "Result": [
@@ -118,9 +118,9 @@
               }
             ],
             "Plan": [
-              "IndexReader_10 10.00 root  index:Projection_6",
-              "└─Projection_6 10.00 cop[tikv]  test.t1.a",
-              "  └─IndexRangeScan_9 10.00 cop[tikv] table:t1, index:b(b, a) range:[-200,-200], keep order:false, stats:pseudo"
+              "IndexReader_9 10.00 root  index:Projection_5",
+              "└─Projection_5 10.00 cop[tikv]  test.t1.a",
+              "  └─IndexRangeScan_8 10.00 cop[tikv] table:t1, index:b(b, a) range:[-200,-200], keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "1",
             "Result": null
@@ -134,9 +134,9 @@
               }
             ],
             "Plan": [
-              "IndexReader_10 10.00 root  index:Projection_6",
-              "└─Projection_6 10.00 cop[tikv]  test.t1.a",
-              "  └─IndexRangeScan_9 10.00 cop[tikv] table:t1, index:b(b, a) range:[0,0], keep order:false, stats:pseudo"
+              "IndexReader_9 10.00 root  index:Projection_5",
+              "└─Projection_5 10.00 cop[tikv]  test.t1.a",
+              "  └─IndexRangeScan_8 10.00 cop[tikv] table:t1, index:b(b, a) range:[0,0], keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
             "Result": null
@@ -155,14 +155,14 @@
               }
             ],
             "Plan": [
-              "IndexHashJoin_17 124.88 root  inner join, inner:IndexLookUp_40, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.b, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
-              "├─IndexLookUp_36(Build) 99.90 root  ",
-              "│ ├─IndexRangeScan_34(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
-              "│ └─TableRowIDScan_35(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo",
-              "└─IndexLookUp_40(Probe) 124.88 root  ",
-              "  ├─Selection_39(Build) 124.88 cop[tikv]  1, eq(test.t2.b, 1), not(isnull(test.t2.a))",
-              "  │ └─IndexRangeScan_37 12500.00 cop[tikv] table:t2, index:b(b, a) range: decided by [eq(test.t2.b, test.t1.b) eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-              "  └─TableRowIDScan_38(Probe) 124.88 cop[tikv] table:t2 keep order:false, stats:pseudo"
+              "IndexHashJoin_15 124.88 root  inner join, inner:IndexLookUp_38, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.b, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+              "├─IndexLookUp_34(Build) 99.90 root  ",
+              "│ ├─IndexRangeScan_32(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_33(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo",
+              "└─IndexLookUp_38(Probe) 124.88 root  ",
+              "  ├─Selection_37(Build) 124.88 cop[tikv]  1, eq(test.t2.b, 1), not(isnull(test.t2.a))",
+              "  │ └─IndexRangeScan_35 12500.00 cop[tikv] table:t2, index:b(b, a) range: decided by [eq(test.t2.b, test.t1.b) eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_36(Probe) 124.88 cop[tikv] table:t2 keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
             "Result": null
@@ -176,14 +176,14 @@
               }
             ],
             "Plan": [
-              "IndexHashJoin_17 124.88 root  inner join, inner:IndexLookUp_40, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.b, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
-              "├─IndexLookUp_36(Build) 99.90 root  ",
-              "│ ├─IndexRangeScan_34(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
-              "│ └─TableRowIDScan_35(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo",
-              "└─IndexLookUp_40(Probe) 124.88 root  ",
-              "  ├─Selection_39(Build) 124.88 cop[tikv]  1, eq(test.t2.b, 2), not(isnull(test.t2.a))",
-              "  │ └─IndexRangeScan_37 12500.00 cop[tikv] table:t2, index:b(b, a) range: decided by [eq(test.t2.b, test.t1.b) eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-              "  └─TableRowIDScan_38(Probe) 124.88 cop[tikv] table:t2 keep order:false, stats:pseudo"
+              "IndexHashJoin_15 124.88 root  inner join, inner:IndexLookUp_38, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.b, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+              "├─IndexLookUp_34(Build) 99.90 root  ",
+              "│ ├─IndexRangeScan_32(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_33(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo",
+              "└─IndexLookUp_38(Probe) 124.88 root  ",
+              "  ├─Selection_37(Build) 124.88 cop[tikv]  1, eq(test.t2.b, 2), not(isnull(test.t2.a))",
+              "  │ └─IndexRangeScan_35 12500.00 cop[tikv] table:t2, index:b(b, a) range: decided by [eq(test.t2.b, test.t1.b) eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_36(Probe) 124.88 cop[tikv] table:t2 keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "1",
             "Result": [
@@ -199,14 +199,14 @@
               }
             ],
             "Plan": [
-              "IndexHashJoin_17 124.88 root  inner join, inner:IndexLookUp_40, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.b, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
-              "├─IndexLookUp_36(Build) 99.90 root  ",
-              "│ ├─IndexRangeScan_34(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
-              "│ └─TableRowIDScan_35(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo",
-              "└─IndexLookUp_40(Probe) 124.88 root  ",
-              "  ├─Selection_39(Build) 124.88 cop[tikv]  eq(test.t2.b, 0), not(isnull(test.t2.a))",
-              "  │ └─IndexRangeScan_37 12500.00 cop[tikv] table:t2, index:b(b, a) range: decided by [eq(test.t2.b, test.t1.b) eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-              "  └─TableRowIDScan_38(Probe) 124.88 cop[tikv] table:t2 keep order:false, stats:pseudo"
+              "IndexHashJoin_15 124.88 root  inner join, inner:IndexLookUp_38, outer key:test.t1.a, test.t1.b, inner key:test.t2.a, test.t2.b, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+              "├─IndexLookUp_34(Build) 99.90 root  ",
+              "│ ├─IndexRangeScan_32(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_33(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo",
+              "└─IndexLookUp_38(Probe) 124.88 root  ",
+              "  ├─Selection_37(Build) 124.88 cop[tikv]  eq(test.t2.b, 0), not(isnull(test.t2.a))",
+              "  │ └─IndexRangeScan_35 12500.00 cop[tikv] table:t2, index:b(b, a) range: decided by [eq(test.t2.b, test.t1.b) eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_36(Probe) 124.88 cop[tikv] table:t2 keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
             "Result": null
@@ -226,7 +226,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -243,7 +243,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -260,7 +260,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(0.99999, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -277,7 +277,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(99999.0, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -294,7 +294,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -311,7 +311,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -328,7 +328,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-0.99999, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -345,7 +345,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-99999.0, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -367,7 +367,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -384,7 +384,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -401,7 +401,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(0.99999, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -418,7 +418,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(99999.0, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -435,7 +435,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -452,7 +452,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -469,7 +469,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-0.99999, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -486,7 +486,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-99999.0, decimal(10,0) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -508,7 +508,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(5,4) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -525,7 +525,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(5,4) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -542,7 +542,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(0.99999, decimal(5,4) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -559,7 +559,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(99999.0, decimal(5,4) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -576,7 +576,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decimal(5,4) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -593,7 +593,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(5,4) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -610,7 +610,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-0.99999, decimal(5,4) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -627,7 +627,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-99999.0, decimal(5,4) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -649,7 +649,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(64,30) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -666,7 +666,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(64,30) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -683,7 +683,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(0.99999, decimal(64,30) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -700,7 +700,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(99999.0, decimal(64,30) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -717,7 +717,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decimal(64,30) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -734,7 +734,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(64,30) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -751,7 +751,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-0.99999, decimal(64,30) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -768,7 +768,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-99999.0, decimal(64,30) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -790,7 +790,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(15,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -807,7 +807,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(15,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -824,7 +824,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(0.99999, decimal(15,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -841,7 +841,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(99999.0, decimal(15,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -858,7 +858,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decimal(15,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -875,7 +875,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(15,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -892,7 +892,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-0.99999, decimal(15,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -909,7 +909,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-99999.0, decimal(15,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -931,7 +931,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(123456789.0123456789012345678901234567890123456789, decimal(5,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -948,7 +948,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(1234567.1234567, decimal(5,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -965,7 +965,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(0.99999, decimal(5,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -982,7 +982,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(99999.0, decimal(5,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -999,7 +999,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-123456789.0123456789012345678901234567890123456789, decimal(5,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -1016,7 +1016,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-1234567.1234567, decimal(5,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -1033,7 +1033,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-0.99999, decimal(5,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -1050,7 +1050,7 @@
             ],
             "Plan": [
               "Projection_3 1.00 root  cast(-99999.0, decimal(5,5) BINARY)->Column#1",
-              "└─TableDual_5 1.00 root  rows:1"
+              "└─TableDual_4 1.00 root  rows:1"
             ],
             "LastPlanUseCache": "0",
             "Result": [
@@ -1078,9 +1078,9 @@
           "6"
         ],
         "Plan": [
-          "IndexReader_8 8000.00 root  index:Selection_7",
-          "└─Selection_7 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
-          "  └─IndexFullScan_6 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
+          "IndexReader_7 8000.00 root  index:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
+          "  └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1089,9 +1089,9 @@
           "6"
         ],
         "Plan": [
-          "IndexReader_8 8000.00 root  index:Selection_7",
-          "└─Selection_7 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
-          "  └─IndexFullScan_6 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
+          "IndexReader_7 8000.00 root  index:Selection_6",
+          "└─Selection_6 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
+          "  └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
       },
@@ -1109,9 +1109,9 @@
           "6 6 6"
         ],
         "Plan": [
-          "TableReader_8 3333.33 root  data:Selection_7",
-          "└─Selection_7 3333.33 cop[tikv]  gt(test.t.b, 1)",
-          "  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader_7 3333.33 root  data:Selection_6",
+          "└─Selection_6 3333.33 cop[tikv]  gt(test.t.b, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1120,9 +1120,9 @@
           "6 6 6"
         ],
         "Plan": [
-          "TableReader_8 3333.33 root  data:Selection_7",
-          "└─Selection_7 3333.33 cop[tikv]  gt(test.t.b, 5)",
-          "  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TableReader_7 3333.33 root  data:Selection_6",
+          "└─Selection_6 3333.33 cop[tikv]  gt(test.t.b, 5)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
       },
@@ -1140,11 +1140,11 @@
           "6 6 6"
         ],
         "Plan": [
-          "IndexLookUp_10 2666.67 root  ",
-          "├─Selection_8(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
-          "│ └─IndexFullScan_6 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
-          "└─Selection_9(Probe) 2666.67 cop[tikv]  gt(test.t.b, 1)",
-          "  └─TableRowIDScan_7 8000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexLookUp_9 2666.67 root  ",
+          "├─Selection_7(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 1)",
+          "│ └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
+          "└─Selection_8(Probe) 2666.67 cop[tikv]  gt(test.t.b, 1)",
+          "  └─TableRowIDScan_6 8000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1153,11 +1153,11 @@
           "6 6 6"
         ],
         "Plan": [
-          "IndexLookUp_10 2666.67 root  ",
-          "├─Selection_8(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
-          "│ └─IndexFullScan_6 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
-          "└─Selection_9(Probe) 2666.67 cop[tikv]  gt(test.t.b, 5)",
-          "  └─TableRowIDScan_7 8000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexLookUp_9 2666.67 root  ",
+          "├─Selection_7(Build) 8000.00 cop[tikv]  gt(plus(test.t.a, 0), 5)",
+          "│ └─IndexFullScan_5 10000.00 cop[tikv] table:t, index:a(a) keep order:false, stats:pseudo",
+          "└─Selection_8(Probe) 2666.67 cop[tikv]  gt(test.t.b, 5)",
+          "  └─TableRowIDScan_6 8000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
       },
@@ -1176,10 +1176,10 @@
           "6 6 6"
         ],
         "Plan": [
-          "Limit_8 10.00 root  offset:0, count:10",
-          "└─TableReader_14 10.00 root  data:Limit_13",
-          "  └─Limit_13 10.00 cop[tikv]  offset:0, count:10",
-          "    └─TableFullScan_12 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit_7 10.00 root  offset:0, count:10",
+          "└─TableReader_12 10.00 root  data:Limit_11",
+          "  └─Limit_11 10.00 cop[tikv]  offset:0, count:10",
+          "    └─TableFullScan_10 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1193,10 +1193,10 @@
           "6 6 6"
         ],
         "Plan": [
-          "Limit_8 20.00 root  offset:0, count:20",
-          "└─TableReader_14 20.00 root  data:Limit_13",
-          "  └─Limit_13 20.00 cop[tikv]  offset:0, count:20",
-          "    └─TableFullScan_12 20.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Limit_7 20.00 root  offset:0, count:20",
+          "└─TableReader_12 20.00 root  data:Limit_11",
+          "  └─Limit_11 20.00 cop[tikv]  offset:0, count:20",
+          "    └─TableFullScan_10 20.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1210,10 +1210,10 @@
           "1 1 1"
         ],
         "Plan": [
-          "TopN_8 1.00 root  test.t.b, offset:0, count:1",
-          "└─TableReader_17 1.00 root  data:TopN_16",
-          "  └─TopN_16 1.00 cop[tikv]  test.t.b, offset:0, count:1",
-          "    └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TopN_7 1.00 root  test.t.b, offset:0, count:1",
+          "└─TableReader_16 1.00 root  data:TopN_15",
+          "  └─TopN_15 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1226,10 +1226,10 @@
           "5 5 5"
         ],
         "Plan": [
-          "TopN_8 5.00 root  test.t.b, offset:0, count:5",
-          "└─TableReader_17 5.00 root  data:TopN_16",
-          "  └─TopN_16 5.00 cop[tikv]  test.t.b, offset:0, count:5",
-          "    └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "TopN_7 5.00 root  test.t.b, offset:0, count:5",
+          "└─TableReader_16 5.00 root  data:TopN_15",
+          "  └─TopN_15 5.00 cop[tikv]  test.t.b, offset:0, count:5",
+          "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1249,10 +1249,10 @@
         ],
         "Plan": [
           "Projection_4 8000.00 root  test.t.b, Column#6",
-          "└─HashAgg_13 8000.00 root  group by:test.t.b, funcs:sum(Column#7)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
-          "  └─TableReader_14 8000.00 root  data:HashAgg_6",
-          "    └─HashAgg_6 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 1))->Column#7",
-          "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─HashAgg_9 8000.00 root  group by:test.t.b, funcs:sum(Column#7)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+          "  └─TableReader_10 8000.00 root  data:HashAgg_5",
+          "    └─HashAgg_5 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 1))->Column#7",
+          "      └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1267,10 +1267,10 @@
         ],
         "Plan": [
           "Projection_4 8000.00 root  test.t.b, Column#6",
-          "└─HashAgg_13 8000.00 root  group by:test.t.b, funcs:sum(Column#7)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
-          "  └─TableReader_14 8000.00 root  data:HashAgg_6",
-          "    └─HashAgg_6 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 5))->Column#7",
-          "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─HashAgg_9 8000.00 root  group by:test.t.b, funcs:sum(Column#7)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+          "  └─TableReader_10 8000.00 root  data:HashAgg_5",
+          "    └─HashAgg_5 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 5))->Column#7",
+          "      └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
       }

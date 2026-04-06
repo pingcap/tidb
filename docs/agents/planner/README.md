@@ -4,3 +4,4 @@
 - `plan_cache_notes.md`: plan cache and binding matching notes.
 - `redundant_using_join_notes.md`: notes for redundant-column handling around `JOIN ... USING` / `NATURAL JOIN`.
 - `window_subquery_notes.md`: deferred window rewrite notes for correlated and non-scalar subqueries.
+- `window_frame_replace_notes.md`: notes for window-frame column replacement during projection elimination.

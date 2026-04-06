@@ -124,6 +124,8 @@ const (
 	ActionAlterMaskingPolicy                    ActionType = 82
 	ActionDropMaskingPolicy                     ActionType = 83
 	ActionAlterTableSetRegionSplitPolicy        ActionType = 84
+
+	// range [200, 256) is reserved for a downstream fork
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -1354,7 +1356,8 @@ func init() {
 	// initially, and then we detect the right version when DDL start.
 	ver := JobVersion1
 	if kerneltype.IsNextGen() {
-		// nextgen doesn't need to consider the compatibility with old TiDB versions,
+		// NextGen doesn't need to consider the compatibility with old TiDB
+		// versions, the initial version can be set to v2 directly.
 		ver = JobVersion2
 	}
 	SetJobVerInUse(ver)
