@@ -207,10 +207,10 @@ func (s *CorrelateSolver) correlate(ctx context.Context, p base.LogicalPlan) (ba
 	ap.SetSchema(join.Schema().Clone())
 	ap.SetOutputNames(join.OutputNames())
 
-	// Store the Apply alternative on the Join for cost-based selection during
-	// physical optimization, rather than unconditionally choosing Apply.
-	join.CorrelateAlternative = ap
-	return p, true, nil
+	// Replace the Join with the Apply. In the alternative logical plans framework,
+	// this round produces a complete plan; the top-level cost comparison across
+	// rounds selects the winner.
+	return ap, true, nil
 }
 
 // buildCorrelatedCond converts an equal condition from the join into a correlated condition
@@ -339,9 +339,8 @@ func cloneJoin(j *logicalop.LogicalJoin) (*logicalop.LogicalJoin, bool) {
 	clone.LeftConditions = append(expression.CNFExprs(nil), j.LeftConditions...)
 	clone.RightConditions = append(expression.CNFExprs(nil), j.RightConditions...)
 	clone.OtherConditions = append(expression.CNFExprs(nil), j.OtherConditions...)
-	// Clear correlate state. The alternative was built for the original join's
-	// children; retaining it would point physical planning at uncloned nodes.
-	clone.CorrelateAlternative = nil
+	// Clear PreferCorrelate on cloned inner joins to prevent CorrelateSolver
+	// from processing nested semi-joins in the cloned subtree.
 	clone.PreferCorrelate = false
 	clone.SetChildren(children...)
 	return &clone, true

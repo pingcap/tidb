@@ -242,17 +242,17 @@ func TestRelevantOptVarsCorrelateSubquery(t *testing.T) {
 	p := parser.New()
 	sql := "select * from t1 where a in (select a from t2)"
 
-	// The variable is recorded as relevant regardless of whether it is ON or OFF,
-	// because the code path where the variable affects plan choice was reached.
+	// The alternative logical plans variable is recorded as relevant because the
+	// code path where it affects plan choice (correlate-to-Apply) was reached.
 	for _, enabled := range []string{"OFF", "ON"} {
-		tk.MustExec("set tidb_opt_enable_correlate_subquery = " + enabled)
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = " + enabled)
 		p.Reset()
 		stmt, err := p.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		vars, _, err := bindinfo.RecordRelevantOptVarsAndFixes(tk.Session(), stmt)
 		require.NoError(t, err)
-		require.True(t, slices.Contains(vars, vardef.TiDBOptEnableCorrelateSubquery),
-			"enabled=%s: expected %s in recorded vars %v", enabled, vardef.TiDBOptEnableCorrelateSubquery, vars)
+		require.True(t, slices.Contains(vars, vardef.TiDBOptEnableAlternativeLogicalPlans),
+			"enabled=%s: expected %s in recorded vars %v", enabled, vardef.TiDBOptEnableAlternativeLogicalPlans, vars)
 	}
 }
 

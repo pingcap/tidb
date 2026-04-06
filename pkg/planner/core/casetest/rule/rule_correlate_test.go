@@ -29,7 +29,7 @@ func TestCorrelateNullSemantics(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_opt_enable_correlate_subquery = ON")
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
 
 	// Case 1: non-null outer, null inner → must return NULL (not 0).
 	tk.MustExec("drop table if exists tn, sn")
@@ -55,14 +55,16 @@ func TestCorrelateNullSemantics(t *testing.T) {
 	tk.MustQuery("select tnn.a in (select snn.a from snn) as r from tnn order by tnn.a").Check(testkit.Rows("1", "1", "0"))
 }
 
-// TestCorrelatePreservesHints verifies that when the CorrelateSolver builds an
-// Apply alternative, user-specified join hints (e.g., HASH_JOIN) are preserved
-// and respected during physical plan selection.
-func TestCorrelatePreservesHints(t *testing.T) {
+// TestCorrelateAlternativeChoosesApply verifies that the correlate alternative
+// round produces an Apply plan that wins the cost comparison for a non-correlated
+// IN subquery when an outer WHERE predicate reduces the estimated row count.
+// Without alternative plans, the InnerJoin+Agg rewrite produces IndexJoin+StreamAgg.
+// With alternative plans, the correlate round produces Apply+Limit which is cheaper
+// (avoids the StreamAgg overhead and uses Limit 1 for early exit on the inner side).
+func TestCorrelateAlternativeChoosesApply(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_opt_enable_correlate_subquery = ON")
 
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (a int not null, b int, key(a))")
@@ -70,21 +72,25 @@ func TestCorrelatePreservesHints(t *testing.T) {
 	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3)")
 	tk.MustExec("insert into t2 values (1,10),(2,20)")
 
-	// With HASH_JOIN hint, the plan should use HashJoin even when the correlate
-	// optimization is enabled and could produce an Apply alternative.
-	rows := tk.MustQuery("explain format = 'brief' select /*+ HASH_JOIN(t1, t2) */ * from t1 where a in (select a from t2)").Rows()
-	hasHashJoin := false
-	for _, row := range rows {
-		if strings.Contains(row[0].(string), "HashJoin") {
-			hasHashJoin = true
-			break
-		}
-	}
-	require.True(t, hasHashJoin, "HASH_JOIN hint should be preserved when correlate optimization is enabled")
+	sql := "select * from t1 where b = 1 and a in (select a from t2)"
 
-	// Verify the same query produces correct results.
-	tk.MustQuery("select /*+ HASH_JOIN(t1, t2) */ * from t1 where a in (select a from t2) order by t1.a").
-		Check(testkit.Rows("1 1", "2 2"))
+	// Without alternative plans: standard InnerJoin+Agg path produces IndexJoin.
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+	rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.True(t, strings.Contains(rows[0][0].(string), "IndexJoin"),
+		"without alternative plans, expected IndexJoin, got: %s", rows[0][0])
+
+	// With alternative plans: correlate round produces Apply (cheaper than IndexJoin+StreamAgg).
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	rows = tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.True(t, strings.Contains(rows[0][0].(string), "Apply"),
+		"with alternative plans, expected Apply, got: %s", rows[0][0])
+
+	// Verify correct results in both modes.
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+	tk.MustQuery(sql).Check(testkit.Rows("1 1"))
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	tk.MustQuery(sql).Check(testkit.Rows("1 1"))
 }
 
 func TestCorrelate(tt *testing.T) {
@@ -99,7 +105,47 @@ func TestCorrelate(tt *testing.T) {
 		tk.MustExec("insert into t3 values (10,1),(20,2)")
 
 		// Enable the correlate rule.
-		tk.MustExec("set tidb_opt_enable_correlate_subquery = ON")
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+
+		var input []string
+		var output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+		suite := GetCorrelateSuiteData()
+		suite.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			})
+			tk.MustQuery("explain format = 'brief' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+		}
+	})
+}
+
+// TestCorrelateWithCostFactors verifies that when hash/merge join cost factors
+// are increased, the correlate alternative round wins and produces Apply-based
+// plans with correlated index access for cases that normally choose HashJoin.
+func TestCorrelateWithCostFactors(tt *testing.T) {
+	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2, t3")
+		tk.MustExec("create table t1 (a int, b int, key(a))")
+		tk.MustExec("create table t2 (a int, b int, key(a))")
+		tk.MustExec("create table t3 (a int, b int, key(a))")
+		tk.MustExec("insert into t1 values (1,1),(2,2),(3,3)")
+		tk.MustExec("insert into t2 values (1,10),(2,20)")
+		tk.MustExec("insert into t3 values (10,1),(20,2)")
+
+		// Enable the correlate rule and penalize hash/merge joins so the
+		// correlate alternative (Apply with index lookup) wins the cost comparison.
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+		tk.MustExec("set tidb_opt_hash_join_cost_factor = 1000")
+		tk.MustExec("set tidb_opt_merge_join_cost_factor = 1000")
 
 		var input []string
 		var output []struct {

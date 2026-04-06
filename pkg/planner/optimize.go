@@ -567,16 +567,37 @@ func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
 		sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
 }
 
-type flagAdjustFunc func(uint64) uint64
-
-var roundList = [...]flagAdjustFunc{
-	func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
-	func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
 }
 
-var roundEnabled = [...]func(*variable.SessionVars) bool{
-	shouldTryNonDecorrelationRound,
-	shouldTryOrderAwareReorderRound,
+// alternativeRound describes one alternative logical-plan round.
+// adjustFlag adjusts the optimization flags for the round.
+// enabled returns true when the round should be attempted.
+// setup/cleanup optionally modify session state before/after plan building.
+type alternativeRound struct {
+	adjustFlag func(uint64) uint64
+	enabled    func(*variable.SessionVars) bool
+	setup      func(*variable.SessionVars)
+	cleanup    func(*variable.SessionVars)
+}
+
+var alternativeRounds = [...]alternativeRound{
+	{
+		adjustFlag: func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+		enabled:    shouldTryNonDecorrelationRound,
+	},
+	{
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+		enabled:    shouldTryOrderAwareReorderRound,
+	},
+	{
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
+		enabled:    shouldTryCorrelateRound,
+		setup:      func(sv *variable.SessionVars) { sv.EnableCorrelateSubquery = true },
+		cleanup:    func(sv *variable.SessionVars) { sv.EnableCorrelateSubquery = false },
+	},
 }
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
@@ -648,8 +669,8 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return p, names, 0, nil
 	}
 
-	for i, adjust := range roundList {
-		if !roundEnabled[i](sessVars) {
+	for _, round := range alternativeRounds {
+		if !round.enabled(sessVars) {
 			continue
 		}
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
@@ -659,6 +680,9 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			}
 		})
 
+		if round.setup != nil {
+			round.setup(sessVars)
+		}
 		p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
 			ctx,
 			sctx,
@@ -673,8 +697,11 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			&bestNames,
 			&bestCost,
 			&bestLogicalPlanCtx,
-			adjust,
+			round.adjustFlag,
 		)
+		if round.cleanup != nil {
+			round.cleanup(sessVars)
+		}
 		if err != nil {
 			return nil, nil, 0, err
 		}

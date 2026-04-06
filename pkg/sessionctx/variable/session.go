@@ -1217,7 +1217,9 @@ type SessionVars struct {
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
 
-	// EnableCorrelateSubquery enables conversion of non-correlated semi-joins to correlated Apply.
+	// EnableCorrelateSubquery is an internal flag (not user-facing) toggled by the
+	// correlate alternative round to enable conversion of non-correlated semi-joins
+	// to correlated Apply during plan building.
 	EnableCorrelateSubquery bool
 
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
@@ -2347,7 +2349,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
 		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
 		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,
-    EnableCorrelateSubquery:          vardef.DefOptEnableCorrelateSubquery,
 		RetryLimit:                       vardef.DefTiDBRetryLimit,
 		DisableTxnAutoRetry:              vardef.DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:                 kv.PriorityLow,

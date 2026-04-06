@@ -361,9 +361,8 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
 	}
-	if logic.SCtx().GetSessionVars().EnableCorrelateSubquery {
-		flag |= rule.FlagCorrelate
-	}
+	// FlagCorrelate is added by the correlate alternative round's flag adjuster,
+	// not here. EnableCorrelateSubquery is an internal flag toggled by the round.
 	// Recompute FlagPruneColumnsAgain after all conditional flag mutations so
 	// that conditionally-added flags (FlagCorrelate, FlagPartitionProcessor, …)
 	// are taken into account. A second column-prune pass is worthwhile when
