@@ -148,11 +148,8 @@ Add `ExecutionContext` in `StatementStats` to store per-statement sampling state
 // ExecutionContext stores the execution context of the currently executing SQL in the session
 type ExecutionContext struct {
     RUDetails   *util.RUDetails
-    RUV2Metrics *execdetails.RUV2Metrics
     Key         RUKey
-    RUV2Weights execdetails.RUV2Weights
     LastRUTotal float64
-    RUVersion   rmclient.RUVersion
 }
 
 // StatementStats extension
@@ -180,16 +177,16 @@ type RUIncrementMap map[RUKey]*RUIncrement
 **Lifecycle Management**:
 
 - **Session Creation**: `CreateStatementStats()` keeps existing interface; RU path initializes `execCtx=nil` and `finishedRUBuffer`
-- **SQL Start**: `StartExecution()` creates/replaces current `execCtx` (with pre-constructed key: `(user, sql_digest, plan_digest)`)
-- **SQL Completion**: `FinishExecution()` calculates final ruDelta and writes to session-local finished buffer (with limit), then clears `execCtx`
-- **RU Sampling Aggregation**: `MergeRUInto()` executes in each 1s tick: drains finished buffer + samples active execCtx, updates LastRUSample
+- **SQL Start**: `OnExecutionBegin()` creates/replaces current `execCtx` (with pre-constructed key: `(user, sql_digest, plan_digest)`)
+- **SQL Completion**: `OnExecutionFinished()` calculates final ruDelta and writes to session-local finished buffer (with limit), then clears `execCtx`
+- **RU Sampling Aggregation**: `MergeRUInto()` executes in each 1s tick: drains finished buffer + samples active execCtx, updates LastRUTotal
 
 #### RU Increment Calculation
 
 Uses delta calculation mechanism to avoid double counting:
 
 - `currentRU = RUDetails.RRU() + RUDetails.WRU()`
-- `ruDelta = currentRU - LastRUSample`
+- `ruDelta = currentRU - LastRUTotal`
 - ruDelta from both active/finish paths is unified and aggregated by `MergeRUInto()` in each 1s tick (interface and timing see previous section "Lifecycle Management")
 
 **Edge Case Handling**:
