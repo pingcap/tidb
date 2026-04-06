@@ -69,6 +69,26 @@ func AllocateTaskID() uint64 {
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
 
+// LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
+// building a logical plan from AST.
+type LogicalPlanBuildState struct {
+	warnings             []SQLWarn
+	extraWarnings        []SQLWarn
+	tables               []TableEntry
+	tableStats           map[int64]any
+	lockTableIDs         map[int64]struct{}
+	tblInfo2UnionScan    map[*model.TableInfo]bool
+	useDynamicPruneMode  bool
+	viewDepth            int32
+	colRefFromUpdatePlan intset.FastIntSet
+	// plan cache related stuff
+	planCacheUseCache    bool
+	planCacheType        contextutil.PlanCacheType
+	planCacheUnqualified string
+	planCacheForce       bool
+	planCacheAlwaysWarn  bool
+}
+
 // ReferenceCount indicates the reference count of StmtCtx.
 type ReferenceCount int32
 
@@ -452,10 +472,25 @@ type StatementContext struct {
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
+	// AlternativeLogicalPlanDecorrelatedApply indicates whether the current logical
+	// optimization round decorrelated at least one Apply into Join.
+	AlternativeLogicalPlanDecorrelatedApply bool
+	// AlternativeLogicalPlanSameOrderIndexJoin indicates whether the current first
+	// round already produced a same-order index join candidate for a decorrelated Apply.
+	AlternativeLogicalPlanSameOrderIndexJoin bool
+	// AlternativeLogicalPlanOrderAwareJoinReorder indicates whether at least one
+	// logical build round produced an order-aware join reorder candidate that is
+	// worth exploring in a dedicated alternative round.
+	AlternativeLogicalPlanOrderAwareJoinReorder bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
 	IsExplainAnalyzeDML bool
+	// InsertRowsAsRUV2Recorded tracks whether the statement-level insert-row RUv2 cost has already been
+	// applied to RUV2Metrics. This must stay idempotent because EXPLAIN ANALYZE INSERT snapshots RU before
+	// FinishExecuteStmt runs, while FinishExecuteStmt still needs to reuse the same accounting path for the
+	// final slow-log and resource-group reporting.
+	InsertRowsAsRUV2Recorded bool
 
 	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
 	InHandleForeignKeyTrigger bool
@@ -581,6 +616,70 @@ func (sc *StatementContext) Reset() bool {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
 	return true
+}
+
+// SaveLogicalPlanBuildState captures the statement-scoped planner state before building
+// another logical plan candidate from the same AST.
+func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
+	planCacheUseCache, planCacheType, planCacheUnqualified, planCacheForce, planCacheAlwaysWarn := sc.PlanCacheTracker.Save()
+	return LogicalPlanBuildState{
+		warnings:             slices.Clone(sc.GetWarnings()),
+		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
+		tables:               slices.Clone(sc.Tables),
+		tableStats:           maps.Clone(sc.TableStats),
+		lockTableIDs:         maps.Clone(sc.LockTableIDs),
+		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
+		useDynamicPruneMode:  sc.UseDynamicPruneMode,
+		viewDepth:            sc.ViewDepth,
+		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
+		planCacheUseCache:    planCacheUseCache,
+		planCacheType:        planCacheType,
+		planCacheUnqualified: planCacheUnqualified,
+		planCacheForce:       planCacheForce,
+		planCacheAlwaysWarn:  planCacheAlwaysWarn,
+	}
+}
+
+// RestoreLogicalPlanBuildState restores the statement-scoped planner state after a
+// discarded logical plan build attempt.
+func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildState) {
+	sc.SetWarnings(slices.Clone(state.warnings))
+	sc.SetExtraWarnings(slices.Clone(state.extraWarnings))
+	sc.Tables = slices.Clone(state.tables)
+	sc.TableStats = maps.Clone(state.tableStats)
+	sc.LockTableIDs = maps.Clone(state.lockTableIDs)
+	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
+	sc.UseDynamicPruneMode = state.useDynamicPruneMode
+	sc.ViewDepth = state.viewDepth
+	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
+	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
+	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+}
+
+// ResetAlternativeLogicalPlanSignals clears the statement-local signals used by the
+// alternative logical plan feature.
+func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = false
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
+}
+
+// MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
+// been decorrelated into a Join in the current round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = true
+}
+
+// MarkAlternativeLogicalPlanSameOrderIndexJoin records that the current first round
+// has already produced a same-order index join candidate for a decorrelated Apply.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
+}
+
+// MarkAlternativeLogicalPlanOrderAwareJoinReorder records that the current
+// logical build round produced an order-aware join reorder candidate.
+func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = true
 }
 
 // CtxID returns the context id of the statement

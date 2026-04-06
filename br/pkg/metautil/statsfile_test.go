@@ -84,28 +84,14 @@ func TestStatsWriter(t *testing.T) {
 			Indices:      map[string]*util.JSONColumn{"test": newJsonColumn(2)},
 			DatabaseName: "test-schema",
 			TableName:    "test-table",
-			ExtStats: []*util.JSONExtendedStats{
-				{
-					StatsName:  "test",
-					StringVals: "test",
-					ColIDs:     []int64{1, 2, 3},
-				},
-			},
-			Count: 1,
+			Count:        1,
 		},
 		2: {
 			Columns:      map[string]*util.JSONColumn{"test": newJsonColumn(3)},
 			Indices:      map[string]*util.JSONColumn{"test": newJsonColumn(4)},
 			DatabaseName: "test-schema",
 			TableName:    "test-table-1",
-			ExtStats: []*util.JSONExtendedStats{
-				{
-					StatsName:  "test",
-					StringVals: "test",
-					ColIDs:     []int64{3, 4, 5},
-				},
-			},
-			Count: 2,
+			Count:        2,
 		},
 	}
 

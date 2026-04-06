@@ -553,7 +553,7 @@ func testInconsistentEstimation(t *testing.T, tk *testkit.TestKit, dom *domain.D
 	for range 10 {
 		tk.MustExec("insert into t values (5,5,5), (10,10,10)")
 	}
-	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("analyze table t all columns with 2 buckets ")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
@@ -709,33 +709,6 @@ func TestIndexEqualUnknown(t *testing.T) {
 			SQL  string
 			Plan []string
 		}
-		analyzeSuiteData := GetAnalyzeSuiteData()
-		analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, tt := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			})
-			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-		}
-	})
-}
-
-func TestLimitIndexEstimation(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(a int, b int, key idx_a(a), key idx_b(b))")
-		tk.MustExec("set session tidb_enable_extended_stats = on")
-		// Values in column a are from 1 to 1000000, values in column b are from 1000000 to 1,
-		// these 2 columns are strictly correlated in reverse order.
-		require.NoError(t, testkit.LoadTableStats("analyzeSuiteTestLimitIndexEstimationT.json", dom))
-		var input []string
-		var output []struct {
-			SQL  string
-			Plan []string
-		}
-
 		analyzeSuiteData := GetAnalyzeSuiteData()
 		analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, tt := range input {

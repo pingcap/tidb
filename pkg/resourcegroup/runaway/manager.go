@@ -409,8 +409,31 @@ func (rm *Manager) Stop() {
 
 // UpdateNewAndDoneWatch is used to update new and done watch items.
 func (rm *Manager) UpdateNewAndDoneWatch() error {
-	rm.runawaySyncer.mu.Lock()
-	defer rm.runawaySyncer.mu.Unlock()
+	s := rm.runawaySyncer
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	if !s.lastSyncTime.IsZero() {
+		s.syncInterval.Observe(now.Sub(s.lastSyncTime).Seconds())
+	}
+	s.lastSyncTime = now
+
+	start := time.Now()
+	err := rm.doSync()
+	s.syncDuration.Observe(time.Since(start).Seconds())
+	if err != nil {
+		s.syncErrCounter.Inc()
+		return err
+	}
+	s.syncOKCounter.Inc()
+	s.watchCPGauge.Set(float64(s.newWatchReader.CheckPoint))
+	s.doneCPGauge.Set(float64(s.deletionWatchReader.CheckPoint))
+	return nil
+}
+
+// doSync performs the actual sync work for watch and watch_done tables.
+func (rm *Manager) doSync() error {
 	if !rm.runawaySyncer.checkWatchTableExist() {
 		return nil
 	}

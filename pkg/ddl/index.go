@@ -58,6 +58,7 @@ import (
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -353,6 +354,9 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int, columnarIndexType m
 // Clustered tables don't have this issue and use version 0.
 func setGlobalIndexVersion(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	idxInfo.GlobalIndexVersion = 0
+	if !model.GetGlobalIndexV1Supported() {
+		return
+	}
 	if idxInfo.Global && !tblInfo.HasClusteredIndex() {
 		needPartitionInKey := !idxInfo.Unique
 		if !needPartitionInKey {
@@ -1506,7 +1510,9 @@ func (w *worker) analyzeTableInner(job *model.Job, tblInfo *model.TableInfo, dbN
 			w.ddlCtx.setAnalyzeStartTime(job.ID, time.Now())
 		}
 
-		doneCh = make(chan error)
+		// Use a buffered channel so analyze goroutine can always report an error
+		// even after caller has timed out and moved on.
+		doneCh = make(chan error, 1)
 		eg := util.NewErrorGroupWithRecover()
 		eg.Go(func() error {
 			sessCtx, err := w.sessPool.Get()
@@ -1610,7 +1616,7 @@ func checkIfTableReorgWorkCanSkip(
 func CheckImportIntoTableIsEmpty(
 	store kv.Storage,
 	sessCtx sessionctx.Context,
-	tbl table.Table,
+	tblInfo *model.TableInfo,
 ) (bool, error) {
 	failpoint.Inject("checkImportIntoTableIsEmpty", func(_val failpoint.Value) {
 		if val, ok := _val.(string); ok {
@@ -1622,6 +1628,10 @@ func CheckImportIntoTableIsEmpty(
 			}
 		}
 	})
+	tbl, err := tables.TableFromMeta(autoid.Allocators{}, tblInfo)
+	if err != nil {
+		return false, err
+	}
 	txn, err := sessCtx.Txn(true)
 	if err != nil {
 		return false, err

@@ -10,6 +10,7 @@ go_library(
         "index.go",
         "job.go",
         "job_args.go",
+        "masking_policy.go",
         "placement.go",
         "reorg.go",
         "resource_group.go",
@@ -52,6 +53,7 @@ go_test(
         "table_test.go",
     ],
     embed = [":model"],
+    embedsrcs = ["job.go"],
     flaky = True,
     shard_count = 50,
     deps = [

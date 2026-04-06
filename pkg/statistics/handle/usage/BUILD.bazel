@@ -44,7 +44,7 @@ go_test(
     ],
     embed = [":usage"],
     flaky = True,
-    shard_count = 15,
+    shard_count = 14,
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/ast",

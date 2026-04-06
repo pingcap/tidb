@@ -45,7 +45,7 @@ var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
-	dumpStatsMaxDuration = 5 * time.Minute
+	dumpStatsMaxDuration = 1 * time.Hour
 
 	// colStatsUsageLastUsedThrottleInterval is the minimum interval to update last_used_at when it already exists (non-NULL).
 	// This throttles frequent timestamp-only updates while allowing immediate NULL-to-value transitions.
@@ -78,7 +78,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	}
 	intest.Assert(!item.InitTime.IsZero(), "InitTime should be initialized before evaluating dump conditions")
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
-		// Dump the stats to kv at least once 5 minutes.
+		// Dump the stats to kv at least once per hour to make sure the stats can be updated when there are only few modifications.
 		return true
 	}
 	// use GetNonPseudoPhysicalTableStats to avoid creating pseudo tables and dropping instantly

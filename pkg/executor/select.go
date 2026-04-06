@@ -541,6 +541,10 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
+
+func (e *LimitExec) open(ctx context.Context) error {
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
@@ -999,6 +1003,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.SessionID.Store(vars.ConnectionID)
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.DiskTracker.Killer = &vars.SQLKiller
+	if vars.InRestrictedSQL && vars.InternalSQLScanUserTable {
+		failpoint.InjectCall("beforeResetSQLKillerForTTLScan", s)
+	}
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID.Store(vars.ConnectionID)
 	vars.ResetRelevantOptVarsAndFixes(false)
