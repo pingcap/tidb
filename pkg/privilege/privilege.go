@@ -123,8 +123,15 @@ type Manager interface {
 
 const key keyType = 0
 
+type sessionVarsAwareManager interface {
+	SetSessionVars(*variable.SessionVars)
+}
+
 // BindPrivilegeManager binds Manager to context.
 func BindPrivilegeManager(ctx sessionctx.Context, pc Manager) {
+	if aware, ok := pc.(sessionVarsAwareManager); ok {
+		aware.SetSessionVars(ctx.GetSessionVars())
+	}
 	ctx.SetValue(key, pc)
 }
 

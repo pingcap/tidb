@@ -1673,6 +1673,9 @@ type SessionVars struct {
 	// Note that PLAN REPLAYER CAPTURE is not included here.
 	InPlanReplayer bool
 
+	// planReplayerSQLPrivilegeType limits the temporary privilege bypass to one helper SQL shape.
+	planReplayerSQLPrivilegeType PlanReplayerInternalSQLType
+
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
 	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats

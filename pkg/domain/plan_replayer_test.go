@@ -22,7 +22,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
+	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 )
@@ -171,4 +176,57 @@ func TestSendTask(t *testing.T) {
 	h.SendTask(task1)
 	success := h.SendTask(task2)
 	require.False(t, success)
+}
+
+type fakePlanReplayerPrivilegeManager struct {
+	privilege.Manager
+}
+
+func (m *fakePlanReplayerPrivilegeManager) RequestDynamicVerification(_ []*auth.RoleIdentity, privName string, grantable bool) bool {
+	return !grantable && privName == "PLAN_REPLAYER_EXPLAIN_ADMIN"
+}
+
+func TestShouldUsePlanReplayerExplainAdminBypass(t *testing.T) {
+	p := parser.New()
+	sctx := mock.NewContext()
+	privilege.BindPrivilegeManager(sctx, &fakePlanReplayerPrivilegeManager{})
+	buildTask := func(sqls []string, analyze bool) *PlanReplayerDumpTask {
+		execStmts := make([]ast.StmtNode, 0, len(sqls))
+		for _, sql := range sqls {
+			stmt, err := p.ParseOneStmt(sql, "", "")
+			require.NoError(t, err, sql)
+			execStmts = append(execStmts, stmt)
+		}
+		return &PlanReplayerDumpTask{
+			ExecStmts: execStmts,
+			Analyze:   analyze,
+		}
+	}
+
+	allowedSQLs := []string{
+		"select * from t",
+		"select * from (select * from t) dt",
+		"with c as (select * from t) select * from c",
+		"select * from t1 union select * from t2",
+		"select * from t where exists (select * from t2)",
+	}
+	for _, sql := range allowedSQLs {
+		require.True(t, shouldUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{sql}, false)), sql)
+	}
+
+	disallowedSQLs := []string{
+		"table t",
+		"values row(1)",
+		"select * from t for update",
+		"select * from t into outfile '/tmp/tmp_file1';",
+		"select * from t1 union values row(2)",
+		"select * from (table t) dt",
+		"with c as (values row(1)) select * from c",
+	}
+	for _, sql := range disallowedSQLs {
+		require.False(t, shouldUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{sql}, false)), sql)
+	}
+
+	require.False(t, shouldUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{"select * from t"}, true)))
+	require.False(t, shouldUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{"select * from t", "values row(1)"}, false)))
 }

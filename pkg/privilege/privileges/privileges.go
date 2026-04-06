@@ -78,6 +78,7 @@ var dynamicPrivs = []string{
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
 	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
 	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
+	"PLAN_REPLAYER_EXPLAIN_ADMIN",     // Can run plan replayer explain helpers without table read privileges
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
@@ -90,6 +91,7 @@ type UserPrivileges struct {
 	*Handle
 	extensionAccessCheckFuncs []extension.AccessCheckFunc
 	authPlugins               map[string]*extension.AuthPlugin
+	sessionVars               *variable.SessionVars
 
 	authPluginRequestVerification        func(user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
 	authPluginRequestDynamicVerification func(activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool
@@ -102,6 +104,11 @@ func NewUserPrivileges(handle *Handle, extension *extension.Extensions) *UserPri
 		extensionAccessCheckFuncs: extension.GetAccessCheckFuncs(),
 		authPlugins:               extension.GetAuthPlugins(),
 	}
+}
+
+// SetSessionVars wires the current session into the privilege manager.
+func (p *UserPrivileges) SetSessionVars(sessionVars *variable.SessionVars) {
+	p.sessionVars = sessionVars
 }
 
 // RequestDynamicVerificationWithUser implements the Manager interface.
@@ -208,9 +215,24 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 
 	mysqlPriv := p.Handle.Get()
 	if !mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv) {
-		return false
+		return p.canBypassPlanReplayerPrivilege(activeRoles)
 	}
 	return p.authPluginRequestVerification == nil || p.authPluginRequestVerification(p.user, p.host, activeRoles, db, table, column, priv)
+}
+
+func (p *UserPrivileges) canBypassPlanReplayerPrivilege(activeRoles []*auth.RoleIdentity) bool {
+	if p.sessionVars == nil || !p.RequestDynamicVerification(activeRoles, "PLAN_REPLAYER_EXPLAIN_ADMIN", false) {
+		return false
+	}
+
+	switch p.sessionVars.GetPlanReplayerSQLPrivilegeType() {
+	case variable.PlanReplayerInternalSQLTypeExplain,
+		variable.PlanReplayerInternalSQLTypeShowCreateTable,
+		variable.PlanReplayerInternalSQLTypeShowCreateView:
+		return true
+	default:
+		return false
+	}
 }
 
 // RequestVerificationWithUser implements the Manager interface.
