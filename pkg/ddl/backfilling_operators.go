@@ -529,12 +529,12 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		zap.Int("id", task.ID), zap.Stringer("task", task))
 
 	var (
+		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
 	// Local ingest may trigger partial import/reset while the scan transaction is
 	// still open, so only the global-sort path can stream results immediately.
 	streamResults := w.reorgMeta.UseCloudStorage
-	bufferedResults := make([]IndexRecordChunk, 0, 4)
 	sendResult := func(idxResult IndexRecordChunk) {
 		sender(idxResult)
 		if w.cpOp != nil {
@@ -595,18 +595,16 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				sendResult(idxResult)
 				continue
 			}
-			bufferedResults = append(bufferedResults, idxResult)
+			idxResults = append(idxResults, idxResult)
 		}
 		return rs.Close()
 	})
-	if err != nil {
-		return err
-	}
-	for _, idxResult := range bufferedResults {
+
+	for _, idxResult := range idxResults {
 		sendResult(idxResult)
 	}
 
-	return nil
+	return err
 }
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
