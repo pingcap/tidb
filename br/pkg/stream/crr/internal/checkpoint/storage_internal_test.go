@@ -84,7 +84,7 @@ func TestMetaFileSeqIncludesUppercaseMetaNamesAfterSyncedTS(t *testing.T) {
 		SyncedTS: 0x06745A03F7B80004,
 	}))
 
-	var got []string
+	got := make([]string, 0)
 	for metaFile, err := range calc.newMetaFileSeq(ctx) {
 		require.NoError(t, err)
 		got = append(got, metaFile.path)

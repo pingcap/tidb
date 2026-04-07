@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
-	"github.com/pingcap/tidb/br/pkg/utiltest/crr"
+	testutil "github.com/pingcap/tidb/br/pkg/utiltest/crr"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -259,8 +259,8 @@ func TestCheckpointCalculatorWaitsForRemovedStoreFiles(t *testing.T) {
 	upstream, err := objstore.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 
-	meta1Path, log1Path := writeCheckpointTestMeta(t, ctx, upstream, 10, 1)
-	meta2Path, log2Path := writeCheckpointTestMeta(t, ctx, upstream, 20, 2)
+	meta1Path, log1Path := writeCheckpointTestMeta(ctx, t, upstream, 10, 1)
+	meta2Path, log2Path := writeCheckpointTestMeta(ctx, t, upstream, 20, 2)
 
 	pd := &fakePDMetaReader{}
 	pd.Set(20, 2)
@@ -297,8 +297,8 @@ func TestCheckpointCalculatorObservedRemovedStoreStillBoundsSyncedTS(t *testing.
 	upstream, err := objstore.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 
-	meta1Path, log1Path := writeCheckpointTestMeta(t, ctx, upstream, 10, 1)
-	meta2Path, log2Path := writeCheckpointTestMeta(t, ctx, upstream, 20, 2)
+	meta1Path, log1Path := writeCheckpointTestMeta(ctx, t, upstream, 10, 1)
+	meta2Path, log2Path := writeCheckpointTestMeta(ctx, t, upstream, 20, 2)
 
 	pd := &fakePDMetaReader{}
 	pd.Set(20, 2)
@@ -447,8 +447,8 @@ func (m fileSyncResultMap) FileSynced(ctx context.Context, name string) (bool, e
 }
 
 func writeCheckpointTestMeta(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	storage storeapi.Storage,
 	flushTS uint64,
 	storeID uint64,

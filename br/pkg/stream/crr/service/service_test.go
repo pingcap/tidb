@@ -26,7 +26,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint"
 	streamhelperconfig "github.com/pingcap/tidb/br/pkg/streamhelper/config"
-	"github.com/pingcap/tidb/br/pkg/utiltest/crr"
+	testutil "github.com/pingcap/tidb/br/pkg/utiltest/crr"
 	"github.com/stretchr/testify/require"
 )
 
@@ -614,7 +614,6 @@ func TestGetStatusFileName(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			actual, err := GetStatusFileName(tc.subDir)
 			if tc.errSubstr != "" {
