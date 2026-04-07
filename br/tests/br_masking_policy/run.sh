@@ -52,7 +52,13 @@ run_br restore db --db "$DB" -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
 # Verify the table is restored
 # run_sql uses mysql -E output, so parse "COUNT(*): <num>" explicitly.
-table_count=$(run_sql "SELECT COUNT(*) FROM ${DB}.t;" | awk -F': ' '/COUNT\(\*\)/ {print $2; exit}' | tr -d '[:space:]')
+table_count_output=$(run_sql "SELECT COUNT(*) FROM ${DB}.t;")
+table_count=$(printf '%s\n' "$table_count_output" | awk -F': ' '/COUNT\(\*\)/ {print $2; found=1; exit} END { if (!found) exit 1 }') || {
+    echo "TEST: [$TEST_NAME] failed! Unable to parse row count from SQL output:"
+    printf '%s\n' "$table_count_output"
+    exit 1
+}
+table_count=$(printf '%s' "$table_count" | tr -d '[:space:]')
 if [ "$table_count" != "2" ]; then
     echo "TEST: [$TEST_NAME] failed! Expected 2 rows, got $table_count"
     exit 1
@@ -69,7 +75,13 @@ if [ "$policy_count_after" != "0" ]; then
     exit 1
 fi
 
-policy_row_count_after=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE db_name='${DB}' AND table_name='t' AND policy_name='test_policy';" | awk -F': ' '/COUNT\\(\\*\\)/ {print $2; exit}' | tr -d '[:space:]')
+policy_row_count_output_after=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE db_name='${DB}' AND table_name='t' AND policy_name='test_policy';")
+policy_row_count_after=$(printf '%s\n' "$policy_row_count_output_after" | awk -F': ' '/COUNT\(\*\)/ {print $2; found=1; exit} END { if (!found) exit 1 }') || {
+    echo "TEST: [$TEST_NAME] failed! Unable to parse masking policy row count from SQL output:"
+    printf '%s\n' "$policy_row_count_output_after"
+    exit 1
+}
+policy_row_count_after=$(printf '%s' "$policy_row_count_after" | tr -d '[:space:]')
 if [ "$policy_row_count_after" != "0" ]; then
     echo "TEST: [$TEST_NAME] failed! Expected 0 rows in mysql.tidb_masking_policy after db-scope restore, got $policy_row_count_after"
     exit 1
