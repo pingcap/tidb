@@ -223,9 +223,9 @@ func (*NoopCollector) Processed(_, _ int64) {}
 // TestCollector is an implementation used for test.
 type TestCollector struct {
 	NoopCollector
-	ReadBytes atomic.Int64
-	Bytes     atomic.Int64
-	Rows      atomic.Int64
+	ReadBytes    atomic.Int64
+	ProcessedCnt atomic.Int64
+	Rows         atomic.Int64
 }
 
 // Accepted implements Collector.Accepted
@@ -235,7 +235,7 @@ func (c *TestCollector) Accepted(bytes int64) {
 
 // Processed implements Collector.Processed
 func (c *TestCollector) Processed(bytes, rows int64) {
-	c.Bytes.Add(bytes)
+	c.ProcessedCnt.Add(bytes)
 	c.Rows.Add(rows)
 }
 

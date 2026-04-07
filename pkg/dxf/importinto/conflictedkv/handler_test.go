@@ -139,7 +139,7 @@ func TestHandler(t *testing.T) {
 			require.NoError(t, eg.Wait())
 			require.EqualValues(t, 10, rowCnt)
 			require.EqualValues(t, expectedKVs, kvPairCnt)
-			require.EqualValues(t, 10, progressCollector.Bytes.Load())
+			require.EqualValues(t, 10, progressCollector.ProcessedCnt.Load())
 		}
 
 		t.Run("clustered pk table", func(t *testing.T) {
@@ -232,7 +232,7 @@ func TestHandler(t *testing.T) {
 			require.EqualValues(t, 3, rowCnt)
 			require.EqualValues(t, expectedKVs, kvPairCnt)
 			require.EqualValues(t, map[string]struct{}{"2": {}, "4": {}, "5": {}}, handledHandles)
-			require.EqualValues(t, 16, progressCollector.Bytes.Load())
+			require.EqualValues(t, 16, progressCollector.ProcessedCnt.Load())
 		}
 
 		t.Run("clustered pk table", func(t *testing.T) {
