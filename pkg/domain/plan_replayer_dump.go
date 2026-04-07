@@ -589,10 +589,17 @@ func shouldUsePlanReplayerExplainAdminBypass(sctx sessionctx.Context, task *Plan
 	return pm.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "PLAN_REPLAYER_EXPLAIN_ADMIN", false)
 }
 
-// Temporarily mark the current helper SQL type so privilege checks can apply the matching narrow bypass rules.
-func runWithPlanReplayerSQLPrivilegeType(sctx sessionctx.Context, sqlType variable.PlanReplayerInternalSQLType, fn func()) {
-	restore := sctx.GetSessionVars().SetPlanReplayerSQLPrivilegeType(sqlType)
-	defer sctx.GetSessionVars().SetPlanReplayerSQLPrivilegeType(restore)
+// Temporarily mark the current helper SQL retry so planner privilege checks can apply PLAN_REPLAYER_EXPLAIN_ADMIN.
+func runWithPlanReplayerPrivilegeBypass(sctx sessionctx.Context, fn func()) {
+	restore := sctx.Value(sessionctx.PlanReplayerPrivilegeBypass)
+	sctx.SetValue(sessionctx.PlanReplayerPrivilegeBypass, true)
+	defer func() {
+		if restore == nil {
+			sctx.ClearValue(sessionctx.PlanReplayerPrivilegeBypass)
+			return
+		}
+		sctx.SetValue(sessionctx.PlanReplayerPrivilegeBypass, restore)
+	}()
 	fn()
 }
 
@@ -860,7 +867,7 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpT
 			if !restoreExplainNonEvaledSubQuery {
 				ctx.GetSessionVars().ExplainNonEvaledSubQuery = true
 			}
-			runWithPlanReplayerSQLPrivilegeType(ctx, variable.PlanReplayerInternalSQLTypeExplain, func() {
+			runWithPlanReplayerPrivilegeBypass(ctx, func() {
 				recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), explainSQL)
 			})
 			if !restoreExplainNonEvaledSubQuery {
@@ -948,11 +955,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 	}
 	execShowCreate()
 	if err != nil && isPlanReplayerExplainAdminPrivilegeError(err) && shouldUsePlanReplayerExplainAdminBypass(ctx, task) {
-		sqlType := variable.PlanReplayerInternalSQLTypeShowCreateTable
-		if pair.IsView {
-			sqlType = variable.PlanReplayerInternalSQLTypeShowCreateView
-		}
-		runWithPlanReplayerSQLPrivilegeType(ctx, sqlType, execShowCreate)
+		runWithPlanReplayerPrivilegeBypass(ctx, execShowCreate)
 	}
 	if err != nil {
 		return err

@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -140,12 +139,8 @@ func canBypassPlanReplayerPrivilegeCheck(sctx planctx.Common, pm privilege.Manag
 	if sctx == nil || pm == nil {
 		return false
 	}
-
-	switch sctx.GetSessionVars().GetPlanReplayerSQLPrivilegeType() {
-	case variable.PlanReplayerInternalSQLTypeExplain,
-		variable.PlanReplayerInternalSQLTypeShowCreateTable,
-		variable.PlanReplayerInternalSQLTypeShowCreateView:
-	default:
+	bypass, ok := sctx.Value(sessionctx.PlanReplayerPrivilegeBypass).(bool)
+	if !ok || !bypass {
 		return false
 	}
 

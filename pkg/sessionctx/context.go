@@ -183,6 +183,8 @@ func (t basicCtxType) String() string {
 		return "initing"
 	case LastExecuteDDL:
 		return "last_execute_ddl"
+	case PlanReplayerPrivilegeBypass:
+		return "plan_replayer_privilege_bypass"
 	}
 	return "unknown"
 }
@@ -195,6 +197,8 @@ const (
 	Initing basicCtxType = 2
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
+	// PlanReplayerPrivilegeBypass marks the temporary helper SQL retry that may use PLAN_REPLAYER_EXPLAIN_ADMIN.
+	PlanReplayerPrivilegeBypass basicCtxType = 4
 )
 
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp.
