@@ -373,7 +373,7 @@ func TestInformationSchemaTiDBMViews(t *testing.T) {
 	require.NoError(t, err)
 	mvID := mvTable.Meta().ID
 
-	tk.MustQuery("select table_catalog, table_schema, mview_id, mview_name, mview_comment, refresh_method, refresh_start, refresh_interval from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'").
+	tk.MustQuery("select table_catalog, table_schema, mview_id, mview_name, mview_comment, refresh_method, refresh_start, refresh_next from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'").
 		Check(testkit.Rows(fmt.Sprintf("def test %d mv_meta mv-meta FAST  DATE_ADD(NOW(), INTERVAL 1 HOUR)", mvID)))
 	tk.MustQuery("select mview_modify_time is not null from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_meta'").
 		Check(testkit.Rows("1"))
