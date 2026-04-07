@@ -2698,6 +2698,13 @@ a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+explain format='plan_cache' select * from t where a = 1;
+id	estRows	task	access object	operator info
+IndexReader_6	10.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1105	skip non-prepared plan-cache: plan cache strategy is hint_only and use_plan_cache hint is absent
 select /*+ use_plan_cache() */ * from t where a = 1;
 a
 1

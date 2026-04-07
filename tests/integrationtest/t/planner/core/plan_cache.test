@@ -1710,6 +1710,8 @@ set tidb_enable_non_prepared_plan_cache = 1;
 select * from t where a = 1;
 select * from t where a = 1;
 select @@last_plan_from_cache;
+explain format='plan_cache' select * from t where a = 1;
+show warnings;
 
 select /*+ use_plan_cache() */ * from t where a = 1;
 select /*+ use_plan_cache() */ * from t where a = 1;
