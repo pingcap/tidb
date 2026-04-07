@@ -1864,13 +1864,24 @@ func TestOrderingIdxSelectivityRatioForMergeJoin(t *testing.T) {
 	// rows post-join, so childRowCount > estimatedRowCount.
 	query := "explain format=verbose select /*+ merge_join(t1, t2) */ t1.* from t1 use index(ib) join t2 use index(ib) on t1.b=t2.b where t1.c < t2.c order by t1.b limit 2"
 
+	hasMergeJoin := func(rows [][]any) bool {
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "MergeJoin") {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Disable ordering ratio: -1 and 0 should have the same cost.
 	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = -1")
 	rs := testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=-1")
 	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err1)
 	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0")
 	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=0")
 	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
 	require.Equal(t, planCost1, planCost2)
@@ -1878,11 +1889,13 @@ func TestOrderingIdxSelectivityRatioForMergeJoin(t *testing.T) {
 	// Increasing the ratio should increase the cost of merge join.
 	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.5")
 	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=0.5")
 	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
 	require.Less(t, planCost2, planCost3)
 	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 1")
 	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=1")
 	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err4)
 	require.Less(t, planCost3, planCost4)

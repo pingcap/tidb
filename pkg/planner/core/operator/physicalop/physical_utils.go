@@ -321,9 +321,12 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 // before enough matching rows are produced. The ordering penalty
 // (rowsToMeetFirst) is only applied when the property requires ordered output.
 func CalcChildExpectedCnt(sctx base.PlanContext, prop *property.PhysicalProperty, childRowCount, estimatedRowCount float64) float64 {
-	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
 	hasOrder := !prop.IsSortItemEmpty()
+	var orderRatio float64
+	if hasOrder {
+		orderRatio = sctx.GetSessionVars().OptOrderingIdxSelRatio
+		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	}
 	if (prop.ExpectedCnt < estimatedRowCount) ||
 		(hasOrder && orderRatio > 0 && childRowCount > estimatedRowCount && prop.ExpectedCnt < childRowCount && estimatedRowCount > 0) {
 		var rowsToMeetFirst float64
