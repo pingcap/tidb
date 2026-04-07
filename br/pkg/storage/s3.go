@@ -68,7 +68,7 @@ const (
 
 var permissionCheckFn = map[Permission]func(context.Context, s3iface.S3API, *backuppb.S3) error{
 	AccessBuckets:      s3BucketExistenceCheck,
-	ListObjects:        listObjectsCheck,
+	ListObjects:        listObjectsV2Check,
 	GetObject:          getObjectCheck,
 	PutAndDeleteObject: PutAndDeleteObjectCheck,
 }
@@ -471,14 +471,14 @@ func s3BucketExistenceCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S
 	return errors.Trace(err)
 }
 
-// listObjectsCheck checks the permission of listObjects
-func listObjectsCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
-	input := &s3.ListObjectsInput{
+// listObjectsV2Check checks the permission of listObjectsV2
+func listObjectsV2Check(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
+	input := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(qs.Bucket),
 		Prefix:  aws.String(qs.Prefix),
 		MaxKeys: aws.Int64(1),
 	}
-	_, err := svc.ListObjects(input)
+	_, err := svc.ListObjectsV2(input)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -718,32 +718,21 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt.ListCount > 0 {
 		maxKeys = opt.ListCount
 	}
-	req := &s3.ListObjectsInput{
+	req := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(rs.options.Bucket),
 		Prefix:  aws.String(prefix),
 		MaxKeys: aws.Int64(maxKeys),
 	}
+	if opt.StartAfter != "" {
+		req.StartAfter = aws.String(path.Join(rs.options.Prefix, opt.StartAfter))
+	}
 
 	for {
-		// FIXME: We can't use ListObjectsV2, it is not universally supported.
-		// (Ceph RGW supported ListObjectsV2 since v15.1.0, released 2020 Jan 30th)
-		// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
-		res, err := rs.svc.ListObjectsWithContext(ctx, req)
+		res, err := rs.svc.ListObjectsV2WithContext(ctx, req)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, r := range res.Contents {
-			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
-			//
-			// `res.NextMarker` is populated only if we specify req.Delimiter.
-			// Aliyun OSS and minio will populate NextMarker no matter what,
-			// but this documented behavior does apply to AWS S3:
-			//
-			// "If response does not include the NextMarker and it is truncated,
-			// you can use the value of the last Key in the response as the marker
-			// in the subsequent request to get the next set of object keys."
-			req.Marker = r.Key
-
 			// when walk on specify directory, the result include storage.Prefix,
 			// which can not be reuse in other API(Open/Read) directly.
 			// so we use TrimPrefix to filter Prefix for next Open/Read.
@@ -761,12 +750,58 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 				return errors.Trace(err)
 			}
 		}
+		prevContinuationToken := aws.StringValue(req.ContinuationToken)
+		nextContinuationToken := aws.StringValue(res.NextContinuationToken)
+		req.ContinuationToken = res.NextContinuationToken
+		req.StartAfter = nil
 		if !aws.BoolValue(res.IsTruncated) {
 			break
+		}
+		if nextContinuationToken == "" || nextContinuationToken == prevContinuationToken {
+			return errors.Annotatef(
+				berrors.ErrStorageUnknown,
+				"list objects pagination is truncated but continuation token does not advance (previous=%q, next=%q, prefix=%q)",
+				prevContinuationToken,
+				nextContinuationToken,
+				prefix,
+			)
 		}
 	}
 
 	return nil
+}
+
+// FileSynced reports whether the object has completed source-side replication.
+func (rs *S3Storage) FileSynced(ctx context.Context, file string) (bool, error) {
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		Key:    aws.String(rs.options.Prefix + file),
+	}
+
+	head, err := rs.svc.HeadObjectWithContext(ctx, input)
+	if err != nil {
+		if aerr, ok := errors.Cause(err).(awserr.Error); ok { // nolint:errorlint
+			switch aerr.Code() {
+			case s3.ErrCodeNoSuchBucket, s3.ErrCodeNoSuchKey, notFound:
+				return false, nil
+			}
+		}
+		return false, errors.Trace(err)
+	}
+
+	status := aws.StringValue(head.ReplicationStatus)
+	switch status {
+	case "COMPLETE", "COMPLETED", "REPLICA":
+		return true, nil
+	case "PENDING":
+		return false, nil
+	case "FAILED":
+		return false, errors.Errorf("upstream replication status for %s is FAILED", file)
+	case "":
+		return false, errors.Errorf("upstream replication status for %s is empty", file)
+	default:
+		return false, errors.Errorf("upstream replication status for %s is %q", file, status)
+	}
 }
 
 // URI returns s3://<base>/<prefix>.

@@ -259,6 +259,10 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt == nil {
 		opt = &WalkOption{}
 	}
+	startOffset := ""
+	if opt.StartAfter != "" {
+		startOffset = s.objectName(opt.StartAfter)
+	}
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
@@ -267,7 +271,7 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		prefix += opt.ObjPrefix
 	}
 
-	query := &storage.Query{Prefix: prefix}
+	query := &storage.Query{Prefix: prefix, StartOffset: startOffset}
 	// only need each object's name and size
 	err := query.SetAttrSelection([]string{"Name", "Size"})
 	if err != nil {
@@ -288,6 +292,9 @@ func (s *GCSStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		path := strings.TrimPrefix(attrs.Name, s.gcs.Prefix)
 		// trim the prefix '/' to ensure that the path returned is consistent with the local storage
 		path = strings.TrimPrefix(path, "/")
+		if opt.StartAfter != "" && path <= opt.StartAfter {
+			continue
+		}
 		if err = fn(path, attrs.Size); err != nil {
 			return errors.Trace(err)
 		}

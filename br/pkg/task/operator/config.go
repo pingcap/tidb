@@ -8,8 +8,15 @@ import (
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	crrconfig "github.com/pingcap/tidb/br/pkg/stream/crr/config"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/spf13/pflag"
+)
+
+const (
+	flagTaskName          = "task-name"
+	flagUpstreamStorage   = "upstream-storage"
+	flagDownstreamStorage = "downstream-storage"
 )
 
 type PauseGcConfig struct {
@@ -177,6 +184,47 @@ func (cfg *MigrateToConfig) Verify() error {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"the --%s and ( --%s or --%s ) flag cannot be used at the same time",
 			flagBase, flagTo, flagRecent)
+	}
+	return nil
+}
+
+type CRRCheckpointConfig struct {
+	task.Config
+	CRRConfig crrconfig.Config
+
+	UpstreamStorage   string
+	DownstreamStorage string
+}
+
+func DefineFlagsForCRRCheckpointConfig(flags *pflag.FlagSet) {
+	crrconfig.DefineFlags(flags)
+	flags.String(flagUpstreamStorage, "", "The upstream log backup storage URI.")
+	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI. Optional when the upstream storage can confirm object sync directly, such as AWS S3.")
+}
+
+func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	if err := cfg.Config.ParseFromFlags(flags); err != nil {
+		return err
+	}
+	if err := cfg.CRRConfig.Parse(flags); err != nil {
+		return err
+	}
+
+	var err error
+	cfg.UpstreamStorage, err = flags.GetString(flagUpstreamStorage)
+	if err != nil {
+		return err
+	}
+	cfg.DownstreamStorage, err = flags.GetString(flagDownstreamStorage)
+	if err != nil {
+		return err
+	}
+
+	if cfg.CRRConfig.TaskName == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagTaskName)
+	}
+	if cfg.UpstreamStorage == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagUpstreamStorage)
 	}
 	return nil
 }
