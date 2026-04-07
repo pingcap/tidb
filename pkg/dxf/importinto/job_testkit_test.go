@@ -204,12 +204,12 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	importStepSummaries := []*execute.SubtaskSummary{
 		{
-			RowCnt: *atomic.NewInt64(300),
-			Bytes:  *atomic.NewInt64(4000),
+			RowCnt:    *atomic.NewInt64(300),
+			Processed: *atomic.NewInt64(4000),
 		},
 		{
-			RowCnt: *atomic.NewInt64(400),
-			Bytes:  *atomic.NewInt64(4000),
+			RowCnt:    *atomic.NewInt64(400),
+			Processed: *atomic.NewInt64(4000),
 		},
 	}
 	for _, m := range importStepSummaries {
@@ -245,12 +245,12 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
-			RowCnt: *atomic.NewInt64(100),
-			Bytes:  *atomic.NewInt64(1000),
+			RowCnt:    *atomic.NewInt64(100),
+			Processed: *atomic.NewInt64(1000),
 		},
 		{
-			RowCnt: *atomic.NewInt64(200),
-			Bytes:  *atomic.NewInt64(2000),
+			RowCnt:    *atomic.NewInt64(200),
+			Processed: *atomic.NewInt64(2000),
 		},
 	}
 	for _, m := range ingestStepSummaries {
@@ -320,31 +320,31 @@ func TestShowImportProgress(t *testing.T) {
 	}{
 		{
 			execute.SubtaskSummary{
-				RowCnt: *atomic.NewInt64(20),
-				Bytes:  *atomic.NewInt64(200),
+				RowCnt:    *atomic.NewInt64(20),
+				Processed: *atomic.NewInt64(200),
 				Progresses: []execute.Progress{
-					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1001, 0)},
-					{RowCnt: 20, Bytes: 200, UpdateTime: time.Unix(1002, 0)},
+					{RowCnt: 0, Processed: 0, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 20, Processed: 200, UpdateTime: time.Unix(1002, 0)},
 				},
 			},
 			proto.SubtaskStateRunning,
 		},
 		{
 			execute.SubtaskSummary{
-				RowCnt: *atomic.NewInt64(30),
-				Bytes:  *atomic.NewInt64(300),
+				RowCnt:    *atomic.NewInt64(30),
+				Processed: *atomic.NewInt64(300),
 				Progresses: []execute.Progress{
-					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1000, 0)},
-					{RowCnt: 15, Bytes: 150, UpdateTime: time.Unix(1001, 0)},
-					{RowCnt: 30, Bytes: 300, UpdateTime: time.Unix(1002, 0)},
+					{RowCnt: 0, Processed: 0, UpdateTime: time.Unix(1000, 0)},
+					{RowCnt: 15, Processed: 150, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 30, Processed: 300, UpdateTime: time.Unix(1002, 0)},
 				},
 			},
 			proto.SubtaskStateSucceed,
 		},
 		{
 			execute.SubtaskSummary{
-				RowCnt: *atomic.NewInt64(0),
-				Bytes:  *atomic.NewInt64(0),
+				RowCnt:    *atomic.NewInt64(0),
+				Processed: *atomic.NewInt64(0),
 			},
 			proto.SubtaskStateSucceed,
 		},

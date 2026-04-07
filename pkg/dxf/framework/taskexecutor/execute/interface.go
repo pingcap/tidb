@@ -86,7 +86,9 @@ type Progress struct {
 	// For now, RowCnt is not used, but as it's collected by the collector,
 	// we still keep it here for future possible usage.
 	RowCnt int64 `json:"row_count,omitempty"`
-	Bytes  int64 `json:"bytes,omitempty"`
+	// Processed stores generic progress units.
+	// Keep the JSON tag as "bytes" for backward compatibility with persisted summaries.
+	Processed int64 `json:"bytes,omitempty"`
 
 	// UpdateTime is the time when this progress is stored.
 	UpdateTime time.Time `json:"update_time,omitempty"`
@@ -95,10 +97,11 @@ type Progress struct {
 // SubtaskSummary contains the summary of a subtask.
 // It tracks the runtime summary of the subtask.
 type SubtaskSummary struct {
-	// RowCnt and Bytes are updated by the collector.
+	// RowCnt and Processed are updated by the collector.
 	RowCnt atomic.Int64 `json:"row_count,omitempty"`
-	// Bytes is the number of bytes to process.
-	Bytes atomic.Int64 `json:"bytes,omitempty"`
+	// Processed is the number of processed units reported by the collector.
+	// Keep the JSON tag as "bytes" for backward compatibility with persisted summaries.
+	Processed atomic.Int64 `json:"bytes,omitempty"`
 	// ReadBytes is the number of bytes that read from the source.
 	ReadBytes atomic.Int64 `json:"read_bytes,omitempty"`
 	// GetReqCnt is the number of get requests to the external storage.
@@ -124,7 +127,7 @@ func (s *SubtaskSummary) MergeObjStoreRequests(reqs *recording.Requests) {
 func (s *SubtaskSummary) Update() {
 	s.Progresses = append(s.Progresses, Progress{
 		RowCnt:     s.RowCnt.Load(),
-		Bytes:      s.Bytes.Load(),
+		Processed:  s.Processed.Load(),
 		UpdateTime: time.Now(),
 	})
 
@@ -145,15 +148,15 @@ func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Du
 	}
 
 	// The number of point is small, so we can afford to iterate through all points.
-	var totalBytes float64
+	var totalProcessed float64
 	for i := range len(s.Progresses) - 1 {
 		rangeStart := s.Progresses[i].UpdateTime
 		rangeEnd := s.Progresses[i+1].UpdateTime
-		rangeBytes := float64(s.Progresses[i+1].Bytes - s.Progresses[i].Bytes)
+		rangeProcessed := float64(s.Progresses[i+1].Processed - s.Progresses[i].Processed)
 		if endTime.Before(rangeStart) || startTime.After(rangeEnd) {
 			continue
 		} else if startTime.Before(rangeStart) && endTime.After(rangeEnd) {
-			totalBytes += rangeBytes
+			totalProcessed += rangeProcessed
 			continue
 		}
 
@@ -167,10 +170,10 @@ func (s *SubtaskSummary) GetSpeedInTimeRange(endTime time.Time, duration time.Du
 			iEnd = endTime
 		}
 
-		totalBytes += rangeBytes * float64(iEnd.Sub(iStart)) / float64(rangeEnd.Sub(rangeStart))
+		totalProcessed += rangeProcessed * float64(iEnd.Sub(iStart)) / float64(rangeEnd.Sub(rangeStart))
 	}
 
-	return int64(totalBytes / duration.Seconds())
+	return int64(totalProcessed / duration.Seconds())
 }
 
 // UpdateTime returns the last update time of the summary.
@@ -184,7 +187,7 @@ func (s *SubtaskSummary) UpdateTime() time.Time {
 // Reset resets the summary to zero values and clears history data.
 func (s *SubtaskSummary) Reset() {
 	s.RowCnt.Store(0)
-	s.Bytes.Store(0)
+	s.Processed.Store(0)
 	s.ReadBytes.Store(0)
 	s.PutReqCnt.Store(0)
 	s.GetReqCnt.Store(0)
@@ -199,11 +202,12 @@ type Collector interface {
 	// when the data is accepted to be processed.
 	Accepted(bytes int64)
 	// Processed is used collects metrics.
-	// `bytes` is the number of bytes processed, and `rows` is the number of rows processed.
-	// The meaning of `bytes` may vary by scenario, for example:
+	// `processed` is the number of processed units, and `rows` is the number of rows processed.
+	// The meaning of `processed` may vary by scenario, for example:
 	//   - During encoding, it represents the number of bytes read from the source data file.
 	//   - During merge sort, it represents the number of bytes merged.
-	Processed(bytes, rows int64)
+	//   - During conflict handling, it represents the number of conflicted rows processed.
+	Processed(processed, rows int64)
 }
 
 // NoopCollector is a no-op implementation of Collector.

@@ -68,6 +68,7 @@ type collectConflictsStepExecutor struct {
 }
 
 var _ execute.StepExecutor = &collectConflictsStepExecutor{}
+var _ execute.Collector = &collectConflictsStepExecutor{}
 
 // NewCollectConflictsStepExecutor creates a new collectConflictsStepExecutor.
 // exported for test.
@@ -174,7 +175,6 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
-	pairCh = e.countConflictPairs(egCtx, eg, pairCh)
 
 	encoders, err := createEncoders(concurrency, e.tableImporter)
 	if err != nil {
@@ -201,6 +201,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 			e.sharedHandleSet,
 			localSet,
 			&e.sizeOfConflictRowFiles,
+			e,
 			e.GetMeterRecorder(),
 		)
 		eg.Go(func() (err error) {
@@ -252,34 +253,12 @@ func (e *collectConflictsStepExecutor) ResetSummary() {
 	e.summary.Reset()
 }
 
-func (e *collectConflictsStepExecutor) countConflictPairs(
-	ctx context.Context,
-	eg *tidbutil.ErrorGroupWithRecover,
-	pairCh <-chan *external.KVPair,
-) chan *external.KVPair {
-	progressPairCh := make(chan *external.KVPair, 128)
-	eg.Go(func() error {
-		defer close(progressPairCh)
-		forwardProgress := true
-		for pair := range pairCh {
-			if pair != nil {
-				e.summary.Bytes.Inc()
-			}
-			if !forwardProgress {
-				continue
-			}
-			select {
-			case progressPairCh <- pair:
-			case <-ctx.Done():
-				// Keep draining the source channel to avoid blocking producer
-				// goroutines when downstream consumers have exited on context
-				// cancellation.
-				forwardProgress = false
-			}
-		}
-		return nil
-	})
-	return progressPairCh
+// Accepted implements Collector.Accepted interface.
+func (*collectConflictsStepExecutor) Accepted(_ int64) {}
+
+// Processed implements Collector.Processed interface.
+func (e *collectConflictsStepExecutor) Processed(processed, _ int64) {
+	e.summary.Processed.Add(processed)
 }
 
 // getConflictRowFilenamePrefix returns the file name prefix to store the conflict

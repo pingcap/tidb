@@ -186,6 +186,8 @@ type RuntimeInfo struct {
 var notAvailable = "N/A"
 
 func (ri *RuntimeInfo) isConflictStep() bool {
+	// Conflict steps track "processed" by conflicted-row count, not by byte size
+	// like other import steps.
 	return ri.Step == proto.ImportStepCollectConflicts || ri.Step == proto.ImportStepConflictResolution
 }
 
@@ -318,7 +320,7 @@ func GetRuntimeInfoForJob(
 
 	ri.Speed = 0
 	for _, s := range summaries {
-		ri.Processed += s.Bytes.Load()
+		ri.Processed += s.Processed.Load()
 		ri.ImportRows += s.RowCnt.Load()
 		ri.Speed += s.GetSpeedInTimeRange(currentTime, timeRange)
 		if s.UpdateTime().After(latestTime) {

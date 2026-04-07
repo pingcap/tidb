@@ -48,6 +48,7 @@ type conflictResolutionStepExecutor struct {
 }
 
 var _ execute.StepExecutor = &conflictResolutionStepExecutor{}
+var _ execute.Collector = &conflictResolutionStepExecutor{}
 
 // NewConflictResolutionStepExecutor creates a new StepExecutor for conflict
 // resolution step, exported for test.
@@ -137,10 +138,9 @@ func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	pairCh := external.ReadKVFilesAsync(egCtx, eg, objStore, ci.Files)
-	pairCh = e.countConflictPairs(egCtx, eg, pairCh)
 	for i := range concurrency {
 		encoder := encoders[i]
-		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e.GetMeterRecorder())
+		deleter := conflictedkv.NewDeleter(e.tableImporter.Table, e.logger, e.store, kvGroup, encoder, e, e.GetMeterRecorder())
 		eg.Go(func() error {
 			return deleter.Run(egCtx, pairCh)
 		})
@@ -163,33 +163,12 @@ func (e *conflictResolutionStepExecutor) ResetSummary() {
 	e.summary.Reset()
 }
 
-func (e *conflictResolutionStepExecutor) countConflictPairs(
-	ctx context.Context,
-	eg *tidbutil.ErrorGroupWithRecover,
-	pairCh <-chan *external.KVPair,
-) chan *external.KVPair {
-	progressPairCh := make(chan *external.KVPair, 128)
-	eg.Go(func() error {
-		defer close(progressPairCh)
-		forwardProgress := true
-		for pair := range pairCh {
-			if pair != nil {
-				e.summary.Bytes.Inc()
-			}
-			if !forwardProgress {
-				continue
-			}
-			select {
-			case progressPairCh <- pair:
-			case <-ctx.Done():
-				// Keep draining source pairs to prevent producer goroutines from
-				// blocking when downstream exits early on context cancelation.
-				forwardProgress = false
-			}
-		}
-		return nil
-	})
-	return progressPairCh
+// Accepted implements Collector.Accepted interface.
+func (*conflictResolutionStepExecutor) Accepted(_ int64) {}
+
+// Processed implements Collector.Processed interface.
+func (e *conflictResolutionStepExecutor) Processed(processed, _ int64) {
+	e.summary.Processed.Add(processed)
 }
 
 // when create encoder, if the table have generated column, when calling
