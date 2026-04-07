@@ -130,7 +130,7 @@ func NewAddIndexIngestPipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
 		reorgMeta.GetBatchSize(), reorgMeta, backendCtx, collector)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
-		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, collector)
+		tbl, indexes, engines, writerCnt, reorgMeta, collector)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, collector)
 
 	operator.Compose(srcOp, scanOp)
@@ -195,7 +195,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		reorgMeta.GetBatchSize(), reorgMeta, nil, collector)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, taskID, subtaskID,
-		tbl, indexes, extStore, srcChkPool, writerCnt,
+		tbl, indexes, extStore, writerCnt,
 		onClose, memSizePerIndex, reorgMeta, tikvCodec,
 		collector,
 	)
@@ -633,7 +633,6 @@ func NewWriteExternalStoreOperator(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	store storeapi.Storage,
-	srcChunkPool *sync.Pool,
 	concurrency int,
 	onClose external.OnWriterCloseFunc,
 	memoryQuota uint64,
@@ -669,17 +668,16 @@ func NewWriteExternalStoreOperator(
 			}
 
 			w := &indexIngestWorker{
-				ctx:          ctx,
-				tbl:          tbl,
-				indexes:      indexes,
-				copCtx:       copCtx,
-				se:           nil,
-				sessPool:     sessPool,
-				writers:      writers,
-				srcChunkPool: srcChunkPool,
-				reorgMeta:    reorgMeta,
-				totalCount:   totalCount,
-				collector:    collector,
+				ctx:        ctx,
+				tbl:        tbl,
+				indexes:    indexes,
+				copCtx:     copCtx,
+				se:         nil,
+				sessPool:   sessPool,
+				writers:    writers,
+				reorgMeta:  reorgMeta,
+				totalCount: totalCount,
+				collector:  collector,
 			}
 			err := w.initIndexConditionCheckers()
 			if err != nil {
@@ -723,7 +721,6 @@ func NewIndexIngestOperator(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	engines []ingest.Engine,
-	srcChunkPool *sync.Pool,
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
 	collector execute.Collector,
@@ -754,12 +751,11 @@ func NewIndexIngestOperator(
 				indexes: indexes,
 				copCtx:  copCtx,
 
-				se:           nil,
-				sessPool:     sessPool,
-				writers:      writers,
-				srcChunkPool: srcChunkPool,
-				reorgMeta:    reorgMeta,
-				collector:    collector,
+				se:        nil,
+				sessPool:  sessPool,
+				writers:   writers,
+				reorgMeta: reorgMeta,
+				collector: collector,
 			}
 			err := w.initIndexConditionCheckers()
 			if err != nil {
@@ -787,8 +783,7 @@ type indexIngestWorker struct {
 	se       *session.Session
 	restore  func(sessionctx.Context)
 
-	writers      []ingest.Writer
-	srcChunkPool *sync.Pool
+	writers []ingest.Writer
 	// only available in global sort
 	totalCount *atomic.Int64
 	collector  execute.Collector
@@ -797,11 +792,7 @@ type indexIngestWorker struct {
 func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) error {
 	defer func() {
 		if ck.Chunk != nil {
-			if ck.releaseChunk != nil {
-				ck.releaseChunk(ck.Chunk)
-			} else {
-				w.srcChunkPool.Put(ck.Chunk)
-			}
+			ck.releaseChunk(ck.Chunk)
 		}
 	}()
 	failpoint.InjectCall("mockIndexIngestWorkerFault")
