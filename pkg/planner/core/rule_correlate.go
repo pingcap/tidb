@@ -18,9 +18,11 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -372,6 +374,7 @@ func cloneProjection(proj *logicalop.LogicalProjection) (*logicalop.LogicalProje
 	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
 		proj.SCtx(), proj.TP(), &clone, proj.QueryBlockOffset())
 	clone.SetSchema(proj.Schema().Clone())
+	clone.Exprs = append([]expression.Expression(nil), proj.Exprs...)
 	clone.SetChildren(children...)
 	return &clone, true
 }
@@ -385,6 +388,8 @@ func cloneAggregation(agg *logicalop.LogicalAggregation) (*logicalop.LogicalAggr
 	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
 		agg.SCtx(), agg.TP(), &clone, agg.QueryBlockOffset())
 	clone.SetSchema(agg.Schema().Clone())
+	clone.AggFuncs = append([]*aggregation.AggFuncDesc(nil), agg.AggFuncs...)
+	clone.GroupByItems = append([]expression.Expression(nil), agg.GroupByItems...)
 	clone.SetChildren(children...)
 	return &clone, true
 }
@@ -398,6 +403,9 @@ func cloneLimit(lim *logicalop.LogicalLimit) (*logicalop.LogicalLimit, bool) {
 	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
 		lim.SCtx(), lim.TP(), &clone, lim.QueryBlockOffset())
 	clone.SetSchema(lim.Schema().Clone())
+	if len(lim.PartitionBy) > 0 {
+		clone.PartitionBy = append([]property.SortItem(nil), lim.PartitionBy...)
+	}
 	clone.SetChildren(children...)
 	return &clone, true
 }
@@ -410,6 +418,8 @@ func cloneSort(s *logicalop.LogicalSort) (*logicalop.LogicalSort, bool) {
 	clone := *s
 	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
 		s.SCtx(), s.TP(), &clone, s.QueryBlockOffset())
+	// LogicalSort embeds BaseLogicalPlan (not LogicalSchemaProducer),
+	// so it inherits schema from its child — no SetSchema needed.
 	clone.ByItems = append([]*util.ByItems(nil), s.ByItems...)
 	clone.SetChildren(children...)
 	return &clone, true
@@ -425,6 +435,9 @@ func cloneTopN(tn *logicalop.LogicalTopN) (*logicalop.LogicalTopN, bool) {
 		tn.SCtx(), tn.TP(), &clone, tn.QueryBlockOffset())
 	clone.SetSchema(tn.Schema().Clone())
 	clone.ByItems = append([]*util.ByItems(nil), tn.ByItems...)
+	if len(tn.PartitionBy) > 0 {
+		clone.PartitionBy = append([]property.SortItem(nil), tn.PartitionBy...)
+	}
 	clone.SetChildren(children...)
 	return &clone, true
 }

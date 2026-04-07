@@ -680,28 +680,31 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			}
 		})
 
-		if round.setup != nil {
-			round.setup(sessVars)
-		}
-		p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
-			ctx,
-			sctx,
-			node,
-			is,
-			hintProcessor,
-			&checked,
-			&optimizeStarted,
-			&beginOpt,
-			needRestoreLogicalPlanCtx,
-			&bestPlan,
-			&bestNames,
-			&bestCost,
-			&bestLogicalPlanCtx,
-			round.adjustFlag,
-		)
-		if round.cleanup != nil {
-			round.cleanup(sessVars)
-		}
+		// Use a closure so that defer-based cleanup runs at the end of each
+		// iteration, not at function exit. This ensures session state (e.g.
+		// EnableCorrelateSubquery) is restored even if the round panics.
+		func() {
+			if round.setup != nil {
+				round.setup(sessVars)
+				defer round.cleanup(sessVars)
+			}
+			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+				ctx,
+				sctx,
+				node,
+				is,
+				hintProcessor,
+				&checked,
+				&optimizeStarted,
+				&beginOpt,
+				needRestoreLogicalPlanCtx,
+				&bestPlan,
+				&bestNames,
+				&bestCost,
+				&bestLogicalPlanCtx,
+				round.adjustFlag,
+			)
+		}()
 		if err != nil {
 			return nil, nil, 0, err
 		}
