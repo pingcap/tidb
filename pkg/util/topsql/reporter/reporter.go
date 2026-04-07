@@ -345,6 +345,7 @@ func findKthNetworkBytes(data stmtstats.StatementStatsMap, k int, u64Slice []uin
 // TopRU extraction runs on the same report tick path.
 // Each call emits at most one aligned closed 60s RU window.
 func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(timestamp uint64) {
+	tsr.drainPendingRUBatchesForReport()
 	ruRecords := tsr.ruAggregator.takeReportRecords(
 		timestamp,
 		uint64(topsqlstate.GetTopRUItemInterval()),
@@ -361,6 +362,21 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(timestamp uint64) {
 	default:
 		// ignore if chan blocked
 		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
+	}
+}
+
+func (tsr *RemoteTopSQLReporter) drainPendingRUBatchesForReport() {
+	// Include RU increments that are already buffered when the report snapshot starts.
+	// Without this drain, a report boundary can overtake queued RU work and split one
+	// logical 60s window across reports depending on goroutine scheduling.
+	pending := len(tsr.collectRUIncrementsChan)
+	for i := 0; i < pending; i++ {
+		select {
+		case batch := <-tsr.collectRUIncrementsChan:
+			tsr.ruAggregator.addBatch(batch)
+		default:
+			return
+		}
 	}
 }
 

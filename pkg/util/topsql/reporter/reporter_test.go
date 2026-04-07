@@ -1167,6 +1167,7 @@ func TestTopRUHandoverEdgeCases(t *testing.T) {
 	t.Run("collect worker drops stale RU version batch", testCollectWorkerDropsStaleRUVersionBatch)
 	t.Run("report worker sends queued RU records after handover", testReportWorkerSendsQueuedRURecordsAfterHandover)
 	t.Run("best effort boundary shift", testTopRUBestEffortBoundaryShift)
+	t.Run("report snapshot includes queued RU batch", testTakeDataAndSendToReportChanIncludesQueuedRUBatch)
 }
 
 func testCollectWorkerDropsStaleRUVersionBatch(t *testing.T) {
@@ -1290,6 +1291,55 @@ func testTopRUBestEffortBoundaryShift(t *testing.T) {
 	second := tsr.ruAggregator.takeReportRecords(120, 60, []byte("ks"))
 	rec := findRURecordByDigest(second, "u-best", "sql-best", "plan-best")
 	require.NotNil(t, rec)
+}
+
+func testTakeDataAndSendToReportChanIncludesQueuedRUBatch(t *testing.T) {
+	origInterval := topsqlstate.GetTopRUItemInterval()
+	require.NoError(t, topsqlstate.SetTopRUItemInterval(tipb.ItemInterval_ITEM_INTERVAL_60S))
+	t.Cleanup(func() {
+		require.NoError(t, topsqlstate.SetTopRUItemInterval(tipb.ItemInterval(origInterval)))
+	})
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	t.Cleanup(tsr.Close)
+	tsr.BindKeyspaceName([]byte("ks-queued"))
+
+	sqlDigest := []byte("sql-queued")
+	planDigest := []byte("plan-queued")
+	tsr.RegisterSQL(sqlDigest, "select /* queued */ 1", false)
+	tsr.RegisterPlan(planDigest, "queued-plan", false)
+
+	key := stmtstats.RUKey{
+		User:       "queued-user",
+		SQLDigest:  stmtstats.BinaryDigest("sql-queued"),
+		PlanDigest: stmtstats.BinaryDigest("plan-queued"),
+	}
+	tsr.collectRUIncrementsChan <- ruBatch{
+		timestamp: 1,
+		data: stmtstats.RUIncrementMap{
+			key: {
+				TotalRU:      9,
+				ExecCount:    2,
+				ExecDuration: 90,
+			},
+		},
+		version: rmclient.DefaultRUVersion,
+	}
+
+	tsr.takeDataAndSendToReportChan(60)
+
+	select {
+	case data := <-tsr.reportCollectedDataChan:
+		require.NotEmpty(t, data.ruRecords)
+		rec := findRURecordByDigest(data.ruRecords, "queued-user", "sql-queued", "plan-queued")
+		require.NotNil(t, rec)
+		require.Len(t, rec.Items, 1)
+		require.Equal(t, uint64(0), rec.Items[0].TimestampSec)
+		require.InDelta(t, 9.0, rec.Items[0].TotalRu, 1e-9)
+		require.Equal(t, uint64(2), rec.Items[0].ExecCount)
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for queued RU report snapshot")
+	}
 }
 
 func drainRUBatchesForTest(tsr *RemoteTopSQLReporter) {
