@@ -37,6 +37,7 @@ const (
 	FlagDeriveTopNFromWindow
 	FlagPredicateSimplification
 	FlagPushDownTopN
+	FlagOrderAwareJoinReorder
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
 	FlagOuterJoinToSemiJoin
