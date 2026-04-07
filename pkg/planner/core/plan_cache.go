@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -174,7 +175,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	for _, tbl := range stmt.tbls {
 		tblInfo := tbl.Meta()
 		if tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
-			sctx.GetSessionVars().StmtCtx.TblInfo2UnionScan[tblInfo] = true
+			if vars.StmtCtx.TblInfo2UnionScan == nil {
+				vars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+			}
+			vars.StmtCtx.TblInfo2UnionScan[tblInfo] = true
 		}
 	}
 

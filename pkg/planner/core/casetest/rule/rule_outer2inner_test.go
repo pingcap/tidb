@@ -140,7 +140,7 @@ where ('1',1) in (select name, id from tmp);`).Check(testkit.Rows(
 			`  ├─TableDual(Build) root  rows:1`,
 			`  └─HashAgg(Probe) root  group by:Column, Column, funcs:firstrow(1)->Column`,
 			`    └─Selection root  eq(Column, "1"), eq(Column, 1)`,
-			`      └─Window root  row_number()->Column#14 over(rows between current row and current row)`,
+			`      └─Window root  row_number()->Column over(rows between current row and current row)`,
 			`        └─Apply root  CARTESIAN left outer join, left side:TableReader`,
 			`          ├─TableReader(Build) root  data:TableFullScan`,
 			`          │ └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo`,
@@ -212,6 +212,16 @@ FROM t0
 		tk.MustQuery(`select 1 from chqin where  '2008-05-28' NOT IN
 		(select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >='1990-11-27' union select f1 from chqin where id=5);`).
 			Check(testkit.Rows())
+
+		// issue:66047
+		tk.MustExec("drop table if exists t0, t1")
+		tk.MustExec("CREATE TABLE t0(c0 NUMERIC UNSIGNED ZEROFILL, c1 BLOB(18), c2 NUMERIC UNSIGNED)")
+		tk.MustExec("CREATE TABLE t1 LIKE t0")
+		tk.MustExec("INSERT INTO t0 VALUES (0, 'wj', NULL)")
+		tk.MustQuery("SELECT TRUE FROM t1 RIGHT OUTER JOIN t0 ON NULL WHERE FIELD(t0.c0, 0.0, CAST(t1.c0 AS FLOAT))").
+			Check(testkit.Rows("1"))
+		tk.MustQuery("SELECT FIELD(t0.c0, 0.0, CAST(t1.c0 AS FLOAT)) FROM t1 RIGHT OUTER JOIN t0 ON NULL").
+			Check(testkit.Rows("1"))
 	})
 }
 

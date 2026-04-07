@@ -10,7 +10,7 @@ inputs:
     required: true
   gcp_sa_key:
     description: GCP service account key JSON content
-    required: true
+    required: false
 runs:
   using: composite
   steps:
@@ -41,7 +41,7 @@ runs:
         echo "Repository Bazel flags may still enable read-only remote cache during the actual build command."
 
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ inputs.go-version }}
         cache: false

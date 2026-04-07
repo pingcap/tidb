@@ -2951,122 +2951,6 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
-type subqueryExprExtractor struct {
-	exprs []ast.ExprNode
-}
-
-// Enter implements Visitor interface.
-func (e *subqueryExprExtractor) Enter(n ast.Node) (ast.Node, bool) {
-	switch subq := n.(type) {
-	case *ast.SubqueryExpr:
-		e.exprs = append(e.exprs, subq)
-		return n, true
-	case *ast.ExistsSubqueryExpr:
-		e.exprs = append(e.exprs, subq)
-		return n, true
-	case *ast.CompareSubqueryExpr:
-		e.exprs = append(e.exprs, subq)
-		return n, true
-	case *ast.PatternInExpr:
-		if subq.Sel == nil {
-			return n, false
-		}
-		e.exprs = append(e.exprs, subq)
-		return n, true
-	}
-	return n, false
-}
-
-// Leave implements Visitor interface.
-func (*subqueryExprExtractor) Leave(n ast.Node) (ast.Node, bool) {
-	return n, true
-}
-
-func findColumnNameByUniqueID(p base.LogicalPlan, uniqueID int64) *ast.ColumnName {
-	for idx, pCol := range p.Schema().Columns {
-		if uniqueID != pCol.UniqueID {
-			continue
-		}
-		pName := p.OutputNames()[idx]
-		return &ast.ColumnName{
-			Schema: pName.DBName,
-			Table:  pName.TblName,
-			Name:   pName.ColName,
-		}
-	}
-	// USING/NATURAL JOIN can keep table-qualified outer references only in FullSchema/FullNames.
-	// LogicalApply embeds LogicalJoin and may carry the same FullSchema/FullNames when a
-	// LATERAL join sits on top of a USING/NATURAL join on the left side.
-	var fullSchema *expression.Schema
-	var fullNames types.NameSlice
-	switch x := p.(type) {
-	case *logicalop.LogicalJoin:
-		fullSchema, fullNames = x.FullSchema, x.FullNames
-	case *logicalop.LogicalApply:
-		fullSchema, fullNames = x.FullSchema, x.FullNames
-	}
-	if fullSchema != nil && len(fullNames) != 0 {
-		for idx, pCol := range fullSchema.Columns {
-			if uniqueID != pCol.UniqueID {
-				continue
-			}
-			pName := fullNames[idx]
-			return &ast.ColumnName{
-				Schema: pName.DBName,
-				Table:  pName.TblName,
-				Name:   pName.ColName,
-			}
-		}
-	}
-	// Selection/Projection/Window and similar unary wrappers can sit above the join that keeps
-	// redundant USING/NATURAL JOIN columns only in FullSchema/FullNames.
-	if len(p.Children()) == 1 {
-		return findColumnNameByUniqueID(p.Children()[0], uniqueID)
-	}
-	return nil
-}
-
-func (b *PlanBuilder) appendAuxiliaryFieldsForSubqueries(ctx context.Context, p base.LogicalPlan, selectFields []*ast.SelectField, nodes ...ast.Node) ([]*ast.SelectField, error) {
-	for _, node := range nodes {
-		if node == nil {
-			continue
-		}
-		extractor := &subqueryExprExtractor{}
-		node.Accept(extractor)
-		for _, expr := range extractor.exprs {
-			// Correlated aggregates are handled separately; here we only need the outer columns
-			// so subqueries inside deferred window expressions can still resolve against this query block.
-			// TODO: Reuse the rewritten expression/plan from the pre-build phase instead of rebuilding it
-			// only for correlated outer-column discovery.
-			_, np, err := b.rewrite(ctx, expr, p, nil, true)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			correlatedCols := coreusage.ExtractCorrelatedCols4LogicalPlan(np)
-			for _, corCol := range correlatedCols {
-				colName := findColumnNameByUniqueID(p, corCol.UniqueID)
-				if colName == nil {
-					continue
-				}
-				columnNameExpr := &ast.ColumnNameExpr{Name: colName}
-				for _, field := range selectFields {
-					if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && c.Name.Match(columnNameExpr.Name) && field.AsName.L == "" {
-						columnNameExpr = nil
-						break
-					}
-				}
-				if columnNameExpr != nil {
-					selectFields = append(selectFields, &ast.SelectField{
-						Auxiliary: true,
-						Expr:      columnNameExpr,
-					})
-				}
-			}
-		}
-	}
-	return selectFields, nil
-}
-
 func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, expr := range exprs {
@@ -4507,7 +4391,14 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	// buildSort is after buildProjection, so we need get OutputNames before BuildProjection and store in allNames.
 	// Otherwise, we will get select fields instead of all OutputNames, so that we can't find the column b in the
 	// above example.
-	b.allNames = append(b.allNames, p.OutputNames())
+	//
+	// For USING/NATURAL JOIN, the canonical OutputNames coalesce common columns and may hide qualified base-table
+	// names like t1.a. DEFAULT(t1.a) still needs the base-table field name, so prefer FullNames when available.
+	namesForDefault := p.OutputNames()
+	if _, fullNames := findJoinFullSchema(p); fullNames != nil {
+		namesForDefault = fullNames
+	}
+	b.allNames = append(b.allNames, namesForDefault)
 	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
 
 	if sel.Where != nil {
@@ -4538,6 +4429,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if isExplicitSetTablesNames {
 				// If `LockTableIDs` map is empty, it will lock all records from all tables.
 				// Besides, it will only lock the metioned in `of` part.
+				if b.ctx.GetSessionVars().StmtCtx.LockTableIDs == nil {
+					b.ctx.GetSessionVars().StmtCtx.LockTableIDs = make(map[int64]struct{})
+				}
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
 			// Use the already-resolved DBInfo to derive the privilege-check DB name.

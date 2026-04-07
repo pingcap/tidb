@@ -1,59 +1,149 @@
 name: Update Bazel Files
 on:
-  pull_request_target:
-    branches:
-      - master
+  workflow_run:
+    workflows:
+      - Generate Bazel Files
     types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
+      - completed
 
 permissions:
+  actions: read
   contents: write
-  pull-requests: read
 
 concurrency:
-  group: update-bazel-files-${{ github.event.pull_request.number }}
+  group: update-bazel-files-${{ github.event.workflow_run.id }}
   cancel-in-progress: true
 
 jobs:
   update:
     name: Update Bazel Files
     if: >
-      github.event.pull_request.head.repo.full_name == github.repository ||
-      github.event.pull_request.maintainer_can_modify
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-        with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-          token: ${{ secrets.BAZEL_PREPARE_PUSH_TOKEN || github.token }}
-      - name: Build Prepare
-        uses: ./.github/actions/tidb_build
-        with:
-          bazelrc: ${{ secrets.BAZELRC }}
-          gcp_sa_key: ${{ secrets.GCP_SA_KEY }}
-          go-version: 1.25
-      - name: Run Bazel Prepare
+      - name: Resolve PR metadata
+        id: pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          pr_number="$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}" --jq '.pull_requests[0].number')"
+          head_repo="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.repo.full_name')"
+          head_ref="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.ref')"
+          pr_head_sha="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
+          run_head_sha="$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}" --jq '.head_sha')"
+
+          printf 'pr_number=%s\n' "${pr_number}" >> "${GITHUB_OUTPUT}"
+          printf 'head_repo=%s\n' "${head_repo}" >> "${GITHUB_OUTPUT}"
+          printf 'head_ref=%s\n' "${head_ref}" >> "${GITHUB_OUTPUT}"
+
+          if [[ "${head_repo}" != "${REPOSITORY}" ]]; then
+            echo "same_repo=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "same_repo=true" >> "${GITHUB_OUTPUT}"
+
+          if [[ "${pr_head_sha}" != "${run_head_sha}" ]]; then
+            echo "stale=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          echo "stale=false" >> "${GITHUB_OUTPUT}"
+      - name: Skip stale workflow run
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.stale == 'true'
         shell: bash
         run: |
-          #!/bin/bash
-          unset CI
-          sed -i '/bazel-cache/d' DEPS.bzl
-          sed -i '/ats.apps.svc/d' DEPS.bzl
-          sed -i '/bazel-cache/d' WORKSPACE
-          sed -i '/ats.apps.svc/d' WORKSPACE
-          make bazel_prepare
-      - name: Commit Bazel Files
-        uses: stefanzweifel/git-auto-commit-action@v5
+          echo "Skip stale bazel update for PR #${{ steps.pr.outputs.pr_number }}."
+      - name: Checkout PR branch
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.stale != 'true'
+        uses: actions/checkout@v6
         with:
-          branch: ${{ github.event.pull_request.head.ref }}
-          commit_message: "chore: update bazel file"
-          disable_globbing: true
-          file_pattern: >-
-            DEPS.bzl
-            :(top,glob)**/*.bazel
-            :(top,glob)**/*.bzl
+          repository: ${{ steps.pr.outputs.head_repo }}
+          ref: ${{ steps.pr.outputs.head_ref }}
+          path: pr
+          fetch-depth: 0
+          token: ${{ github.token }}
+          persist-credentials: false
+      - name: Download Bazel Files Artifact
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.stale != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: bazel-files
+          path: bazel-artifact
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Apply Bazel Files Artifact
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.stale != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          patch_path="${PWD}/bazel-artifact/bazel.patch"
+          summary="$(git apply --summary "${patch_path}")"
+
+          while IFS= read -r line; do
+            case "${line}" in
+              " rename "*|" copy "*)
+                echo "Unsupported patch summary: ${line}" >&2
+                exit 1
+                ;;
+            esac
+          done <<< "${summary}"
+
+          declare -A seen_paths=()
+
+          while IFS= read -r -d '' record; do
+            if [[ -z "${record}" ]]; then
+              continue
+            fi
+
+            IFS=$'\t' read -r _ _ path <<< "${record}"
+
+            case "${path}" in
+              ""|/*|..|../*|*/..|*/../*)
+                echo "Unexpected patch path: ${path}" >&2
+                exit 1
+                ;;
+              DEPS.bzl|*.bazel|*.bzl)
+                ;;
+              *)
+                echo "Unexpected patch path: ${path}" >&2
+                exit 1
+                ;;
+            esac
+
+            if [[ -n "${seen_paths[${path}]:-}" ]]; then
+              echo "Duplicate patch path: ${path}" >&2
+              exit 1
+            fi
+            seen_paths["${path}"]=1
+          done < <(git apply --numstat -z "${patch_path}")
+
+          git -C pr apply --check --index "${patch_path}"
+          git -C pr apply --index "${patch_path}"
+      - name: Commit Bazel Files
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.stale != 'true'
+        shell: bash
+        env:
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+          PUSH_TOKEN: ${{ github.token }}
+          TARGET_REPOSITORY: ${{ steps.pr.outputs.head_repo }}
+        run: |
+          set -euo pipefail
+
+          if git -C pr diff --cached --quiet -- DEPS.bzl ':(glob)**/*.bazel' ':(glob)**/*.bzl'; then
+            echo "No generated Bazel changes to commit."
+            exit 0
+          fi
+
+          git -C pr config user.name "Ti Chi Robot"
+          git -C pr config user.email "ti-community-prow-bot@tidb.io"
+          git -C pr commit -m "chore: update bazel file"
+          git -C pr push "https://x-access-token:${PUSH_TOKEN}@github.com/${TARGET_REPOSITORY}.git" "HEAD:${HEAD_REF}"

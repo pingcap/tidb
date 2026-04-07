@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/pkg/metrics"
 )
 
 type ruv2MetricsKeyType struct{}
@@ -58,6 +60,8 @@ func RUV2MetricsFromContext(ctx context.Context) *RUV2Metrics {
 
 // RUV2Metrics stores statement-level RUv2 metrics.
 type RUV2Metrics struct {
+	bypass atomic.Bool
+
 	resultChunkCells int64
 
 	executorL1 sync.Map
@@ -87,15 +91,37 @@ func NewRUV2Metrics() *RUV2Metrics {
 	return &RUV2Metrics{}
 }
 
+// SetBypass marks whether statement-level RU accounting should be skipped.
+func (m *RUV2Metrics) SetBypass(enabled bool) {
+	m.bypass.Store(enabled)
+}
+
+// Bypass returns whether statement-level RU accounting should be skipped.
+func (m *RUV2Metrics) Bypass() bool {
+	return m.bypass.Load()
+}
+
 // AddResultChunkCells records result cells written by the current statement.
 func (m *RUV2Metrics) AddResultChunkCells(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2ResultChunkCells.Add(float64(delta))
 	atomic.AddInt64(&m.resultChunkCells, delta)
 }
 
 // AddExecutorMetric records a statement-level executor metric for the given RUv2 level.
 func (m *RUV2Metrics) AddExecutorMetric(level int, label string, delta int64) {
-	if delta == 0 || label == "" {
+	if m.Bypass() || delta == 0 || label == "" {
 		return
+	}
+	switch level {
+	case 1:
+		metrics.RUV2ExecutorL1.WithLabelValues(label).Add(float64(delta))
+	case 2:
+		metrics.RUV2ExecutorL2.WithLabelValues(label).Add(float64(delta))
+	case 3:
+		metrics.RUV2ExecutorL3.WithLabelValues(label).Add(float64(delta))
 	}
 	switch level {
 	case 1:
@@ -109,74 +135,127 @@ func (m *RUV2Metrics) AddExecutorMetric(level int, label string, delta int64) {
 
 // AddExecutorL5InsertRows records affected insert rows for RUv2 accounting.
 func (m *RUV2Metrics) AddExecutorL5InsertRows(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2ExecutorL5InsertRows.Add(float64(delta))
 	atomic.AddInt64(&m.executorL5InsertRows, delta)
 }
 
 // AddPlanCnt records plan builder invocations for the current statement.
 func (m *RUV2Metrics) AddPlanCnt(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2PlanCnt.Add(float64(delta))
 	atomic.AddInt64(&m.planCnt, delta)
 }
 
 // AddPlanDeriveStatsPaths records derived stats paths for the current statement.
 func (m *RUV2Metrics) AddPlanDeriveStatsPaths(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2PlanDeriveStatsPaths.Add(float64(delta))
 	atomic.AddInt64(&m.planDeriveStatsPaths, delta)
 }
 
 // AddSessionParserTotal records parser executions for the current statement.
 func (m *RUV2Metrics) AddSessionParserTotal(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2SessionParserTotal.Add(float64(delta))
 	atomic.AddInt64(&m.sessionParserTotal, delta)
 }
 
 // AddTxnCnt records transaction completions attributed to the current statement.
 func (m *RUV2Metrics) AddTxnCnt(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2TxnCnt.Add(float64(delta))
 	atomic.AddInt64(&m.txnCnt, delta)
 }
 
 // AddResourceManagerReadCnt records TiKV read RPCs charged to resource management.
 func (m *RUV2Metrics) AddResourceManagerReadCnt(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2ResourceManagerReadCnt.Add(float64(delta))
 	atomic.AddInt64(&m.resourceManagerReadCnt, delta)
 }
 
 // AddResourceManagerWriteCnt records TiKV write RPCs charged to resource management.
 func (m *RUV2Metrics) AddResourceManagerWriteCnt(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2ResourceManagerWriteCnt.Add(float64(delta))
 	atomic.AddInt64(&m.resourceManagerWriteCnt, delta)
 }
 
 // AddTiKVKVEngineCacheMiss records TiKV kv_engine_cache_miss counters from ExecDetailsV2.
 func (m *RUV2Metrics) AddTiKVKVEngineCacheMiss(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2TiKVKVEngineCacheMiss.Add(float64(delta))
 	atomic.AddInt64(&m.tikvKvEngineCacheMiss, delta)
 }
 
 // AddTiKVCoprocessorExecutorIterations records TiKV coprocessor iteration counters.
 func (m *RUV2Metrics) AddTiKVCoprocessorExecutorIterations(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2TiKVCoprocessorExecutorIterations.Add(float64(delta))
 	atomic.AddInt64(&m.tikvCoprocessorExecutorIterations, delta)
 }
 
 // AddTiKVCoprocessorResponseBytes records TiKV coprocessor response bytes.
 func (m *RUV2Metrics) AddTiKVCoprocessorResponseBytes(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2TiKVCoprocessorResponseBytes.Add(float64(delta))
 	atomic.AddInt64(&m.tikvCoprocessorResponseBytes, delta)
 }
 
 // AddTiKVRaftstoreStoreWriteTriggerWB records TiKV raftstore write trigger bytes.
 func (m *RUV2Metrics) AddTiKVRaftstoreStoreWriteTriggerWB(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2TiKVRaftstoreStoreWriteTriggerWB.Add(float64(delta))
 	atomic.AddInt64(&m.tikvRaftstoreStoreWriteTriggerWB, delta)
 }
 
 // AddTiKVStorageProcessedKeysBatchGet records TiKV batch-get processed keys.
 func (m *RUV2Metrics) AddTiKVStorageProcessedKeysBatchGet(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2TiKVStorageProcessedKeysBatchGet.Add(float64(delta))
 	atomic.AddInt64(&m.tikvStorageProcessedKeysBatchGet, delta)
 }
 
 // AddTiKVStorageProcessedKeysGet records TiKV get processed keys.
 func (m *RUV2Metrics) AddTiKVStorageProcessedKeysGet(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2TiKVStorageProcessedKeysGet.Add(float64(delta))
 	atomic.AddInt64(&m.tikvStorageProcessedKeysGet, delta)
 }
 
 // AddTiKVCoprocessorWorkTotal records TiKV executor input counters by executor type.
 func (m *RUV2Metrics) AddTiKVCoprocessorWorkTotal(label string, delta int64) {
-	if delta == 0 || label == "" {
+	if m.Bypass() || delta == 0 || label == "" {
 		return
 	}
+	metrics.RUV2TiKVCoprocessorWorkTotal.WithLabelValues(label).Add(float64(delta))
 	addRUV2LabelCounter(&m.tikvCoprocessorWorkTotal, label, delta)
 }
 
@@ -186,6 +265,7 @@ func (m *RUV2Metrics) Clone() *RUV2Metrics {
 		return nil
 	}
 	cloned := &RUV2Metrics{}
+	cloned.bypass.Store(m.Bypass())
 	atomic.StoreInt64(&cloned.resultChunkCells, atomic.LoadInt64(&m.resultChunkCells))
 	cloneRUV2LabelCounter(&cloned.executorL1, &m.executorL1)
 	cloneRUV2LabelCounter(&cloned.executorL2, &m.executorL2)
@@ -270,23 +350,26 @@ func (m *RUV2Metrics) Merge(other *RUV2Metrics) {
 	if m == nil || other == nil {
 		return
 	}
-	m.AddResultChunkCells(other.ResultChunkCells())
+	if m.Bypass() || other.Bypass() {
+		return
+	}
+	atomic.AddInt64(&m.resultChunkCells, other.ResultChunkCells())
 	mergeIntoRUV2LabelCounter(&m.executorL1, &other.executorL1)
 	mergeIntoRUV2LabelCounter(&m.executorL2, &other.executorL2)
 	mergeIntoRUV2LabelCounter(&m.executorL3, &other.executorL3)
-	m.AddExecutorL5InsertRows(other.ExecutorL5InsertRows())
-	m.AddPlanCnt(other.PlanCnt())
-	m.AddPlanDeriveStatsPaths(other.PlanDeriveStatsPaths())
-	m.AddSessionParserTotal(other.SessionParserTotal())
-	m.AddTxnCnt(other.TxnCnt())
-	m.AddResourceManagerReadCnt(other.ResourceManagerReadCnt())
-	m.AddResourceManagerWriteCnt(other.ResourceManagerWriteCnt())
-	m.AddTiKVKVEngineCacheMiss(other.TiKVKVEngineCacheMiss())
-	m.AddTiKVCoprocessorExecutorIterations(other.TiKVCoprocessorExecutorIterations())
-	m.AddTiKVCoprocessorResponseBytes(other.TiKVCoprocessorResponseBytes())
-	m.AddTiKVRaftstoreStoreWriteTriggerWB(other.TiKVRaftstoreStoreWriteTriggerWB())
-	m.AddTiKVStorageProcessedKeysBatchGet(other.TiKVStorageProcessedKeysBatchGet())
-	m.AddTiKVStorageProcessedKeysGet(other.TiKVStorageProcessedKeysGet())
+	atomic.AddInt64(&m.executorL5InsertRows, other.ExecutorL5InsertRows())
+	atomic.AddInt64(&m.planCnt, other.PlanCnt())
+	atomic.AddInt64(&m.planDeriveStatsPaths, other.PlanDeriveStatsPaths())
+	atomic.AddInt64(&m.sessionParserTotal, other.SessionParserTotal())
+	atomic.AddInt64(&m.txnCnt, other.TxnCnt())
+	atomic.AddInt64(&m.resourceManagerReadCnt, other.ResourceManagerReadCnt())
+	atomic.AddInt64(&m.resourceManagerWriteCnt, other.ResourceManagerWriteCnt())
+	atomic.AddInt64(&m.tikvKvEngineCacheMiss, other.TiKVKVEngineCacheMiss())
+	atomic.AddInt64(&m.tikvCoprocessorExecutorIterations, other.TiKVCoprocessorExecutorIterations())
+	atomic.AddInt64(&m.tikvCoprocessorResponseBytes, other.TiKVCoprocessorResponseBytes())
+	atomic.AddInt64(&m.tikvRaftstoreStoreWriteTriggerWB, other.TiKVRaftstoreStoreWriteTriggerWB())
+	atomic.AddInt64(&m.tikvStorageProcessedKeysBatchGet, other.TiKVStorageProcessedKeysBatchGet())
+	atomic.AddInt64(&m.tikvStorageProcessedKeysGet, other.TiKVStorageProcessedKeysGet())
 	mergeIntoRUV2LabelCounter(&m.tikvCoprocessorWorkTotal, &other.tikvCoprocessorWorkTotal)
 }
 
@@ -411,7 +494,7 @@ func (m *RUV2Metrics) TiKVStorageProcessedKeysGet() int64 {
 
 // IsZero checks whether all metrics are zero.
 func (m *RUV2Metrics) IsZero() bool {
-	if m == nil {
+	if m == nil || m.Bypass() {
 		return true
 	}
 	return m.ResultChunkCells() == 0 &&
@@ -438,7 +521,7 @@ func (m *RUV2Metrics) IsZero() bool {
 // provided weights. The weights specify how each component is weighted in the
 // RU calculation. Returns the calculated TiDB RU as a float64.
 func (m *RUV2Metrics) CalculateRUValues(weights RUV2Weights) (tidbRU float64) {
-	if m == nil {
+	if m == nil || m.Bypass() {
 		return 0
 	}
 	return m.calculateRUValuesWithWeights(weights)
@@ -446,6 +529,12 @@ func (m *RUV2Metrics) CalculateRUValues(weights RUV2Weights) (tidbRU float64) {
 
 // TotalRU returns the statement RU v2 total as TiDB + TiKV + TiFlash.
 func (m *RUV2Metrics) TotalRU(weights RUV2Weights, tiKVRU, tiFlashRU float64) float64 {
+	if m == nil {
+		return tiKVRU + tiFlashRU
+	}
+	if m.Bypass() {
+		return 0
+	}
 	return m.CalculateRUValues(weights) + tiKVRU + tiFlashRU
 }
 
@@ -479,6 +568,9 @@ func sumRUV2LabelMap(values map[string]int64) int64 {
 
 // FormatRUV2Summary formats the RUv2 total and detailed metrics in one pass.
 func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlashRU float64) (total string, detail string) {
+	if metrics != nil && metrics.Bypass() {
+		return "", ""
+	}
 	var (
 		resultChunkCells                  int64
 		executorL1                        map[string]int64
