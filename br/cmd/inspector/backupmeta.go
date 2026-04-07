@@ -87,6 +87,9 @@ func runBackupMetaInspect(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid --restored-ts: %w", err)
 	}
+	if startTS > endTS {
+		return fmt.Errorf("invalid range: --start-ts (%d) must be <= --restored-ts (%d)", startTS, endTS)
+	}
 
 	_, s, err := task.GetStorage(ctx, cfg.Storage, &cfg)
 	if err != nil {

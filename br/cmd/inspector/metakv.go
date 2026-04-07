@@ -279,6 +279,9 @@ func runMetaKVInspect(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("invalid --restored-ts: %w", err)
 	}
+	if startTS > endTS {
+		return fmt.Errorf("invalid range: --start-ts (%d) must be <= --restored-ts (%d)", startTS, endTS)
+	}
 
 	_, s, err := task.GetStorage(ctx, cfg.Storage, &cfg)
 	if err != nil {
@@ -381,12 +384,12 @@ func fmtInt(n int64) string {
 	return string(b)
 }
 
-// avgVersions returns (entries / uniqueKeys), or 1 if uniqueKeys == 0.
-func avgVersions(entries, uniqueKeys int64) int64 {
+// avgVersions returns (entries / uniqueKeys), or 1.0 if uniqueKeys == 0.
+func avgVersions(entries, uniqueKeys int64) float64 {
 	if uniqueKeys == 0 {
-		return 0
+		return 1.0
 	}
-	return entries / uniqueKeys
+	return float64(entries) / float64(uniqueKeys)
 }
 
 func printMetaKVStats(cmd *cobra.Command, stats *metaKVStats, startTS, endTS uint64, topN int) {
@@ -408,7 +411,7 @@ func printMetaKVStats(cmd *cobra.Command, stats *metaKVStats, startTS, endTS uin
 		keyBytes    int64
 		valBytes    int64
 		uniqueCount int64
-		avgVer      int64
+		avgVer      float64
 	}
 	var rows []topRow
 	for _, cat := range []topLevelCategory{catDB, catDDLHistory, catOther} {
@@ -436,13 +439,13 @@ func printMetaKVStats(cmd *cobra.Command, stats *metaKVStats, startTS, endTS uin
 		"Category", "CF", "Entries", "Key Bytes", "Value Bytes", "Unique Keys", "Avg Versions")
 	cmd.Printf("  %s\n", strings.Repeat("-", 95))
 	for _, r := range rows {
-		cmd.Printf("  %-15s | %-7s | %-12s | %-11s | %-12s | %-12s | %s\n",
+		cmd.Printf("  %-15s | %-7s | %-12s | %-11s | %-12s | %-12s | %.2f\n",
 			r.cat, r.cf,
 			fmtInt(r.entries),
 			formatBytes(uint64(r.keyBytes)),
 			formatBytes(uint64(r.valBytes)),
 			fmtInt(r.uniqueCount),
-			fmtInt(r.avgVer),
+			r.avgVer,
 		)
 	}
 	cmd.Printf("\n")
@@ -470,7 +473,20 @@ func printMetaKVStats(cmd *cobra.Command, stats *metaKVStats, startTS, endTS uin
 		})
 	}
 	sort.Slice(detailRows, func(i, j int) bool {
-		return detailRows[i].entries > detailRows[j].entries
+		if detailRows[i].entries != detailRows[j].entries {
+			return detailRows[i].entries > detailRows[j].entries
+		}
+		// Deterministic tie-breaker: sort by dbID, tableID, field, cf
+		if detailRows[i].dbID != detailRows[j].dbID {
+			return detailRows[i].dbID < detailRows[j].dbID
+		}
+		if detailRows[i].tableID != detailRows[j].tableID {
+			return detailRows[i].tableID < detailRows[j].tableID
+		}
+		if detailRows[i].field != detailRows[j].field {
+			return detailRows[i].field < detailRows[j].field
+		}
+		return detailRows[i].cf < detailRows[j].cf
 	})
 	if topN > 0 && len(detailRows) > topN {
 		detailRows = detailRows[:topN]
