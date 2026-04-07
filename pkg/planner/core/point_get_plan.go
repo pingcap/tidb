@@ -770,7 +770,9 @@ func checkFastPlanPrivilege(ctx base.PlanContext, dbName, tableName string, chec
 	pm := privilege.GetPrivilegeManager(ctx)
 	visitInfos := make([]visitInfo, 0, len(checkTypes))
 	for _, checkType := range checkTypes {
-		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
+		if pm != nil &&
+			!canBypassPlanReplayerPrivilegeCheck(ctx, pm) &&
+			!pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
 			return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
 		}
 		// This visitInfo is only for table lock check, so we do not need column field,

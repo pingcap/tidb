@@ -91,7 +91,6 @@ type UserPrivileges struct {
 	*Handle
 	extensionAccessCheckFuncs []extension.AccessCheckFunc
 	authPlugins               map[string]*extension.AuthPlugin
-	sessionVars               *variable.SessionVars
 
 	authPluginRequestVerification        func(user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
 	authPluginRequestDynamicVerification func(activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool
@@ -104,11 +103,6 @@ func NewUserPrivileges(handle *Handle, extension *extension.Extensions) *UserPri
 		extensionAccessCheckFuncs: extension.GetAccessCheckFuncs(),
 		authPlugins:               extension.GetAuthPlugins(),
 	}
-}
-
-// SetSessionVars wires the current session into the privilege manager.
-func (p *UserPrivileges) SetSessionVars(sessionVars *variable.SessionVars) {
-	p.sessionVars = sessionVars
 }
 
 // RequestDynamicVerificationWithUser implements the Manager interface.
@@ -215,26 +209,9 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 
 	mysqlPriv := p.Handle.Get()
 	if !mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv) {
-		return p.canBypassPlanReplayerPrivilege(activeRoles)
+		return false
 	}
 	return p.authPluginRequestVerification == nil || p.authPluginRequestVerification(p.user, p.host, activeRoles, db, table, column, priv)
-}
-
-func (p *UserPrivileges) canBypassPlanReplayerPrivilege(activeRoles []*auth.RoleIdentity) bool {
-	if p.sessionVars == nil {
-		return false
-	}
-
-	sqlType := p.sessionVars.GetPlanReplayerSQLPrivilegeType()
-	switch sqlType {
-	case variable.PlanReplayerInternalSQLTypeExplain,
-		variable.PlanReplayerInternalSQLTypeShowCreateTable,
-		variable.PlanReplayerInternalSQLTypeShowCreateView:
-	default:
-		return false
-	}
-
-	return p.RequestDynamicVerification(activeRoles, "PLAN_REPLAYER_EXPLAIN_ADMIN", false)
 }
 
 // RequestVerificationWithUser implements the Manager interface.

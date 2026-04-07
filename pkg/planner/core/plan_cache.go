@@ -374,7 +374,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 func checkPreparedPriv(ctx context.Context, sctx sessionctx.Context, stmt *PlanCacheStmt, is infoschema.InfoSchema) error {
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 		visitInfo := VisitInfo4PrivCheck(ctx, is, stmt.PreparedAst.Stmt, stmt.VisitInfos)
-		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
+		if err := CheckPrivilege(sctx, pm, visitInfo); err != nil {
 			return err
 		}
 	}

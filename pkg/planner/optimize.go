@@ -500,7 +500,7 @@ func buildAndOptimizeLogicalPlanRound(
 		// produced by the logical build, but not on the later cost winner.
 		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
 			visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
-			if err := core.CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
+			if err := core.CheckPrivilege(sctx, pm, visitInfo); err != nil {
 				return nil, nil, false, err
 			}
 		}
