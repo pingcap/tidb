@@ -146,14 +146,16 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 	})
 
 	t.Run("EmptyInput", func(t *testing.T) {
-		got := EstimateGlobalSingletonBySketches(nil, nil)
-		require.Equal(t, uint64(0), got)
+		require.PanicsWithValue(t, "assert failed, ndvSketches shouldn't be empty", func() {
+			EstimateGlobalSingletonBySketches(nil, nil)
+		})
 	})
 
 	t.Run("MismatchedLengths", func(t *testing.T) {
 		ndvSketches := []*FMSketch{newFMSketchFromHashValues(a)}
 		singletonSketches := []*FMSketch{newFMSketchFromHashValues(a), newFMSketchFromHashValues(b)}
-		got := EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
-		require.Equal(t, uint64(0), got)
+		require.PanicsWithValue(t, "assert failed, ndvSketches and singletonSketches should have the same length", func() {
+			EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
+		})
 	})
 }
