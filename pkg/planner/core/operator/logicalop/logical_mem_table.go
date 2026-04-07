@@ -89,8 +89,7 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 		infoschema.TableDataLockWaits,
 		infoschema.TableDeadlocks,
 		infoschema.ClusterTableDeadlocks,
-		infoschema.TableTables,
-		infoschema.TableTiDBMViews:
+		infoschema.TableTables:
 	default:
 		return p, nil
 	}

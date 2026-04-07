@@ -1128,37 +1128,6 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 	}
 }
 
-func TestInfoschemaTiDBMViewsSpecialOptimizationCovered(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_schema_cache_size = default")
-	tk.MustExec("use test")
-	tk.MustExec("create table t_mview_cover (a int, b int not null)")
-	tk.MustExec("create materialized view log on t_mview_cover (a, b) purge next date_add(now(), interval 1 hour)")
-	tk.MustExec("create materialized view mv_cover (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mview_cover group by a")
-
-	mvID := tk.MustQuery("select mview_id from information_schema.tidb_mviews where table_schema = 'test' and mview_name = 'mv_cover'").Rows()[0][0]
-	for _, testCase := range []struct {
-		sql    string
-		expect bool
-	}{
-		{"select mview_name, table_schema from information_schema.tidb_mviews", true},
-		{"select mview_name from information_schema.tidb_mviews", true},
-		{"select mview_name from information_schema.tidb_mviews where table_schema = 'test'", true},
-		{"select mview_name from information_schema.tidb_mviews where mview_name = 'mv_cover'", true},
-		{fmt.Sprintf("select mview_name from information_schema.tidb_mviews where mview_id = %v", mvID), false},
-		{"select count(mview_name) from information_schema.tidb_mviews", true},
-		{"select count(*) from information_schema.tidb_mviews", true},
-		{"select * from information_schema.tidb_mviews", false},
-		{"select mview_name, mview_sql_content from information_schema.tidb_mviews", false},
-	} {
-		var covered bool
-		ctx := context.WithValue(context.Background(), "cover-check", &covered)
-		tk.MustQueryWithContext(ctx, testCase.sql)
-		require.Equal(t, testCase.expect, covered, testCase.sql)
-	}
-}
-
 func TestStatisticShowPublicIndexes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
