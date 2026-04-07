@@ -78,6 +78,13 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 //
 // Summing these per-region contributions gives the global singleton estimate.
 //
+// The current implementation rebuilds "all except i" from scratch for each
+// region, which is O(k²) in the number of regions. A prefix-suffix approach
+// could reduce this to O(k) time, but would require O(k) extra sketches
+// (~160KB each), which risks significant memory pressure for tables with
+// many TiKV regions. We keep the O(k²) approach
+// for its O(1) memory overhead.
+//
 // Example with three regions:
 //
 //	Region 0 all distinct values: {a, b, c}    local singletons: {a, b, c}
@@ -132,26 +139,20 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		// Merge the other-regions sketch with region i's singleton sketch.
 		// ndvUnion - ndvOther gives the count of region i's singletons
 		// that don't appear in any other region (i.e. globally unique values).
-		var union *FMSketch
+		// We already captured ndvOther, so we can safely reuse other here.
 		if other != nil {
-			union = other.Copy()
 			if singletonSketches[i] != nil {
-				union.MergeFMSketch(singletonSketches[i])
+				other.MergeFMSketch(singletonSketches[i])
 			}
 		} else if singletonSketches[i] != nil {
-			union = singletonSketches[i].Copy()
+			other = singletonSketches[i].Copy()
 		}
 
 		ndvUnion := int64(0)
-		if union != nil {
-			ndvUnion = union.NDV()
+		if other != nil {
+			ndvUnion = other.NDV()
 		}
-
-		globalSingleton += int64(ndvUnion) - int64(ndvOther)
-
-		// Cleanup.
-		other = nil
-		union = nil
+		globalSingleton += ndvUnion - ndvOther
 	}
 	if globalSingleton < 0 {
 		return 0
