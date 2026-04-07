@@ -641,7 +641,7 @@ func TestShowStatsHealthy(t *testing.T) {
 // TestIndexDoubleReadClose checks that when a index double read returns before reading all the rows, the goroutine doesn't
 // leak. For testing distsql with multiple regions, we need to manually split a mock TiKV.
 func TestIndexDoubleReadClose(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 
 	if _, ok := store.GetClient().(*copr.CopClient); !ok {
 		// Make sure the store is tikv store.
@@ -649,7 +649,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	}
 	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
 	tk.MustExec("set @@tidb_index_lookup_size = '10'")
 	tk.MustExec("use test")
 	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
@@ -667,7 +667,10 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	err = rs.Next(context.Background(), req)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	keyword := "pickAndExecTask"
+	// `pickAndExecTask` is an IndexMerge table-scan worker frame and can be
+	// present in unrelated background activity. This test exercises the
+	// IndexLookUp table worker, whose entrypoint is `execTableTask`.
+	keyword := "execTableTask"
 	require.NoError(t, rs.Close())
 	require.Eventually(t, func() bool {
 		return !checkGoroutineExists(keyword)
