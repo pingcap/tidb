@@ -150,7 +150,6 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 
 		return normalizedPlanRows, digest.String()
 	}
-
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`
@@ -188,15 +187,14 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	_, d2 := getNormalizedPlan()
 
 	tk.MustExec("explain format = 'plan_tree' select * from t order by vec_cosine_distance(vec, '[]') limit 3")
-	p3, d3 := getNormalizedPlan()
+	_, d3 := getNormalizedPlan()
 
 	// Projection differs, so that normalized plan should differ.
 	tk.MustExec("explain format = 'plan_tree' select * from t order by vec_cosine_distance('[1,2,3]', vec) limit 3")
 	_, dx1 := getNormalizedPlan()
 
 	require.Equal(t, d1, d2)
-	require.NotEqual(t, d1, d3)
-	require.NotContains(t, strings.Join(p3, "\n"), "annIndex:")
+	require.Equal(t, d1, d3)
 	require.NotEqual(t, d1, dx1)
 
 	// test for TiFlashReplica's Available
@@ -284,27 +282,41 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	sctx := tk.Session()
-	stmts, err := session.Parse(sctx, "select * from t1 use index(vector_index) order by vec_cosine_distance(vec, '[1,1,1]') limit 1")
-	require.NoError(t, err)
-	require.Len(t, stmts, 1)
-	stmt := stmts[0]
-	ret := &core.PreprocessorReturn{}
-	nodeW := resolve.NewNodeW(stmt)
-	err = core.Preprocess(context.Background(), sctx, nodeW, core.WithPreprocessorReturn(ret))
-	require.NoError(t, err)
-	var finalPlanTree base.Plan
-	finalPlanTree, _, err = planner.Optimize(context.Background(), sctx, nodeW, ret.InfoSchema)
-	require.NoError(t, err)
-	physicalTree, ok := finalPlanTree.(base.PhysicalPlan)
-	require.True(t, ok)
-	// Find the PhysicalTableReader node.
-	tableReader := physicalTree
-	for ; len(tableReader.Children()) > 0; tableReader = tableReader.Children()[0] {
+	optimizeToTableScan := func(sql string) *physicalop.PhysicalTableScan {
+		stmts, err := session.Parse(sctx, sql)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+		stmt := stmts[0]
+		ret := &core.PreprocessorReturn{}
+		nodeW := resolve.NewNodeW(stmt)
+		err = core.Preprocess(context.Background(), sctx, nodeW, core.WithPreprocessorReturn(ret))
+		require.NoError(t, err)
+		finalPlanTree, _, err := planner.Optimize(context.Background(), sctx, nodeW, ret.InfoSchema)
+		require.NoError(t, err)
+		physicalTree, ok := finalPlanTree.(base.PhysicalPlan)
+		require.True(t, ok)
+		var findTableScan func(base.PhysicalPlan) *physicalop.PhysicalTableScan
+		findTableScan = func(plan base.PhysicalPlan) *physicalop.PhysicalTableScan {
+			if tableReader, ok := plan.(*physicalop.PhysicalTableReader); ok {
+				tableScan, err := tableReader.GetTableScan()
+				require.NoError(t, err)
+				return tableScan
+			}
+			for _, child := range plan.Children() {
+				if physicalChild, ok := child.(base.PhysicalPlan); ok {
+					if tableScan := findTableScan(physicalChild); tableScan != nil {
+						return tableScan
+					}
+				}
+			}
+			return nil
+		}
+		tableScan := findTableScan(physicalTree)
+		require.NotNil(t, tableScan)
+		return tableScan
 	}
-	castedTableReader, ok := tableReader.(*physicalop.PhysicalTableReader)
-	require.True(t, ok)
-	tableScan, err := castedTableReader.GetTableScan()
-	require.NoError(t, err)
+
+	tableScan := optimizeToTableScan("select * from t1 use index(vector_index) order by vec_cosine_distance(vec, '[1,1,1]') limit 1")
 	// Check that it has the extra vector index information.
 	require.Len(t, tableScan.UsedColumnarIndexes, 1)
 	require.True(t, tableScan.UsedColumnarIndexes[0].QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector)
@@ -314,6 +326,9 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	// Check that the -inf and +inf are the correct types.
 	require.Equal(t, types.KindMinNotNull, tableScan.Ranges[0].LowVal[0].Kind())
 	require.Equal(t, types.KindMaxValue, tableScan.Ranges[0].HighVal[0].Kind())
+
+	mismatchTableScan := optimizeToTableScan("select * from t1 order by vec_cosine_distance(vec, '[]') limit 1")
+	require.Empty(t, mismatchTableScan.UsedColumnarIndexes)
 }
 
 func TestVectorSearchWithPKAuto(t *testing.T) {
