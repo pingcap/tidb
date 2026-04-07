@@ -478,12 +478,11 @@ func TestNextGenMetering(t *testing.T) {
 	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort")
 	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), index(b));")
 
-	baseTime := time.Now().Truncate(time.Minute).Unix()
+	baseTime := atomic.NewInt64(time.Now().Truncate(time.Minute).Unix() - 60)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
 		// the metering library requires the timestamp to be at minute boundary, but
 		// during test, we want to reduce the flush interval.
-		*ts = baseTime
-		baseTime += 60
+		*ts = baseTime.Add(60)
 	})
 	// this failpoint can make sure we only get one gotMeterData
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask", "return(true)")

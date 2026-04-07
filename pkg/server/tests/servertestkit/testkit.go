@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
+	"github.com/pingcap/tidb/pkg/util/topsql/reporter"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
@@ -156,14 +157,14 @@ func CreateTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 
 	dbt := testkit.NewDBTestKit(t, db)
 	topsqlstate.GlobalState.PrecisionSeconds.Store(1)
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(2)
+	restoreTicker := reporter.SetReportTickerIntervalSecondsForTest(2)
 	dbt.MustExec("set @@global.tidb_top_sql_max_time_series_count=5;")
 
 	require.NoError(t, cpuprofile.StartCPUProfiler())
 	t.Cleanup(func() {
 		cpuprofile.StopCPUProfiler()
 		topsqlstate.GlobalState.PrecisionSeconds.Store(topsqlstate.DefTiDBTopSQLPrecisionSeconds)
-		topsqlstate.GlobalState.ReportIntervalSeconds.Store(topsqlstate.DefTiDBTopSQLReportIntervalSeconds)
+		restoreTicker()
 		view.Stop()
 	})
 	return ts

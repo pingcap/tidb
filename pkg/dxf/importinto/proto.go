@@ -155,9 +155,12 @@ type CollectConflictsStepMeta struct {
 	Checksum *Checksum `json:"checksum,omitempty"`
 	// ConflictedRowCount is the count of all conflicted rows.
 	ConflictedRowCount int64 `json:"conflicted-row-count,omitempty"`
-	// ConflictedRowFilenames is the filenames of all conflicted rows.
+	// ConflictedRowFilenames is the filenames of recorded conflicted rows.
 	// Note: this file is for user to resolve conflicts manually.
 	ConflictedRowFilenames []string `json:"conflicted-row-filenames,omitempty"`
+	// ConflictedRowRecordingCapped is true if conflict-row file recording stops
+	// due to maxTotalConflictRowFileSize.
+	ConflictedRowRecordingCapped bool `json:"conflicted-row-recording-capped,omitempty"`
 	// TooManyConflictsFromIndex is true if there are too many conflicts from index.
 	// if true, we will skip checksum.
 	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`

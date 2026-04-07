@@ -219,15 +219,12 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
 
 		tk.MustExec("create table t (a int, b int, c int)")
-		tk.MustExec("alter table t set tiflash replica 1")
 		tk.MustExec("set @@session.tidb_allow_mpp=ON")
-		tb := external.GetTableByName(t, tk, "test", "t")
-		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
 
 		tk.MustExec("explain format = 'brief' select a, sum(b) from t group by a, c")
 		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
@@ -264,7 +261,7 @@ func TestMPPHintsWithBinding(t *testing.T) {
 		tk.MustExec("drop global binding for select * from t t1, t t2 where t1.a=t2.a;")
 		res = tk.MustQuery("show global bindings").Rows()
 		require.Equal(t, len(res), 0)
-	}, mockstore.WithMockTiFlash(2))
+	})
 }
 
 func TestJoinHintCompatibilityWithBinding(t *testing.T) {
@@ -354,6 +351,163 @@ func TestHintAlias(t *testing.T) {
 
 			require.Equal(t, core.ToString(p2), core.ToString(p1))
 		}
+	})
+}
+
+func TestIndexJoinRowModeWithInnerTopN(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		if cascades == "on" {
+			t.Skip("cascades planner does not carry apply-derived join flags yet")
+		}
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1(a int primary key, b int)")
+		tk.MustExec("create table t2(a int, b int, key(a), key(b))")
+
+		tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern=1")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=0.1")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=100")
+		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=100")
+
+		sql := "select /*+ INL_JOIN(s) */ * from t1 join (select * from t2 order by b limit 2) s on t1.a = s.a"
+		stmt, err := parser.New().ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+
+		nodeW := resolve.NewNodeW(stmt)
+		tk.Session().GetSessionVars().StmtCtx.OriginalSQL = sql
+		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, domain.GetDomain(tk.Session()).InfoSchema())
+		require.NoError(t, err)
+
+		pp, ok := p.(base.PhysicalPlan)
+		require.True(t, ok)
+		innerIsDerivedS := false
+		var hasTopNOrLimit func(base.PhysicalPlan) bool
+		hasTopNOrLimit = func(plan base.PhysicalPlan) bool {
+			switch plan.(type) {
+			case *physicalop.PhysicalTopN, *physicalop.PhysicalLimit:
+				return true
+			}
+			for _, child := range plan.Children() {
+				if hasTopNOrLimit(child) {
+					return true
+				}
+			}
+			return false
+		}
+		var walk func(base.PhysicalPlan)
+		walk = func(plan base.PhysicalPlan) {
+			switch join := plan.(type) {
+			case *physicalop.PhysicalIndexHashJoin:
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
+			case *physicalop.PhysicalIndexMergeJoin:
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
+			case *physicalop.PhysicalIndexJoin:
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
+			}
+			for _, child := range plan.Children() {
+				walk(child)
+			}
+		}
+		walk(pp)
+		require.False(t, innerIsDerivedS, "expected no index join whose inner child is derived table s (contains topn/limit)")
+	})
+}
+
+func TestIndexJoinRowModeWithInnerTopNOuterJoin(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		if cascades == "on" {
+			t.Skip("cascades planner does not support index join inner multi-pattern yet")
+		}
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1(a int primary key, b int)")
+		tk.MustExec("create table t2(a int, b int, key(a), key(b))")
+
+		tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern=1")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=0.1")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=100")
+		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=100")
+
+		sql := "select /*+ INL_JOIN(s) */ * from t1 left join (select * from t2 order by b limit 2) s on t1.a = s.a"
+		stmt, err := parser.New().ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+
+		nodeW := resolve.NewNodeW(stmt)
+		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, domain.GetDomain(tk.Session()).InfoSchema())
+		require.NoError(t, err)
+
+		pp, ok := p.(base.PhysicalPlan)
+		require.True(t, ok)
+		innerIsDerivedS := false
+		var hasTopNOrLimit func(base.PhysicalPlan) bool
+		hasTopNOrLimit = func(plan base.PhysicalPlan) bool {
+			switch plan.(type) {
+			case *physicalop.PhysicalTopN, *physicalop.PhysicalLimit:
+				return true
+			}
+			for _, child := range plan.Children() {
+				if hasTopNOrLimit(child) {
+					return true
+				}
+			}
+			return false
+		}
+		var walk func(base.PhysicalPlan)
+		walk = func(plan base.PhysicalPlan) {
+			switch join := plan.(type) {
+			case *physicalop.PhysicalIndexHashJoin:
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
+			case *physicalop.PhysicalIndexMergeJoin:
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
+			case *physicalop.PhysicalIndexJoin:
+				innerIsDerivedS = innerIsDerivedS || hasTopNOrLimit(join.Children()[join.InnerChildIdx])
+			}
+			for _, child := range plan.Children() {
+				walk(child)
+			}
+		}
+		walk(pp)
+		require.False(t, innerIsDerivedS, "expected no index join whose inner child is derived table s (contains topn/limit, outer join)")
+	})
+}
+
+func TestIndexJoinHintInSubquery(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop table if exists t2")
+		tk.MustExec("create table t1(a int primary key, c int)")
+		tk.MustExec("create table t2(a int primary key, c int, key idx_c(c))")
+
+		tk.MustExec("set @@session.tidb_opt_advanced_join_hint=1")
+		tk.MustExec("set @@session.tidb_opt_index_join_cost_factor=100")
+		tk.MustExec("set @@session.tidb_opt_hash_join_cost_factor=0.1")
+		tk.MustExec("set @@session.tidb_opt_merge_join_cost_factor=0.1")
+
+		sql := "select /*+ INL_JOIN(t1, t2@subq) */ * from t1 where exists (select /*+ QB_NAME(subq) */ 1 from t2 where t2.c = t1.c)"
+		stmt, err := parser.New().ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+
+		nodeW := resolve.NewNodeW(stmt)
+		tk.Session().GetSessionVars().StmtCtx.OriginalSQL = sql
+		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, domain.GetDomain(tk.Session()).InfoSchema())
+		require.NoError(t, err)
+
+		pp, ok := p.(base.PhysicalPlan)
+		require.True(t, ok)
+		found := false
+		var walk func(base.PhysicalPlan)
+		walk = func(plan base.PhysicalPlan) {
+			switch plan.(type) {
+			case *physicalop.PhysicalIndexHashJoin, *physicalop.PhysicalIndexMergeJoin, *physicalop.PhysicalIndexJoin:
+				found = true
+			}
+			for _, child := range plan.Children() {
+				walk(child)
+			}
+		}
+		walk(pp)
+		require.True(t, found, "expected index join for INL_JOIN hint in subquery")
 	})
 }
 
