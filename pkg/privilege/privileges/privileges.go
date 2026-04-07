@@ -221,18 +221,20 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 }
 
 func (p *UserPrivileges) canBypassPlanReplayerPrivilege(activeRoles []*auth.RoleIdentity) bool {
-	if p.sessionVars == nil || !p.RequestDynamicVerification(activeRoles, "PLAN_REPLAYER_EXPLAIN_ADMIN", false) {
+	if p.sessionVars == nil {
 		return false
 	}
 
-	switch p.sessionVars.GetPlanReplayerSQLPrivilegeType() {
+	sqlType := p.sessionVars.GetPlanReplayerSQLPrivilegeType()
+	switch sqlType {
 	case variable.PlanReplayerInternalSQLTypeExplain,
 		variable.PlanReplayerInternalSQLTypeShowCreateTable,
 		variable.PlanReplayerInternalSQLTypeShowCreateView:
-		return true
 	default:
 		return false
 	}
+
+	return p.RequestDynamicVerification(activeRoles, "PLAN_REPLAYER_EXPLAIN_ADMIN", false)
 }
 
 // RequestVerificationWithUser implements the Manager interface.
