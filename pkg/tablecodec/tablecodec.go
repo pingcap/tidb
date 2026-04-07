@@ -139,6 +139,17 @@ func hasRecordPrefixSep(key kv.Key) bool {
 	return key[0] == recordPrefixSep[0] && key[1] == recordPrefixSep[1]
 }
 
+func decodeAPIV2KeyIfNeeded(key kv.Key) kv.Key {
+	if len(key) == 0 || key.HasPrefix(tablePrefix) || key.HasPrefix(metaPrefix) {
+		return key
+	}
+	_, decodedKey, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+	if err != nil {
+		return key
+	}
+	return decodedKey
+}
+
 // DecodeRecordKey decodes the key and gets the tableID, handle.
 func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
 	if len(key) <= prefixLen {
@@ -739,12 +750,14 @@ func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte,
 
 // CutIndexPrefix cuts the index prefix.
 func CutIndexPrefix(key kv.Key) []byte {
+	key = decodeAPIV2KeyIfNeeded(key)
 	return key[prefixLen+idLen:]
 }
 
 // CutIndexKeyTo cuts encoded index key into colIDs to bytes slices.
 // The caller should prepare the memory of the result values.
 func CutIndexKeyTo(key kv.Key, values [][]byte) (b []byte, err error) {
+	key = decodeAPIV2KeyIfNeeded(key)
 	b = key[prefixLen+idLen:]
 	length := len(values)
 	for i := 0; i < length; i++ {
@@ -771,6 +784,7 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 // The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
 // if it is non-unique index.
 func CutCommonHandle(key kv.Key, length int) (values [][]byte, b []byte, err error) {
+	key = decodeAPIV2KeyIfNeeded(key)
 	b = key[prefixLen:]
 	values = make([][]byte, 0, length)
 	for i := 0; i < length; i++ {
