@@ -110,6 +110,10 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketch) uint64 {
 	intest.Assert(len(ndvSketches) > 0, "ndvSketches shouldn't be empty")
 	intest.Assert(len(ndvSketches) == len(singletonSketches), "ndvSketches and singletonSketches should have the same length")
+	for i := range ndvSketches {
+		intest.Assert(ndvSketches[i] != nil, "ndvSketches must not contain nil entries")
+		intest.Assert(singletonSketches[i] != nil, "singletonSketches must not contain nil entries")
+	}
 	// Defensive checks.
 	if len(ndvSketches) == 0 || len(ndvSketches) != len(singletonSketches) {
 		return 0

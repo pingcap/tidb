@@ -106,43 +106,19 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 		require.Equal(t, uint64(0), got)
 	})
 
-	t.Run("NilSingletonSketches", func(t *testing.T) {
-		// A node with nil singleton sketch contributes 0.
-		ndvSketches := []*FMSketch{
-			newFMSketchFromHashValues(a, b),
-			newFMSketchFromHashValues(c, d),
-		}
-		singletonSketches := []*FMSketch{
-			nil,
-			newFMSketchFromHashValues(c, d),
-		}
-		// Node 0 contributes 0 (nil singleton).
-		// Node 1: others' NDV = {a, b}, union with {c, d} = {a, b, c, d} → contribution = 2.
-		got := EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
-		require.Equal(t, uint64(2), got)
-	})
-
-	t.Run("NilNDVSketches", func(t *testing.T) {
-		// A node with nil NDV sketch is skipped when building "others".
-		ndvSketches := []*FMSketch{
-			nil,
-			newFMSketchFromHashValues(c, d),
-		}
-		singletonSketches := []*FMSketch{
-			newFMSketchFromHashValues(a, b),
-			newFMSketchFromHashValues(c, d),
-		}
-		// Node 0: others' NDV = {c, d}, union with {a, b} = {a, b, c, d} → contribution = 2.
-		// Node 1: others' NDV = {} (nil), union with {c, d} = {c, d} → contribution = 2.
-		got := EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
-		require.Equal(t, uint64(4), got)
-	})
-
-	t.Run("AllNilSketches", func(t *testing.T) {
-		ndvSketches := []*FMSketch{nil, nil}
-		singletonSketches := []*FMSketch{nil, nil}
-		got := EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
-		require.Equal(t, uint64(0), got)
+	t.Run("NilEntry", func(t *testing.T) {
+		require.PanicsWithValue(t, "assert failed, ndvSketches must not contain nil entries", func() {
+			EstimateGlobalSingletonBySketches(
+				[]*FMSketch{nil, newFMSketchFromHashValues(c, d)},
+				[]*FMSketch{newFMSketchFromHashValues(a, b), newFMSketchFromHashValues(c, d)},
+			)
+		})
+		require.PanicsWithValue(t, "assert failed, singletonSketches must not contain nil entries", func() {
+			EstimateGlobalSingletonBySketches(
+				[]*FMSketch{newFMSketchFromHashValues(a, b), newFMSketchFromHashValues(c, d)},
+				[]*FMSketch{nil, newFMSketchFromHashValues(c, d)},
+			)
+		})
 	})
 
 	t.Run("EmptyInput", func(t *testing.T) {
