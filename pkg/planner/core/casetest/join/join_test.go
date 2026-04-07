@@ -321,6 +321,13 @@ JOIN
 			`        └─TableFullScan cop[tikv] table:t3_issue60076 keep order:false, stats:pseudo`))
 		tk.MustQuery(`show warnings`).Check(testkit.Rows())
 
+		tk.MustExec(`create table t_int_issue67366 (id int primary key auto_increment, val varchar(100))`)
+		tk.MustExec(`create table t_varchar_issue67366 (id varchar(20) primary key, info text)`)
+		tk.MustQuery(`explain format='plan_tree' select /* issue:67366 */ count(*) from t_int_issue67366 join t_varchar_issue67366 on t_int_issue67366.id = t_varchar_issue67366.id`).CheckContain("cast(test.t_int_issue67366.id, double BINARY)")
+		tk.MustQuery(`show warnings`).Check(testkit.Rows(
+			`Warning 1105 Implicit type or collation conversion on join keys (test.t_int_issue67366.id = test.t_varchar_issue67366.id) may make indexes unusable`,
+		))
+
 		tk.MustExec(`drop table if exists issue66859_t0, issue66859_t1, issue66859_t2`)
 		tk.MustExec(`create table issue66859_t0(c0 int)`)
 		tk.MustExec(`create table issue66859_t1 like issue66859_t0`)
