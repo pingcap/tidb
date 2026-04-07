@@ -130,6 +130,32 @@ func TestFileScanner(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("CreateSchemasAndTablesIgnoresDropTableInSchemaFile", func(t *testing.T) {
+		dropDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dropDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dropDir, "db1.t_drop-schema.sql"),
+			[]byte("DROP TABLE t_drop; CREATE TABLE t_drop (id INT);"),
+			0o644,
+		))
+
+		dropDB, dropMock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer dropDB.Close()
+
+		dropScanner, err := NewFileScanner(ctx, "file://"+dropDir, dropDB, defaultSDKConfig())
+		require.NoError(t, err)
+		defer dropScanner.Close()
+
+		dropMock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA.*").WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
+		dropMock.ExpectExec(regexp.QuoteMeta("CREATE DATABASE IF NOT EXISTS `db1`")).WillReturnResult(sqlmock.NewResult(0, 0))
+		dropMock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `db1`.`t_drop`")).WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err = dropScanner.CreateSchemasAndTables(ctx)
+		require.NoError(t, err)
+		require.NoError(t, dropMock.ExpectationsWereMet())
+	})
+
 	t.Run("EstimateImportDataSize", func(t *testing.T) {
 		estimateDir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
