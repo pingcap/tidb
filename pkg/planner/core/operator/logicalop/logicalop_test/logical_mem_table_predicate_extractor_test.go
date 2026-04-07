@@ -1665,6 +1665,82 @@ func TestColumns(t *testing.T) {
 	}
 }
 
+func TestTiDBMViews(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql                string
+		tableSchema        set.StringSet
+		mviewName          set.StringSet
+		mviewID            set.StringSet
+		tableSchemaPattern []string
+		mviewNamePattern   []string
+		skipRequest        bool
+	}{
+		{
+			sql:         `select * from information_schema.tidb_mviews where table_schema='TEST';`,
+			tableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:       `select * from information_schema.tidb_mviews where mview_name='MV_TEST';`,
+			mviewName: set.NewStringSet("mv_test"),
+		},
+		{
+			sql:     `select * from information_schema.tidb_mviews where mview_id in (1, 2, 3);`,
+			mviewID: set.NewStringSet("1", "2", "3"),
+		},
+		{
+			sql:              `select * from information_schema.tidb_mviews where mview_name like 'MV%';`,
+			mviewNamePattern: []string{"mv%"},
+		},
+		{
+			sql:                `select * from information_schema.tidb_mviews where table_schema like 'TE%';`,
+			tableSchemaPattern: []string{"te%"},
+		},
+		{
+			sql:         `select * from information_schema.tidb_mviews where mview_id=1 and mview_id=2;`,
+			skipRequest: true,
+		},
+	}
+
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		mviewExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTiDBMViewsExtractor)
+		require.Equal(t, ca.skipRequest, mviewExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.tableSchema.Count(), mviewExtractor.ColPredicates["table_schema"].Count())
+		if ca.tableSchema.Count() > 0 && mviewExtractor.ColPredicates["table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, mviewExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewName.Count(), mviewExtractor.ColPredicates["mview_name"].Count())
+		if ca.mviewName.Count() > 0 && mviewExtractor.ColPredicates["mview_name"].Count() > 0 {
+			require.EqualValues(t, ca.mviewName, mviewExtractor.ColPredicates["mview_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewID.Count(), mviewExtractor.ColPredicates["mview_id"].Count())
+		if ca.mviewID.Count() > 0 && mviewExtractor.ColPredicates["mview_id"].Count() > 0 {
+			require.EqualValues(t, ca.mviewID, mviewExtractor.ColPredicates["mview_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.tableSchemaPattern), len(mviewExtractor.LikePatterns["table_schema"]))
+		if len(ca.tableSchemaPattern) > 0 && len(mviewExtractor.LikePatterns["table_schema"]) > 0 {
+			require.EqualValues(t, ca.tableSchemaPattern, mviewExtractor.LikePatterns["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.mviewNamePattern), len(mviewExtractor.LikePatterns["mview_name"]))
+		if len(ca.mviewNamePattern) > 0 && len(mviewExtractor.LikePatterns["mview_name"]) > 0 {
+			require.EqualValues(t, ca.mviewNamePattern, mviewExtractor.LikePatterns["mview_name"], "SQL: %v", ca.sql)
+		}
+	}
+}
+
 func TestTikvRegionStatusExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

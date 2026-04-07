@@ -58,6 +58,8 @@ const (
 	TableSchema      = "table_schema"
 	TableName        = "table_name"
 	TidbTableID      = "tidb_table_id"
+	MViewName        = "mview_name"
+	MViewID          = "mview_id"
 	PartitionName    = "partition_name"
 	TidbPartitionID  = "tidb_partition_id"
 	IndexName        = "index_name"
@@ -77,6 +79,7 @@ const (
 var patternMatchable = map[string]struct{}{
 	TableSchema:      {},
 	TableName:        {},
+	MViewName:        {},
 	IndexName:        {},
 	SchemaName:       {},
 	ConstraintSchema: {},
@@ -998,4 +1001,31 @@ ForLoop:
 	}
 
 	return indexes
+}
+
+// InfoSchemaTiDBMViewsExtractor is the predicate extractor for information_schema.tidb_mviews.
+type InfoSchemaTiDBMViewsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// NewInfoSchemaTiDBMViewsExtractor creates a new InfoSchemaTiDBMViewsExtractor.
+func NewInfoSchemaTiDBMViewsExtractor() *InfoSchemaTiDBMViewsExtractor {
+	e := &InfoSchemaTiDBMViewsExtractor{}
+	e.extractableColumns = extractableCols{
+		schema:  TableSchema,
+		table:   MViewName,
+		tableID: MViewID,
+	}
+	e.colNames = []string{TableSchema, MViewName, MViewID}
+	return e
+}
+
+// HasMViewName returns true if table name is specified in predicates.
+func (e *InfoSchemaTiDBMViewsExtractor) HasMViewName(name string) bool {
+	return !e.filter(TableName, name)
+}
+
+// HasTableSchema returns true if table schema is specified in predicates.
+func (e *InfoSchemaTiDBMViewsExtractor) HasTableSchema(name string) bool {
+	return !e.filter(TableSchema, name)
 }

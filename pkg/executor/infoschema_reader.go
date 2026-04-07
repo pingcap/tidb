@@ -739,28 +739,38 @@ func (e *memtableRetriever) setDataFromOneTable(
 }
 
 func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
-	if len(columns) <= 3 {
-		for _, colInfo := range columns {
-			switch colInfo.Name.L {
-			case "table_schema":
-			case "table_name":
-			case "table_catalog":
-			default:
-				return false
-			}
-		}
-		return true
-	}
-	return false
+	return onlyNamedColumns(columns, "table_catalog", "table_schema", "table_name")
 }
 
 func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
+	return onlyNamedColPredicates(predicates, "table_catalog", "table_schema", "table_name")
+}
+
+func onlySchemaOrMViewColumns(columns []*model.ColumnInfo) bool {
+	return onlyNamedColumns(columns, "table_catalog", "table_schema", "mview_name")
+}
+
+func onlySchemaOrMViewColPredicates(predicates map[string]set.StringSet) bool {
+	return onlyNamedColPredicates(predicates, "table_catalog", "table_schema", "mview_name")
+}
+
+func onlyNamedColumns(columns []*model.ColumnInfo, allowedNames ...string) bool {
+	if len(columns) > len(allowedNames) {
+		return false
+	}
+	allowed := set.NewStringSet(allowedNames...)
+	for _, colInfo := range columns {
+		if !allowed.Exist(colInfo.Name.L) {
+			return false
+		}
+	}
+	return true
+}
+
+func onlyNamedColPredicates(predicates map[string]set.StringSet, allowedNames ...string) bool {
+	allowed := set.NewStringSet(allowedNames...)
 	for str := range predicates {
-		switch str {
-		case "table_name":
-		case "table_schema":
-		case "table_catalog":
-		default:
+		if !allowed.Exist(str) {
 			return false
 		}
 	}
@@ -1541,39 +1551,98 @@ func (e *memtableRetriever) setDataFromViews(ctx context.Context, sctx sessionct
 
 func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBMViewsExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTiDBMViewsExtractor", e.extractor)
+	}
+
+	if ex.SkipRequest {
+		return nil
+	}
+
 	rows := make([][]types.Datum, 0)
+	if onlySchemaOrMViewColumns(e.columns) && onlySchemaOrMViewColPredicates(ex.ColPredicates) {
+		is := e.is
+		if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+			is = raw.InfoSchema
+		}
+		v2, ok := is.(interface {
+			IterateAllTableItems(visit func(infoschema.TableItem) bool)
+		})
+
+		if ok {
+			if x := ctx.Value("cover-check"); x != nil {
+				// The interface assertion is too tricky, so we add test to cover here.
+				// To ensure that if implementation changes one day, we can catch it.
+				slot := x.(*bool)
+				*slot = true
+			}
+			v2.IterateAllTableItems(func(t infoschema.TableItem) bool {
+				if !ex.HasMViewName(t.TableName.L) {
+					return true
+				}
+				if !ex.HasTableSchema(t.DBName.L) {
+					return true
+				}
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, t.DBName.L, t.TableName.L, "", mysql.AllPrivMask) {
+					return true
+				}
+
+				record := types.MakeDatums(
+					infoschema.CatalogVal, // TABLE_CATALOG
+					t.DBName.O,            // TABLE_SCHEMA
+					nil,                   // MVIEW_ID
+					t.TableName.O,         // MVIEW_NAME
+					nil,                   // MVIEW_SQL_CONTENT
+					nil,                   // MVIEW_COMMENT
+					nil,                   // MVIEW_MODIFY_TIME
+					nil,                   // REFRESH_METHOD
+					nil,                   // REFRESH_START
+					nil,                   // REFRESH_NEXT
+				)
+				rows = append(rows, record)
+				return true
+			})
+			e.rows = rows
+			return nil
+		}
+		return nil
+	}
+
+	schemas, tables, err := ex.ListSchemasAndTables(ctx, e.is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	e.updateStatsCacheIfNeed(sctx, tables)
+
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
 	}
 
-	for _, schema := range e.is.AllSchemaNames() {
-		tables, err := e.is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return errors.Trace(err)
+	for i, tbl := range tables {
+		schema := schemas[i]
+		if tbl.MaterializedView == nil {
+			continue
 		}
-		for _, tbl := range tables {
-			if tbl.MaterializedView == nil {
-				continue
-			}
-			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
-				continue
-			}
-			modifyTime := types.NewTime(types.FromGoTime(tbl.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
-			record := types.MakeDatums(
-				infoschema.CatalogVal,                 // TABLE_CATALOG
-				schema.O,                              // TABLE_SCHEMA
-				tbl.ID,                                // MVIEW_ID
-				tbl.Name.O,                            // MVIEW_NAME
-				tbl.MaterializedView.SQLContent,       // MVIEW_SQL_CONTENT
-				tbl.Comment,                           // MVIEW_COMMENT
-				modifyTime,                            // MVIEW_MODIFY_TIME
-				tbl.MaterializedView.RefreshMethod,    // REFRESH_METHOD
-				tbl.MaterializedView.RefreshStartWith, // REFRESH_START
-				tbl.MaterializedView.RefreshNext,      // REFRESH_INTERVAL
-			)
-			rows = append(rows, record)
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+			continue
 		}
+		modifyTime := types.NewTime(types.FromGoTime(tbl.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+		record := types.MakeDatums(
+			infoschema.CatalogVal,                 // TABLE_CATALOG
+			schema.O,                              // TABLE_SCHEMA
+			tbl.ID,                                // MVIEW_ID
+			tbl.Name.O,                            // MVIEW_NAME
+			tbl.MaterializedView.SQLContent,       // MVIEW_SQL_CONTENT
+			tbl.Comment,                           // MVIEW_COMMENT
+			modifyTime,                            // MVIEW_MODIFY_TIME
+			tbl.MaterializedView.RefreshMethod,    // REFRESH_METHOD
+			tbl.MaterializedView.RefreshStartWith, // REFRESH_START
+			tbl.MaterializedView.RefreshNext,      // REFRESH_NEXT
+		)
+		rows = append(rows, record)
 	}
 	e.rows = rows
 	return nil

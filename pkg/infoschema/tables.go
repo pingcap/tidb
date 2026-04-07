@@ -740,7 +740,7 @@ var tableTiDBMViewsCols = []columnInfo{
 	{name: "MVIEW_MODIFY_TIME", tp: mysql.TypeDatetime, flag: mysql.NotNullFlag},
 	{name: "REFRESH_METHOD", tp: mysql.TypeVarchar, size: 32},
 	{name: "REFRESH_START", tp: mysql.TypeVarchar, size: 128},
-	{name: "REFRESH_INTERVAL", tp: mysql.TypeVarchar, size: 128},
+	{name: "REFRESH_NEXT", tp: mysql.TypeVarchar, size: 128},
 }
 
 var tableRoutinesCols = []columnInfo{

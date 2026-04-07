@@ -16,16 +16,107 @@ package executor
 
 import (
 	"context"
+	"errors"
+	"reflect"
+	"regexp"
 	"testing"
+	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/stretchr/testify/require"
 )
+
+type mockInfoSchemaWithItems struct {
+	infoschema.InfoSchema
+	items []infoschema.TableItem
+}
+
+func (m *mockInfoSchemaWithItems) IterateAllTableItems(visit func(infoschema.TableItem) bool) {
+	for _, item := range m.items {
+		if !visit(item) {
+			return
+		}
+	}
+}
+
+type tableByNameErrorInfoSchema struct {
+	infoschema.InfoSchema
+	err error
+}
+
+func (m *tableByNameErrorInfoSchema) TableByName(
+	_ context.Context,
+	_, _ pmodel.CIStr,
+) (table.Table, error) {
+	return nil, m.err
+}
+
+type stubPrivilegeManager struct {
+	privilege.Manager
+	allow func(db, table string) bool
+	calls []string
+}
+
+func (m *stubPrivilegeManager) RequestVerification(
+	_ []*auth.RoleIdentity,
+	db, table, _ string,
+	_ mysql.PrivilegeType,
+) bool {
+	m.calls = append(m.calls, db+"."+table)
+	if m.allow == nil {
+		return true
+	}
+	return m.allow(db, table)
+}
+
+func setExtractorRegexp(
+	t *testing.T,
+	ex *plannercore.InfoSchemaTiDBMViewsExtractor,
+	col string,
+	patterns ...string,
+) {
+	t.Helper()
+
+	regs := make([]*regexp.Regexp, 0, len(patterns))
+	for _, pattern := range patterns {
+		regs = append(regs, regexp.MustCompile(pattern))
+	}
+
+	field := reflect.ValueOf(&ex.InfoSchemaBaseExtractor).Elem().FieldByName("colsRegexp")
+	require.True(t, field.IsValid())
+	field = reflect.NewAt(field.Type(), unsafe.Pointer(field.UnsafeAddr())).Elem()
+	field.Set(reflect.ValueOf(map[string][]*regexp.Regexp{col: regs}))
+}
+
+func newColumnInfo(name string) *model.ColumnInfo {
+	return &model.ColumnInfo{Name: pmodel.NewCIStr(name)}
+}
+
+func newMViewTableInfo(id int64, name string, updateTS uint64) *model.TableInfo {
+	return &model.TableInfo{
+		ID:       id,
+		Name:     pmodel.NewCIStr(name),
+		Comment:  name + "-comment",
+		UpdateTS: updateTS,
+		State:    model.StatePublic,
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent:       "select 1",
+			RefreshMethod:    "FAST",
+			RefreshStartWith: "CURRENT_TIMESTAMP",
+			RefreshNext:      "CURRENT_TIMESTAMP + INTERVAL 1 HOUR",
+		},
+	}
+}
 
 func TestSetDataFromCheckConstraints(t *testing.T) {
 	tblInfos := []*model.TableInfo{
@@ -161,4 +252,200 @@ func TestSetDataFromKeywords(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, types.NewStringDatum("ADD"), mt.rows[0][0]) // Keyword: ADD
 	require.Equal(t, types.NewIntDatum(1), mt.rows[0][1])        // Reserved: true(1)
+}
+
+func TestSetDataFromTiDBMViews(t *testing.T) {
+	t.Run("wrong extractor type", func(t *testing.T) {
+		mt := memtableRetriever{
+			extractor: &plannercore.InfoSchemaTablesExtractor{},
+		}
+
+		err := mt.setDataFromTiDBMViews(context.Background(), defaultCtx())
+		require.ErrorContains(t, err, "wrong extractor type")
+	})
+
+	t.Run("skip request", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMViewsExtractor()
+		ex.SkipRequest = true
+		mt := memtableRetriever{extractor: ex}
+
+		err := mt.setDataFromTiDBMViews(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Nil(t, mt.rows)
+	})
+
+	t.Run("fast path without iterate support", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMViewsExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			plannercore.TableSchema: set.NewStringSet("test"),
+		}
+		mt := memtableRetriever{
+			is:        infoschema.MockInfoSchema(nil),
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("table_schema"),
+				newColumnInfo("mview_name"),
+			},
+		}
+
+		err := mt.setDataFromTiDBMViews(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Nil(t, mt.rows)
+	})
+
+	t.Run("fast path filters by name schema and privilege", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMViewsExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			plannercore.TableSchema: set.NewStringSet("test"),
+		}
+		// Drive the HasMViewName branch through the extractor's internal regexp filter.
+		setExtractorRegexp(t, ex, plannercore.TableName, "^mv_(deny|keep)$")
+
+		baseIS := &mockInfoSchemaWithItems{
+			InfoSchema: infoschema.MockInfoSchema(nil),
+			items: []infoschema.TableItem{
+				{DBName: pmodel.NewCIStr("other"), TableName: pmodel.NewCIStr("mv_keep")},
+				{DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("skip_by_name")},
+				{DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("mv_deny")},
+				{DBName: pmodel.NewCIStr("test"), TableName: pmodel.NewCIStr("mv_keep")},
+			},
+		}
+
+		sctx := defaultCtx()
+		pm := &stubPrivilegeManager{
+			allow: func(db, table string) bool {
+				return table != "mv_deny"
+			},
+		}
+		privilege.BindPrivilegeManager(sctx, pm)
+
+		mt := memtableRetriever{
+			is: &infoschema.SessionExtendedInfoSchema{
+				InfoSchema: baseIS,
+			},
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("table_schema"),
+				newColumnInfo("mview_name"),
+			},
+		}
+
+		var covered bool
+		ctx := context.WithValue(context.Background(), "cover-check", &covered)
+		err := mt.setDataFromTiDBMViews(ctx, sctx)
+		require.NoError(t, err)
+		require.True(t, covered)
+		require.Equal(t, []string{"test.mv_deny", "test.mv_keep"}, pm.calls)
+
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), mt.rows[0][0])
+		require.Equal(t, types.NewStringDatum("test"), mt.rows[0][1])
+		require.True(t, mt.rows[0][2].IsNull())
+		require.Equal(t, types.NewStringDatum("mv_keep"), mt.rows[0][3])
+		for i := 4; i < len(mt.rows[0]); i++ {
+			require.True(t, mt.rows[0][i].IsNull())
+		}
+	})
+
+	t.Run("non fast path returns list schemas error", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMViewsExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			plannercore.MViewName: set.NewStringSet("mv_err"),
+		}
+		mt := memtableRetriever{
+			is: &tableByNameErrorInfoSchema{
+				InfoSchema: infoschema.MockInfoSchema(nil),
+				err:        errors.New("boom"),
+			},
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mview_sql_content"),
+			},
+		}
+
+		err := mt.setDataFromTiDBMViews(context.Background(), defaultCtx())
+		require.ErrorContains(t, err, "boom")
+	})
+
+	t.Run("non fast path when columns are not eligible", func(t *testing.T) {
+		updateTS := uint64(time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC).UnixMilli()) << 18
+		ex := plannercore.NewInfoSchemaTiDBMViewsExtractor()
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				{
+					ID:    1,
+					Name:  pmodel.NewCIStr("base"),
+					State: model.StatePublic,
+				},
+				newMViewTableInfo(2, "mv_deny", updateTS),
+				newMViewTableInfo(3, "mv_keep", updateTS),
+			}),
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mview_name"),
+				newColumnInfo("mview_sql_content"),
+			},
+		}
+
+		sctx := defaultCtx()
+		sctx.GetSessionVars().TimeZone = nil
+		pm := &stubPrivilegeManager{
+			allow: func(db, table string) bool {
+				return table != "mv_deny"
+			},
+		}
+		privilege.BindPrivilegeManager(sctx, pm)
+
+		err := mt.setDataFromTiDBMViews(context.Background(), sctx)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []string{"test.mv_deny", "test.mv_keep"}, pm.calls)
+		require.Len(t, mt.rows, 1)
+
+		row := mt.rows[0]
+		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[0])
+		require.Equal(t, types.NewStringDatum("test"), row[1])
+		require.Equal(t, types.NewIntDatum(3), row[2])
+		require.Equal(t, types.NewStringDatum("mv_keep"), row[3])
+		require.Equal(t, types.NewStringDatum("select 1"), row[4])
+		require.Equal(t, types.NewStringDatum("mv_keep-comment"), row[5])
+		expectedTime := types.NewTime(
+			types.FromGoTime(model.TSConvert2Time(updateTS).In(time.Local)),
+			mysql.TypeDatetime,
+			types.DefaultFsp,
+		)
+		require.Equal(t, expectedTime, row[6].GetMysqlTime())
+		require.Equal(t, types.NewStringDatum("FAST"), row[7])
+		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP"), row[8])
+		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP + INTERVAL 1 HOUR"), row[9])
+	})
+
+	t.Run("non fast path when predicates are not eligible", func(t *testing.T) {
+		loc := time.FixedZone("UTC+8", 8*3600)
+		updateTS := uint64(time.Date(2025, 6, 7, 8, 9, 10, 0, time.UTC).UnixMilli()) << 18
+		ex := plannercore.NewInfoSchemaTiDBMViewsExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			"refresh_next": set.NewStringSet("ignored"),
+		}
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				newMViewTableInfo(1, "mv_keep", updateTS),
+			}),
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mview_name"),
+			},
+		}
+
+		sctx := defaultCtx()
+		sctx.GetSessionVars().TimeZone = loc
+
+		err := mt.setDataFromTiDBMViews(context.Background(), sctx)
+		require.NoError(t, err)
+		require.Len(t, mt.rows, 1)
+		require.Equal(
+			t,
+			types.NewTime(types.FromGoTime(model.TSConvert2Time(updateTS).In(loc)), mysql.TypeDatetime, types.DefaultFsp),
+			mt.rows[0][6].GetMysqlTime(),
+		)
+	})
 }
