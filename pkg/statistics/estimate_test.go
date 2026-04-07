@@ -43,9 +43,9 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 	)
 
 	t.Run("DocCommentExample", func(t *testing.T) {
-		// Region 0: all distinct = {a, b, c}, local singletons = {a, b, c}
-		// Region 1: all distinct = {b, c, d}, local singletons = {b, d}
-		// Region 2: all distinct = {c, e, f}, local singletons = {e, f}
+		// Node 0: all distinct = {a, b, c}, local singletons = {a, b, c}
+		// Node 1: all distinct = {b, c, d}, local singletons = {b, d}
+		// Node 2: all distinct = {c, e, f}, local singletons = {e, f}
 		// Global singletons = {a, d, e, f} = 4
 		ndvSketches := []*FMSketch{
 			newFMSketchFromHashValues(a, b, c),
@@ -61,8 +61,8 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 		require.Equal(t, uint64(4), got)
 	})
 
-	t.Run("SingleRegion", func(t *testing.T) {
-		// With one region, all local singletons are global singletons.
+	t.Run("SingleNode", func(t *testing.T) {
+		// With one node, all local singletons are global singletons.
 		ndvSketches := []*FMSketch{
 			newFMSketchFromHashValues(a, b, c),
 		}
@@ -74,7 +74,7 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 	})
 
 	t.Run("NoOverlap", func(t *testing.T) {
-		// Regions have disjoint values. All local singletons are global singletons.
+		// Nodes have disjoint values. All local singletons are global singletons.
 		ndvSketches := []*FMSketch{
 			newFMSketchFromHashValues(a, b),
 			newFMSketchFromHashValues(c, d),
@@ -90,10 +90,10 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 	})
 
 	t.Run("FullOverlap", func(t *testing.T) {
-		// Every local singleton also appears in another region's NDV.
-		// Region 0: all = {a, b}, singletons = {a, b}
-		// Region 1: all = {a, b}, singletons = {a, b}
-		// No value is unique to a single region → 0 global singletons.
+		// Every local singleton also appears in another node's NDV.
+		// Node 0: all = {a, b}, singletons = {a, b}
+		// Node 1: all = {a, b}, singletons = {a, b}
+		// No value is unique to a single node → 0 global singletons.
 		ndvSketches := []*FMSketch{
 			newFMSketchFromHashValues(a, b),
 			newFMSketchFromHashValues(a, b),
@@ -107,7 +107,7 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 	})
 
 	t.Run("NilSingletonSketches", func(t *testing.T) {
-		// A region with nil singleton sketch contributes 0.
+		// A node with nil singleton sketch contributes 0.
 		ndvSketches := []*FMSketch{
 			newFMSketchFromHashValues(a, b),
 			newFMSketchFromHashValues(c, d),
@@ -116,14 +116,14 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 			nil,
 			newFMSketchFromHashValues(c, d),
 		}
-		// Region 0 contributes 0 (nil singleton).
-		// Region 1: others' NDV = {a, b}, union with {c, d} = {a, b, c, d} → contribution = 2.
+		// Node 0 contributes 0 (nil singleton).
+		// Node 1: others' NDV = {a, b}, union with {c, d} = {a, b, c, d} → contribution = 2.
 		got := EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
 		require.Equal(t, uint64(2), got)
 	})
 
 	t.Run("NilNDVSketches", func(t *testing.T) {
-		// A region with nil NDV sketch is skipped when building "others".
+		// A node with nil NDV sketch is skipped when building "others".
 		ndvSketches := []*FMSketch{
 			nil,
 			newFMSketchFromHashValues(c, d),
@@ -132,8 +132,8 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 			newFMSketchFromHashValues(a, b),
 			newFMSketchFromHashValues(c, d),
 		}
-		// Region 0: others' NDV = {c, d}, union with {a, b} = {a, b, c, d} → contribution = 2.
-		// Region 1: others' NDV = {} (nil), union with {c, d} = {c, d} → contribution = 2.
+		// Node 0: others' NDV = {c, d}, union with {a, b} = {a, b, c, d} → contribution = 2.
+		// Node 1: others' NDV = {} (nil), union with {c, d} = {c, d} → contribution = 2.
 		got := EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
 		require.Equal(t, uint64(4), got)
 	})

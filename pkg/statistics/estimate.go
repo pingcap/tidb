@@ -67,44 +67,44 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 }
 
 // EstimateGlobalSingletonBySketches estimates the global singleton count using NDV and singleton sketches.
-// For each region i, we ask: how many of region i's local singletons
-// never appeared in any other region? Those are the values that are
-// truly unique across the entire dataset, contributed by region i.
+// For each node i, we ask: how many of node i's local singletons
+// never appeared in any other node? Those are the values that are
+// truly unique across the entire dataset, contributed by node i.
 //
-// We compute this by merging all *other* regions' NDV sketches (their full
-// distinct-value sets), then checking how much region i's local singletons
-// grow that union. The growth is exactly the count of region i's singletons
-// that no other region has seen.
+// We compute this by merging all *other* nodes' NDV sketches (their full
+// distinct-value sets), then checking how much node i's local singletons
+// grow that union. The growth is exactly the count of node i's singletons
+// that no other node has seen.
 //
-// Summing these per-region contributions gives the global singleton estimate.
+// Summing these per-node contributions gives the global singleton estimate.
 //
 // The current implementation rebuilds "all except i" from scratch for each
-// region, which is O(k²) in the number of regions. A prefix-suffix approach
+// node, which is O(k²) in the number of nodes. A prefix-suffix approach
 // could reduce this to O(k) time, but would require O(k) extra sketches
 // (~160KB each), which risks significant memory pressure for tables with
-// many TiKV regions. We keep the O(k²) approach
+// many nodes. We keep the O(k²) approach
 // for its O(1) memory overhead.
 //
-// Example with three regions:
+// Example with three nodes:
 //
-//	Region 0 all distinct values: {a, b, c}    local singletons: {a, b, c}
-//	Region 1 all distinct values: {b, c, d}    local singletons: {b, d}
-//	Region 2 all distinct values: {c, e, f}    local singletons: {e, f}
+//	Node 0 all distinct values: {a, b, c}    local singletons: {a, b, c}
+//	Node 1 all distinct values: {b, c, d}    local singletons: {b, d}
+//	Node 2 all distinct values: {c, e, f}    local singletons: {e, f}
 //
 // True global frequencies: a×1, b×2, c×3, d×1, e×1, f×1
 // True singletons = 4  (the values {a, d, e, f} appear exactly once globally)
 //
-//	Region 0: others' NDV = {b,c,d,e,f} (size 5)
-//	          + region 0 singletons {a,b,c} = {a,b,c,d,e,f} (size 6)
-//	          contribution = 1  (only `a` is new)
+//	Node 0: others' NDV = {b,c,d,e,f} (size 5)
+//	        + node 0 singletons {a,b,c} = {a,b,c,d,e,f} (size 6)
+//	        contribution = 1  (only `a` is new)
 //
-//	Region 1: others' NDV = {a,b,c,e,f} (size 5)
-//	          + region 1 singletons {b,d} = {a,b,c,d,e,f} (size 6)
-//	          contribution = 1  (only `d` is new)
+//	Node 1: others' NDV = {a,b,c,e,f} (size 5)
+//	        + node 1 singletons {b,d} = {a,b,c,d,e,f} (size 6)
+//	        contribution = 1  (only `d` is new)
 //
-//	Region 2: others' NDV = {a,b,c,d} (size 4)
-//	          + region 2 singletons {e,f} = {a,b,c,d,e,f} (size 6)
-//	          contribution = 2  (`e` and `f` are new)
+//	Node 2: others' NDV = {a,b,c,d} (size 4)
+//	        + node 2 singletons {e,f} = {a,b,c,d,e,f} (size 6)
+//	        contribution = 2  (`e` and `f` are new)
 //
 // Estimated singletons = 1 + 1 + 2 = 4
 func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketch) uint64 {
@@ -117,7 +117,7 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 
 	var globalSingleton int64
 	for i := range ndvSketches {
-		// Merge NDV sketches from all regions except region i.
+		// Merge NDV sketches from all nodes except node i.
 		var other *FMSketch
 		for j, ns := range ndvSketches {
 			if j == i || ns == nil {
@@ -136,9 +136,9 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 			ndvOther = other.NDV()
 		}
 
-		// Merge the other-regions sketch with region i's singleton sketch.
-		// ndvUnion - ndvOther gives the count of region i's singletons
-		// that don't appear in any other region (i.e. globally unique values).
+		// Merge the other-nodes sketch with node i's singleton sketch.
+		// ndvUnion - ndvOther gives the count of node i's singletons
+		// that don't appear in any other node (i.e. globally unique values).
 		// We already captured ndvOther, so we can safely reuse other here.
 		if other != nil {
 			if singletonSketches[i] != nil {
