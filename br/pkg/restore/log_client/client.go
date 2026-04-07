@@ -1544,6 +1544,7 @@ func (rc *LogClient) PreSplitRegions(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer se.Close()
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("pre-split: get split threshold from tikv config",
