@@ -704,9 +704,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -725,9 +725,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
 		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
@@ -778,6 +778,7 @@ func constructDS2TableScanTask(
 	ds *logicalop.DataSource,
 	ranges ranger.Ranges,
 	filterConds []expression.Expression,
+	accessConds []expression.Expression,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
@@ -850,6 +851,10 @@ func constructDS2TableScanTask(
 	// For IndexJoin probe-side scans, predicates that contain very large IN-lists and are not part of
 	// range construction can be expensive to execute in coprocessor. Keep them in TiDB.
 	ts.FilterCondition, rootTaskConds = splitLargeInListFiltersForIndexJoinProbe(ts.FilterCondition, indexJoinProbeSideLargeInNotInThreshold)
+	// Keep explicit probe-side selections for access predicates to preserve the previous
+	// plan shape (`TableReader data:Selection`) even when those predicates are already used
+	// to build ranges. This does not change range pruning or result correctness.
+	ts.FilterCondition = ranger.AppendConditionsIfNotExist(ds.SCtx().GetExprCtx().GetEvalCtx(), ts.FilterCondition, accessConds)
 	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 	selStats := ts.StatsInfo().Scale(ds.SCtx().GetSessionVars(), selectivity)
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, selStats, ds.AstIndexHints)
