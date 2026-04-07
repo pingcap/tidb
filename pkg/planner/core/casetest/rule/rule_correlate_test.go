@@ -15,6 +15,7 @@
 package rule
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -145,6 +146,67 @@ func joinExplainRows(rows [][]any) string {
 		sb.WriteByte('\n')
 	}
 	return sb.String()
+}
+
+// TestCorrelateParallelApply verifies that when the correlate alternative round
+// produces an Apply plan and tidb_enable_parallel_apply is ON, the Apply is
+// executed with parallel concurrency. This tests the interaction between the
+// correlate optimization (converting decorrelated semi-join back to Apply) and
+// the parallel apply executor.
+func TestCorrelateParallelApply(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int not null, b int, key(a))")
+	tk.MustExec("create table t2 (a int not null, b int, key(a))")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("insert into t2 values (1,10),(2,20),(3,30)")
+
+	sql := "select * from t1 where b = 1 and a in (select a from t2)"
+
+	// Enable correlate alternative + parallel apply.
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	tk.MustExec("set tidb_enable_parallel_apply = ON")
+	tk.MustExec("set tidb_executor_concurrency = 5")
+
+	// Verify the plan contains Apply (correlate alternative won).
+	rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.True(t, explainContains(rows, "Apply"),
+		"with correlate alternative + parallel apply, expected Apply in plan:\n%s", joinExplainRows(rows))
+
+	// Verify EXPLAIN ANALYZE reports Concurrency > 1 for the Apply.
+	analyzeRows := tk.MustQuery("explain analyze " + sql).Rows()
+	foundConcurrency := false
+	for _, row := range analyzeRows {
+		line := fmt.Sprintf("%v", row)
+		if strings.Contains(line, "Apply") && strings.Contains(line, "Concurrency:") {
+			idx := strings.Index(line, "Concurrency:")
+			if idx >= 0 {
+				rest := line[idx+len("Concurrency:"):]
+				var n int
+				if _, err := fmt.Sscanf(rest, "%d", &n); err == nil && n > 1 {
+					foundConcurrency = true
+				}
+			}
+			break
+		}
+	}
+	require.True(t, foundConcurrency,
+		"EXPLAIN ANALYZE must report Concurrency > 1 for Apply when parallel_apply is on")
+
+	// Verify correctness: parallel + correlate must match serial + no correlate.
+	tk.MustExec("set tidb_enable_parallel_apply = OFF")
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+	serialRows := tk.MustQuery(sql).Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply = ON")
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	parallelRows := tk.MustQuery(sql).Rows()
+
+	require.Equal(t, serialRows, parallelRows,
+		"correlate alternative + parallel apply must produce the same result as standard path")
 }
 
 // TestCorrelateWithCostFactors verifies that when hash/merge join cost factors

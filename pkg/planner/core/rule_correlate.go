@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -38,12 +39,12 @@ type CorrelateSolver struct{}
 func (s *CorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan) (retPlan base.LogicalPlan, retChanged bool, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Warn("CorrelateSolver panic, returning original plan",
+			logutil.BgLogger().Warn("CorrelateSolver panic",
 				zap.Any("recover", r),
 				zap.Stack("stack"))
-			retPlan = p
+			retPlan = nil
 			retChanged = false
-			retErr = nil
+			retErr = fmt.Errorf("CorrelateSolver panic: %v", r)
 		}
 	}()
 	return s.correlate(ctx, p)

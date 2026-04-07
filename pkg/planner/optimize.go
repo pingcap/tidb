@@ -48,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -669,10 +671,19 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return p, names, 0, nil
 	}
 
+	// Pre-compute which rounds are enabled based on the signals from the first
+	// (default) build. This prevents signal leakage: alternative rounds rebuild
+	// the plan and may set AlternativeLogicalPlan* signals as a side effect,
+	// which are not reset by restoreLogicalPlanBuildCtx. Evaluating enabled()
+	// upfront ensures each round's eligibility is determined solely by the
+	// original build's signals.
+	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
 	for _, round := range alternativeRounds {
-		if !round.enabled(sessVars) {
-			continue
+		if round.enabled(sessVars) {
+			enabledRounds = append(enabledRounds, round)
 		}
+	}
+	for _, round := range enabledRounds {
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
 			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
@@ -706,7 +717,11 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			)
 		}()
 		if err != nil {
-			return nil, nil, 0, err
+			// Alternative rounds are optional optimizations. If one fails,
+			// log and continue — the first round's plan is still valid.
+			logutil.BgLogger().Warn("alternative logical plan round failed",
+				zap.Error(err))
+			continue
 		}
 		if nonLogical {
 			return p, names, 0, nil

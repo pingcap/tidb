@@ -1084,7 +1084,10 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingExistsSubquery)
 	// When EnableCorrelateSubquery is ON (set by the correlate alternative round),
 	// prevent decorrelation of correlated subqueries so they stay as Apply with index lookups.
-	if !noDecorrelate && len(corCols) > 0 {
+	// Skip when SEMI_JOIN_REWRITE() hint is present, since that hint explicitly requires
+	// decorrelation and would be silently ineffective on LogicalApply nodes.
+	semiJoinRewriteHint := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+	if !noDecorrelate && len(corCols) > 0 && !semiJoinRewriteHint {
 		b.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
 		if b.ctx.GetSessionVars().EnableCorrelateSubquery {
 			noDecorrelate = true
@@ -1105,7 +1108,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		}
 	}
 	np = er.popExistsSubPlan(planCtx, np)
-	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+	semiJoinRewrite := semiJoinRewriteHint
 	if semiJoinRewrite && hintFlags&hint.HintFlagNoDecorrelate > 0 {
 		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective.")
