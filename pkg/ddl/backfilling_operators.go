@@ -577,13 +577,13 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
 			idxResult := IndexRecordChunk{
-				ID:               task.ID,
-				Chunk:            srcChk,
-				Done:             done,
-				ctx:              w.ctx,
+				ID:                task.ID,
+				Chunk:             srcChk,
+				Done:              done,
+				ctx:               w.ctx,
 				tableScanRowCount: tableScanRowCount - lastTableScanRowCount,
-				conditionPushed:  conditionPushed,
-				releaseChunk:     w.recycleChunk,
+				conditionPushed:   conditionPushed,
+				releaseChunk:      w.recycleChunk,
 			}
 			lastTableScanRowCount = tableScanRowCount
 			sender(idxResult)
