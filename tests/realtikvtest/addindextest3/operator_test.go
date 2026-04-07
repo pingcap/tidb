@@ -155,6 +155,11 @@ func TestBackfillOperators(t *testing.T) {
 			values = append(values, val)
 		}
 
+		srcChkPool := &sync.Pool{
+			New: func() any {
+				return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, 100)
+			},
+		}
 		pTbl := tbl.(table.PhysicalTable)
 		index, err := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 		require.NoError(t, err)
@@ -171,7 +176,7 @@ func TestBackfillOperators(t *testing.T) {
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
 			wctx, copCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
-			3, reorgMeta, &execute.TestCollector{})
+			srcChkPool, 3, reorgMeta, &execute.TestCollector{})
 		sink := testutil.NewOperatorTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
@@ -445,7 +450,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		defer bcCtx.Close()
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		ingestOp := ddl.NewIndexIngestOperator(wctx, copCtx, sessPool, pTbl, []table.Index{index},
-			[]ingest.Engine{mockEngine}, 2, nil, &execute.TestCollector{})
+			[]ingest.Engine{mockEngine}, nil, 2, nil, &execute.TestCollector{})
 
 		ingestOp.Open()
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(2))

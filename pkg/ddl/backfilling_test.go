@@ -17,31 +17,24 @@ package ddl
 import (
 	"bytes"
 	"context"
-	"errors"
 	"math"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -604,121 +597,4 @@ func TestSplitRangesByKeys(t *testing.T) {
 		result := splitRangesByKeys(tt.ranges, tt.splitKeys)
 		require.EqualValues(t, len(tt.expected), len(result), "keys mismatch", tt.name)
 	}
-}
-
-type mockOpSessPoolForTest struct {
-	sctx   sessionctx.Context
-	getErr error
-	putCnt atomic.Int32
-}
-
-func (p *mockOpSessPoolForTest) Get() (sessionctx.Context, error) {
-	if p.getErr != nil {
-		return nil, p.getErr
-	}
-	return p.sctx, nil
-}
-
-func (p *mockOpSessPoolForTest) Put(sessionctx.Context) {
-	p.putCnt.Add(1)
-}
-
-type mockCopCtxForIngestWorkerTest struct {
-	base *copr.CopContextBase
-}
-
-func (m *mockCopCtxForIngestWorkerTest) GetBase() *copr.CopContextBase {
-	return m.base
-}
-
-func (*mockCopCtxForIngestWorkerTest) IndexColumnOutputOffsets(int64) []int {
-	return nil
-}
-
-func (*mockCopCtxForIngestWorkerTest) IndexInfo(int64) *model.IndexInfo {
-	return nil
-}
-
-func (*mockCopCtxForIngestWorkerTest) GetCondition() (expression.Expression, error) {
-	return nil, nil
-}
-
-func TestIndexIngestWorkerHandleTaskReleaseChunk(t *testing.T) {
-	t.Run("release on session init error", func(t *testing.T) {
-		releaseCnt := atomic.Int32{}
-		sendCnt := atomic.Int32{}
-		mockErr := errors.New("mock get session error")
-		pool := &mockOpSessPoolForTest{getErr: mockErr}
-
-		srcChunk := chunk.NewEmptyChunk(nil)
-		worker := &indexIngestWorker{
-			sessPool:  pool,
-			collector: &execute.TestCollector{},
-		}
-		err := worker.HandleTask(IndexRecordChunk{
-			Chunk: srcChunk,
-			releaseChunk: func(chk *chunk.Chunk) {
-				require.Same(t, srcChunk, chk)
-				releaseCnt.Add(1)
-			},
-		}, func(IndexWriteResult) {
-			sendCnt.Add(1)
-		})
-		require.ErrorIs(t, err, mockErr)
-		require.Equal(t, int32(1), releaseCnt.Load())
-		require.Equal(t, int32(0), sendCnt.Load())
-	})
-
-	t.Run("release on successful handle", func(t *testing.T) {
-		releaseCnt := atomic.Int32{}
-		sendCnt := atomic.Int32{}
-
-		sctx := mock.NewContext()
-		pool := &mockOpSessPoolForTest{sctx: sctx}
-		tblInfo := &model.TableInfo{
-			ID:    1,
-			Name:  ast.NewCIStr("t"),
-			State: model.StatePublic,
-			Columns: []*model.ColumnInfo{
-				{
-					ID:        1,
-					Offset:    0,
-					Name:      ast.NewCIStr("a"),
-					State:     model.StatePublic,
-					FieldType: *types.NewFieldType(mysql.TypeLonglong),
-				},
-			},
-		}
-		tbl := tables.MockTableFromMeta(tblInfo)
-		require.NotNil(t, tbl)
-		pTbl, ok := tbl.(table.PhysicalTable)
-		require.True(t, ok)
-
-		wctx := workerpool.NewContext(context.Background())
-		defer wctx.Cancel()
-		worker := &indexIngestWorker{
-			ctx:       wctx,
-			tbl:       pTbl,
-			copCtx:    &mockCopCtxForIngestWorkerTest{base: &copr.CopContextBase{ExprCtx: sctx.GetExprCtx()}},
-			sessPool:  pool,
-			reorgMeta: &model.DDLReorgMeta{},
-			collector: &execute.TestCollector{},
-		}
-		srcChunk := chunk.NewEmptyChunk(nil)
-		err := worker.HandleTask(IndexRecordChunk{
-			Chunk: srcChunk,
-			releaseChunk: func(chk *chunk.Chunk) {
-				require.Same(t, srcChunk, chk)
-				releaseCnt.Add(1)
-			},
-		}, func(IndexWriteResult) {
-			sendCnt.Add(1)
-		})
-		require.NoError(t, err)
-		require.Equal(t, int32(1), releaseCnt.Load())
-		require.Equal(t, int32(1), sendCnt.Load())
-
-		require.NoError(t, worker.Close())
-		require.Equal(t, int32(1), pool.putCnt.Load())
-	})
 }
