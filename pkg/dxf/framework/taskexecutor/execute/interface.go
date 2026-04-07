@@ -86,7 +86,7 @@ type Progress struct {
 	// For now, RowCnt is not used, but as it's collected by the collector,
 	// we still keep it here for future possible usage.
 	RowCnt int64 `json:"row_count,omitempty"`
-	// Processed stores generic progress units.
+	// Processed stores generic progress units, such as bytes processed or rows processed.
 	// Keep the JSON tag as "bytes" for backward compatibility with persisted summaries.
 	Processed int64 `json:"bytes,omitempty"`
 
@@ -100,6 +100,7 @@ type SubtaskSummary struct {
 	// RowCnt and Processed are updated by the collector.
 	RowCnt atomic.Int64 `json:"row_count,omitempty"`
 	// Processed is the number of processed units reported by the collector.
+	// Its unit may be bytes processed or rows processed, depending on the step.
 	// Keep the JSON tag as "bytes" for backward compatibility with persisted summaries.
 	Processed atomic.Int64 `json:"bytes,omitempty"`
 	// ReadBytes is the number of bytes that read from the source.
