@@ -89,15 +89,15 @@ func TestWithFailure(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 
 	cp := c.advanceCheckpoints()
-	for _, v := range c.stores {
-		v.flush()
+	for _, v := range c.storeList() {
+		v.Flush()
 		break
 	}
 	require.NoError(t, adv.OnTick(ctx))
 	require.Less(t, env.getCheckpoint(), cp, "%d %d", env.getCheckpoint(), cp)
 
-	for _, v := range c.stores {
-		v.flush()
+	for _, v := range c.storeList() {
+		v.Flush()
 	}
 
 	require.NoError(t, adv.OnTick(ctx))
@@ -120,13 +120,13 @@ func shouldFinishInTime(t *testing.T, d time.Duration, name string, f func()) {
 func TestCollectorFailure(t *testing.T) {
 	log.SetLevel(zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
-	c.onGetClient = func(u uint64) error {
+	c.SetOnGetClient(func(u uint64) error {
 		return status.Error(codes.DataLoss,
 			"Exiled requests from the client, please slow down and listen a story: "+
 				"the server has been dropped, we are longing for new nodes, however the goddess(k8s) never allocates new resource. "+
 				"May you take the sword named `vim`, refactoring the definition of the nature, in the yaml file hidden at somewhere of the cluster, "+
 				"to save all of us and gain the response you desiring?")
-	}
+	})
 	ctx := context.Background()
 	splitKeys := make([]string, 0, 10000)
 	for i := 0; i < 10000; i++ {
@@ -179,7 +179,7 @@ func TestOneStoreFailure(t *testing.T) {
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	c.onGetClient = oneStoreFailure()
+	c.SetOnGetClient(oneStoreFailure())
 
 	for i := 0; i < 100; i++ {
 		c.advanceCheckpoints()
@@ -187,7 +187,7 @@ func TestOneStoreFailure(t *testing.T) {
 		require.ErrorContains(t, adv.OnTick(ctx), "the warm lamplight")
 	}
 
-	c.onGetClient = nil
+	c.SetOnGetClient(nil)
 	cp := c.advanceCheckpoints()
 	c.flushAll()
 	require.NoError(t, adv.OnTick(ctx))
@@ -207,16 +207,16 @@ func TestGCServiceSafePoint(t *testing.T) {
 	c.flushAll()
 
 	req.NoError(adv.OnTick(ctx))
-	req.Equal(env.serviceGCSafePoint, cp-1)
-	env.fakeCluster.mu.Lock()
-	req.True(env.serviceGCSafePointSet)
-	env.fakeCluster.mu.Unlock()
+	req.Equal(env.ServiceGCSafePoint, cp-1)
+	env.Cluster.Mu.Lock()
+	req.True(env.ServiceGCSafePointSet)
+	env.Cluster.Mu.Unlock()
 
 	env.unregisterTask()
 	req.Eventually(func() bool {
-		env.fakeCluster.mu.Lock()
-		defer env.fakeCluster.mu.Unlock()
-		return env.serviceGCSafePointDeleted
+		env.Cluster.Mu.Lock()
+		defer env.Cluster.Mu.Unlock()
+		return env.ServiceGCSafePointDeleted
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
@@ -271,17 +271,16 @@ func TestClearCache(t *testing.T) {
 	c.splitAndScatter("0012", "0034", "0048")
 
 	clearedCache := make(map[uint64]bool)
-	c.onClearCache = func(u uint64) error {
+	c.SetOnClearCache(func(u uint64) error {
 		// make store u cache cleared
 		clearedCache[u] = true
 		return nil
-	}
+	})
 	failedStoreID := uint64(0)
 	hasFailed := atomic.NewBool(false)
-	for _, s := range c.stores {
-		s.clientMu.Lock()
+	for _, s := range c.storeList() {
 		sid := s.GetID()
-		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+		s.SetGetRegionCheckpointHook(func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
 			// mark one store failed is enough
 			if hasFailed.CompareAndSwap(false, true) {
 				// mark this store cache cleared
@@ -289,8 +288,7 @@ func TestClearCache(t *testing.T) {
 				return errors.New("failed to get checkpoint")
 			}
 			return nil
-		}
-		s.clientMu.Unlock()
+		})
 	}
 	env := newTestEnv(c, t)
 	adv := streamhelper.NewCheckpointAdvancer(env)
@@ -315,9 +313,8 @@ func TestBlocked(t *testing.T) {
 	firstBlocked := make(chan struct{}, 1)
 	firstBlockedOnce := sync.Once{}
 	marked := false
-	for _, s := range c.stores {
-		s.clientMu.Lock()
-		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+	for _, s := range c.storeList() {
+		s.SetGetRegionCheckpointHook(func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
 			firstBlockedOnce.Do(func() {
 				firstBlocked <- struct{}{}
 			})
@@ -325,8 +322,7 @@ func TestBlocked(t *testing.T) {
 			// this may happen when TiKV goes down or too busy.
 			<-blockReq
 			return nil
-		}
-		s.clientMu.Unlock()
+		})
 		marked = true
 	}
 	req.True(marked, "failed to mark the cluster: ")
@@ -370,7 +366,7 @@ func TestResolveLock(t *testing.T) {
 	minCheckpoint := c.advanceCheckpoints()
 	env := newTestEnv(c, t)
 
-	lockRegion := c.findRegionByKey([]byte("01"))
+	lockRegion := c.FindRegionByKey([]byte("01"))
 	allLocks := []*txnlock.Lock{
 		{
 			Key: []byte("011"),
@@ -424,7 +420,7 @@ func TestResolveLock(t *testing.T) {
 	require.Len(t, r.FailureSubRanges, 0)
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 
-	env.maxTs = maxTargetTs + 1
+	env.MaxTS = maxTargetTs + 1
 	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
 		time.Second, 50*time.Millisecond)
 	// now the lock state must be ture. because tick finished and asyncResolveLocks got stuck.
@@ -1003,7 +999,7 @@ func TestGCCheckpoint(t *testing.T) {
 	c.advanceClusterTimeBy(1 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.PauseTask(ctx, "whole")
-	c.serviceGCSafePoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute))
+	c.ServiceGCSafePoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(2 * time.Minute))
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		assert.NoError(c, adv.OnTick(ctx))
 	}, 5*time.Second, 100*time.Millisecond)

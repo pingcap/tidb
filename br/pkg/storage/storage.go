@@ -77,15 +77,9 @@ type WalkOption struct {
 	//
 	// The size of a deleted file should be `TombstoneSize`.
 	IncludeTombstone bool
-	// StartAfter is the storage-relative object key boundary for pagination.
-	// If not empty, WalkDir starts listing after this key.
-	//
-	// The value must be relative to the storage base prefix (the same path space
-	// as WalkDir callback paths) and must not include backend base prefix.
-	// A leading '/' is allowed and will be normalized away by implementations.
-	//
-	// When SubDir is set, StartAfter must point to a key under that SubDir.
-	// Currently only S3-like storage supports this option.
+	// StartAfter is the key to start after. If not empty, the walk will start
+	// after the key. This is currently supported by S3-like storage, GCS and
+	// local storage.
 	StartAfter string
 }
 

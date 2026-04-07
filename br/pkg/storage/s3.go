@@ -960,6 +960,33 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	return nil
 }
 
+// FileSynced reports whether the object has completed source-side replication.
+func (rs *S3Storage) FileSynced(ctx context.Context, file string) (bool, error) {
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String(rs.options.Bucket),
+		Key:    aws.String(rs.options.Prefix + file),
+	}
+
+	head, err := rs.svc.HeadObject(ctx, input)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	status := head.ReplicationStatus
+	switch status {
+	case "COMPLETE", "COMPLETED", "REPLICA":
+		return true, nil
+	case "PENDING":
+		return false, nil
+	case "FAILED":
+		return false, errors.Errorf("upstream replication status for %s is FAILED", file)
+	case "":
+		return false, errors.Errorf("upstream replication status for %s is empty", file)
+	default:
+		return false, errors.Errorf("upstream replication status for %s is %q", file, status)
+	}
+}
+
 // URI returns s3://<base>/<prefix>.
 func (rs *S3Storage) URI() string {
 	return "s3://" + rs.options.Bucket + "/" + rs.options.Prefix

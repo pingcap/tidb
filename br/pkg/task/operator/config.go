@@ -10,23 +10,27 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	crrconfig "github.com/pingcap/tidb/br/pkg/stream/crr/config"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/spf13/pflag"
 )
 
 const (
-	flagTableConcurrency = "table-concurrency"
-	flagStorePatterns    = "stores"
-	flagTTL              = "ttl"
-	flagSafePoint        = "safepoint"
-	flagStorage          = "storage"
-	flagLoadCreds        = "load-creds"
-	flagJSON             = "json"
-	flagRecent           = "recent"
-	flagTo               = "to"
-	flagBase             = "base"
-	flagYes              = "yes"
-	flagDryRun           = "dry-run"
+	flagTableConcurrency  = "table-concurrency"
+	flagStorePatterns     = "stores"
+	flagTaskName          = "task-name"
+	flagUpstreamStorage   = "upstream-storage"
+	flagDownstreamStorage = "downstream-storage"
+	flagTTL               = "ttl"
+	flagSafePoint         = "safepoint"
+	flagStorage           = "storage"
+	flagLoadCreds         = "load-creds"
+	flagJSON              = "json"
+	flagRecent            = "recent"
+	flagTo                = "to"
+	flagBase              = "base"
+	flagYes               = "yes"
+	flagDryRun            = "dry-run"
 )
 
 type PauseGcConfig struct {
@@ -216,6 +220,47 @@ func (cfg *ForceFlushConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	}
 
 	return cfg.Config.ParseFromFlags(flags)
+}
+
+type CRRCheckpointConfig struct {
+	task.Config
+	CRRConfig crrconfig.Config
+
+	UpstreamStorage   string
+	DownstreamStorage string
+}
+
+func DefineFlagsForCRRCheckpointConfig(flags *pflag.FlagSet) {
+	crrconfig.DefineFlags(flags)
+	flags.String(flagUpstreamStorage, "", "The upstream log backup storage URI.")
+	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI. Optional when the upstream storage can confirm object sync directly, such as AWS S3.")
+}
+
+func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	if err := cfg.Config.ParseFromFlags(flags); err != nil {
+		return err
+	}
+	if err := cfg.CRRConfig.Parse(flags); err != nil {
+		return err
+	}
+
+	var err error
+	cfg.UpstreamStorage, err = flags.GetString(flagUpstreamStorage)
+	if err != nil {
+		return err
+	}
+	cfg.DownstreamStorage, err = flags.GetString(flagDownstreamStorage)
+	if err != nil {
+		return err
+	}
+
+	if cfg.CRRConfig.TaskName == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagTaskName)
+	}
+	if cfg.UpstreamStorage == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagUpstreamStorage)
+	}
+	return nil
 }
 
 type ChecksumWithRewriteRulesConfig struct {
