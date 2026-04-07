@@ -2553,7 +2553,11 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, copTask *physicalop.CopTask, p *logicalop.DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
-	tableConds, copTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
+	var rootTaskConds []expression.Expression
+	tableConds, rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
+	// Preserve pre-collected root conditions (for example, large IN / NOT IN filters moved
+	// from IndexJoin probe side) instead of overwriting them.
+	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 
 	var newRootConds []expression.Expression
 	pctx := util.GetPushDownCtx(is.SCtx())
@@ -3019,7 +3023,11 @@ func addPushedDownSelectionToMppTask4PhysicalTableScan(ts *physicalop.PhysicalTa
 }
 
 func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, copTask *physicalop.CopTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) {
-	ts.FilterCondition, copTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
+	var rootTaskConds []expression.Expression
+	ts.FilterCondition, rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
+	// Preserve pre-collected root conditions (for example, large IN / NOT IN filters moved
+	// from IndexJoin probe side) instead of overwriting them.
+	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 	var newRootConds []expression.Expression
 	ts.FilterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), ts.FilterCondition, ts.StoreType)
 	copTask.RootTaskConds = append(copTask.RootTaskConds, newRootConds...)

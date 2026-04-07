@@ -351,6 +351,58 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 	for i, tt := range tests {
 		testAnalyzeLookUpFilters(t, indexJoinCtx, &tt, fmt.Sprintf("test case: %v", i))
 	}
+
+	t.Run("split predicates containing large in-list for index join probe", func(t *testing.T) {
+		ctx := indexJoinCtx.dataSourceNode.SCtx()
+		conds, err := rewriteSimpleExpr(
+			ctx.GetExprCtx(),
+			"a in (1, 2, 3, 4) and a not in (5, 6, 7, 8) and a > 0",
+			indexJoinCtx.dataSourceNode.Schema(),
+			indexJoinCtx.dsNames,
+		)
+		require.NoError(t, err)
+
+		pushDownConds, rootTaskConds := splitLargeInListFiltersForIndexJoinProbe(conds, 3)
+		require.Len(t, pushDownConds, 1)
+		require.Len(t, rootTaskConds, 2)
+		require.Equal(t, 4, getInListLength(rootTaskConds[0]))
+		require.True(t, containsLargeInList(rootTaskConds[0], 3))
+		require.True(t, containsLargeInList(rootTaskConds[1], 3))
+		require.False(t, containsLargeInList(pushDownConds[0], 3))
+	})
+
+	t.Run("in list equal to threshold is kept for pushdown", func(t *testing.T) {
+		ctx := indexJoinCtx.dataSourceNode.SCtx()
+		conds, err := rewriteSimpleExpr(
+			ctx.GetExprCtx(),
+			"a in (1, 2, 3, 4)",
+			indexJoinCtx.dataSourceNode.Schema(),
+			indexJoinCtx.dsNames,
+		)
+		require.NoError(t, err)
+
+		pushDownConds, rootTaskConds := splitLargeInListFiltersForIndexJoinProbe(conds, 4)
+		require.Len(t, pushDownConds, 1)
+		require.Empty(t, rootTaskConds)
+	})
+
+	t.Run("predicate containing large in-list is kept at root", func(t *testing.T) {
+		ctx := indexJoinCtx.dataSourceNode.SCtx()
+		conds, err := rewriteSimpleExpr(
+			ctx.GetExprCtx(),
+			"a = 1 or b in (1, 2, 3, 4)",
+			indexJoinCtx.dataSourceNode.Schema(),
+			indexJoinCtx.dsNames,
+		)
+		require.NoError(t, err)
+
+		pushDownConds, rootTaskConds := splitLargeInListFiltersForIndexJoinProbe(conds, 3)
+		require.Empty(t, pushDownConds)
+		require.Len(t, rootTaskConds, 1)
+		// The top-level predicate is OR, not IN itself.
+		require.Equal(t, -1, getInListLength(rootTaskConds[0]))
+		require.True(t, containsLargeInList(rootTaskConds[0], 3))
+	})
 }
 
 func checkRangeFallbackAndReset(t *testing.T, ctx base.PlanContext, expectedRangeFallback bool) {
