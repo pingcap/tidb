@@ -16,6 +16,7 @@
       "select * from t1 where a in (select a from t2 group by a)",
       "select * from t1 where a in (select a from t2 where b > 1 group by a)",
       "select * from t1 where a in (select a from t2 limit 10)",
+      "select * from t1 where a in (select a from t2 order by a limit 10)",
       "select * from t1 where b = 1 and a in (select a from t2)",
       "select * from t1 where b = 1 and exists (select 1 from t2 where t2.a = t1.a) limit 1",
       "select * from t1 where b = 1 and a not in (select a from t2) limit 1",
@@ -31,7 +32,8 @@
       "select * from t1 where exists (select 1 from t2 where t2.a > t1.a)",
       "select * from t1 where exists (select 1 from t2 where t2.a = t1.a and t2.b > t1.b)",
       "select * from t1 where a in (select a from t2) order by a limit 10",
-      "select * from t1 where a in (select a from t2 where b > 1)"
+      "select * from t1 where a in (select a from t2 where b > 1)",
+      "select * from t1 where a in (select a from t2 order by a limit 10)"
     ]
   }
 ]

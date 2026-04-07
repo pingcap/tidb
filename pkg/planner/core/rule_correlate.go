@@ -276,6 +276,10 @@ func cloneLogicalSubtree(p base.LogicalPlan) (base.LogicalPlan, bool) {
 		return cloneAggregation(op)
 	case *logicalop.LogicalLimit:
 		return cloneLimit(op)
+	case *logicalop.LogicalSort:
+		return cloneSort(op)
+	case *logicalop.LogicalTopN:
+		return cloneTopN(op)
 	default:
 		// Unknown operator type — cannot safely clone. Return failure
 		// so the caller aborts the correlate optimization.
@@ -394,6 +398,33 @@ func cloneLimit(lim *logicalop.LogicalLimit) (*logicalop.LogicalLimit, bool) {
 	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
 		lim.SCtx(), lim.TP(), &clone, lim.QueryBlockOffset())
 	clone.SetSchema(lim.Schema().Clone())
+	clone.SetChildren(children...)
+	return &clone, true
+}
+
+func cloneSort(s *logicalop.LogicalSort) (*logicalop.LogicalSort, bool) {
+	children, ok := cloneWithChildren(s)
+	if !ok {
+		return nil, false
+	}
+	clone := *s
+	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
+		s.SCtx(), s.TP(), &clone, s.QueryBlockOffset())
+	clone.ByItems = append([]*util.ByItems(nil), s.ByItems...)
+	clone.SetChildren(children...)
+	return &clone, true
+}
+
+func cloneTopN(tn *logicalop.LogicalTopN) (*logicalop.LogicalTopN, bool) {
+	children, ok := cloneWithChildren(tn)
+	if !ok {
+		return nil, false
+	}
+	clone := *tn
+	clone.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(
+		tn.SCtx(), tn.TP(), &clone, tn.QueryBlockOffset())
+	clone.SetSchema(tn.Schema().Clone())
+	clone.ByItems = append([]*util.ByItems(nil), tn.ByItems...)
 	clone.SetChildren(children...)
 	return &clone, true
 }

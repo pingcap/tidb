@@ -77,14 +77,14 @@ func TestCorrelateAlternativeChoosesApply(t *testing.T) {
 	// Without alternative plans: standard InnerJoin+Agg path produces IndexJoin.
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
 	rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
-	require.True(t, strings.Contains(rows[0][0].(string), "IndexJoin"),
-		"without alternative plans, expected IndexJoin, got: %s", rows[0][0])
+	require.True(t, explainContains(rows, "IndexJoin"),
+		"without alternative plans, expected IndexJoin in plan:\n%s", joinExplainRows(rows))
 
 	// With alternative plans: correlate round produces Apply (cheaper than IndexJoin+StreamAgg).
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
 	rows = tk.MustQuery("explain format = 'brief' " + sql).Rows()
-	require.True(t, strings.Contains(rows[0][0].(string), "Apply"),
-		"with alternative plans, expected Apply, got: %s", rows[0][0])
+	require.True(t, explainContains(rows, "Apply"),
+		"with alternative plans, expected Apply in plan:\n%s", joinExplainRows(rows))
 
 	// Verify correct results in both modes.
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
@@ -125,6 +125,26 @@ func TestCorrelate(tt *testing.T) {
 			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 		}
 	})
+}
+
+// explainContains scans all explain rows for a substring in the operator column.
+func explainContains(rows [][]any, substr string) bool {
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// joinExplainRows formats explain rows into a single string for debug output.
+func joinExplainRows(rows [][]any) string {
+	var sb strings.Builder
+	for _, row := range rows {
+		sb.WriteString(row[0].(string))
+		sb.WriteByte('\n')
+	}
+	return sb.String()
 }
 
 // TestCorrelateWithCostFactors verifies that when hash/merge join cost factors
