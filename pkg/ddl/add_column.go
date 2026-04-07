@@ -499,6 +499,11 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 			format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
+		// When NO_BACKSLASH_ESCAPES mode is enabled, we need to escape backslashes when restoring the expression
+		// to ensure the stored expression can be correctly parsed later regardless of the sql_mode at that time.
+		if ctx.GetSQLMode().HasNoBackslashEscapesMode() {
+			restoreFlags |= format.RestoreStringEscapeBackslash
+		}
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 		for _, v := range colDef.Options {

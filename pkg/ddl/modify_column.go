@@ -2289,7 +2289,12 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
+	// When NO_BACKSLASH_ESCAPES mode is enabled, we need to escape backslashes when restoring the expression
+	// to ensure the stored expression can be correctly parsed later regardless of the sql_mode at that time.
+	if ctx.GetSessionVars().SQLMode.HasNoBackslashEscapesMode() {
+		restoreFlags |= format.RestoreStringEscapeBackslash
+	}
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	var hasDefaultValue, setOnUpdateNow bool
