@@ -41,10 +41,10 @@ func runPredicatePushdownTestData(t *testing.T, tk *testkit.TestKit, cascades, n
 		}
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + input[i]).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + input[i]).Rows())
 			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 		})
-		tk.MustQuery("explain format = 'brief' " + input[i]).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'plan_tree' " + input[i]).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 	}
 }
@@ -67,11 +67,11 @@ func runPredicatePushdownTestDataWithResult(t *testing.T, tk *testkit.TestKit, c
 		}
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + input[i]).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' " + input[i]).Rows())
 			output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
-		tk.MustQuery("explain format = 'brief' " + input[i]).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain format = 'plan_tree' " + input[i]).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
@@ -88,6 +88,10 @@ func TestConstantPropagateWithCollation(t *testing.T) {
 		tk.MustExec("create table t2 (k0 int, k1 int)")
 		tk.MustExec("create table t3 (k0 int, d0 decimal(12,2))")
 		tk.MustExec("create table t4 (k0 int)")
+		tk.MustExec("drop table if exists t1_65994")
+		tk.MustExec("drop table if exists t2_65994")
+		tk.MustExec("create table t1_65994 (a int, b int)")
+		tk.MustExec("create table t2_65994 (a int, b int)")
 		tk.MustExec("insert into t0 values (1, 10), (2, 20), (3, 30)")
 		tk.MustExec("insert into t2 values (1, 100), (3, 300), (4, 400)")
 		runPredicatePushdownTestDataWithResult(t, tk, cascades, "TestConstantPropagateWithCollation")
@@ -114,7 +118,7 @@ func TestPredicatePushDown(t *testing.T) {
 		testkit.SetTiFlashReplica(t, dom, "test", "crm_rd_150m")
 
 		tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-		tk.MustExec("explain format = 'brief' SELECT /* issue:15110 */ count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
+		tk.MustExec("explain format = 'plan_tree' SELECT /* issue:15110 */ count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
 
 		tk.MustExec("drop table if exists t31202")
 		tk.MustExec("create table t31202(a int primary key, b int);")
@@ -122,14 +126,14 @@ func TestPredicatePushDown(t *testing.T) {
 		// Set the hacked TiFlash replica for explain tests.
 		testkit.SetTiFlashReplica(t, dom, "test", "t31202")
 
-		tk.MustQuery("explain format = 'brief' select /* issue:31202 */ * from t31202;").Check(testkit.Rows(
-			"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
-			"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─TableFullScan 10000.00 mpp[tiflash] table:t31202 keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:31202 */ * from t31202;").Check(testkit.Rows(
+			"TableReader root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─TableFullScan mpp[tiflash] table:t31202 keep order:false, stats:pseudo"))
 
 		tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
-		tk.MustQuery("explain format = 'brief' select /* issue:31202 */ * from t31202 use index (primary);").Check(testkit.Rows(
-			"TableReader 10000.00 root  data:TableFullScan",
-			"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:31202 */ * from t31202 use index (primary);").Check(testkit.Rows(
+			"TableReader root  data:TableFullScan",
+			"└─TableFullScan cop[tikv] table:t31202 keep order:false, stats:pseudo"))
 	})
 }

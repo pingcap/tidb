@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -145,11 +146,13 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	if err != nil {
 		return nil, false, err
 	}
-
 	// index merge path is generated from all conditions from ds based on ds.PossibleAccessPath.
 	// we should renew ds.PossibleAccessPath to AllPossibleAccessPath once a new DS is generated.
 	if err := generateIndexMergePath(ds); err != nil {
 		return nil, false, err
+	}
+	if vars := ds.SCtx().GetSessionVars(); vars != nil && vars.RUV2Metrics != nil {
+		vars.RUV2Metrics.AddPlanDeriveStatsPaths(int64(len(ds.PossibleAccessPaths)))
 	}
 
 	indexForce := false
@@ -337,7 +340,7 @@ func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds
 	// Skip the expensive GetRowCountByIntColumnRanges call in this case.
 	// Current code will exclude partitioned tables from this optimization.
 	// TODO: Enhance this optimization to support partitioned tables.
-	if lenAccessConds == 0 && ds.Table.GetPartitionedTable() == nil {
+	if lenAccessConds == 0 && len(path.Ranges) > 0 && ds.Table.GetPartitionedTable() == nil {
 		path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	} else {
 		var countEst statistics.RowEstimate
@@ -416,12 +419,50 @@ func detachCondAndBuildRangeForPath(
 		}
 	}
 	indexCols := path.IdxCols
-	if len(indexCols) > len(path.Index.Columns) { // remove clustered primary key if it has been added to path.IdxCols
+	if len(indexCols) > len(path.Index.Columns) {
+		// Trim appended handle dimensions and keep only real index-definition columns for stats estimation.
 		indexCols = indexCols[0:len(path.Index.Columns)]
 	}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, indexCols)
+	needPruneEstimateRange := false
+	if len(indexCols) < len(path.IdxCols) {
+		for _, ran := range path.Ranges {
+			if len(ran.LowVal) > len(indexCols) || len(ran.HighVal) > len(indexCols) {
+				needPruneEstimateRange = true
+				break
+			}
+		}
+	}
+	var estimateRanges []*ranger.Range
+	if needPruneEstimateRange {
+		// Non-unique index paths may append handle columns in `path.IdxCols` for execution ranges.
+		// Rebuild estimation ranges with the same column set used in row-count estimation.
+		estimateRanges = pruneEstimateRange(path.Ranges, len(indexCols))
+	} else {
+		estimateRanges = path.Ranges
+	}
+	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, estimateRanges, indexCols)
 	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
 	return err
+}
+
+func pruneEstimateRange(ranges []*ranger.Range, keepColCnt int) []*ranger.Range {
+	estimateRanges := make([]*ranger.Range, 0, len(ranges))
+	for _, ran := range ranges {
+		newRange := &ranger.Range{
+			LowVal:      make([]types.Datum, 0, keepColCnt),
+			HighVal:     make([]types.Datum, 0, keepColCnt),
+			Collators:   make([]collate.Collator, 0, keepColCnt),
+			LowExclude:  ran.LowExclude,
+			HighExclude: ran.HighExclude,
+		}
+		for idx := range min(keepColCnt, len(ran.LowVal)) {
+			newRange.LowVal = append(newRange.LowVal, ran.LowVal[idx])
+			newRange.HighVal = append(newRange.HighVal, ran.HighVal[idx])
+			newRange.Collators = append(newRange.Collators, ran.Collators[idx])
+		}
+		estimateRanges = append(estimateRanges, newRange)
+	}
+	return estimateRanges
 }
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
@@ -555,7 +596,9 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
 	var tiflashPath *util.AccessPath
 	isMPPEnforced := ds.SCtx().GetSessionVars().IsMPPEnforced()
-	if ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced {
+	// Use table info/hypo replicas here because PreparePossibleProperties has not run yet.
+	hasTiFlashReplica := ds.HasTiFlash()
+	if (ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced) && hasTiFlashReplica {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
@@ -658,8 +701,10 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 		ds.PossibleAccessPaths = ds.PossibleAccessPaths[:1]
 		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
 		keep := (ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced) && selected.StoreType != kv.TiFlash
-		if keep {
-			// also keep tiflash path as well.
+		if keep && tiflashPath != nil {
+			// TiFlash replicas may exist while the current session has filtered TiFlash out of
+			// the available access paths, for example via tidb_isolation_read_engines.
+			// Only keep the TiFlash path when it was actually built.
 			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, tiflashPath)
 			return nil
 		}
@@ -677,7 +722,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			if selected.Index.Unique {
 				sb.WriteString("unique ")
 			}
-			sb.WriteString(fmt.Sprintf("index %s of %s is selected since the path", selected.Index.Name.O, tableName))
+			fmt.Fprintf(&sb, "index %s of %s is selected since the path", selected.Index.Name.O, tableName)
 			if isRefinedPath {
 				sb.WriteString(" only fetches limited number of rows")
 			} else {

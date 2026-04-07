@@ -41,10 +41,10 @@ func TestDDLTableVersionTables(t *testing.T) {
 	for _, v := range ddlTableVersionTables {
 		allDDLTables = append(allDDLTables, v.tables...)
 	}
-	testTableBasicInfoSlice(t, allDDLTables)
+	testTableBasicInfoSlice(t, allDDLTables, " mysql.%s (")
 }
 
-func testTableBasicInfoSlice(t *testing.T, allTables []TableBasicInfo) {
+func testTableBasicInfoSlice(t *testing.T, allTables []TableBasicInfo, sqlFmt string) {
 	t.Helper()
 	require.True(t, slices.IsSortedFunc(allTables, func(a, b TableBasicInfo) int {
 		if a.ID == b.ID {
@@ -59,8 +59,8 @@ func testTableBasicInfoSlice(t *testing.T, allTables []TableBasicInfo) {
 		require.Greater(t, vt.ID, metadef.ReservedGlobalIDLowerBound, "table ID should be greater than ReservedGlobalIDLowerBound")
 		require.LessOrEqual(t, vt.ID, metadef.ReservedGlobalIDUpperBound, "table ID should be less than or equal to ReservedGlobalIDUpperBound")
 		require.Equal(t, strings.ToLower(vt.Name), vt.Name, "table name should be in lower case")
-		require.Contains(t, vt.SQL, fmt.Sprintf(" mysql.%s (", vt.Name),
-			"table SQL should contain table name and follow the format 'mysql.<table_name> ('")
+		require.Contains(t, vt.SQL, fmt.Sprintf(sqlFmt, vt.Name),
+			fmt.Sprintf("table SQL should contain table name and follow the format %s", sqlFmt))
 	}
 }
 

@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -289,6 +291,7 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 
 	// first, try to clear the left cursor if there is one
 	if useCursor && stmt.GetCursorActive() {
+		resultset.ReportCursorRUV2Delta(stmt.GetResultSet(), 0)
 		if stmt.GetResultSet() != nil && stmt.GetResultSet().GetRowIterator() != nil {
 			stmt.GetResultSet().GetRowIterator().Close()
 		}
@@ -440,6 +443,7 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 		}
 	}()
 	crs := resultset.WrapWithRowContainerCursor(rs, reader)
+	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx))
 	if cl, ok := crs.(resultset.FetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
@@ -460,8 +464,27 @@ func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedSt
 
 	vars := (&cc.ctx).GetSessionVars()
 	crs := resultset.WrapWithLazyCursor(drs, vars.InitChunkSize, vars.MaxChunkSize)
+	// The execute phase may already have accumulated RU before the first cursor fetch arrives.
+	// Seed the tracker from the current totals so FETCH/CLOSE only reports post-execute deltas.
+	resultset.AttachCursorRUV2Tracker(crs, cc.buildCursorRUV2Tracker(ctx))
 	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
 	return true, err
+}
+
+func (cc *clientConn) buildCursorRUV2Tracker(ctx context.Context) *resultset.CursorRUV2Tracker {
+	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+	ruDetails, _ := ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+	if ruv2Metrics == nil && ruDetails == nil {
+		return nil
+	}
+
+	var reporter resourcegroup.ConsumptionReporter
+	var resourceGroupName string
+	if dctx := cc.ctx.GetDistSQLCtx(); dctx != nil {
+		reporter = dctx.RUConsumptionReporter
+		resourceGroupName = dctx.ResourceGroupName
+	}
+	return resultset.NewCursorRUV2Tracker(reporter, resourceGroupName, ruv2Metrics, ruDetails, cc.ctx.GetSessionVars().RUV2Weights())
 }
 
 // writeExecuteResultWithCursor will store the `ResultSet` in `stmt` and send the column info to the client. The logic is shared between

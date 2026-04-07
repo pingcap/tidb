@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/atomic"
@@ -59,6 +60,13 @@ var (
 )
 
 const (
+	// DXFLogCategory is the shared log category used by DXF sampled logs.
+	DXFLogCategory = "dxf"
+	// SampleLogTick is the common sampling window used by DXF sampled logs.
+	SampleLogTick = time.Minute
+	// SampleLogFirst is the max number of logs with same level/message in each SampleLogTick.
+	SampleLogFirst = 10
+
 	// NextGenTargetScope is the target scope for new tasks in nextgen kernel.
 	// on nextgen, DXF works as a service and runs only on node with scope 'dxf_service',
 	// so all tasks must be submitted to that scope.
@@ -77,6 +85,14 @@ func NotifyTaskChange() {
 	case TaskChangedCh <- struct{}{}:
 	default:
 	}
+}
+
+// NewSampleErrVerboseLogger creates a sampled logger with DXF defaults.
+func NewSampleErrVerboseLogger(fields ...zap.Field) *zap.Logger {
+	allFields := make([]zap.Field, 0, len(fields)+1)
+	allFields = append(allFields, zap.String(logutil.LogFieldCategory, DXFLogCategory))
+	allFields = append(allFields, fields...)
+	return logutil.SampleErrVerboseLoggerFactory(SampleLogTick, SampleLogFirst, allFields...)()
 }
 
 // GetCPUCountOfNode gets the CPU count of the managed node.
@@ -176,8 +192,12 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 	}
 	ticker := time.NewTicker(checkTaskFinishInterval)
 	defer ticker.Stop()
-
-	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
+	sampleLogger := logutil.SampleLoggerFactory(
+		SampleLogTick,
+		SampleLogFirst,
+		zap.String(logutil.LogFieldCategory, DXFLogCategory),
+		zap.Int64("task-id", id),
+	)()
 	for {
 		select {
 		case <-ctx.Done():
@@ -185,7 +205,7 @@ func WaitTask(ctx context.Context, id int64, matchFn func(base *proto.TaskBase) 
 		case <-ticker.C:
 			task, err := taskManager.GetTaskBaseByIDWithHistory(ctx, id)
 			if err != nil {
-				logger.Error("cannot get task during waiting", zap.Error(err))
+				sampleLogger.Error("cannot get task during waiting", zap.Error(err))
 				continue
 			}
 
@@ -308,20 +328,41 @@ func GetTargetScope() string {
 	return vardef.ServiceScope.Load()
 }
 
-// GetCloudStorageURI returns the cloud storage URI with cluster ID appended to the path.
+// GetCloudStorageURI returns the cloud storage URI for global-sort.
+// cloud storage URI is shared by other components, we add the dxf prefix to
+// differentiate them.
+// when deploying without SEM and with explicit prefix, we assume that the
+// bucket might be shared by multiple clusters, such as during test, to
+// avoid 2 clusters mistakenly configured the same URI, we add the cluster
+// ID in the prefix.
+// when deploying with SEM, such as on CLOUD, the bucket is uniquely used
+// by current cluster. or if the prefix is empty, we assume that the bucket
+// is not shared.
 func GetCloudStorageURI(ctx context.Context, store kv.Storage) string {
 	cloudURI := vardef.CloudStorageURI.Load()
-	if s, ok := store.(kv.StorageWithPD); ok {
-		// When setting the cloudURI value by SQL, we already checked the effectiveness, so we don't need to check it again here.
-		u, _ := objstore.ParseRawURL(cloudURI)
-		if len(u.Path) != 0 {
-			u.Path = path.Join(u.Path, strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10))
-			return u.String()
-		}
-	} else {
-		logutil.BgLogger().Warn("Can't get cluster id from store, use default cloud storage uri")
+	if cloudURI == "" {
+		return cloudURI
 	}
-	return cloudURI
+	// when setting the cloudURI value by SQL, we already checked the
+	// effectiveness, so we don't need to check it again here.
+	u, _ := objstore.ParseRawURL(cloudURI)
+	prefix := storeapi.NewPrefix(u.Path)
+	var clusterIDStr string
+	if !compat.IsEnabled() && prefix.String() != "" {
+		if s, ok := store.(kv.StorageWithPD); ok {
+			clusterIDStr = strconv.FormatUint(s.GetPDClient().GetClusterID(ctx), 10)
+		} else {
+			logutil.BgLogger().Warn("Can't get cluster id from store, use default cloud storage uri",
+				zap.String("schema", u.Scheme),
+				zap.String("bucket", u.Host),
+				zap.String("prefix", prefix.String()),
+			)
+		}
+	}
+
+	const dxfPrefix = "dxf"
+	u.Path = prefix.JoinStr(path.Join(dxfPrefix, clusterIDStr)).ToPath()
+	return u.String()
 }
 
 // UpdatePauseScaleInFlag updates the pause scale-in flag.

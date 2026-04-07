@@ -5,173 +5,173 @@
       {
         "SQL": "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1 and t2.k2 = 1",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1)], runtime filter:0[IN] <- test.t1.k1",
-          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
-          "    └─Selection(Probe) 1.00 mpp[tiflash]  eq(test.t2.k2, 1), not(isnull(test.t2.k1))",
-          "      └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1)], runtime filter:0[IN] <- test.t1.k1",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t1.k1))",
+          "    │     └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "    └─Selection(Probe) mpp[tiflash]  eq(test.t2.k2, 1), not(isnull(test.t2.k1))",
+          "      └─TableFullScan mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1"
         ]
       },
       {
         "SQL": "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1 and t1.k1=t2.k2",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1) eq(test.t1.k1, test.t2.k2)], runtime filter:0[IN] <- test.t1.k1, 1[IN] <- test.t1.k1",
-          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
-          "    └─Selection(Probe) 1.00 mpp[tiflash]  not(isnull(test.t2.k1)), not(isnull(test.t2.k2))",
-          "      └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1, 1[IN] -> test.t2.k2"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1) eq(test.t1.k1, test.t2.k2)], runtime filter:0[IN] <- test.t1.k1, 1[IN] <- test.t1.k1",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t1.k1))",
+          "    │     └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "    └─Selection(Probe) mpp[tiflash]  not(isnull(test.t2.k1)), not(isnull(test.t2.k2))",
+          "      └─TableFullScan mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1, 1[IN] -> test.t2.k2"
         ]
       },
       {
         "SQL": "select /*+ shuffle_join(t1, t2) */ * from t1, t2 where t1.k1=t2.k1; -- Global doesn't support",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1)]",
-          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.k1, collate: binary]",
-          "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
-          "    └─ExchangeReceiver(Probe) 1.00 mpp[tiflash]  ",
-          "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.k1, collate: binary]",
-          "        └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "          └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1)]",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.k1, collate: binary]",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t1.k1))",
+          "    │     └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "    └─ExchangeReceiver(Probe) mpp[tiflash]  ",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.k1, collate: binary]",
+          "        └─Selection mpp[tiflash]  not(isnull(test.t2.k1))",
+          "          └─TableFullScan mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
         "SQL": "select /*+ broadcast_join(t2, t1), hash_join_build(t2) */ * from t2, (select k1 from t1 group by k1) t1 where t1.k1=t2.k1; -- Global doesn't support",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t2.k1, test.t1.k1)]",
-          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
-          "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1",
-          "      └─HashAgg 1.00 mpp[tiflash]  group by:test.t1.k1, funcs:firstrow(test.t1.k1)->test.t1.k1",
-          "        └─ExchangeReceiver 1.00 mpp[tiflash]  ",
-          "          └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.k1, collate: binary]",
-          "            └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "              └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t2.k1, test.t1.k1)]",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t2.k1))",
+          "    │     └─TableFullScan mpp[tiflash] table:t2 keep order:false",
+          "    └─Projection(Probe) mpp[tiflash]  test.t1.k1",
+          "      └─HashAgg mpp[tiflash]  group by:test.t1.k1, funcs:firstrow(test.t1.k1)->test.t1.k1",
+          "        └─ExchangeReceiver mpp[tiflash]  ",
+          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.k1, collate: binary]",
+          "            └─Selection mpp[tiflash]  not(isnull(test.t1.k1))",
+          "              └─TableFullScan mpp[tiflash] table:t1 keep order:false"
         ]
       },
       {
         "SQL": "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1; -- t1 is build side",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1)], runtime filter:0[IN] <- test.t1.k1",
-          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
-          "    └─Selection(Probe) 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "      └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t1.k1, test.t2.k1)], runtime filter:0[IN] <- test.t1.k1",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t1.k1))",
+          "    │     └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "    └─Selection(Probe) mpp[tiflash]  not(isnull(test.t2.k1))",
+          "      └─TableFullScan mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1"
         ]
       },
       {
         "SQL": "select * from t1_tikv as t1, t2 where t1.k1=t2.k1; -- Doesn't support hash join in root",
         "Plan": [
-          "HashJoin 1.25 root  inner join, equal:[eq(test.t1_tikv.k1, test.t2.k1)]",
-          "├─TableReader(Build) 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "│     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1_tikv.k1))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "HashJoin root  inner join, equal:[eq(test.t1_tikv.k1, test.t2.k1)]",
+          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─Selection mpp[tiflash]  not(isnull(test.t2.k1))",
+          "│     └─TableFullScan mpp[tiflash] table:t2 keep order:false",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  not(isnull(test.t1_tikv.k1))",
+          "    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1+1=t2.k1; -- Support transform src expression t1.k1+1",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 1.00 mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
-          "    └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(Column#9, test.t2.k1)], runtime filter:0[IN] <- Column#9",
-          "      ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Projection 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#9",
-          "      │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
-          "      └─TableFullScan(Probe) 1.00 mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
+          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(Column, test.t2.k1)], runtime filter:0[IN] <- Column",
+          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─Projection mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column",
+          "      │     └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "      └─TableFullScan(Probe) mpp[tiflash] table:t2 keep order:false, runtime filter:0[IN] -> test.t2.k1"
         ]
       },
       {
         "SQL": "select /*+ broadcast_join(t2, t1), hash_join_build(t2) */ * from t2, (select k1, k1+1 as k11 from t1) t1 where t1.k1=t2.k1; -- Only support origin column k1",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t2.k1, test.t1.k1)], runtime filter:0[IN] <- test.t2.k1",
-          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
-          "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#9",
-          "      └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "        └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false, runtime filter:0[IN] -> test.t1.k1"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t2.k1, test.t1.k1)], runtime filter:0[IN] <- test.t2.k1",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t2.k1))",
+          "    │     └─TableFullScan mpp[tiflash] table:t2 keep order:false",
+          "    └─Projection(Probe) mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column",
+          "      └─Selection mpp[tiflash]  not(isnull(test.t1.k1))",
+          "        └─TableFullScan mpp[tiflash] table:t1 keep order:false, runtime filter:0[IN] -> test.t1.k1"
         ]
       },
       {
         "SQL": "select /*+ hash_join_build(t2) */ * from t2, (select k1, k1+1 as k11 from t1) t1 where t1.k11=t2.k1; -- Doesn't support transform column k11",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t2.k1, Column#9)]",
-          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t2.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false",
-          "    └─Projection(Probe) 1.00 mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column#9",
-          "      └─Selection 1.00 mpp[tiflash]  not(isnull(plus(test.t1.k1, 1)))",
-          "        └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t2.k1, Column)]",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t2.k1))",
+          "    │     └─TableFullScan mpp[tiflash] table:t2 keep order:false",
+          "    └─Projection(Probe) mpp[tiflash]  test.t1.k1, plus(test.t1.k1, 1)->Column",
+          "      └─Selection mpp[tiflash]  not(isnull(plus(test.t1.k1, 1)))",
+          "        └─TableFullScan mpp[tiflash] table:t1 keep order:false"
         ]
       },
       {
         "SQL": "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1+1; -- Doesn't support target expression t2.k1+1",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 1.00 mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
-          "    └─HashJoin 1.00 mpp[tiflash]  inner join, equal:[eq(test.t1.k1, Column#9)]",
-          "      ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "      │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
-          "      └─Projection(Probe) 1.00 mpp[tiflash]  test.t2.k1, test.t2.k2, test.t2.k3, plus(test.t2.k1, 1)->Column#9",
-          "        └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection mpp[tiflash]  test.t1.k1, test.t2.k1, test.t2.k2, test.t2.k3",
+          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t1.k1, Column)]",
+          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "      └─Projection(Probe) mpp[tiflash]  test.t2.k1, test.t2.k2, test.t2.k3, plus(test.t2.k1, 1)->Column",
+          "        └─TableFullScan mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
         "SQL": "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1 right join t2 on t1.k1=t2.k1; -- t2 side couldn't be RF target side, no RF",
         "Plan": [
-          "TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t1.k1, test.t2.k1)]",
-          "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
-          "    │     └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
-          "    └─TableFullScan(Probe) 1.00 mpp[tiflash] table:t2 keep order:false"
+          "TableReader root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t1.k1, test.t2.k1)]",
+          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t1.k1))",
+          "    │     └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "    └─TableFullScan(Probe) mpp[tiflash] table:t2 keep order:false"
         ]
       },
       {
         "SQL": "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1<=>t2.k1; -- Doesn't support null safe eq predicate",
         "Plan": [
-          "HashJoin 1.00 root  inner join, equal:[nulleq(test.t1.k1, test.t2.k1)]",
-          "├─TableReader(Build) 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─TableFullScan 1.00 mpp[tiflash] table:t1 keep order:false",
-          "└─TableReader(Probe) 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TableFullScan 1.00 mpp[tiflash] table:t2 keep order:false"
+          "HashJoin root  inner join, equal:[nulleq(test.t1.k1, test.t2.k1)]",
+          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan mpp[tiflash] table:t1 keep order:false",
+          "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t2 keep order:false"
         ]
       }
     ]

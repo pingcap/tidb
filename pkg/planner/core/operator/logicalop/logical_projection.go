@@ -331,7 +331,7 @@ func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	childProperties := childrenProperties[0]
 	oldCols := make([]*expression.Column, 0, p.Schema().Len())
 	newCols := make([]*expression.Column, 0, p.Schema().Len())
@@ -341,9 +341,10 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 			oldCols = append(oldCols, col)
 		}
 	}
+	p.hasTiFlash = childProperties.HasTiFlash
 	tmpSchema := expression.NewSchema(oldCols...)
-	newProperties := make([][]*expression.Column, 0, len(childProperties))
-	for _, childProperty := range childProperties {
+	newProperties := make([][]*expression.Column, 0, len(childProperties.Orders))
+	for _, childProperty := range childProperties.Orders {
 		newChildProperty := make([]*expression.Column, 0, len(childProperty))
 		for _, col := range childProperty {
 			pos := tmpSchema.ColumnIndex(col)
@@ -356,7 +357,10 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 			newProperties = append(newProperties, newChildProperty)
 		}
 	}
-	return newProperties
+	return &base.PossiblePropertiesInfo{
+		Orders:     newProperties,
+		HasTiFlash: p.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -672,4 +676,15 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 		}
 	}
 	return true
+}
+
+// InjectExpr injects the expr into a projection above p, and returns the new projection and the new column.
+func InjectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		proj = LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+	}
+	return proj, proj.AppendExpr(expr)
 }

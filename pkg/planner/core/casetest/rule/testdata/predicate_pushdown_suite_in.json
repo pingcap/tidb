@@ -18,7 +18,8 @@
       "select /* double_not_semi_join */ t0.k0 from t0 where exists (select 1 from t2 where not not (t0.k0 = t2.k0))",
       "select /* double_not_left_join_exec */ t0.k0, t2.k0 from t0 left join t2 on not not (t0.k0 = t2.k0) order by t0.k0, t2.k0",
       "select /* double_not_right_join_exec */ t0.k0, t2.k0 from t0 right join t2 on not not (t0.k0 = t2.k0) order by t2.k0, t0.k0",
-      "select /* double_not_semi_join_exec */ t0.k0 from t0 where exists (select 1 from t2 where not not (t0.k0 = t2.k0)) order by t0.k0"
+      "select /* double_not_semi_join_exec */ t0.k0 from t0 where exists (select 1 from t2 where not not (t0.k0 = t2.k0)) order by t0.k0",
+      "select /* issue:65994 */ * from t1_65994 left join t2_65994 on (t1_65994.a = t2_65994.a or 0)"
     ]
   }
 ]

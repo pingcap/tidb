@@ -20,7 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -66,13 +67,13 @@ type PlanReplayerDumpInfo struct {
 	HistoricalStatsTS uint64
 	StartTS           uint64
 	Path              string
-	File              *os.File
+	File              io.WriteCloser
 	FileName          string
 	ctx               sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
-func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.endFlag {
 		return nil
@@ -83,10 +84,16 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return e.registerCaptureTask(ctx)
 	}
-	err := e.createFile()
+	err = e.createFile(ctx)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil && e.DumpInfo != nil && e.DumpInfo.File != nil {
+			_ = e.DumpInfo.File.Close()
+			e.DumpInfo.File = nil
+		}
+	}()
 	// Note:
 	// For the dumping for SQL file case (len(e.DumpInfo.Path) > 0), the DumpInfo.dump() is called in
 	// handleFileTransInConn(), which is after TxnManager.OnTxnEnd(), where we can't access the TxnManager anymore.
@@ -113,7 +120,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	req.AppendString(0, e.DumpInfo.FileName)
+	req.AppendString(0, e.Ctx().GetSessionVars().LastPlanReplayerToken)
 	e.endFlag = true
 	return nil
 }
@@ -163,9 +170,12 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	return nil
 }
 
-func (e *PlanReplayerExec) createFile() error {
-	var err error
-	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(false, false, false)
+func (e *PlanReplayerExec) createFile(ctx context.Context) error {
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return err
+	}
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
 	if err != nil {
 		return err
 	}
@@ -189,7 +199,11 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
+	token := e.FileName
+	if task.PresignedURL != "" {
+		token = task.PresignedURL
+	}
+	e.ctx.GetSessionVars().LastPlanReplayerToken = token
 	return nil
 }
 
@@ -392,6 +406,17 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 	return nil
 }
 
+// Plan replayer loads recorded statistics for troubleshooting/reproduction.
+// Auto-analyze can run right after restore and overwrite those stats, which
+// makes the restored environment drift from the captured one.
+func disableAutoAnalyzeForPlanReplayerLoad(ctx sessionctx.Context) error {
+	return errors.AddStack(ctx.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(
+		context.Background(),
+		vardef.TiDBEnableAutoAnalyze,
+		vardef.Off,
+	))
+}
+
 // createSchemaAndItems creates schema and tables or views
 func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	r, err := f.Open()
@@ -481,7 +506,12 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		return err
 	}
-
+	// Explicitly disable auto-analyze after restore so imported stats stay stable.
+	// Users can re-enable it manually when they no longer need a frozen replay env.
+	err = disableAutoAnalyzeForPlanReplayerLoad(e.Ctx)
+	if err != nil {
+		return err
+	}
 	// build schema and table first
 	var databaseSets map[string]struct{}
 	databaseSets, err = e.createTable(z)
@@ -521,6 +551,13 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	if err != nil {
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
+
+	// Notify users that PLAN REPLAYER LOAD disables auto-analyze to keep restored stats stable.
+	e.Ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"`PLAN REPLAYER LOAD` sets @@global.%s=OFF to keep restored statistics stable; re-enable it manually if needed",
+		vardef.TiDBEnableAutoAnalyze,
+	))
+
 	return nil
 }
 

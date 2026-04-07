@@ -35,6 +35,8 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification", true)
 	testDataMap.LoadTestSuiteData("testdata", "outer_to_semi_join_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "cdc_join_reorder_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "order_aware_join_reorder_suite", true)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -76,4 +78,12 @@ func GetPredicateSimplificationSuiteData() testdata.TestData {
 
 func GetOuterToSemiJoinSuiteData() testdata.TestData {
 	return testDataMap["outer_to_semi_join_suite"]
+}
+
+func GetCDCJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["cdc_join_reorder_suite"]
+}
+
+func GetOrderAwareJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["order_aware_join_reorder_suite"]
 }

@@ -240,6 +240,30 @@ func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, s
 	}
 }
 
+func TestGetActiveTaskCountsByKeyspace(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	summary, err := gm.GetActiveTaskCountsByKeyspace(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	require.Zero(t, summary.Total)
+	require.Empty(t, summary.PerKeyspace)
+
+	_, err = gm.CreateTask(ctx, "key-ks1-1", "test", "ks1", 1, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+	_, err = gm.CreateTask(ctx, "key-ks1-2", "test", "ks1", 1, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+	_, err = gm.CreateTask(ctx, "key-ks2-1", "test", "ks2", 1, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+
+	summary, err = gm.GetActiveTaskCountsByKeyspace(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, summary.Total)
+	require.EqualValues(t, 2, summary.PerKeyspace["ks1"])
+	require.EqualValues(t, 1, summary.PerKeyspace["ks2"])
+}
+
 func TestSwitchTaskStep(t *testing.T) {
 	store, tm, ctx := testutil.InitTableTest(t)
 	tk := testkit.NewTestKit(t, store)

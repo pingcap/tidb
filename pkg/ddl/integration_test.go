@@ -16,16 +16,42 @@ package ddl_test
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
+
+type mockEtcdBackend struct {
+	kv.Storage
+	pdAddrs []string
+}
+
+func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
+
+func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
 
 func TestDDLStatementsBackFill(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -144,6 +170,37 @@ func TestPartialIndex(t *testing.T) {
 	}
 }
 
+func TestDropTableAdminCheckTableFastCheckTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, key(b) where a = 1);")
+
+	dom := domain.GetDomain(tk.Session())
+	require.NotNil(t, dom)
+	pool := dom.SysSessionPool()
+
+	seOn, err := pool.Get()
+	require.NoError(t, err)
+	seOff, err := pool.Get()
+	require.NoError(t, err)
+
+	seOffCtx := seOff.(sessionctx.Context)
+	require.NoError(t, seOffCtx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.Off))
+
+	pool.Put(seOn)
+	pool.Put(seOff)
+
+	oldCheckTableBeforeDrop := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = oldCheckTableBeforeDrop
+	}()
+	tk.MustExec("drop table t;")
+}
+
 func TestMaintainAffectColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -172,4 +229,70 @@ func TestMaintainAffectColumns(t *testing.T) {
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 1, tbl.Meta().Indices[0].AffectColumn[0].Offset)
+}
+
+func TestJobVersionAndGlobalIndexV1SupportForNextGen(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("nextgen only")
+	}
+	integration.BeforeTestExternal(t)
+
+	originJobVer := model.GetJobVerInUse()
+	originGlobalIdxV1 := model.GetGlobalIndexV1Supported()
+	t.Cleanup(func() {
+		model.SetJobVerInUse(originJobVer)
+		model.SetGlobalIndexV1Supported(originGlobalIdxV1)
+	})
+	require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+	require.True(t, model.GetGlobalIndexV1Supported())
+
+	serverInfos := map[string]*serverinfo.ServerInfo{
+		"node0": {
+			StaticInfo: serverinfo.StaticInfo{
+				VersionInfo: serverinfo.VersionInfo{Version: "8.0.11-TiDB-CLOUD.202510.1"},
+			},
+		},
+	}
+	bytes, err := json.Marshal(serverInfos)
+	require.NoError(t, err)
+	testfailpoint.Enable(t,
+		"github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo",
+		fmt.Sprintf("return(`%s`)", string(bytes)),
+	)
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	mockStore := &mockEtcdBackend{
+		Storage: store,
+		pdAddrs: []string{cluster.Members[0].GRPCURL()},
+	}
+	storeTypeBak := config.GetGlobalConfig().Store
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Store = storeTypeBak
+		ddl.CloseOwnerManager(mockStore)
+	})
+	require.NoError(t, ddl.StartOwnerManager(context.Background(), mockStore))
+
+	newDDL, _ := ddl.NewDDL(context.Background(),
+		ddl.WithStore(mockStore),
+		ddl.WithInfoCache(dom.InfoCache()),
+		ddl.WithLease(testLease),
+		ddl.WithSchemaLoader(dom),
+		ddl.WithEtcdClient(cluster.RandClient()),
+	)
+	err = newDDL.Start(ddl.Normal, pools.NewResourcePool(func() (pools.Resource, error) {
+		session := testkit.NewTestKit(t, mockStore).Session()
+		session.GetSessionVars().CommonGlobalLoaded = true
+		return session, nil
+	}, 1, 1, time.Second))
+	require.NoError(t, err)
+	require.NoError(t, newDDL.Stop())
+
+	// The only meaningful assert in this test. It makes sure that the JobVersion is 2
+	// and the global index v1 is always supported for next-gen cluster.
+	require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+	require.True(t, model.GetGlobalIndexV1Supported())
 }
