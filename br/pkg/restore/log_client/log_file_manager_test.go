@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -656,7 +657,8 @@ func ddljobkvEntry(jobID int, ts uint64) *logclient.KvEntryWithTS {
 
 // buildTestBuffer concatenates encoded KV entries and produces the DataFileInfo
 // (sha256 checksum, offset, length) required by ReadFilteredEntriesFromFiles.
-func buildTestBuffer(entries ...[]byte) ([]byte, *backuppb.DataFileInfo) {
+// The cf parameter specifies the column family (use consts.DefaultCF or consts.WriteCF).
+func buildTestBuffer(cf string, entries ...[]byte) ([]byte, *backuppb.DataFileInfo) {
 	buff := make([]byte, 0)
 	for _, e := range entries {
 		buff = append(buff, e...)
@@ -666,7 +668,7 @@ func buildTestBuffer(entries ...[]byte) ([]byte, *backuppb.DataFileInfo) {
 		Sha256:      sum[:],
 		RangeOffset: 0,
 		RangeLength: uint64(len(buff)),
-		Cf:          consts.WriteCF,
+		Cf:          cf,
 	}
 }
 
@@ -674,7 +676,7 @@ func buildTestBuffer(entries ...[]byte) ([]byte, *backuppb.DataFileInfo) {
 // logical mDB key are deduplicated, keeping only the highest-TS version.
 func TestReadFilteredEntries_DedupMDBKeys(t *testing.T) {
 	ctx := context.Background()
-	data, file := buildTestBuffer(
+	data, file := buildTestBuffer(consts.DefaultCF,
 		// Three MVCC versions of the same logical key "mDB:1:IID:5".
 		encodemdbkv("mDB:1:IID:5", 40, false),
 		encodemdbkv("mDB:1:IID:5", 60, false),
@@ -702,14 +704,13 @@ func TestReadFilteredEntries_DedupMDBKeys(t *testing.T) {
 // DDL entries appear before dedup entries in the output slices.
 func TestReadFilteredEntries_DDLJobHistoryBypassesDedup(t *testing.T) {
 	ctx := context.Background()
-	data, file := buildTestBuffer(
+	// DDL job history entries are only processed for DefaultCF.
+	data, file := buildTestBuffer(consts.DefaultCF,
 		encodeddljobkv(100, 40),
 		encodeddljobkv(101, 50),
 		// A regular mDB key written after the DDL entries to verify output ordering.
 		encodemdbkv("mDB:reg:1", 45, false),
 	)
-	// DDL job history entries are only processed for DefaultCF.
-	file.Cf = consts.DefaultCF
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 
 	// filterTS=100: all entries land in kvEntries.
@@ -728,14 +729,13 @@ func TestReadFilteredEntries_DDLJobHistoryBypassesDedup(t *testing.T) {
 // single file contains both DDL job history keys and regular mDB keys.
 func TestReadFilteredEntries_MixedDDLJobHistoryAndMDBKeys(t *testing.T) {
 	ctx := context.Background()
-	data, file := buildTestBuffer(
+	// DDL job history entries are only processed for DefaultCF.
+	data, file := buildTestBuffer(consts.DefaultCF,
 		encodeddljobkv(200, 40),
 		encodemdbkv("mDB:mixed:1", 42, false),
 		encodeddljobkv(201, 60),
 		encodemdbkv("mDB:mixed:1", 55, false), // higher TS wins dedup
 	)
-	// DDL job history entries are only processed for DefaultCF.
-	file.Cf = consts.DefaultCF
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 
 	// filterTS=50: ts<50 → kvEntries, ts>=50 → filteredOutKvEntries.
@@ -758,7 +758,7 @@ func TestReadFilteredEntries_MixedDDLJobHistoryAndMDBKeys(t *testing.T) {
 // would have gone to the other slice.
 func TestReadFilteredEntries_DedupFilterTSSplit(t *testing.T) {
 	ctx := context.Background()
-	data, file := buildTestBuffer(
+	data, file := buildTestBuffer(consts.DefaultCF,
 		encodemdbkv("mDB:splitkey", 40, false), // loses dedup; would land in kvEntries
 		encodemdbkv("mDB:splitkey", 60, false), // wins dedup; lands in filteredOutKvEntries
 	)
@@ -777,7 +777,7 @@ func TestReadFilteredEntries_DedupFilterTSSplit(t *testing.T) {
 // copies and do not retain references to the original buffer.
 func TestReadFilteredEntries_CopySemantics(t *testing.T) {
 	ctx := context.Background()
-	data, file := buildTestBuffer(encodemdbkv("mDB:copytest", 50, false))
+	data, file := buildTestBuffer(consts.DefaultCF, encodemdbkv("mDB:copytest", 50, false))
 	helper := &logclient.FakeStreamMetadataHelper{Data: data}
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, helper)
 
@@ -805,7 +805,7 @@ func TestReadFilteredEntries_CopySemantics(t *testing.T) {
 // with a non-empty value to survive as the dedup winner.
 func TestReadFilteredEntries_DedupEmptyValueSkipped(t *testing.T) {
 	ctx := context.Background()
-	data, file := buildTestBuffer(
+	data, file := buildTestBuffer(consts.DefaultCF,
 		encodemdbkv("mDB:emptytest", 60, true),  // highest TS but empty value → discarded
 		encodemdbkv("mDB:emptytest", 40, false), // lower TS, non-empty → dedup winner
 	)
@@ -823,10 +823,9 @@ func TestReadFilteredEntries_DedupEmptyValueSkipped(t *testing.T) {
 // given write type. Uses a large startTs to ensure the encoded value meets
 // the minimum 9-byte length required by RawWriteCFValue.ParseFrom.
 func encodeWriteCFValue(writeType byte) []byte {
-	data := make([]byte, 0, 9)
-	data = append(data, writeType)
-	data = codec.EncodeUvarint(data, 400036290571534337) // 9-byte varint; total 10 bytes
-	return data
+	// Use a large startTs (400036290571534337) to ensure the varint encoding
+	// produces enough bytes to meet the minimum length requirement.
+	return mvcc.EncodeWriteCFValue(writeType, 400036290571534337, nil)
 }
 
 // encodemdbkvWithValue constructs an encoded KV entry with an explicit value.
@@ -846,7 +845,7 @@ func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
 	lockValue := encodeWriteCFValue(stream.WriteTypeLock)
 
 	t.Run("RollbackDoesNotEvictPut", func(t *testing.T) {
-		data, file := buildTestBuffer(
+		data, file := buildTestBuffer(consts.WriteCF,
 			// Committed Put at ts=40.
 			encodemdbkvWithValue("mDB:1:IID:5", 40, putValue),
 			// Rollback at ts=60 — higher TS but must NOT evict the Put.
@@ -863,7 +862,7 @@ func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
 	})
 
 	t.Run("LockDoesNotEvictPut", func(t *testing.T) {
-		data, file := buildTestBuffer(
+		data, file := buildTestBuffer(consts.WriteCF,
 			encodemdbkvWithValue("mDB:1:IID:5", 40, putValue),
 			// Lock at ts=55 — must NOT evict the Put.
 			encodemdbkvWithValue("mDB:1:IID:5", 55, lockValue),
@@ -877,7 +876,7 @@ func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
 	})
 
 	t.Run("RollbackDoesNotEvictDelete", func(t *testing.T) {
-		data, file := buildTestBuffer(
+		data, file := buildTestBuffer(consts.WriteCF,
 			encodemdbkvWithValue("mDB:1:Table:3", 45, deleteValue),
 			encodemdbkvWithValue("mDB:1:Table:3", 70, rollbackValue),
 		)
@@ -890,7 +889,7 @@ func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
 	})
 
 	t.Run("OnlyRollbacksProduceNoOutput", func(t *testing.T) {
-		data, file := buildTestBuffer(
+		data, file := buildTestBuffer(consts.WriteCF,
 			encodemdbkvWithValue("mDB:1:IID:5", 40, rollbackValue),
 			encodemdbkvWithValue("mDB:1:IID:5", 60, rollbackValue),
 		)
@@ -902,7 +901,7 @@ func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
 	})
 
 	t.Run("CommittedPutAfterRollbackSurvives", func(t *testing.T) {
-		data, file := buildTestBuffer(
+		data, file := buildTestBuffer(consts.WriteCF,
 			// Rollback arrives first at ts=50 — skipped.
 			encodemdbkvWithValue("mDB:1:IID:5", 50, rollbackValue),
 			// Put arrives later at ts=40 — should be the dedup winner (only committed entry).
@@ -918,11 +917,10 @@ func TestReadFilteredEntries_WriteCFSkipsLockAndRollback(t *testing.T) {
 
 	t.Run("DefaultCFIgnoresWriteTypeFiltering", func(t *testing.T) {
 		// In DefaultCF, values are not WriteCF-encoded — all entries pass through.
-		data, file := buildTestBuffer(
+		data, file := buildTestBuffer(consts.DefaultCF,
 			encodemdbkv("mDB:1:IID:5", 40, false),
 			encodemdbkv("mDB:1:IID:5", 60, false),
 		)
-		file.Cf = consts.DefaultCF
 		fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 		kvEntries, _, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 100)
 		require.NoError(t, err)

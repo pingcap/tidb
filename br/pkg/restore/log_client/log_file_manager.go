@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -476,6 +477,20 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 	// dedupOrder tracks insertion order so output is deterministic.
 	dedupOrder := make([]string, 0)
 
+	// copyAndAppend copies key/value bytes and appends to the appropriate slice
+	// based on filterTS. This ensures the decompressed buffer can be GC'd promptly.
+	copyAndAppend := func(key, value []byte, entryTS uint64) {
+		copied := &KvEntryWithTS{
+			E:  kv.Entry{Key: slices.Clone(key), Value: slices.Clone(value)},
+			Ts: entryTS,
+		}
+		if entryTS < filterTS {
+			kvEntries = append(kvEntries, copied)
+		} else {
+			filteredOutKvEntries = append(filteredOutKvEntries, copied)
+		}
+	}
+
 	eventIter := stream.NewEventIterator(buff)
 	for eventIter.Valid() {
 		eventIter.Next()
@@ -520,11 +535,13 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 		// causing data loss for the restored MVCC state.
 		if file.Cf == consts.WriteCF {
 			var rawWrite stream.RawWriteCFValue
-			if err := rawWrite.ParseFrom(txnEntry.Value); err == nil {
-				wt := rawWrite.GetWriteType()
-				if wt == stream.WriteTypeLock || wt == stream.WriteTypeRollback {
-					continue
-				}
+			if err := rawWrite.ParseFrom(txnEntry.Value); err != nil {
+				return nil, nil, errors.Annotatef(err,
+					"failed to parse WriteCF value for key %s", redact.Key(txnEntry.Key))
+			}
+			wt := rawWrite.GetWriteType()
+			if wt == stream.WriteTypeLock || wt == stream.WriteTypeRollback {
+				continue
 			}
 		}
 
@@ -535,16 +552,7 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 				continue
 			}
 			// DDL job history keys are unique per job ID; copy immediately.
-			keyCopy := make([]byte, len(txnEntry.Key))
-			copy(keyCopy, txnEntry.Key)
-			valCopy := make([]byte, len(txnEntry.Value))
-			copy(valCopy, txnEntry.Value)
-			e := &KvEntryWithTS{E: kv.Entry{Key: keyCopy, Value: valCopy}, Ts: ts}
-			if ts < filterTS {
-				kvEntries = append(kvEntries, e)
-			} else {
-				filteredOutKvEntries = append(filteredOutKvEntries, e)
-			}
+			copyAndAppend(txnEntry.Key, txnEntry.Value, ts)
 			continue
 		}
 
@@ -567,16 +575,7 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 	// copies are the only references, allowing buff to be GC'd promptly).
 	for _, logicalKey := range dedupOrder {
 		e := dedupMap[logicalKey]
-		keyCopy := make([]byte, len(e.E.Key))
-		copy(keyCopy, e.E.Key)
-		valCopy := make([]byte, len(e.E.Value))
-		copy(valCopy, e.E.Value)
-		copied := &KvEntryWithTS{E: kv.Entry{Key: keyCopy, Value: valCopy}, Ts: e.Ts}
-		if e.Ts < filterTS {
-			kvEntries = append(kvEntries, copied)
-		} else {
-			filteredOutKvEntries = append(filteredOutKvEntries, copied)
-		}
+		copyAndAppend(e.E.Key, e.E.Value, e.Ts)
 	}
 
 	return kvEntries, filteredOutKvEntries, nil
