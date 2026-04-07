@@ -65,3 +65,96 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 	}
 	return ndv
 }
+
+// EstimateGlobalSingletonBySketches estimates the global singleton count using NDV and singleton sketches.
+// For each region i, we ask: how many of region i's local singletons
+// never appeared in any other region? Those are the values that are
+// truly unique across the entire dataset, contributed by region i.
+//
+// We compute this by merging all *other* regions' NDV sketches (their full
+// distinct-value sets), then checking how much region i's local singletons
+// grow that union. The growth is exactly the count of region i's singletons
+// that no other region has seen.
+//
+// Summing these per-region contributions gives the global singleton estimate.
+//
+// Example with three regions:
+//
+//	Region 0 all distinct values: {a, b, c}    local singletons: {a, b, c}
+//	Region 1 all distinct values: {b, c, d}    local singletons: {b, d}
+//	Region 2 all distinct values: {c, e, f}    local singletons: {e, f}
+//
+// True global frequencies: a×1, b×2, c×3, d×1, e×1, f×1
+// True singletons = 4  (the values {a, d, e, f} appear exactly once globally)
+//
+//	Region 0: others' NDV = {b,c,d,e,f} (size 5)
+//	          + region 0 singletons {a,b,c} = {a,b,c,d,e,f} (size 6)
+//	          contribution = 1  (only `a` is new)
+//
+//	Region 1: others' NDV = {a,b,c,e,f} (size 5)
+//	          + region 1 singletons {b,d} = {a,b,c,d,e,f} (size 6)
+//	          contribution = 1  (only `d` is new)
+//
+//	Region 2: others' NDV = {a,b,c,d} (size 4)
+//	          + region 2 singletons {e,f} = {a,b,c,d,e,f} (size 6)
+//	          contribution = 2  (`e` and `f` are new)
+//
+// Estimated singletons = 1 + 1 + 2 = 4
+func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketch) uint64 {
+	intest.Assert(len(ndvSketches) > 0, "ndvSketches shouldn't be empty")
+	intest.Assert(len(ndvSketches) == len(singletonSketches), "ndvSketches and singletonSketches should have the same length")
+	// Defensive checks.
+	if len(ndvSketches) == 0 || len(ndvSketches) != len(singletonSketches) {
+		return 0
+	}
+
+	var globalSingleton int64
+	for i := range ndvSketches {
+		// Merge NDV sketches from all regions except region i.
+		var other *FMSketch
+		for j, ns := range ndvSketches {
+			if j == i || ns == nil {
+				continue
+			}
+
+			if other == nil {
+				other = ns.Copy()
+				continue
+			}
+			other.MergeFMSketch(ns)
+		}
+
+		ndvOther := int64(0)
+		if other != nil {
+			ndvOther = other.NDV()
+		}
+
+		// Merge the other-regions sketch with region i's singleton sketch.
+		// ndvUnion - ndvOther gives the count of region i's singletons
+		// that don't appear in any other region (i.e. globally unique values).
+		var union *FMSketch
+		if other != nil {
+			union = other.Copy()
+			if singletonSketches[i] != nil {
+				union.MergeFMSketch(singletonSketches[i])
+			}
+		} else if singletonSketches[i] != nil {
+			union = singletonSketches[i].Copy()
+		}
+
+		ndvUnion := int64(0)
+		if union != nil {
+			ndvUnion = union.NDV()
+		}
+
+		globalSingleton += int64(ndvUnion) - int64(ndvOther)
+
+		// Cleanup.
+		other = nil
+		union = nil
+	}
+	if globalSingleton < 0 {
+		return 0
+	}
+	return uint64(globalSingleton)
+}
