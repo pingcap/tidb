@@ -514,10 +514,11 @@ func TestAddIndexResumesFromCheckpointAfterPartialScan(t *testing.T) {
 		}
 
 		// Let the first chunk fetch in scanRecords succeed, then inject an
-		// error on the second fetch. This delivers exactly one partial chunk
-		// to the ingest worker before the scan task bails out, exercising the
-		// partial-scan checkpoint path. Subsequent fetches (in the retry) see
-		// the failpoint as already consumed and proceed normally.
+		// error on the second fetch. The local-ingest path buffers scan
+		// results until the scan finishes, so this exercises the partial-scan
+		// checkpoint path where the retry must restart without a flushed chunk
+		// advancing the checkpoint. Subsequent fetches (in the retry) see the
+		// failpoint as already consumed and proceed normally.
 		testfailpoint.Enable(t,
 			"github.com/pingcap/tidb/pkg/ddl/mockScanRecordPartialError",
 			"1*return(false)->1*return(true)")

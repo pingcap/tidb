@@ -534,7 +534,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	)
 	// Local ingest may trigger partial import/reset while the scan transaction is
 	// still open, so only the global-sort path can stream results immediately.
-	streamResults := w.reorgMeta.UseCloudStorage
+	enableStreaming := w.reorgMeta.UseCloudStorage
 	sendResult := func(idxResult IndexRecordChunk) {
 		sender(idxResult)
 		if w.cpOp != nil {
@@ -591,17 +591,19 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
 			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
 			lastTableScanRowCount = tableScanRowCount
-			if streamResults {
+			if enableStreaming {
 				sendResult(idxResult)
-				continue
+			} else {
+				idxResults = append(idxResults, idxResult)
 			}
-			idxResults = append(idxResults, idxResult)
 		}
 		return rs.Close()
 	})
 
-	for _, idxResult := range idxResults {
-		sendResult(idxResult)
+	if !enableStreaming {
+		for _, idxResult := range idxResults {
+			sendResult(idxResult)
+		}
 	}
 
 	return err
