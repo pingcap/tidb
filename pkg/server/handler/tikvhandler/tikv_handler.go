@@ -2039,6 +2039,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			old := local.CurrentMaxBatchSplitRanges.Load()
 			intV := int(v)
 			local.CurrentMaxBatchSplitRanges.Store(&intV)
+			if old == nil {
+				return 0
+			}
 			return float64(*old)
 		}
 	case IngestParamMaxSplitRangesPerSec:
@@ -2063,6 +2066,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		updateGlobal = func(v float64) float64 {
 			old := local.CurrentMaxIngestPerSec.Load()
 			local.CurrentMaxIngestPerSec.Store(&v)
+			if old == nil {
+				return 0
+			}
 			return *old
 		}
 	case IngestParamMaxInflight:
