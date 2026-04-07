@@ -856,15 +856,15 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpT
 		recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), explainSQL)
 		if err != nil && isPlanReplayerExplainAdminPrivilegeError(err) && shouldUsePlanReplayerExplainAdminBypass(ctx, task) {
 			restoreExplainNonEvaledSubQuery := ctx.GetSessionVars().ExplainNonEvaledSubQuery
-			// Keep the bypass retry from materializing scalar subquery values into explain output.
-			if restoreExplainNonEvaledSubQuery {
-				ctx.GetSessionVars().ExplainNonEvaledSubQuery = false
+			// Keep the bypass retry from pre-evaluating scalar subqueries into explain output.
+			if !restoreExplainNonEvaledSubQuery {
+				ctx.GetSessionVars().ExplainNonEvaledSubQuery = true
 			}
 			runWithPlanReplayerSQLPrivilegeType(ctx, variable.PlanReplayerInternalSQLTypeExplain, func() {
 				recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), explainSQL)
 			})
-			if restoreExplainNonEvaledSubQuery {
-				ctx.GetSessionVars().ExplainNonEvaledSubQuery = true
+			if !restoreExplainNonEvaledSubQuery {
+				ctx.GetSessionVars().ExplainNonEvaledSubQuery = false
 			}
 		}
 		if err != nil {
