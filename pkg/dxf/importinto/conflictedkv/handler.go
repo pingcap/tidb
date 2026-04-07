@@ -122,9 +122,6 @@ func (*BaseHandler) PreRun() error {
 // Run implements Handler interface.
 func (h *BaseHandler) Run(ctx context.Context, pairCh chan *external.KVPair) error {
 	for kvPair := range pairCh {
-		if kvPair == nil {
-			continue
-		}
 		if err := h.Handle(ctx, kvPair); err != nil {
 			return errors.Trace(err)
 		}
