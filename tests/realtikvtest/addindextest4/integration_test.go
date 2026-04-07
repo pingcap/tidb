@@ -497,23 +497,6 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 	t.Run("dist_task_on", func(t *testing.T) { runCase(t, true) })
 }
 
-// TestAddIndexResumesFromCheckpointAfterPartialScan exercises the streaming
-// scanRecords path on a partial-error scan: a scan task fetches one chunk
-// successfully, then errors mid-task before reaching task.End. The DDL
-// framework retries the failed subtask, and the retry must re-scan the
-// unread range so the unique index ends up consistent with the table.
-//
-// Bug class background: a buffer-then-flush version of scanRecords that
-// post-processes a slice with `done := i == len(idxResults)-1` would mark the
-// single buffered chunk with last=true even though the scan errored before
-// reaching task.End. Combined with all writers catching up via FinishChunk,
-// every gating condition in CheckpointManager.afterFlush could become
-// satisfied (lastBatchRead=true, writtenKeys>=totalKeys, chunksFinished>=
-// chunksTotal), advancing the flushed-key watermark past unread keys. The
-// retry would then resume from the advanced watermark and silently skip the
-// unscanned range, leaving the index missing rows. The streaming refactor
-// uses fetchTableScanResult's per-fetch `done` directly, so last=true is only
-// passed to UpdateChunk when the scan actually reaches task.End.
 func TestAddIndexResumesFromCheckpointAfterPartialScan(t *testing.T) {
 	runCase := func(t *testing.T, distTaskOn bool) {
 		store := realtikvtest.CreateMockStoreAndSetup(t)
