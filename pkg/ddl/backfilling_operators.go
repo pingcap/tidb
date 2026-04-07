@@ -531,6 +531,17 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	var (
 		execDetails kvutil.ExecDetails
 	)
+	// Local ingest may trigger partial import/reset while the scan transaction is
+	// still open, so only the global-sort path can stream results immediately.
+	streamResults := w.reorgMeta.UseCloudStorage
+	bufferedResults := make([]IndexRecordChunk, 0, 4)
+	sendResult := func(idxResult IndexRecordChunk) {
+		sender(idxResult)
+		if w.cpOp != nil {
+			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), idxResult.Done)
+		}
+		w.totalCount.Add(idxResult.tableScanRowCount)
+	}
 	var scanCtx context.Context = w.ctx
 	if scanCtx.Value(kvutil.ExecDetailsKey) == nil {
 		scanCtx = context.WithValue(w.ctx, kvutil.ExecDetailsKey, &execDetails)
@@ -580,16 +591,22 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
 			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
 			lastTableScanRowCount = tableScanRowCount
-			sender(idxResult)
-			if w.cpOp != nil {
-				w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
+			if streamResults {
+				sendResult(idxResult)
+				continue
 			}
-			w.totalCount.Add(idxResult.tableScanRowCount)
+			bufferedResults = append(bufferedResults, idxResult)
 		}
 		return rs.Close()
 	})
+	if err != nil {
+		return err
+	}
+	for _, idxResult := range bufferedResults {
+		sendResult(idxResult)
+	}
 
-	return err
+	return nil
 }
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
