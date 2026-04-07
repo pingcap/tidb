@@ -3132,13 +3132,26 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	if len(task.Indexes) > 0 {
 		for _, idx := range task.Indexes {
 			availableIdx = append(availableIdx, idx)
+			hasInvalidOffset := false
 			colGroup := &tipb.AnalyzeColumnGroup{
 				ColumnOffsets: make([]int64, 0, len(idx.Columns)),
 			}
 			for _, col := range idx.Columns {
+				if col.Offset < 0 {
+					// Skip this column offset; the corresponding index will be handled as
+					// a special index in analyzeColumnsPushDown. We still add the valid
+					// column offsets below.
+					hasInvalidOffset = true
+					continue
+				}
 				colGroup.ColumnOffsets = append(colGroup.ColumnOffsets, int64(col.Offset))
 			}
-			colGroups = append(colGroups, colGroup)
+			// Only add to colGroups if all columns have valid offsets.
+			// colGroups is used by coprocessor to compute FMSketch for index values.
+			// If any column has invalid offset (-1), the coprocessor would panic.
+			if !hasInvalidOffset {
+				colGroups = append(colGroups, colGroup)
+			}
 		}
 	}
 

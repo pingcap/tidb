@@ -71,9 +71,18 @@ func (e *AnalyzeColumnsExec) analyzeColumnsPushDown(ctx context.Context, gp *gp.
 	for i, idx := range e.indexes {
 		isSpecial := false
 		for _, col := range idx.Columns {
+			// col.Offset can be -1 or out of bounds when the column is not in e.colsInfo
+			// (e.g., a stored generated column that was not included in the analyze column list).
+			if col.Offset < 0 || col.Offset >= len(e.colsInfo) {
+				isSpecial = true
+				break
+			}
 			colInfo := e.colsInfo[col.Offset]
 			isPrefixCol := col.Length != types.UnspecifiedLength
-			if colInfo.IsVirtualGenerated() || isPrefixCol {
+			// Stored generated columns are not in e.colsInfo when they are indexed but not
+			// in the analyze column list. Virtual generated columns and prefix columns also
+			// need special handling because their values cannot be derived from sampled rows.
+			if colInfo.IsVirtualGenerated() || colInfo.GeneratedStored || isPrefixCol {
 				isSpecial = true
 				break
 			}
@@ -217,7 +226,11 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	}()
 
-	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
+	// l is the total number of columns + indexes for the collector's arrays (NullCount, FMSketches).
+	// It must be len(e.colsInfo) + len(e.indexes) so that NullCount has enough space for
+	// all indexes. Previously this used len(ColsInfo)+len(ColGroups), but ColGroups only
+	// contains non-special indexes, causing an out-of-bounds access when NullCount was too short.
+	l := len(e.colsInfo) + len(e.indexes)
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for range l {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
@@ -386,7 +399,17 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	// Generate tasks for building stats for indexes.
+	// Skip special indexes (virtual/stored generated columns or prefix columns): their
+	// FMSketch and NullCount have already been set from the NDV pushdown above, and
+	// their histogram will be a zero-bucket histogram derived from the NDV count.
+	isSpecialIndex := make([]bool, len(e.indexes))
+	for _, offset := range indexesWithVirtualColOffsets {
+		isSpecialIndex[offset] = true
+	}
 	for i, idx := range e.indexes {
+		if isSpecialIndex[i] {
+			continue
+		}
 		buildTaskChan <- &samplingBuildTask{
 			id:               idx.ID,
 			rootRowCollector: rootRowCollector,
