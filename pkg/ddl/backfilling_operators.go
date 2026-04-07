@@ -130,7 +130,7 @@ func NewAddIndexIngestPipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
 		reorgMeta.GetBatchSize(), reorgMeta, backendCtx, collector)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
-		tbl, indexes, engines, writerCnt, reorgMeta, collector)
+		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, collector)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, collector)
 
 	operator.Compose(srcOp, scanOp)
@@ -195,7 +195,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		reorgMeta.GetBatchSize(), reorgMeta, nil, collector)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, taskID, subtaskID,
-		tbl, indexes, extStore, writerCnt,
+		tbl, indexes, extStore, srcChkPool, writerCnt,
 		onClose, memSizePerIndex, reorgMeta, tikvCodec,
 		collector,
 	)
@@ -254,9 +254,6 @@ type IndexRecordChunk struct {
 	Chunk *chunk.Chunk
 	Err   error
 	Done  bool
-	// releaseChunk releases the ownership of Chunk after the downstream consumer
-	// has finished using it.
-	releaseChunk func(*chunk.Chunk)
 
 	// tableScanRowCount is the number of rows scanned by the corresponding TableScanTask.
 	// If the index is a partial index, the number of rows in the Chunk may be less than tableScanRowCount.
@@ -576,15 +573,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResult := IndexRecordChunk{
-				ID:                task.ID,
-				Chunk:             srcChk,
-				Done:              done,
-				ctx:               w.ctx,
-				tableScanRowCount: tableScanRowCount - lastTableScanRowCount,
-				conditionPushed:   conditionPushed,
-				releaseChunk:      w.recycleChunk,
-			}
+			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
 			lastTableScanRowCount = tableScanRowCount
 			sender(idxResult)
 			if w.cpOp != nil {
@@ -633,6 +622,7 @@ func NewWriteExternalStoreOperator(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	store storeapi.Storage,
+	srcChunkPool *sync.Pool,
 	concurrency int,
 	onClose external.OnWriterCloseFunc,
 	memoryQuota uint64,
@@ -668,16 +658,17 @@ func NewWriteExternalStoreOperator(
 			}
 
 			w := &indexIngestWorker{
-				ctx:        ctx,
-				tbl:        tbl,
-				indexes:    indexes,
-				copCtx:     copCtx,
-				se:         nil,
-				sessPool:   sessPool,
-				writers:    writers,
-				reorgMeta:  reorgMeta,
-				totalCount: totalCount,
-				collector:  collector,
+				ctx:          ctx,
+				tbl:          tbl,
+				indexes:      indexes,
+				copCtx:       copCtx,
+				se:           nil,
+				sessPool:     sessPool,
+				writers:      writers,
+				srcChunkPool: srcChunkPool,
+				reorgMeta:    reorgMeta,
+				totalCount:   totalCount,
+				collector:    collector,
 			}
 			err := w.initIndexConditionCheckers()
 			if err != nil {
@@ -721,6 +712,7 @@ func NewIndexIngestOperator(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	engines []ingest.Engine,
+	srcChunkPool *sync.Pool,
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
 	collector execute.Collector,
@@ -751,11 +743,12 @@ func NewIndexIngestOperator(
 				indexes: indexes,
 				copCtx:  copCtx,
 
-				se:        nil,
-				sessPool:  sessPool,
-				writers:   writers,
-				reorgMeta: reorgMeta,
-				collector: collector,
+				se:           nil,
+				sessPool:     sessPool,
+				writers:      writers,
+				srcChunkPool: srcChunkPool,
+				reorgMeta:    reorgMeta,
+				collector:    collector,
 			}
 			err := w.initIndexConditionCheckers()
 			if err != nil {
@@ -783,7 +776,8 @@ type indexIngestWorker struct {
 	se       *session.Session
 	restore  func(sessionctx.Context)
 
-	writers []ingest.Writer
+	writers      []ingest.Writer
+	srcChunkPool *sync.Pool
 	// only available in global sort
 	totalCount *atomic.Int64
 	collector  execute.Collector
@@ -792,7 +786,7 @@ type indexIngestWorker struct {
 func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) error {
 	defer func() {
 		if ck.Chunk != nil {
-			ck.releaseChunk(ck.Chunk)
+			w.srcChunkPool.Put(ck.Chunk)
 		}
 	}()
 	failpoint.InjectCall("mockIndexIngestWorkerFault")
