@@ -568,8 +568,6 @@ func TestStatusStorePreservesFailureStoreCountAndTracksZeroAliveStores(t *testin
 }
 
 func TestGetStatusFileName(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		name      string
 		subDir    string
