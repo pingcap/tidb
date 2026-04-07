@@ -103,6 +103,7 @@ var optRuleList = []base.LogicalOptRule{
 	&DeriveTopNFromWindow{},
 	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
+	&rule.OrderAwareJoinReorder{},
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
 	&rule.OuterJoinToSemiJoin{},

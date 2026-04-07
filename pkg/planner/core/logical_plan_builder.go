@@ -4429,6 +4429,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if isExplicitSetTablesNames {
 				// If `LockTableIDs` map is empty, it will lock all records from all tables.
 				// Besides, it will only lock the metioned in `of` part.
+				if b.ctx.GetSessionVars().StmtCtx.LockTableIDs == nil {
+					b.ctx.GetSessionVars().StmtCtx.LockTableIDs = make(map[int64]struct{})
+				}
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
 			// Use the already-resolved DBInfo to derive the privilege-check DB name.

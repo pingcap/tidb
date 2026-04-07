@@ -39,7 +39,6 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"go.uber.org/zap"
@@ -352,27 +351,30 @@ func (s *kvSizeSampler) sampleOneFile(
 	}()
 
 	var (
-		count        int
-		readRowCache []types.Datum
-		readFn       = parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey())
-		kvBatch      = newEncodedKVGroupBatch(ksCodec, maxRowCount)
+		count   int
+		kvBatch = newEncodedKVGroupBatch(ksCodec, maxRowCount)
 	)
 	for count < maxRowCount {
-		row, closed, readErr := readFn(ctx, readRowCache)
-		if readErr != nil {
-			return 0, 0, 0, readErr
-		}
-		if closed {
+		startPos, _ := parser.Pos()
+		if s.cfg.Format != DataFormatParquet && startPos >= chunk.Chunk.EndOffset {
 			break
 		}
-		readRowCache = row.row
-		if rowDelta := row.endOffset - row.startPos; rowDelta > 0 {
-			sourceSize += rowDelta
+
+		readErr := parser.ReadRow()
+		if readErr != nil {
+			if errors.Cause(readErr) == io.EOF {
+				break
+			}
+			return 0, 0, 0, common.ErrEncodeKV.Wrap(readErr).GenWithStackByArgs(chunk.GetKey(), startPos)
 		}
-		kvs, encodeErr := encoder.Encode(row.row, row.rowID)
-		row.resetFn()
+
+		lastRow := parser.LastRow()
+		sourceSize += s.sampledRowSourceSize(parser, startPos, lastRow)
+
+		kvs, encodeErr := encoder.Encode(lastRow.Row, lastRow.RowID)
+		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
-			return 0, 0, 0, common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(chunk.GetKey(), row.startPos)
+			return 0, 0, 0, common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(chunk.GetKey(), startPos)
 		}
 		if _, err = kvBatch.add(kvs); err != nil {
 			return 0, 0, 0, err
@@ -381,4 +383,20 @@ func (s *kvSizeSampler) sampleOneFile(
 	}
 	dataKVSize, indexKVSize = kvBatch.groupChecksum.DataAndIndexSumSize()
 	return sourceSize, dataKVSize, indexKVSize, nil
+}
+
+func (s *kvSizeSampler) sampledRowSourceSize(parser mydump.Parser, startPos int64, row mydump.Row) int64 {
+	// Sampling needs per-row source bytes, not buffered reader progress.
+	// SQL/CSV parsers expose byte offsets through Pos(), including compressed
+	// input where Pos() tracks uncompressed bytes and stays aligned with the
+	// RealSize-based source totals. Parquet Pos() is row-count based and must
+	// fall back to the row-size estimate.
+	if s.cfg.Format == DataFormatParquet {
+		return int64(row.Length)
+	}
+	endPos, _ := parser.Pos()
+	if rowDelta := endPos - startPos; rowDelta > 0 {
+		return rowDelta
+	}
+	return int64(row.Length)
 }

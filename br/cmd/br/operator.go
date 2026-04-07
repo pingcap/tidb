@@ -3,13 +3,23 @@
 package main
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
 )
+
+type crrCheckpointServiceStateKey struct{}
+
+type crrCheckpointServiceState struct {
+	service *service.Service
+	cleanup func()
+}
 
 func newOperatorCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -36,6 +46,7 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newListMigrationsCommand())
 	cmd.AddCommand(newMigrateToCommand())
 	cmd.AddCommand(newForceFlushCommand())
+	cmd.AddCommand(newCRRCheckpointCommand())
 	cmd.AddCommand(newChecksumCommand())
 	cmd.AddCommand(newTestStorageCommand())
 	cmd.AddCommand(newPitrChecksumCommand())
@@ -198,6 +209,57 @@ func newForceFlushCommand() *cobra.Command {
 	}
 	operator.DefineFlagsForForceFlushConfig(cmd.Flags())
 	return cmd
+}
+
+func newCRRCheckpointCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "crr-checkpoint",
+		Short: "run the CRR checkpoint service",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			state, err := getCRRCheckpointServiceState(cmd)
+			if err != nil {
+				return err
+			}
+			defer state.cleanup()
+			return state.service.Run(GetDefaultContext())
+		},
+	}
+	operator.DefineFlagsForCRRCheckpointConfig(cmd.Flags())
+	registerStatusServerPreparer(cmd, prepareCRRCheckpointStatusServer)
+	return cmd
+}
+
+func prepareCRRCheckpointStatusServer(cmd *cobra.Command) (statusServerRegistrar, error) {
+	cfg := operator.CRRCheckpointConfig{}
+	if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+		return nil, err
+	}
+	svc, cleanup, err := operator.NewCRRCheckpointService(GetDefaultContext(), tidbGlue, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	baseCtx := cmd.Context()
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
+	cmd.SetContext(context.WithValue(baseCtx, crrCheckpointServiceStateKey{}, &crrCheckpointServiceState{
+		service: svc,
+		cleanup: cleanup,
+	}))
+	return svc.Register, nil
+}
+
+func getCRRCheckpointServiceState(cmd *cobra.Command) (*crrCheckpointServiceState, error) {
+	if cmd.Context() == nil {
+		return nil, errors.New("crr checkpoint service context is missing")
+	}
+	state, ok := cmd.Context().Value(crrCheckpointServiceStateKey{}).(*crrCheckpointServiceState)
+	if !ok || state == nil {
+		return nil, errors.New("crr checkpoint service is not prepared")
+	}
+	return state, nil
 }
 
 func newTestStorageCommand() *cobra.Command {

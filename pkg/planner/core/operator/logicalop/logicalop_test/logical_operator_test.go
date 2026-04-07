@@ -204,7 +204,7 @@ func TestLogicalProjectionPushDownTopN(t *testing.T) {
 col16 json DEFAULT NULL,
 col17 json DEFAULT NULL
 );`)
-	sql := `explain format='brief' SELECT
+	sql := `explain format='plan_tree' SELECT
        s.column16 AS column16,
        s.column17 AS column17
 FROM
@@ -221,22 +221,22 @@ ORDER BY CONVERT(column16 USING GBK) ASC,column17 ASC
 LIMIT 0,
       20;`
 	tk.MustQuery(sql).Check(testkit.Rows(
-		"Projection 20.00 root  Column#5, Column#6",
-		"└─TopN 20.00 root  Column#7, Column#6, offset:0, count:20",
-		"  └─Projection 10000.00 root  Column#5, Column#6, convert(cast(Column#5, var_string(16777216)), gbk)->Column#7",
-		"    └─TableReader 10000.00 root  data:Projection",
-		"      └─Projection 10000.00 cop[tikv]  json_extract(test.table_test.col16, $[].optUid)->Column#5, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#6",
-		"        └─TableFullScan 10000.00 cop[tikv] table:table_test keep order:false, stats:pseudo"))
+		"Projection root  Column, Column",
+		"└─TopN root  Column, Column, offset:0, count:20",
+		"  └─Projection root  Column, Column, convert(cast(Column, var_string(16777216)), gbk)->Column",
+		"    └─TableReader root  data:Projection",
+		"      └─Projection cop[tikv]  json_extract(test.table_test.col16, $[].optUid)->Column, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column",
+		"        └─TableFullScan cop[tikv] table:table_test keep order:false, stats:pseudo"))
 	tk.MustExec(`INSERT INTO mysql.opt_rule_blacklist VALUES("topn_push_down");`)
 	tk.MustExec(`admin reload opt_rule_blacklist;`)
 	tk.MustQuery(sql).Check(testkit.Rows(
-		"Limit 20.00 root  offset:0, count:20",
-		"└─Projection 20.00 root  Column#5, Column#6",
-		"  └─Sort 20.00 root  Column#7, Column#6",
-		"    └─Projection 10000.00 root  Column#5, Column#6, convert(cast(Column#5, var_string(16777216)), gbk)->Column#7",
-		"      └─TableReader 10000.00 root  data:Projection",
-		"        └─Projection 10000.00 cop[tikv]  json_extract(test.table_test.col16, $[].optUid)->Column#5, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#6",
-		"          └─TableFullScan 10000.00 cop[tikv] table:table_test keep order:false, stats:pseudo"))
+		"Limit root  offset:0, count:20",
+		"└─Projection root  Column, Column",
+		"  └─Sort root  Column, Column",
+		"    └─Projection root  Column, Column, convert(cast(Column, var_string(16777216)), gbk)->Column",
+		"      └─TableReader root  data:Projection",
+		"        └─Projection cop[tikv]  json_extract(test.table_test.col16, $[].optUid)->Column, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column",
+		"          └─TableFullScan cop[tikv] table:table_test keep order:false, stats:pseudo"))
 }
 
 func TestLogicalTopNPruneColumnsRefreshesSchemaBeforeInlineProjection(t *testing.T) {
@@ -344,9 +344,9 @@ func TestLogicalExpandBuildKeyInfo(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format=brief " + tt).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='plan_tree' " + tt).Rows())
 			})
-			res := tk.MustQuery("explain format=brief " + tt)
+			res := tk.MustQuery("explain format='plan_tree' " + tt)
 			res.Check(testkit.Rows(output[i].Plan...))
 		}
 	})
