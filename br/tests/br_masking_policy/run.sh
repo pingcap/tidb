@@ -66,7 +66,7 @@ fi
 
 # Verify masking policy metadata behavior for db-scope restore.
 # For `restore db`, filter is `<db>.*`, so mysql system tables are filtered out.
-# Therefore `mysql.tidb_masking_policy` entries are not restored in this mode.
+# Therefore policy metadata should not be attached to the restored table.
 echo "Checking masking policy after restore..."
 policy_output_after=$(run_sql "SHOW MASKING POLICIES FOR ${DB}.t;")
 policy_count_after=$(printf '%s\n' "$policy_output_after" | grep -c "test_policy" || true)
@@ -75,7 +75,17 @@ if [ "$policy_count_after" != "0" ]; then
     exit 1
 fi
 
-policy_row_count_output_after=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE db_name='${DB}' AND table_name='t' AND policy_name='test_policy';")
+# Use the restored table ID for verification. Name-based filtering can hit stale
+# metadata rows for dropped tables in the same cluster and become flaky.
+restored_table_id_output=$(run_sql "SELECT TIDB_TABLE_ID FROM information_schema.TABLES WHERE TABLE_SCHEMA='${DB}' AND TABLE_NAME='t';")
+restored_table_id=$(printf '%s\n' "$restored_table_id_output" | awk -F': ' '/TIDB_TABLE_ID/ {print $2; found=1; exit} END { if (!found) exit 1 }') || {
+    echo "TEST: [$TEST_NAME] failed! Unable to parse restored table ID from SQL output:"
+    printf '%s\n' "$restored_table_id_output"
+    exit 1
+}
+restored_table_id=$(printf '%s' "$restored_table_id" | tr -d '[:space:]')
+
+policy_row_count_output_after=$(run_sql "SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE table_id=${restored_table_id} AND policy_name='test_policy';")
 policy_row_count_after=$(printf '%s\n' "$policy_row_count_output_after" | awk -F': ' '/COUNT\(\*\)/ {print $2; found=1; exit} END { if (!found) exit 1 }') || {
     echo "TEST: [$TEST_NAME] failed! Unable to parse masking policy row count from SQL output:"
     printf '%s\n' "$policy_row_count_output_after"
@@ -83,7 +93,7 @@ policy_row_count_after=$(printf '%s\n' "$policy_row_count_output_after" | awk -F
 }
 policy_row_count_after=$(printf '%s' "$policy_row_count_after" | tr -d '[:space:]')
 if [ "$policy_row_count_after" != "0" ]; then
-    echo "TEST: [$TEST_NAME] failed! Expected 0 rows in mysql.tidb_masking_policy after db-scope restore, got $policy_row_count_after"
+    echo "TEST: [$TEST_NAME] failed! Expected 0 rows in mysql.tidb_masking_policy for restored table_id=${restored_table_id} after db-scope restore, got $policy_row_count_after"
     exit 1
 fi
 
