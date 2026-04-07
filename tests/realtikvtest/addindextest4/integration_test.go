@@ -489,3 +489,71 @@ func TestAddIndexResumesFromCheckpointAfterPartialImport(t *testing.T) {
 	t.Run("dist_task_off", func(t *testing.T) { runCase(t, false) })
 	t.Run("dist_task_on", func(t *testing.T) { runCase(t, true) })
 }
+
+// TestAddIndexResumesFromCheckpointAfterPartialScan exercises the streaming
+// scanRecords path on a partial-error scan: a scan task fetches one chunk
+// successfully, then errors mid-task before reaching task.End. The DDL
+// framework retries the failed subtask, and the retry must re-scan the
+// unread range so the unique index ends up consistent with the table.
+//
+// Bug class background: a buffer-then-flush version of scanRecords that
+// post-processes a slice with `done := i == len(idxResults)-1` would mark the
+// single buffered chunk with last=true even though the scan errored before
+// reaching task.End. Combined with all writers catching up via FinishChunk,
+// every gating condition in CheckpointManager.afterFlush could become
+// satisfied (lastBatchRead=true, writtenKeys>=totalKeys, chunksFinished>=
+// chunksTotal), advancing the flushed-key watermark past unread keys. The
+// retry would then resume from the advanced watermark and silently skip the
+// unscanned range, leaving the index missing rows. The streaming refactor
+// uses fetchTableScanResult's per-fetch `done` directly, so last=true is only
+// passed to UpdateChunk when the scan actually reaches task.End.
+func TestAddIndexResumesFromCheckpointAfterPartialScan(t *testing.T) {
+	runCase := func(t *testing.T, distTaskOn bool) {
+		store := realtikvtest.CreateMockStoreAndSetup(t)
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+
+		if kerneltype.IsClassic() {
+			tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
+			if distTaskOn {
+				tk.MustExec("set global tidb_enable_dist_task = 1")
+			} else {
+				tk.MustExec("set global tidb_enable_dist_task = 0")
+			}
+		}
+		ingest.ForceSyncFlagForTest.Store(true)
+
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a bigint primary key, b bigint)")
+		for i := 0; i < 2000; i++ {
+			tk.MustExec("insert into t values (?, ?)", i, i)
+		}
+
+		// Let the first chunk fetch in scanRecords succeed, then inject an
+		// error on the second fetch. This delivers exactly one partial chunk
+		// to the ingest worker before the scan task bails out, exercising the
+		// partial-scan checkpoint path. Subsequent fetches (in the retry) see
+		// the failpoint as already consumed and proceed normally.
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/ddl/mockScanRecordPartialError",
+			"1*return(false)->1*return(true)")
+		defer testfailpoint.Disable(t,
+			"github.com/pingcap/tidb/pkg/ddl/mockScanRecordPartialError")
+
+		tk.MustExec("alter table t add unique index idx_b(b)")
+
+		tblCntStr := tk.MustQuery("select count(*) from t").Rows()[0][0].(string)
+		idxCntStr := tk.MustQuery("select count(*) from t use index(idx_b)").Rows()[0][0].(string)
+		tblCnt, err := strconv.Atoi(tblCntStr)
+		require.NoError(t, err)
+		idxCnt, err := strconv.Atoi(idxCntStr)
+		require.NoError(t, err)
+		require.Equal(t, tblCnt, idxCnt)
+
+		tk.MustExec("admin check table t")
+	}
+
+	t.Run("dist_task_off", func(t *testing.T) { runCase(t, false) })
+	t.Run("dist_task_on", func(t *testing.T) { runCase(t, true) })
+}

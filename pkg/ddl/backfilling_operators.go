@@ -564,6 +564,11 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk)
+			failpoint.Inject("mockScanRecordPartialError", func(val failpoint.Value) {
+				if shouldFail, _ := val.(bool); shouldFail {
+					err = errors.New("mock partial scan error")
+				}
+			})
 			if err != nil || scanCtx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
