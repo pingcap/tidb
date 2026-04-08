@@ -83,7 +83,7 @@ const (
 	flagClusterSSLCA             = "cluster-ssl-ca"
 	flagClusterSSLCert           = "cluster-ssl-cert"
 	flagClusterSSLKey            = "cluster-ssl-key"
-  flagPartitions               = "partitions"
+    flagPartitions               = "partitions"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
