@@ -22,12 +22,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -40,8 +45,10 @@ var (
 
 type cachedTable struct {
 	TableCommon
-	cacheData atomic.Pointer[cacheData]
-	totalSize int64
+	cacheData      atomic.Pointer[cacheData]
+	resultCache    atomic.Pointer[resultSetCache]
+	resultCacheMem atomic.Int64
+	totalSize      int64
 	// StateRemote is not thread-safe, this tokenLimit is used to keep only one visitor.
 	tokenLimit
 }
@@ -71,6 +78,8 @@ type cacheData struct {
 	Start uint64
 	Lease uint64
 	kv.MemBuffer
+	datumCache       *CachedDatumData                // pre-decoded datum cache for table scans
+	indexDatumCaches map[int64]*CachedIndexDatumData // pre-decoded datum caches for index scans, keyed by index ID
 }
 
 func leaseFromTS(ts uint64, leaseDuration time.Duration) uint64 {
@@ -205,14 +214,15 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 		return
 	}
 	if succ {
+		c.invalidateResultCache() // Data is about to be reloaded, old result sets are stale.
 		c.cacheData.Store(&cacheData{
 			Start:     ts,
 			Lease:     lease,
 			MemBuffer: nil, // Async loading, this will be set later.
 		})
 
-		// Make the load data process async, in case that loading data takes longer the
-		// lease duration, then the loaded data get staled and that process repeats forever.
+		// Make the load data process async, in case that loading data takes longer than the
+		// lease duration, then the loaded data becomes stale and that process repeats forever.
 		go func() {
 			start := time.Now()
 			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store)
@@ -222,12 +232,17 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 				return
 			}
 
+			datumCache := c.buildDatumCache(mb)
+			indexDatumCaches := c.buildIndexDatumCaches(mb)
+
 			tmp := c.cacheData.Load()
 			if tmp != nil && tmp.Start == ts {
 				c.cacheData.Store(&cacheData{
-					Start:     startTS,
-					Lease:     tmp.Lease,
-					MemBuffer: mb,
+					Start:            startTS,
+					Lease:            tmp.Lease,
+					MemBuffer:        mb,
+					datumCache:       datumCache,
+					indexDatumCaches: indexDatumCaches,
 				})
 				atomic.StoreInt64(&c.totalSize, totalSize)
 			}
@@ -236,7 +251,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 	// Current status is not suitable to cache.
 }
 
-const cachedTableSizeLimit = 64 * (1 << 20)
+const cachedTableSizeLimit = 256 * (1 << 20)
 
 // AddRecord implements the AddRecord method for the table.Table interface.
 func (c *cachedTable) AddRecord(sctx table.MutateContext, txn kv.Transaction, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
@@ -255,7 +270,7 @@ func txnCtxAddCachedTable(sctx table.MutateContext, tid int64, handle *cachedTab
 
 // UpdateRecord implements table.Table
 func (c *cachedTable) UpdateRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, oldData, newData []types.Datum, touched []bool, opts ...table.UpdateRecordOption) error {
-	// Prevent furthur writing when the table is already too large.
+	// Prevent further writing when the table is already too large.
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
@@ -288,19 +303,197 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 		if !kv.IsTxnRetryableError(err) {
 			log.Warn("Renew read lease error", zap.Error(err))
 		}
+		c.invalidateResultCache() // Renewal failed, data may have changed.
 		return
 	}
 	if newLease > 0 {
 		c.cacheData.Store(&cacheData{
-			Start:     data.Start,
-			Lease:     newLease,
-			MemBuffer: data.MemBuffer,
+			Start:            data.Start,
+			Lease:            newLease,
+			MemBuffer:        data.MemBuffer,
+			datumCache:       data.datumCache,
+			indexDatumCaches: data.indexDatumCaches,
 		})
+	} else {
+		c.invalidateResultCache() // Lease not renewed, data may have changed.
 	}
 
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
 		TestMockRenewLeaseABA2 <- struct{}{}
 	})
+}
+
+// buildDatumCache builds a CachedDatumData from the given MemBuffer.
+// It constructs the decoder parameters from the table schema.
+// Returns nil if building fails (non-fatal, the cache simply won't be available).
+func (c *cachedTable) buildDatumCache(mb kv.MemBuffer) *CachedDatumData {
+	cols := c.Cols()
+	tblMeta := c.Meta()
+	defaultExprCtx := exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(exprstatic.NewEvalContext(exprstatic.WithLocation(time.UTC))),
+	)
+
+	colInfo := make([]rowcodec.ColInfo, len(cols))
+	fieldTypes := make([]*types.FieldType, len(cols))
+	for i, col := range cols {
+		ft := rowcodec.FieldTypeFromModelColumn(col.ColumnInfo)
+		colInfo[i] = rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblMeta.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
+			Ft:         ft,
+		}
+		fieldTypes[i] = ft
+	}
+
+	pkColIDs := TryGetCommonPkColumnIds(tblMeta)
+	if len(pkColIDs) == 0 {
+		if tblMeta.PKIsHandle {
+			// For PKIsHandle tables, the PK value is stored in the row key (handle),
+			// not in the row value. The ChunkDecoder needs the actual column ID to
+			// match it in tryAppendHandleColumn and write the handle value into the chunk.
+			for _, col := range cols {
+				if mysql.HasPriKeyFlag(col.GetFlag()) {
+					pkColIDs = []int64{col.ID}
+					break
+				}
+			}
+		}
+		if len(pkColIDs) == 0 {
+			pkColIDs = []int64{-1}
+		}
+	}
+
+	defDatum := func(i int, chk *chunk.Chunk) error {
+		d, err := table.GetColOriginDefaultValueWithoutStrictSQLMode(defaultExprCtx, cols[i].ColumnInfo)
+		if err != nil {
+			return err
+		}
+		chk.AppendDatum(i, &d)
+		return nil
+	}
+
+	dc, err := BuildCachedDatumData(mb, c.tableID, colInfo, pkColIDs, defDatum, fieldTypes)
+	if err != nil {
+		log.Warn("build datum cache failed", zap.Error(err))
+		return nil
+	}
+	return dc
+}
+
+func (c *cachedTable) GetCachedDatumData() *CachedDatumData {
+	data := c.cacheData.Load()
+	if data == nil {
+		return nil
+	}
+	return data.datumCache
+}
+
+// GetCachedDatumDataForMemBuffer returns the datum cache only when it belongs to
+// the same cacheData generation as mb. This prevents mixing a MemBuffer from one
+// lease generation with pre-decoded datums from a later reload.
+func (c *cachedTable) GetCachedDatumDataForMemBuffer(mb kv.MemBuffer) *CachedDatumData {
+	data := c.cacheData.Load()
+	if data == nil || data.MemBuffer != mb {
+		return nil
+	}
+	return data.datumCache
+}
+
+// buildIndexDatumCaches builds CachedIndexDatumData for all public indexes.
+// Returns nil if no indexes can be cached (non-fatal).
+func (c *cachedTable) buildIndexDatumCaches(mb kv.MemBuffer) map[int64]*CachedIndexDatumData {
+	tblMeta := c.Meta()
+	indices := tblMeta.Indices
+	if len(indices) == 0 {
+		return nil
+	}
+
+	caches := make(map[int64]*CachedIndexDatumData, len(indices))
+	for _, idx := range indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		dc, err := BuildCachedIndexDatumData(mb, c.tableID, idx, tblMeta)
+		if err != nil {
+			log.Warn("build index datum cache failed",
+				zap.String("index", idx.Name.O),
+				zap.Error(err))
+			continue
+		}
+		caches[idx.ID] = dc
+	}
+	if len(caches) == 0 {
+		return nil
+	}
+	return caches
+}
+
+// GetCachedIndexDatumData returns the pre-decoded index datum cache for the given index ID.
+func (c *cachedTable) GetCachedIndexDatumData(indexID int64) *CachedIndexDatumData {
+	data := c.cacheData.Load()
+	if data == nil || data.indexDatumCaches == nil {
+		return nil
+	}
+	return data.indexDatumCaches[indexID]
+}
+
+// GetCachedIndexDatumDataForMemBuffer returns the index datum cache only when it
+// belongs to the same cacheData generation as mb.
+func (c *cachedTable) GetCachedIndexDatumDataForMemBuffer(mb kv.MemBuffer, indexID int64) *CachedIndexDatumData {
+	data := c.cacheData.Load()
+	if data == nil || data.MemBuffer != mb || data.indexDatumCaches == nil {
+		return nil
+	}
+	return data.indexDatumCaches[indexID]
+}
+
+func (c *cachedTable) getResultCache() *resultSetCache {
+	return c.resultCache.Load()
+}
+
+func (c *cachedTable) getOrCreateResultCache() *resultSetCache {
+	if rc := c.resultCache.Load(); rc != nil {
+		return rc
+	}
+	rc := newResultSetCache()
+	if c.resultCache.CompareAndSwap(nil, rc) {
+		return rc
+	}
+	return c.resultCache.Load()
+}
+
+func (c *cachedTable) invalidateResultCache() {
+	old := c.resultCache.Swap(nil)
+	if accounted := c.resultCacheMem.Swap(0); accounted > 0 {
+		metrics.ResultCacheMemoryGauge.Sub(float64(accounted))
+	}
+	if old != nil {
+		if n := old.Len(); n > 0 {
+			metrics.ResultCacheEvictCounter.Add(float64(n))
+		}
+	}
+}
+
+func (c *cachedTable) GetCachedResult(key table.ResultCacheKey, paramBytes []byte) ([]*chunk.Chunk, []*types.FieldType, bool) {
+	rc := c.getResultCache()
+	if rc == nil {
+		return nil, nil, false
+	}
+	return rc.Get(key, paramBytes)
+}
+
+func (c *cachedTable) PutCachedResult(key table.ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool {
+	rc := c.getOrCreateResultCache()
+	paramCopy := append([]byte(nil), paramBytes...)
+	ok, memSize := rc.put(key, paramCopy, chunks, fieldTypes)
+	if ok && memSize > 0 {
+		// If the result cache is invalidated concurrently, don't account its memory in metrics.
+		if c.resultCache.Load() == rc {
+			c.resultCacheMem.Add(memSize)
+			metrics.ResultCacheMemoryGauge.Add(float64(memSize))
+		}
+	}
+	return ok
 }
 
 const cacheTableWriteLease = 5 * time.Second
@@ -350,6 +543,6 @@ func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
 func (c *cachedTable) lockForWrite(ctx context.Context) (uint64, error) {
 	handle := c.TakeStateRemoteHandle()
 	defer c.PutStateRemoteHandle(handle)
-
+	c.invalidateResultCache() // Write incoming, result cache is no longer valid.
 	return handle.LockForWrite(ctx, c.Meta().ID, cacheTableWriteLease)
 }

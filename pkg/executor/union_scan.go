@@ -27,6 +27,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -58,6 +59,11 @@ type UnionScanExec struct {
 
 	// cacheTable not nil means it's reading from cached table.
 	cacheTable kv.MemBuffer
+	// datumCache holds pre-decoded datum cache for cached tables.
+	// When non-nil, memCachedDatumIter is used to skip KV decode.
+	datumCache *tables.CachedDatumData
+	// indexDatumCaches holds pre-decoded datum caches for index scans, keyed by index ID.
+	indexDatumCaches map[int64]*tables.CachedIndexDatumData
 
 	// If partitioned table and the physical table id is encoded in the chuck at this column index
 	// used with dynamic prune mode
@@ -132,6 +138,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		return err
 	}
 	us.snapshotChunkBuffer = exec.TryNewCacheChunk(us)
+	us.mutableRow = chunk.MutRowFromTypes(exec.RetTypes(us))
 	return nil
 }
 
@@ -144,7 +151,13 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// the for-loop may exit without read one single row!
 	req.GrowAndReset(us.MaxChunkSize())
 
-	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(us))
+	// For cached tables, getSnapshotRow() always returns nil, so the merge
+	// logic in getOneRow() is unnecessary. Use a dedicated fast path that
+	// reads directly from addedRowsIter.
+	if us.cacheTable != nil {
+		return us.nextForCacheTable(req)
+	}
+
 	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
@@ -154,11 +167,11 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if row == nil {
 			return nil
 		}
-		mutableRow.SetDatums(row...)
+		us.mutableRow.SetDatums(row...)
 
 		sctx := us.Ctx()
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), us.mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
@@ -172,16 +185,71 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if (mysql.HasNotNullFlag(us.columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(us.columns[idx].GetFlag())) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(us.columns[idx])
 			}
-			mutableRow.SetDatum(idx, castDatum)
+			us.mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, us.mutableRow.ToRow())
 		if err != nil {
 			return err
 		}
 		if matched {
-			req.AppendRow(mutableRow.ToRow())
+			req.AppendRow(us.mutableRow.ToRow())
 		}
+	}
+	return nil
+}
+
+// nextForCacheTable is a fast path for cached tables. Since cached tables have
+// no snapshot rows (getSnapshotRow always returns nil), we skip the merge logic
+// and read directly from addedRowsIter.
+func (us *UnionScanExec) nextForCacheTable(req *chunk.Chunk) error {
+	needsMutableRow := len(us.virtualColumnIndex) > 0 || len(us.conditionsWithVirCol) > 0
+	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
+		row, err := us.addedRowsIter.Next()
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			return nil
+		}
+
+		if !needsMutableRow {
+			// Fast path: no virtual columns and no conditions,
+			// write datums directly to req without the intermediate mutableRow copy.
+			for i := range row {
+				req.AppendDatum(i, &row[i])
+			}
+			continue
+		}
+
+		us.mutableRow.SetDatums(row...)
+
+		sctx := us.Ctx()
+		for _, idx := range us.virtualColumnIndex {
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), us.mutableRow.ToRow())
+			if err != nil {
+				return err
+			}
+			castDatum, err := table.CastValue(us.Ctx(), datum, us.columns[idx], false, true)
+			if err != nil {
+				return err
+			}
+			if (mysql.HasNotNullFlag(us.columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(us.columns[idx].GetFlag())) && castDatum.IsNull() {
+				castDatum = table.GetZeroValue(us.columns[idx])
+			}
+			us.mutableRow.SetDatum(idx, castDatum)
+		}
+
+		if len(us.conditionsWithVirCol) > 0 {
+			matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, us.mutableRow.ToRow())
+			if err != nil {
+				return err
+			}
+			if !matched {
+				continue
+			}
+		}
+		req.AppendRow(us.mutableRow.ToRow())
 	}
 	return nil
 }

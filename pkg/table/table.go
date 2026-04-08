@@ -534,6 +534,12 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 
+// ResultCacheKey is the lookup key for result set caching on cached tables.
+type ResultCacheKey struct {
+	PlanDigest [16]byte // digest of the normalized plan
+	ParamHash  uint64   // hash distinguishing queries with same plan shape but different values
+}
+
 // CachedTable is a Table, and it has a UpdateLockForRead() method
 // UpdateLockForRead() according to the reasons for not meeting the read conditions, update the lock information,
 // And at the same time reload data from the original table.
@@ -553,6 +559,17 @@ type CachedTable interface {
 	// 'exit' is a channel to tell the keep alive goroutine to exit.
 	// The result is sent to the 'wg' channel.
 	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
+
+	// GetCachedResult looks up a previously cached query result set.
+	// paramBytes is the raw encoded parameter bytes for secondary verification
+	// against hash collisions. Returns the cached chunks, their field types,
+	// and whether the lookup was a hit.
+	GetCachedResult(key ResultCacheKey, paramBytes []byte) ([]*chunk.Chunk, []*types.FieldType, bool)
+
+	// PutCachedResult stores a query result set in the cache.
+	// paramBytes is stored alongside the entry for secondary verification on future lookups.
+	// Returns false if the cache rejects the entry (e.g. memory/entry limits exceeded).
+	PutCachedResult(key ResultCacheKey, paramBytes []byte, chunks []*chunk.Chunk, fieldTypes []*types.FieldType) bool
 }
 
 // CheckRowConstraint verify row check constraints.

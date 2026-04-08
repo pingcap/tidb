@@ -956,6 +956,8 @@ const (
 	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
 	// TiDBPlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
 	TiDBPlanCacheMaxPlanSize = "tidb_plan_cache_max_plan_size"
+	// TiDBPlanCachePolicy controls how plan cache is enabled.
+	TiDBPlanCachePolicy = "tidb_plan_cache_policy"
 	// TiDBPlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.
 	TiDBPlanCacheInvalidationOnFreshStats = "tidb_plan_cache_invalidation_on_fresh_stats"
@@ -1674,6 +1676,7 @@ const (
 	DefTiDBEnableNonPreparedPlanCacheForDML           = true
 	DefTiDBNonPreparedPlanCacheSize                   = 100
 	DefTiDBPlanCacheMaxPlanSize                       = 2 * size.MB
+	DefTiDBPlanCachePolicy                            = PlanCachePolicyAll
 	DefTiDBInstancePlanCacheMaxMemSize                = 100 * size.MB
 	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
 	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
@@ -2124,6 +2127,11 @@ const (
 	StrategyConservative = "conservative"
 	// StrategyCustom is a choice of variable TiDBPipelinedDmlResourcePolicy,
 	StrategyCustom = "custom"
+
+	// PlanCachePolicyAll means all cacheable statements can use plan cache.
+	PlanCachePolicyAll = "all"
+	// PlanCachePolicyHintOnly means only statements with the USE_PLAN_CACHE() hint can use plan cache.
+	PlanCachePolicyHintOnly = "hint_only"
 
 	// IndexLookUpPushDownPolicyHintOnly indicates only use the hint to decide whether to push down the index lookup or not.
 	IndexLookUpPushDownPolicyHintOnly = "hint-only"

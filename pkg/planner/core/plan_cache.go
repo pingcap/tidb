@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -198,6 +199,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
+	var matchedBinding *bindinfo.Binding
 	cacheEnabled := false
 	if isNonPrepared {
 		stmtCtx.SetCacheType(contextutil.SessionNonPrepared)
@@ -207,7 +209,14 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		cacheEnabled = sessVars.EnablePreparedPlanCache
 	}
 	if stmt.StmtCacheable && cacheEnabled {
-		stmtCtx.EnablePlanCache()
+		if sessVars.PlanCachePolicy == vardef.PlanCachePolicyHintOnly && !stmt.UsePlanCacheHint {
+			matchedBinding = matchSQLBindingWithCache(sctx, stmt)
+		}
+		if allowPlanCacheByPolicy(sctx, stmt, matchedBinding) {
+			stmtCtx.EnablePlanCache()
+		} else {
+			stmtCtx.WarnSkipPlanCache("the switch 'tidb_plan_cache_policy' is set to hint_only and no USE_PLAN_CACHE() hint is found")
+		}
 	}
 	if stmt.UncacheableReason != "" {
 		stmtCtx.WarnSkipPlanCache(stmt.UncacheableReason)
@@ -216,7 +225,10 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	var cacheKey, binding, reason string
 	var cacheable bool
 	if stmtCtx.UseCache() {
-		cacheKey, binding, cacheable, reason, err = NewPlanCacheKey(sctx, stmt)
+		if matchedBinding == nil {
+			matchedBinding = matchSQLBindingWithCache(sctx, stmt)
+		}
+		cacheKey, binding, cacheable, reason, err = newPlanCacheKeyWithMatchedBinding(sctx, stmt, matchedBinding)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -240,6 +252,30 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, binding, paramTypes)
+}
+
+func allowPlanCacheByPolicy(sctx sessionctx.Context, stmt *PlanCacheStmt, matchedBinding *bindinfo.Binding) bool {
+	if sctx.GetSessionVars().PlanCachePolicy != vardef.PlanCachePolicyHintOnly {
+		return true
+	}
+	if stmt.UsePlanCacheHint {
+		return true
+	}
+	return bindingHasUsePlanCacheHint(matchedBinding)
+}
+
+func matchSQLBindingWithCache(sctx sessionctx.Context, stmt *PlanCacheStmt) *bindinfo.Binding {
+	matchedBinding, matched, _ := bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	if !matched {
+		return nil
+	}
+	return matchedBinding
+}
+
+func bindingHasUsePlanCacheHint(matchedBinding *bindinfo.Binding) bool {
+	return matchedBinding != nil &&
+		matchedBinding.Hint != nil &&
+		matchedBinding.Hint.ContainTableHint(hint.HintUsePlanCache)
 }
 
 func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,

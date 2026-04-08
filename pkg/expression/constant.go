@@ -243,6 +243,21 @@ func (c *Constant) GetType(ctx EvalContext) *types.FieldType {
 	return c.RetType
 }
 
+// getTypeNonAlloc fills buf for ParamMarker constants without heap allocation,
+// or returns c.RetType for non-ParamMarker constants.
+func (c *Constant) getTypeNonAlloc(ctx EvalContext, buf *types.FieldType) *types.FieldType {
+	if c.ParamMarker != nil {
+		types.InitUnspecifiedFieldType(buf)
+		dt, err := c.ParamMarker.GetUserVar(ctx)
+		if err != nil {
+			return nil
+		}
+		types.InferParamTypeFromDatum(&dt, buf)
+		return buf
+	}
+	return c.RetType
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (c *Constant) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if c.DeferredExpr == nil {
@@ -363,12 +378,14 @@ func (c *Constant) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) 
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	var tpBuf types.FieldType
+	tp := c.getTypeNonAlloc(ctx, &tpBuf)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
 	} else if dt.Kind() == types.KindBinaryLiteral {
 		val, err := dt.GetBinaryLiteral().ToInt(typeCtx(ctx))
 		return int64(val), err != nil, err
-	} else if c.GetType(ctx).Hybrid() || dt.Kind() == types.KindString {
+	} else if tp.Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(typeCtx(ctx))
 		return res, false, err
 	} else if dt.Kind() == types.KindMysqlBit {
@@ -387,10 +404,12 @@ func (c *Constant) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, erro
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	var tpBuf types.FieldType
+	tp := c.getTypeNonAlloc(ctx, &tpBuf)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return 0, true, nil
 	}
-	if c.GetType(ctx).Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
+	if tp.Hybrid() || dt.Kind() == types.KindBinaryLiteral || dt.Kind() == types.KindString {
 		res, err := dt.ToFloat64(typeCtx(ctx))
 		return res, false, err
 	}
@@ -406,7 +425,9 @@ func (c *Constant) EvalString(ctx EvalContext, row chunk.Row) (string, bool, err
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	var tpBuf types.FieldType
+	tp := c.getTypeNonAlloc(ctx, &tpBuf)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return "", true, nil
 	}
 	res, err := dt.ToString()
@@ -422,14 +443,16 @@ func (c *Constant) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	var tpBuf types.FieldType
+	tp := c.getTypeNonAlloc(ctx, &tpBuf)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return nil, true, nil
 	}
 	res, err := dt.ToDecimal(typeCtx(ctx))
 	if err != nil {
 		return nil, false, err
 	}
-	if err := c.adjustDecimal(ctx, res); err != nil {
+	if err := c.adjustDecimalWithType(tp, res); err != nil {
 		return nil, false, err
 	}
 	return res, false, nil
@@ -444,6 +467,14 @@ func (c *Constant) adjustDecimal(ctx EvalContext, d *types.MyDecimal) error {
 	return nil
 }
 
+func (c *Constant) adjustDecimalWithType(tp *types.FieldType, d *types.MyDecimal) error {
+	_, frac := d.PrecisionAndFrac()
+	if frac < tp.GetDecimal() {
+		return d.Round(d, tp.GetDecimal(), types.ModeHalfUp)
+	}
+	return nil
+}
+
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
 func (c *Constant) EvalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error) {
 	dt, lazy, err := c.getLazyDatum(ctx, row)
@@ -453,7 +484,9 @@ func (c *Constant) EvalTime(ctx EvalContext, row chunk.Row) (val types.Time, isN
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	var tpBuf types.FieldType
+	tp := c.getTypeNonAlloc(ctx, &tpBuf)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return types.ZeroTime, true, nil
 	}
 	return dt.GetMysqlTime(), false, nil
@@ -468,7 +501,9 @@ func (c *Constant) EvalDuration(ctx EvalContext, row chunk.Row) (val types.Durat
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	var tpBuf types.FieldType
+	tp := c.getTypeNonAlloc(ctx, &tpBuf)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return types.Duration{}, true, nil
 	}
 	return dt.GetMysqlDuration(), false, nil
@@ -483,7 +518,9 @@ func (c *Constant) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	var tpBuf types.FieldType
+	tp := c.getTypeNonAlloc(ctx, &tpBuf)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return types.BinaryJSON{}, true, nil
 	}
 	return dt.GetMysqlJSON(), false, nil
@@ -498,7 +535,9 @@ func (c *Constant) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.Vect
 	if !lazy {
 		dt = c.Value
 	}
-	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+	var tpBuf types.FieldType
+	tp := c.getTypeNonAlloc(ctx, &tpBuf)
+	if tp.GetType() == mysql.TypeNull || dt.IsNull() {
 		return types.ZeroVectorFloat32, true, nil
 	}
 	return dt.GetVectorFloat32(), false, nil

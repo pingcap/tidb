@@ -92,6 +92,7 @@ func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
 func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, isPrepStmt bool,
 	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, base.Plan, int, error) {
 	vars := sctx.GetSessionVars()
+	usePlanCacheHint := hasUsePlanCacheHint(paramStmt)
 	var extractor paramMarkerExtractor
 	paramStmt.Accept(&extractor)
 
@@ -222,6 +223,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		UsePlanCacheHint:    usePlanCacheHint,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
@@ -236,6 +238,15 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, err
 	}
 	return preparedObj, p, paramCount, nil
+}
+
+func hasUsePlanCacheHint(stmt ast.StmtNode) bool {
+	for _, h := range hint.ExtractTableHintsFromStmtNode(stmt, nil) {
+		if h.HintName.L == hint.HintUsePlanCache {
+			return true
+		}
+	}
+	return false
 }
 
 // tableIDSlicePool is a pool for int64 slices used in hashInt64Uint64Map.
@@ -310,7 +321,15 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
-	if matchedBinding, matched, _ := bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo); matched {
+	matchedBinding, matched, _ := bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	if !matched {
+		matchedBinding = nil
+	}
+	return newPlanCacheKeyWithMatchedBinding(sctx, stmt, matchedBinding)
+}
+
+func newPlanCacheKeyWithMatchedBinding(sctx sessionctx.Context, stmt *PlanCacheStmt, matchedBinding *bindinfo.Binding) (key, binding string, cacheable bool, reason string, err error) {
+	if matchedBinding != nil {
 		// Record the matched binding SQL so the plan cache key reflects the effective hints.
 		binding = matchedBinding.BindSQL
 	}
@@ -737,6 +756,7 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	UsePlanCacheHint  bool   // Whether this stmt contains the USE_PLAN_CACHE() hint.
 
 	limits      []*ast.Limit
 	hasSubquery bool

@@ -1811,6 +1811,95 @@ func runPreparedPlanCacheForUpdateInTxn(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec(`deallocate prepare st`)
 }
 
+func TestPreparedPlanCacheHintOnlyWithoutUsePlanCacheHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	preparedCache := tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache").Rows()[0][0]
+	planCachePolicy := tk.MustQuery("select @@session.tidb_plan_cache_policy").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_prepared_plan_cache=%v", preparedCache))
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_plan_cache_policy=%q", planCachePolicy))
+	}()
+	tk.MustExec(`set @@session.tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`set @@session.tidb_plan_cache_policy='hint_only'`)
+
+	tableName := "t_prepare_hint_only_without_use_hint"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s (a int)", tableName))
+	tk.MustExec(fmt.Sprintf("insert into %s values (1)", tableName))
+
+	tk.MustExec(fmt.Sprintf("prepare st from 'select 1 from %s where a = ?'", tableName))
+	tk.MustExec("set @a=1")
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(fmt.Sprintf(
+		"create global binding for select 1 from %s where a = ? using select /*+ use_plan_cache() */ 1 from %s where a = ?",
+		tableName, tableName,
+	))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("select @@last_plan_from_binding, @@last_plan_from_cache").Check(testkit.Rows("1 0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("select @@last_plan_from_binding, @@last_plan_from_cache").Check(testkit.Rows("1 1"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("select @@last_plan_from_binding, @@last_plan_from_cache").Check(testkit.Rows("1 1"))
+}
+
+func TestPreparedPlanCacheHintOnlyWithBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	preparedCache := tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache").Rows()[0][0]
+	planCachePolicy := tk.MustQuery("select @@session.tidb_plan_cache_policy").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_prepared_plan_cache=%v", preparedCache))
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_plan_cache_policy=%q", planCachePolicy))
+	}()
+	tk.MustExec(`set @@session.tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`set @@session.tidb_plan_cache_policy='hint_only'`)
+
+	tableName := "t_prepare_hint_only_binding"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s (pk int, a int, primary key(pk))", tableName))
+	tk.MustExec(fmt.Sprintf("insert into %s values (1, 1), (2, 2)", tableName))
+
+	tk.MustExec(fmt.Sprintf("prepare st from 'select * from %s where pk >= ?'", tableName))
+	tk.MustExec("set @a=1")
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	tk.MustExec(fmt.Sprintf(
+		"CREATE BINDING FOR select * from %s where pk >= ? USING select /*+ use_plan_cache() */ * from %s where pk >= ?",
+		tableName, tableName,
+	))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("select @@last_plan_from_binding, @@last_plan_from_cache").Check(testkit.Rows("1 0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery("select @@last_plan_from_binding, @@last_plan_from_cache").Check(testkit.Rows("1 1"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(fmt.Sprintf(
+		"CREATE BINDING FOR select * from %s where pk >= ? USING select /*+ ignore_plan_cache() */ * from %s where pk >= ?",
+		tableName, tableName,
+	))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec("execute st using @a")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
 func TestNonPreparedPlanCacheSupportsFeatures(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

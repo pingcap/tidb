@@ -128,6 +128,8 @@ const (
 	SlowLogIsExplicitTxn = "IsExplicitTxn"
 	// SlowLogIsWriteCacheTable is used to indicate whether writing to the cache table need to wait for the read lock to expire.
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
+	// SlowLogResultCacheHit is used to indicate whether the result was served from the result set cache.
+	SlowLogResultCacheHit = "Result_cache_hit"
 	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
 	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
 	// SlowLogRRU is the read request_unit(RU) cost
@@ -279,6 +281,7 @@ type SlowQueryLogItems struct {
 	Succ              bool
 	IsExplicitTxn     bool
 	IsWriteCacheTable bool
+	ResultCacheHit    bool
 	IsSyncStatsFailed bool
 	Prepared          bool
 	// plan information
@@ -531,6 +534,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogIsSyncStatsFailed, strconv.FormatBool(logItems.IsSyncStatsFailed))
 	if s.StmtCtx.WaitLockLeaseTime > 0 {
 		writeSlowLogItem(&buf, SlowLogIsWriteCacheTable, strconv.FormatBool(logItems.IsWriteCacheTable))
+	}
+	if logItems.ResultCacheHit {
+		writeSlowLogItem(&buf, SlowLogResultCacheHit, strconv.FormatBool(logItems.ResultCacheHit))
 	}
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)

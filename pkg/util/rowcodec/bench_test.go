@@ -28,6 +28,96 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 )
 
+func BenchmarkDecodeWideRowToChunk(b *testing.B) {
+	makeBytes := func(n int) []byte {
+		bs := make([]byte, n)
+		for i := range bs {
+			bs[i] = byte('a' + (i % 26))
+		}
+		return bs
+	}
+
+	const (
+		intCols      = 48
+		bytesCols    = 12
+		timeCols     = 4
+		totalCols    = intCols + bytesCols + timeCols
+		batchSize    = 64
+		timestampFsp = 0
+	)
+
+	benchCases := []struct {
+		name     string
+		bytesLen int
+	}{
+		{name: "small_bytes_32", bytesLen: 32},
+		{name: "big_bytes_1024", bytesLen: 1024},
+	}
+
+	for _, tc := range benchCases {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			colIDs := make([]int64, totalCols)
+			values := make([]types.Datum, totalCols)
+			fieldTypes := make([]*types.FieldType, totalCols)
+			cols := make([]rowcodec.ColInfo, totalCols)
+
+			// Int columns.
+			for i := 0; i < intCols; i++ {
+				colIDs[i] = int64(i + 1)
+				values[i].SetInt64(int64(i))
+				ft := types.NewFieldType(mysql.TypeLonglong)
+				fieldTypes[i] = ft
+				cols[i] = rowcodec.ColInfo{ID: colIDs[i], Ft: ft}
+			}
+
+			// Bytes columns.
+			payload := makeBytes(tc.bytesLen)
+			for i := 0; i < bytesCols; i++ {
+				idx := intCols + i
+				colIDs[idx] = int64(idx + 1)
+				values[idx].SetBytes(payload)
+				ft := types.NewFieldType(mysql.TypeVarchar)
+				fieldTypes[idx] = ft
+				cols[idx] = rowcodec.ColInfo{ID: colIDs[idx], Ft: ft}
+			}
+
+			// Timestamp columns (exercise FromPackedUint + optional TZ conversion).
+			baseCore := types.FromDate(2024, 1, 2, 3, 4, 5, 0)
+			baseTS := types.NewTime(baseCore, mysql.TypeTimestamp, timestampFsp)
+			for i := 0; i < timeCols; i++ {
+				idx := intCols + bytesCols + i
+				colIDs[idx] = int64(idx + 1)
+				values[idx].SetMysqlTime(baseTS)
+				ft := types.NewFieldType(mysql.TypeTimestamp)
+				ft.SetDecimal(timestampFsp)
+				fieldTypes[idx] = ft
+				cols[idx] = rowcodec.ColInfo{ID: colIDs[idx], Ft: ft}
+			}
+
+			var enc rowcodec.Encoder
+			rowData, err := enc.Encode(time.Local, colIDs, values, nil, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			decoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.Local)
+			chk := chunk.NewChunkWithCapacity(fieldTypes, batchSize)
+
+			b.ResetTimer()
+			for range b.N {
+				chk.Reset()
+				for r := 0; r < batchSize; r++ {
+					if err := decoder.DecodeToChunk(rowData, kv.IntHandle(r), chk); err != nil {
+						b.Fatal(err)
+					}
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkChecksum(b *testing.B) {
 	b.ReportAllocs()
 	datums := types.MakeDatums(1, "abc", 1.1)

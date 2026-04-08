@@ -79,6 +79,18 @@ var (
 
 	// IndexLookUpCopTaskCount records the number of cop tasks in index look up executor
 	IndexLookUpCopTaskCount *prometheus.CounterVec
+
+	// ResultCacheHitCounter records the number of result cache hits on cached tables.
+	ResultCacheHitCounter prometheus.Counter
+
+	// ResultCacheMissCounter records the number of result cache misses on cached tables.
+	ResultCacheMissCounter prometheus.Counter
+
+	// ResultCacheMemoryGauge records the memory usage of result cache on cached tables.
+	ResultCacheMemoryGauge prometheus.Gauge
+
+	// ResultCacheEvictCounter records the number of result cache evictions (lease expiry).
+	ResultCacheEvictCounter prometheus.Counter
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -200,4 +212,40 @@ func InitExecutorMetrics() {
 			Name:      "index_lookup_cop_task_count",
 			Help:      "Counter for index lookup cop tasks",
 		}, []string{LblType})
+
+	ResultCacheHitCounter = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "result_cache_hit_total",
+			Help:      "Total number of result cache hits on cached tables.",
+		},
+	)
+
+	ResultCacheMissCounter = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "result_cache_miss_total",
+			Help:      "Total number of result cache misses on cached tables.",
+		},
+	)
+
+	ResultCacheMemoryGauge = metricscommon.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "result_cache_memory_bytes",
+			Help:      "Memory usage of result cache on cached tables.",
+		},
+	)
+
+	ResultCacheEvictCounter = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "result_cache_evict_total",
+			Help:      "Total number of result cache evictions (lease expiry).",
+		},
+	)
 }

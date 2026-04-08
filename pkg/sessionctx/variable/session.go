@@ -1644,6 +1644,9 @@ type SessionVars struct {
 	// PlanCacheMaxPlanSize controls the maximum size of a plan that can be cached.
 	PlanCacheMaxPlanSize uint64
 
+	// PlanCachePolicy controls how plan cache is enabled.
+	PlanCachePolicy string
+
 	// SessionPlanCacheSize controls the size of session plan cache.
 	SessionPlanCacheSize uint64
 
@@ -2458,6 +2461,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RegardNULLAsPoint:                vardef.DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:          vardef.DefOptEnableProjectionPushDown,
 		SkipMissingPartitionStats:        vardef.DefTiDBSkipMissingPartitionStats,
+		PlanCachePolicy:                  vardef.DefTiDBPlanCachePolicy,
 		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 	}
