@@ -318,7 +318,7 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 		TLS: tlsConfig,
 	})
 	if store.GetCodec().GetKeyspace() != nil {
-		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespaceSlash(store.GetCodec()))
+		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
 	}
 	if err != nil {
 		panic(err)
