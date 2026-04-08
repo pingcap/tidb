@@ -112,16 +112,21 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 	intest.Assert(len(ndvSketches) > 0, "ndvSketches shouldn't be empty")
 	intest.Assert(len(ndvSketches) == len(singletonSketches), "ndvSketches and singletonSketches should have the same length")
 	intest.AssertFunc(func() bool {
-		for i := range ndvSketches {
-			if ndvSketches[i] == nil {
-				return false
-			}
-			if singletonSketches[i] == nil {
+		for _, ndvSketch := range ndvSketches {
+			if ndvSketch == nil {
 				return false
 			}
 		}
 		return true
-	}, "ndvSketches and singletonSketches should never contains nil values")
+	}, "ndvSketches must not contain nil entries")
+	intest.AssertFunc(func() bool {
+		for _, singletonSketch := range singletonSketches {
+			if singletonSketch == nil {
+				return false
+			}
+		}
+		return true
+	}, "singletonSketches must not contain nil entries")
 	if len(ndvSketches) == 0 || len(ndvSketches) != len(singletonSketches) {
 		return 0
 	}
@@ -129,44 +134,16 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 	var globalSingleton int64
 	var prefixNDV *FMSketch
 	for i := range ndvSketches {
-		// Rebuild the suffix union from nodes after i, then merge the rolling
-		// prefix union from nodes before i.
-		var other *FMSketch
+		other := mergeCopiedFMSketch(nil, prefixNDV)
 		for j := i + 1; j < len(ndvSketches); j++ {
-			ns := ndvSketches[j]
-			if ns == nil {
-				continue
-			}
-			if other == nil {
-				other = ns.Copy()
-				continue
-			}
-			other.MergeFMSketch(ns)
-		}
-		if prefixNDV != nil {
-			if other == nil {
-				other = prefixNDV.Copy()
-			} else {
-				other.MergeFMSketch(prefixNDV)
-			}
+			other = mergeCopiedFMSketch(other, ndvSketches[j])
 		}
 
 		ndvOther := int64(0)
 		if other != nil {
 			ndvOther = other.NDV()
 		}
-
-		// Merge the other-nodes sketch with node i's singleton sketch.
-		// ndvUnion - ndvOther gives the count of node i's singletons
-		// that don't appear in any other node (i.e. globally unique values).
-		// We already captured ndvOther, so we can safely reuse other here.
-		if other != nil {
-			if singletonSketches[i] != nil {
-				other.MergeFMSketch(singletonSketches[i])
-			}
-		} else if singletonSketches[i] != nil {
-			other = singletonSketches[i].Copy()
-		}
+		other = mergeCopiedFMSketch(other, singletonSketches[i])
 
 		ndvUnion := int64(0)
 		if other != nil {
@@ -177,16 +154,19 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		// In practice, this appears to be fairly rare.
 		delta := max(0, ndvUnion-ndvOther)
 		globalSingleton += delta
-
-		if ndvSketches[i] == nil {
-			continue
-		}
-		if prefixNDV == nil {
-			prefixNDV = ndvSketches[i].Copy()
-		} else {
-			prefixNDV.MergeFMSketch(ndvSketches[i])
-		}
+		prefixNDV = mergeCopiedFMSketch(prefixNDV, ndvSketches[i])
 	}
 	intest.Assert(globalSingleton >= 0, "globalSingleton must be positive")
 	return uint64(globalSingleton)
+}
+
+func mergeCopiedFMSketch(dst, src *FMSketch) *FMSketch {
+	if src == nil {
+		return dst
+	}
+	if dst == nil {
+		return src.Copy()
+	}
+	dst.MergeFMSketch(src)
+	return dst
 }
