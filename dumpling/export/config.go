@@ -83,7 +83,7 @@ const (
 	flagClusterSSLCA             = "cluster-ssl-ca"
 	flagClusterSSLCert           = "cluster-ssl-cert"
 	flagClusterSSLKey            = "cluster-ssl-key"
-    flagPartitions               = "partitions"
+	flagPartitions               = "partitions"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -809,7 +809,7 @@ func validateSpecifiedSQL(conf *Config) error {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
 	}
 	if conf.SQL != "" && len(conf.Partitions) > 0 {
-		return errors.New("can't specify both --sql and --partitions at the same time.")
+		return errors.New("can't specify both --sql and --partitions at the same time")
 	}
 	return nil
 }
