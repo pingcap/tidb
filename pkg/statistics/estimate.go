@@ -143,10 +143,11 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		rightHalfNDV = mergeCopiedFMSketch(rightHalfNDV, ndvSketches[i])
 	}
 
+	// NOTE: For each node, we still merge every other node's NDV sketch.
 	globalSingleton := estimateGlobalSingletonInRange(ndvSketches, singletonSketches, 0, mid, nil, rightHalfNDV)
 	globalSingleton += estimateGlobalSingletonInRange(ndvSketches, singletonSketches, mid, len(ndvSketches), leftHalfNDV, nil)
-	intest.Assert(globalSingleton >= 0, "globalSingleton must be positive")
 	// SAFETY: Each per-node contribution is clamped to >= 0 before accumulation.
+	intest.Assert(globalSingleton >= 0, "globalSingleton must be positive")
 	return uint64(globalSingleton)
 }
 
