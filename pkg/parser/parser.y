@@ -6815,7 +6815,7 @@ PredicateExpr:
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		}
-		// When ESCAPE ” is specified, escape is empty and explicit is true.
+		// When ESCAPE '' is specified, escape is empty and explicit is true.
 		// This means no escape character should be used (Escape = 0).
 		var escapeChar byte
 		if len(escape) > 0 {
@@ -6839,7 +6839,7 @@ PredicateExpr:
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		}
-		// When ESCAPE ” is specified, escape is empty and explicit is true.
+		// When ESCAPE '' is specified, escape is empty and explicit is true.
 		// This means no escape character should be used (Escape = 0).
 		var escapeChar byte
 		if len(escape) > 0 {
@@ -16239,14 +16239,14 @@ CreateMaskingPolicyStmt:
 		}
 		state := $15.(*ast.MaskingPolicyState)
 		$$ = &ast.CreateMaskingPolicyStmt{
-			OrReplace:          $2.(bool),
-			IfNotExists:        $5.(bool),
-			PolicyName:         ast.NewCIStr($6),
-			Table:              $8.(*ast.TableName),
-			Column:             &ast.ColumnName{Name: ast.NewCIStr($10)},
-			Expr:               $13,
-			RestrictOps:        $14.(ast.MaskingPolicyRestrictOps),
-			MaskingPolicyState: *state,
+			OrReplace:           $2.(bool),
+			IfNotExists:         $5.(bool),
+			PolicyName:          ast.NewCIStr($6),
+			Table:               $8.(*ast.TableName),
+			Column:              &ast.ColumnName{Name: ast.NewCIStr($10)},
+			Expr:                $13,
+			RestrictOps:         $14.(ast.MaskingPolicyRestrictOps),
+			MaskingPolicyState:  *state,
 		}
 	}
 
