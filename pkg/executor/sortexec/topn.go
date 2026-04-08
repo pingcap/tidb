@@ -471,21 +471,17 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 	savedRowCount := e.chkHeap.rowChunks.Len()
 	totalLimit := int(e.chkHeap.totalLimit)
 
-	if savedRowCount+rowCnt <= totalLimit {
+	totalRecvRowCnt := savedRowCount + rowCnt
+	if totalRecvRowCnt <= totalLimit {
 		// Fast path
-		e.RankInfo.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
+		if totalRecvRowCnt == totalLimit {
+			e.RankInfo.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
+		}
 		return rowCnt, err
 	}
 
-	// Maybe savedRowCount is greater than totalLimit
-	remainingNeedRowCnt := max(0, totalLimit-savedRowCount)
-
-	if remainingNeedRowCnt > 0 {
-		idx += remainingNeedRowCnt
-	}
-
-	// both idx == 0 and len(e.prevPrefixKeys) == 0 is impossible
-	if idx > 0 {
+	if savedRowCount < totalLimit {
+		idx = totalLimit - savedRowCount
 		e.RankInfo.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(idx - 1))
 		if err != nil {
 			return 0, err
