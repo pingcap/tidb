@@ -343,9 +343,17 @@ type mockMVServiceHelper struct {
 	lastHistoryGCCurrentTSO           atomic.Uint64
 	lastMViewHistoryGCRetention       atomic.Int64
 	lastMLogHistoryGCRetention        atomic.Int64
+	syncRefreshAlertCalls             atomic.Int32
+	cleanupStaleRefreshAlertCalls     atomic.Int32
+	syncRefreshAlertErr               error
+	cleanupStaleRefreshAlertErr       error
 
 	lastRefreshID int64
 	lastPurgeID   int64
+
+	syncRefreshAlertMu   sync.Mutex
+	lastRefreshAlertAt   time.Time
+	lastRefreshAlertSync []refreshAlertTask
 
 	metricsMu          sync.Mutex
 	taskDurationCounts map[string]int
@@ -393,6 +401,20 @@ func (m *mockMVServiceHelper) TryBackoffPurgeManualCancel(_ context.Context, _ b
 		m.purgeManualCancelBackoffNext = next
 	}
 	return m.purgeManualCancelBackoffApplied, m.purgeManualCancelBackoffNext, m.purgeManualCancelBackoffErr
+}
+
+func (m *mockMVServiceHelper) SyncMVRefreshAlertStates(_ context.Context, _ basic.SessionPool, updatedAt time.Time, states []refreshAlertTask) error {
+	m.syncRefreshAlertCalls.Add(1)
+	m.syncRefreshAlertMu.Lock()
+	defer m.syncRefreshAlertMu.Unlock()
+	m.lastRefreshAlertAt = updatedAt
+	m.lastRefreshAlertSync = append(m.lastRefreshAlertSync[:0], states...)
+	return m.syncRefreshAlertErr
+}
+
+func (m *mockMVServiceHelper) CleanupStaleMVRefreshAlerts(_ context.Context, _ basic.SessionPool) error {
+	m.cleanupStaleRefreshAlertCalls.Add(1)
+	return m.cleanupStaleRefreshAlertErr
 }
 
 func (m *mockMVServiceHelper) loadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
@@ -2222,6 +2244,61 @@ func TestServerHelperTryBackoffRefreshManualCancel(t *testing.T) {
 		require.Equal(t, []string{"BEGIN PESSIMISTIC", "ROLLBACK"}, se.executedSQL)
 		require.Equal(t, []string{testSQLLockMVNextTime}, se.executedRestrictedSQL)
 	})
+}
+
+func TestServerHelperSyncMVRefreshAlertStates(t *testing.T) {
+	installMockTimeForTest(t)
+
+	now := mvsNow().Round(0)
+	se := newRecordingSessionContext()
+	pool := recordingSessionPool{se: se}
+	states := []refreshAlertTask{
+		{
+			mviewID:         101,
+			schemaName:      "test",
+			mviewName:       "mv_warn",
+			lastSuccessTime: now.Add(-time.Minute),
+			alertLevel:      mvRefreshAlertLevelWarning,
+		},
+		{
+			mviewID:         102,
+			schemaName:      "test",
+			mviewName:       "mv_overdue",
+			lastSuccessTime: now.Add(-2 * time.Minute),
+			alertLevel:      mvRefreshAlertLevelOverdue,
+		},
+		{
+			mviewID: 103,
+		},
+		{
+			mviewID:            104,
+			metadataUnresolved: true,
+		},
+		{
+			mviewID: 0,
+		},
+	}
+
+	err := (&serviceHelper{}).SyncMVRefreshAlertStates(context.Background(), pool, now, states)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		buildDeleteMVRefreshAlertSQL([]int64{103}),
+		buildUpsertMVRefreshAlertSQL(now, states[:2]),
+	}, se.executedRestrictedSQL)
+	require.Len(t, se.executedRestrictedArg, 2)
+	require.Empty(t, se.executedRestrictedArg[0])
+	require.Empty(t, se.executedRestrictedArg[1])
+}
+
+func TestServerHelperCleanupStaleMVRefreshAlerts(t *testing.T) {
+	se := newRecordingSessionContext()
+	pool := recordingSessionPool{se: se}
+
+	err := (&serviceHelper{}).CleanupStaleMVRefreshAlerts(context.Background(), pool)
+	require.NoError(t, err)
+	require.Equal(t, []string{buildCleanupStaleMVRefreshAlertSQL()}, se.executedRestrictedSQL)
+	require.Len(t, se.executedRestrictedArg, 1)
+	require.Empty(t, se.executedRestrictedArg[0])
 }
 
 func TestServerHelperTryBackoffPurgeManualCancel(t *testing.T) {

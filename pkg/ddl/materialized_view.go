@@ -704,7 +704,22 @@ func (e *executor) alterMaterializedViewRefresh(
 	if !shouldUpdateNextTime {
 		return nil
 	}
-	return errors.Trace(e.updateMaterializedViewRefreshInfoNextTime(ctx, mviewID, nextTime))
+	updated, err := e.updateMaterializedViewRefreshInfoNextTime(ctx, mviewID, nextTime)
+	if err != nil {
+		return err
+	}
+	if updated && nextTime == nil {
+		if err := e.deleteMaterializedViewRefreshAlert(ctx, mviewID); err != nil {
+			logutil.DDLLogger().Warn(
+				"alter materialized view refresh: failed to delete refresh alert after disabling schedule",
+				zap.String("schemaName", schemaName.O),
+				zap.String("tableName", viewName.O),
+				zap.Int64("mviewID", mviewID),
+				zap.Error(err),
+			)
+		}
+	}
+	return nil
 }
 
 func (e *executor) alterMaterializedViewAttributes(
@@ -909,8 +924,8 @@ func (e *executor) updateMaterializedViewRefreshInfoNextTime(
 	ctx sessionctx.Context,
 	mviewID int64,
 	nextTime *string,
-) error {
-	return errors.Trace(e.bestEffortUpdateMaterializedScheduleInfoNextTime(
+) (bool, error) {
+	return e.bestEffortUpdateMaterializedScheduleInfoNextTime(
 		ctx,
 		alterMaterializedScheduleInfoNextTimeUpdateSpec{
 			operation:                  "alter materialized view refresh",
@@ -921,12 +936,40 @@ func (e *executor) updateMaterializedViewRefreshInfoNextTime(
 			tableNotExistsErrConverter: convertAlterMaterializedViewRefreshInfoTableNotExistsErr,
 		},
 		nextTime,
-	))
+	)
+}
+
+func (e *executor) deleteMaterializedViewRefreshAlert(ctx sessionctx.Context, mviewID int64) error {
+	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
+	ddlSess, releaseInternalSession, err := e.newInternalMaterializedScheduleInfoUpdateSession(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseInternalSession()
+
+	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID = %?", mviewID)
+	_, err = ddlSess.Execute(kctx, deleteSQL, "alter-materialized-view-refresh-delete-alert")
+	failpoint.Inject("mockDeleteMaterializedViewRefreshAlertTableNotExists", func(val failpoint.Value) {
+		if val.(bool) {
+			err = infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_mview_refresh_alert")
+		}
+	})
+	if err != nil {
+		return errors.Trace(convertAlterMaterializedViewRefreshAlertTableNotExistsErr(err))
+	}
+	return nil
 }
 
 func convertAlterMaterializedViewRefreshInfoTableNotExistsErr(err error) error {
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return errors.New("alter materialized view refresh: required system table mysql.tidb_mview_refresh_info does not exist")
+	}
+	return err
+}
+
+func convertAlterMaterializedViewRefreshAlertTableNotExistsErr(err error) error {
+	if infoschema.ErrTableNotExists.Equal(err) {
+		return errors.New("alter materialized view refresh: required system table mysql.tidb_mview_refresh_alert does not exist")
 	}
 	return err
 }
@@ -964,7 +1007,7 @@ func (e *executor) updateMaterializedViewLogPurgeInfoNextTime(
 	mlogID int64,
 	nextTime *string,
 ) error {
-	return errors.Trace(e.bestEffortUpdateMaterializedScheduleInfoNextTime(
+	_, err := e.bestEffortUpdateMaterializedScheduleInfoNextTime(
 		ctx,
 		alterMaterializedScheduleInfoNextTimeUpdateSpec{
 			operation:                  "alter materialized view log purge",
@@ -975,7 +1018,8 @@ func (e *executor) updateMaterializedViewLogPurgeInfoNextTime(
 			tableNotExistsErrConverter: convertAlterMaterializedViewLogPurgeInfoTableNotExistsErr,
 		},
 		nextTime,
-	))
+	)
+	return errors.Trace(err)
 }
 
 type alterMaterializedScheduleInfoNextTimeUpdateSpec struct {
@@ -1004,18 +1048,18 @@ func (e *executor) bestEffortUpdateMaterializedScheduleInfoNextTime(
 	ctx sessionctx.Context,
 	spec alterMaterializedScheduleInfoNextTimeUpdateSpec,
 	nextTime *string,
-) error {
+) (bool, error) {
 	kctx := kv.WithInternalSourceType(e.ctx, kv.InternalTxnDDL)
 	// The outer ALTER MATERIALIZED VIEW / LOG statement is privilege-checked on the target
 	// MV/base table only. The follow-up NEXT_TIME update touches mysql.* system tables and must
 	// therefore run on a true DDL internal session instead of reusing the caller session.
 	ddlSess, releaseInternalSession, err := e.newInternalMaterializedScheduleInfoUpdateSession(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer releaseInternalSession()
 	if err := ddlSess.BeginPessimistic(kctx); err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	committed := false
 	defer func() {
@@ -1034,12 +1078,12 @@ func (e *executor) bestEffortUpdateMaterializedScheduleInfoNextTime(
 	if err != nil {
 		if isAlterMaterializedScheduleInfoUpdateLockContentionErr(err) {
 			appendAlterMaterializedScheduleInfoUpdateWarning(ctx, spec)
-			return nil
+			return false, nil
 		}
-		return errors.Trace(spec.tableNotExistsErrConverter(err))
+		return false, errors.Trace(spec.tableNotExistsErrConverter(err))
 	}
 	if len(rows) == 0 {
-		return errors.New(spec.rowMissingErr)
+		return false, errors.New(spec.rowMissingErr)
 	}
 
 	var nextTimeArg any
@@ -1054,19 +1098,19 @@ func (e *executor) bestEffortUpdateMaterializedScheduleInfoNextTime(
 	if _, err := ddlSess.Execute(kctx, updateSQL, spec.operation+"-update-next-time", nextTimeArg, spec.objectID); err != nil {
 		if isAlterMaterializedScheduleInfoUpdateLockContentionErr(err) {
 			appendAlterMaterializedScheduleInfoUpdateWarning(ctx, spec)
-			return nil
+			return false, nil
 		}
-		return errors.Trace(spec.tableNotExistsErrConverter(err))
+		return false, errors.Trace(spec.tableNotExistsErrConverter(err))
 	}
 	if err := ddlSess.Commit(kctx); err != nil {
 		if isAlterMaterializedScheduleInfoUpdateLockContentionErr(err) {
 			appendAlterMaterializedScheduleInfoUpdateWarning(ctx, spec)
-			return nil
+			return false, nil
 		}
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	committed = true
-	return nil
+	return true, nil
 }
 
 func isAlterMaterializedScheduleInfoUpdateLockContentionErr(err error) bool {

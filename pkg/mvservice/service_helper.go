@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
@@ -44,7 +45,8 @@ import (
 )
 
 const (
-	historyGCDeleteBatchSize = 10000
+	historyGCDeleteBatchSize   = 10000
+	refreshAlertWriteBatchSize = 128
 )
 
 type serviceHelper struct {
@@ -104,6 +106,118 @@ func newServiceHelper() *serviceHelper {
 
 func (*serviceHelper) serverFilter(s serverInfo) bool {
 	return true
+}
+
+func buildDeleteMVRefreshAlertSQL(mviewIDs []int64) string {
+	var sql strings.Builder
+	sql.WriteString("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN (")
+	for i, mviewID := range mviewIDs {
+		if i > 0 {
+			sql.WriteString(",")
+		}
+		sqlescape.MustFormatSQL(&sql, "%?", mviewID)
+	}
+	sql.WriteString(")")
+	return sql.String()
+}
+
+func buildUpsertMVRefreshAlertSQL(updatedAt time.Time, states []refreshAlertTask) string {
+	var sql strings.Builder
+	sql.WriteString(`INSERT INTO mysql.tidb_mview_refresh_alert (
+MVIEW_ID,
+MV_SCHEMA,
+MV_NAME,
+ALERT_LEVEL,
+LAST_SUCCESS_TIME,
+UPDATED_AT
+) VALUES `)
+	for i, state := range states {
+		if i > 0 {
+			sql.WriteString(",")
+		}
+		sqlescape.MustFormatSQL(
+			&sql,
+			"(%?, %?, %?, %?, %?, %?)",
+			state.mviewID,
+			state.schemaName,
+			state.mviewName,
+			state.alertLevel,
+			state.lastSuccessTime.Round(0),
+			updatedAt.Round(0),
+		)
+	}
+	sql.WriteString(` ON DUPLICATE KEY UPDATE
+MV_SCHEMA = VALUES(MV_SCHEMA),
+MV_NAME = VALUES(MV_NAME),
+ALERT_LEVEL = VALUES(ALERT_LEVEL),
+LAST_SUCCESS_TIME = VALUES(LAST_SUCCESS_TIME),
+UPDATED_AT = VALUES(UPDATED_AT)`)
+	return sql.String()
+}
+
+func buildCleanupStaleMVRefreshAlertSQL() string {
+	return `DELETE a
+FROM mysql.tidb_mview_refresh_alert AS a
+LEFT JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
+WHERE i.MVIEW_ID IS NULL OR i.NEXT_TIME IS NULL`
+}
+
+func (*serviceHelper) SyncMVRefreshAlertStates(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+	updatedAt time.Time,
+	states []refreshAlertTask,
+) error {
+	if len(states) == 0 {
+		return nil
+	}
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return err
+	}
+	defer sysSessionPool.Put(se)
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+
+	deleteIDs := make([]int64, 0, len(states))
+	upsertStates := make([]refreshAlertTask, 0, len(states))
+	for _, state := range states {
+		if state.mviewID <= 0 {
+			continue
+		}
+		if state.metadataUnresolved {
+			continue
+		}
+		if state.alertLevel == "" {
+			deleteIDs = append(deleteIDs, state.mviewID)
+			continue
+		}
+		upsertStates = append(upsertStates, state)
+	}
+
+	for start := 0; start < len(deleteIDs); start += refreshAlertWriteBatchSize {
+		end := min(start+refreshAlertWriteBatchSize, len(deleteIDs))
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, buildDeleteMVRefreshAlertSQL(deleteIDs[start:end]), nil); err != nil {
+			return err
+		}
+	}
+	for start := 0; start < len(upsertStates); start += refreshAlertWriteBatchSize {
+		end := min(start+refreshAlertWriteBatchSize, len(upsertStates))
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, buildUpsertMVRefreshAlertSQL(updatedAt, upsertStates[start:end]), nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (*serviceHelper) CleanupStaleMVRefreshAlerts(
+	ctx context.Context,
+	sysSessionPool basic.SessionPool,
+) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	_, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, buildCleanupStaleMVRefreshAlertSQL(), nil)
+	return err
 }
 
 func (*serviceHelper) getServerInfo() (serverInfo, error) {
@@ -882,6 +996,8 @@ func (*serviceHelper) loadAllTiDBMVRefresh(ctx context.Context, sysSessionPool b
 			m.mviewName = mviewName
 			m.alertWarningSec = alertWarningSec
 			m.alertOverdueSec = alertOverdueSec
+		} else {
+			m.metadataUnresolved = true
 		}
 		m.orderTs = m.nextRefresh.UnixMilli()
 		newPending[mvID] = m

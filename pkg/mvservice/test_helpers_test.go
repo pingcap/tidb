@@ -53,14 +53,32 @@ func newRunningMVServiceForTest(t *testing.T, helper Helper) *MVService {
 }
 
 func setHistoryGCOwnerForTest(svc *MVService, ownerHash uint32) {
-	svc.nextHistoryGCAtMillis.Store(0)
-	svc.sch.mu.Lock()
-	svc.sch.ID = "nodeA"
-	svc.sch.chash.hashFunc = mustHash(map[string]uint32{
-		"nodeA#0":           10,
-		"nodeB#0":           30,
+	setServiceOwnersForTest(svc, map[string]uint32{
 		mvHistoryGCOwnerKey: ownerHash,
 	})
+	svc.nextHistoryGCAtMillis.Store(0)
+}
+
+func setRefreshAlertCleanupOwnerForTest(svc *MVService, ownerHash uint32) {
+	setServiceOwnersForTest(svc, map[string]uint32{
+		mvRefreshAlertCleanupOwnerKey: ownerHash,
+	})
+}
+
+func setServiceOwnersForTest(svc *MVService, ownerHashes map[string]uint32) {
+	svc.sch.mu.Lock()
+	svc.sch.ID = "nodeA"
+	svc.sch.chash.replicas = 1
+	mapping := map[string]uint32{
+		"nodeA#0":                     10,
+		"nodeB#0":                     30,
+		mvHistoryGCOwnerKey:           10,
+		mvRefreshAlertCleanupOwnerKey: 10,
+	}
+	for key, hash := range ownerHashes {
+		mapping[key] = hash
+	}
+	svc.sch.chash.hashFunc = mustHash(mapping)
 	svc.sch.servers = map[string]serverInfo{
 		"nodeA": {ID: "nodeA"},
 		"nodeB": {ID: "nodeB"},
