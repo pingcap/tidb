@@ -163,7 +163,10 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		if other != nil {
 			ndvUnion = other.NDV()
 		}
-		globalSingleton += ndvUnion - ndvOther
+		// FM sketch NDV estimates are not monotone under merge, so the estimated
+		// union can be smaller than ndvOther. Clamp the per-node contribution to 0.
+		delta := max(0, ndvUnion-ndvOther)
+		globalSingleton += delta
 	}
 	intest.Assert(globalSingleton >= 0, "globalSingleton must be positive")
 	return uint64(globalSingleton)

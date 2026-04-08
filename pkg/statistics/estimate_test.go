@@ -17,6 +17,8 @@ package statistics
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,6 +30,31 @@ func newFMSketchFromHashValues(vals ...uint64) *FMSketch {
 		s.insertHashValue(v)
 	}
 	return s
+}
+
+// newFMSketchesFromSamples builds a pair of sketches from the same sample rows:
+// the NDV sketch sees every sample, while the singleton sketch keeps only
+// values that occur exactly once in that sample set.
+func newFMSketchesFromSamples(t *testing.T, maxSize int, samples ...int64) (*FMSketch, *FMSketch) {
+	t.Helper()
+	ctx := mock.NewContext()
+	ndvSketch := NewFMSketch(maxSize)
+	singletonSketch := NewFMSketch(maxSize)
+	counts := make(map[int64]int, len(samples))
+	for _, v := range samples {
+		counts[v]++
+		err := ndvSketch.InsertValue(ctx.GetSessionVars().StmtCtx, types.NewIntDatum(v))
+		require.NoError(t, err)
+	}
+	for _, v := range samples {
+		if counts[v] != 1 {
+			continue
+		}
+		err := singletonSketch.InsertValue(ctx.GetSessionVars().StmtCtx, types.NewIntDatum(v))
+		require.NoError(t, err)
+		delete(counts, v)
+	}
+	return ndvSketch, singletonSketch
 }
 
 func TestEstimateGlobalSingletonBySketches(t *testing.T) {
@@ -104,6 +131,24 @@ func TestEstimateGlobalSingletonBySketches(t *testing.T) {
 		}
 		got := EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
 		require.Equal(t, uint64(0), got)
+	})
+
+	t.Run("NegativeContributionIsClamped", func(t *testing.T) {
+		// Both sketches are built from the same local samples.
+		//
+		// Node 0 samples: [0]
+		// Node 1 samples: [0, 0, 0, 1, 1, 4, 7]
+		//
+		// The true global singleton set is {4, 7}, so the result should be 2.
+		// Before the fix, node 0's contribution could become negative due to FM
+		// sketch merge behavior, making the final estimate incorrect.
+		ndv0, singleton0 := newFMSketchesFromSamples(t, 3, 0)
+		ndv1, singleton1 := newFMSketchesFromSamples(t, 3, 0, 0, 0, 1, 1, 4, 7)
+		ndvSketches := []*FMSketch{ndv0, ndv1}
+		singletonSketches := []*FMSketch{singleton0, singleton1}
+
+		got := EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches)
+		require.Equal(t, uint64(2), got)
 	})
 
 	t.Run("NilEntry", func(t *testing.T) {
