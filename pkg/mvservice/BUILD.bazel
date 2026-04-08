@@ -45,6 +45,7 @@ go_test(
         "mvservice_test.go",
         "server_maintainer_test.go",
         "task_handler_test.go",
+        "test_helpers_test.go",
         "time_proxy_test.go",  #keep
         "utils_test.go",
     ],
@@ -67,5 +68,6 @@ go_test(
         "//pkg/util/sqlexec",
         "@com_github_ngaut_pools//:pools",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
     ],
 )

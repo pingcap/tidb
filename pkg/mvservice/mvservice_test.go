@@ -271,7 +271,7 @@ func TestTaskExecutorBackpressure(t *testing.T) {
 	}
 	require.Eventually(t, func() bool {
 		return exec.metrics.counters.backpressureCount.Load() > 0
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 	require.Equal(t, int64(1), exec.metrics.counters.backpressureCount.Load())
 
 	controller.blocked.Store(false)
@@ -279,7 +279,7 @@ func TestTaskExecutorBackpressure(t *testing.T) {
 	waitForSignal(t, done, time.Hour)
 	require.Eventually(t, func() bool {
 		return exec.metrics.gauges.backpressureBlocked.Load() == 0
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 }
 
 func TestTaskExecutorBackpressureCheckDoesNotBlockSubmit(t *testing.T) {
@@ -340,7 +340,7 @@ func TestTaskExecutorBackpressureCheckDoesNotBlockSubmit(t *testing.T) {
 	waitStarted("t2")
 	require.Eventually(t, func() bool {
 		return exec.metrics.counters.finishedCount.Load() == 2
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 }
 
 func TestTaskExecutorCloseInterruptsBackpressureWait(t *testing.T) {
@@ -377,7 +377,7 @@ func TestTaskExecutorCloseInterruptsBackpressureWait(t *testing.T) {
 	}
 	require.Eventually(t, func() bool {
 		return exec.metrics.gauges.backpressureBlocked.Load() == 0
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 	require.Greater(t, exec.metrics.counters.backpressureCount.Load(), int64(0))
 }
 
@@ -428,9 +428,8 @@ func TestNewMVServiceConfig(t *testing.T) {
 		}
 
 		svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, cfg)
-		maxConcurrency, timeout := svc.executor.GetConfig()
-		require.Equal(t, cfg.TaskMaxConcurrency, maxConcurrency)
-		require.Equal(t, cfg.TaskTimeout, timeout)
+		require.Equal(t, cfg.TaskMaxConcurrency, int(svc.executor.maxConcurrency.Load()))
+		require.Equal(t, cfg.TaskTimeout, time.Duration(svc.executor.timeoutNanos.Load()))
 
 		baseDelay, maxDelay := svc.retryDelayConfig()
 		require.Equal(t, cfg.RetryBaseDelay, baseDelay)
@@ -625,6 +624,190 @@ func TestMVServiceUpdateConfigs(t *testing.T) {
 	})
 }
 
+func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
+	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+	defer svc.executor.Close()
+
+	now := mvsNow()
+
+	svc.mvRefreshMu.Lock()
+	if svc.mvRefreshMu.pending == nil {
+		svc.mvRefreshMu.pending = make(map[int64]mvItem)
+	}
+	warnTask := &mv{
+		ID:              101,
+		nextRefresh:     now.Add(-2 * time.Minute),
+		lastSuccessTime: now.Add(-40 * time.Second),
+		alertWarningSec: 30,
+		alertOverdueSec: 120,
+	}
+	warnTask.orderTs = warnTask.nextRefresh.UnixMilli()
+	svc.mvRefreshMu.pending[warnTask.ID] = svc.mvRefreshMu.prio.Push(warnTask)
+
+	overdueTask := &mv{
+		ID:              102,
+		nextRefresh:     now.Add(-2 * time.Minute),
+		lastSuccessTime: now.Add(-70 * time.Second),
+		alertWarningSec: 30,
+		alertOverdueSec: 60,
+	}
+	overdueTask.orderTs = maxNextScheduleTs // simulate running task
+	svc.mvRefreshMu.pending[overdueTask.ID] = svc.mvRefreshMu.prio.Push(overdueTask)
+
+	disabledTask := &mv{
+		ID:              103,
+		nextRefresh:     now.Add(-2 * time.Minute),
+		lastSuccessTime: now.Add(-5 * time.Minute),
+	}
+	disabledTask.orderTs = disabledTask.nextRefresh.UnixMilli()
+	svc.mvRefreshMu.pending[disabledTask.ID] = svc.mvRefreshMu.prio.Push(disabledTask)
+	svc.mvRefreshMu.Unlock()
+
+	got, warningCount, overdueCount := svc.collectRefreshAlertTasks(now)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(1), warningCount)
+	require.Equal(t, int64(1), overdueCount)
+
+	byID := make(map[int64]refreshAlertTask, len(got))
+	for _, task := range got {
+		byID[task.mviewID] = task
+	}
+	require.False(t, byID[101].overdue)
+	require.Equal(t, "queued", byID[101].taskState)
+	require.Equal(t, int64(30), byID[101].alertWarningSec)
+	require.Equal(t, int64(120), byID[101].alertOverdueSec)
+	require.True(t, byID[102].overdue)
+	require.Equal(t, "running", byID[102].taskState)
+	require.Equal(t, int64(30), byID[102].alertWarningSec)
+	require.Equal(t, int64(60), byID[102].alertOverdueSec)
+}
+
+func TestMVServiceRefreshAlertScanInterval(t *testing.T) {
+	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+	defer svc.executor.Close()
+
+	now := mvsNow()
+
+	svc.mvRefreshMu.Lock()
+	if svc.mvRefreshMu.pending == nil {
+		svc.mvRefreshMu.pending = make(map[int64]mvItem)
+	}
+	task := &mv{
+		ID:              1,
+		nextRefresh:     now.Add(-2 * time.Minute),
+		lastSuccessTime: now.Add(-2 * time.Minute),
+		alertWarningSec: 30,
+	}
+	task.orderTs = task.nextRefresh.UnixMilli()
+	svc.mvRefreshMu.pending[task.ID] = svc.mvRefreshMu.prio.Push(task)
+	svc.mvRefreshMu.Unlock()
+
+	svc.nextRefreshAlertScanMillis.Store(0)
+	svc.maybeLogRefreshAlertTasks(now)
+	require.Equal(t, now.Add(mvRefreshAlertScanInterval).UnixMilli(), svc.nextRefreshAlertScanMillis.Load())
+
+	// Within scan interval: should not trigger another scan.
+	svc.maybeLogRefreshAlertTasks(now.Add(mvRefreshAlertScanInterval / 2))
+	require.Equal(t, now.Add(mvRefreshAlertScanInterval).UnixMilli(), svc.nextRefreshAlertScanMillis.Load())
+
+	// After interval: one more full scan and next scan time moves forward.
+	svc.maybeLogRefreshAlertTasks(now.Add(mvRefreshAlertScanInterval))
+	require.Equal(t, now.Add(2*mvRefreshAlertScanInterval).UnixMilli(), svc.nextRefreshAlertScanMillis.Load())
+}
+
+func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T) {
+	type step struct {
+		atOffset        time.Duration
+		beforeCollect   func(task *mv, now time.Time)
+		expectedCount   int
+		expectedID      int64
+		expectedOverdue bool
+		warningCount    int64
+		overdueCount    int64
+	}
+	type testCase struct {
+		name  string
+		task  *mv
+		steps []step
+	}
+
+	now := mvsNow()
+	testCases := []testCase{
+		{
+			name: "dedup_on_same_tso",
+			task: &mv{
+				ID:                 201,
+				nextRefresh:        now.Add(-2 * time.Minute),
+				lastSuccessReadTSO: 123456,
+				lastSuccessTime:    now.Add(-2 * time.Minute),
+				alertWarningSec:    30,
+			},
+			steps: []step{
+				{atOffset: 0, expectedCount: 1, expectedID: 201, expectedOverdue: false, warningCount: 1, overdueCount: 0},
+				{atOffset: 10 * time.Second, expectedCount: 0, warningCount: 1, overdueCount: 0},
+				{
+					atOffset: 20 * time.Second,
+					beforeCollect: func(task *mv, now time.Time) {
+						task.lastSuccessReadTSO = 223456
+						task.lastSuccessTime = now.Add(-2 * time.Minute)
+					},
+					expectedCount: 1, expectedID: 201, expectedOverdue: false, warningCount: 1, overdueCount: 0,
+				},
+			},
+		},
+		{
+			name: "dedup_by_alert_level",
+			task: &mv{
+				ID:                 202,
+				nextRefresh:        now.Add(-2 * time.Minute),
+				lastSuccessReadTSO: 123456,
+				lastSuccessTime:    now.Add(-40 * time.Second),
+				alertWarningSec:    30,
+				alertOverdueSec:    60,
+			},
+			steps: []step{
+				{atOffset: 0, expectedCount: 1, expectedID: 202, expectedOverdue: false, warningCount: 1, overdueCount: 0},
+				{atOffset: 10 * time.Second, expectedCount: 0, warningCount: 1, overdueCount: 0},
+				{atOffset: 30 * time.Second, expectedCount: 1, expectedID: 202, expectedOverdue: true, warningCount: 0, overdueCount: 1},
+				{atOffset: 40 * time.Second, expectedCount: 0, warningCount: 0, overdueCount: 1},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+			defer svc.executor.Close()
+
+			task := tc.task
+			task.orderTs = task.nextRefresh.UnixMilli()
+			svc.mvRefreshMu.Lock()
+			if svc.mvRefreshMu.pending == nil {
+				svc.mvRefreshMu.pending = make(map[int64]mvItem)
+			}
+			svc.mvRefreshMu.pending[task.ID] = svc.mvRefreshMu.prio.Push(task)
+			svc.mvRefreshMu.Unlock()
+
+			for _, s := range tc.steps {
+				at := now.Add(s.atOffset)
+				if s.beforeCollect != nil {
+					svc.mvRefreshMu.Lock()
+					s.beforeCollect(task, at)
+					svc.mvRefreshMu.Unlock()
+				}
+				got, warningCount, overdueCount := svc.collectRefreshAlertTasks(at)
+				require.Len(t, got, s.expectedCount)
+				require.Equal(t, s.warningCount, warningCount)
+				require.Equal(t, s.overdueCount, overdueCount)
+				if s.expectedCount > 0 {
+					require.Equal(t, s.expectedID, got[0].mviewID)
+					require.Equal(t, s.expectedOverdue, got[0].overdue)
+				}
+			}
+		})
+	}
+}
+
 func TestTaskQueueRingBufferFIFO(t *testing.T) {
 	var q taskQueue
 	mkReq := func(i int) taskRequest {
@@ -723,7 +906,7 @@ func (h *fullChainMVServiceHelper) setPending(logs map[int64]time.Time, mvs map[
 	}
 }
 
-func (h *fullChainMVServiceHelper) fetchAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
+func (h *fullChainMVServiceHelper) loadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
 	h.fetchLogsCalls.Add(1)
 	if h.fetchLogsErr != nil {
 		return nil, h.fetchLogsErr
@@ -743,7 +926,7 @@ func (h *fullChainMVServiceHelper) fetchAllTiDBMVLogPurge(context.Context, basic
 	return ret, nil
 }
 
-func (h *fullChainMVServiceHelper) fetchAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
+func (h *fullChainMVServiceHelper) loadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
 	h.fetchViewCalls.Add(1)
 	if h.fetchViewsErr != nil {
 		return nil, h.fetchViewsErr
@@ -830,7 +1013,7 @@ func (h *mvServiceTestHarness) stop() {
 	h.cancel()
 	select {
 	case <-h.runDone:
-	case <-time.After(time.Second):
+	case <-time.After(testEventuallyWait):
 		h.t.Fatal("mv service did not stop in time")
 	}
 }
@@ -854,17 +1037,17 @@ func (h *mvServiceTestHarness) waitFetchCycleSince(logCalls, viewCalls int32) {
 	h.t.Helper()
 	require.Eventually(h.t, func() bool {
 		return h.helper.fetchLogsCalls.Load() > logCalls && h.helper.fetchViewCalls.Load() > viewCalls
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 }
 
 func (h *mvServiceTestHarness) waitRefreshTask(mvID int64) {
 	h.t.Helper()
-	waitInt64SignalReal(h.t, h.helper.refreshSignal, mvID, time.Second, "refresh task")
+	waitInt64SignalReal(h.t, h.helper.refreshSignal, mvID, testEventuallyWait, "refresh task")
 }
 
 func (h *mvServiceTestHarness) waitPurgeTask(mvLogID int64) {
 	h.t.Helper()
-	waitInt64SignalReal(h.t, h.helper.purgeSignal, mvLogID, time.Second, "purge task")
+	waitInt64SignalReal(h.t, h.helper.purgeSignal, mvLogID, testEventuallyWait, "purge task")
 }
 
 func (h *mvServiceTestHarness) assertNoPending() {
@@ -872,7 +1055,7 @@ func (h *mvServiceTestHarness) assertNoPending() {
 	require.Eventually(h.t, func() bool {
 		mvLogCount, mvCount := pendingTaskCounts(h.svc)
 		return mvLogCount == 0 && mvCount == 0
-	}, time.Second, time.Millisecond)
+	}, testEventuallyWait, testEventuallyTick)
 }
 
 func TestMVServiceFullChainSimulation(t *testing.T) {
@@ -903,7 +1086,7 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 
 		require.Eventually(t, func() bool {
 			return h.svc.executor.metrics.counters.finishedCount.Load() == 2
-		}, time.Second, time.Millisecond)
+		}, testEventuallyWait, testEventuallyTick)
 		assertTaskExecutorMetrics(t, h.svc.executor, 2, 2, 0, 0, 0, 0, 0, 0)
 		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
 		require.Equal(t, 1, h.helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))
@@ -933,7 +1116,7 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 			return h.svc.executor.metrics.counters.finishedCount.Load() >= finishedBase+2 &&
 				h.svc.executor.metrics.counters.failedCount.Load() >= failedBase+2 &&
 				h.svc.executor.metrics.counters.submittedCount.Load() >= submittedBase+2
-		}, time.Second, time.Millisecond)
+		}, testEventuallyWait, testEventuallyTick)
 
 		h.helper.refreshErr = nil
 		h.helper.purgeErr = nil
@@ -946,7 +1129,7 @@ func TestMVServiceFullChainSimulation(t *testing.T) {
 			return h.svc.executor.metrics.counters.finishedCount.Load() >= finishedBase+4 &&
 				h.svc.executor.metrics.counters.failedCount.Load() >= failedBase+2 &&
 				h.svc.executor.metrics.counters.submittedCount.Load() >= submittedBase+4
-		}, time.Second, time.Millisecond)
+		}, testEventuallyWait, testEventuallyTick)
 
 		require.Equal(t, 2, h.helper.taskDurationCount(mvTaskDurationTypeRefresh, mvDurationResultSuccess))
 		require.Equal(t, 2, h.helper.taskDurationCount(mvTaskDurationTypePurge, mvDurationResultSuccess))

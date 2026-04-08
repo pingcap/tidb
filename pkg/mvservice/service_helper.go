@@ -123,19 +123,52 @@ func (*serviceHelper) getAllServerInfo(ctx context.Context) (map[string]serverIn
 	return servers, nil
 }
 
+func resolveMVIdentityByID(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	mvID int64,
+) (schemaName, mviewName string, alertWarningSec, alertOverdueSec int64, found bool, err error) {
+	if mvID <= 0 {
+		return "", "", 0, 0, false, errors.New("mview id is invalid")
+	}
+	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	mvTable, ok := infoSchema.TableByID(ctx, mvID)
+	if !ok {
+		return "", "", 0, 0, false, nil
+	}
+	mvMeta := mvTable.Meta()
+	if mvMeta == nil {
+		return "", "", 0, 0, false, errors.New("mview metadata is invalid")
+	}
+	if mvMeta.MaterializedView != nil {
+		alertWarningSec = max(0, mvMeta.MaterializedView.AlertWarningSec)
+		alertOverdueSec = max(0, mvMeta.MaterializedView.AlertOverdueSec)
+	}
+	dbInfo, ok := infoSchema.SchemaByID(mvMeta.DBID)
+	if !ok || dbInfo == nil {
+		return "", "", 0, 0, false, errors.New("mview metadata is invalid")
+	}
+	schemaName = dbInfo.Name.L
+	mviewName = mvMeta.Name.L
+	if schemaName == "" || mviewName == "" {
+		return "", "", 0, 0, false, errors.New("mview metadata is invalid")
+	}
+	return schemaName, mviewName, alertWarningSec, alertOverdueSec, true, nil
+}
+
 // RefreshMV executes one incremental refresh round for a materialized view.
 //
 // It:
 // 1. Gets a system session from the pool.
 // 2. Resolves schema/table names from MVIEW_ID.
-// 3. Executes `REFRESH MATERIALIZED VIEW ... WITH SYNC MODE FAST`.
+// 3. Executes `REFRESH MATERIALIZED VIEW ... FAST`.
 // 4. Reads NEXT_TIME from mysql.tidb_mview_refresh_info.
 //
 // The returned error only represents execution failures. A zero nextRefresh means
 // no further scheduling is needed (for example, the MV metadata was removed).
 func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID int64) (nextRefresh time.Time, err error) {
 	const (
-		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n WITH SYNC MODE FAST`
+		refreshMVSQL    = `REFRESH MATERIALIZED VIEW %n.%n FAST`
 		findNextTimeSQL = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? AND NEXT_TIME IS NOT NULL`
 	)
 	startAt := mvsNow()
@@ -162,30 +195,19 @@ func (*serviceHelper) RefreshMV(ctx context.Context, sysSessionPool basic.Sessio
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 
 	sctx := se.(sessionctx.Context)
-	infoSchema := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	mvTable, ok := infoSchema.TableByID(ctx, mvID)
-	if !ok {
+	schemaName, mviewName, _, _, found, err := resolveMVIdentityByID(ctx, sctx, mvID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !found {
 		return time.Time{}, nil
 	}
-	mvMeta := mvTable.Meta()
-	if mvMeta == nil {
-		return time.Time{}, errors.New("mview metadata is invalid")
-	}
-	mviewName = mvMeta.Name.L
-	dbInfo, ok := infoSchema.SchemaByID(mvMeta.DBID)
-	if !ok || dbInfo == nil {
-		return time.Time{}, errors.New("mview metadata is invalid")
-	}
-	schemaName = dbInfo.Name.L
-	if schemaName == "" || mviewName == "" {
-		return time.Time{}, errors.New("mview metadata is invalid")
-	}
 
-	if _, err = execRCRestrictedSQL(ctx, sctx, refreshMVSQL, []any{schemaName, mviewName}); err != nil {
+	if _, err = execRCRestrictedSQLWithSession(ctx, sctx, refreshMVSQL, []any{schemaName, mviewName}); err != nil {
 		return time.Time{}, err
 	}
 
-	rows, err := execRCRestrictedSQL(ctx, sctx, findNextTimeSQL, []any{mvID})
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, findNextTimeSQL, []any{mvID})
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -271,11 +293,11 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 	if baseSchema == "" {
 		return time.Time{}, errors.New("materialized view base table schema name is empty")
 	}
-	if _, err = execRCRestrictedSQL(ctx, sctx, purgeMVLogSQL, []any{baseSchema, baseTable}); err != nil {
+	if _, err = execRCRestrictedSQLWithSession(ctx, sctx, purgeMVLogSQL, []any{baseSchema, baseTable}); err != nil {
 		return time.Time{}, err
 	}
 
-	rows, err := execRCRestrictedSQL(ctx, sctx, findNextTimeSQL, []any{mvLogID})
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, findNextTimeSQL, []any{mvLogID})
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -361,8 +383,8 @@ func purgeMVHistoryInBatches(ctx context.Context, sctx sessionctx.Context, sql s
 	}
 }
 
-// fetchAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
-func (*serviceHelper) fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
+// loadAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
+func (*serviceHelper) loadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
 	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
@@ -388,10 +410,17 @@ func (*serviceHelper) fetchAllTiDBMVLogPurge(ctx context.Context, sysSessionPool
 	return newPending, nil
 }
 
-// fetchAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
-func (*serviceHelper) fetchAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
-	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
-	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
+// loadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
+func (*serviceHelper) loadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
+	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer sysSessionPool.Put(se)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
+	sctx := se.(sessionctx.Context)
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, sql, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -405,9 +434,27 @@ func (*serviceHelper) fetchAllTiDBMVRefresh(ctx context.Context, sysSessionPool 
 			continue
 		}
 		nextRefresh := mvsUnix(row.GetInt64(0), 0)
+		var lastSuccessReadTSO uint64
+		var lastSuccessTime time.Time
+		if !row.IsNull(2) {
+			tso := row.GetInt64(2)
+			if tso > 0 {
+				lastSuccessReadTSO = uint64(tso)
+				lastSuccessTime = mvsUnixMilli(oracle.ExtractPhysical(lastSuccessReadTSO))
+			}
+		}
 		m := &mv{
-			ID:          mvID,
-			nextRefresh: nextRefresh,
+			ID:                 mvID,
+			nextRefresh:        nextRefresh,
+			lastSuccessReadTSO: lastSuccessReadTSO,
+			lastSuccessTime:    lastSuccessTime,
+		}
+		schemaName, mviewName, alertWarningSec, alertOverdueSec, found, resolveErr := resolveMVIdentityByID(ctx, sctx, mvID)
+		if resolveErr == nil && found {
+			m.schemaName = schemaName
+			m.mviewName = mviewName
+			m.alertWarningSec = alertWarningSec
+			m.alertOverdueSec = alertOverdueSec
 		}
 		m.orderTs = m.nextRefresh.UnixMilli()
 		newPending[mvID] = m
@@ -429,12 +476,7 @@ func execRCRestrictedSQLWithSessionPool(ctx context.Context, sysSessionPool basi
 	}
 	defer sysSessionPool.Put(se)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
-	return execRCRestrictedSQL(ctx, se.(sessionctx.Context), sql, params)
-}
-
-// execRCRestrictedSQL is a small wrapper over execRCRestrictedSQLWithSession.
-func execRCRestrictedSQL(ctx context.Context, sctx sessionctx.Context, sql string, params []any) ([]chunk.Row, error) {
-	return execRCRestrictedSQLWithSession(ctx, sctx, sql, params)
+	return execRCRestrictedSQLWithSession(ctx, se.(sessionctx.Context), sql, params)
 }
 
 // execRCRestrictedSQLWithSession executes SQL through the restricted SQL executor.
@@ -494,18 +536,23 @@ func shouldHandleMVCreateEvent(event *notifier.SchemaChangeEvent) bool {
 	}
 
 	switch event.GetType() {
-	case meta.ActionCreateMaterializedViewLog, meta.ActionCreateMaterializedView:
-		return true
 	case meta.ActionCreateTable:
 		tbl := event.GetCreateTableInfo()
-		if tbl == nil {
-			return false
-		}
-		return tbl.MaterializedView != nil || tbl.MaterializedViewLog != nil
-	// case meta.ActionAlterMaterializedViewRefresh, meta.ActionAlterMaterializedViewLogPurge:
-	// 	return true
+		return hasMVRelatedTableInfo(tbl)
+	case meta.ActionDropTable:
+		dropped := event.GetDropTableInfo()
+		return hasMVRelatedTableInfo(dropped)
+	case meta.ActionAlterMaterializedViewRefresh, meta.ActionAlterMaterializedViewAttributes, meta.ActionAlterMaterializedViewLogPurge:
+		return true
 	default:
 		// For other DDL types, rely on periodic refresh.
 		return false
 	}
+}
+
+func hasMVRelatedTableInfo(tbl *meta.TableInfo) bool {
+	if tbl == nil {
+		return false
+	}
+	return tbl.MaterializedView != nil || tbl.MaterializedViewLog != nil
 }

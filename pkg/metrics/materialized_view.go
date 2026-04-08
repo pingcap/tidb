@@ -31,10 +31,12 @@ const (
 	mvMetricTaskStatusTaskExecTimedOutRunning = "exec_timed_out_running"
 	mvMetricTaskStatusTaskExecBackpressureBlk = "exec_backpressure_blocked"
 
-	mvMetricTaskStatusMVTotal       = "mv_total"
-	mvMetricTaskStatusMVLogTotal    = "mvlog_total"
-	mvMetricTaskStatusMVRefreshRun  = "mv_refresh_running"
-	mvMetricTaskStatusMVLogPurgeRun = "mvlog_purge_running"
+	mvMetricTaskStatusMVTotal          = "mv_total"
+	mvMetricTaskStatusMVLogTotal       = "mvlog_total"
+	mvMetricTaskStatusMVRefreshRun     = "mv_refresh_running"
+	mvMetricTaskStatusMVLogPurgeRun    = "mvlog_purge_running"
+	mvMetricTaskStatusMVRefreshWarning = "mv_refresh_warning"
+	mvMetricTaskStatusMVRefreshOverdue = "mv_refresh_overdue"
 )
 
 // Metrics for materialized view service.
@@ -61,6 +63,8 @@ var (
 	MVServiceMVLogPurgeTotalGauge   prometheus.Gauge
 	MVServiceMVRefreshRunningGauge  prometheus.Gauge
 	MVServiceMVLogPurgeRunningGauge prometheus.Gauge
+	MVServiceMVRefreshWarningGauge  prometheus.Gauge
+	MVServiceMVRefreshOverdueGauge  prometheus.Gauge
 )
 
 // InitMVMetrics initializes metrics for materialized view service.
@@ -104,4 +108,6 @@ func InitMVMetrics() {
 	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVLogTotal)
 	MVServiceMVRefreshRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshRun)
 	MVServiceMVLogPurgeRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVLogPurgeRun)
+	MVServiceMVRefreshWarningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshWarning)
+	MVServiceMVRefreshOverdueGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshOverdue)
 }

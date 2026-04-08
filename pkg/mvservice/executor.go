@@ -205,16 +205,6 @@ func (e *TaskExecutor) setTimeout(timeout time.Duration) {
 	e.timeoutNanos.Store(int64(timeout))
 }
 
-// GetConfig returns the current execution config.
-func (e *TaskExecutor) GetConfig() (maxConcurrency int, timeout time.Duration) {
-	if e == nil {
-		return 0, 0
-	}
-	maxConcurrency = int(e.maxConcurrency.Load())
-	timeout = time.Duration(e.timeoutNanos.Load())
-	return maxConcurrency, timeout
-}
-
 // SetBackpressureController sets a task backpressure controller.
 // Passing nil disables backpressure.
 func (e *TaskExecutor) SetBackpressureController(controller TaskBackpressureController) {
@@ -384,12 +374,12 @@ func (e *TaskExecutor) tryExitWorkerWithLock() bool {
 // runTask executes one task with timeout handling and metrics reporting.
 func (e *TaskExecutor) runTask(name string, task func() error) {
 	e.metrics.gauges.runningCount.Add(1)
-
+	taskStart := mvsNow()
 	timeout := time.Duration(e.timeoutNanos.Load())
 	if timeout <= 0 {
 		err := e.safeExecute(name, task)
 		e.metrics.gauges.runningCount.Add(-1)
-		e.finishTask(name, err)
+		e.finishTask(err)
 		return
 	}
 
@@ -404,14 +394,15 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 	select {
 	case err := <-done:
 		e.metrics.gauges.runningCount.Add(-1)
-		e.finishTask(name, err)
+		e.finishTask(err)
 	case <-timer.C:
 		e.metrics.counters.timeoutCount.Add(1)
 		e.metrics.gauges.runningCount.Add(-1)
 		e.metrics.gauges.timedOutRunningCount.Add(1)
 		logutil.BgLogger().Warn(
-			"mv task timed out, continue in background",
+			"task timed out, continue in background",
 			zap.String("task", name),
+			zap.Time("exec_start", taskStart),
 			zap.Duration("timeout", timeout),
 			zap.Int64("running_count", e.metrics.gauges.runningCount.Load()),
 			zap.Int64("waiting_count", e.metrics.gauges.waitingCount.Load()),
@@ -420,39 +411,33 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 		go func() {
 			err := <-done
 			e.metrics.gauges.timedOutRunningCount.Add(-1)
-			e.finishTask(name, err)
+			e.finishTask(err)
 		}()
 	}
 }
 
 // finishTask marks one task as done and reports execution result metrics.
-func (e *TaskExecutor) finishTask(name string, err error) {
+func (e *TaskExecutor) finishTask(err error) {
 	e.tasksWG.Done()
-	e.logResult(name, err)
-}
-
-// logResult updates finish/failure counters and emits warning logs on failures.
-func (e *TaskExecutor) logResult(name string, err error) {
 	e.metrics.counters.finishedCount.Add(1)
 	if err == nil {
 		return
 	}
 	e.metrics.counters.failedCount.Add(1)
-	logutil.BgLogger().Warn(
-		"mv task failed",
-		zap.String("task", name),
-		zap.Error(err),
-		zap.Int64("running_count", e.metrics.gauges.runningCount.Load()),
-		zap.Int64("waiting_count", e.metrics.gauges.waitingCount.Load()),
-		zap.Int64("timed_out_running_count", e.metrics.gauges.timedOutRunningCount.Load()),
-	)
 }
 
 // safeExecute runs task and converts panics into errors.
 func (*TaskExecutor) safeExecute(taskName string, task func() error) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("mv task panicked, task=%s, panic=%v, stack=%s", taskName, r, debug.Stack())
+			stack := debug.Stack()
+			err = fmt.Errorf("task panicked, task=%s, panic=%v", taskName, r)
+			logutil.BgLogger().Error(
+				"task panicked in executor",
+				zap.String("task", taskName),
+				zap.Any("panic", r),
+				zap.ByteString("stack", stack),
+			)
 		}
 	}()
 	return task()
