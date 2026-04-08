@@ -392,8 +392,9 @@ func (e *BaseTaskExecutor) Run() {
 			// might have failed, we rely on scheduler to detect the error, and
 			// notify task executor or manager to cancel.
 			if llog.IsContextCanceledError(err) {
-				// to avoid the log being misleading when context is canceled.
-				e.sampleLogger.Info("meet context cancel when run subtask", llog.ShortError(err))
+				// Context canceled is expected when scheduler/manager cancels executor,
+				// so log as info instead of a subtask failure.
+				e.sampleLogger.Info("subtask run canceled by context", llog.ShortError(err))
 			} else {
 				e.sampleLogger.Error("run subtask failed", zap.Error(err))
 			}
