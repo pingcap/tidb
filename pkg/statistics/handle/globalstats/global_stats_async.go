@@ -310,10 +310,10 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	sctx sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64,
 	isIndex bool,
+	analyzeVersion int,
 ) error {
 	a.skipMissingPartitionStats = sctx.GetSessionVars().SkipMissingPartitionStats
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
-	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	return util.CallWithSCtx(a.statsHandle.SPool(),
 		func(sctx sessionctx.Context) error {

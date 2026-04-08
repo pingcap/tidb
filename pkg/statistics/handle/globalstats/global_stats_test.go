@@ -976,6 +976,7 @@ func TestEmptyHists(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec(`create table t (
 	id int,
 	fname varchar(30),
@@ -995,4 +996,21 @@ partitions 12;`)
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
 	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
+
+	// Global merge should follow the target stats version from GlobalStatsInfo rather than session analyze version.
+	called := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/mergeGlobalStatsAnalyzeVersion", func(version int) {
+		called = true
+		require.Equal(t, 1, version)
+	})
+	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
+	require.NoError(t, dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(
+		se,
+		core.GetAnalyzeOptionDefaultV2ForTest(),
+		infoSchema,
+		&types.GlobalStatsInfo{StatsVersion: 1},
+		tbl.Meta().ID,
+	))
+	require.True(t, called)
 }

@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -53,7 +54,11 @@ func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionct
 	info *statstypes.GlobalStatsInfo,
 	physicalID int64,
 ) (err error) {
-	globalStats, err := MergePartitionStats2GlobalStatsByTableID(sc, sg.statsHandler, opts, is, physicalID, info.IsIndex == 1, info.HistIDs)
+	analyzeVersion := info.StatsVersion
+	if analyzeVersion == 0 {
+		analyzeVersion = sc.GetSessionVars().AnalyzeVersion
+	}
+	globalStats, err := MergePartitionStats2GlobalStatsByTableID(sc, sg.statsHandler, opts, is, physicalID, info.IsIndex == 1, info.HistIDs, analyzeVersion)
 	if err != nil {
 		if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 			// When we find some partition-level stats are missing, we need to report warning.
@@ -101,7 +106,9 @@ func MergePartitionStats2GlobalStats(
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
+	analyzeVersion int,
 ) (globalStats *GlobalStats, err error) {
+	failpoint.InjectCall("mergeGlobalStatsAnalyzeVersion", analyzeVersion)
 	if sc.GetSessionVars().EnableAsyncMergeGlobalStats {
 		statslogutil.StatsSampleLogger().Info("use async merge global stats",
 			zap.Int64("tableID", globalTableInfo.ID),
@@ -111,7 +118,7 @@ func MergePartitionStats2GlobalStats(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = worker.MergePartitionStats2GlobalStats(sc, opts, isIndex)
+		err = worker.MergePartitionStats2GlobalStats(sc, opts, isIndex, analyzeVersion)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -121,7 +128,7 @@ func MergePartitionStats2GlobalStats(
 		zap.Int64("tableID", globalTableInfo.ID),
 		zap.String("table", globalTableInfo.Name.L),
 	)
-	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
+	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle, analyzeVersion)
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -133,6 +140,7 @@ func MergePartitionStats2GlobalStatsByTableID(
 	tableID int64,
 	isIndex bool,
 	histIDs []int64,
+	analyzeVersion int,
 ) (globalStats *GlobalStats, err error) {
 	// Get the partition table IDs.
 	globalTable, ok := statsHandle.TableInfoByID(is, tableID)
@@ -142,7 +150,7 @@ func MergePartitionStats2GlobalStatsByTableID(
 	}
 
 	globalTableInfo := globalTable.Meta()
-	globalStats, err = MergePartitionStats2GlobalStats(sc, statsHandle, opts, is, globalTableInfo, isIndex, histIDs)
+	globalStats, err = MergePartitionStats2GlobalStats(sc, statsHandle, opts, is, globalTableInfo, isIndex, histIDs, analyzeVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -175,6 +183,7 @@ func blockingMergePartitionStats2GlobalStats(
 	histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table,
 	statsHandle statstypes.StatsHandle,
+	analyzeVersion int,
 ) (globalStats *GlobalStats, err error) {
 	externalCache := false
 	if allPartitionStats != nil {
@@ -336,14 +345,14 @@ func blockingMergePartitionStats2GlobalStats(
 		var poppedTopN []statistics.TopNMeta
 		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
 		globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(gpool, sc, wrapper,
-			sc.GetSessionVars().StmtCtx.TimeZone(), sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+			sc.GetSessionVars().StmtCtx.TimeZone(), analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
 		if err != nil {
 			return
 		}
 
 		// Merge histogram.
 		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, sc.GetSessionVars().AnalyzeVersion)
+			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, analyzeVersion)
 		if err != nil {
 			return
 		}
