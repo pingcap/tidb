@@ -1152,14 +1152,15 @@ func constructDS2IndexScanTask(
 }
 
 const (
+	joinLeft             = 0
+	joinRight            = 1
+	indexJoinMethod      = 0
+	indexHashJoinMethod  = 1
+	indexMergeJoinMethod = 2
+
 	// A fixed guardrail for step-1: do not push down probe-side residual predicates
 	// that contain IN-lists whose size is greater than this threshold.
 	indexJoinProbeSideLargeInNotInThreshold = 100000
-	joinLeft                                = 0
-	joinRight                               = 1
-	indexJoinMethod                         = 0
-	indexHashJoinMethod                     = 1
-	indexMergeJoinMethod                    = 2
 )
 
 func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod int, ok bool) {
