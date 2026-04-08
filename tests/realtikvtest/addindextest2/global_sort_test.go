@@ -1009,18 +1009,18 @@ func TestNextGenMetering(t *testing.T) {
 	require.EqualValues(t, 0, readIndexSum.GetReqCnt.Load())
 	require.EqualValues(t, 3, readIndexSum.PutReqCnt.Load())
 	require.Greater(t, readIndexSum.ReadBytes.Load(), int64(0))
-	require.EqualValues(t, 153, readIndexSum.Bytes.Load())
+	require.EqualValues(t, 153, readIndexSum.Processed.Load())
 	require.EqualValues(t, 3, readIndexSum.RowCnt.Load())
 
 	require.EqualValues(t, 2, mergeSum.GetReqCnt.Load())
 	require.EqualValues(t, 3, mergeSum.PutReqCnt.Load())
 	require.EqualValues(t, 0, mergeSum.ReadBytes.Load())
-	require.EqualValues(t, 0, mergeSum.Bytes.Load())
+	require.EqualValues(t, 0, mergeSum.Processed.Load())
 
 	require.EqualValues(t, 3, ingestSum.GetReqCnt.Load())
 	require.EqualValues(t, 0, ingestSum.PutReqCnt.Load())
 	require.EqualValues(t, 0, ingestSum.ReadBytes.Load())
-	require.EqualValues(t, 0, ingestSum.Bytes.Load())
+	require.EqualValues(t, 0, ingestSum.Processed.Load())
 
 	require.Eventually(t, func() bool {
 		items := *rowAndSizeMeterItems.Load()
@@ -1043,7 +1043,7 @@ func getStepSummary(t *testing.T, taskMgr *diststorage.TaskManager, taskID int64
 		v := &execute.SubtaskSummary{}
 		require.NoError(t, json.Unmarshal([]byte(subtask.Summary), &v))
 		accumSummary.RowCnt.Add(v.RowCnt.Load())
-		accumSummary.Bytes.Add(v.Bytes.Load())
+		accumSummary.Processed.Add(v.Processed.Load())
 		accumSummary.ReadBytes.Add(v.ReadBytes.Load())
 		accumSummary.PutReqCnt.Add(v.PutReqCnt.Load())
 		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
