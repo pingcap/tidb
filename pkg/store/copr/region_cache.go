@@ -80,8 +80,14 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 	loc := l.Location
 	res := []*LocationKeyRanges{}
 	for ranges.Len() > 0 {
-		// ranges must be in loc.region, so the bucket returned by loc.LocateBucket is guaranteed to be not nil
-		bucket := loc.LocateBucket(ranges.At(0).StartKey)
+		startKey := ranges.At(0).StartKey
+		bucket := loc.LocateBucket(startKey)
+		if bucket == nil {
+			logutil.BgLogger().Warn("LocateBucket returned nil, fallback to region split",
+				zap.Uint64("regionID", loc.Region.GetID()),
+				zap.String("startKey", strconv.Quote(string(startKey))))
+			return []*LocationKeyRanges{l}
+		}
 
 		// Iterate to the first range that is not complete in the bucket.
 		var r kv.KeyRange
