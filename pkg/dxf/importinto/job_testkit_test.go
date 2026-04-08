@@ -288,22 +288,16 @@ func TestShowImportProgress(t *testing.T) {
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
 		Summary: importer.Summary{
-			EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-			MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
-			IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-			ImportedRows:  100,
+			EncodeSummary:           importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			MergeSummary:            importer.StepSummary{Bytes: 0, RowCnt: 0},
+			IngestSummary:           importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			CollectConflictsSummary: importer.StepSummary{RowCnt: 1000},
+			ResolveConflictsSummary: importer.StepSummary{RowCnt: 500},
+			ImportedRows:            100,
 		},
 	}
 
 	bytes, err := json.Marshal(taskMeta)
-	require.NoError(t, err)
-	var taskMetaMap map[string]any
-	require.NoError(t, json.Unmarshal(bytes, &taskMetaMap))
-	summaryMap, ok := taskMetaMap["Summary"].(map[string]any)
-	require.True(t, ok)
-	summaryMap["collect-conflicts-summary"] = map[string]any{"input-rows": int64(1000)}
-	summaryMap["resolve-conflicts-summary"] = map[string]any{"input-rows": int64(500)}
-	bytes, err = json.Marshal(taskMetaMap)
 	require.NoError(t, err)
 
 	conn := tk.Session().GetSQLExecutor()
