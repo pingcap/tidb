@@ -391,7 +391,12 @@ func (e *BaseTaskExecutor) Run() {
 			// task executor keeps running its subtasks even though some subtask
 			// might have failed, we rely on scheduler to detect the error, and
 			// notify task executor or manager to cancel.
-			e.sampleLogger.Error("run subtask failed", zap.Error(err))
+			if llog.IsContextCanceledError(err) {
+				// to avoid the log being misleading when context is canceled.
+				e.logger.Info("meet context cancel when run subtask")
+			} else {
+				e.logger.Error("run subtask failed", zap.Error(err))
+			}
 		} else {
 			// if we run a subtask successfully, we will try to run next subtask
 			// immediately for once.
