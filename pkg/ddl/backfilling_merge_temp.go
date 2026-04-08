@@ -97,10 +97,12 @@ func (e *mergeTempIndexExecutor) initializeByMeta(subtask *proto.Subtask, meta *
 	)
 	// init metrics
 
-	e.mergeCounter = getBackfillTotalByLabel(
+	e.mergeCounter = getBackfillTotalByTableID(
+		meta.PhysicalTableID,
 		metrics.LblMergeTmpIdxRate,
 		e.job.SchemaName, e.physicalTable.Meta().Name.String(), e.idxInfo.Name.L)
-	e.conflictCounter = getBackfillTotalByLabel(
+	e.conflictCounter = getBackfillTotalByTableID(
+		meta.PhysicalTableID,
 		fmt.Sprintf("%s-conflict", metrics.LblMergeTmpIdxRate),
 		e.job.SchemaName, e.physicalTable.Meta().Name.String(), e.idxInfo.Name.L)
 	return nil

@@ -27,9 +27,11 @@ var (
 	backfillLabelsMu sync.Mutex
 	// activeBackfillProgressLabels tracks all active backfill progress metrics labels
 	// for cleanup when DDL jobs are done.
+	// DEPRECATED: This is now tracked in pkg/metrics/backfillMetricsRegistry by tableID
 	activeBackfillProgressLabels = make(map[string]struct{}, 256)
 	// activeBackfillTotalLabels tracks all active backfill total counter metrics labels
 	// for cleanup when DDL jobs are done.
+	// DEPRECATED: This is now tracked in pkg/metrics/backfillMetricsRegistry by tableID
 	activeBackfillTotalLabels = make(map[string]struct{}, 256)
 )
 
@@ -54,7 +56,20 @@ func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) stri
 	return stringBuilder.String()
 }
 
+// getBackfillTotalByTableID returns the Counter showing the speed of backfilling for the given table ID and type label.
+// It also tracks the label for later cleanup by tableID.
+func getBackfillTotalByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
+	return metrics.GetBackfillTotalByTableID(tableID, label, schemaName, tableName, optionalColOrIdxName)
+}
+
+// getBackfillProgressByTableID returns the Gauge showing the percentage progress for the given table ID and type label.
+// It also tracks the label for later cleanup by tableID.
+func getBackfillProgressByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
+	return metrics.GetBackfillProgressByTableID(tableID, label, schemaName, tableName, optionalColOrIdxName)
+}
+
 // getBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
+// DEPRECATED: Use getBackfillTotalByTableID instead.
 // It also tracks the label for later cleanup.
 func getBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
 	labelValue := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
@@ -65,6 +80,7 @@ func getBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName 
 }
 
 // getBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
+// DEPRECATED: Use getBackfillProgressByTableID instead.
 // It also tracks the label for later cleanup.
 func getBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
 	labelValue := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
