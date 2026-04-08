@@ -101,8 +101,9 @@ const (
 	defaultMVFetchInterval       = 30 * time.Second
 	defaultMVBasicInterval       = time.Second
 	defaultServerRefreshInterval = 5 * time.Second
-	defaultMVHistoryGCInterval   = time.Hour
+	defaultMVHistoryGCInterval   = 20 * time.Minute
 	defaultMVHistoryGCRetention  = 365 * 24 * time.Hour
+	defaultMVHistoryGCMaxRecords = uint64(1000000)
 	defaultMVTaskRetryBase       = 10 * time.Second
 	defaultMVTaskRetryMax        = 120 * time.Second
 	manualCancelBackoffDelay     = 2 * time.Minute
@@ -474,7 +475,7 @@ func (t *MVService) logMVRefreshAlerts(alertTasks []refreshAlertTask) {
 		if task.overdue {
 			logutil.BgLogger().Error("Materialized_view_refresh_time_overdue", fields...)
 		} else {
-			logutil.BgLogger().Warn("Materialized_view_refresh_time_warning", fields...)
+			logutil.BgLogger().Error("Materialized_view_refresh_time_warning", fields...)
 		}
 	}
 }
@@ -964,13 +965,21 @@ func (t *MVService) runGCOperationHistory(now time.Time, historyGCInterval time.
 		logutil.BgLogger().Warn("get current tso failed when GC MV/MVLOG operation history", fields...)
 		return
 	}
-	if err := t.mh.PurgeMVHistoryBeforeTSO(t.ctx, t.sysSessionPool, currentTSO, mviewRefreshRetention, mlogPurgeRetention); err != nil {
+	if err := t.mh.PurgeMVHistoryBeforeTSO(
+		t.ctx,
+		t.sysSessionPool,
+		currentTSO,
+		mviewRefreshRetention,
+		mlogPurgeRetention,
+	); err != nil {
 		result = mvDurationResultFailed
 		t.scheduleHistoryGCFailure(now, historyGCInterval)
 		fields := append(t.runtimeLogFields(),
 			zap.Uint64("current_tso", currentTSO),
 			zap.Duration("mview_refresh_hist_retention", mviewRefreshRetention),
 			zap.Duration("mlog_purge_hist_retention", mlogPurgeRetention),
+			zap.Uint64("mview_refresh_hist_max_records", defaultMVHistoryGCMaxRecords),
+			zap.Uint64("mlog_purge_hist_max_records", defaultMVHistoryGCMaxRecords),
 			zap.Error(err),
 		)
 		logutil.BgLogger().Warn("GC MV/MVLOG operation history failed", fields...)
