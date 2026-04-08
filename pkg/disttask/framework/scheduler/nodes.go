@@ -21,12 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD:pkg/disttask/framework/scheduler/nodes.go
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-=======
-	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
->>>>>>> 8043e40e0cf (pkg/dxf: sample high-frequency logs and summarize kv-range split (#67513)):pkg/dxf/framework/scheduler/nodes.go
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"

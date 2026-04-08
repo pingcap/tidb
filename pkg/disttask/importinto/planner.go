@@ -484,12 +484,8 @@ func splitForOneSubtask(
 		} else {
 			endKey = tidbkv.Key(endKeyOfGroup).Clone()
 		}
-<<<<<<< HEAD:pkg/disttask/importinto/planner.go
-		logutil.Logger(ctx).Info("kv range as subtask",
-=======
 		logutil.Logger(ctx).Debug("kv range as subtask",
 			zap.String("kvGroup", kvGroup),
->>>>>>> 8043e40e0cf (pkg/dxf: sample high-frequency logs and summarize kv-range split (#67513)):pkg/dxf/importinto/planner.go
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)),
 			zap.Int("dataFiles", len(dataFiles)))
