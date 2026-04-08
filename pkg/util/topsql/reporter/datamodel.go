@@ -626,6 +626,9 @@ type normalizedSQLMap struct {
 	length atomic2.Int64
 }
 
+// normalizedMetaRegisterAfterLoadHook is a test hook for coordinating stale-pointer registrations.
+var normalizedMetaRegisterAfterLoadHook func()
+
 func newNormalizedSQLMap() *normalizedSQLMap {
 	r := &normalizedSQLMap{}
 	r.data.Store(&sync.Map{})
@@ -640,6 +643,9 @@ func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isIn
 		return
 	}
 	data := m.data.Load()
+	if normalizedMetaRegisterAfterLoadHook != nil {
+		normalizedMetaRegisterAfterLoadHook()
+	}
 	_, loaded := data.LoadOrStore(string(sqlDigest), sqlMeta{
 		normalizedSQL: normalizedSQL,
 		isInternal:    isInternal,
@@ -705,6 +711,9 @@ func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, i
 		return
 	}
 	data := m.data.Load()
+	if normalizedMetaRegisterAfterLoadHook != nil {
+		normalizedMetaRegisterAfterLoadHook()
+	}
 	_, loaded := data.LoadOrStore(string(planDigest), planMeta{
 		binaryNormalizedPlan: normalizedPlan,
 		isLarge:              isLarge,

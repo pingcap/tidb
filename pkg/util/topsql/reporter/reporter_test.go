@@ -178,6 +178,99 @@ func TestDoReportSendsMetaWhenRURecordsEmpty(t *testing.T) {
 	}
 }
 
+func TestReportWorkerWaitsForInFlightSQLMetaRegistration(t *testing.T) {
+	origReportHook := reportWorkerBeforeBuildReportDataHook
+	origRegisterHook := normalizedMetaRegisterAfterLoadHook
+
+	registerLoadedOldMap := make(chan struct{})
+	releaseRegister := make(chan struct{})
+	reportWorkerReceivedData := make(chan struct{})
+
+	reportWorkerBeforeBuildReportDataHook = func() {
+		select {
+		case <-reportWorkerReceivedData:
+		default:
+			close(reportWorkerReceivedData)
+		}
+	}
+
+	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
+	tsr.BindKeyspaceName([]byte("ks-race"))
+	t.Cleanup(tsr.Close)
+	t.Cleanup(func() {
+		select {
+		case <-releaseRegister:
+		default:
+			close(releaseRegister)
+		}
+		normalizedMetaRegisterAfterLoadHook = origRegisterHook
+		reportWorkerBeforeBuildReportDataHook = origReportHook
+	})
+
+	ch := make(chan *ReportData, 1)
+	require.NoError(t, tsr.Register(newMockDataSink(ch)))
+	go tsr.reportWorker()
+
+	seedDigest := []byte("sql-seed")
+	racingDigest := []byte("sql-racing")
+	tsr.RegisterSQL(seedDigest, "select 1", false)
+	normalizedMetaRegisterAfterLoadHook = func() {
+		select {
+		case <-registerLoadedOldMap:
+		default:
+			close(registerLoadedOldMap)
+		}
+		<-releaseRegister
+	}
+
+	registerDone := make(chan struct{})
+	go func() {
+		tsr.RegisterSQL(racingDigest, "select 2", false)
+		close(registerDone)
+	}()
+
+	select {
+	case <-registerLoadedOldMap:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for RegisterSQL to snapshot the old SQL meta map")
+	}
+
+	tsr.takeDataAndSendToReportChan(60)
+
+	select {
+	case <-reportWorkerReceivedData:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for reportWorker to dequeue the payload")
+	}
+
+	require.Never(t, func() bool {
+		select {
+		case <-ch:
+			return true
+		default:
+			return false
+		}
+	}, 20*time.Millisecond, time.Millisecond)
+
+	close(releaseRegister)
+	select {
+	case <-registerDone:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the in-flight SQL meta registration to finish")
+	}
+
+	select {
+	case payload := <-ch:
+		require.Len(t, payload.SQLMetas, 2)
+		_, ok := findSQLMeta(payload.SQLMetas, seedDigest)
+		require.True(t, ok, "missing seed SQL meta")
+		_, ok = findSQLMeta(payload.SQLMetas, racingDigest)
+		require.True(t, ok, "missing in-flight SQL meta")
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for the report payload")
+	}
+}
+
 func TestCollectAndSendBatch(t *testing.T) {
 	tsr, ds := setupRemoteTopSQLReporter(t, maxSQLNum, 1)
 	populateCache(tsr, 0, maxSQLNum, 1)

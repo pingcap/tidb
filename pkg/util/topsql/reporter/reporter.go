@@ -38,6 +38,9 @@ const (
 
 var nowFunc = time.Now
 
+// reportWorkerBeforeBuildReportDataHook is a test hook for coordinating reportWorker timing.
+var reportWorkerBeforeBuildReportDataHook func()
+
 // TopSQLReporter collects Top SQL metrics.
 type TopSQLReporter interface {
 	collector.Collector
@@ -371,10 +374,12 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 	for {
 		select {
 		case data := <-tsr.reportCollectedDataChan:
-			// When `reportCollectedDataChan` receives something, there could be ongoing
-			// `RegisterSQL` and `RegisterPlan` running, who writes to the data structure
-			// that `data` contains. So we wait for a little while to ensure that writes
-			// are finished.
+			if reportWorkerBeforeBuildReportDataHook != nil {
+				reportWorkerBeforeBuildReportDataHook()
+			}
+			// RegisterSQL/RegisterPlan may still be in flight against the taken maps
+			// after the payload is queued, so allow those stale-pointer writes to
+			// settle before converting the payload to protobuf.
 			time.Sleep(time.Millisecond * 100)
 			rs := data.collected.getReportRecords()
 			// Convert to protobuf data and do report.
