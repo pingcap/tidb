@@ -78,12 +78,12 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 //
 // Summing these per-node contributions gives the global singleton estimate.
 //
-// The current implementation rebuilds "all except i" from scratch for each
-// node, which is O(k²) in the number of nodes. A prefix-suffix approach
-// could reduce this to O(k) time, but would require O(k) extra sketches
-// (~160KB each), which risks significant memory pressure for tables with
-// many nodes. We keep the O(k²) approach
-// for its O(1) memory overhead.
+// The implementation keeps a rolling prefix union for nodes before i and
+// rebuilds only the suffix union for nodes after i. That keeps the O(k²)
+// time complexity but avoids roughly half of the repeated merge work while
+// preserving O(1) extra sketches. A full prefix-suffix cache could reduce
+// the runtime to O(k), but it would require O(k) extra sketches (~160KB
+// each), which risks significant memory pressure for tables with many nodes.
 //
 // Example with three nodes:
 //
@@ -127,19 +127,28 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 	}
 
 	var globalSingleton int64
+	var prefixNDV *FMSketch
 	for i := range ndvSketches {
-		// Merge NDV sketches from all nodes except node i.
+		// Rebuild the suffix union from nodes after i, then merge the rolling
+		// prefix union from nodes before i.
 		var other *FMSketch
-		for j, ns := range ndvSketches {
-			if j == i || ns == nil {
+		for j := i + 1; j < len(ndvSketches); j++ {
+			ns := ndvSketches[j]
+			if ns == nil {
 				continue
 			}
-
 			if other == nil {
 				other = ns.Copy()
 				continue
 			}
 			other.MergeFMSketch(ns)
+		}
+		if prefixNDV != nil {
+			if other == nil {
+				other = prefixNDV.Copy()
+			} else {
+				other.MergeFMSketch(prefixNDV)
+			}
 		}
 
 		ndvOther := int64(0)
@@ -168,6 +177,15 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		// In practice, this appears to be fairly rare.
 		delta := max(0, ndvUnion-ndvOther)
 		globalSingleton += delta
+
+		if ndvSketches[i] == nil {
+			continue
+		}
+		if prefixNDV == nil {
+			prefixNDV = ndvSketches[i].Copy()
+		} else {
+			prefixNDV.MergeFMSketch(ndvSketches[i])
+		}
 	}
 	intest.Assert(globalSingleton >= 0, "globalSingleton must be positive")
 	return uint64(globalSingleton)
