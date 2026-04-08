@@ -1,0 +1,81 @@
+use test;
+drop table if exists t;
+create table t (
+c0 int not null,
+c1 int unsigned not null,
+c2 double not null,
+c3 decimal(20, 3) not null,
+kcol int
+);
+select count(*) from information_schema.tidb_mviews;
+count(*)
+0
+select * from information_schema.tidb_mviews;
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+create materialized view log on t (c0, c1, c2, c3, kcol);
+CREATE MATERIALIZED VIEW mv_t (kcol, s0, s1, s2, s3, cnt)
+REFRESH FAST NEXT DATE_ADD(now(), interval 1 hour)
+AS
+SELECT kcol, SUM(c0), SUM(c1), SUM(c2), SUM(c3), COUNT(1)
+FROM t
+GROUP BY kcol;
+CREATE MATERIALIZED VIEW mv_t1 (kcol, s0, s1, s2, s3, cnt)
+REFRESH FAST NEXT DATE_ADD(now(), interval 1 hour)
+AS
+SELECT kcol, SUM(c0), SUM(c1), SUM(c2), SUM(c3), COUNT(1)
+FROM t
+GROUP BY kcol;
+CREATE MATERIALIZED VIEW mvv_t1 (kcol, s0, s1, s2, s3, cnt)
+REFRESH FAST NEXT DATE_ADD(now(), interval 1 hour)
+AS
+SELECT kcol, SUM(c0), SUM(c1), SUM(c2), SUM(c3), COUNT(1)
+FROM t
+GROUP BY kcol;
+select count(*) from information_schema.tidb_mviews;
+count(*)
+3
+select * from information_schema.tidb_mviews;
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+select * from information_schema.tidb_mviews where TABLE_SCHEMA = "test";
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+select * from information_schema.tidb_mviews where TABLE_SCHEMA != "test";
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+select * from information_schema.tidb_mviews where MVIEW_NAME = "mv_t";
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+select * from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME = "mv_t1";
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+select TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME like "%mvv%";
+TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_MODIFY_TIME	REFRESH_METHOD
+test	124	mv_t	2026-04-08 22:00:32	FAST
+test	128	mvv_t1	2026-04-08 22:00:32	FAST
+select * from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1");
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+select * from information_schema.tidb_mviews where MVIEW_NAME not in ("mv", "mv_t1");
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+select * from information_schema.tidb_mviews where TABLE_SCHEMA = "test" and MVIEW_NAME like "%mvv%";
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+select * from information_schema.tidb_mviews where REFRESH_METHOD = "FAST";
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+select * from information_schema.tidb_mviews where REFRESH_METHOD != "FAST";
+TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
+select TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") and REFRESH_METHOD = "FAST";
+TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_MODIFY_TIME	REFRESH_METHOD
+test	124	mv_t	2026-04-08 22:00:32	FAST
+test	126	mv_t1	2026-04-08 22:00:32	FAST
