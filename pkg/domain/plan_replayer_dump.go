@@ -258,7 +258,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		logutil.BgLogger().Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
 			zap.Strings("sqls", sqls))
 	}
-	task.useExplainAdminBypass = shouldUsePlanReplayerExplainAdminBypass(sctx, task)
+	task.useExplainAdminBypass = canUsePlanReplayerExplainAdminBypass(sctx, task)
 	defer func() {
 		errMsg := ""
 		if err != nil {
@@ -571,7 +571,7 @@ func isPlanReplayerExplainAdminStmt(stmt ast.StmtNode) bool {
 	return ok && checker.valid
 }
 
-func shouldUsePlanReplayerExplainAdminBypass(sctx sessionctx.Context, task *PlanReplayerDumpTask) bool {
+func canUsePlanReplayerExplainAdminBypass(sctx sessionctx.Context, task *PlanReplayerDumpTask) bool {
 	if task == nil || task.Analyze {
 		return false
 	}

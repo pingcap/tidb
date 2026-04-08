@@ -186,7 +186,7 @@ func (m *fakePlanReplayerPrivilegeManager) RequestDynamicVerification(_ []*auth.
 	return !grantable && privName == "PLAN_REPLAYER_EXPLAIN_ADMIN"
 }
 
-func TestShouldUsePlanReplayerExplainAdminBypass(t *testing.T) {
+func TestCanUsePlanReplayerExplainAdminBypass(t *testing.T) {
 	p := parser.New()
 	sctx := mock.NewContext()
 	privilege.BindPrivilegeManager(sctx, &fakePlanReplayerPrivilegeManager{})
@@ -211,7 +211,7 @@ func TestShouldUsePlanReplayerExplainAdminBypass(t *testing.T) {
 		"select * from t where exists (select * from t2)",
 	}
 	for _, sql := range allowedSQLs {
-		require.True(t, shouldUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{sql}, false)), sql)
+		require.True(t, canUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{sql}, false)), sql)
 	}
 
 	disallowedSQLs := []string{
@@ -224,9 +224,9 @@ func TestShouldUsePlanReplayerExplainAdminBypass(t *testing.T) {
 		"with c as (values row(1)) select * from c",
 	}
 	for _, sql := range disallowedSQLs {
-		require.False(t, shouldUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{sql}, false)), sql)
+		require.False(t, canUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{sql}, false)), sql)
 	}
 
-	require.False(t, shouldUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{"select * from t"}, true)))
-	require.False(t, shouldUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{"select * from t", "values row(1)"}, false)))
+	require.False(t, canUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{"select * from t"}, true)))
+	require.False(t, canUsePlanReplayerExplainAdminBypass(sctx, buildTask([]string{"select * from t", "values row(1)"}, false)))
 }
