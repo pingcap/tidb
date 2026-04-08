@@ -899,6 +899,17 @@ func TestBuildPartitionClauses(t *testing.T) {
 	}
 }
 
+func TestBuildTiDBTableSampleQuery(t *testing.T) {
+	require.Equal(t,
+		"SELECT `a`,`b` FROM `test`.`t` TABLESAMPLE REGIONS() ORDER BY `a`,`b`",
+		buildTiDBTableSampleQuery([]string{"a", "b"}, "test", "t"),
+	)
+	require.Equal(t,
+		"SELECT `a` FROM `test`.`t` PARTITION(`p0`,`p1`) TABLESAMPLE REGIONS() ORDER BY `a`",
+		buildTiDBTableSampleQuery([]string{"a"}, "test", "t", "p0", "p1"),
+	)
+}
+
 func TestBuildWhereCondition(t *testing.T) {
 	conf := DefaultConfig()
 	testCases := []struct {

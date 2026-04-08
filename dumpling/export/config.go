@@ -79,6 +79,7 @@ const (
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
 	flagCsvOutputDialect         = "csv-output-dialect"
+	flagPartitions               = "partitions"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -182,6 +183,7 @@ type Config struct {
 	Tables              DatabaseTables
 	CollationCompatible string
 	CsvOutputDialect    CSVDialect
+	Partitions          []string
 
 	Labels        prometheus.Labels `json:"-"`
 	PromFactory   promutil.Factory  `json:"-"`
@@ -360,6 +362,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
+	flags.StringSlice(flagPartitions, nil, "The table partitions to dump")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -515,6 +518,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.TiDBMemQuotaQuery, err = flags.GetUint64(flagTidbMemQuotaQuery)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.Partitions, err = flags.GetStringSlice(flagPartitions)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -759,6 +766,9 @@ func buildTLSConfig(conf *Config) error {
 func validateSpecifiedSQL(conf *Config) error {
 	if conf.SQL != "" && conf.Where != "" {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
+	}
+	if conf.SQL != "" && len(conf.Partitions) > 0 {
+		return errors.New("can't specify both --sql and --partitions at the same time.")
 	}
 	return nil
 }
