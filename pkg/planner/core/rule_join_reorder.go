@@ -36,15 +36,16 @@ import (
 func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	joinMethodHintInfo := make(map[int]*joinorder.JoinMethodHint)
 	var (
-		group              []base.LogicalPlan
-		joinOrderHintInfo  []*h.PlanHints
-		eqEdges            []*expression.ScalarFunction
-		otherConds         []expression.Expression
-		joinTypes          []*joinTypeWithExtMsg
-		nullExtendedCols   []*expression.Column
-		nullExtendedColSet = make(map[int64]struct{})
-		hasOuterJoin       bool
-		currentLeadingHint *h.PlanHints // Track the active LEADING hint
+		group               []base.LogicalPlan
+		joinOrderHintInfo   []*h.PlanHints
+		eqEdges             []*expression.ScalarFunction
+		otherConds          []expression.Expression
+		joinTypes           []*joinTypeWithExtMsg
+		nullExtendedCols    []*expression.Column
+		nullExtendedColSet  = make(map[int64]struct{})
+		hasOuterJoin        bool
+		currentLeadingHint  *h.PlanHints // Track the active LEADING hint
+		indexJoinFirstHints *h.PlanHints // Tracks INDEX_JOIN_FIRST hint across the join group
 	)
 	appendNullExtendedCols := func(schema *expression.Schema) {
 		if schema == nil {
@@ -90,7 +91,9 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
-	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
+	// PreferIndexJoinFirst is a statement-level soft preference that biases the reordered joins; it must not block reorder.
+	hardHints := join.PreferJoinType &^ h.PreferIndexJoinFirst
+	if !isJoin || (hardHints > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin) ||
 		((join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) && join.EqualConditions == nil) ||
 		// with NullEQ in the EQCond, the join order needs to consider the transitivity of null and avoid the wrong result.
@@ -129,6 +132,13 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			joinMethodHintInfo[join.Children()[1].ID()] = &joinorder.JoinMethodHint{PreferJoinMethod: join.RightPreferJoinType, HintInfo: join.HintInfo}
 			rightHasHint = true
 		}
+	}
+	if isJoin && join.HintInfo != nil && join.HintInfo.IndexJoinFirst {
+		// INDEX_JOIN_FIRST is a statement-level hint (no table target), so it is not stored in
+		// joinMethodHintInfo. Track it separately so newCartesianJoin can re-apply it to every
+		// reordered join. This capture must happen regardless of EnableAdvancedJoinHint because
+		// PreferIndexJoinFirst is exempted from the reorder-blocking guard above.
+		indexJoinFirstHints = join.HintInfo
 	}
 	hasOuterJoin = hasOuterJoin || (join.JoinType != base.InnerJoin)
 	// If the left child has the hint, it means there are some join method hints want to specify the join method based on the left child.
@@ -178,6 +188,9 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		appendNullExtendedCols(lhsJoinGroupResult.nullExtendedCols)
 		maps.Copy(joinMethodHintInfo, lhsJoinMethodHintInfo)
 		hasOuterJoin = hasOuterJoin || lhsHasOuterJoin
+		if lhsJoinGroupResult.indexJoinFirstHints != nil {
+			indexJoinFirstHints = lhsJoinGroupResult.indexJoinFirstHints
+		}
 	} else {
 		group = append(group, join.Children()[0])
 	}
@@ -226,6 +239,9 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		appendNullExtendedCols(rhsJoinGroupResult.nullExtendedCols)
 		maps.Copy(joinMethodHintInfo, rhsJoinMethodHintInfo)
 		hasOuterJoin = hasOuterJoin || rhsHasOuterJoin
+		if rhsJoinGroupResult.indexJoinFirstHints != nil {
+			indexJoinFirstHints = rhsJoinGroupResult.indexJoinFirstHints
+		}
 	} else {
 		group = append(group, join.Children()[1])
 	}
@@ -267,11 +283,12 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		hasOuterJoin:      hasOuterJoin,
 		joinOrderHintInfo: joinOrderHintInfo,
 		basicJoinGroupInfo: &basicJoinGroupInfo{
-			eqEdges:            eqEdges,
-			otherConds:         otherConds,
-			joinTypes:          joinTypes,
-			nullExtendedCols:   nullExtendedSchema,
-			joinMethodHintInfo: joinMethodHintInfo,
+			eqEdges:             eqEdges,
+			otherConds:          otherConds,
+			joinTypes:           joinTypes,
+			nullExtendedCols:    nullExtendedSchema,
+			joinMethodHintInfo:  joinMethodHintInfo,
+			indexJoinFirstHints: indexJoinFirstHints,
 		},
 	}
 }
@@ -415,6 +432,10 @@ type basicJoinGroupInfo struct {
 	// The sub-plan will join the join reorder process to build the new plan.
 	// So after we have finished the join reorder process, we can reset the join method hint based on the sub-plan's ID.
 	joinMethodHintInfo map[int]*joinorder.JoinMethodHint
+	// indexJoinFirstHints holds the PlanHints when INDEX_JOIN_FIRST() is set.
+	// This is a statement-level hint that applies to all joins, so it must be re-applied
+	// to every new join created during join reordering.
+	indexJoinFirstHints *h.PlanHints
 }
 
 type joinGroupResult struct {
@@ -703,6 +724,12 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.Lo
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
 	joinorder.SetNewJoinWithHint(join, s.joinMethodHintInfo)
+	// Re-apply INDEX_JOIN_FIRST: it is a statement-level hint with no table target, so it is not
+	// tracked in joinMethodHintInfo. Apply it to every reordered join.
+	if s.indexJoinFirstHints != nil {
+		join.PreferJoinType |= h.PreferIndexJoinFirst
+		join.HintInfo = s.indexJoinFirstHints
+	}
 	return join
 }
 
