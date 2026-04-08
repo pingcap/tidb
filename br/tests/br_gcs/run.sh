@@ -89,7 +89,7 @@ done
 
 # new version backup full
 echo "backup start..."
-run_br --pd $PD_ADDR backup full -s "gcs://$BUCKET/$DB?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/"
+run_br --pd $PD_ADDR backup full -s "gcs://$BUCKET/$DB?endpoint=http://$GCS_HOST:$GCS_PORT"
 
 # old version backup full v4.0.8 and disable check-requirements
 echo "v4.0.8 backup start..."
@@ -98,7 +98,7 @@ bin/brv4.0.8 backup full \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/br.pem" \
     --key "$TEST_DIR/certs/br.key" \
-    --pd $PD_ADDR -s "gcs://$BUCKET/${DB}_old?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+    --pd $PD_ADDR -s "gcs://$BUCKET/${DB}_old?endpoint=http://$GCS_HOST:$GCS_PORT" --check-requirements=false
 
 # clean up
 for i in $(seq $DB_COUNT); do
@@ -107,7 +107,7 @@ done
 
 # new version restore full
 echo "restore start..."
-run_br restore full -s "gcs://$BUCKET/$DB?" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+run_br restore full -s "gcs://$BUCKET/$DB?" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT" --check-requirements=false
 
 for i in $(seq $DB_COUNT); do
     row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
@@ -135,7 +135,7 @@ for i in $(seq $DB_COUNT); do
 done
 
 echo "v4.0.8 version restore start..."
-run_br restore full -s "gcs://$BUCKET/${DB}_old" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+run_br restore full -s "gcs://$BUCKET/${DB}_old" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT" --check-requirements=false
 
 for i in $(seq $DB_COUNT); do
     row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
