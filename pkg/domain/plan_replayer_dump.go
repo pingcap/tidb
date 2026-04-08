@@ -258,6 +258,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		logutil.BgLogger().Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
 			zap.Strings("sqls", sqls))
 	}
+	task.useExplainAdminBypass = shouldUsePlanReplayerExplainAdminBypass(sctx, task)
 	defer func() {
 		errMsg := ""
 		if err != nil {
@@ -861,7 +862,7 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpT
 
 		var recordSets []sqlexec.RecordSet
 		recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), explainSQL)
-		if err != nil && isPlanReplayerExplainAdminPrivilegeError(err) && shouldUsePlanReplayerExplainAdminBypass(ctx, task) {
+		if err != nil && isPlanReplayerExplainAdminPrivilegeError(err) && task.useExplainAdminBypass {
 			restoreExplainNonEvaledSubQuery := ctx.GetSessionVars().ExplainNonEvaledSubQuery
 			// Keep the bypass retry from pre-evaluating scalar subqueries into explain output.
 			if !restoreExplainNonEvaledSubQuery {
@@ -954,7 +955,7 @@ func getShowCreateTable(pair tableNamePair, zw *zip.Writer, ctx sessionctx.Conte
 		recordSets, err = ctx.GetSQLExecutor().Execute(context.Background(), fmt.Sprintf("show create table `%v`.`%v`", pair.DBName, pair.TableName))
 	}
 	execShowCreate()
-	if err != nil && isPlanReplayerExplainAdminPrivilegeError(err) && shouldUsePlanReplayerExplainAdminBypass(ctx, task) {
+	if err != nil && isPlanReplayerExplainAdminPrivilegeError(err) && task != nil && task.useExplainAdminBypass {
 		runWithPlanReplayerPrivilegeBypass(ctx, execShowCreate)
 	}
 	if err != nil {
