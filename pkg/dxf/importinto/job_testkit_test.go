@@ -301,8 +301,8 @@ func TestShowImportProgress(t *testing.T) {
 	require.NoError(t, json.Unmarshal(bytes, &taskMetaMap))
 	summaryMap, ok := taskMetaMap["Summary"].(map[string]any)
 	require.True(t, ok)
-	summaryMap["collect-conflicts-summary"] = map[string]any{"input-bytes": int64(1000)}
-	summaryMap["resolve-conflicts-summary"] = map[string]any{"input-bytes": int64(500)}
+	summaryMap["collect-conflicts-summary"] = map[string]any{"input-rows": int64(1000)}
+	summaryMap["resolve-conflicts-summary"] = map[string]any{"input-rows": int64(500)}
 	bytes, err = json.Marshal(taskMetaMap)
 	require.NoError(t, err)
 

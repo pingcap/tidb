@@ -714,7 +714,7 @@ func generateCollectConflictsSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]p
 	if err != nil {
 		return nil, err
 	}
-	p.summary.Bytes = totalConflicts(groupConflictInfos)
+	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {
 		return []planner.PipelineSpec{}, nil
@@ -743,7 +743,7 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([
 	if err != nil {
 		return nil, err
 	}
-	p.summary.Bytes = totalConflicts(groupConflictInfos)
+	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {
 		return []planner.PipelineSpec{}, nil

@@ -342,9 +342,9 @@ func GetRuntimeInfoForJob(
 	case proto.ImportStepMergeSort:
 		ri.Total = taskMeta.Summary.MergeSummary.Bytes
 	case proto.ImportStepCollectConflicts:
-		ri.Total = taskMeta.Summary.CollectConflictsSummary.Bytes
+		ri.Total = taskMeta.Summary.CollectConflictsSummary.RowCnt
 	case proto.ImportStepConflictResolution:
-		ri.Total = taskMeta.Summary.ResolveConflictsSummary.Bytes
+		ri.Total = taskMeta.Summary.ResolveConflictsSummary.RowCnt
 	}
 
 	if !latestTime.IsZero() {
