@@ -393,9 +393,9 @@ func (e *BaseTaskExecutor) Run() {
 			// notify task executor or manager to cancel.
 			if llog.IsContextCanceledError(err) {
 				// to avoid the log being misleading when context is canceled.
-				e.logger.Info("meet context cancel when run subtask")
+				e.sampleLogger.Info("meet context cancel when run subtask")
 			} else {
-				e.logger.Error("run subtask failed", zap.Error(err))
+				e.sampleLogger.Error("run subtask failed", zap.Error(err))
 			}
 		} else {
 			// if we run a subtask successfully, we will try to run next subtask
