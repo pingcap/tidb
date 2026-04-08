@@ -133,7 +133,7 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		return 0
 	}
 
-	mid := (len(ndvSketches) + 1) / 2
+	mid := len(ndvSketches) - len(ndvSketches)/2
 	var leftHalfNDV *FMSketch
 	for i := range mid {
 		leftHalfNDV = mergeCopiedFMSketch(leftHalfNDV, ndvSketches[i])
