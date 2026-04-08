@@ -573,7 +573,7 @@ func TestMVServiceUpdateConfigs(t *testing.T) {
 		err = svc.SetMLogPurgeHistRetention(20 * 24 * time.Hour)
 		require.NoError(t, err)
 		interval = svc.historyGCInterval()
-		require.Equal(t, time.Hour, interval)
+		require.Equal(t, 20*time.Minute, interval)
 		mviewRefreshRetention, mlogPurgeRetention = svc.historyGCRetentionConfig()
 		require.Equal(t, 10*24*time.Hour, mviewRefreshRetention)
 		require.Equal(t, 20*24*time.Hour, mlogPurgeRetention)

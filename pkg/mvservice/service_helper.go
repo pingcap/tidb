@@ -880,13 +880,27 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 	mlogPurgeRetention time.Duration,
 ) error {
 	deleteMVRefreshHistSQL := fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
+		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
 		historyGCDeleteBatchSize,
 	)
 	deleteMVLogPurgeHistSQL := fmt.Sprintf(
-		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE PURGE_JOB_ID < %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
+		`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID < %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
 		historyGCDeleteBatchSize,
 	)
+	const countMVRefreshHistSQL = `SELECT COUNT(*), MIN(REFRESH_JOB_ID) FROM mysql.tidb_mview_refresh_hist`
+	const countMVLogPurgeHistSQL = `SELECT COUNT(*), MIN(PURGE_JOB_ID) FROM mysql.tidb_mlog_purge_hist`
+	deleteMVRefreshHistByCountSQL := func(limit uint64) string {
+		return fmt.Sprintf(
+			`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID >= %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
+			limit,
+		)
+	}
+	deleteMVLogPurgeHistByCountSQL := func(limit uint64) string {
+		return fmt.Sprintf(
+			`DELETE FROM mysql.tidb_mlog_purge_hist WHERE (PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running') AND PURGE_JOB_ID >= %%? ORDER BY PURGE_JOB_ID LIMIT %d`,
+			limit,
+		)
+	}
 
 	calcCutoffTSO := func(retention time.Duration) uint64 {
 		cutoffTSO := currentTSO
@@ -906,10 +920,23 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	sctx := se.(sessionctx.Context)
 
+	var purgeErrs []error
 	if err := purgeMVHistoryInBatches(ctx, sctx, deleteMVRefreshHistSQL, calcCutoffTSO(mviewRefreshRetention)); err != nil {
-		return err
+		purgeErrs = append(purgeErrs, fmt.Errorf("purge mview refresh history by retention failed: %w", err))
 	}
-	return purgeMVHistoryInBatches(ctx, sctx, deleteMVLogPurgeHistSQL, calcCutoffTSO(mlogPurgeRetention))
+	if err := purgeMVHistoryByCountLimit(ctx, sctx, countMVRefreshHistSQL, deleteMVRefreshHistByCountSQL, defaultMVHistoryGCMaxRecords); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("purge mview refresh history by count limit failed: %w", err))
+	}
+	if err := purgeMVHistoryInBatches(ctx, sctx, deleteMVLogPurgeHistSQL, calcCutoffTSO(mlogPurgeRetention)); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("purge mlog purge history by retention failed: %w", err))
+	}
+	if err := purgeMVHistoryByCountLimit(ctx, sctx, countMVLogPurgeHistSQL, deleteMVLogPurgeHistByCountSQL, defaultMVHistoryGCMaxRecords); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("purge mlog purge history by count limit failed: %w", err))
+	}
+	if len(purgeErrs) > 0 {
+		return errors.Join(purgeErrs...)
+	}
+	return nil
 }
 
 func purgeMVHistoryInBatches(ctx context.Context, sctx sessionctx.Context, sql string, cutoffTSO uint64) error {
@@ -922,6 +949,50 @@ func purgeMVHistoryInBatches(ctx context.Context, sctx sessionctx.Context, sql s
 			return nil
 		}
 	}
+}
+
+func purgeMVHistoryByCountLimit(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	countSQL string,
+	deleteSQL func(limit uint64) string,
+	maxRecords uint64,
+) error {
+	if maxRecords == 0 {
+		return nil
+	}
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, countSQL, nil)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return nil
+	}
+	totalCount := rows[0].GetInt64(0)
+	if totalCount <= 0 || rows[0].IsNull(1) {
+		return nil
+	}
+	totalCountUint := uint64(totalCount)
+	if totalCountUint <= maxRecords {
+		return nil
+	}
+	minJobID := rows[0].GetUint64(1)
+	remainingDelete := totalCountUint - maxRecords
+	for remainingDelete > 0 {
+		batchSize := remainingDelete
+		if batchSize > uint64(historyGCDeleteBatchSize) {
+			batchSize = uint64(historyGCDeleteBatchSize)
+		}
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, deleteSQL(batchSize), []any{minJobID}); err != nil {
+			return err
+		}
+		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
+		if affectedRows == 0 || affectedRows < batchSize {
+			return nil
+		}
+		remainingDelete -= affectedRows
+	}
+	return nil
 }
 
 // loadAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
