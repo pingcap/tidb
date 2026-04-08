@@ -114,7 +114,7 @@ func newRepoSnapshotListCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			backupIDs, err := task.RunRepoSnapshotList(ctx, task.RepoSnapshotListConfig{Config: cfg})
+			backupIDs, err := task.RunRepoSnapshotList(ctx, tidbGlue, task.RepoSnapshotListConfig{Config: cfg})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -147,7 +147,7 @@ func newRepoSnapshotGetCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			payload, err := task.RunRepoSnapshotGet(ctx, task.RepoSnapshotGetConfig{
+			payload, err := task.RunRepoSnapshotGet(ctx, tidbGlue, task.RepoSnapshotGetConfig{
 				Config:   cfg,
 				BackupID: backupID,
 				View:     view,
@@ -183,7 +183,7 @@ func newRepoSnapshotDeleteCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			result, err := task.RunRepoSnapshotDelete(ctx, task.RepoSnapshotDeleteConfig{
+			result, err := task.RunRepoSnapshotDelete(ctx, tidbGlue, task.RepoSnapshotDeleteConfig{
 				Config:   cfg,
 				BackupID: backupID,
 			})
@@ -228,7 +228,7 @@ func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			result, err := task.RunRepoSnapshotPendingDiscard(ctx, task.RepoSnapshotPendingDiscardConfig{
+			result, err := task.RunRepoSnapshotPendingDiscard(ctx, tidbGlue, task.RepoSnapshotPendingDiscardConfig{
 				Config:   cfg,
 				BackupID: backupID,
 			})
@@ -270,10 +270,11 @@ func newRepoSnapshotOrphansListCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			for orphanPath, err := range task.WalkRepoSnapshotOrphans(ctx, task.RepoSnapshotOrphansConfig{Config: cfg}) {
-				if err != nil {
-					return errors.Trace(err)
-				}
+			orphanPaths, err := task.RunRepoSnapshotOrphansList(ctx, tidbGlue, task.RepoSnapshotOrphansConfig{Config: cfg})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for _, orphanPath := range orphanPaths {
 				if _, err := fmt.Fprintln(cmd.OutOrStdout(), orphanPath); err != nil {
 					return errors.Trace(err)
 				}
@@ -297,7 +298,7 @@ func newRepoSnapshotOrphansDeleteCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			deleted, err := task.RunRepoSnapshotOrphansDelete(ctx, task.RepoSnapshotOrphansConfig{Config: cfg})
+			deleted, err := task.RunRepoSnapshotOrphansDelete(ctx, tidbGlue, task.RepoSnapshotOrphansConfig{Config: cfg})
 			if err != nil {
 				return errors.Trace(err)
 			}

@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -257,6 +259,82 @@ func TestListAndDeleteSnapshotOrphansUsesStartAfterWhenAvailable(t *testing.T) {
 	requireFileMissing(t, ctx, storage, snapshotpaths.StoreDataPrefix(2, orphanID)+"/orphan-b.sst")
 }
 
+func TestDeleteSnapshotWaitsForStartedDeletesAfterWalkError(t *testing.T) {
+	ctx := context.Background()
+	storage := newWalkErrorDeleteBlockingStorage(t)
+	snapshotOps := repo.SnapshotOpsExtension(storage)
+
+	backupID := repo.BackupID(0x7ABC)
+	createBackupMeta(t, ctx, storage, backupID)
+	storage.failSubDir = pathJoin("_meta", "snapshot", backupID.StorageName())
+	storage.failPath = snapshotpaths.MetadataFile(backupID)
+
+	resultCh := make(chan *repo.SnapshotDeleteResult, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
+		resultCh <- result
+		errCh <- err
+	}()
+
+	select {
+	case <-storage.deleteStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("delete worker did not start")
+	}
+
+	select {
+	case err := <-errCh:
+		result := <-resultCh
+		t.Fatalf("DeleteSnapshot returned before in-flight delete finished: result=%v err=%v", result, err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(storage.releaseDelete)
+
+	result := <-resultCh
+	err := <-errCh
+	require.Error(t, err)
+	require.ErrorContains(t, err, "injected walk error")
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.MetadataDeleted)
+}
+
+func TestDiscardPendingSnapshotReportsPartialMarkerDeletion(t *testing.T) {
+	ctx := context.Background()
+	storage := newMarkerDeletePartialFailureStorage()
+	snapshotOps := repo.SnapshotOpsExtension(storage)
+
+	backupID := repo.BackupID(0x7ABD)
+	firstMarker := snapshotpaths.PendingFile([]byte("hash-a"), backupID)
+	secondMarker := snapshotpaths.PendingFile([]byte("hash-b"), backupID)
+	require.NoError(t, storage.WriteFile(ctx, firstMarker, []byte("{}")))
+	require.NoError(t, storage.WriteFile(ctx, secondMarker, []byte("{}")))
+	storage.firstPath = firstMarker
+	storage.secondPath = secondMarker
+
+	var deletedCallbacks atomic.Int64
+	result, err := snapshotOps.DiscardPendingSnapshot(
+		ctx,
+		repo.PendingBackup{
+			BackupID:    backupID,
+			MarkerPaths: []string{firstMarker, secondMarker},
+			State:       repo.PendingBackupStateStale,
+		},
+		repo.WithMutationProgress(nil, func(count int) {
+			deletedCallbacks.Add(int64(count))
+		}),
+	)
+	require.Error(t, err)
+	require.ErrorContains(t, err, secondMarker)
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.PendingDeleted)
+	require.Equal(t, int64(1), deletedCallbacks.Load())
+	require.True(t, result.StalePending)
+	requireFileMissing(t, ctx, storage, firstMarker)
+	requireFileExists(t, ctx, storage, secondMarker)
+}
+
 func createPendingCheckpoint(t *testing.T, ctx context.Context, storage storeapi.Storage, backupID repo.BackupID) {
 	t.Helper()
 	createPendingMarker(t, ctx, storage, backupID)
@@ -367,6 +445,81 @@ func (s *startAfterLocalStorage) WalkDir(
 		}
 		return fn(path, size)
 	})
+}
+
+type walkErrorDeleteBlockingStorage struct {
+	*startAfterLocalStorage
+	failSubDir    string
+	failPath      string
+	deleteStarted chan struct{}
+	releaseDelete chan struct{}
+}
+
+func newWalkErrorDeleteBlockingStorage(t *testing.T) *walkErrorDeleteBlockingStorage {
+	t.Helper()
+	return &walkErrorDeleteBlockingStorage{
+		startAfterLocalStorage: newStartAfterLocalStorage(t, false),
+		deleteStarted:          make(chan struct{}, 1),
+		releaseDelete:          make(chan struct{}),
+	}
+}
+
+func (s *walkErrorDeleteBlockingStorage) WalkDir(
+	ctx context.Context,
+	opt *storeapi.WalkOption,
+	fn func(string, int64) error,
+) error {
+	if opt != nil && opt.SubDir == s.failSubDir {
+		if err := fn(s.failPath, 1); err != nil {
+			return err
+		}
+		return fmt.Errorf("injected walk error for %s", opt.SubDir)
+	}
+	return s.startAfterLocalStorage.WalkDir(ctx, opt, fn)
+}
+
+func (s *walkErrorDeleteBlockingStorage) DeleteFile(ctx context.Context, name string) error {
+	if name == s.failPath {
+		select {
+		case s.deleteStarted <- struct{}{}:
+		default:
+		}
+		<-s.releaseDelete
+	}
+	return s.Storage.DeleteFile(ctx, name)
+}
+
+type markerDeletePartialFailureStorage struct {
+	storeapi.Storage
+	firstPath   string
+	secondPath  string
+	firstDelete chan struct{}
+}
+
+func newMarkerDeletePartialFailureStorage() *markerDeletePartialFailureStorage {
+	return &markerDeletePartialFailureStorage{
+		Storage:     objstore.NewMemStorage(),
+		firstDelete: make(chan struct{}, 1),
+	}
+}
+
+func (s *markerDeletePartialFailureStorage) DeleteFile(ctx context.Context, name string) error {
+	switch name {
+	case s.firstPath:
+		err := s.Storage.DeleteFile(ctx, name)
+		if err == nil {
+			select {
+			case s.firstDelete <- struct{}{}:
+			default:
+			}
+		}
+		return err
+	case s.secondPath:
+		<-s.firstDelete
+		return fmt.Errorf("failed to delete file %s", name)
+	default:
+		return s.Storage.DeleteFile(ctx, name)
+	}
 }
 
 func snapshotDataRoot() string {

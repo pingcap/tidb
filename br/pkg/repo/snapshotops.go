@@ -64,6 +64,47 @@ type SnapshotOps struct {
 	storeapi.Storage
 }
 
+// SnapshotMutationOption customizes repo snapshot mutation progress observation.
+type SnapshotMutationOption func(*snapshotMutationOptions)
+
+type snapshotMutationOptions struct {
+	onDiscover func(int)
+	onDelete   func(int)
+}
+
+// WithMutationProgress reports discovered and deleted object counts while a repo
+// snapshot mutation runs. Callbacks receive the delta for the current event.
+func WithMutationProgress(onDiscover func(int), onDelete func(int)) SnapshotMutationOption {
+	return func(opts *snapshotMutationOptions) {
+		opts.onDiscover = onDiscover
+		opts.onDelete = onDelete
+	}
+}
+
+func collectSnapshotMutationOptions(options []SnapshotMutationOption) snapshotMutationOptions {
+	var opts snapshotMutationOptions
+	for _, option := range options {
+		if option != nil {
+			option(&opts)
+		}
+	}
+	return opts
+}
+
+func (opts snapshotMutationOptions) discovered(count int) {
+	if count <= 0 || opts.onDiscover == nil {
+		return
+	}
+	opts.onDiscover(count)
+}
+
+func (opts snapshotMutationOptions) deleted(count int) {
+	if count <= 0 || opts.onDelete == nil {
+		return
+	}
+	opts.onDelete(count)
+}
+
 func SnapshotOpsExtension(storage storeapi.Storage) SnapshotOps {
 	return SnapshotOps{Storage: storage}
 }
@@ -72,7 +113,7 @@ func (ops SnapshotOps) ListPendingBackups(ctx context.Context) ([]PendingBackup,
 	grouped := make(map[BackupID]*PendingBackup)
 	for err, marker := range WalkPendingMarkers(ctx, ops.Storage) {
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.Annotatef(err, "walk pending snapshot markers")
 		}
 		entry, ok := grouped[marker.BackupID]
 		if !ok {
@@ -88,11 +129,11 @@ func (ops SnapshotOps) ListPendingBackups(ctx context.Context) ([]PendingBackup,
 		metadataStorage := NewPrefixedStorage(ops.Storage, snapshotMetadataDir(entry.BackupID))
 		hasBackupMeta, err := metadataStorage.FileExists(ctx, metautil.MetaFile)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.Annotatef(err, "check %s for pending backup %s", metautil.MetaFile, entry.BackupID)
 		}
 		hasCheckpoint, err := metadataStorage.FileExists(ctx, checkpoint.CheckpointMetaPathForBackup)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.Annotatef(err, "check %s for pending backup %s", checkpoint.CheckpointMetaPathForBackup, entry.BackupID)
 		}
 		switch {
 		case hasBackupMeta:
@@ -126,7 +167,7 @@ func (ops SnapshotOps) WalkSnapshotOrphans(ctx context.Context) TrySeq[string] {
 	completed, err := ListCompletedSnapshotIDs(ctx, ops.Storage)
 	if err != nil {
 		return func(yield func(error, string) bool) {
-			yield(errors.Trace(err), "")
+			yield(errors.Annotatef(err, "list completed snapshot IDs"), "")
 		}
 	}
 
@@ -142,7 +183,7 @@ func (ops SnapshotOps) WalkSnapshotOrphans(ctx context.Context) TrySeq[string] {
 	return func(yield func(error, string) bool) {
 		for err, head := range ops.walkSnapshotStoreBackupHeads(ctx) {
 			if err != nil {
-				yield(errors.Trace(err), "")
+				yield(errors.Annotatef(err, "walk snapshot store backup heads"), "")
 				return
 			}
 			if _, ok := completedSet[head.BackupID]; ok {
@@ -150,7 +191,12 @@ func (ops SnapshotOps) WalkSnapshotOrphans(ctx context.Context) TrySeq[string] {
 			}
 			for err, dataFile := range ops.walkSnapshotDataFilesForStoreBackup(ctx, head.StoreID, head.BackupID) {
 				if err != nil {
-					yield(errors.Trace(err), "")
+					yield(errors.Annotatef(
+						err,
+						"walk snapshot data files for store %d backup %s",
+						head.StoreID,
+						head.BackupID,
+					), "")
 					return
 				}
 				if !yield(nil, dataFile.Path) {
@@ -178,52 +224,92 @@ func (ops SnapshotOps) walkSnapshotOrphansByFullScan(ctx context.Context, comple
 	}
 }
 
-func (ops SnapshotOps) DeleteSnapshotOrphans(ctx context.Context) (int, error) {
-	return ops.deleteFilesFromStream(ctx, ops.WalkSnapshotOrphans(ctx))
+func (ops SnapshotOps) DeleteSnapshotOrphans(ctx context.Context, options ...SnapshotMutationOption) (int, error) {
+	return ops.deleteFilesFromStream(ctx, ops.WalkSnapshotOrphans(ctx), collectSnapshotMutationOptions(options))
 }
 
-func (ops SnapshotOps) deleteFilesFromStream(ctx context.Context, stream TrySeq[string]) (int, error) {
+func filePathStream(paths []string) TrySeq[string] {
+	return func(yield func(error, string) bool) {
+		for _, filePath := range paths {
+			if !yield(nil, filePath) {
+				return
+			}
+		}
+	}
+}
+
+func (ops SnapshotOps) deleteFilesFromStream(
+	ctx context.Context,
+	stream TrySeq[string],
+	opts snapshotMutationOptions,
+) (int, error) {
 	const maxConcurrentWork = 128
 
-	group, groupCtx := errgroup.WithContext(ctx)
+	deleteCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	group, groupCtx := errgroup.WithContext(deleteCtx)
 	group.SetLimit(maxConcurrentWork)
 	var deleted atomic.Int64
+	var streamErr error
 	for err, filePath := range stream {
 		if err != nil {
-			return 0, errors.Trace(err)
+			streamErr = errors.Trace(err)
+			cancel()
+			break
 		}
+		if groupCtx.Err() != nil {
+			break
+		}
+		opts.discovered(1)
+		filePath := filePath
 		group.Go(func() error {
 			if err := ops.Storage.DeleteFile(groupCtx, filePath); err != nil {
-				return errors.Trace(err)
+				return errors.Annotatef(err, "delete file %s", filePath)
 			}
 			deleted.Add(1)
+			opts.deleted(1)
 			return nil
 		})
 	}
-	if err := group.Wait(); err != nil {
-		return 0, errors.Trace(err)
+
+	deletedCount := int(deleted.Load())
+	groupErr := group.Wait()
+	deletedCount = int(deleted.Load())
+	if streamErr != nil {
+		if groupErr != nil && !errors.ErrorEqual(groupErr, context.Canceled) {
+			return deletedCount, errors.Annotatef(streamErr, "wait in-flight deletions: %v", groupErr)
+		}
+		return deletedCount, streamErr
 	}
-	return int(deleted.Load()), nil
+	if groupErr != nil {
+		return deletedCount, errors.Trace(groupErr)
+	}
+	return deletedCount, nil
 }
 
-func (ops SnapshotOps) DeleteSnapshot(ctx context.Context, backupID BackupID) (*SnapshotDeleteResult, error) {
+func (ops SnapshotOps) DeleteSnapshot(
+	ctx context.Context,
+	backupID BackupID,
+	options ...SnapshotMutationOption,
+) (*SnapshotDeleteResult, error) {
+	opts := collectSnapshotMutationOptions(options)
 	result := &SnapshotDeleteResult{BackupID: backupID}
 	if err := ops.requireRepoStartAfter(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotatef(err, "delete snapshot %s", backupID)
 	}
 
 	var err error
-	result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, snapshotMetadataDir(backupID))
+	result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, snapshotMetadataDir(backupID), opts)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return result, errors.Annotatef(err, "delete snapshot metadata for %s", backupID)
 	}
-	result.DataDeleted, err = ops.deleteSnapshotDataFilesForBackup(ctx, backupID)
+	result.DataDeleted, err = ops.deleteSnapshotDataFilesForBackup(ctx, backupID, opts)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return result, errors.Annotatef(err, "delete snapshot data files for %s", backupID)
 	}
-	result.PendingDeleted, err = ops.deletePendingMarkersForBackup(ctx, backupID)
+	result.PendingDeleted, err = ops.deletePendingMarkersForBackup(ctx, backupID, opts)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return result, errors.Annotatef(err, "delete pending markers for snapshot %s", backupID)
 	}
 	return result, nil
 }
@@ -246,32 +332,34 @@ func (ops SnapshotOps) requireRepoStartAfter() error {
 func (ops SnapshotOps) DiscardPendingSnapshot(
 	ctx context.Context,
 	target PendingBackup,
+	options ...SnapshotMutationOption,
 ) (*PendingDiscardResult, error) {
+	opts := collectSnapshotMutationOptions(options)
 	var err error
 	result := &PendingDiscardResult{BackupID: target.BackupID}
 	switch target.State {
 	case PendingBackupStateStale:
-		if err := ops.Storage.DeleteFiles(ctx, target.MarkerPaths); err != nil {
-			return nil, errors.Trace(err)
-		}
-		result.PendingDeleted = len(target.MarkerPaths)
 		result.StalePending = true
+		result.PendingDeleted, err = ops.deleteFilesFromStream(ctx, filePathStream(target.MarkerPaths), opts)
+		if err != nil {
+			return result, errors.Annotatef(err, "delete pending markers for stale backup %s", target.BackupID)
+		}
 	case PendingBackupStateUnfinished:
 		if err := ops.requireRepoStartAfter(); err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.Annotatef(err, "discard unfinished pending snapshot %s", target.BackupID)
 		}
-		result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, snapshotMetadataDir(target.BackupID))
+		result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, snapshotMetadataDir(target.BackupID), opts)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return result, errors.Annotatef(err, "delete snapshot metadata for unfinished backup %s", target.BackupID)
 		}
-		result.DataDeleted, err = ops.deleteSnapshotDataFilesForBackup(ctx, target.BackupID)
+		result.DataDeleted, err = ops.deleteSnapshotDataFilesForBackup(ctx, target.BackupID, opts)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return result, errors.Annotatef(err, "delete snapshot data files for unfinished backup %s", target.BackupID)
 		}
-		if err := ops.Storage.DeleteFiles(ctx, target.MarkerPaths); err != nil {
-			return nil, errors.Trace(err)
+		result.PendingDeleted, err = ops.deleteFilesFromStream(ctx, filePathStream(target.MarkerPaths), opts)
+		if err != nil {
+			return result, errors.Annotatef(err, "delete pending markers for unfinished backup %s", target.BackupID)
 		}
-		result.PendingDeleted = len(target.MarkerPaths)
 	default:
 		return nil, errors.Annotatef(
 			berrors.ErrInvalidArgument,
@@ -284,36 +372,45 @@ func (ops SnapshotOps) DiscardPendingSnapshot(
 	return result, nil
 }
 
-func (ops SnapshotOps) deletePendingMarkersForBackup(ctx context.Context, backupID BackupID) (int, error) {
+func (ops SnapshotOps) deletePendingMarkersForBackup(
+	ctx context.Context,
+	backupID BackupID,
+	opts snapshotMutationOptions,
+) (int, error) {
 	backups, err := ops.ListPendingBackups(ctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.Annotatef(err, "list pending backups before deleting markers for %s", backupID)
 	}
 	for _, pending := range backups {
 		if pending.BackupID != backupID {
 			continue
 		}
-		if err := ops.Storage.DeleteFiles(ctx, pending.MarkerPaths); err != nil {
-			return 0, errors.Trace(err)
-		}
-		return len(pending.MarkerPaths), nil
+		return ops.deleteFilesFromStream(ctx, filePathStream(pending.MarkerPaths), opts)
 	}
 	return 0, nil
 }
 
-func (ops SnapshotOps) deletePrefixFiles(ctx context.Context, prefix string) (int, error) {
-	return ops.deleteFilesFromStream(ctx, ops.walkFilesWithPrefix(ctx, prefix))
+func (ops SnapshotOps) deletePrefixFiles(ctx context.Context, prefix string, opts snapshotMutationOptions) (int, error) {
+	return ops.deleteFilesFromStream(ctx, ops.walkFilesWithPrefix(ctx, prefix), opts)
 }
 
-func (ops SnapshotOps) deleteSnapshotDataFilesForBackup(ctx context.Context, backupID BackupID) (int, error) {
+func (ops SnapshotOps) deleteSnapshotDataFilesForBackup(
+	ctx context.Context,
+	backupID BackupID,
+	opts snapshotMutationOptions,
+) (int, error) {
 	deleted := 0
 	for err, head := range ops.walkSnapshotStoreHeads(ctx) {
 		if err != nil {
-			return deleted, errors.Trace(err)
+			return deleted, errors.Annotatef(err, "walk snapshot store heads while deleting backup %s", backupID)
 		}
-		storeDeleted, err := ops.deleteFilesFromStream(ctx, ops.walkSnapshotDataPathsForStoreBackup(ctx, head.StoreID, backupID))
+		storeDeleted, err := ops.deleteFilesFromStream(
+			ctx,
+			ops.walkSnapshotDataPathsForStoreBackup(ctx, head.StoreID, backupID),
+			opts,
+		)
 		if err != nil {
-			return deleted, errors.Trace(err)
+			return deleted, errors.Annotatef(err, "delete snapshot data files for store %d backup %s", head.StoreID, backupID)
 		}
 		deleted += storeDeleted
 	}
@@ -326,7 +423,7 @@ func (ops SnapshotOps) walkFilesWithPrefix(ctx context.Context, prefix string) T
 			yield(nil, filePath)
 			return nil
 		}); err != nil {
-			yield(errors.Trace(err), "")
+			yield(errors.Annotatef(err, "walk files with prefix %s", prefix), "")
 		}
 	}
 }
@@ -335,7 +432,7 @@ func (ops SnapshotOps) walkSnapshotDataPathsForStoreBackup(ctx context.Context, 
 	return func(yield func(error, string) bool) {
 		for err, dataFile := range ops.walkSnapshotDataFilesForStoreBackup(ctx, storeID, backupID) {
 			if err != nil {
-				yield(errors.Trace(err), "")
+				yield(errors.Annotatef(err, "walk snapshot data paths for store %d backup %s", storeID, backupID), "")
 				return
 			}
 			if !yield(nil, dataFile.Path) {
@@ -352,7 +449,7 @@ func (ops SnapshotOps) walkSnapshotStoreHeads(ctx context.Context) TrySeq[Snapsh
 			found := false
 			for err, dataFile := range ops.walkSnapshotDataFilesAfter(ctx, cursor) {
 				if err != nil {
-					yield(errors.Trace(err), SnapshotDataFile{})
+					yield(errors.Annotatef(err, "walk snapshot data files after %q", cursor), SnapshotDataFile{})
 					return
 				}
 				found = true
@@ -376,7 +473,7 @@ func (ops SnapshotOps) walkSnapshotStoreBackupHeads(ctx context.Context) TrySeq[
 			found := false
 			for err, dataFile := range ops.walkSnapshotDataFilesAfter(ctx, cursor) {
 				if err != nil {
-					yield(errors.Trace(err), SnapshotDataFile{})
+					yield(errors.Annotatef(err, "walk snapshot data files after %q", cursor), SnapshotDataFile{})
 					return
 				}
 				found = true
@@ -397,7 +494,7 @@ func (ops SnapshotOps) walkSnapshotDataFilesForStoreBackup(ctx context.Context, 
 	return func(yield func(error, SnapshotDataFile) bool) {
 		for err, dataFile := range ops.walkSnapshotDataFilesAfter(ctx, snapshotStoreBackupAnchor(storeID, backupID)) {
 			if err != nil {
-				yield(errors.Trace(err), SnapshotDataFile{})
+				yield(errors.Annotatef(err, "walk snapshot data files for store %d backup %s", storeID, backupID), SnapshotDataFile{})
 				return
 			}
 			if dataFile.StoreID != storeID || dataFile.BackupID != backupID {

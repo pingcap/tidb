@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
@@ -57,6 +58,12 @@ type RepoSnapshotPendingDiscardResult = repo.PendingDiscardResult
 
 type RepoSnapshotOrphansConfig struct {
 	Config
+}
+
+type repoSnapshotConsole interface {
+	glue.ConsoleGlue
+	StartProgressBar(title string, total int, extraFields ...glue.ExtraField) glue.ProgressWaiter
+	StartDynamicProgressBar(title string, extraFields ...glue.ExtraField) glue.DynamicProgressWaiter
 }
 
 type repoSnapshotMetaView string
@@ -102,38 +109,79 @@ type repoSnapshotFileView struct {
 	SHA256     string `json:"sha256"`
 }
 
-func RunRepoSnapshotList(ctx context.Context, cfg RepoSnapshotListConfig) ([]repo.BackupID, error) {
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]repo.BackupID, error) {
-		return repo.ListCompletedSnapshotIDs(ctx, storage)
+func RunRepoSnapshotList(
+	ctx context.Context,
+	consoleGlue glue.ConsoleGlue,
+	cfg RepoSnapshotListConfig,
+) ([]repo.BackupID, error) {
+	console := normalizeRepoSnapshotConsole(consoleGlue)
+	return runRepoSnapshotSpinnerTask(ctx, console, "Listing snapshot backups...", nil, func() ([]repo.BackupID, error) {
+		return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]repo.BackupID, error) {
+			return repo.ListCompletedSnapshotIDs(ctx, storage)
+		})
 	})
 }
 
-func RunRepoSnapshotGet(ctx context.Context, cfg RepoSnapshotGetConfig) ([]byte, error) {
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]byte, error) {
-		view, err := normalizeRepoSnapshotMetaView(cfg.View)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		metadataStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(cfg.BackupID))
-		backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.Config)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		reader := metautil.NewMetaReader(backupMeta, metadataStorage, &cfg.CipherInfo)
-		return renderRepoSnapshotMetaView(ctx, reader, view)
+func RunRepoSnapshotGet(
+	ctx context.Context,
+	consoleGlue glue.ConsoleGlue,
+	cfg RepoSnapshotGetConfig,
+) ([]byte, error) {
+	console := normalizeRepoSnapshotConsole(consoleGlue)
+	extraFields := []glue.ExtraField{glue.WithConstExtraField("backup-id", cfg.BackupID.String())}
+	return runRepoSnapshotSpinnerTask(ctx, console, "Loading snapshot metadata...", extraFields, func() ([]byte, error) {
+		return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]byte, error) {
+			view, err := normalizeRepoSnapshotMetaView(cfg.View)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			metadataStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(cfg.BackupID))
+			backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.Config)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			reader := metautil.NewMetaReader(backupMeta, metadataStorage, &cfg.CipherInfo)
+			return renderRepoSnapshotMetaView(ctx, reader, view)
+		})
 	})
 }
 
-func RunRepoSnapshotDelete(ctx context.Context, cfg RepoSnapshotDeleteConfig) (*RepoSnapshotDeleteResult, error) {
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotDeleteResult, error) {
-		return repo.SnapshotOpsExtension(storage).DeleteSnapshot(ctx, cfg.BackupID)
-	})
+func RunRepoSnapshotDelete(
+	ctx context.Context,
+	consoleGlue glue.ConsoleGlue,
+	cfg RepoSnapshotDeleteConfig,
+) (*RepoSnapshotDeleteResult, error) {
+	console := normalizeRepoSnapshotConsole(consoleGlue)
+	extraFields := []glue.ExtraField{
+		glue.WithConstExtraField("backup-id", cfg.BackupID.String()),
+	}
+	return runRepoSnapshotDynamicProgressTask(
+		ctx,
+		console,
+		"Deleting snapshot backup...",
+		extraFields,
+		func(addTotal func(int64), advance func(int64)) (*RepoSnapshotDeleteResult, error) {
+			return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotDeleteResult, error) {
+				snapshotOps := repo.SnapshotOpsExtension(storage)
+				return snapshotOps.DeleteSnapshot(
+					ctx,
+					cfg.BackupID,
+					repo.WithMutationProgress(
+						func(count int) { addTotal(int64(count)) },
+						func(count int) { advance(int64(count)) },
+					),
+				)
+			})
+		},
+	)
 }
 
 func RunRepoSnapshotPendingDiscard(
 	ctx context.Context,
+	consoleGlue glue.ConsoleGlue,
 	cfg RepoSnapshotPendingDiscardConfig,
 ) (*RepoSnapshotPendingDiscardResult, error) {
+	console := normalizeRepoSnapshotConsole(consoleGlue)
 	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotPendingDiscardResult, error) {
 		snapshotOps := repo.SnapshotOpsExtension(storage)
 		pendingBackups, err := snapshotOps.ListPendingBackups(ctx)
@@ -144,16 +192,39 @@ func RunRepoSnapshotPendingDiscard(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return snapshotOps.DiscardPendingSnapshot(ctx, *target)
+		extraFields := []glue.ExtraField{
+			glue.WithConstExtraField("backup-id", target.BackupID.String()),
+			glue.WithConstExtraField("state", target.State),
+		}
+		return runRepoSnapshotDynamicProgressTask(
+			ctx,
+			console,
+			"Discarding pending snapshot backup...",
+			extraFields,
+			func(addTotal func(int64), advance func(int64)) (*RepoSnapshotPendingDiscardResult, error) {
+				return snapshotOps.DiscardPendingSnapshot(
+					ctx,
+					*target,
+					repo.WithMutationProgress(
+						func(count int) { addTotal(int64(count)) },
+						func(count int) { advance(int64(count)) },
+					),
+				)
+			},
+		)
 	})
 }
 
 func RunRepoSnapshotOrphansList(
 	ctx context.Context,
+	consoleGlue glue.ConsoleGlue,
 	cfg RepoSnapshotOrphansConfig,
 ) ([]string, error) {
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]string, error) {
-		return repo.SnapshotOpsExtension(storage).ListSnapshotOrphans(ctx)
+	console := normalizeRepoSnapshotConsole(consoleGlue)
+	return runRepoSnapshotSpinnerTask(ctx, console, "Listing orphan snapshot objects...", nil, func() ([]string, error) {
+		return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]string, error) {
+			return repo.SnapshotOpsExtension(storage).ListSnapshotOrphans(ctx)
+		})
 	})
 }
 
@@ -179,11 +250,94 @@ func WalkRepoSnapshotOrphans(
 
 func RunRepoSnapshotOrphansDelete(
 	ctx context.Context,
+	consoleGlue glue.ConsoleGlue,
 	cfg RepoSnapshotOrphansConfig,
 ) (int, error) {
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (int, error) {
-		return repo.SnapshotOpsExtension(storage).DeleteSnapshotOrphans(ctx)
-	})
+	console := normalizeRepoSnapshotConsole(consoleGlue)
+	return runRepoSnapshotDynamicProgressTask(
+		ctx,
+		console,
+		"Deleting orphan snapshot objects...",
+		nil,
+		func(addTotal func(int64), advance func(int64)) (int, error) {
+			return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (int, error) {
+				snapshotOps := repo.SnapshotOpsExtension(storage)
+				return snapshotOps.DeleteSnapshotOrphans(
+					ctx,
+					repo.WithMutationProgress(
+						func(count int) { addTotal(int64(count)) },
+						func(count int) { advance(int64(count)) },
+					),
+				)
+			})
+		},
+	)
+}
+
+func normalizeRepoSnapshotConsole(consoleGlue glue.ConsoleGlue) repoSnapshotConsole {
+	if consoleGlue == nil {
+		return glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}
+	}
+	if console, ok := consoleGlue.(repoSnapshotConsole); ok {
+		return console
+	}
+	return glue.ConsoleOperations{ConsoleGlue: consoleGlue}
+}
+
+func waitRepoSnapshotProgressDone(progress glue.ProgressWaiter) {
+	// Progress rendering is best-effort UI work. Once the underlying repo task has
+	// succeeded, a late cancellation of the operation context should not rewrite a
+	// successful mutation into a failed command result.
+	_ = progress.Wait(context.Background())
+}
+
+func runRepoSnapshotSpinnerTask[T any](
+	ctx context.Context,
+	console repoSnapshotConsole,
+	title string,
+	extraFields []glue.ExtraField,
+	fn func() (T, error),
+) (T, error) {
+	if console == nil {
+		return fn()
+	}
+	progress := console.StartProgressBar(title, 1, append([]glue.ExtraField{glue.WithTimeCost()}, extraFields...)...)
+	defer progress.Close()
+	result, err := fn()
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	progress.Inc()
+	waitRepoSnapshotProgressDone(progress)
+	return result, nil
+}
+
+func runRepoSnapshotDynamicProgressTask[T any](
+	ctx context.Context,
+	console repoSnapshotConsole,
+	title string,
+	extraFields []glue.ExtraField,
+	fn func(addTotal func(int64), advance func(int64)) (T, error),
+) (T, error) {
+	progress := console.StartDynamicProgressBar(title, append([]glue.ExtraField{glue.WithTimeCost()}, extraFields...)...)
+	defer progress.Close()
+	advance := func(delta int64) {
+		if delta <= 0 {
+			return
+		}
+		if delta == 1 {
+			progress.Inc()
+			return
+		}
+		progress.IncBy(delta)
+	}
+	result, err := fn(progress.AddTotal, advance)
+	if err != nil {
+		return result, errors.Trace(err)
+	}
+	progress.Complete()
+	waitRepoSnapshotProgressDone(progress)
+	return result, nil
 }
 
 func openSnapshotRepoStorage(ctx context.Context, cfg *Config) (storeapi.Storage, error) {

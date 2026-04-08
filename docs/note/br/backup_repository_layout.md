@@ -21,7 +21,15 @@
 - If a pending entry has checkpoint metadata but no final `backupmeta`, BR fails fast instead of implicitly resuming.
 - If a pending entry has neither checkpoint metadata nor final `backupmeta`, BR treats it as inconsistent repo state and reports an operator-visible error.
 
-## Known Scope Boundary
+## Repo Management Commands
 
-- This change set intentionally does not add `br repo ...` management commands yet.
-- Because repo management is still missing, the current repo-v1 path blocks on unfinished checkpointed backups instead of offering resume or discard from the CLI.
+- `br repo snapshot ...` now covers listing, inspecting, deleting completed snapshots, discarding unfinished snapshots, and managing orphan snapshot objects.
+- Pending snapshot discard distinguishes stale markers from unfinished checkpoint-backed backups and preserves the same on-storage state classification used by backup startup checks.
+
+## CLI Progress Integration
+
+- Repo snapshot commands now route long-running work through `ConsoleGlue` so CLI users get terminal progress feedback instead of a silent wait.
+- `ConsoleGlue` now supports dynamic-total progress bars for workloads that discover more work while running.
+- Repo mutation plumbing keeps the public `SnapshotOps` methods as the primary entrypoints and threads progress observation through function options instead of separate `WithCallback` variants.
+- Metadata scans use a single-step ConsoleGlue task indicator, while destructive commands (`snapshot delete`, `snapshot pending discard`, `snapshot orphans delete`) grow the progress total as objects are discovered and advance it as each object deletion finishes.
+- Dynamic progress currently covers metadata files, snapshot data files, and pending marker files, so the visual progress still converges to the same mutation summary printed after the command completes.

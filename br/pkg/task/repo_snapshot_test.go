@@ -20,11 +20,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
@@ -50,7 +52,7 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 		meta.Mode = backuppb.BackupMode_FILE
 	})
 
-	result, err := RunRepoSnapshotGet(ctx, RepoSnapshotGetConfig{
+	result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
 		Config:   cfg,
 		BackupID: backupID,
 	})
@@ -93,7 +95,7 @@ func TestRunRepoSnapshotGetTablesViewSorted(t *testing.T) {
 		}
 	})
 
-	result, err := RunRepoSnapshotGet(ctx, RepoSnapshotGetConfig{
+	result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
 		Config:   cfg,
 		BackupID: backupID,
 		View:     "tables",
@@ -129,7 +131,7 @@ func TestRunRepoSnapshotGetFilesViewSorted(t *testing.T) {
 			backupID := repo.BackupID(0x1235)
 			createBackupMetaWithFiles(t, ctx, storage, backupID, useV2, files)
 
-			result, err := RunRepoSnapshotGet(ctx, RepoSnapshotGetConfig{
+			result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
 				Config:   cfg,
 				BackupID: backupID,
 				View:     "files",
@@ -150,7 +152,7 @@ func TestRunRepoSnapshotGetInvalidView(t *testing.T) {
 	backupID := repo.BackupID(0x1239)
 	createBackupMeta(t, ctx, storage, backupID)
 
-	_, err := RunRepoSnapshotGet(ctx, RepoSnapshotGetConfig{
+	_, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
 		Config:   cfg,
 		BackupID: backupID,
 		View:     "unknown",
@@ -169,7 +171,7 @@ func TestRunRepoSnapshotGetRejectsInvalidMetaWindow(t *testing.T) {
 		meta.EndVersion = 100
 	})
 
-	_, err := RunRepoSnapshotGet(ctx, RepoSnapshotGetConfig{
+	_, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
 		Config:   cfg,
 		BackupID: backupID,
 	})
@@ -185,9 +187,127 @@ func TestRunRepoSnapshotPendingDiscardRejectsAmbiguousWithoutBackupID(t *testing
 	createPendingCheckpoint(t, ctx, storage, repo.BackupID(0x101))
 	createPendingCheckpoint(t, ctx, storage, repo.BackupID(0x102))
 
-	_, err := RunRepoSnapshotPendingDiscard(ctx, RepoSnapshotPendingDiscardConfig{Config: cfg})
+	_, err := RunRepoSnapshotPendingDiscard(ctx, nil, RepoSnapshotPendingDiscardConfig{Config: cfg})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "backup id is required")
+}
+
+func TestRunRepoSnapshotListWithConsoleUsesSpinner(t *testing.T) {
+	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+	defer storage.Close()
+
+	createBackupMeta(t, ctx, storage, repo.BackupID(0x1001))
+	createBackupMeta(t, ctx, storage, repo.BackupID(0x1002))
+
+	console := &repoSnapshotTestConsole{}
+	backupIDs, err := RunRepoSnapshotList(ctx, console, RepoSnapshotListConfig{Config: cfg})
+	require.NoError(t, err)
+	require.Equal(t, []repo.BackupID{0x1001, 0x1002}, backupIDs)
+	requireRepoSnapshotProgress(t, console, "Listing snapshot backups...", 1, 1)
+}
+
+func TestRunRepoSnapshotDeleteWithConsoleUsesProgressBar(t *testing.T) {
+	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+	defer storage.Close()
+
+	backupID := repo.BackupID(0x2001)
+	createBackupMeta(t, ctx, storage, backupID)
+	createPendingMarker(t, ctx, storage, backupID)
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, backupID)+"/a.sst", []byte("a")))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(2, backupID)+"/b.sst", []byte("b")))
+
+	console := &repoSnapshotTestConsole{}
+	result, err := RunRepoSnapshotDelete(ctx, console, RepoSnapshotDeleteConfig{
+		Config:   cfg,
+		BackupID: backupID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, &RepoSnapshotDeleteResult{
+		BackupID:        backupID,
+		MetadataDeleted: 1,
+		DataDeleted:     2,
+		PendingDeleted:  1,
+	}, result)
+	requireRepoSnapshotProgress(t, console, "Deleting snapshot backup...", 4, 4)
+}
+
+func TestRunRepoSnapshotPendingDiscardWithConsoleUsesProgressBar(t *testing.T) {
+	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+	defer storage.Close()
+
+	backupID := repo.BackupID(0x3001)
+	createPendingCheckpoint(t, ctx, storage, backupID)
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, backupID)+"/a.sst", []byte("a")))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(2, backupID)+"/b.sst", []byte("b")))
+
+	console := &repoSnapshotTestConsole{}
+	result, err := RunRepoSnapshotPendingDiscard(ctx, console, RepoSnapshotPendingDiscardConfig{
+		Config:   cfg,
+		BackupID: backupID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, &RepoSnapshotPendingDiscardResult{
+		BackupID:        backupID,
+		MetadataDeleted: 1,
+		DataDeleted:     2,
+		PendingDeleted:  1,
+	}, result)
+	requireRepoSnapshotProgress(t, console, "Discarding pending snapshot backup...", 4, 4)
+}
+
+func TestRunRepoSnapshotOrphansDeleteWithConsoleUsesProgressBar(t *testing.T) {
+	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+	defer storage.Close()
+
+	completedID := repo.BackupID(0x4001)
+	orphanID := repo.BackupID(0x4002)
+	createBackupMeta(t, ctx, storage, completedID)
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, orphanID)+"/a.sst", []byte("a")))
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(2, orphanID)+"/b.sst", []byte("b")))
+
+	console := &repoSnapshotTestConsole{}
+	deleted, err := RunRepoSnapshotOrphansDelete(ctx, console, RepoSnapshotOrphansConfig{Config: cfg})
+	require.NoError(t, err)
+	require.Equal(t, 2, deleted)
+	requireRepoSnapshotProgress(t, console, "Deleting orphan snapshot objects...", 2, 2)
+}
+
+func TestRunRepoSnapshotListIgnoresProgressWaitCancelAfterSuccess(t *testing.T) {
+	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+	defer storage.Close()
+
+	createBackupMeta(t, ctx, storage, repo.BackupID(0x5001))
+	console := &repoSnapshotTestConsole{waitErr: context.Canceled}
+
+	backupIDs, err := RunRepoSnapshotList(ctx, console, RepoSnapshotListConfig{Config: cfg})
+	require.NoError(t, err)
+	require.Equal(t, []repo.BackupID{0x5001}, backupIDs)
+	requireRepoSnapshotProgress(t, console, "Listing snapshot backups...", 1, 1)
+}
+
+func TestRunRepoSnapshotDeleteIgnoresProgressWaitCancelAfterSuccess(t *testing.T) {
+	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+	defer storage.Close()
+
+	backupID := repo.BackupID(0x5002)
+	createBackupMeta(t, ctx, storage, backupID)
+	createPendingMarker(t, ctx, storage, backupID)
+	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, backupID)+"/a.sst", []byte("a")))
+	console := &repoSnapshotTestConsole{waitErr: context.Canceled}
+
+	result, err := RunRepoSnapshotDelete(ctx, console, RepoSnapshotDeleteConfig{
+		Config:   cfg,
+		BackupID: backupID,
+	})
+	require.NoError(t, err)
+	require.Equal(t, &RepoSnapshotDeleteResult{
+		BackupID:        backupID,
+		MetadataDeleted: 1,
+		DataDeleted:     1,
+		PendingDeleted:  1,
+	}, result)
+	requireRepoSnapshotProgress(t, console, "Deleting snapshot backup...", 3, 3)
 }
 
 func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storeapi.Storage) {
@@ -342,4 +462,100 @@ func newFileForView(
 		TotalBytes: totalBytes,
 		Sha256:     sha256Bytes,
 	}
+}
+
+type repoSnapshotTestConsole struct {
+	glue.NoOPConsoleGlue
+	progressBars []*repoSnapshotTestProgress
+	waitErr      error
+}
+
+func (c *repoSnapshotTestConsole) StartProgressBar(
+	title string,
+	total int,
+	_ ...glue.ExtraField,
+) glue.ProgressWaiter {
+	progress := &repoSnapshotTestProgress{title: title, waitErr: c.waitErr}
+	progress.SetTotal(int64(total))
+	c.progressBars = append(c.progressBars, progress)
+	return progress
+}
+
+func (c *repoSnapshotTestConsole) StartDynamicProgressBar(
+	title string,
+	_ ...glue.ExtraField,
+) glue.DynamicProgressWaiter {
+	progress := &repoSnapshotTestProgress{title: title, waitErr: c.waitErr}
+	c.progressBars = append(c.progressBars, progress)
+	return progress
+}
+
+type repoSnapshotTestProgress struct {
+	title     string
+	waitErr   error
+	total     atomic.Int64
+	closed    atomic.Bool
+	waited    atomic.Bool
+	completed atomic.Bool
+	count     atomic.Int64
+}
+
+func (p *repoSnapshotTestProgress) Inc() {
+	p.count.Add(1)
+}
+
+func (p *repoSnapshotTestProgress) IncBy(cnt int64) {
+	p.count.Add(cnt)
+}
+
+func (p *repoSnapshotTestProgress) GetCurrent() int64 {
+	return p.count.Load()
+}
+
+func (p *repoSnapshotTestProgress) Close() {
+	p.closed.Store(true)
+}
+
+func (p *repoSnapshotTestProgress) Wait(context.Context) error {
+	p.waited.Store(true)
+	if p.completed.Load() {
+		return p.waitErr
+	}
+	if total := p.total.Load(); total > 0 && p.count.Load() >= total {
+		p.completed.Store(true)
+	}
+	return p.waitErr
+}
+
+func (p *repoSnapshotTestProgress) SetTotal(total int64) {
+	p.total.Store(total)
+}
+
+func (p *repoSnapshotTestProgress) AddTotal(delta int64) {
+	if delta <= 0 {
+		return
+	}
+	p.total.Add(delta)
+}
+
+func (p *repoSnapshotTestProgress) Complete() {
+	p.completed.Store(true)
+}
+
+func requireRepoSnapshotProgress(
+	t *testing.T,
+	console *repoSnapshotTestConsole,
+	title string,
+	total int,
+	current int64,
+) {
+	t.Helper()
+	require.Len(t, console.progressBars, 1)
+	progress := console.progressBars[0]
+	require.Equal(t, title, progress.title)
+	require.Equal(t, int64(total), progress.total.Load())
+	require.Equal(t, current, progress.GetCurrent())
+	require.True(t, progress.completed.Load())
+	require.True(t, progress.waited.Load())
+	require.True(t, progress.closed.Load())
 }
