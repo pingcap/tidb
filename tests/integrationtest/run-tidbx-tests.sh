@@ -230,6 +230,10 @@ function start_tidb_server()
 
     # Disable pipelined pessimistic lock temporarily until tikv#11649 is resolved
     cat <<EOF > tikv.toml
+[storage]
+api-version = 2
+enable-ttl = true
+
 [pessimistic-txn]
 pipelined = false
 EOF
