@@ -854,7 +854,16 @@ func constructDS2TableScanTask(
 	// Keep explicit probe-side selections for access predicates to preserve the previous
 	// plan shape (`TableReader data:Selection`) even when those predicates are already used
 	// to build ranges. This does not change range pruning or result correctness.
-	ts.FilterCondition = ranger.AppendConditionsIfNotExist(ds.SCtx().GetExprCtx().GetEvalCtx(), ts.FilterCondition, accessConds)
+	// NOTE: only keep predicates that are fully evaluable on the inner schema. Correlated
+	// access conditions (for example, `t2.col <= t1.col`) must not be attached here,
+	// otherwise later schema checks may fail when validating/cop-pushing table filters.
+	innerOnlyAccessConds := make([]expression.Expression, 0, len(accessConds))
+	for _, cond := range accessConds {
+		if expression.ExprFromSchema(cond, ds.Schema()) {
+			innerOnlyAccessConds = append(innerOnlyAccessConds, cond)
+		}
+	}
+	ts.FilterCondition = ranger.AppendConditionsIfNotExist(ds.SCtx().GetExprCtx().GetEvalCtx(), ts.FilterCondition, innerOnlyAccessConds)
 	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 	selStats := ts.StatsInfo().Scale(ds.SCtx().GetSessionVars(), selectivity)
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, selStats, ds.AstIndexHints)
