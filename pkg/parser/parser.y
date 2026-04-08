@@ -909,6 +909,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	job                        "JOB"
 	jobs                       "JOBS"
 	lite                       "LITE"
+	ndvRate                    "NDVRATE"
 	nodeID                     "NODE_ID"
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
@@ -3659,6 +3660,10 @@ AnalyzeOptionList:
 	{
 		$$ = append($1.([]ast.AnalyzeOpt), $3.(ast.AnalyzeOpt))
 	}
+|	AnalyzeOptionList AnalyzeOption
+	{
+		$$ = append($1.([]ast.AnalyzeOpt), $2.(ast.AnalyzeOpt))
+	}
 
 AnalyzeOption:
 	NUM "BUCKETS"
@@ -3684,6 +3689,10 @@ AnalyzeOption:
 |	NumLiteral "SAMPLERATE"
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr($1, "", "")}
+	}
+|	NumLiteral "NDVRATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate, Value: ast.NewValueExpr($1, "", "")}
 	}
 
 /*******************************************************************************************/
@@ -6806,7 +6815,7 @@ PredicateExpr:
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		}
-		// When ESCAPE '' is specified, escape is empty and explicit is true.
+		// When ESCAPE ” is specified, escape is empty and explicit is true.
 		// This means no escape character should be used (Escape = 0).
 		var escapeChar byte
 		if len(escape) > 0 {
@@ -6830,7 +6839,7 @@ PredicateExpr:
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		}
-		// When ESCAPE '' is specified, escape is empty and explicit is true.
+		// When ESCAPE ” is specified, escape is empty and explicit is true.
 		// This means no escape character should be used (Escape = 0).
 		var escapeChar byte
 		if len(escape) > 0 {
@@ -7644,6 +7653,7 @@ TiDBKeyword:
 |	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
+|	"NDVRATE"
 |	"NODE_ID"
 |	"NODE_STATE"
 |	"SAMPLES"
@@ -16229,14 +16239,14 @@ CreateMaskingPolicyStmt:
 		}
 		state := $15.(*ast.MaskingPolicyState)
 		$$ = &ast.CreateMaskingPolicyStmt{
-			OrReplace:           $2.(bool),
-			IfNotExists:         $5.(bool),
-			PolicyName:          ast.NewCIStr($6),
-			Table:               $8.(*ast.TableName),
-			Column:              &ast.ColumnName{Name: ast.NewCIStr($10)},
-			Expr:                $13,
-			RestrictOps:         $14.(ast.MaskingPolicyRestrictOps),
-			MaskingPolicyState:  *state,
+			OrReplace:          $2.(bool),
+			IfNotExists:        $5.(bool),
+			PolicyName:         ast.NewCIStr($6),
+			Table:              $8.(*ast.TableName),
+			Column:             &ast.ColumnName{Name: ast.NewCIStr($10)},
+			Expr:               $13,
+			RestrictOps:        $14.(ast.MaskingPolicyRestrictOps),
+			MaskingPolicyState: *state,
 		}
 	}
 
