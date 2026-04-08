@@ -82,7 +82,7 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 // rebuilds only the suffix union for nodes after i. That keeps the O(k²)
 // time complexity but avoids roughly half of the repeated merge work while
 // preserving O(1) extra sketches. A full prefix-suffix cache could reduce
-// the runtime to O(k), but it would require O(k) extra sketches (~160KB
+// the runtime to O(k), but it would require O(k) extra sketches (~80KB
 // each), which risks significant memory pressure for tables with many nodes.
 //
 // Example with three nodes:
