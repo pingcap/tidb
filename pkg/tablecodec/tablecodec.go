@@ -66,7 +66,10 @@ const (
 
 	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
 	CommonHandleFlag byte = 127
-	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
+	// PartitionIDFlag is the flag used to decode the partition ID.
+	// Used in both global index values and global index keys (for V1+ non-unique indexes).
+	// In keys: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded (IntHandle)
+	// In values: PartitionIDFlag + partition_id (8 bytes)
 	PartitionIDFlag byte = 126
 	// IndexVersionFlag is the flag used to decode the index's version info.
 	IndexVersionFlag byte = 125
@@ -1017,7 +1020,7 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 		if err != nil {
 			return nil, err
 		}
-		// If len(value) >= 9, it may contains partition id.
+		// If len(value) >= 9, it may contain partition id.
 		// We should decode it and return a partition handle.
 		if len(value) >= 9 {
 			seg := SplitIndexValue(value)
@@ -1025,6 +1028,14 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 				_, pid, err := codec.DecodeInt(seg.PartitionID)
 				if err != nil {
 					return nil, err
+				}
+				// For GlobalIndexVersionV1+, the handle from the key may already be a
+				// PartitionHandle (partition ID encoded in key). To avoid creating a
+				// nested PartitionHandle, extract the inner handle first.
+				// For V1: use partition ID from value (authoritative source).
+				// TODO: For V2+, use partition ID from key (PartitionHandle) instead.
+				if ph, ok := handle.(kv.PartitionHandle); ok {
+					handle = ph.Handle
 				}
 				handle = kv.NewPartitionHandle(pid, handle)
 			}
@@ -1038,6 +1049,22 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
+	// Check if this is a PartitionHandle (for global non-unique indexes V1+)
+	if len(keySuffix) > 0 && keySuffix[0] == PartitionIDFlag {
+		// Format: PartitionIDFlag + partition_id (8 bytes) + inner_handle
+		keySuffix = keySuffix[1:] // Skip the flag
+		remain, partID, err := codec.DecodeInt(keySuffix)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Decode the inner handle
+		innerHandle, err := decodeHandleInIndexKey(remain)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return kv.NewPartitionHandle(partID, innerHandle), nil
+	}
+
 	remain, d, err := codec.DecodeOne(keySuffix)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1225,6 +1252,23 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 		return nil, false, err
 	}
 	if !distinct && h != nil {
+		// For PartitionHandle on global indexes V1+, we must encode BOTH partition ID and inner handle
+		// in the key to prevent collisions when different partitions have duplicate handles.
+		// This is critical after EXCHANGE PARTITION, which can create duplicate _tidb_rowid values.
+		// Only use the new format for version >= V1. Legacy indexes (version 0) use the old format.
+		if idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+			if tblInfo.HasClusteredIndex() {
+				return nil, false, errors.New("clustered index is not supported in GlobalIndexVersionV1+")
+			}
+			ph, ok := h.(kv.PartitionHandle)
+			if !ok {
+				return nil, false, errors.New("handle is not a PartitionHandle in GlobalIndexVersionV1+")
+			}
+			// Encode as: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded
+			key = append(key, PartitionIDFlag)
+			key = codec.EncodeInt(key, ph.PartitionID)
+		}
+
 		if h.IsInt() {
 			// We choose the efficient path here instead of calling `codec.EncodeKey`
 			// because the int handle must be an int64, and it must be comparable.

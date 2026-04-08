@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 set @@sql_mode='STRICT_TRANS_TABLES';
 set @@tidb_enable_outer_join_reorder=true;
 DROP TABLE IF EXISTS t;
@@ -260,9 +259,9 @@ create table t (a int, b int, c int, key idx(a, b, c));
 explain format = 'plan_tree' select count(a) from t;
 id	task	access object	operator info
 StreamAgg	root		funcs:count(Column)->Column
-└─TableReader	root		data:StreamAgg
+└─IndexReader	root		index:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:count(select.t.a)->Column
-    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b, c)	keep order:false, stats:pseudo
 select count(a) from t;
 count(a)
 0
@@ -342,6 +341,32 @@ HashJoin	root		CARTESIAN left outer join, left side:HashJoin, left cond:[eq(sele
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t1_65994;
+drop table if exists t2_65994;
+create table t1_65994 (a int, b int);
+create table t2_65994 (a int, b int);
+insert into t1_65994 values (1, 10), (2, 20), (3, 30), (null, 40);
+insert into t2_65994 values (1, 100), (2, 200), (4, 400), (null, 500);
+explain format = 'plan_tree' select /* issue:65994 */ * from t1_65994 left join t2_65994 on (t1_65994.a = t2_65994.a or 0);
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(select.t1_65994.a, select.t2_65994.a)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(select.t2_65994.a))
+│   └─TableFullScan	cop[tikv]	table:t2_65994	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1_65994	keep order:false, stats:pseudo
+select /* issue:65994 */ t1_65994.a, t1_65994.b, t2_65994.b from t1_65994 left join t2_65994 on (t1_65994.a = t2_65994.a) order by t1_65994.a, t1_65994.b, t2_65994.b;
+a	b	b
+NULL	40	NULL
+1	10	100
+2	20	200
+3	30	NULL
+select /* issue:65994 */ t1_65994.a, t1_65994.b, t2_65994.b from t1_65994 left join t2_65994 on (t1_65994.a = t2_65994.a or 0) order by t1_65994.a, t1_65994.b, t2_65994.b;
+a	b	b
+NULL	40	NULL
+1	10	100
+2	20	200
+3	30	NULL
 drop table if exists t;
 create table t(a bigint primary key, b bigint);
 desc select * from t where a = 1;
@@ -361,40 +386,40 @@ insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
 desc select * from th where a=-2;
 id	estRows	task	access object	operator info
-TableReader_10	10.00	root		data:Selection_9
-└─Selection_9	10.00	cop[tikv]		eq(select.th.a, -2)
-  └─TableFullScan_8	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+TableReader_9	10.00	root		data:Selection_8
+└─Selection_8	10.00	cop[tikv]		eq(select.th.a, -2)
+  └─TableFullScan_7	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
 desc select * from th;
 id	estRows	task	access object	operator info
-PartitionUnion_10	30000.00	root		
-├─TableReader_13	10000.00	root		data:TableFullScan_12
-│ └─TableFullScan_12	10000.00	cop[tikv]	table:th, partition:p0	keep order:false, stats:pseudo
-├─TableReader_15	10000.00	root		data:TableFullScan_14
-│ └─TableFullScan_14	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
-└─TableReader_17	10000.00	root		data:TableFullScan_16
-  └─TableFullScan_16	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+PartitionUnion_9	30000.00	root		
+├─TableReader_12	10000.00	root		data:TableFullScan_11
+│ └─TableFullScan_11	10000.00	cop[tikv]	table:th, partition:p0	keep order:false, stats:pseudo
+├─TableReader_14	10000.00	root		data:TableFullScan_13
+│ └─TableFullScan_13	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
+└─TableReader_16	10000.00	root		data:TableFullScan_15
+  └─TableFullScan_15	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
 desc select * from th partition (p2,p1);
 id	estRows	task	access object	operator info
-PartitionUnion_9	20000.00	root		
-├─TableReader_12	10000.00	root		data:TableFullScan_11
-│ └─TableFullScan_11	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
-└─TableReader_14	10000.00	root		data:TableFullScan_13
-  └─TableFullScan_13	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+PartitionUnion_8	20000.00	root		
+├─TableReader_11	10000.00	root		data:TableFullScan_10
+│ └─TableFullScan_10	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
+└─TableReader_13	10000.00	root		data:TableFullScan_12
+  └─TableFullScan_12	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
 set @@session.tidb_partition_prune_mode = 'dynamic';
 analyze table th all columns;
 desc select * from th where a=-2;
 id	estRows	task	access object	operator info
-TableReader_8	1.00	root	partition:p2	data:Selection_7
-└─Selection_7	1.00	cop[tikv]		eq(select.th.a, -2)
-  └─TableFullScan_6	17.00	cop[tikv]	table:th	keep order:false
+TableReader_7	1.00	root	partition:p2	data:Selection_6
+└─Selection_6	1.00	cop[tikv]		eq(select.th.a, -2)
+  └─TableFullScan_5	17.00	cop[tikv]	table:th	keep order:false
 desc select * from th;
 id	estRows	task	access object	operator info
-TableReader_6	17.00	root	partition:all	data:TableFullScan_5
-└─TableFullScan_5	17.00	cop[tikv]	table:th	keep order:false
+TableReader_5	17.00	root	partition:all	data:TableFullScan_4
+└─TableFullScan_4	17.00	cop[tikv]	table:th	keep order:false
 desc select * from th partition (p2,p1);
 id	estRows	task	access object	operator info
-TableReader_6	17.00	root	partition:p1,p2	data:TableFullScan_5
-└─TableFullScan_5	17.00	cop[tikv]	table:th	keep order:false
+TableReader_5	17.00	root	partition:p1,p2	data:TableFullScan_4
+└─TableFullScan_4	17.00	cop[tikv]	table:th	keep order:false
 set @@session.tidb_partition_prune_mode = DEFAULT;
 drop table if exists t;
 create table t(a int, b int);
@@ -495,7 +520,7 @@ explain format = 'plan_tree' select row_number() over( partition by i ) - x as r
 id	task	access object	operator info
 Projection	root		minus(Column, select.t.x)->Column
 └─Shuffle	root		execution info: concurrency:5, data sources:[TableReader]
-  └─Window	root		row_number()->Column#5 over(partition by select.t.i rows between current row and current row)
+  └─Window	root		row_number()->Column over(partition by select.t.i rows between current row and current row)
     └─Sort	root		select.t.i
       └─ShuffleReceiver	root		
         └─TableReader	root		data:TableFullScan
@@ -531,39 +556,39 @@ explain format = 'plan_tree' select * from t2 left join t1 on t2.a=t1.a left joi
 id	task	access object	operator info
 Projection	root		select.t2.a, select.t2.b, select.t1.a, select.t1.b, select.t3.a, select.t3.b
 └─HashJoin	root		left outer join, left side:HashJoin, equal:[eq(select.t2.a, select.t1.a)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(select.t1.a))
-  │   └─TableFullScan	cop[tikv]	table:t1	keep order:false
-  └─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(select.t2.a, select.t3.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
-    │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-    └─TableReader(Probe)	root		data:TableFullScan
-      └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  ├─HashJoin(Build)	root		left outer join, left side:TableReader, equal:[eq(select.t2.a, select.t3.a)]
+  │ ├─TableReader(Build)	root		data:Selection
+  │ │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
+  │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+  │ └─TableReader(Probe)	root		data:TableFullScan
+  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(select.t1.a))
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false
 explain format = 'plan_tree' select * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.a=1;
 id	task	access object	operator info
 HashJoin	root		CARTESIAN left outer join, left side:TableReader, left cond:[eq(select.t2.a, 1)]
-├─HashJoin(Build)	root		left outer join, left side:TableReader, equal:[eq(select.t1.a, select.t3.a)]
-│ ├─TableReader(Build)	root		data:Selection
-│ │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
-│ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-│ └─TableReader(Probe)	root		data:TableFullScan
-│   └─TableFullScan	cop[tikv]	table:t1	keep order:false
-└─TableReader(Probe)	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t2	keep order:false
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false
+└─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(select.t1.a, select.t3.a)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
+  │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false
 explain format = 'plan_tree' select * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.a=t3.a;
 id	task	access object	operator info
-HashJoin	root		left outer join, left side:TableReader, equal:[eq(select.t2.a, select.t3.a)]
-├─Projection(Build)	root		select.t1.a, select.t1.b, select.t3.a, select.t3.b
-│ └─HashJoin	root		inner join, equal:[eq(select.t3.a, select.t1.a)]
-│   ├─TableReader(Build)	root		data:Selection
-│   │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
-│   │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-│   └─TableReader(Probe)	root		data:Selection
-│     └─Selection	cop[tikv]		not(isnull(select.t1.a))
-│       └─TableFullScan	cop[tikv]	table:t1	keep order:false
-└─TableReader(Probe)	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t2	keep order:false
+Projection	root		select.t2.a, select.t2.b, select.t1.a, select.t1.b, select.t3.a, select.t3.b
+└─HashJoin	root		left outer join, left side:TableReader, equal:[eq(select.t2.a, select.t3.a)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  └─HashJoin(Probe)	root		inner join, equal:[eq(select.t3.a, select.t1.a)]
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
+    │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+    └─TableReader(Probe)	root		data:Selection
+      └─Selection	cop[tikv]		not(isnull(select.t1.a))
+        └─TableFullScan	cop[tikv]	table:t1	keep order:false
 explain format = 'plan_tree' select * from t2 left join t1 on t1.a=t2.a join t3 on t2.b=t3.b;
 id	task	access object	operator info
 Projection	root		select.t2.a, select.t2.b, select.t1.a, select.t1.b, select.t3.a, select.t3.b
@@ -594,65 +619,66 @@ Projection	root		select.t1.a, select.t1.b, select.t2.a, select.t2.b, select.t3.a
       └─TableFullScan	cop[tikv]	table:t1	keep order:false
 explain format = 'plan_tree' select * from t2 right join t3 on t3.a=t2.a right join t1 on t2.a=t1.a;
 id	task	access object	operator info
-HashJoin	root		right outer join, left side:Projection, equal:[eq(select.t2.a, select.t1.a)]
-├─Projection(Build)	root		select.t2.a, select.t2.b, select.t3.a, select.t3.b
-│ └─HashJoin	root		inner join, equal:[eq(select.t3.a, select.t2.a)]
-│   ├─TableReader(Build)	root		data:Selection
-│   │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
-│   │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-│   └─TableReader(Probe)	root		data:Selection
-│     └─Selection	cop[tikv]		not(isnull(select.t2.a))
-│       └─TableFullScan	cop[tikv]	table:t2	keep order:false
-└─TableReader(Probe)	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t1	keep order:false
+Projection	root		select.t2.a, select.t2.b, select.t3.a, select.t3.b, select.t1.a, select.t1.b
+└─HashJoin	root		right outer join, left side:HashJoin, equal:[eq(select.t2.a, select.t1.a)]
+  ├─HashJoin(Build)	root		inner join, equal:[eq(select.t3.a, select.t2.a)]
+  │ ├─TableReader(Build)	root		data:Selection
+  │ │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
+  │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(select.t2.a))
+  │     └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false
 explain format = 'plan_tree' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t4.a;
 id	task	access object	operator info
-HashJoin	root		left outer join, left side:HashJoin, equal:[eq(select.t2.a, select.t4.a)]
-├─HashJoin(Build)	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
-│ ├─TableReader(Build)	root		data:Selection
-│ │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
-│ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-│ └─TableReader(Probe)	root		data:Selection
-│   └─Selection	cop[tikv]		not(isnull(select.t4.a))
-│     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(select.t1.a, select.t2.a)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(select.t2.a))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t1	keep order:false
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(select.t1.a, select.t2.a)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false
+└─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(select.t2.a, select.t4.a)]
+  ├─HashJoin(Build)	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
+  │ ├─TableReader(Build)	root		data:Selection
+  │ │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
+  │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(select.t4.a))
+  │     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(select.t2.a))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false
 explain format = 'plan_tree' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t3.a;
 id	task	access object	operator info
-HashJoin	root		left outer join, left side:HashJoin, equal:[eq(select.t2.a, select.t3.a)]
-├─HashJoin(Build)	root		left outer join, left side:TableReader, equal:[eq(select.t3.a, select.t4.a)]
-│ ├─TableReader(Build)	root		data:Selection
-│ │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
-│ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-│ └─TableReader(Probe)	root		data:Selection
-│   └─Selection	cop[tikv]		not(isnull(select.t4.a))
-│     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(select.t1.a, select.t2.a)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(select.t2.a))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t1	keep order:false
+HashJoin	root		left outer join, left side:HashJoin, equal:[eq(select.t3.a, select.t4.a)]
+├─HashJoin(Build)	root		left outer join, left side:TableReader, equal:[eq(select.t1.a, select.t2.a)]
+│ ├─HashJoin(Build)	root		left outer join, left side:TableReader, equal:[eq(select.t2.a, select.t3.a)]
+│ │ ├─TableReader(Build)	root		data:Selection
+│ │ │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
+│ │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+│ │ └─TableReader(Probe)	root		data:Selection
+│ │   └─Selection	cop[tikv]		not(isnull(select.t2.a))
+│ │     └─TableFullScan	cop[tikv]	table:t2	keep order:false
+│ └─TableReader(Probe)	root		data:TableFullScan
+│   └─TableFullScan	cop[tikv]	table:t1	keep order:false
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(select.t4.a))
+    └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t1.a=t4.a;
 id	task	access object	operator info
-HashJoin	root		left outer join, left side:HashJoin, equal:[eq(select.t1.a, select.t4.a)]
-├─HashJoin(Build)	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
-│ ├─TableReader(Build)	root		data:Selection
-│ │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
-│ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-│ └─TableReader(Probe)	root		data:Selection
-│   └─Selection	cop[tikv]		not(isnull(select.t4.a))
-│     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(select.t1.a, select.t2.a)]
+Projection	root		select.t1.a, select.t1.b, select.t2.a, select.t2.b, select.t3.a, select.t3.b, select.t4.a, select.t4.b
+└─HashJoin	root		left outer join, left side:HashJoin, equal:[eq(select.t1.a, select.t2.a)]
   ├─TableReader(Build)	root		data:Selection
   │ └─Selection	cop[tikv]		not(isnull(select.t2.a))
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t1	keep order:false
+  └─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(select.t1.a, select.t4.a)]
+    ├─HashJoin(Build)	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
+    │ ├─TableReader(Build)	root		data:Selection
+    │ │ └─Selection	cop[tikv]		not(isnull(select.t3.a))
+    │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+    │ └─TableReader(Probe)	root		data:Selection
+    │   └─Selection	cop[tikv]		not(isnull(select.t4.a))
+    │     └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false
 drop table if exists t3;
 create table t3(a char(10), primary key (a));
 insert into t3 values ('a');
@@ -703,3 +729,5 @@ SELECT * FROM t1 STRAIGHT_JOIN t2 USING(i);
 Error 1054 (42S22): Unknown column 'i' in 'from clause'
 SELECT * FROM t1 STRAIGHT_JOIN t3 USING(id);
 Error 1054 (42S22): Unknown column 'id' in 'from clause'
+select $$;
+Error 1054 (42S22): Unknown column '$$' in 'field list'

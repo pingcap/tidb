@@ -153,7 +153,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 	// Test when config.SortByPk is disabled.
 	mockConf.SortByPk = false
 	for tp := version.ServerTypeUnknown; tp < version.ServerTypeAll; tp++ {
-		mockConf.ServerInfo.ServerType = version.ServerType(tp)
+		mockConf.ServerInfo.ServerType = tp
 		comment := fmt.Sprintf("current server type: %v", tp)
 
 		mock.ExpectQuery("SHOW COLUMNS FROM").

@@ -1,4 +1,3 @@
-set tidb_cost_model_version=2;
 drop table if exists t1, t2;
 create table t1(id bigint primary key, a int, b int);
 create table t2(id bigint primary key, a int, b int);
@@ -139,34 +138,29 @@ HashJoin	root		CARTESIAN left outer join, left side:TableReader
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on false;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer join, left side:TableReader
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:TableFullScan
+Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b, <nil>->expression__explain.t2.id, <nil>->expression__explain.t2.a, <nil>->expression__explain.t2.b
+└─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 right join t2 on false;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN right outer join, left side:TableDual
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:TableFullScan
+Projection	root		<nil>->expression__explain.t1.id, <nil>->expression__explain.t1.a, <nil>->expression__explain.t1.b, expression__explain.t2.id, expression__explain.t2.a, expression__explain.t2.b
+└─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on t1.a = 1 and t1.a = 2;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer join, left side:TableReader
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:TableFullScan
+Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b, <nil>->expression__explain.t2.id, <nil>->expression__explain.t2.a, <nil>->expression__explain.t2.b
+└─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on t1.a =1 where t1.a = 2;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer join, left side:TableReader
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:Selection
+Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b, <nil>->expression__explain.t2.id, <nil>->expression__explain.t2.a, <nil>->expression__explain.t2.b
+└─TableReader	root		data:Selection
   └─Selection	cop[tikv]		eq(expression__explain.t1.a, 2)
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on t2.a = 1 and t2.a = 2;
 id	task	access object	operator info
-HashJoin	root		CARTESIAN left outer join, left side:TableReader
-├─TableDual(Build)	root		rows:0
-└─TableReader(Probe)	root		data:TableFullScan
+Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b, <nil>->expression__explain.t2.id, <nil>->expression__explain.t2.a, <nil>->expression__explain.t2.b
+└─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t1 left join t2 on t1.a = 1 or (t1.a = 2 and t1.a = 3);
 id	task	access object	operator info
@@ -187,7 +181,7 @@ explain format = 'plan_tree' select * from t1 where t1.b > 1 or t1.b in (select 
 id	task	access object	operator info
 Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b
 └─Selection	root		or(gt(expression__explain.t1.b, 1), Column)
-  └─HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(expression__explain.t1.b, expression__explain.t2.b)
+  └─HashJoin	root		left outer semi join, left side:TableReader, equal:[eq(expression__explain.t1.b, expression__explain.t2.b)]
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	root		data:TableFullScan

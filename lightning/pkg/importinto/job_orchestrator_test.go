@@ -20,14 +20,34 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
 	mockimport "github.com/pingcap/tidb/lightning/pkg/importinto/mock"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	sdkmock "github.com/pingcap/tidb/pkg/importsdk/mock"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func observeContextDone(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		close(done)
+	}()
+	return done
+}
+
+func channelClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
 
 func TestJobOrchestratorSubmitAndWait(t *testing.T) {
 	tests := []struct {
@@ -110,6 +130,8 @@ func TestJobOrchestratorSubmitAndWait(t *testing.T) {
 			setup: func(mockSubmitter *mockimport.MockJobSubmitter, mockCpMgr *mockimport.MockCheckpointManager, mockMonitor *mockimport.MockJobMonitor, mockSDK *sdkmock.MockSDK) {
 				mockCpMgr.EXPECT().Get(gomock.Any(), gomock.Any()).Return(nil, nil)
 				mockSubmitter.EXPECT().SubmitTable(gomock.Any(), gomock.Any()).Return(nil, errors.New("submit error"))
+				mockSubmitter.EXPECT().GetGroupKey().Return("group1")
+				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "group1").Return([]*importsdk.JobStatus{}, nil)
 			},
 			wantErr: true,
 		},
@@ -127,6 +149,18 @@ func TestJobOrchestratorSubmitAndWait(t *testing.T) {
 				}, nil)
 				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
 				mockMonitor.EXPECT().WaitForJobs(gomock.Any(), gomock.Any()).Return(errors.New("monitor error"))
+				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "group1").Return([]*importsdk.JobStatus{
+					{JobID: 1, Status: "running"},
+				}, nil)
+				mockSDK.EXPECT().CancelJob(gomock.Any(), int64(1)).Return(nil)
+				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
+					require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
+					require.Equal(t, int64(1), cp.JobID)
+					require.Equal(t, importinto.CheckpointStatusFailed, cp.Status)
+					require.Equal(t, "cancelled by user", cp.Message)
+					require.Equal(t, "group1", cp.GroupKey)
+					return nil
+				})
 			},
 			wantErr: true,
 		},
@@ -160,6 +194,318 @@ func TestJobOrchestratorSubmitAndWait(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestJobOrchestratorSubmissionErrorStillRecordsSubmittedJobs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
+	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockMonitor := mockimport.NewMockJobMonitor(ctrl)
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+
+	orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
+		Submitter:         mockSubmitter,
+		CheckpointMgr:     mockCpMgr,
+		SDK:               mockSDK,
+		Monitor:           mockMonitor,
+		SubmitConcurrency: 2,
+		PollInterval:      time.Millisecond,
+		Logger:            log.L(),
+	})
+
+	tables := []*importsdk.TableMeta{
+		{Database: "db", Table: "t1", DataFiles: []importsdk.DataFileMeta{{Path: "f1"}}, TotalSize: 100},
+		{Database: "db", Table: "t2", DataFiles: []importsdk.DataFileMeta{{Path: "f2"}}, TotalSize: 100},
+	}
+
+	mockCpMgr.EXPECT().Get(gomock.Any(), common.UniqueTable("db", "t1")).Return(nil, nil)
+	mockCpMgr.EXPECT().Get(gomock.Any(), common.UniqueTable("db", "t2")).Return(nil, nil)
+
+	t2Started := make(chan struct{})
+	t1Failed := make(chan struct{})
+	mockSubmitter.EXPECT().SubmitTable(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, tableMeta *importsdk.TableMeta) (*importinto.ImportJob, error) {
+		switch tableMeta.Table {
+		case "t1":
+			<-t2Started
+			close(t1Failed)
+			return nil, errors.New("submit error")
+		case "t2":
+			close(t2Started)
+			<-t1Failed
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+			}
+			return &importinto.ImportJob{
+				JobID:     1,
+				TableMeta: tableMeta,
+				GroupKey:  "group1",
+			}, nil
+		default:
+			return nil, errors.New("unexpected table")
+		}
+	}).Times(2)
+
+	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, cp *importinto.TableCheckpoint) error {
+		require.NoError(t, ctx.Err())
+		require.Equal(t, common.UniqueTable("db", "t2"), cp.TableName)
+		require.Equal(t, int64(1), cp.JobID)
+		require.Equal(t, importinto.CheckpointStatusRunning, cp.Status)
+		require.Equal(t, "group1", cp.GroupKey)
+		return nil
+	})
+
+	mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "group1").Return([]*importsdk.JobStatus{
+		{JobID: 1, Status: "running"},
+	}, nil)
+	mockSDK.EXPECT().CancelJob(gomock.Any(), int64(1)).Return(nil)
+	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
+		require.Equal(t, common.UniqueTable("db", "t2"), cp.TableName)
+		require.Equal(t, int64(1), cp.JobID)
+		require.Equal(t, importinto.CheckpointStatusFailed, cp.Status)
+		require.Equal(t, "cancelled by user", cp.Message)
+		require.Equal(t, "group1", cp.GroupKey)
+		return nil
+	})
+
+	require.Error(t, orchestrator.SubmitAndWait(context.Background(), tables))
+}
+
+func TestJobOrchestratorSubmissionErrorStillCancelsRunningCheckpointJobs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
+	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockMonitor := mockimport.NewMockJobMonitor(ctrl)
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+
+	orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
+		Submitter:         mockSubmitter,
+		CheckpointMgr:     mockCpMgr,
+		SDK:               mockSDK,
+		Monitor:           mockMonitor,
+		SubmitConcurrency: 1,
+		PollInterval:      time.Millisecond,
+		Logger:            log.L(),
+	})
+
+	tables := []*importsdk.TableMeta{
+		{Database: "db", Table: "t2", DataFiles: []importsdk.DataFileMeta{{Path: "f2"}}, TotalSize: 100},
+		{Database: "db", Table: "t1", DataFiles: []importsdk.DataFileMeta{{Path: "f1"}}, TotalSize: 100},
+	}
+
+	gomock.InOrder(
+		mockCpMgr.EXPECT().Get(gomock.Any(), common.UniqueTable("db", "t2")).Return(nil, nil),
+		mockSubmitter.EXPECT().SubmitTable(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, tableMeta *importsdk.TableMeta) (*importinto.ImportJob, error) {
+			require.Equal(t, "t2", tableMeta.Table)
+			return nil, errors.New("submit error")
+		}),
+		mockCpMgr.EXPECT().Get(gomock.Any(), common.UniqueTable("db", "t1")).Return(&importinto.TableCheckpoint{
+			JobID:  1,
+			Status: importinto.CheckpointStatusRunning,
+		}, nil),
+		mockSubmitter.EXPECT().GetGroupKey().Return("group1"),
+		mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "group1").Return([]*importsdk.JobStatus{
+			{JobID: 1, Status: "running"},
+		}, nil),
+		mockSDK.EXPECT().CancelJob(gomock.Any(), int64(1)).Return(nil),
+		mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
+			require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
+			require.Equal(t, int64(1), cp.JobID)
+			require.Equal(t, importinto.CheckpointStatusFailed, cp.Status)
+			require.Equal(t, "cancelled by user", cp.Message)
+			require.Equal(t, "group1", cp.GroupKey)
+			return nil
+		}),
+	)
+
+	require.Error(t, orchestrator.SubmitAndWait(context.Background(), tables))
+}
+
+func TestJobOrchestratorSubmitGraceStartsAfterContextCancel(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout", `return("50ms")`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout"))
+	})
+
+	mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
+	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockMonitor := mockimport.NewMockJobMonitor(ctrl)
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+
+	orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
+		Submitter:         mockSubmitter,
+		CheckpointMgr:     mockCpMgr,
+		SDK:               mockSDK,
+		Monitor:           mockMonitor,
+		SubmitConcurrency: 1,
+		PollInterval:      time.Millisecond,
+		Logger:            log.L(),
+	})
+
+	tables := []*importsdk.TableMeta{
+		{Database: "db", Table: "t1", DataFiles: []importsdk.DataFileMeta{{Path: "f1"}}, TotalSize: 100},
+	}
+
+	mockCpMgr.EXPECT().Get(gomock.Any(), common.UniqueTable("db", "t1")).Return(nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	submitStarted := make(chan struct{})
+	parentCanceled := make(chan struct{})
+	submitCheckedAfterCancel := make(chan struct{})
+	allowSubmitReturn := make(chan struct{})
+	var submitCtxDone <-chan struct{}
+	mockSubmitter.EXPECT().SubmitTable(gomock.Any(), gomock.Any()).DoAndReturn(func(submitCtx context.Context, tableMeta *importsdk.TableMeta) (*importinto.ImportJob, error) {
+		submitCtxDone = observeContextDone(submitCtx)
+		close(submitStarted)
+		<-parentCanceled
+		select {
+		case <-submitCtx.Done():
+			return nil, submitCtx.Err()
+		default:
+		}
+		close(submitCheckedAfterCancel)
+		<-allowSubmitReturn
+		return &importinto.ImportJob{
+			JobID:     1,
+			TableMeta: tableMeta,
+			GroupKey:  "group1",
+		}, nil
+	})
+
+	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(updateCtx context.Context, cp *importinto.TableCheckpoint) error {
+		require.NoError(t, updateCtx.Err())
+		require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
+		require.Equal(t, int64(1), cp.JobID)
+		require.Equal(t, importinto.CheckpointStatusRunning, cp.Status)
+		require.Equal(t, "group1", cp.GroupKey)
+		return nil
+	})
+	mockMonitor.EXPECT().WaitForJobs(gomock.Any(), gomock.Any()).Return(context.Canceled)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- orchestrator.SubmitAndWait(ctx, tables)
+	}()
+
+	<-submitStarted
+	require.Never(t, func() bool {
+		return channelClosed(submitCtxDone)
+	}, 80*time.Millisecond, 10*time.Millisecond)
+	cancel()
+	close(parentCanceled)
+	<-submitCheckedAfterCancel
+	close(allowSubmitReturn)
+
+	err := <-errCh
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestJobOrchestratorRecordSubmissionGetsFreshGraceTimeout(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout", `return("50ms")`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/lightning/pkg/importinto/setSubmitGraceTimeout"))
+	})
+
+	mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
+	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockMonitor := mockimport.NewMockJobMonitor(ctrl)
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+
+	orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
+		Submitter:         mockSubmitter,
+		CheckpointMgr:     mockCpMgr,
+		SDK:               mockSDK,
+		Monitor:           mockMonitor,
+		SubmitConcurrency: 1,
+		PollInterval:      time.Millisecond,
+		Logger:            log.L(),
+	})
+
+	tables := []*importsdk.TableMeta{
+		{Database: "db", Table: "t1", DataFiles: []importsdk.DataFileMeta{{Path: "f1"}}, TotalSize: 100},
+	}
+
+	mockCpMgr.EXPECT().Get(gomock.Any(), common.UniqueTable("db", "t1")).Return(nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	submitStarted := make(chan struct{})
+	parentCanceled := make(chan struct{})
+	submitCheckedAfterCancel := make(chan struct{})
+	allowSubmitReturn := make(chan struct{})
+	updateStarted := make(chan struct{})
+	allowUpdateReturn := make(chan struct{})
+	var submitCtxDone <-chan struct{}
+	var updateCtxDone <-chan struct{}
+	mockSubmitter.EXPECT().SubmitTable(gomock.Any(), gomock.Any()).DoAndReturn(func(submitCtx context.Context, tableMeta *importsdk.TableMeta) (*importinto.ImportJob, error) {
+		submitCtxDone = observeContextDone(submitCtx)
+		close(submitStarted)
+		<-parentCanceled
+		select {
+		case <-submitCtx.Done():
+			return nil, submitCtx.Err()
+		default:
+		}
+		close(submitCheckedAfterCancel)
+		<-allowSubmitReturn
+		return &importinto.ImportJob{
+			JobID:     1,
+			TableMeta: tableMeta,
+			GroupKey:  "group1",
+		}, nil
+	})
+
+	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(updateCtx context.Context, cp *importinto.TableCheckpoint) error {
+		updateCtxDone = observeContextDone(updateCtx)
+		close(updateStarted)
+		<-allowUpdateReturn
+		select {
+		case <-updateCtx.Done():
+			return updateCtx.Err()
+		default:
+		}
+		require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
+		require.Equal(t, int64(1), cp.JobID)
+		require.Equal(t, importinto.CheckpointStatusRunning, cp.Status)
+		require.Equal(t, "group1", cp.GroupKey)
+		return nil
+	})
+	mockMonitor.EXPECT().WaitForJobs(gomock.Any(), gomock.Any()).Return(context.Canceled)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- orchestrator.SubmitAndWait(ctx, tables)
+	}()
+
+	<-submitStarted
+	cancel()
+	close(parentCanceled)
+	<-submitCheckedAfterCancel
+	require.Never(t, func() bool {
+		return channelClosed(submitCtxDone)
+	}, 40*time.Millisecond, 5*time.Millisecond)
+	close(allowSubmitReturn)
+
+	<-updateStarted
+	require.Never(t, func() bool {
+		return channelClosed(updateCtxDone)
+	}, 20*time.Millisecond, 5*time.Millisecond)
+	close(allowUpdateReturn)
+
+	err := <-errCh
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestJobOrchestratorCancel(t *testing.T) {
@@ -219,7 +565,84 @@ func TestJobOrchestratorCancel(t *testing.T) {
 
 	// Expect CancelJob only for job 2
 	mockSDK.EXPECT().CancelJob(gomock.Any(), int64(2)).Return(nil)
+	expectedCps := map[string]struct {
+		jobID   int64
+		status  importinto.CheckpointStatus
+		message string
+	}{
+		common.UniqueTable("db", "t1"): {jobID: 1, status: importinto.CheckpointStatusFinished},
+		common.UniqueTable("db", "t2"): {jobID: 2, status: importinto.CheckpointStatusFailed, message: "cancelled by user"},
+	}
+	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
+		exp, ok := expectedCps[cp.TableName]
+		require.True(t, ok)
+		require.Equal(t, exp.jobID, cp.JobID)
+		require.Equal(t, exp.status, cp.Status)
+		require.Equal(t, exp.message, cp.Message)
+		require.Equal(t, "group1", cp.GroupKey)
+		delete(expectedCps, cp.TableName)
+		return nil
+	}).Times(2)
 
 	err = orchestrator.Cancel(context.Background())
 	require.NoError(t, err)
+}
+
+func TestJobOrchestratorCancelWithoutActiveJobs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
+	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockMonitor := mockimport.NewMockJobMonitor(ctrl)
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+
+	orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
+		Submitter:     mockSubmitter,
+		CheckpointMgr: mockCpMgr,
+		SDK:           mockSDK,
+		Monitor:       mockMonitor,
+		Logger:        log.L(),
+	})
+
+	mockSubmitter.EXPECT().GetGroupKey().Return("group1")
+	mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "group1").Return([]*importsdk.JobStatus{
+		{JobID: 1, Status: "running"},
+		{JobID: 2, Status: "pending"},
+	}, nil)
+	mockSDK.EXPECT().CancelJob(gomock.Any(), int64(1)).Return(nil)
+	mockSDK.EXPECT().CancelJob(gomock.Any(), int64(2)).Return(nil)
+
+	require.NoError(t, orchestrator.Cancel(context.Background()))
+}
+
+func TestJobOrchestratorCancelRetriesOnTaskNotFound(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
+	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockMonitor := mockimport.NewMockJobMonitor(ctrl)
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+
+	orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
+		Submitter:     mockSubmitter,
+		CheckpointMgr: mockCpMgr,
+		SDK:           mockSDK,
+		Monitor:       mockMonitor,
+		Logger:        log.L(),
+	})
+
+	mockSubmitter.EXPECT().GetGroupKey().Return("group1")
+	mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "group1").Return([]*importsdk.JobStatus{
+		{JobID: 1, Status: "running"},
+	}, nil)
+
+	gomock.InOrder(
+		mockSDK.EXPECT().CancelJob(gomock.Any(), int64(1)).Return(errors.New("task not found")),
+		mockSDK.EXPECT().CancelJob(gomock.Any(), int64(1)).Return(errors.New("task not found")),
+		mockSDK.EXPECT().CancelJob(gomock.Any(), int64(1)).Return(nil),
+	)
+
+	require.NoError(t, orchestrator.Cancel(context.Background()))
 }

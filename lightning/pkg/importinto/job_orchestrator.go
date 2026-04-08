@@ -16,6 +16,7 @@ package importinto
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +36,18 @@ const (
 	DefaultPollInterval = 5 * time.Second
 	// DefaultLogInterval is the default interval for logging progress.
 	DefaultLogInterval = 1 * time.Minute
+	// submitGraceTimeout bounds how long an already-started detached submit can
+	// continue after the batch context is canceled. This gives the client enough
+	// time to get the job ID and record the checkpoint so later cleanup can find
+	// the job reliably.
+	submitGraceTimeout = time.Minute
+)
+
+const (
+	cancelJobMaxRetry = 5
+
+	cancelJobRetryBaseBackoff = 100 * time.Millisecond
+	cancelJobRetryMaxBackoff  = time.Second
 )
 
 // JobOrchestrator orchestrates the submission and monitoring of import jobs.
@@ -55,6 +68,8 @@ type DefaultJobOrchestrator struct {
 	activeJobs []*ImportJob
 }
 
+const cancelledByUserMessage = "cancelled by user"
+
 // OrchestratorConfig configures the job orchestrator.
 type OrchestratorConfig struct {
 	Submitter         JobSubmitter
@@ -65,6 +80,7 @@ type OrchestratorConfig struct {
 	PollInterval      time.Duration
 	LogInterval       time.Duration
 	Logger            log.Logger
+	ProgressUpdater   ProgressUpdater
 }
 
 // NewJobOrchestrator creates a new job orchestrator.
@@ -84,7 +100,7 @@ func NewJobOrchestrator(cfg OrchestratorConfig) JobOrchestrator {
 
 	monitor := cfg.Monitor
 	if monitor == nil {
-		monitor = NewJobMonitor(cfg.SDK, cfg.CheckpointMgr, pollInterval, logInterval, cfg.Logger)
+		monitor = NewJobMonitor(cfg.SDK, cfg.CheckpointMgr, pollInterval, logInterval, cfg.Logger, cfg.ProgressUpdater)
 	}
 
 	return &DefaultJobOrchestrator{
@@ -102,6 +118,15 @@ func (o *DefaultJobOrchestrator) SubmitAndWait(ctx context.Context, tables []*im
 	// Phase 1: Submit all jobs
 	jobs, err := o.submitAllJobs(ctx, tables)
 	if err != nil {
+		o.activeJobs = jobs
+		if !common.IsContextCanceledError(err) {
+			o.logger.Warn("job submission failed, cancelling submitted jobs", zap.Error(err), zap.Int("submitted", len(jobs)))
+			cancelCtx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
+			defer cancel()
+			if cancelErr := o.Cancel(cancelCtx); cancelErr != nil {
+				o.logger.Warn("failed to cancel jobs after submission error", zap.Error(cancelErr))
+			}
+		}
 		return errors.Annotate(err, "submit jobs")
 	}
 
@@ -120,40 +145,168 @@ func (o *DefaultJobOrchestrator) SubmitAndWait(ctx context.Context, tables []*im
 	})
 
 	// Phase 2: Wait for all jobs to complete (delegated to monitor)
-	return o.monitor.WaitForJobs(ctx, jobs)
+	err = o.monitor.WaitForJobs(ctx, jobs)
+	if err != nil && !common.IsContextCanceledError(err) {
+		o.logger.Warn("job monitoring failed, cancelling remaining jobs", zap.Error(err))
+		cancelCtx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
+		defer cancel()
+		if cancelErr := o.Cancel(cancelCtx); cancelErr != nil {
+			o.logger.Warn("failed to cancel jobs after monitor error", zap.Error(cancelErr))
+		}
+	}
+	return err
 }
 
 // Cancel cancels all active jobs.
 func (o *DefaultJobOrchestrator) Cancel(ctx context.Context) error {
-	jobs := o.activeJobs
-
-	if len(jobs) == 0 {
+	groupKey := o.getGroupKey()
+	if groupKey == "" {
+		o.logger.Warn("no group key found, skip cancelling jobs")
 		return nil
 	}
 
-	o.logger.Info("cancelling all active jobs", zap.Int("count", len(jobs)))
+	o.logger.Info("cancelling import jobs", zap.String("groupKey", groupKey))
+	statusByID, cancelledJobs, err := o.cancelJobsInGroup(ctx, groupKey)
 
-	// Get current status of all jobs in the group to avoid cancelling finished jobs
-	groupKey := jobs[0].GroupKey
+	updateErr := o.updateCheckpointsAfterCancel(ctx, groupKey, statusByID, cancelledJobs)
+	if updateErr != nil {
+		if err != nil {
+			o.logger.Warn("failed to update checkpoints after cancelling jobs", zap.String("groupKey", groupKey), zap.NamedError("cancelErr", err), zap.NamedError("updateErr", updateErr))
+		} else {
+			o.logger.Warn("failed to update checkpoints after cancelling jobs", zap.String("groupKey", groupKey), zap.Error(updateErr))
+		}
+	}
+	if err == nil {
+		err = updateErr
+	}
+	return err
+}
+
+func (o *DefaultJobOrchestrator) getGroupKey() string {
+	if len(o.activeJobs) > 0 {
+		return o.activeJobs[0].GroupKey
+	}
+	if o.submitter != nil {
+		return o.submitter.GetGroupKey()
+	}
+	return ""
+}
+
+func (o *DefaultJobOrchestrator) cancelJobsInGroup(ctx context.Context, groupKey string) (map[int64]*importsdk.JobStatus, map[int64]struct{}, error) {
+	var firstErr error
+	statusByID := make(map[int64]*importsdk.JobStatus)
+	cancelledJobs := make(map[int64]struct{})
+
 	statuses, err := o.sdk.GetJobsByGroup(ctx, groupKey)
 	if err != nil {
-		o.logger.Warn("failed to get group jobs status, will try to cancel all jobs", zap.Error(err))
+		o.logger.Warn("failed to get group jobs status", zap.Error(err), zap.String("groupKey", groupKey))
+		return statusByID, cancelledJobs, err
 	}
 
-	finishedMap := make(map[int64]bool)
-	for _, s := range statuses {
-		if s.IsCompleted() {
-			finishedMap[s.JobID] = true
-		}
-	}
-
-	var firstErr error
-	for _, job := range jobs {
-		if finishedMap[job.JobID] {
+	for _, st := range statuses {
+		statusByID[st.JobID] = st
+		if st.IsCompleted() {
 			continue
 		}
-		if err := o.sdk.CancelJob(ctx, job.JobID); err != nil {
-			o.logger.Warn("failed to cancel job", zap.Int64("jobID", job.JobID), zap.Error(err))
+		if err := o.cancelJobWithRetry(ctx, st.JobID); err != nil {
+			o.logger.Warn("failed to cancel job", zap.Int64("jobID", st.JobID), zap.Error(err))
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		cancelledJobs[st.JobID] = struct{}{}
+	}
+	return statusByID, cancelledJobs, firstErr
+}
+
+func (o *DefaultJobOrchestrator) cancelJobWithRetry(ctx context.Context, jobID int64) error {
+	var (
+		err     error
+		backoff = cancelJobRetryBaseBackoff
+	)
+
+	for attempt := range cancelJobMaxRetry {
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
+
+		err = o.sdk.CancelJob(ctx, jobID)
+		if err == nil {
+			return nil
+		}
+		if !shouldRetryCancelJobErr(err) || attempt == cancelJobMaxRetry-1 {
+			return err
+		}
+
+		o.logger.Warn("cancel job failed, retrying", zap.Int64("jobID", jobID), zap.Int("attempt", attempt+1), zap.Error(err))
+
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Trace(ctx.Err())
+		case <-timer.C:
+		}
+		backoff = min(backoff*2, cancelJobRetryMaxBackoff)
+	}
+	return err
+}
+
+func shouldRetryCancelJobErr(err error) bool {
+	// In next-gen kernel, job creation and DXF task submission may happen in
+	// separate transactions (cross keyspace). If `CANCEL IMPORT JOB` is issued in
+	// between, TiDB may return "task not found" which is transient.
+	if strings.Contains(strings.ToLower(err.Error()), "task not found") {
+		return true
+	}
+	return common.IsRetryableError(err)
+}
+
+func (o *DefaultJobOrchestrator) updateCheckpointsAfterCancel(
+	ctx context.Context,
+	groupKey string,
+	statusByID map[int64]*importsdk.JobStatus,
+	cancelledJobs map[int64]struct{},
+) error {
+	var firstErr error
+	// Update checkpoints based on final job status.
+	// Use activeJobs as the source for table names.
+	for _, job := range o.activeJobs {
+		if job == nil || job.TableMeta == nil || job.JobID <= 0 {
+			continue
+		}
+		tableName := common.UniqueTable(job.TableMeta.Database, job.TableMeta.Table)
+		st := statusByID[job.JobID]
+
+		var cpStatus CheckpointStatus
+		var cpMessage string
+		switch {
+		case st != nil && st.IsFinished():
+			cpStatus = CheckpointStatusFinished
+		case st != nil && st.IsFailed():
+			cpStatus = CheckpointStatusFailed
+			cpMessage = st.ResultMessage
+		case st != nil && st.IsCancelled():
+			cpStatus = CheckpointStatusFailed
+			cpMessage = cancelledByUserMessage
+		default:
+			// Job was cancelled but status not yet updated, or job not found
+			if _, ok := cancelledJobs[job.JobID]; !ok {
+				continue
+			}
+			cpStatus = CheckpointStatusFailed
+			cpMessage = cancelledByUserMessage
+		}
+
+		if err := o.cpMgr.Update(ctx, &TableCheckpoint{
+			TableName: tableName,
+			JobID:     job.JobID,
+			Status:    cpStatus,
+			Message:   cpMessage,
+			GroupKey:  groupKey,
+		}); err != nil {
+			o.logger.Warn("failed to update checkpoint", zap.String("table", tableName), zap.Int64("jobID", job.JobID), zap.Error(err))
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -167,6 +320,11 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 		mu   sync.Mutex
 		jobs []*ImportJob
 	)
+	appendJob := func(job *ImportJob) {
+		mu.Lock()
+		jobs = append(jobs, job)
+		mu.Unlock()
+	}
 
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(o.submitConcurrency)
@@ -181,8 +339,13 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 		eg.Go(func() error {
 			logger := o.logger.With(zap.String("database", table.Database), zap.String("table", table.Table))
 
+			// Still inspect checkpoints after errgroup cancellation so previously
+			// running jobs remain tracked and can be reconciled during cleanup.
+			checkpointCtx, cancelCheckpoint := context.WithTimeout(context.WithoutCancel(ctx), cancelTimeout)
+			defer cancelCheckpoint()
+
 			// Check if we can resume an existing job
-			cp, err := o.cpMgr.Get(egCtx, common.UniqueTable(table.Database, table.Table))
+			cp, err := o.cpMgr.Get(checkpointCtx, common.UniqueTable(table.Database, table.Table))
 			if err != nil {
 				return errors.Annotatef(err, "get checkpoint for %s.%s", table.Database, table.Table)
 			}
@@ -192,49 +355,52 @@ func (o *DefaultJobOrchestrator) submitAllJobs(ctx context.Context, tables []*im
 				return nil
 			}
 
-			var job *ImportJob
 			if cp != nil && cp.JobID > 0 && cp.Status == CheckpointStatusRunning {
 				// Resume existing running job
 				logger.Info("resuming previously running job", zap.Int64("jobID", cp.JobID))
-				job = &ImportJob{
+				appendJob(&ImportJob{
 					JobID:     cp.JobID,
 					TableMeta: table,
 					GroupKey:  o.submitter.GetGroupKey(),
-				}
-			} else {
-				// Need to submit new job
-				// This handles: no checkpoint, failed checkpoint, or cancelled checkpoint
-				if cp != nil {
-					logger.Info("previous job failed or cancelled, submitting new job",
-						zap.String("previousStatus", cp.Status.String()),
-						zap.Int64("previousJobID", cp.JobID),
-					)
-				} else {
-					logger.Info("submitting new import job")
-				}
-
-				job, err = o.submitter.SubmitTable(egCtx, table)
-				if err != nil {
-					return errors.Annotatef(err, "submit table %s.%s", table.Database, table.Table)
-				}
-
-				if err := o.recordSubmission(egCtx, job); err != nil {
-					return errors.Annotatef(err, "record submission for %s.%s", table.Database, table.Table)
-				}
+				})
+				return nil
 			}
 
-			mu.Lock()
-			jobs = append(jobs, job)
-			mu.Unlock()
+			// Need to submit new job
+			// This handles: no checkpoint, failed checkpoint, or cancelled checkpoint
+			if cp != nil {
+				logger.Info("previous job failed or cancelled, submitting new job",
+					zap.String("previousStatus", cp.Status.String()),
+					zap.Int64("previousJobID", cp.JobID),
+				)
+			} else {
+				logger.Info("submitting new import job")
+			}
+
+			if err := egCtx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+
+			submitCtx, cancel := newStartedSubmitContext(ctx)
+			defer cancel()
+
+			job, err := o.submitter.SubmitTable(submitCtx, table)
+			if err != nil {
+				return errors.Annotatef(err, "submit table %s.%s", table.Database, table.Table)
+			}
+
+			appendJob(job)
+			recordCtx, cancelRecord := newSubmissionRecordContext(ctx)
+			defer cancelRecord()
+			if err := o.recordSubmission(recordCtx, job); err != nil {
+				return errors.Annotatef(err, "record submission for %s.%s", table.Database, table.Table)
+			}
 			return nil
 		})
 	}
 
-	if err := eg.Wait(); err != nil {
-		return nil, err
-	}
-
-	return jobs, nil
+	err := eg.Wait()
+	return jobs, err
 }
 
 func (o *DefaultJobOrchestrator) recordSubmission(ctx context.Context, job *ImportJob) error {
@@ -244,4 +410,43 @@ func (o *DefaultJobOrchestrator) recordSubmission(ctx context.Context, job *Impo
 		Status:    CheckpointStatusRunning,
 		GroupKey:  job.GroupKey,
 	})
+}
+
+func getSubmitGraceTimeout() time.Duration {
+	graceTimeout := submitGraceTimeout
+	failpoint.Inject("setSubmitGraceTimeout", func(val failpoint.Value) {
+		parsedTimeout, err := time.ParseDuration(val.(string))
+		if err == nil {
+			graceTimeout = parsedTimeout
+		}
+	})
+	return graceTimeout
+}
+
+// newStartedSubmitContext is used for submits that have already started.
+// We cannot keep using the parent errgroup context here, because a sibling
+// submit failure or parent cancellation would abort this request immediately
+// and we could return before receiving the detached job ID. Instead, keep the
+// started submit alive for a bounded grace period that begins when the parent
+// context is canceled.
+func newStartedSubmitContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	graceCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	stop := context.AfterFunc(ctx, func() {
+		timer := time.NewTimer(getSubmitGraceTimeout())
+		defer timer.Stop()
+
+		select {
+		case <-graceCtx.Done():
+		case <-timer.C:
+			cancel()
+		}
+	})
+	return graceCtx, func() {
+		stop()
+		cancel()
+	}
+}
+
+func newSubmissionRecordContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), getSubmitGraceTimeout())
 }

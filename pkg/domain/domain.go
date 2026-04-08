@@ -514,7 +514,6 @@ func (do *Domain) Close() {
 
 	do.sysSessionPool.Close()
 	do.dxfSessionPool.Close()
-	do.advancedSysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
@@ -528,6 +527,8 @@ func (do *Domain) Close() {
 	if handle := do.statsHandle.Load(); handle != nil {
 		handle.Close()
 	}
+
+	do.advancedSysSessionPool.Close()
 
 	do.crossKSSessMgr.Close()
 
@@ -1708,6 +1709,15 @@ func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroup
 	do.resourceGroupsController.Store(controller)
 }
 
+// GetRUVersion returns the current RU calculation version for this keyspace.
+// Returns DefaultRUVersion (v1) if the resource groups controller is not available.
+func (do *Domain) GetRUVersion() rmclient.RUVersion {
+	if rgCtl := do.ResourceGroupsController(); rgCtl != nil {
+		return rgCtl.GetRUVersion()
+	}
+	return rmclient.DefaultRUVersion
+}
+
 // SetupHistoricalStatsWorker setups worker
 func (do *Domain) SetupHistoricalStatsWorker(ctx sessionctx.Context) {
 	do.historicalStatsWorker = &HistoricalStatsWorker{
@@ -1818,7 +1828,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(time.Hour, time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(do.ctx, time.Hour, time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")

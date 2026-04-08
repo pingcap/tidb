@@ -22,6 +22,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ks3sdklib/aws-sdk-go/aws"
@@ -50,9 +51,6 @@ var (
 )
 
 const (
-	// KS3SDKProvider ks3 sdk does not expose context, we use hardcoded timeout
-	// for network request
-	KS3SDKProvider      = "ks3-sdk"
 	maxSkipOffsetByRead = 1 << 16 // 64KB
 	// max number of retries when meets error
 	maxErrorRetries = 3
@@ -760,7 +758,12 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *storeapi.
 	return uploaderWriter, nil
 }
 
-// Rename implements Storage interface.
+// PresignFile implements storeapi.Storage interface.
+func (*KS3Storage) PresignFile(_ context.Context, _ string, _ time.Duration) (string, error) {
+	return "", errors.New("KS3 backend does not support PresignFile")
+}
+
+// Rename implements the StorageWriter interface.
 func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	content, err := rs.ReadFile(ctx, oldFileName)
 	if err != nil {

@@ -965,7 +965,7 @@ func TestSessionProxyMethods(t *testing.T) {
 		t, sctx, se, "ExecRestrictedStmt",
 		ctx,
 		ast.StmtNode(&ast.SelectStmt{}),
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionIgnoreWarning, sqlexec.ExecOptionAnalyzeVer1},
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionIgnoreWarning, sqlexec.ExecOptionAnalyzeVer2},
 		[]chunk.Row{{}, {}},
 		[]*resolve.ResultField{{DBName: ast.NewCIStr("v1")}, {DBName: ast.NewCIStr("v2")}},
 		errors.New("mockErr"),
@@ -979,7 +979,7 @@ func TestSessionProxyMethods(t *testing.T) {
 	testCallProxyMethod43(
 		t, sctx, se, "ExecRestrictedSQL",
 		ctx,
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionIgnoreWarning, sqlexec.ExecOptionAnalyzeVer1},
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionIgnoreWarning, sqlexec.ExecOptionAnalyzeVer2},
 		"select ?, ?, ?",
 		[]any{1, 2, "3"},
 		[]chunk.Row{{}, {}},

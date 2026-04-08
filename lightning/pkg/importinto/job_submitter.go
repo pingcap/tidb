@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
 
@@ -70,7 +71,12 @@ func (s *DefaultJobSubmitter) SubmitTable(ctx context.Context, tableMeta *import
 		return nil, errors.Annotate(err, "generate import SQL")
 	}
 
-	logger.Info("submitting import job", zap.String("sql", sql))
+	sqlForLog, logErr := generateImportSQLForLog(tableMeta, options)
+	if logErr != nil {
+		logger.Info("submitting import job")
+	} else {
+		logger.Info("submitting import job", zap.String("sql", sqlForLog))
+	}
 	jobID, err := s.sdk.SubmitJob(ctx, sql)
 	if err != nil {
 		return nil, errors.Annotate(err, "submit job")
@@ -127,4 +133,33 @@ func (s *DefaultJobSubmitter) buildImportOptions(tableMeta *importsdk.TableMeta)
 	}
 
 	return opts
+}
+
+func generateImportSQLForLog(tableMeta *importsdk.TableMeta, options *importsdk.ImportOptions) (string, error) {
+	// Best-effort redaction: build a second SQL statement for logging purposes.
+	redactedMeta := *tableMeta
+	redactedOpts := *options
+
+	path := redactedMeta.WildcardPath
+	if redactedOpts.ResourceParameters != "" {
+		// Same logic as importsdk.sqlGenerator.GenerateImportSQL: append resource
+		// parameters to the wildcard path, then redact secrets from the full URL.
+		u, err := url.Parse(path)
+		if err == nil {
+			if u.RawQuery != "" {
+				u.RawQuery += "&" + redactedOpts.ResourceParameters
+			} else {
+				u.RawQuery = redactedOpts.ResourceParameters
+			}
+			path = u.String()
+		}
+		// Avoid adding ResourceParameters twice when re-generating SQL.
+		redactedOpts.ResourceParameters = ""
+	}
+	redactedMeta.WildcardPath = ast.RedactURL(path)
+	if redactedOpts.CloudStorageURI != "" {
+		redactedOpts.CloudStorageURI = ast.RedactURL(redactedOpts.CloudStorageURI)
+	}
+
+	return importsdk.NewSQLGenerator().GenerateImportSQL(&redactedMeta, &redactedOpts)
 }

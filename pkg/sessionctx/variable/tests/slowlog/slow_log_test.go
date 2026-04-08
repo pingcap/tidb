@@ -163,13 +163,15 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 
 		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(1)})
 		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(2)})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.00000001})
 		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.123})
-		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(4)})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: uint64(4)})
 		// ExecDetail == nil
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.0})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
-		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: uint64(0)})
 		// ExecDetail != nil && d.CommitDetail == nil && d.ScanDetail == nil
 		execDetail := &execdetails.ExecDetails{
 			CopExecDetails: execdetails.CopExecDetails{
@@ -181,8 +183,37 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		accessor.Setter(context.Background(), seVar, items)
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.0})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
-		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: uint64(0)})
+
+		// ExecDetail != nil && d.ScanDetail != nil
+		seVar.StmtCtx.SyncExecDetails.Reset()
+		execDetail = &execdetails.ExecDetails{
+			CopExecDetails: execdetails.CopExecDetails{
+				ScanDetail: &util.ScanDetail{
+					ProcessedKeys: 10,
+					TotalKeys:     100,
+				},
+			},
+		}
+		seVar.StmtCtx.SyncExecDetails.MergeCopExecDetails(&execDetail.CopExecDetails, 0)
+		items.ExecDetail = nil
+		accessor.Setter(context.Background(), seVar, items)
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 9.99})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 10.0})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 10.01})
+
+		// ProcessedKeys == 0 follows scheme A: only threshold == 0 can match.
+		items.ExecDetail.ScanDetail.ProcessedKeys = 0
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.0})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.01})
+
+		// TotalKeys == 0 and ProcessedKeys > 0: ratio is 0.
+		items.ExecDetail.ScanDetail.TotalKeys = 0
+		items.ExecDetail.ScanDetail.ProcessedKeys = 10
+		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.0})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: variable.SlowLogCopMVCCReadAmplification, Threshold: 0.01})
 	})
 }
 
@@ -271,8 +302,70 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
 }
 
+func TestMatchUintExecDetailFieldsAfterParse(t *testing.T) {
+	t.Run("commit fields", func(t *testing.T) {
+		ctx := newMockCtx()
+		rules, err := variable.ParseSessionSlowLogRules("Write_keys:1,Write_size:2,Prewrite_region:3")
+		require.NoError(t, err)
+		ctx.GetSessionVars().SlowLogRules.SlowLogRules = rules
+
+		newItems := func(writeKeys, writeSize int, prewriteRegionNum int32) *variable.SlowQueryLogItems {
+			return &variable.SlowQueryLogItems{
+				ExecDetail: &execdetails.ExecDetails{
+					CommitDetail: &util.CommitDetails{
+						WriteKeys:         writeKeys,
+						WriteSize:         writeSize,
+						PrewriteRegionNum: prewriteRegionNum,
+					},
+				},
+			}
+		}
+
+		require.True(t, executor.Match(ctx.GetSessionVars(), newItems(2, 3, 4), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+
+		t.Run("negative write_keys", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(-1, 3, 4), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+		t.Run("negative write_size", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(2, -1, 4), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+		t.Run("negative prewrite_region", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(2, 3, -1), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+	})
+
+	t.Run("scan fields", func(t *testing.T) {
+		ctx := newMockCtx()
+		rules, err := variable.ParseSessionSlowLogRules("Total_keys:1,Process_keys:2")
+		require.NoError(t, err)
+		ctx.GetSessionVars().SlowLogRules.SlowLogRules = rules
+
+		newItems := func(totalKeys, processedKeys int64) *variable.SlowQueryLogItems {
+			return &variable.SlowQueryLogItems{
+				ExecDetail: &execdetails.ExecDetails{
+					CopExecDetails: execdetails.CopExecDetails{
+						ScanDetail: &util.ScanDetail{
+							TotalKeys:     totalKeys,
+							ProcessedKeys: processedKeys,
+						},
+					},
+				},
+			}
+		}
+
+		require.True(t, executor.Match(ctx.GetSessionVars(), newItems(2, 3), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+
+		t.Run("negative total_keys", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(-1, 3), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+		t.Run("negative process_keys", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(2, -1), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+	})
+}
+
 func TestParseSingleSlowLogField(t *testing.T) {
-	require.Equal(t, len(variable.SlowLogRuleFieldAccessors), 38)
+	require.Equal(t, len(variable.SlowLogRuleFieldAccessors), 39)
 	accessor, ok := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogPlanDigest)]
 	require.True(t, ok)
 	require.NotNil(t, accessor.Setter)
@@ -301,9 +394,35 @@ func TestParseSingleSlowLogField(t *testing.T) {
 	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "1.5e6")
 	require.NoError(t, err)
 	require.Equal(t, 1.5e6, v)
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogCopMVCCReadAmplification, "10.5")
+	require.NoError(t, err)
+	require.Equal(t, 10.5, v)
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogCopMVCCReadAmplification, "abc")
+	require.Error(t, err)
 
 	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "abc")
 	require.Error(t, err)
+
+	// negative float64 values should be rejected
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "-1.5")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogCopMVCCReadAmplification, "-0.1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	// zero is still valid
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "0")
+	require.NoError(t, err)
+	require.Equal(t, float64(0), v)
+
+	// negative int64 values should be rejected
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogMemMax, "-100")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	// zero is still valid
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogMemMax, "0")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), v)
 
 	// string fields
 	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogDBStr, "testdb")
@@ -435,6 +554,28 @@ func TestParseSessionSlowLogRules(t *testing.T) {
 	_, err = variable.ParseSessionSlowLogRules("Exec_retry_count > 123")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid slow log rule format:Exec_retry_count > 123")
+
+	// Negative numeric thresholds should be rejected
+	_, err = variable.ParseSessionSlowLogRules("Query_time:-1.5")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	_, err = variable.ParseSessionSlowLogRules("cop_mvcc_read_amplification:-0.1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	_, err = variable.ParseSessionSlowLogRules("Mem_max:-100")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+
+	// Non-finite float thresholds should be rejected.
+	_, err = variable.ParseSessionSlowLogRules("Query_time:NaN")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "finite")
+	_, err = variable.ParseSessionSlowLogRules("Query_time:Inf")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "finite")
+	_, err = variable.ParseSessionSlowLogRules("cop_mvcc_read_amplification:+Inf")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "finite")
 
 	// Field resetting
 	slowLogRules, err = variable.ParseSessionSlowLogRules("Mem_max:100,Succ:true,Succ:false,Mem_max:200")
