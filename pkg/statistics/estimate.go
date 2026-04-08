@@ -73,8 +73,8 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 //
 // We compute this by merging all *other* nodes' NDV sketches (their full
 // distinct-value sets), then checking how much node i's local singletons
-// grow that union. The growth is exactly the count of node i's singletons
-// that no other node has seen.
+// grow that union. The growth is approximately node i's singleton's
+// FMSketch that no other node has seen.
 //
 // Summing these per-node contributions gives the global singleton estimate.
 //
