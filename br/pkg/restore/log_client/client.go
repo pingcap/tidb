@@ -1556,14 +1556,14 @@ func (rc *LogClient) PreSplitRegions(
 
 	logIter, err := rc.LoadDMLFiles(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotate(err, "pre-split: load DML files")
 	}
 
 	var fileCount int
 	startTime := time.Now()
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		if r.Err != nil {
-			return errors.Trace(r.Err)
+			return errors.Annotate(r.Err, "pre-split: iterate DML files")
 		}
 		file := r.Item
 		if file.IsMeta {
@@ -1600,7 +1600,7 @@ func (rc *LogClient) PreSplitRegions(
 	splitStart := time.Now()
 	accumulations := strategy.GetAccumulations()
 	if err := splitter.ExecuteRegions(ctx, accumulations); err != nil {
-		return errors.Trace(err)
+		return errors.Annotate(err, "pre-split: execute regions")
 	}
 	log.Info("pre-split: completed",
 		zap.Duration("split-took", time.Since(splitStart)),
