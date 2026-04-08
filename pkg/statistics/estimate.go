@@ -78,12 +78,14 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 //
 // Summing these per-node contributions gives the global singleton estimate.
 //
-// The implementation keeps a rolling prefix union for nodes before i and
-// rebuilds only the suffix union for nodes after i. That keeps the O(k²)
-// time complexity but avoids roughly half of the repeated merge work while
-// preserving O(1) extra sketches. A full prefix-suffix cache could reduce
-// the runtime to O(k), but it would require O(k) extra sketches (~80KB
-// each), which risks significant memory pressure for tables with many nodes.
+// The implementation splits the nodes into two halves, precomputes one NDV
+// union per half, and then rebuilds only the suffix within each half while
+// keeping a rolling in-half prefix. That keeps the O(k²) time complexity
+// but cuts repeated merge work to roughly one quarter of the naive
+// rebuild-from-scratch loop while preserving O(1) extra sketches. A full
+// prefix-suffix cache could reduce the runtime to O(k), but it would require
+// O(k) extra sketches (~80KB each), which risks significant memory pressure
+// for tables with many nodes.
 //
 // Example with three nodes:
 //
@@ -131,13 +133,33 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		return 0
 	}
 
+	mid := (len(ndvSketches) + 1) / 2
+	var leftHalfNDV *FMSketch
+	for i := range mid {
+		leftHalfNDV = mergeCopiedFMSketch(leftHalfNDV, ndvSketches[i])
+	}
+	var rightHalfNDV *FMSketch
+	for i := mid; i < len(ndvSketches); i++ {
+		rightHalfNDV = mergeCopiedFMSketch(rightHalfNDV, ndvSketches[i])
+	}
+
+	globalSingleton := estimateGlobalSingletonInRange(ndvSketches, singletonSketches, 0, mid, nil, rightHalfNDV)
+	globalSingleton += estimateGlobalSingletonInRange(ndvSketches, singletonSketches, mid, len(ndvSketches), leftHalfNDV, nil)
+	intest.Assert(globalSingleton >= 0, "globalSingleton must be positive")
+	// SAFETY: Each per-node contribution is clamped to >= 0 before accumulation.
+	return uint64(globalSingleton)
+}
+
+func estimateGlobalSingletonInRange(ndvSketches, singletonSketches []*FMSketch, start, end int, beforeRangeNDV, afterRangeNDV *FMSketch) int64 {
 	var globalSingleton int64
 	var prefixNDV *FMSketch
-	for i := range ndvSketches {
-		other := mergeCopiedFMSketch(nil, prefixNDV)
-		for j := i + 1; j < len(ndvSketches); j++ {
+	for i := start; i < end; i++ {
+		other := mergeCopiedFMSketch(nil, beforeRangeNDV)
+		other = mergeCopiedFMSketch(other, prefixNDV)
+		for j := i + 1; j < end; j++ {
 			other = mergeCopiedFMSketch(other, ndvSketches[j])
 		}
+		other = mergeCopiedFMSketch(other, afterRangeNDV)
 
 		ndvOther := int64(0)
 		if other != nil {
@@ -152,12 +174,10 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		// FM sketch NDV estimates are not monotone under merge, so the estimated
 		// union can be smaller than ndvOther. Clamp the per-node contribution to 0.
 		// In practice, this appears to be fairly rare.
-		delta := max(0, ndvUnion-ndvOther)
-		globalSingleton += delta
+		globalSingleton += max(0, ndvUnion-ndvOther)
 		prefixNDV = mergeCopiedFMSketch(prefixNDV, ndvSketches[i])
 	}
-	intest.Assert(globalSingleton >= 0, "globalSingleton must be positive")
-	return uint64(globalSingleton)
+	return globalSingleton
 }
 
 func mergeCopiedFMSketch(dst, src *FMSketch) *FMSketch {
