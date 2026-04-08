@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "spans",
+    srcs = [
+        "sorted.go",
+        "utils.go",
+        "value_sorted.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/streamhelper/spans",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/logutil",
+        "//br/pkg/utils",
+        "//pkg/kv",
+        "@com_github_google_btree//:btree",
+    ],
+)
+
+go_test(
+    name = "spans_test",
+    timeout = "short",
+    srcs = [
+        "sorted_test.go",
+        "utils_test.go",
+        "value_sorted_test.go",
+    ],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        ":spans",
+        "@com_github_stretchr_testify//require",
+    ],
+)

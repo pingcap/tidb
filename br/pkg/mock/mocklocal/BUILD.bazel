@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mocklocal",
+    srcs = ["local.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/mock/mocklocal",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/lightning/backend",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_mock//gomock",
+    ],
+)

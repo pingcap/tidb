@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "metric",
+    srcs = ["metric.go"],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/metric",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/promutil",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_model//go",
+    ],
+)
+
+go_test(
+    name = "metric_test",
+    timeout = "short",
+    srcs = ["metric_test.go"],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        ":metric",
+        "//pkg/util/promutil",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

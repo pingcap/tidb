@@ -1,0 +1,33 @@
+use mysql;
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (1, 0, "", "{}");
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (2, 0, "", "{}");
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (3, 0, "", "{}");
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (4, 0, "", "{}");
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (5, 0, "", "{}");
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (6, 0, "", "{}");
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (7, 0, "", "{}");
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (8, 0, "", "{}");
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (9, 0, "", "{}");
+insert into tidb_background_subtask(id, state, checkpoint, summary) values (10, 0, "", "{}");
+update tidb_background_subtask set summary = json_set(summary, "$.row_count", 2) where id = 2;
+update tidb_background_subtask set summary = json_set(summary, "$.row_count", 3) where id = 3;
+update tidb_background_subtask set summary = json_set(summary, "$.row_count", 4) where id = 4;
+update tidb_background_subtask set summary = json_set(summary, "$.row_count", 5) where id = 5;
+update tidb_background_subtask set summary = json_set(summary, "$.row_count", 6) where id = 6;
+update tidb_background_subtask set summary = json_set(summary, "$.row_count", 7) where id = 7;
+update tidb_background_subtask set summary = json_set(summary, "$.row_count", 8) where id = 8;
+update tidb_background_subtask set summary = json_set(summary, "$.row_count", 9) where id = 9;
+update tidb_background_subtask set summary = json_set(summary, "$.row_count", 10) where id = 10;
+select sum(json_extract(summary, '$.row_count')) from tidb_background_subtask;
+sum(json_extract(summary, '$.row_count'))
+54
+truncate table tidb_background_subtask;
+truncate table tidb_background_subtask_history;
+use mysql;
+insert into tidb_background_subtask(id, state, checkpoint) values (1, 0, "");
+insert into tidb_background_subtask_history select * from tidb_background_subtask;
+select * from tidb_background_subtask_history;
+id	step	namespace	task_key	ddl_physical_tid	type	exec_id	exec_expired	state	checkpoint	concurrency	create_time	start_time	state_update_time	end_time	meta	ordinal	error	summary
+1	NULL	NULL	NULL	NULL	NULL	NULL	NULL	0		NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+truncate table tidb_background_subtask;
+truncate table tidb_background_subtask_history;

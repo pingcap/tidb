@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "benchraw_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/cmd/benchraw",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/parser/terror",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//config",
+        "@com_github_tikv_client_go_v2//rawkv",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "benchraw",
+    embed = [":benchraw_lib"],
+    visibility = ["//visibility:public"],
+)

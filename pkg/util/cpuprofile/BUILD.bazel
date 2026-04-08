@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cpuprofile",
+    srcs = [
+        "cpuprofile.go",
+        "pprof_api.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/cpuprofile",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/metrics",
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "@com_github_google_pprof//profile",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "cpuprofile_test",
+    timeout = "short",
+    srcs = ["cpuprofile_test.go"],
+    embed = [":cpuprofile"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "//pkg/util/cpuprofile/testutil",
+        "@com_github_google_pprof//profile",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

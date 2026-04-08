@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "auth",
+    srcs = [
+        "auth.go",
+        "caching_sha2.go",
+        "mysql_native_password.go",
+        "tidb_sm3.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/auth",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "auth_test",
+    timeout = "short",
+    srcs = [
+        "caching_sha2_test.go",
+        "mysql_native_password_test.go",
+        "tidb_sm3_test.go",
+    ],
+    embed = [":auth"],
+    flaky = True,
+    shard_count = 16,
+    deps = [
+        "//pkg/parser/mysql",
+        "@com_github_stretchr_testify//require",
+    ],
+)

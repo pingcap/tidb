@@ -1,0 +1,12 @@
+drop table if exists t40150;
+CREATE TABLE t40150 (a int) PARTITION BY HASH (a) PARTITIONS 2;
+alter table t40150 rename column a to c;
+Error 3855 (HY000): Column 'a' has a partitioning function dependency and cannot be dropped or renamed
+drop table if exists t;
+create table t (a int, b int as (a+3));
+alter table t change a c int not null;
+Error 3108 (HY000): Column 'a' has a generated column dependency.
+drop table if exists t2;
+create table t2(id int, a int, b int generated always as (abs(a)) virtual);
+alter table t2 modify column a bigint;
+Error 3106 (HY000): '[ddl:3108]Column 'a' has a generated column dependency.' is not supported for generated columns.

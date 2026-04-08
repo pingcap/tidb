@@ -1,0 +1,27 @@
+[mydumper]
+source-id = "mysql-01"
+
+[[mydumper.ignore-columns]]
+db = "routes_b"
+table = "u"
+columns = ["b", "c"]
+
+# the complicated routing rules should be tested in tidb-tools repo already
+# here we're just verifying the basic things do work.
+[[routes]]
+schema-pattern = "routes_a*"
+table-pattern = "t*"
+target-schema = "routes_b"
+target-table = "u"
+
+[routes.extract-table]
+table-regexp = "t(.*)"
+target-column = "c_table"
+
+[routes.extract-schema]
+schema-regexp = "routes_a(.*)"
+target-column = "c_schema"
+
+[routes.extract-source]
+source-regexp = "mysql-(.*)"
+target-column = "c_source"

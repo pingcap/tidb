@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "rewriter_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "rewriter_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/errno",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

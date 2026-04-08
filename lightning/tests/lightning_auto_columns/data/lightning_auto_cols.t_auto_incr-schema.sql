@@ -1,0 +1,3 @@
+CREATE TABLE t_auto_incr (
+id bigint PRIMARY KEY AUTO_INCREMENT,
+c char(40) NOT NULL DEFAULT '');

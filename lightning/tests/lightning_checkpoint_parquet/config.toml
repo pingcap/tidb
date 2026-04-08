@@ -1,0 +1,11 @@
+[lightning]
+region-concurrency = 1
+
+[checkpoint]
+enable = true
+schema = "checkpoint_test_parquet"
+driver = "mysql"
+keep-after-success = true
+
+[tikv-importer]
+max-kv-pairs = 32

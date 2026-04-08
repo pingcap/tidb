@@ -1,0 +1,310 @@
+[
+  {
+    "Name": "TestNullConditionForPrefixIndex",
+    "Cases": [
+      {
+        "SQL": "select count(1) from t1 where c1 = '0xfff' and c2 is not null",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where c1 = '0xfff' and c2 is null",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" NULL,\"0xfff\" NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where c1 >= '0xfff' and c2 is not null",
+        "Plan": [
+          "HashAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:HashAgg",
+          "  └─HashAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─Selection cop[tikv]  not(isnull(test.t1.c2))",
+          "      └─IndexRangeScan cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where c1 >= '0xfff' and c2 is null",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─Selection cop[tikv]  isnull(test.t1.c2)",
+          "      └─IndexRangeScan cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is not null",
+        "Plan": [
+          "StreamAgg root  funcs:count(1)->Column",
+          "└─IndexLookUp root  ",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t1, index:idx1(c1) range:[\"0xfff\",\"0xfff\"], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) cop[tikv]  not(isnull(plus(cast(test.t1.c2, double BINARY), 1)))",
+          "    └─TableRowIDScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t1 where c1 = '0xfff' and (c2 + 1) is null",
+        "Plan": [
+          "StreamAgg root  funcs:count(1)->Column",
+          "└─IndexLookUp root  ",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t1, index:idx1(c1) range:[\"0xfff\",\"0xfff\"], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) cop[tikv]  isnull(plus(cast(test.t1.c2, double BINARY), 1))",
+          "    └─TableRowIDScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is not null",
+        "Plan": [
+          "Projection root  test.t1.c2",
+          "└─IndexLookUp root  ",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "111111",
+          "22    "
+        ]
+      },
+      {
+        "SQL": "select c2 from t1 use index(idx2) where c1 = '0xfff' and c2 is null",
+        "Plan": [
+          "Projection root  test.t1.c2",
+          "└─IndexLookUp root  ",
+          "  ├─IndexRangeScan(Build) cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" NULL,\"0xfff\" NULL], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is not null",
+        "Plan": [
+          "Projection root  test.t1.c2",
+          "└─IndexLookUp root  ",
+          "  ├─Selection(Build) cop[tikv]  not(isnull(test.t1.c2))",
+          "  │ └─IndexRangeScan cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "111111",
+          "22    "
+        ]
+      },
+      {
+        "SQL": "select c2 from t1 use index(idx2) where c1 >= '0xfff' and c2 is null",
+        "Plan": [
+          "Projection root  test.t1.c2",
+          "└─IndexLookUp root  ",
+          "  ├─Selection(Build) cop[tikv]  isnull(test.t1.c2)",
+          "  │ └─IndexRangeScan cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\",+inf], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t2 use index(idx) where b is not null",
+        "Plan": [
+          "HashAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:HashAgg",
+          "  └─HashAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexFullScan cop[tikv] table:t2, index:idx(b) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select count(1) from t2 use index(idx) where b is null",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:t2, index:idx(b) range:[NULL,NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select b from t2 use index(idx) where b is not null",
+        "Plan": [
+          "IndexLookUp root  ",
+          "├─IndexFullScan(Build) cop[tikv] table:t2, index:idx(b) keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "aaaaaa",
+          "bb    "
+        ]
+      },
+      {
+        "SQL": "select b from t2 use index(idx) where b is null",
+        "Plan": [
+          "IndexLookUp root  ",
+          "├─IndexRangeScan(Build) cop[tikv] table:t2, index:idx(b) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "<nil>"
+        ]
+      },
+      {
+        "SQL": "select b from t3 where a = 1 and b is not null",
+        "Plan": [
+          "TableReader root  data:Projection",
+          "└─Projection cop[tikv]  test.t3.b",
+          "  └─TableRangeScan cop[tikv] table:t3 range:[1,1], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "",
+          "aaaaaa",
+          "bb    "
+        ]
+      },
+      {
+        "SQL": "select b from t3 where a = 1 and b is null",
+        "Plan": [
+          "TableDual root  rows:0"
+        ],
+        "Result": null
+      }
+    ]
+  },
+  {
+    "Name": "TestRowFunctionMatchTheIndexRangeScan",
+    "Cases": [
+      {
+        "SQL": "select k1 from t1 where (k1,k2) > (1,2)",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─IndexRangeScan cop[tikv] table:t1, index:pk1(k1, k2) range:(1 2,1 +inf], (1,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1,k2) >= (1,2)",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─IndexRangeScan cop[tikv] table:t1, index:pk1(k1, k2) range:[1 2,1 +inf], (1,+inf], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1,k2) < (1,2)",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─IndexRangeScan cop[tikv] table:t1, index:pk1(k1, k2) range:[-inf,1), [1 -inf,1 2), keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) <= (1,2)",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─IndexRangeScan cop[tikv] table:t1, index:pk1(k1, k2) range:[-inf,1), [1 -inf,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1,k2) = (1,2)",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─IndexRangeScan cop[tikv] table:t1, index:pk1(k1, k2) range:[1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) != (1,2); -- could not match range scan",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─Selection cop[tikv]  or(ne(test.t1.k1, 1), ne(test.t1.k2, 2))",
+          "    └─IndexFullScan cop[tikv] table:t1, index:pk1(k1, k2) keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1) <=> (1); -- could not match range scan",
+        "Plan": [
+          "IndexReader root  index:IndexRangeScan",
+          "└─IndexRangeScan cop[tikv] table:t1, index:pk1(k1, k2) range:[1,1], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) in ((1,2), (3,4))",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─IndexRangeScan cop[tikv] table:t1, index:pk1(k1, k2) range:[1 2,1 2], [3 4,3 4], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) > (1,2) and (k1, k2) < (4,5)",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─IndexRangeScan cop[tikv] table:t1, index:pk1(k1, k2) range:(1 2,1 +inf], (1,4), [4 -inf,4 5), keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k1, k2) >= (1,2) and (k1, k2) <= (4,5)",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─IndexRangeScan cop[tikv] table:t1, index:pk1(k1, k2) range:[1 2,1 +inf], (1,4), [4 -inf,4 5], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select k1 from t1 where (k2, k3) > (1,2); -- could not match range scan ",
+        "Plan": [
+          "TableReader root  data:Projection",
+          "└─Projection cop[tikv]  test.t1.k1",
+          "  └─Selection cop[tikv]  or(gt(test.t1.k2, 1), and(eq(test.t1.k2, 1), gt(test.t1.k3, 2)))",
+          "    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      }
+    ]
+  }
+]

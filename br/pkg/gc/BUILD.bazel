@@ -1,0 +1,54 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "gc",
+    srcs = [
+        "manager.go",
+        "manager_global.go",
+        "manager_keyspace.go",
+        "safepoint.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/gc",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/errors",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//clients/gc",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "gc_test",
+    timeout = "short",
+    srcs = [
+        "manager_test.go",
+        "mock_test.go",
+        "safepoint_test.go",
+    ],
+    flaky = True,
+    shard_count = 7,
+    deps = [
+        ":gc",
+        "//pkg/config",
+        "//pkg/store/mockstore/unistore/lockstore",
+        "//pkg/store/mockstore/unistore/tikv",
+        "//pkg/store/mockstore/unistore/tikv/mvcc",
+        "@com_github_pingcap_badger//:badger",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//clients/gc",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest/observer",
+    ],
+)

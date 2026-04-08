@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = ["import_mock.go"],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/lightning/backend",
+        "@org_uber_go_mock//gomock",
+    ],
+)

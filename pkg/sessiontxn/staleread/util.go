@@ -1,0 +1,164 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package staleread
+
+import (
+	"context"
+	"strconv"
+	"time"
+
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/tikv/client-go/v2/oracle"
+)
+
+// minTSO is 2013-01-01T00:00:00Z in milliseconds since epoch.
+// Serves as a reasonable lower bound for any TiDB physical TSO.
+const minTSO = 1356998400000
+
+// CalculateAsOfTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
+func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr ast.ExprNode) (uint64, error) {
+	sctx.GetSessionVars().StmtCtx.SetStaleTSOProviderIfNotExist(func() (uint64, error) {
+		failpoint.Inject("mockStaleReadTSO", func(val failpoint.Value) (uint64, error) {
+			return uint64(val.(int)), nil
+		})
+		// this function accepts a context, but we don't need it when there is a valid cached ts.
+		// in most cases, the stale read ts can be calculated from `cached ts + time since cache - staleness`,
+		// this can be more accurate than `time.Now() - staleness`, because TiDB's local time can drift.
+		return sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
+	})
+	tsVal, err := plannerutil.EvalAstExprWithPlanCtx(sctx, tsExpr)
+	if err != nil {
+		return 0, err
+	}
+
+	if tsVal.IsNull() {
+		return 0, plannererrors.ErrAsOf.FastGenWithCause("as of timestamp cannot be NULL")
+	}
+
+	// We first try to parse as a datetime, and only fall back to parsing as a raw TSO if the datetime conversion fails.
+	// Note that this behaves differently than `tidb_snapshot` for compact dates such as 'YYYYMMDDHHMMSS' or 'YYYYMMDDHH',
+	// that can parse both as date time and integers. `tidb_snapshot` treats them as integers, while we parse them as datetimes,
+	// to maintain backwards compatibility.
+	ts, datetimeErr := parseTsExprAsDatetime(ctx, sctx, tsVal)
+	if datetimeErr == nil {
+		return ts, nil
+	}
+
+	// If datetime conversion failed, try to parse as a TiDB TSO (not a Unix timestamp).
+	// A TiDB TSO encodes a physical timestamp (ms since epoch) in the high bits and a logical
+	// counter in the low 18 bits
+	tso, ok := tsoFromDatum(tsVal)
+	if !ok {
+		return 0, plannererrors.ErrAsOf.FastGenWithCause("cannot parse AS OF TIMESTAMP expression as datetime or TSO")
+	}
+
+	physicalMS := oracle.ExtractPhysical(tso)
+	if physicalMS <= minTSO {
+		return 0, plannererrors.ErrAsOf.FastGenWithCause("invalid TSO timestamp: TSO is before 2013-01-01")
+	}
+	// Validate that the TSO does not exceed the current PD timestamp to preserve
+	// linearizability when async commit is enabled
+	if err := sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), tso, true); err != nil {
+		return 0, err
+	}
+	return tso, nil
+}
+
+// tsoFromDatum extracts a uint64 TSO value from a Datum.
+func tsoFromDatum(d types.Datum) (uint64, bool) {
+	switch d.Kind() {
+	case types.KindString, types.KindBytes:
+		if tso, err := strconv.ParseUint(d.GetString(), 10, 64); err == nil {
+			return tso, true
+		}
+	case types.KindInt64:
+		if v := d.GetInt64(); v > 0 {
+			return uint64(v), true
+		}
+	case types.KindUint64:
+		if v := d.GetUint64(); v > 0 {
+			return v, true
+		}
+	}
+	return 0, false
+}
+
+// parseTsExprAsDatetime tries to parse the value as a datetime and convert it to TSO.
+// It handles all valid datetime formats including compact format like YYYYMMDDHHMMSS.
+func parseTsExprAsDatetime(_ context.Context, sctx planctx.PlanContext, tsVal types.Datum) (uint64, error) {
+	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
+	// We need at least the millisecond here, so set fsp to 3.
+	toTypeTimestamp.SetDecimal(3)
+	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), toTypeTimestamp)
+	if err != nil {
+		return 0, err
+	}
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
+	if err != nil {
+		return 0, err
+	}
+	return oracle.GoTimeToTS(tsTime), nil
+}
+
+// CalculateTsWithReadStaleness calculates the TsExpr for readStaleness duration
+func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
+	nowVal, err := expression.GetStmtTimestamp(sctx.GetExprCtx().GetEvalCtx())
+	if err != nil {
+		return 0, err
+	}
+	tsVal := nowVal.Add(readStaleness)
+	sc := sctx.GetSessionVars().StmtCtx
+	minSafeTSVal := expression.GetStmtMinSafeTime(sc, sctx.GetStore(), sc.TimeZone())
+	calculatedTime := expression.CalAppropriateTime(tsVal, nowVal, minSafeTSVal)
+	readTS := oracle.GoTimeToTS(calculatedTime)
+	if calculatedTime.After(minSafeTSVal) {
+		// If the final calculated exceeds the min safe ts, we are not sure whether the ts is safe to read (note that
+		// reading with a ts larger than PD's max allocated ts + 1 is unsafe and may break linearizability).
+		// So in this case, do an extra check on it.
+		err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), readTS, true)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return readTS, nil
+}
+
+// IsStmtStaleness indicates whether the current statement is staleness or not
+func IsStmtStaleness(sctx sessionctx.Context) bool {
+	return sctx.GetSessionVars().StmtCtx.IsStaleness
+}
+
+// GetExternalTimestamp returns the external timestamp in cache, or get and store it in cache
+func GetExternalTimestamp(ctx context.Context, sc *stmtctx.StatementContext) (uint64, error) {
+	// Try to get from the stmt cache to make sure this function is deterministic.
+	externalTimestamp, err := sc.GetOrEvaluateStmtCache(stmtctx.StmtExternalTSCacheKey, func() (any, error) {
+		return variable.GetExternalTimestamp(ctx)
+	})
+
+	if err != nil {
+		return 0, plannererrors.ErrAsOf.FastGenWithCause(err.Error())
+	}
+	return externalTimestamp.(uint64), nil
+}

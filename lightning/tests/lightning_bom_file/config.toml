@@ -1,0 +1,5 @@
+[mydumper.csv]
+header = true
+
+[tidb.session-vars]
+tidb_enable_clustered_index = "OFF"

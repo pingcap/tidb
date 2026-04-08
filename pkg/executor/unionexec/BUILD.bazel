@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "unionexec",
+    srcs = ["union.go"],
+    importpath = "github.com/pingcap/tidb/pkg/executor/unionexec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/executor/internal/exec",
+        "//pkg/util",
+        "//pkg/util/channel",
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+        "//pkg/util/syncutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)

@@ -1,0 +1,16 @@
+# config of tidb
+
+# Schema lease duration
+# There are lot of ddl in the tests, setting this
+# to 360s to test whether BR is gracefully shutdown.
+lease = "360s"
+
+new_collations_enabled_on_first_bootstrap = false
+
+[security]
+ssl-ca = "/tmp/backup_restore_test/certs/ca.pem"
+ssl-cert = "/tmp/backup_restore_test/certs/tidb.pem"
+ssl-key = "/tmp/backup_restore_test/certs/tidb.key"
+cluster-ssl-ca = "/tmp/backup_restore_test/certs/ca.pem"
+cluster-ssl-cert = "/tmp/backup_restore_test/certs/tidb.pem"
+cluster-ssl-key = "/tmp/backup_restore_test/certs/tidb.key"

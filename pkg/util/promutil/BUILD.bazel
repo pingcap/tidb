@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "promutil",
+    srcs = [
+        "factory.go",
+        "registry.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/promutil",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_prometheus_client_golang//prometheus"],
+)
+
+go_test(
+    name = "promutil_test",
+    timeout = "short",
+    srcs = ["registry_test.go"],
+    embed = [":promutil"],
+    flaky = True,
+    deps = [
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_stretchr_testify//require",
+    ],
+)

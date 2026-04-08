@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "resourcegrouptest_test",
+    timeout = "short",
+    srcs = ["resource_group_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

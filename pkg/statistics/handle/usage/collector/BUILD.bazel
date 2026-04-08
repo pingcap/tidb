@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "collector",
+    srcs = ["collector.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/usage/collector",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "collector_test",
+    timeout = "short",
+    srcs = ["collector_test.go"],
+    embed = [":collector"],
+    flaky = True,
+    shard_count = 3,
+    deps = ["@com_github_stretchr_testify//require"],
+)

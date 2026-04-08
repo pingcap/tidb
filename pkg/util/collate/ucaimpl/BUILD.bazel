@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "ucaimpl_lib",
+    srcs = ["main.go"],
+    embedsrcs = ["unicode_ci.go.tpl"],
+    importpath = "github.com/pingcap/tidb/pkg/util/collate/ucaimpl",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "ucaimpl",
+    embed = [":ucaimpl_lib"],
+    visibility = ["//visibility:public"],
+)

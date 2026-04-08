@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sqlescape",
+    srcs = ["utils.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/sqlescape",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/hack",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "sqlescape_test",
+    timeout = "short",
+    srcs = ["utils_test.go"],
+    embed = [":sqlescape"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

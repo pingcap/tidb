@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "timer_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "store_intergartion_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 6,
+    deps = [
+        "//pkg/kv",
+        "//pkg/meta/metadef",
+        "//pkg/session/syssession",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/timer/api",
+        "//pkg/timer/runtime",
+        "//pkg/timer/tablestore",
+        "//pkg/util/timeutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@io_etcd_go_etcd_tests_v3//integration",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

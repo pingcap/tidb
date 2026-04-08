@@ -1,0 +1,10 @@
+# Set the default behavior, in case people don't have core.autocrlf set.
+* text=auto
+
+# Declare files that will always have LF line endings on checkout.
+*.y text eol=lf
+
+*.result diff
+
+util/collate/unicode_0*_ci.go linguist-generated=true
+util/collate/ucadata/unicode_*_data.go linguist-generated=true

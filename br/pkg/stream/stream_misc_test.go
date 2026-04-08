@@ -1,0 +1,243 @@
+// Copyright 2022 PingCAP, Inc. Licensed under Apache-2.0.
+
+package stream_test
+
+import (
+	"context"
+	"slices"
+	"testing"
+
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/stretchr/testify/require"
+)
+
+func TestGetCheckpointOfTask(t *testing.T) {
+	task := stream.TaskStatus{
+		Info: backuppb.StreamBackupTaskInfo{
+			StartTs: 8,
+		},
+		Checkpoints: []streamhelper.Checkpoint{
+			{
+				ID: 1,
+				TS: 10,
+			},
+			{
+				ID: 2,
+				TS: 8,
+			},
+			{
+				ID: 6,
+				TS: 12,
+			},
+		},
+	}
+
+	require.Equal(t, task.GetMinStoreCheckpoint().TS, uint64(8), "progress = %v", task.Checkpoints)
+	task.Checkpoints[1].TS = 18
+
+	require.Equal(t, task.GetMinStoreCheckpoint().TS, uint64(10))
+	task.Checkpoints[0].TS = 14
+
+	require.Equal(t, task.GetMinStoreCheckpoint().TS, uint64(12), "progress = %v", task.Checkpoints)
+}
+
+func TestMetadataHelperReadFile(t *testing.T) {
+	ctx := context.Background()
+	tmpdir := t.TempDir()
+	s, err := objstore.NewLocalStorage(tmpdir)
+	require.Nil(t, err)
+	helper := stream.NewMetadataHelper()
+	filename1 := "full_data"
+	filename2 := "misc_data"
+	data1 := []byte("Test MetadataHelper. The data contains bare data (or maybe compressed data).")
+	// data2 is the compressed content from data1
+	data2 := []byte{0x28, 0xb5, 0x2f, 0xfd, 0x0, 0x58, 0x15, 0x2, 0x0, 0x52, 0x44, 0xe, 0x14, 0xb0, 0x37, 0x1, 0xe7,
+		0xa4, 0x1c, 0xd9, 0x3d, 0xc7, 0xee, 0xe7, 0x3e, 0x15, 0x14, 0x80, 0xdc, 0x25, 0x14, 0xc, 0x60, 0x24, 0x70,
+		0xda, 0x6a, 0x47, 0xfc, 0x2d, 0xa4, 0x4e, 0x6f, 0xe, 0xa3, 0x9e, 0x2, 0xce, 0xa6, 0x98, 0xa, 0x67, 0x52,
+		0xa7, 0x4e, 0x5b, 0x4f, 0x94, 0x92, 0xfb, 0x32, 0x2e, 0x38, 0x6d, 0xce, 0xf, 0x4d, 0x7c, 0x9, 0x1, 0x0,
+		0xb2, 0x6c, 0x96, 0x1}
+
+	// write data at first
+	err = s.WriteFile(ctx, filename1, data1)
+	require.NoError(t, err)
+	err = s.WriteFile(ctx, filename2, slices.Concat(data1, data2))
+	require.NoError(t, err)
+
+	helper.InitCacheEntry(filename2, 2)
+	get_data, err := helper.ReadFile(ctx, filename1, 0, 0, backuppb.CompressionType_UNKNOWN, s, nil)
+	require.NoError(t, err)
+	require.Equal(t, data1, get_data)
+	get_data, err = helper.ReadFile(ctx, filename2, 0, uint64(len(data1)), backuppb.CompressionType_UNKNOWN, s, nil)
+	require.NoError(t, err)
+	require.Equal(t, data1, get_data)
+	get_data, err = helper.ReadFile(ctx, filename2, uint64(len(data1)), uint64(len(data2)),
+		backuppb.CompressionType_ZSTD, s, nil)
+	require.NoError(t, err)
+	require.Equal(t, data1, get_data)
+}
+
+func TestMetadataHelperParseToMetadataPreservesExistingFileGroupsForV1(t *testing.T) {
+	helper := stream.NewMetadataHelper()
+	original := &backuppb.Metadata{
+		MetaVersion: backuppb.MetaVersion_V1,
+		FileGroups: []*backuppb.DataFileGroup{
+			{
+				Path: "v1/log/store-1/flush-00000001-region-1.log",
+				DataFilesInfo: []*backuppb.DataFileInfo{
+					{
+						Path: "v1/log/store-1/flush-00000001-region-1.log",
+					},
+				},
+			},
+		},
+	}
+
+	raw, err := original.Marshal()
+	require.NoError(t, err)
+
+	meta, err := helper.ParseToMetadata(raw)
+	require.NoError(t, err)
+	require.Len(t, meta.FileGroups, 1)
+	require.Equal(t, original.FileGroups[0].Path, meta.FileGroups[0].Path)
+	require.Len(t, meta.FileGroups[0].DataFilesInfo, 1)
+	require.Equal(t, original.FileGroups[0].DataFilesInfo[0].Path, meta.FileGroups[0].DataFilesInfo[0].Path)
+
+	hardMeta, err := helper.ParseToMetadataHard(raw)
+	require.NoError(t, err)
+	require.Len(t, hardMeta.FileGroups, 1)
+	require.Equal(t, original.FileGroups[0].Path, hardMeta.FileGroups[0].Path)
+	require.Len(t, hardMeta.FileGroups[0].DataFilesInfo, 1)
+	require.Equal(t, original.FileGroups[0].DataFilesInfo[0].Path, hardMeta.FileGroups[0].DataFilesInfo[0].Path)
+}
+
+func TestFilterPath(t *testing.T) {
+	type args struct {
+		path         string
+		shiftStartTS uint64
+		restoreTS    uint64
+	}
+	tests := []struct {
+		name     string
+		args     args
+		expected string
+	}{
+		{
+			name: "normal: minDefaultTs < minTs",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000005-000000000000000a-000000000000001e.meta", // flush=10, minDefault=5, min=10, max=30
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000005-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "normal: minDefaultTs == minTs",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-000000000000000a-000000000000000a-000000000000001e.meta", // all = 10
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000a-000000000000000a-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "fallback: minDefaultTs == 0",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000000-000000000000000a-000000000000001e.meta", // minDefault=0, min=10
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000000-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "fallback: minBeginTsInDefaultCf > minTs, file preserved",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // minDefault=20, min=10
+				shiftStartTS: 5,
+				restoreTS:    11,
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "fallback: minBeginTsInDefaultCf > minTs, file preserved (not filtered)",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // minDefault=20, min=10
+				shiftStartTS: 5,
+				restoreTS:    9, // even though 9 < minTs(10), file is preserved when minBeginTsInDefaultCf is invalid
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "maxTs < shiftStartTS, should be filtered",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000005-000000000000000a-0000000000000004.meta", // max=4 < 5
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "",
+		},
+		{
+			name: "fallback: minBeginTsInDefaultCf > minTs, file preserved even with small restoreTS",
+			args: args{
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+				shiftStartTS: 5,
+				restoreTS:    8, // even though 8 < minTs(10), file is preserved when minBeginTsInDefaultCf is invalid
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "new format: normal",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000005l000000000000000Au000000000000001E.meta",
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-d0000000000000005l000000000000000Au000000000000001E.meta",
+		},
+		{
+			name: "new format: accepts reordered tags and extra tags",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-u0000000000000004x0000000000000009d0000000000000002l0000000000000003.meta",
+				shiftStartTS: 3,
+				restoreTS:    4,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-u0000000000000004x0000000000000009d0000000000000002l0000000000000003.meta",
+		},
+		{
+			name: "new format: out of range should be filtered",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003u0000000000000004.meta",
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "",
+		},
+		{
+			name: "new format: invalid name should be preserved for compatibility",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003.meta",
+				shiftStartTS: 10,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003.meta",
+		},
+		{
+			name: "non-matching file name format, preserved for compatibility",
+			args: args{
+				path:         "v1/backupmeta/unexpected_format.meta",
+				shiftStartTS: 10,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/unexpected_format.meta",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := stream.FilterPathByTs(tt.args.path, tt.args.shiftStartTS, tt.args.restoreTS)
+			require.Equal(t, tt.expected, got)
+		})
+	}
+}

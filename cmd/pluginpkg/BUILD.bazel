@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "pluginpkg_lib",
+    srcs = ["pluginpkg.go"],
+    importpath = "github.com/pingcap/tidb/cmd/pluginpkg",
+    visibility = ["//visibility:private"],
+    deps = ["@com_github_burntsushi_toml//:toml"],
+)
+
+go_binary(
+    name = "pluginpkg",
+    embed = [":pluginpkg_lib"],
+    visibility = ["//visibility:public"],
+)

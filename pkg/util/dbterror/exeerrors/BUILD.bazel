@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "exeerrors",
+    srcs = ["errors.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/dbterror/exeerrors",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/errno",
+        "//pkg/parser/mysql",
+        "//pkg/util/dbterror",
+    ],
+)

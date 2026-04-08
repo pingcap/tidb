@@ -1,0 +1,10 @@
+[replication]
+enable-placement-rules = true
+
+[security]
+cacert-path = "/tmp/backup_restore_test/certs/ca.pem"
+cert-path = "/tmp/backup_restore_test/certs/pd.pem"
+key-path = "/tmp/backup_restore_test/certs/pd.key"
+
+[keyspace]
+pre-alloc = ["keyspace1", "keyspace2"]
