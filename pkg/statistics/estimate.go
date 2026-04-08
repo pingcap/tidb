@@ -165,6 +165,7 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		}
 		// FM sketch NDV estimates are not monotone under merge, so the estimated
 		// union can be smaller than ndvOther. Clamp the per-node contribution to 0.
+		// In practice, this appears to be fairly rare.
 		delta := max(0, ndvUnion-ndvOther)
 		globalSingleton += delta
 	}
