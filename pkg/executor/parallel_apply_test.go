@@ -17,10 +17,13 @@ package executor_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,9 +68,12 @@ func TestParallelApplyPlan(t *testing.T) {
 	q3 := "select t1.b from t t1 where t1.b > (select max(b) from t t2 where t1.a > t2.a) order by t1.a"
 	checkApplyPlan(t, tk, q3, 0)
 	tk.MustExec("alter table t add index idx(a)")
+	// With ordered parallel apply, ordering is now preserved via a reorder
+	// buffer so we no longer reject the plan.  The Apply should show the
+	// configured concurrency.
 	checkApplyPlan(t, tk, q3, 1)
-	tk.MustQuery(q3).Sort().Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Parallel Apply rejects the possible order properties of its outer child currently"))
+	tk.MustQuery(q3).Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
 
 func TestApplyColumnType(t *testing.T) {
@@ -504,4 +510,580 @@ func TestParallelApplyCorrectness(t *testing.T) {
 
 	tk.MustExec("set tidb_enable_parallel_apply=false")
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("1", "3"))
+}
+
+func TestParallelApplyCancelInflight(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency = 3")
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	for i := 1; i <= 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d)", i))
+	}
+	tk.MustExec("insert into t2 values (1), (2), (3)")
+
+	// Verify the optimizer chooses a parallel Apply plan for this query.
+	sql := "select * from (select t1.a from t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t2 where t2.a < t1.a)) sub limit 1"
+	checkApplyPlan(t, tk, sql, 3)
+
+	// The failpoint makes each inner execution sleep 300ms but respects
+	// context cancellation, so cancelled workers return immediately.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner", `return(300)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplySlowInner"))
+	}()
+
+	// LIMIT 1: once one row is produced, Close() fires and should cancel
+	// in-flight inner workers via context cancellation.
+	start := time.Now()
+	rows := tk.MustQuery(sql).Rows()
+	elapsed := time.Since(start)
+
+	// We got exactly 1 row.
+	require.Len(t, rows, 1)
+	// Without cancel-in-flight, all 20 outer rows would be processed
+	// (~2s per run). With cancellation, Close() fires after the first
+	// result and aborts workers sleeping in the failpoint via context
+	// cancellation. Note: fillInnerChunk may process multiple outer
+	// rows per call, so the effective savings depend on how many rows
+	// are in-flight when cancel fires. The 3s threshold is generous
+	// enough to avoid CI flakiness while catching regressions where
+	// cancellation is completely broken.
+	require.Less(t, elapsed, 3*time.Second, "query took too long (%v); cancel-in-flight may not be working", elapsed)
+}
+
+func TestOrderedParallelApply(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,10),(2,20),(3,30),(4,40),(5,50),(6,60),(7,70),(8,80),(9,90),(10,100)")
+	tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
+
+	// ----------------------------------------------------------------
+	// 1. ORDER BY with scalar correlated subquery – verify row order
+	//    is preserved (not just sorted after the fact).
+	// ----------------------------------------------------------------
+	q1 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a"
+	// Serial: get baseline
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serialResult := tk.MustQuery(q1)
+	serialRows := serialResult.Rows()
+
+	// Parallel ordered: should produce identical order.
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=5")
+	checkApplyPlan(t, tk, q1, 5)
+	tk.MustQuery(q1).Check(testkit.RowsWithSep(" ", flattenRows(serialRows)...))
+
+	// ----------------------------------------------------------------
+	// 2. ORDER BY + LIMIT – should use Limit (not TopN) because the
+	//    ordered parallel apply preserves outer order.
+	// ----------------------------------------------------------------
+	q2 := "select t1.a, t1.b from t1 where t1.b > (select min(t2.b) from t2 where t2.a >= t1.a) order by t1.a limit 5"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serialResult2 := tk.MustQuery(q2)
+	serialRows2 := serialResult2.Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	checkApplyPlan(t, tk, q2, 5)
+	// The planner should use a streamable Limit (not TopN) because the
+	// ordered parallel apply preserves the outer scan order.
+	// Verify the outer plan uses a streamable Limit (not TopN).
+	// TopN may legitimately appear inside the inner (Probe) side
+	// (e.g. for min/max optimization), so only check operators at
+	// or above the Apply level.
+	planRows := tk.MustQuery("explain " + q2).Rows()
+	hasLimit := false
+	hasOuterTopN := false
+	seenApply := false
+	for _, row := range planRows {
+		line := fmt.Sprintf("%v", row)
+		if strings.Contains(line, "Apply") {
+			seenApply = true
+		}
+		if !seenApply {
+			// Operators above Apply — check for Limit vs TopN.
+			if strings.Contains(line, "Limit") {
+				hasLimit = true
+			}
+			if strings.Contains(line, "TopN") {
+				hasOuterTopN = true
+			}
+		}
+	}
+	require.True(t, hasLimit, "plan should contain Limit above Apply for ORDER BY + LIMIT with ordered apply")
+	require.False(t, hasOuterTopN, "plan should not contain TopN above Apply when ordered apply preserves order")
+	tk.MustQuery(q2).Check(testkit.RowsWithSep(" ", flattenRows(serialRows2)...))
+
+	// ----------------------------------------------------------------
+	// 3. EXISTS semi-join with ORDER BY – common pattern from the
+	//    correlate branch.
+	// ----------------------------------------------------------------
+	q3 := "select t1.a from t1 where exists (select 1 from t2 where t2.a = t1.a and t2.b > 3) order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serialResult3 := tk.MustQuery(q3)
+	serialRows3 := serialResult3.Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q3).Check(testkit.RowsWithSep(" ", flattenRows(serialRows3)...))
+
+	// ----------------------------------------------------------------
+	// 4. Varying concurrency levels – results must be identical.
+	// ----------------------------------------------------------------
+	q4 := "select t1.a, (select count(*) from t2 where t2.a > t1.a) from t1 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected := tk.MustQuery(q4).Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	for _, cc := range []int{2, 3, 5, 7, 10} {
+		tk.MustExec(fmt.Sprintf("set tidb_executor_concurrency=%d", cc))
+		tk.MustQuery(q4).Check(testkit.RowsWithSep(" ", flattenRows(expected)...))
+	}
+
+	// ----------------------------------------------------------------
+	// 5. Ordered parallel apply with OFFSET.
+	// ----------------------------------------------------------------
+	q5 := "select t1.a, t1.b from t1 where t1.b > (select min(t2.b) from t2 where t2.a >= t1.a) order by t1.a limit 3 offset 2"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serialResult5 := tk.MustQuery(q5)
+	serialRows5 := serialResult5.Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=5")
+	tk.MustQuery(q5).Check(testkit.RowsWithSep(" ", flattenRows(serialRows5)...))
+}
+
+func TestOrderedParallelApplyEdgeCases(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=4")
+
+	// ----------------------------------------------------------------
+	// 1. Outer filter with unselected rows — exercises the
+	//    processOneOuterRow !or.selected path.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("insert into t2 values (1,10),(2,20),(3,30)")
+	// The WHERE t1.a > 2 acts as an outer filter so rows with a<=2 hit
+	// the unselected path in processOneOuterRow.
+	q1 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 where t1.a > 2 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected1 := tk.MustQuery(q1).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	checkApplyPlan(t, tk, q1, 4)
+	tk.MustQuery(q1).Check(testkit.RowsWithSep(" ", flattenRows(expected1)...))
+
+	// ----------------------------------------------------------------
+	// 2. NOT EXISTS (anti-semi-join) with ORDER BY — exercises
+	//    OnMissMatch in the ordered path.
+	// ----------------------------------------------------------------
+	q2 := "select t1.a from t1 where not exists (select 1 from t2 where t2.a = t1.a) order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected2 := tk.MustQuery(q2).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q2).Check(testkit.RowsWithSep(" ", flattenRows(expected2)...))
+
+	// ----------------------------------------------------------------
+	// 3. ORDER BY + LIMIT 1 — the primary use-case for eager flush.
+	//    Verifies the reorder worker flushes partial output early.
+	// ----------------------------------------------------------------
+	q3 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a limit 1"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected3 := tk.MustQuery(q3).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q3).Check(testkit.RowsWithSep(" ", flattenRows(expected3)...))
+
+	// ----------------------------------------------------------------
+	// 4. Empty outer side — orderedResultCh closes immediately.
+	// ----------------------------------------------------------------
+	q4 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 where t1.a > 999 order by t1.a"
+	tk.MustQuery(q4).Check(testkit.Rows())
+
+	// ----------------------------------------------------------------
+	// 5. Single row outer — minimal ordered path exercise.
+	// ----------------------------------------------------------------
+	q5 := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 where t1.a = 3 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected5 := tk.MustQuery(q5).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q5).Check(testkit.RowsWithSep(" ", flattenRows(expected5)...))
+
+	// ----------------------------------------------------------------
+	// 6. Left outer semi-join with ORDER BY — exercises the e.outer
+	//    path where OnMissMatch must emit the outer row.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t3, t4")
+	tk.MustExec("create table t3 (a int, index idx_a(a))")
+	tk.MustExec("create table t4 (a int)")
+	tk.MustExec("insert into t3 values (1),(2),(3),(4),(5)")
+	tk.MustExec("insert into t4 values (2),(4)")
+	// The IN subquery uses left-outer-semi-join producing a boolean column.
+	q6 := "select a, a in (select /*+ NO_DECORRELATE() */ a from t4 where t4.a = t3.a) from t3 order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected6 := tk.MustQuery(q6).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q6).Check(testkit.RowsWithSep(" ", flattenRows(expected6)...))
+
+	// ----------------------------------------------------------------
+	// 7. Large result set — exercises the appendRow→IsFull→flushOutput
+	//    path where the output chunk fills to capacity and must be
+	//    flushed mid-drain.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t5, t6")
+	tk.MustExec("create table t5 (a int, index idx_a(a))")
+	tk.MustExec("create table t6 (a int)")
+	vals := ""
+	for i := 1; i <= 2000; i++ {
+		if i > 1 {
+			vals += ","
+		}
+		vals += fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec("insert into t5 values " + vals)
+	tk.MustExec("insert into t6 values (1),(2),(3)")
+	q7 := "select t5.a, (select count(*) from t6 where t6.a <= t5.a) from t5 order by t5.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected7 := tk.MustQuery(q7).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q7).Check(testkit.RowsWithSep(" ", flattenRows(expected7)...))
+}
+
+func TestOrderedParallelApplyLargeInner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=4")
+
+	// ----------------------------------------------------------------
+	// Each outer row joins with many inner rows, forcing the chunk to
+	// fill to capacity in processOneOuterRow (chk.IsFull path) and
+	// the reorder worker's appendRow→flushOutput path.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1),(2),(3)")
+	// Insert enough rows to exceed chunk capacity for each outer row.
+	vals := ""
+	for i := 1; i <= 2000; i++ {
+		if i > 1 {
+			vals += ","
+		}
+		vals += fmt.Sprintf("(%d, %d)", i%3+1, i)
+	}
+	tk.MustExec("insert into t2 values " + vals)
+
+	q := "select t1.a, (select /*+ NO_DECORRELATE() */ count(*) from t2 where t2.a = t1.a) from t1 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected := tk.MustQuery(q).Rows()
+
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	checkApplyPlan(t, tk, q, 4)
+	tk.MustQuery(q).Check(testkit.RowsWithSep(" ", flattenRows(expected)...))
+
+	// ----------------------------------------------------------------
+	// Cartesian-style: every outer row pairs with every inner row to
+	// produce a large result set (exercises multi-chunk flush in the
+	// reorder worker).
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t3, t4")
+	tk.MustExec("create table t3 (a int, index idx_a(a))")
+	tk.MustExec("create table t4 (b int)")
+	tk.MustExec("insert into t3 values (1),(2),(3)")
+	vals = ""
+	for i := 1; i <= 500; i++ {
+		if i > 1 {
+			vals += ","
+		}
+		vals += fmt.Sprintf("(%d)", i)
+	}
+	tk.MustExec("insert into t4 values " + vals)
+
+	q2 := "select t3.a, (select /*+ NO_DECORRELATE() */ sum(t4.b) from t4 where t4.b <= t3.a * 100) from t3 order by t3.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected2 := tk.MustQuery(q2).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q2).Check(testkit.RowsWithSep(" ", flattenRows(expected2)...))
+}
+
+func TestOrderedParallelApplyLeftOuterSemiJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=4")
+
+	// ----------------------------------------------------------------
+	// Left outer semi-join with outer filter: some outer rows are
+	// not selected, exercising the e.outer && !or.selected path in
+	// processOneOuterRow. Also exercises OnMissMatch in ordered mode.
+	// ----------------------------------------------------------------
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,10),(2,20),(3,30),(4,40),(5,50)")
+	tk.MustExec("insert into t2 values (2,2),(4,4)")
+
+	// IN subquery → left outer semi join; the NOT IN variant produces
+	// anti-semi join with OnMissMatch for non-matching rows.
+	q1 := "select a, a in (select /*+ NO_DECORRELATE() */ a from t2 where t2.a = t1.a) from t1 order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected1 := tk.MustQuery(q1).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q1).Check(testkit.RowsWithSep(" ", flattenRows(expected1)...))
+
+	// NOT IN subquery — anti-semi-join path
+	q2 := "select a from t1 where a not in (select /*+ NO_DECORRELATE() */ a from t2 where t2.b < t1.b) order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected2 := tk.MustQuery(q2).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q2).Check(testkit.RowsWithSep(" ", flattenRows(expected2)...))
+
+	// Left outer join with ORDER BY — the subquery returns a value for
+	// every outer row, exercising both matched and unmatched paths.
+	q3 := "select t1.a, (select t2.b from t2 where t2.a = t1.a) from t1 order by t1.a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected3 := tk.MustQuery(q3).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q3).Check(testkit.RowsWithSep(" ", flattenRows(expected3)...))
+
+	// ----------------------------------------------------------------
+	// Left outer semi-join with outer-side WHERE conditions.
+	// Note: the planner pushes outer-side filters below the Apply
+	// into the outer child (e.g. IndexRangeScan), so the outerFilter
+	// field on the Apply is empty and selected=true for all rows
+	// reaching processOneOuterRow.  These tests verify correctness
+	// of the left outer semi join with reduced outer row sets and
+	// nullable columns.
+	// ----------------------------------------------------------------
+	tk.MustExec("insert into t1 values (null, null), (6, null)")
+	q4 := "select a, a in (select /*+ NO_DECORRELATE() */ a from t2 where t2.a = t1.a) from t1 where t1.b is not null order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected4 := tk.MustQuery(q4).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q4).Check(testkit.RowsWithSep(" ", flattenRows(expected4)...))
+
+	q5 := "select a, a in (select /*+ NO_DECORRELATE() */ a from t2 where t2.a = t1.a) from t1 where t1.a > 2 order by a"
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	expected5 := tk.MustQuery(q5).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustQuery(q5).Check(testkit.RowsWithSep(" ", flattenRows(expected5)...))
+}
+
+func TestOrderedParallelApplyGoroutinePanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("insert into t2 values (1,10),(2,20),(3,30)")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=3")
+
+	sql := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a"
+	// Verify baseline works.
+	checkApplyPlan(t, tk, sql, 3)
+	tk.MustQuery(sql).Check(testkit.Rows("1 10", "2 20", "3 30", "4 30", "5 30"))
+
+	// Panic in ordered inner worker — error should propagate through
+	// reorder worker to the consumer.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplyInnerWorkerOrderedPanic", "panic"))
+	require.Error(t, tk.QueryToErr(sql))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplyInnerWorkerOrderedPanic"))
+
+	// Panic in outer worker (shared with unordered, but verify it
+	// works with the reorder worker present).
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/parallelApplyOuterWorkerPanic", "panic"))
+	require.Error(t, tk.QueryToErr(sql))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/parallelApplyOuterWorkerPanic"))
+}
+
+func TestOrderedParallelApplyKillSignal(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("insert into t2 values (1,10),(2,20),(3,30)")
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	tk.MustExec("set tidb_executor_concurrency=3")
+
+	sql := "select t1.a, (select max(t2.b) from t2 where t2.a <= t1.a) from t1 order by t1.a"
+
+	// Verify baseline works before testing kill.
+	checkApplyPlan(t, tk, sql, 3)
+	tk.MustQuery(sql).Check(testkit.Rows("1 10", "2 20", "3 30", "4 30", "5 30"))
+
+	// Enable a failpoint that makes inner workers sleep, giving us time
+	// to send a kill signal while the ordered pipeline is active.
+	fpPath := "github.com/pingcap/tidb/pkg/executor/parallelApplyOrderedSleep"
+	require.NoError(t, failpoint.Enable(fpPath, "return(500)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpPath))
+	}()
+
+	// Kill signal during inner worker processing.
+	// The kill signal is sent after 200ms while inner workers are sleeping
+	// for 500ms each. The exec.Next() kill check after the sleep should
+	// detect the signal and return ErrQueryInterrupted, which propagates
+	// through orderedResultCh → reorder worker → resultChkCh → consumer.
+	tk.Session().GetSessionVars().SQLKiller.Reset()
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		time.Sleep(200 * time.Millisecond)
+		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	}()
+
+	start := time.Now()
+	err := tk.QueryToErr(sql)
+	elapsed := time.Since(start)
+	require.Error(t, err, "query should be interrupted by kill signal")
+	// The query should be interrupted well before all 5 rows × 500ms
+	// sleep would complete (~2.5s). Allow generous headroom but verify
+	// it didn't run to completion.
+	require.Less(t, elapsed, 2*time.Second,
+		"kill signal should abort execution promptly, but took %v", elapsed)
+	wg.Wait()
+}
+
+func TestOrderedParallelApplyNested(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
+	tk.MustExec("create table t2 (a int, b int)")
+	tk.MustExec("create table t3 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,10),(2,20),(3,30),(4,40),(5,50)")
+	tk.MustExec("insert into t2 values (1,100),(2,200),(3,300)")
+	tk.MustExec("insert into t3 values (1,1000),(2,2000),(3,3000),(4,4000)")
+	tk.MustExec("set tidb_executor_concurrency=3")
+
+	// ----------------------------------------------------------------
+	// Case 1: Two correlated subqueries in SELECT with ORDER BY.
+	// This produces two stacked Apply operators:
+	//   Apply_outer(outer=Apply_inner(outer=IndexScan, inner=t2_subq), inner=t3_subq)
+	// Both Apply operators are on the outer-child path, so both are
+	// parallelized with KeepOrder=true.
+	// ----------------------------------------------------------------
+	q1 := `select t1.a,
+		(select /*+ NO_DECORRELATE() */ max(t2.b) from t2 where t2.a = t1.a),
+		(select /*+ NO_DECORRELATE() */ max(t3.b) from t3 where t3.a = t1.a)
+	from t1 order by t1.a`
+
+	// Verify both Apply operators are parallel with Concurrency:3.
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	rows := tk.MustQuery("explain analyze " + q1).Rows()
+	applyCount := 0
+	for _, row := range rows {
+		id := fmt.Sprintf("%v", row[0])
+		if strings.Contains(id, "Apply") {
+			applyCount++
+			execInfo := fmt.Sprintf("%v", row[5])
+			require.Contains(t, execInfo, "Concurrency:3",
+				"nested Apply %s should be parallel", id)
+		}
+	}
+	require.Equal(t, 2, applyCount, "should have two Apply operators")
+
+	// Verify ordering: compare parallel vs serial results.
+	expected1 := tk.MustQuery(q1).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serial1 := tk.MustQuery(q1).Rows()
+	require.Equal(t, serial1, expected1, "nested parallel apply should match serial results")
+
+	// ----------------------------------------------------------------
+	// Case 2: Subquery inside subquery (Apply inside inner child).
+	// This produces: Apply_outer(outer=IndexScan, inner=Apply_inner(...))
+	// Per limitation 2, Apply_inner stays serial while Apply_outer is
+	// parallel with KeepOrder=true.
+	// ----------------------------------------------------------------
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	q2 := `select t1.a,
+		(select /*+ NO_DECORRELATE() */ max(t2.b) +
+			(select /*+ NO_DECORRELATE() */ max(t3.b) from t3 where t3.a = t2.a)
+		from t2 where t2.a = t1.a)
+	from t1 order by t1.a`
+
+	rows2 := tk.MustQuery("explain analyze " + q2).Rows()
+	parallelApplyCount := 0
+	serialApplyCount := 0
+	for _, row := range rows2 {
+		id := fmt.Sprintf("%v", row[0])
+		execInfo := fmt.Sprintf("%v", row[5])
+		if !strings.Contains(id, "Apply") {
+			continue
+		}
+		if strings.Contains(execInfo, "concurrency:OFF") {
+			serialApplyCount++
+		} else if strings.Contains(execInfo, "Concurrency:") {
+			parallelApplyCount++
+		}
+	}
+	// Outer Apply is parallel; inner-side Apply stays serial (limitation 2).
+	require.Equal(t, 1, parallelApplyCount, "outer Apply should be parallel")
+	require.Equal(t, 1, serialApplyCount, "inner-side Apply should be serial")
+
+	expected2 := tk.MustQuery(q2).Rows()
+	tk.MustExec("set tidb_enable_parallel_apply=false")
+	serial2 := tk.MustQuery(q2).Rows()
+	require.Equal(t, serial2, expected2, "nested inner apply should match serial results")
+
+	// ----------------------------------------------------------------
+	// Case 3: Two stacked Apply with LIMIT — verify ordering preserved
+	// through both layers.
+	// ----------------------------------------------------------------
+	tk.MustExec("set tidb_enable_parallel_apply=true")
+	q3 := `select t1.a,
+		(select /*+ NO_DECORRELATE() */ max(t2.b) from t2 where t2.a = t1.a),
+		(select /*+ NO_DECORRELATE() */ max(t3.b) from t3 where t3.a = t1.a)
+	from t1 order by t1.a limit 3`
+	tk.MustQuery(q3).Check(testkit.Rows("1 100 1000", "2 200 2000", "3 300 3000"))
+
+	// ----------------------------------------------------------------
+	// Case 4: Varying concurrency with nested apply.
+	// ----------------------------------------------------------------
+	for _, conc := range []int{1, 2, 5} {
+		tk.MustExec(fmt.Sprintf("set tidb_executor_concurrency=%d", conc))
+		result := tk.MustQuery(q1).Rows()
+		require.Equal(t, serial1, result,
+			"nested parallel apply with concurrency=%d should match serial", conc)
+	}
+}
+
+// flattenRows converts [][]interface{} from MustQuery().Rows() into
+// []string suitable for testkit.RowsWithSep(" ", ...).
+func flattenRows(rows [][]any) []string {
+	result := make([]string, 0, len(rows))
+	for _, row := range rows {
+		s := ""
+		for i, col := range row {
+			if i > 0 {
+				s += " "
+			}
+			s += fmt.Sprintf("%v", col)
+		}
+		result = append(result, s)
+	}
+	return result
 }

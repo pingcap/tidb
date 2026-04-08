@@ -681,6 +681,16 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL scope  */
+	{Scope: vardef.ScopeGlobal, Name: vardef.PerformanceSchemaSessionConnectAttrsSize,
+		Value: strconv.FormatInt(vardef.DefConnectAttrsSize, 10),
+		Type:  vardef.TypeInt, MinValue: -1, MaxValue: 65536,
+		GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+			return strconv.FormatInt(vardef.ConnectAttrsSize.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.ConnectAttrsSize.Store(TidbOptInt64(val, vardef.DefConnectAttrsSize))
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.MaxPreparedStmtCount, Value: strconv.FormatInt(vardef.DefMaxPreparedStmtCount, 10), Type: vardef.TypeInt, MinValue: -1, MaxValue: 1048576,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			num, err := strconv.ParseInt(val, 10, 64)
@@ -1978,6 +1988,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.ForeignKeyChecks, originalValue)
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBForeignKeyCheckInSharedLock, Value: BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.ForeignKeyCheckInSharedLock = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableForeignKey, Value: BoolToOnOff(true), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.EnableForeignKey.Store(TiDBOptOn(val))
 		return nil
@@ -2434,6 +2448,10 @@ var defaultSysVars = []*SysVar{
 		s.SetEnableIndexMerge(TiDBOptOn(val))
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableNoBackslashEscapesInLike, Value: BoolToOnOff(vardef.DefTiDBEnableNoBackslashEscapesInLike), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNoBackslashEscapesInLike = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableTablePartition, Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, "AUTO"}, Validation: func(vars *SessionVars, s string, s2 string, flag vardef.ScopeFlag) (string, error) {
 		if s == vardef.Off {
 			vars.StmtCtx.AppendWarning(errors.NewNoStackError("tidb_enable_table_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
@@ -2514,6 +2532,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableNoDecorrelateInSelect = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableAlternativeLogicalPlans, Value: BoolToOnOff(vardef.DefOptEnableAlternativeLogicalPlans), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAlternativeLogicalPlans = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil
@@ -2580,6 +2602,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThreshold, Value: strconv.Itoa(vardef.DefTiDBOptJoinReorderThreshold), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 63, SetSession: func(s *SessionVars, val string) error {
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, vardef.DefTiDBOptJoinReorderThreshold)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableAdvancedJoinReorder, Value: BoolToOnOff(vardef.DefTiDBOptEnableAdvancedJoinReorder), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiDBOptEnableAdvancedJoinReorder = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughSel), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -2730,14 +2756,30 @@ var defaultSysVars = []*SysVar{
 		s.GuaranteeLinearizability = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeVersion, Value: strconv.Itoa(vardef.DefTiDBAnalyzeVersion), Type: vardef.TypeInt, MinValue: 1, MaxValue: 2, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeVersion, Value: strconv.Itoa(vardef.DefTiDBAnalyzeVersion), Type: vardef.TypeInt, MinValue: 1, MaxValue: 2, Validation: func(_ *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+		if normalizedValue == "1" {
+			return normalizedValue, errors.New("tidb_analyze_version=1 is no longer supported, please set tidb_analyze_version to 2")
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, vardef.DefTiDBAnalyzeVersion)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinBuild, Value: BoolToOnOff(vardef.DefTiDBOptIndexJoinBuild), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnhanceIndexJoinBuildV2 = TiDBOptOn(val)
-		return nil
-	}},
+	// Keep this sysvar for upgrade compatibility. The planner always uses the v2 path now.
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinBuild, Value: BoolToOnOff(vardef.DefTiDBOptIndexJoinBuild), Type: vardef.TypeBool,
+		Validation: func(_ *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+			if !TiDBOptOn(normalizedValue) {
+				return vardef.On, errors.New("tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off")
+			}
+			return vardef.On, nil
+		},
+		GetSession: func(*SessionVars) (string, error) {
+			return vardef.On, nil
+		},
+		GetGlobal: func(context.Context, *SessionVars) (string, error) {
+			return vardef.On, nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBHashJoinVersion, Value: vardef.DefTiDBHashJoinVersion, Type: vardef.TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
 			lowerValue := strings.ToLower(normalizedValue)
@@ -2954,9 +2996,6 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableDDLAnalyze, Value: BoolToOnOff(vardef.DefTiDBEnableDDLAnalyze), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
-			if TiDBOptOn(val) && s.AnalyzeVersion == 1 {
-				return errors.New("tidb_stats_update_during_ddl can only be enabled with tidb_analyze_version 2")
-			}
 			s.EnableDDLAnalyze = TiDBOptOn(val)
 			return nil
 		}},
@@ -3070,16 +3109,16 @@ var defaultSysVars = []*SysVar{
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPartialOrderedIndexForTopN, Value: BoolToOnOff(vardef.DefTiDBOptPartialOrderedIndexForTopN), Type: vardef.TypeBool, IsHintUpdatableVerified: true,
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPartialOrderedIndexForTopN, Value: vardef.DefTiDBOptPartialOrderedIndexForTopN, Type: vardef.TypeEnum, PossibleValues: []string{"DISABLE", "COST"}, IsHintUpdatableVerified: true,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
-			// Only allow exact values: 0, 1, ON, OFF (case-insensitive)
-			lowerValue := strings.ToLower(strings.TrimSpace(originalValue))
-			if lowerValue != "0" && lowerValue != "1" && lowerValue != "on" && lowerValue != "off" {
+			// Allow DISABLE, COST (case-insensitive)
+			upperValue := strings.ToUpper(strings.TrimSpace(originalValue))
+			if upperValue != "DISABLE" && upperValue != "COST" {
 				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBOptPartialOrderedIndexForTopN, originalValue)
 			}
-			return normalizedValue, nil
+			return upperValue, nil
 		}, SetSession: func(s *SessionVars, val string) error {
-			s.OptPartialOrderedIndexForTopN = TiDBOptOn(val)
+			s.OptPartialOrderedIndexForTopN = strings.ToUpper(val)
 			return nil
 		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExternalTS, Value: strconv.FormatInt(vardef.DefTiDBExternalTS, 10), SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
@@ -3383,6 +3422,10 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheInvalidationOnFreshStats, Value: BoolToOnOff(vardef.DefTiDBPlanCacheInvalidationOnFreshStats), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheSkipStatsOnBinding, Value: BoolToOnOff(vardef.DefTiDBPlanCacheSkipStatsOnBinding), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PlanCacheSkipStatsOnBinding = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiFlashReplicaRead, Value: vardef.DefTiFlashReplicaRead, Type: vardef.TypeEnum, PossibleValues: []string{vardef.DefTiFlashReplicaRead, vardef.ClosestAdaptiveStr, vardef.ClosestReplicasStr},

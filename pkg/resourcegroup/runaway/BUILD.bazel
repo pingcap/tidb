@@ -4,6 +4,7 @@ go_library(
     name = "runaway",
     srcs = [
         "checker.go",
+        "flusher.go",
         "manager.go",
         "record.go",
         "syncer.go",
@@ -46,13 +47,23 @@ go_test(
     timeout = "short",
     srcs = [
         "checker_test.go",
+        "flusher_test.go",
         "record_test.go",
     ],
     embed = [":runaway"],
     flaky = True,
-    shard_count = 2,
+    shard_count = 16,
     deps = [
+        "//pkg/ddl",
+        "//pkg/infoschema",
+        "//pkg/metrics",
+        "//pkg/owner",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

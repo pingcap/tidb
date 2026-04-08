@@ -57,15 +57,14 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
 └─MergeJoin	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t2.id
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-  └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t1.id
+  └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t1.id, other cond:or(like(planner__core__join_reorder2.t3.name, "test3", 92), like(planner__core__join_reorder2.t4.name, "test4", 92))
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-    └─Selection(Probe)	root		or(like(planner__core__join_reorder2.t3.name, "test3", 92), like(planner__core__join_reorder2.t4.name, "test4", 92))
-      └─MergeJoin	root		left outer join, left side:TableReader, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t4.id
-        ├─TableReader(Build)	root		data:TableFullScan
-        │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
-        └─TableReader(Probe)	root		data:TableFullScan
-          └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+    └─MergeJoin(Probe)	root		left outer join, left side:TableReader, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t4.id
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
+      └─TableReader(Probe)	root		data:TableFullScan
+        └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
 set @@tidb_opt_join_reorder_through_sel = 0;
 explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
 (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub

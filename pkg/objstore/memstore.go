@@ -19,10 +19,12 @@ import (
 	"context"
 	"io"
 	"path"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
@@ -157,20 +159,23 @@ func (s *MemStorage) Open(ctx context.Context, filePath string, o *storeapi.Read
 		return nil, errors.Errorf("cannot find the file: %s", filePath)
 	}
 	data := theFile.GetData()
-	// just for simplicity, different from other implementation, MemStorage can't
-	// seek beyond [o.StartOffset, o.EndOffset)
-	start, end := 0, len(data)
+	start, end := int64(0), int64(len(data))
 	if o != nil {
 		if o.StartOffset != nil {
-			start = int(*o.StartOffset)
+			start = *o.StartOffset
 		}
 		if o.EndOffset != nil {
-			end = int(*o.EndOffset)
+			end = *o.EndOffset
 		}
 	}
-	r := bytes.NewReader(data[start:end])
+	r := bytes.NewReader(data)
+	if _, err := r.Seek(start, io.SeekStart); err != nil {
+		return nil, errors.Trace(err)
+	}
 	return &memFileReader{
 		br:   r,
+		pos:  start,
+		end:  end,
 		size: int64(len(data)),
 	}, nil
 }
@@ -265,6 +270,12 @@ func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return nil
 }
 
+// PresignFile implements storeapi.Storage interface.
+// For in-memory storage, returns the file name only (basename).
+func (s *MemStorage) PresignFile(_ context.Context, fileName string, _ time.Duration) (string, error) {
+	return filepath.Base(fileName), nil
+}
+
 // Close implements Storage interface.
 func (s *MemStorage) Close() {
 	s.dataStore = nil
@@ -273,6 +284,8 @@ func (s *MemStorage) Close() {
 // memFileReader is the struct to read data from an opend mem storage file
 type memFileReader struct {
 	br       *bytes.Reader
+	pos      int64
+	end      int64
 	size     int64
 	isClosed atomic.Bool
 }
@@ -283,7 +296,13 @@ func (r *memFileReader) Read(p []byte) (int, error) {
 	if r.isClosed.Load() {
 		return 0, io.EOF
 	}
-	return r.br.Read(p)
+	maxCnt := min(r.end-r.pos, int64(len(p)))
+	if maxCnt <= 0 {
+		return 0, io.EOF
+	}
+	n, err := r.br.Read(p[:maxCnt])
+	r.pos += int64(n)
+	return n, err
 }
 
 // Close closes the mem storage file data
@@ -299,7 +318,12 @@ func (r *memFileReader) Seek(offset int64, whence int) (int64, error) {
 	if r.isClosed.Load() {
 		return 0, errors.New("reader closed")
 	}
-	return r.br.Seek(offset, whence)
+	n, err := r.br.Seek(offset, whence)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	r.pos = n
+	return n, nil
 }
 
 func (r *memFileReader) GetFileSize() (int64, error) {

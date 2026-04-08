@@ -69,6 +69,7 @@ go_library(
         "//pkg/planner/util/utilfuncp",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/table",
         "//pkg/types",
@@ -77,12 +78,14 @@ go_library(
         "//pkg/util/hint",
         "//pkg/util/intest",
         "//pkg/util/intset",
+        "//pkg/util/logutil",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
         "//pkg/util/size",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

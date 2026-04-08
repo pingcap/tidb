@@ -303,7 +303,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 			if i != 0 {
 				buffer.WriteString(", ")
 			}
-			buffer.WriteString(runtimeFilter.ExplainInfo(true))
+			buffer.WriteString(runtimeFilter.ExplainInfo(true, evalCtx))
 		}
 	}
 	return buffer.String()

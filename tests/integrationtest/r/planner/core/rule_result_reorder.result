@@ -20,21 +20,21 @@ set tidb_enable_ordered_result_mode=1;
 set tidb_opt_limit_push_down_threshold=0;
 drop table if exists t;
 create table t (a int primary key, b int, c int, d int, key(b));
-explain select * from t where a > 0 limit 1;
+explain format = 'brief' select * from t where a > 0 limit 1;
 id	estRows	task	access object	operator info
-Limit_13	1.00	root		offset:0, count:1
-└─TableReader_23	1.00	root		data:Limit_22
-  └─Limit_22	1.00	cop[tikv]		offset:0, count:1
-    └─TableRangeScan_21	34.32	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo
+Limit	1.00	root		offset:0, count:1
+└─TableReader	1.00	root		data:Limit
+  └─Limit	1.00	cop[tikv]		offset:0, count:1
+    └─TableRangeScan	34.32	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo
 create session binding for select * from t where a>0 limit 1 using select * from t use index(b) where a>0 limit 1;
-explain select * from t where a > 0 limit 1;
+explain format = 'brief' select * from t where a > 0 limit 1;
 id	estRows	task	access object	operator info
-TopN_10	1.00	root		planner__core__rule_result_reorder.t.a, offset:0, count:1
-└─IndexLookUp_20	1.00	root		
-  ├─TopN_19(Build)	1.00	cop[tikv]		planner__core__rule_result_reorder.t.a, offset:0, count:1
-  │ └─Selection_18	3333.33	cop[tikv]		gt(planner__core__rule_result_reorder.t.a, 0)
-  │   └─IndexFullScan_16	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
-  └─TableRowIDScan_17(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TopN	1.00	root		planner__core__rule_result_reorder.t.a, offset:0, count:1
+└─IndexLookUp	1.00	root		
+  ├─TopN(Build)	1.00	cop[tikv]		planner__core__rule_result_reorder.t.a, offset:0, count:1
+  │ └─Selection	3333.33	cop[tikv]		gt(planner__core__rule_result_reorder.t.a, 0)
+  │   └─IndexFullScan	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 set tidb_enable_ordered_result_mode=DEFAULT;
 set tidb_opt_limit_push_down_threshold=DEFAULT;
 set tidb_enable_ordered_result_mode=1;

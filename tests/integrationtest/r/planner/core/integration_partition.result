@@ -414,18 +414,18 @@ use list_partition_invisible_idx;
 drop table if exists tlist;
 create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
 alter table tlist alter index a invisible;
-explain select a from tlist where a>=0 and a<=5;
+explain format = 'brief' select a from tlist where a>=0 and a<=5;
 id	estRows	task	access object	operator info
-TableReader_8	250.00	root	partition:all	data:Selection_7
-└─Selection_7	250.00	cop[tikv]		ge(list_partition_invisible_idx.tlist.a, 0), le(list_partition_invisible_idx.tlist.a, 5)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:tlist	keep order:false, stats:pseudo
+TableReader	250.00	root	partition:all	data:Selection
+└─Selection	250.00	cop[tikv]		ge(list_partition_invisible_idx.tlist.a, 0), le(list_partition_invisible_idx.tlist.a, 5)
+  └─TableFullScan	10000.00	cop[tikv]	table:tlist	keep order:false, stats:pseudo
 create table tcollist (a int, b int, key(a)) partition by list columns (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
 alter table tcollist alter index a invisible;
-explain select a from tcollist where a>=0 and a<=5;
+explain format = 'brief' select a from tcollist where a>=0 and a<=5;
 id	estRows	task	access object	operator info
-TableReader_8	250.00	root	partition:all	data:Selection_7
-└─Selection_7	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:tcollist	keep order:false, stats:pseudo
+TableReader	250.00	root	partition:all	data:Selection
+└─Selection	250.00	cop[tikv]		ge(list_partition_invisible_idx.tcollist.a, 0), le(list_partition_invisible_idx.tcollist.a, 5)
+  └─TableFullScan	10000.00	cop[tikv]	table:tcollist	keep order:false, stats:pseudo
 create database list_partition_cte;
 use list_partition_cte;
 drop table if exists tlist;
@@ -640,18 +640,18 @@ create table t1 (id int, c date) partition by range (to_days(c))
 partition p1 values less than (to_days('2022-02-11')),
 partition p2 values less than (to_days('2022-03-11')));
 analyze table t1;
-explain select * from t1 where c in ('2022-01-23', '2022-01-22');
+explain format = 'brief' select * from t1 where c in ('2022-01-23', '2022-01-22');
 id	estRows	task	access object	operator info
-TableReader_8	20.00	root	partition:p1	data:Selection_7
-└─Selection_7	20.00	cop[tikv]		in(planner__core__integration_partition.t1.c, 2022-01-23 00:00:00.000000, 2022-01-22 00:00:00.000000)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+TableReader	20.00	root	partition:p1	data:Selection
+└─Selection	20.00	cop[tikv]		in(planner__core__integration_partition.t1.c, 2022-01-23 00:00:00.000000, 2022-01-22 00:00:00.000000)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 where c in ('2022-01-23', '2022-01-22');
 id	c
-explain select * from t1 where c in (NULL, '2022-01-23');
+explain format = 'brief' select * from t1 where c in (NULL, '2022-01-23');
 id	estRows	task	access object	operator info
-TableReader_8	10.00	root	partition:p1	data:Selection_7
-└─Selection_7	10.00	cop[tikv]		in(planner__core__integration_partition.t1.c, NULL, 2022-01-23 00:00:00.000000)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+TableReader	10.00	root	partition:p1	data:Selection
+└─Selection	10.00	cop[tikv]		in(planner__core__integration_partition.t1.c, NULL, 2022-01-23 00:00:00.000000)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 where c in (NULL, '2022-01-23');
 id	c
 drop table t1;
@@ -1131,71 +1131,71 @@ a
 select * from t partition(p6);
 a
 2020-01-01
-explain select * from t where a < '1943-02-12';
+explain format = 'brief' select * from t where a < '1943-02-12';
 id	estRows	task	access object	operator info
-TableReader_8	1.00	root	partition:p0	data:Selection_7
-└─Selection_7	1.00	cop[tikv]		lt(rcd.t.a, 1943-02-12 00:00:00.000000)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where a >= '19690213';
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		lt(rcd.t.a, 1943-02-12 00:00:00.000000)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where a >= '19690213';
 id	estRows	task	access object	operator info
-TableReader_8	7.00	root	partition:all	data:Selection_7
-└─Selection_7	7.00	cop[tikv]		ge(rcd.t.a, 1969-02-13 00:00:00.000000)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where a > '2003-03-13';
+TableReader	7.00	root	partition:all	data:Selection
+└─Selection	7.00	cop[tikv]		ge(rcd.t.a, 1969-02-13 00:00:00.000000)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where a > '2003-03-13';
 id	estRows	task	access object	operator info
-TableReader_8	4.00	root	partition:p2,p3,p4,p5,p6	data:Selection_7
-└─Selection_7	4.00	cop[tikv]		gt(rcd.t.a, 2003-03-13 00:00:00.000000)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where a < '2006-02-03';
+TableReader	4.00	root	partition:p2,p3,p4,p5,p6	data:Selection
+└─Selection	4.00	cop[tikv]		gt(rcd.t.a, 2003-03-13 00:00:00.000000)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where a < '2006-02-03';
 id	estRows	task	access object	operator info
-TableReader_8	3.00	root	partition:p0,p1,p2	data:Selection_7
-└─Selection_7	3.00	cop[tikv]		lt(rcd.t.a, 2006-02-03 00:00:00.000000)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where a = '20070707';
+TableReader	3.00	root	partition:p0,p1,p2	data:Selection
+└─Selection	3.00	cop[tikv]		lt(rcd.t.a, 2006-02-03 00:00:00.000000)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where a = '20070707';
 id	estRows	task	access object	operator info
-TableReader_8	1.00	root	partition:p2	data:Selection_7
-└─Selection_7	1.00	cop[tikv]		eq(rcd.t.a, 2007-07-07 00:00:00.000000)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where a > '1949-10-10';
+TableReader	1.00	root	partition:p2	data:Selection
+└─Selection	1.00	cop[tikv]		eq(rcd.t.a, 2007-07-07 00:00:00.000000)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where a > '1949-10-10';
 id	estRows	task	access object	operator info
-TableReader_8	7.00	root	partition:all	data:Selection_7
-└─Selection_7	7.00	cop[tikv]		gt(rcd.t.a, 1949-10-10 00:00:00.000000)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where a > '2016-02-01' AND a < '20000103';
+TableReader	7.00	root	partition:all	data:Selection
+└─Selection	7.00	cop[tikv]		gt(rcd.t.a, 1949-10-10 00:00:00.000000)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where a > '2016-02-01' AND a < '20000103';
 id	estRows	task	access object	operator info
-TableReader_8	1.00	root	partition:dual	data:Selection_7
-└─Selection_7	1.00	cop[tikv]		gt(rcd.t.a, 2016-02-01 00:00:00.000000), lt(rcd.t.a, 2000-01-03 00:00:00.000000)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where a < '19691112' or a >= '2019-09-18';
+TableReader	1.00	root	partition:dual	data:Selection
+└─Selection	1.00	cop[tikv]		gt(rcd.t.a, 2016-02-01 00:00:00.000000), lt(rcd.t.a, 2000-01-03 00:00:00.000000)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where a < '19691112' or a >= '2019-09-18';
 id	estRows	task	access object	operator info
-TableReader_8	1.00	root	partition:p0,p5,p6	data:Selection_7
-└─Selection_7	1.00	cop[tikv]		or(lt(rcd.t.a, 1969-11-12 00:00:00.000000), ge(rcd.t.a, 2019-09-18 00:00:00.000000))
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where a is null;
+TableReader	1.00	root	partition:p0,p5,p6	data:Selection
+└─Selection	1.00	cop[tikv]		or(lt(rcd.t.a, 1969-11-12 00:00:00.000000), ge(rcd.t.a, 2019-09-18 00:00:00.000000))
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where a is null;
 id	estRows	task	access object	operator info
-TableReader_8	1.00	root	partition:p0	data:Selection_7
-└─Selection_7	1.00	cop[tikv]		isnull(rcd.t.a)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where '2003-02-27' >= a;
+TableReader	1.00	root	partition:p0	data:Selection
+└─Selection	1.00	cop[tikv]		isnull(rcd.t.a)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where '2003-02-27' >= a;
 id	estRows	task	access object	operator info
-TableReader_8	3.00	root	partition:p0,p1,p2	data:Selection_7
-└─Selection_7	3.00	cop[tikv]		ge(2003-02-27 00:00:00.000000, rcd.t.a)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where '20141024' < a;
+TableReader	3.00	root	partition:p0,p1,p2	data:Selection
+└─Selection	3.00	cop[tikv]		ge(2003-02-27 00:00:00.000000, rcd.t.a)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where '20141024' < a;
 id	estRows	task	access object	operator info
-TableReader_8	2.00	root	partition:p4,p5,p6	data:Selection_7
-└─Selection_7	2.00	cop[tikv]		lt(2014-10-24 00:00:00.000000, rcd.t.a)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where '2003-03-30' > a;
+TableReader	2.00	root	partition:p4,p5,p6	data:Selection
+└─Selection	2.00	cop[tikv]		lt(2014-10-24 00:00:00.000000, rcd.t.a)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where '2003-03-30' > a;
 id	estRows	task	access object	operator info
-TableReader_8	3.00	root	partition:p0,p1,p2	data:Selection_7
-└─Selection_7	3.00	cop[tikv]		gt(2003-03-30 00:00:00.000000, rcd.t.a)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
-explain select * from t where a between '2003-03-30' AND '2014-01-01';
+TableReader	3.00	root	partition:p0,p1,p2	data:Selection
+└─Selection	3.00	cop[tikv]		gt(2003-03-30 00:00:00.000000, rcd.t.a)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
+explain format = 'brief' select * from t where a between '2003-03-30' AND '2014-01-01';
 id	estRows	task	access object	operator info
-TableReader_8	2.00	root	partition:p2,p3,p4	data:Selection_7
-└─Selection_7	2.00	cop[tikv]		ge(rcd.t.a, 2003-03-30 00:00:00.000000), le(rcd.t.a, 2014-01-01 00:00:00.000000)
-  └─TableFullScan_6	7.00	cop[tikv]	table:t	keep order:false
+TableReader	2.00	root	partition:p2,p3,p4	data:Selection
+└─Selection	2.00	cop[tikv]		ge(rcd.t.a, 2003-03-30 00:00:00.000000), le(rcd.t.a, 2014-01-01 00:00:00.000000)
+  └─TableFullScan	7.00	cop[tikv]	table:t	keep order:false
 drop database if exists rcd;
 create database rcd;
 use rcd;
@@ -1274,28 +1274,28 @@ drop table if exists t;
 create table t(id int) PARTITION BY HASH(id) partitions 5;
 insert into t values(0),(0);
 analyze table t;
-explain select *,_tidb_rowid from t where _tidb_rowid=1;
+explain format = 'brief' select *,_tidb_rowid from t where _tidb_rowid=1;
 id	estRows	task	access object	operator info
-TableReader_7	2.00	root	partition:all	data:TableRangeScan_6
-└─TableRangeScan_6	2.00	cop[tikv]	table:t	range:[1,1], keep order:false
+TableReader	2.00	root	partition:all	data:TableRangeScan
+└─TableRangeScan	2.00	cop[tikv]	table:t	range:[1,1], keep order:false
 select *,_tidb_rowid from t where _tidb_rowid=1;
 id	_tidb_rowid
 0	1
-explain select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+explain format = 'brief' select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
 id	estRows	task	access object	operator info
-Point_Get_6	1.00	root	table:t, partition:p0	handle:1
+Point_Get	1.00	root	table:t, partition:p0	handle:1
 select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
 id	_tidb_rowid
 0	1
-explain select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+explain format = 'brief' select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
 id	estRows	task	access object	operator info
-Point_Get_6	1.00	root	table:t, partition:p1	handle:1
+Point_Get	1.00	root	table:t, partition:p1	handle:1
 select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
 id	_tidb_rowid
-explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
+explain format = 'brief' select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
 id	estRows	task	access object	operator info
-TableReader_7	2.00	root	partition:p0,p1	data:TableRangeScan_6
-└─TableRangeScan_6	2.00	cop[tikv]	table:t	range:[1,1], keep order:false
+TableReader	2.00	root	partition:p0,p1	data:TableRangeScan
+└─TableRangeScan	2.00	cop[tikv]	table:t	range:[1,1], keep order:false
 drop table if exists t;
 CREATE TABLE `t` (
 `a` bigint unsigned
@@ -1303,18 +1303,18 @@ CREATE TABLE `t` (
 PARTITION BY LIST (`a`)
 (PARTITION `p0` VALUES IN (18446744073709551610,1),
 PARTITION `p1` VALUES IN (2,3));
-explain select * from t where a < 18446744073709551610 and a > 2;
+explain format = 'brief' select * from t where a < 18446744073709551610 and a > 2;
 id	estRows	task	access object	operator info
-TableReader_8	250.00	root	partition:p1	data:Selection_7
-└─Selection_7	250.00	cop[tikv]		gt(planner__core__integration_partition.t.a, 2), lt(planner__core__integration_partition.t.a, 18446744073709551610)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain select * from t where a < 18446744073709551610;
+TableReader	250.00	root	partition:p1	data:Selection
+└─Selection	250.00	cop[tikv]		gt(planner__core__integration_partition.t.a, 2), lt(planner__core__integration_partition.t.a, 18446744073709551610)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a < 18446744073709551610;
 id	estRows	task	access object	operator info
-TableReader_8	3323.33	root	partition:all	data:Selection_7
-└─Selection_7	3323.33	cop[tikv]		lt(planner__core__integration_partition.t.a, 18446744073709551610)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain select * from t where a not in (18446744073709551610, 1);
+TableReader	3323.33	root	partition:all	data:Selection
+└─Selection	3323.33	cop[tikv]		lt(planner__core__integration_partition.t.a, 18446744073709551610)
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a not in (18446744073709551610, 1);
 id	estRows	task	access object	operator info
-TableReader_8	3833.33	root	partition:p1	data:Selection_7
-└─Selection_7	3833.33	cop[tikv]		not(in(planner__core__integration_partition.t.a, 18446744073709551610, 1))
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	3833.33	root	partition:p1	data:Selection
+└─Selection	3833.33	cop[tikv]		not(in(planner__core__integration_partition.t.a, 18446744073709551610, 1))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

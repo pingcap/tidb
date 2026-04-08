@@ -62,10 +62,10 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format='brief' " + tt).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + tt).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Sort().Rows())
 			})
-			testKit.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].Plan...))
 			testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 		}
 
@@ -82,11 +82,11 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 		tkProcess := testKit.Session().ShowProcess()
 		ps := []*sessmgr.ProcessInfo{tkProcess}
 		testKit.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-		testKit.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#8)->Column#6",
-			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#8",
-			"    └─IndexRangeScan_18 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+		testKit.MustQuery(fmt.Sprintf("explain format = 'brief' for connection %d", tkProcess.ID)).Check(testkit.Rows(
+			"StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
+			"└─IndexReader 1.00 root  index:StreamAgg",
+			"  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
+			"    └─IndexRangeScan 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 	})
 }
 
@@ -95,15 +95,15 @@ func TestInvisibleIndex(t *testing.T) {
 		testKit.MustExec("use test")
 		testKit.MustExec("CREATE TABLE t1 ( a INT, KEY( a ) INVISIBLE );")
 		testKit.MustExec("INSERT INTO t1 VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);")
-		testKit.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
+		testKit.MustQuery(`explain format = 'plan_tree' SELECT a FROM t1;`).Check(
 			testkit.Rows(
-				`TableReader_6 10000.00 root  data:TableFullScan_5`,
-				`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				`TableReader root  data:TableFullScan`,
+				`└─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		testKit.MustExec("set session tidb_opt_use_invisible_indexes=on;")
-		testKit.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
+		testKit.MustQuery(`explain format = 'plan_tree' SELECT a FROM t1;`).Check(
 			testkit.Rows(
-				`IndexReader_8 10000.00 root  index:IndexFullScan_7`,
-				`└─IndexFullScan_7 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
+				`IndexReader root  index:IndexFullScan`,
+				`└─IndexFullScan cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
 	})
 }
 
@@ -125,7 +125,7 @@ func TestRangeDerivation(t *testing.T) {
 		indexRangeSuiteData := GetIndexRangeSuiteData()
 		indexRangeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, sql := range input {
-			plan := testKit.MustQuery("explain format = 'brief' " + sql)
+			plan := testKit.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
 				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
@@ -152,10 +152,10 @@ func TestRowFunctionMatchTheIndexRangeScan(t *testing.T) {
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format='brief' " + tt).Rows())
+				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'plan_tree' " + tt).Rows())
 				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Sort().Rows())
 			})
-			testKit.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+			testKit.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].Plan...))
 			testKit.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 		}
 	})
@@ -211,7 +211,7 @@ func TestRangeIntersection(t *testing.T) {
 		indexRangeSuiteData := GetIndexRangeSuiteData()
 		indexRangeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, sql := range input {
-			plan := testKit.MustQuery("explain format = 'brief' " + sql)
+			plan := testKit.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
 				output[i].SQL = sql
 				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
@@ -227,20 +227,20 @@ func TestOrderedIndexWithIsNull(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("CREATE TABLE t1 (a int key, b int, c int, index (b, c));")
-		testKit.MustQuery("explain select a from t1 where b is null order by c").Check(testkit.Rows(
-			"Projection_6 10.00 root  test.t1.a",
-			"└─IndexReader_14 10.00 root  index:IndexRangeScan_13",
-			"  └─IndexRangeScan_13 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
+		testKit.MustQuery("explain format = 'plan_tree' select a from t1 where b is null order by c").Check(testkit.Rows(
+			"Projection root  test.t1.a",
+			"└─IndexReader root  index:IndexRangeScan",
+			"  └─IndexRangeScan cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
 		))
 		// https://github.com/pingcap/tidb/issues/56116
 		testKit.MustExec("create table t2(id bigint(20) DEFAULT NULL, UNIQUE KEY index_on_id (id))")
 		testKit.MustExec("insert into t2 values (), (), ()")
 		testKit.MustExec("analyze table t2")
-		testKit.MustQuery("explain select count(*) from t2 where id is null;").Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#6)->Column#4",
-			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#6",
-			"    └─IndexRangeScan_18 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
+		testKit.MustQuery("explain format = 'plan_tree' select count(*) from t2 where id is null;").Check(testkit.Rows(
+			"StreamAgg root  funcs:count(Column)->Column",
+			"└─IndexReader root  index:StreamAgg",
+			"  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+			"    └─IndexRangeScan cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
 	})
 }
 
@@ -356,21 +356,6 @@ func TestAnalyzeColumnarIndex(t *testing.T) {
 		require.NotNil(t, col)
 		// It doesn't have stats.
 		require.False(t, (col.Histogram.Len()+col.TopN.Num()) > 0)
-
-		testKit.MustExec("set tidb_analyze_version=1")
-		testKit.MustExec("analyze table t")
-		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
-			"Warning 1105 analyzing columnar index is not supported, skip idx",
-			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
-		testKit.MustExec("analyze table t index idx")
-		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
-			"Warning 1105 analyzing columnar index is not supported, skip idx"))
-		testKit.MustExec("analyze table t index a")
-		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows())
-		testKit.MustExec("analyze table t index a, idx, idx2")
-		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
-			"Warning 1105 analyzing columnar index is not supported, skip idx",
-			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 	})
 }
 
@@ -415,7 +400,7 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
-		tk.MustQuery("explain select * from t use index(idx1) where a > 1").CheckContain("idx1")
+		tk.MustQuery("explain format = 'plan_tree' select * from t use index(idx1) where a > 1").CheckContain("idx1")
 
 		// Set the prune behavior to prune all non interesting ones.
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=0")
@@ -445,7 +430,7 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 			}
 			require.True(t, idx2Found, "Partial index idx2 should not be pruned")
 		}))
-		tk.MustQuery("explain select * from t order by b").CheckNotContain("idx2")
+		tk.MustQuery("explain format = 'plan_tree' select * from t order by b").CheckNotContain("idx2")
 
 		// idx2 is pruned because b is not referenced as interesting one.
 		// idx1 is kept though its constraint is not matched.
@@ -461,7 +446,26 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 			}
 			require.True(t, idx1Found, "Partial index idx1 should not be pruned")
 		}))
-		tk.MustQuery("explain select * from t where a is null").CheckNotContain("idx1")
+		tk.MustQuery("explain format = 'plan_tree' select * from t where a is null").CheckNotContain("idx1")
 		require.NoError(t, failpoint.Disable(fpName))
+	})
+}
+
+func TestForceIndexLimit(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`CREATE TABLE tb (
+  object_id bigint(20),
+  a bigint(20) ,
+  b bigint(20) ,
+  c bigint(20) ,
+  PRIMARY KEY (object_id),
+  KEY ab (a,b))`)
+		tk.MustQuery(`explain format = 'plan_tree' select count(1) from (select /* issue:54213 */ /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+			testkit.Rows("StreamAgg root  funcs:count(1)->Column",
+				"└─Limit root  offset:0, count:100",
+				"  └─IndexReader root  index:Limit",
+				"    └─Limit cop[tikv]  offset:0, count:100",
+				"      └─IndexRangeScan cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 	})
 }

@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -40,6 +43,14 @@ var (
 	// exported for test.
 	BufferedHandleLimit = 256
 )
+
+// TrafficRecorder records the best-effort traffic between TiDB and TiKV.
+// It's used to report metering data for conflict handling without introducing
+// a dependency on the metering package.
+type TrafficRecorder interface {
+	IncClusterReadBytes(uint64)
+	IncClusterWriteBytes(uint64)
+}
 
 // Handler is the conflict KV Handler, either collecting info about those KVs or
 // delete those KVs from the cluster.
@@ -166,7 +177,11 @@ func NewDataKVHandler(base *BaseHandler) *DataKVHandler {
 
 // Handle implements KVHandler interface.
 func (h *DataKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
-	handle, err := tablecodec.DecodeRowKey(kv.Key)
+	key, err := stripKeyspacePrefix(kv.Key)
+	if err != nil {
+		return err
+	}
+	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return err
 	}
@@ -229,13 +244,17 @@ func (h *IndexKVHandler) PreRun() error {
 
 // Handle implements KVHandler interface.
 func (h *IndexKVHandler) Handle(ctx context.Context, kv *external.KVPair) error {
+	key, err := stripKeyspacePrefix(kv.Key)
+	if err != nil {
+		return err
+	}
 	// we should use the table ID from the key, in case of partition table
-	tableID := tablecodec.DecodeTableID(kv.Key)
+	tableID := tablecodec.DecodeTableID(key)
 	if tableID == 0 {
 		// should not happen
 		return errors.Errorf("invalid table ID in key %v", redact.Key(kv.Key))
 	}
-	handle, err := tablecodec.DecodeIndexHandle(kv.Key, kv.Value, len(h.targetIdx.Columns))
+	handle, err := tablecodec.DecodeIndexHandle(key, kv.Value, len(h.targetIdx.Columns))
 	if err != nil {
 		return err
 	}
@@ -263,9 +282,6 @@ func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 		rowKeys2Handle[string(rowKey)] = hdl.handle
 	}
 
-	if err := h.snapshot.refreshAsNeeded(); err != nil {
-		return errors.Trace(err)
-	}
 	res, err := h.snapshot.BatchGet(ctx, rowKeys)
 	if err != nil {
 		return errors.Trace(err)
@@ -294,13 +310,15 @@ type LazyRefreshedSnapshot struct {
 	tidbkv.Snapshot
 	store           tidbkv.Storage
 	lastRefreshTime time.Time
+	trafficRec      TrafficRecorder
 }
 
 // NewLazyRefreshedSnapshot creates a new LazyRefreshedSnapshot.
 // exported for test.
-func NewLazyRefreshedSnapshot(store tidbkv.Storage) *LazyRefreshedSnapshot {
+func NewLazyRefreshedSnapshot(store tidbkv.Storage, rec TrafficRecorder) *LazyRefreshedSnapshot {
 	return &LazyRefreshedSnapshot{
-		store: store,
+		store:      store,
+		trafficRec: rec,
 	}
 }
 
@@ -323,4 +341,42 @@ func (s *LazyRefreshedSnapshot) refreshAsNeeded() error {
 	s.Snapshot = s.store.GetSnapshot(ver)
 	s.lastRefreshTime = time.Now()
 	return nil
+}
+
+// BatchGet implements Snapshot interface.
+func (s *LazyRefreshedSnapshot) BatchGet(
+	ctx context.Context,
+	keys []tidbkv.Key,
+	options ...tidbkv.BatchGetOption,
+) (map[string]tidbkv.ValueEntry, error) {
+	if err := s.refreshAsNeeded(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	res, err := s.Snapshot.BatchGet(ctx, keys, options...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if s.trafficRec != nil {
+		var readBytes uint64
+		for k, v := range res {
+			readBytes += uint64(len(k) + len(v.Value))
+		}
+		s.trafficRec.IncClusterReadBytes(readBytes)
+	}
+	return res, nil
+}
+
+// the encoded key is prepended with keyspace prefix before store to object
+// store to make later ingest step easier to process. but when resolving
+// conflicts, we need to use transaction to access those keys, and the keys must
+// not have the keyspace prefix.
+func stripKeyspacePrefix(key tidbkv.Key) (tidbkv.Key, error) {
+	if kerneltype.IsClassic() {
+		return key, nil
+	}
+	_, decodedKey, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return decodedKey, nil
 }

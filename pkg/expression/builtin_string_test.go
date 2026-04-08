@@ -1103,6 +1103,202 @@ func TestLocate(t *testing.T) {
 	}
 }
 
+func TestFindInSetConstStrlistLookup(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.FindInSet]
+	const padSpaceCollation = "utf8mb4_general_ci"
+
+	// Use utf8mb4_general_ci to verify that FIND_IN_SET should not treat trailing
+	// spaces as equal even under PAD SPACE collations.
+	str := types.NewCollationStringDatum(" ", padSpaceCollation)
+	strlist := types.NewCollationStringDatum("  , , ,", padSpaceCollation)
+	fn, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{str, strlist}))
+	require.NoError(t, err)
+	findInSetSig, ok := fn.(*builtinFindInSetSig)
+	require.True(t, ok)
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), d.GetInt64())
+	cached := findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached)
+	require.False(t, cached.item.isNull)
+	require.Len(t, cached.item.lookup, 3)
+
+	// Constant strlist lookup map should be reused across evaluations.
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), d.GetInt64())
+	require.Same(t, cached, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	// Vectorized path should use the same semantics and produce first match.
+	require.True(t, findInSetSig.isChildrenVectorized())
+	chk := chunk.NewChunkWithCapacity(nil, 4)
+	chk.SetNumVirtualRows(4)
+	result := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 4)
+	err = vecEvalType(ctx, fn, types.ETInt, chk, result.Column(0))
+	require.NoError(t, err)
+	for i := 0; i < chk.NumRows(); i++ {
+		require.Equal(t, int64(2), result.Column(0).GetInt64(i))
+	}
+
+	str2 := types.NewCollationStringDatum("a", padSpaceCollation)
+	strlist2 := types.NewCollationStringDatum("a,b,a", padSpaceCollation)
+	fn, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str2, strlist2}))
+	require.NoError(t, err)
+	findInSetSig, ok = fn.(*builtinFindInSetSig)
+	require.True(t, ok)
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), d.GetInt64())
+	cached = findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached)
+	require.False(t, cached.item.isNull)
+	require.Len(t, cached.item.lookup, 2)
+
+	require.True(t, findInSetSig.isChildrenVectorized())
+	chk = chunk.NewChunkWithCapacity(nil, 2)
+	chk.SetNumVirtualRows(2)
+	result = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 2)
+	err = vecEvalType(ctx, fn, types.ETInt, chk, result.Column(0))
+	require.NoError(t, err)
+	for i := 0; i < chk.NumRows(); i++ {
+		require.Equal(t, int64(1), result.Column(0).GetInt64(i))
+	}
+	require.Same(t, cached, findInSetSig.constStrlistLookupCache.cached.Load())
+}
+
+func TestFindInSetVecFirstMatchNonConstStrlist(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.FindInSet]
+	colTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldType(mysql.TypeVarString),
+	}
+	fn, err := fc.getFunction(ctx, []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+	})
+	require.NoError(t, err)
+
+	findInSetSig, ok := fn.(*builtinFindInSetSig)
+	require.True(t, ok)
+	require.True(t, findInSetSig.isChildrenVectorized())
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	input := chunk.NewChunkWithCapacity(colTypes, 4)
+	input.AppendString(0, "a")
+	input.AppendString(1, "b,a,c,a")
+	input.AppendString(0, "a")
+	input.AppendString(1, "a,b,a")
+	input.AppendString(0, "")
+	input.AppendString(1, ",,")
+	input.AppendString(0, "x")
+	input.AppendString(1, "a,b,a")
+
+	expected := []int64{2, 1, 1, 0}
+	for i, want := range expected {
+		d, err := evalBuiltinFunc(fn, ctx, input.GetRow(i))
+		require.NoError(t, err)
+		require.Equalf(t, want, d.GetInt64(), "scalar row %d", i)
+	}
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	result := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, input.NumRows())
+	err = vecEvalType(ctx, fn, types.ETInt, input, result.Column(0))
+	require.NoError(t, err)
+	for i, want := range expected {
+		require.Equalf(t, want, result.Column(0).GetInt64(i), "vectorized row %d", i)
+	}
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+}
+
+func TestFindInSetConstOnlyInContextStrlistLookup(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.FindInSet]
+	const padSpaceCollation = "utf8mb4_general_ci"
+	resetStmtCtx := func() {
+		ctx.GetSessionVars().StmtCtx = ctx.GetSessionVars().InitStatementContext()
+		ctx.ResetSessionAndStmtTimeZone(ctx.GetSessionVars().TimeZone)
+	}
+
+	str := types.NewCollationStringDatum(" ", padSpaceCollation)
+	strTp := types.NewFieldType(mysql.TypeVarString)
+	strTp.SetCharset(charset.CharsetUTF8MB4)
+	strTp.SetCollate(padSpaceCollation)
+	strExpr := &Constant{
+		Value:   str,
+		RetType: strTp,
+	}
+	strlistTp := types.NewFieldType(mysql.TypeVarString)
+	strlistTp.SetCharset(charset.CharsetUTF8MB4)
+	strlistTp.SetCollate(padSpaceCollation)
+	strlistExpr := &Constant{
+		ParamMarker: &ParamMarker{order: 0},
+		RetType:     strlistTp,
+	}
+
+	// ParamMarker.GetType() needs a concrete parameter value during function build.
+	ctx.GetSessionVars().PlanCacheParams.Reset()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewCollationStringDatum("  , , ,", padSpaceCollation))
+
+	fn, err := fc.getFunction(ctx, []Expression{strExpr, strlistExpr})
+	require.NoError(t, err)
+	findInSetSig, ok := fn.(*builtinFindInSetSig)
+	require.True(t, ok)
+	require.Nil(t, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	ctx.GetSessionVars().PlanCacheParams.Reset()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewCollationStringDatum("  , , ,", padSpaceCollation))
+	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), d.GetInt64())
+	cached := findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached)
+	require.False(t, cached.item.isNull)
+	require.Len(t, cached.item.lookup, 3)
+
+	// Reuse within one statement context.
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), d.GetInt64())
+	require.Same(t, cached, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	require.True(t, findInSetSig.isChildrenVectorized())
+	chk := chunk.NewChunkWithCapacity(nil, 3)
+	chk.SetNumVirtualRows(3)
+	result := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 3)
+	err = vecEvalType(ctx, fn, types.ETInt, chk, result.Column(0))
+	require.NoError(t, err)
+	for i := 0; i < chk.NumRows(); i++ {
+		require.Equal(t, int64(2), result.Column(0).GetInt64(i))
+	}
+	require.Same(t, cached, findInSetSig.constStrlistLookupCache.cached.Load())
+
+	// New statement context should rebuild the cache.
+	ctx.GetSessionVars().PlanCacheParams.Reset()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewCollationStringDatum(" ,a", padSpaceCollation))
+	resetStmtCtx()
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), d.GetInt64())
+	cached2 := findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached2)
+	require.NotSame(t, cached, cached2)
+
+	// Null strlist in const-only-in-context should return NULL and cache null state.
+	ctx.GetSessionVars().PlanCacheParams.Reset()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewDatum(nil))
+	resetStmtCtx()
+	d, err = evalBuiltinFunc(fn, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, d.IsNull())
+	cached3 := findInSetSig.constStrlistLookupCache.cached.Load()
+	require.NotNil(t, cached3)
+	require.True(t, cached3.item.isNull)
+}
+
 func TestTrim(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {

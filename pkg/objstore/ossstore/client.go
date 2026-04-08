@@ -190,13 +190,31 @@ func (c *client) IsObjectExists(ctx context.Context, name string) (bool, error) 
 	return true, nil
 }
 
-func (c *client) ListObjects(ctx context.Context, extraPrefix string, marker *string, maxKeys int) (*s3like.ListResp, error) {
+func (c *client) HeadObject(ctx context.Context, name string) (*s3like.HeadObjectResp, error) {
+	key := c.ObjectKey(name)
+	input := &oss.HeadObjectRequest{
+		Bucket: oss.Ptr(c.Bucket),
+		Key:    oss.Ptr(key),
+	}
+	_, err := c.svc.HeadObject(ctx, input)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &s3like.HeadObjectResp{}, nil
+}
+
+func (c *client) ListObjects(ctx context.Context, extraPrefix, startAfter string, continuationToken *string, maxKeys int) (*s3like.ListResp, error) {
+	var startAfterKey *string
+	if len(startAfter) > 0 {
+		startAfterKey = oss.Ptr(c.ObjectKey(startAfter))
+	}
 	prefix := c.ObjectKey(extraPrefix)
 	req := &oss.ListObjectsV2Request{
 		Bucket:            oss.Ptr(c.Bucket),
 		Prefix:            oss.Ptr(prefix),
 		MaxKeys:           int32(maxKeys),
-		ContinuationToken: marker,
+		ContinuationToken: continuationToken,
+		StartAfter:        startAfterKey,
 	}
 	res, err := c.svc.ListObjectsV2(ctx, req)
 	if err != nil {
@@ -210,9 +228,9 @@ func (c *client) ListObjects(ctx context.Context, extraPrefix string, marker *st
 		})
 	}
 	return &s3like.ListResp{
-		NextMarker:  res.NextContinuationToken,
-		IsTruncated: res.IsTruncated,
-		Objects:     objects,
+		NextContinuationToken: res.NextContinuationToken,
+		IsTruncated:           res.IsTruncated,
+		Objects:               objects,
 	}, nil
 }
 

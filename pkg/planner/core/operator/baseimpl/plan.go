@@ -29,11 +29,12 @@ import (
 
 // Plan Should be used as embedded struct in Plan implementations.
 type Plan struct {
-	ctx     planctx.PlanContext
-	stats   *property.StatsInfo `plan-cache-clone:"shallow"`
-	tp      string
-	id      int
-	qbBlock int // Query Block offset
+	ctx                planctx.PlanContext
+	stats              *property.StatsInfo `plan-cache-clone:"shallow"`
+	tp                 string
+	id                 int
+	qbBlock            int // Query Block offset
+	NoncacheableReason string
 }
 
 // NewBasePlan creates a new base plan.
@@ -150,4 +151,16 @@ func (p *Plan) CloneWithNewCtx(newCtx base.PlanContext) *Plan {
 // CloneForPlanCache clones the plan for Plan Cache.
 func (*Plan) CloneForPlanCache(base.PlanContext) (cloned base.Plan, ok bool) {
 	return nil, false
+}
+
+// SetNoncacheableReason sets the reason why the plan is non-cacheable.
+func (p *Plan) SetNoncacheableReason(reason string) {
+	if p.NoncacheableReason == "" {
+		p.NoncacheableReason = reason
+	}
+}
+
+// GetNoncacheableReason returns the reason why the plan is non-cacheable.
+func (p *Plan) GetNoncacheableReason() string {
+	return p.NoncacheableReason
 }

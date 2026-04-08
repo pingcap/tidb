@@ -967,6 +967,8 @@ func TestNextGenMetering(t *testing.T) {
 		*ts = baseTime
 		baseTime += 60
 	})
+	// this failpoint can make sure we only get one gotMeterData
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask", "return(true)")
 	var gotMeterData uberatomic.String
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
 		gotMeterData.Store(s.String())
