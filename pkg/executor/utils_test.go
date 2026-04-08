@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -176,4 +178,57 @@ func TestEncodePasswordWithPlugin(t *testing.T) {
 	pwd, ok = encodePassword(u, p)
 	require.True(t, ok)
 	require.Equal(t, "", pwd)
+}
+
+type mockSQLExecutor struct {
+	calls []struct {
+		sql  string
+		args []any
+	}
+}
+
+func (m *mockSQLExecutor) Execute(context.Context, string) ([]sqlexec.RecordSet, error) {
+	panic("unexpected Execute call")
+}
+
+func (m *mockSQLExecutor) ExecuteInternal(_ context.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+	m.calls = append(m.calls, struct {
+		sql  string
+		args []any
+	}{
+		sql:  sql,
+		args: append([]any{}, args...),
+	})
+	return nil, nil
+}
+
+func (m *mockSQLExecutor) ExecuteStmt(context.Context, ast.StmtNode) (sqlexec.RecordSet, error) {
+	panic("unexpected ExecuteStmt call")
+}
+
+func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testing.T) {
+	exec := &mockSQLExecutor{}
+	lastPurgedTSO := uint64(200)
+	nextTime := "2026-03-08 00:00:00"
+
+	require.NoError(
+		t,
+		updateMaterializedViewLogPurgeInfoOnSuccess(
+			context.Background(),
+			exec,
+			int64(123),
+			&lastPurgedTSO,
+			&nextTime,
+			true,
+		),
+	)
+
+	require.Len(t, exec.calls, 2)
+
+	require.Contains(t, exec.calls[0].sql, "LAST_PURGED_TSO = %?")
+	require.Contains(t, exec.calls[0].sql, "LAST_PURGED_TSO IS NULL OR LAST_PURGED_TSO < %?")
+	require.Equal(t, []any{uint64(200), int64(123), uint64(200)}, exec.calls[0].args)
+
+	require.Contains(t, exec.calls[1].sql, "NEXT_TIME = %?")
+	require.Equal(t, []any{"2026-03-08 00:00:00", int64(123)}, exec.calls[1].args)
 }

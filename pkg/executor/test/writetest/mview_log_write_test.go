@@ -791,6 +791,31 @@ func TestMLogPartialColumnsMapping(t *testing.T) {
 	))
 }
 
+func TestMLogTrackedReferenceTypes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (id int primary key, s varchar(20), j json, d decimal(10,2), b blob)")
+	tk.MustExec("create materialized view log on t (s, j, d, b)")
+
+	tk.MustExec(`insert into t values (1, 'alpha', '{"k":"v1"}', 12.34, 'payload1')`)
+	tk.MustQuery(
+		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Check(testkit.Rows(
+		"alpha v1 12.34 7061796C6F616431 I 1",
+	))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec(`update t set s='beta', j='{"k":"v2"}', d=56.78, b='payload2' where id=1`)
+	tk.MustQuery(
+		"select s, json_unquote(json_extract(j, '$.k')), d, hex(b), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`",
+	).Sort().Check(testkit.Rows(
+		"alpha v1 12.34 7061796C6F616431 U -1",
+		"beta v2 56.78 7061796C6F616432 U 1",
+	))
+}
+
 func TestMLogPrunedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

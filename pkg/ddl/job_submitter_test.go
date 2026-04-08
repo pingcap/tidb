@@ -503,6 +503,47 @@ func TestCreateMaterializedViewLogJobTableIDs(t *testing.T) {
 	}, tableIDs)
 }
 
+func TestCreateMaterializedViewJobTableIDs(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	// disable DDL to avoid it interfere the test
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	dom.DDL().OwnerManager().CampaignCancel()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	const (
+		baseTableID int64 = 900000000000000000
+		mlogTableID int64 = 900000000000000001
+	)
+	jobW := ddl.NewJobWrapperWithArgs(
+		&model.Job{
+			Version:    model.GetJobVerInUse(),
+			Type:       model.ActionCreateMaterializedView,
+			SchemaName: "test",
+			TableName:  "mv",
+		},
+		&model.CreateMaterializedViewArgs{
+			TableInfo: &model.TableInfo{
+				MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{baseTableID}},
+			},
+			MLogTableID: mlogTableID,
+		},
+		false,
+	)
+	submitter := ddl.NewJobSubmitterForTest()
+	require.NoError(t, submitter.GenGIDAndInsertJobsWithRetry(ctx, sess.NewSession(tk.Session()), []*ddl.JobWrapper{jobW}))
+
+	rows := tk.MustQuery(fmt.Sprintf("select table_ids from mysql.tidb_ddl_job where job_id = %d", jobW.ID)).Rows()
+	require.Len(t, rows, 1)
+
+	tableIDs := strings.Split(rows[0][0].(string), ",")
+	require.Len(t, tableIDs, 2)
+	require.ElementsMatch(t, []string{
+		strconv.FormatInt(jobW.TableID, 10),
+		strconv.FormatInt(mlogTableID, 10),
+	}, tableIDs)
+}
+
 var (
 	threadVar             = flag.Int("threads", 100, "number of threads")
 	iterationPerThreadVar = flag.Int("iterations", 30000, "number of iterations per thread")

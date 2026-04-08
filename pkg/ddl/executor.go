@@ -1162,11 +1162,12 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	}
 
 	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:    baseTableID,
-		Columns:        s.Cols,
-		PurgeMethod:    purgeMethod,
-		PurgeStartWith: purgeStartWith,
-		PurgeNext:      purgeNext,
+		BaseTableID:       baseTableID,
+		Columns:           s.Cols,
+		PurgeMethod:       purgeMethod,
+		PurgeStartWith:    purgeStartWith,
+		PurgeNext:         purgeNext,
+		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
 	}
 
 	involvingSchemas := []model.InvolvingSchemaInfo{

@@ -133,6 +133,12 @@ func (p Delete) Init(ctx base.PlanContext) *Delete {
 	return &p
 }
 
+// Init initializes MVDeltaMerge.
+func (p MVDeltaMerge) Init(ctx base.PlanContext) *MVDeltaMerge {
+	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeMVDeltaMerge, 0)
+	return &p
+}
+
 // Init initializes Insert.
 func (p Insert) Init(ctx base.PlanContext) *Insert {
 	p.Plan = baseimpl.NewBasePlan(ctx, plancodec.TypeInsert, 0)

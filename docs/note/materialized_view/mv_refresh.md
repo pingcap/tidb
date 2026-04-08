@@ -7,6 +7,16 @@ At the moment:
 - `COMPLETE` refresh is implemented with transactional semantics.
 - `FAST` refresh already has the internal statement framework path (it can go through compile/optimize/executor), but the real incremental refresh logic is not implemented yet (planner still returns a placeholder "not supported" error).
 
+## Runtime `NEXT_TIME` Update (Internal SQL Success Path)
+
+- For **internal SQL** triggered refresh (identified by `SessionVars.InRestrictedSQL`), after a successful refresh commit, `mysql.tidb_mview_refresh_info.NEXT_TIME` should be updated together with success metadata.
+- Runtime `NEXT_TIME` derivation in this path is intentionally different from create-time derivation:
+  - evaluate and use only `RefreshNext` expression;
+  - do not apply create-time `START WITH` priority / near-now rules;
+  - if `RefreshStartWith` is non-empty and `RefreshNext` is empty, explicitly set `NEXT_TIME = NULL`;
+  - if both are empty, keep `NEXT_TIME` unchanged.
+- For non-internal (user) SQL refresh, keep existing behavior (do not update `NEXT_TIME` on success path).
+
 > Note: refresh metadata and refresh history are now split:
 > - `mysql.tidb_mview_refresh_info` stores per-MV metadata for next refresh (for example `LAST_SUCCESS_READ_TSO`).
 > - `mysql.tidb_mview_refresh_hist` stores per-refresh lifecycle and results (`running/success/failed`).
@@ -49,6 +59,28 @@ At the moment:
 
 `MVIEW_ID` directly uses MV physical table `TableInfo.ID`.
 
+## Create-time `NEXT_TIME` Initialization (`CREATE MATERIALIZED VIEW`)
+
+`REFRESH MATERIALIZED VIEW` relies on an existing row in `mysql.tidb_mview_refresh_info`.
+
+When `CREATE MATERIALIZED VIEW` succeeds, DDL worker initializes (or upserts) that row with:
+
+- `MVIEW_ID`
+- initial `LAST_SUCCESS_READ_TSO` (from create-time initial build read tso)
+- `NEXT_TIME` (derived from create-time schedule expressions)
+
+Create-time `NEXT_TIME` derivation rules (for `RefreshStartWith` / `RefreshNext`) are:
+
+1. If both are empty, do not update `NEXT_TIME` (row keeps default `NULL`).
+2. Evaluate expressions in prepared eval session (`UTC` timezone + DDL job SQL mode).
+3. `START WITH` has higher priority, unless it is near-now (`START WITH < now + 10s`) and `NEXT` exists; in that case use `NEXT`.
+4. If the chosen expression evaluates to `NULL`, explicitly write `NEXT_TIME = NULL`.
+
+This create-time rule set is intentionally different from runtime internal-refresh reschedule rule:
+
+- runtime internal refresh uses `RefreshNext` only;
+- runtime internal refresh does not apply create-time `START WITH`/near-now priority.
+
 ## SQL behavior (user view)
 
 Supported syntax (all use one common transactional framework today; `FAST` execution is still placeholder):
@@ -86,6 +118,7 @@ The most direct implementation is: transaction + row-lock mutex + history lifecy
 6. Success path: read `refresh_read_tso` from transaction context (`TxnCtx.GetForUpdateTS()`).
 7. Before commit, persist success metadata with CAS-style SQL:
    - `UPDATE ... SET LAST_SUCCESS_READ_TSO = <refresh_read_tso> WHERE MVIEW_ID = <mview_id> AND LAST_SUCCESS_READ_TSO <=> <locked_tso>`.
+   - runtime internal-SQL rule: update `NEXT_TIME` by evaluating only `RefreshNext`; if `RefreshStartWith != ''` and `RefreshNext == ''`, set `NEXT_TIME = NULL`.
 8. Do double check by reading back `LAST_SUCCESS_READ_TSO` from `mysql.tidb_mview_refresh_info`:
    - if value is `NULL` or not equal to `<refresh_read_tso>`, treat as unknown inconsistency and fail refresh.
 9. Commit refresh transaction.
@@ -140,6 +173,11 @@ INSERT INTO <db>.<mv> <SQLContent>;
 -- (C2) success-only metadata update in the same refresh transaction (CAS style)
 UPDATE mysql.tidb_mview_refresh_info
    SET LAST_SUCCESS_READ_TSO = <refresh_read_tso>
+   -- internal SQL path only:
+   --   1) if RefreshNext is non-empty: NEXT_TIME = eval(RefreshNext)
+   --   2) else if RefreshStartWith is non-empty: NEXT_TIME = NULL
+   --   3) else: NEXT_TIME unchanged
+   NEXT_TIME = <runtime_derived_or_unchanged>
  WHERE MVIEW_ID = <mview_id>
    AND LAST_SUCCESS_READ_TSO <=> <locked_last_success_read_tso>;
 

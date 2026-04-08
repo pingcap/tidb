@@ -993,6 +993,7 @@ import (
 	AlterMaterializedViewLogStmt "ALTER MATERIALIZED VIEW LOG statement"
 	DropMaterializedViewStmt   "DROP MATERIALIZED VIEW statement"
 	DropMaterializedViewLogStmt "DROP MATERIALIZED VIEW LOG statement"
+	PurgeMaterializedViewLogStmt "PURGE MATERIALIZED VIEW LOG statement"
 	RefreshMaterializedViewStmt "REFRESH MATERIALIZED VIEW statement"
 	CreateUserStmt             "CREATE User statement"
 	CreateRoleStmt             "CREATE Role statement"
@@ -5608,6 +5609,12 @@ DropMaterializedViewLogStmt:
 	"DROP" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
 	{
 		$$ = &ast.DropMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
+	}
+
+PurgeMaterializedViewLogStmt:
+	"PURGE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
+	{
+		$$ = &ast.PurgeMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
 	}
 
 RefreshMaterializedViewStmt:
@@ -12773,6 +12780,7 @@ Statement:
 |	CreateStatisticsStmt
 |	DistributeTableStmt
 |	DoStmt
+|	PurgeMaterializedViewLogStmt
 |	RefreshMaterializedViewStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
