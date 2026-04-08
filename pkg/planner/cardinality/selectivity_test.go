@@ -1850,7 +1850,7 @@ func TestOrderingIdxSelectivityRatioForMergeJoin(t *testing.T) {
 	testKit.MustExec("create table t2(a int, b int, c int, index ib(b))")
 	testKit.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
 	testKit.MustExec("insert into t2 values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
-	// Double the data several times to reach ~640 rows per table.
+	// Double the data several times to reach ~320 rows per table.
 	for i := 0; i < 5; i++ {
 		testKit.MustExec("insert into t1 select a,b,c from t1")
 		testKit.MustExec("insert into t2 select a,b,c from t2")
@@ -1860,8 +1860,9 @@ func TestOrderingIdxSelectivityRatioForMergeJoin(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
 	// Force merge join via hint with use-index hints so the plan shape stays
-	// stable across ratio values. The OtherCondition (t1.c < t2.c) filters
-	// rows post-join, so childRowCount > estimatedRowCount.
+	// stable across ratio values. The ordering index ib(b) matches the
+	// ORDER BY, so the cross-estimation path inflates the IndexScan row
+	// count when the ratio is positive, increasing the merge-join cost.
 	query := "explain format=verbose select /*+ merge_join(t1, t2) */ t1.* from t1 use index(ib) join t2 use index(ib) on t1.b=t2.b where t1.c < t2.c order by t1.b limit 2"
 
 	hasMergeJoin := func(rows [][]any) bool {
