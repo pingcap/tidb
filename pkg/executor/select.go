@@ -1144,6 +1144,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.LoadDataStmt:
 		sc.MemSensitive = true
 		sc.InLoadDataStmt = true
+		// LOAD DATA has a dedicated LOW_PRIORITY keyword (not the common stmt.Priority field).
+		// Align it with other statements so downstream KV requests can reuse StmtCtx.Priority.
+		if stmt.LowPriority {
+			sc.Priority = mysql.LowPriority
+		}
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 	case *ast.ImportIntoStmt:

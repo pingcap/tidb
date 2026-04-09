@@ -1,4 +1,4 @@
-drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8, t9, tmp1, tmp2;
 set @@tidb_scatter_region='table';
 create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
 create table t2(a varchar(32), b int, c int, d int, e int, primary key(a, b) CLUSTERED, index i(c), unique index u(e)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -565,4 +565,43 @@ id	a	b
 1	2	3
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_replica_read='leader';
+create table t8 (a int, b int, key idx_a(a));
+create table t9 (a int, b int, key idx_a(a));
+insert into t8 values (20,1),(24,5),(23,9);
+insert into t9 values (1,1),(3,2),(6,3),(10,4),(12,5),(15,6),(25,7);
+explain format='plan_tree' select *
+from t8
+where t8.a < (
+select /*+ INDEX_LOOKUP_PUSHDOWN(t9, idx_a) */ sum(t9.b)
+from t9 use index(idx_a)
+where t9.a > t8.b
+)
+order by t8.a, t8.b;
+id	task	access object	operator info
+Sort	root		executor__index_lookup_pushdown.t8.a, executor__index_lookup_pushdown.t8.b
+└─Projection	root		executor__index_lookup_pushdown.t8.a, executor__index_lookup_pushdown.t8.b
+  └─Apply	root		CARTESIAN inner join, other cond:lt(cast(executor__index_lookup_pushdown.t8.a, decimal(10,0) BINARY), Column)
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t8	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	root		funcs:sum(Column)->Column
+      └─IndexLookUp	root		
+        ├─HashAgg(Build)	cop[tikv]		funcs:sum(executor__index_lookup_pushdown.t9.b)->Column
+        │ └─LocalIndexLookUp	cop[tikv]		index handle offsets:[1]
+        │   ├─Selection(Build)	cop[tikv]		gt(executor__index_lookup_pushdown.t9.a, executor__index_lookup_pushdown.t8.b)
+        │   │ └─IndexRangeScan	cop[tikv]	table:t9, index:idx_a(a)	range: decided by [gt(executor__index_lookup_pushdown.t9.a, executor__index_lookup_pushdown.t8.b)], keep order:false, stats:pseudo
+        │   └─TableRowIDScan(Probe)	cop[tikv]	table:t9	keep order:false, stats:pseudo
+        └─HashAgg(Probe)	cop[tikv]		funcs:sum(executor__index_lookup_pushdown.t9.b)->Column
+          └─TableRowIDScan	cop[tikv]	table:t9	keep order:false, stats:pseudo
+select *
+from t8
+where t8.a < (
+select /*+ INDEX_LOOKUP_PUSHDOWN(t9, idx_a) */ sum(t9.b)
+from t9 use index(idx_a)
+where t9.a > t8.b
+)
+order by t8.a, t8.b;
+a	b
+20	1
+24	5
 set @@tidb_scatter_region=default;

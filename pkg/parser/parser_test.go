@@ -5624,7 +5624,7 @@ func TestUnionOrderBy(t *testing.T) {
 func TestLikeEscape(t *testing.T) {
 	table := []testCase{
 		// for like escape
-		{`select "abc_" like "abc\\_" escape ''`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"},
+		{`select "abc_" like "abc\\_" escape ''`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_' ESCAPE ''"},
 		{`select "abc_" like "abc\\_" escape '\\'`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"},
 		{`select "abc_" like "abc\\_" escape '||'`, false, ""},
 		{`select "abc" like "escape" escape '+'`, true, "SELECT _UTF8MB4'abc' LIKE _UTF8MB4'escape' ESCAPE '+'"},
@@ -7130,6 +7130,10 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 	}
 
 	switch node := in.(type) {
+	case *ast.PatternLikeOrIlikeExpr:
+		if node.Escape == '\\' {
+			node.EscapeExplicit = false
+		}
 	case *ast.CreateTableStmt:
 		for _, opt := range node.Options {
 			switch opt.Tp {
