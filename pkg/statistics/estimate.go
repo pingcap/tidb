@@ -153,6 +153,9 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 
 func estimateGlobalSingletonInRange(ndvSketches, singletonSketches []*FMSketch, outOfRangeNDVSketch *FMSketch) int64 {
 	var globalSingleton int64
+	// prefixNDVSketch accumulates ndvSketches[0..i-1] as i advances, so
+	// each iteration only rebuilds the suffix (ndvSketches[i+1..]) from
+	// scratch instead of the full "all-except-i" set.
 	var prefixNDVSketch *FMSketch
 	for i := range ndvSketches {
 		other := mergeCopiedFMSketch(nil, prefixNDVSketch)
