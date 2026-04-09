@@ -751,6 +751,9 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 }
 
 func getIndexJoinFullScanRows(probe base.PhysicalPlan) float64 {
+	if stats := probe.StatsInfo(); stats != nil && stats.HistColl != nil && stats.HistColl.RealtimeCount > 0 {
+		return float64(stats.HistColl.RealtimeCount)
+	}
 	tblStats := physicalop.GetTblStats(probe)
 	if tblStats == nil || tblStats.RealtimeCount <= 0 {
 		return 0
