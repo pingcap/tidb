@@ -281,6 +281,11 @@ go_test(
         "placement_policy_test.go",
         "placement_sql_test.go",
         "primary_key_handle_test.go",
+<<<<<<< HEAD
+=======
+        "reorg_test.go",
+        "reorg_util_test.go",
+>>>>>>> 8b8bccf34f1 (ddl: use max approximate kv/region size for add-index table estimation (#67585))
         "repair_table_test.go",
         "restart_test.go",
         "rollingback_test.go",
@@ -384,6 +389,7 @@ go_test(
         "//pkg/util/sem/compat",
         "//pkg/util/sqlexec",
         "//pkg/util/timeutil",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
