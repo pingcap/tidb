@@ -253,9 +253,7 @@ func TestFinishStmtError(t *testing.T) {
 	// Then `TryDetach` should return `true`, because the original record set is detached and cannot be used anymore.
 	_, ok, err := drs.TryDetach()
 	require.True(t, ok)
-	if err == nil {
-		t.Skip("skip because finishStmtError failpoint is inactive in this test binary")
-	}
+	require.Error(t, err)
 
 	// The cursor created for the detached record set should also be cleaned up on the error path.
 	tk.Session().GetCursorTracker().RangeCursor(func(_ cursor.Handle) bool {
