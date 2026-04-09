@@ -5175,32 +5175,40 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	}
 	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
-	for _, name := range outPutNames {
+	// Create new FieldName objects to avoid modifying shared references
+	newNames := make([]*types.FieldName, len(outPutNames))
+	for i, name := range outPutNames {
 		// Preserve OrigTblName and OrigColName for masking policy lookup
 		// If they are not set, copy from TblName and ColName before overwriting
-		if name.OrigTblName.L == "" {
-			name.OrigTblName = name.TblName
+		origTblName := name.OrigTblName
+		if origTblName.L == "" {
+			origTblName = name.TblName
 		}
-		if name.OrigColName.L == "" {
-			name.OrigColName = name.ColName
+		origColName := name.OrigColName
+		if origColName.L == "" {
+			origColName = name.ColName
 		}
-		name.TblName = cte.Name
-		name.DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		newNames[i] = &types.FieldName{
+			DBName:            ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB),
+			OrigTblName:       origTblName,
+			OrigColName:       origColName,
+			TblName:           cte.Name,
+			ColName:           name.ColName,
+			NotExplicitUsable: name.NotExplicitUsable,
+			Redundant:         name.Redundant,
+			Hidden:            name.Hidden,
+		}
 	}
 
 	if len(cte.ColNameList) > 0 {
-		if len(cte.ColNameList) != len(p.OutputNames()) {
+		if len(cte.ColNameList) != len(newNames) {
 			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
-			// Preserve original column name before overwriting
-			if outPutNames[i].OrigColName.L == "" {
-				outPutNames[i].OrigColName = outPutNames[i].ColName
-			}
-			outPutNames[i].ColName = n
+			newNames[i].ColName = n
 		}
 	}
-	p.SetOutputNames(outPutNames)
+	p.SetOutputNames(newNames)
 	return p, nil
 }
 
