@@ -388,6 +388,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
+		reportDDLForceMergeRanges(d.ctx, t, "drop table", job.SchemaName, job.TableName, job.TableID, tblInfo, oldIDs)
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
 	}
@@ -813,8 +814,53 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	asyncNotifyEvent(d, &util.Event{Tp: model.ActionTruncateTable, TableInfo: tblInfo})
 	startKey := tablecodec.EncodeTablePrefix(tableID)
-	job.Args = []interface{}{startKey, oldPartitionIDs}
+	job.Args = []interface{}{startKey, oldPartitionIDs, []string(nil)}
+	reportDDLForceMergeRanges(d.ctx, t, "truncate table", job.SchemaName, job.TableName, tableID, tblInfo, oldPartitionIDs)
 	return ver, nil
+}
+
+func reportDDLForceMergeRanges(
+	ctx context.Context,
+	t *meta.Meta,
+	action string,
+	schemaName string,
+	tableName string,
+	tableID int64,
+	tblInfo *model.TableInfo,
+	physicalTableIDs []int64,
+) {
+	if !variable.EnableDropTableForceMerge.Load() {
+		return
+	}
+
+	if len(physicalTableIDs) == 0 {
+		// Non-partitioned tables do not have partition IDs, so fall back to the
+		// physical table ID itself when calculating the force-merge range.
+		physicalTableIDs = []int64{tableID}
+	}
+
+	forceMergeRanges, err := buildForceMergeRanges(t, schemaName, tblInfo, physicalTableIDs)
+	if err != nil {
+		logutil.BgLogger().Error("build "+action+" force merge ranges failed",
+			zap.String("schema", schemaName),
+			zap.String("table", tableName),
+			zap.Int64("tableID", tableID),
+			zap.Error(err))
+		return
+	}
+	if len(forceMergeRanges) == 0 {
+		return
+	}
+
+	// Reporting to PD is best-effort only. The DDL has already succeeded and must
+	// stay successful even if PD rejects the force-merge request or is temporarily unavailable.
+	if err := sendForceMergeRangesToPD(ctx, forceMergeRanges); err != nil {
+		logutil.BgLogger().Error("send "+action+" force merge ranges failed",
+			zap.String("schema", schemaName),
+			zap.String("table", tableName),
+			zap.Int64("tableID", tableID),
+			zap.Error(err))
+	}
 }
 
 func onRebaseAutoIncrementIDType(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

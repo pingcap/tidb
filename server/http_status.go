@@ -245,6 +245,7 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/tables/{db}/{table}/scatter", tableHandler{tikvHandlerTool, opTableScatter})
 		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{tikvHandlerTool, opStopTableScatter})
 		router.Handle("/tables/{db}/{table}/disk-usage", tableHandler{tikvHandlerTool, opTableDiskUsage})
+		router.Handle("/merge-empty-regions", &mergeEmptyRegionsHandler{tikvHandlerTool: tikvHandlerTool}).Name("Merge_Empty_Regions")
 		router.Handle("/regions/meta", regionHandler{tikvHandlerTool}).Name("RegionsMeta")
 		router.Handle("/regions/hot", regionHandler{tikvHandlerTool}).Name("RegionHot")
 		router.Handle("/regions/{regionID}", regionHandler{tikvHandlerTool})

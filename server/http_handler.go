@@ -377,9 +377,21 @@ type ddlHistoryJobHandler struct {
 	*tikvHandlerTool
 }
 
+// mergeEmptyRegionsHandler scans missing physical table ID ranges and dispatches
+// the PD send in a background task.
+type mergeEmptyRegionsHandler struct {
+	*tikvHandlerTool
+	running uint32
+}
+
 // ddlResignOwnerHandler is the handler for resigning ddl owner.
 type ddlResignOwnerHandler struct {
 	store kv.Storage
+}
+
+// Tests can override this runner to make the background task deterministic.
+var runMergeEmptyRegionsTask = func(task func()) {
+	go util.WithRecovery(task, nil)
 }
 
 type serverInfoHandler struct {
@@ -1333,6 +1345,49 @@ func (h ddlHistoryJobHandler) getHistoryDDL(jobID, limit int) (jobs []*model.Job
 		return nil, errors.Trace(err)
 	}
 	return jobs, nil
+}
+
+// ServeHTTP handles request of scanning the full table ID space and dispatching
+// the missing intervals to PD for force merge asynchronously.
+func (h *mergeEmptyRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+	if !variable.EnableDropTableForceMerge.Load() {
+		writeError(w, errors.New("drop-table-force-merge is disabled"))
+		return
+	}
+	if !atomic.CompareAndSwapUint32(&h.running, 0, 1) {
+		writeError(w, errors.New("merge empty regions task is running"))
+		return
+	}
+
+	schema, err := h.schema()
+	if err != nil {
+		atomic.StoreUint32(&h.running, 0)
+		writeError(w, err)
+		return
+	}
+
+	result, task := ddl.ScanForceMergeRanges(schema)
+	if task == nil {
+		atomic.StoreUint32(&h.running, 0)
+		writeData(w, result)
+		return
+	}
+
+	runMergeEmptyRegionsTask(func() {
+		defer func() {
+			atomic.StoreUint32(&h.running, 0)
+		}()
+
+		if err := task.Send(context.Background()); err != nil {
+			logutil.BgLogger().Error("send merge empty regions force merge ranges failed", zap.Error(err))
+		}
+	})
+
+	writeData(w, result)
 }
 
 func (h ddlResignOwnerHandler) resignDDLOwner() error {

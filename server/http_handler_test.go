@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
@@ -48,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1017,6 +1019,76 @@ func TestAllHistory(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
+func TestDDLForceMergeAPI(t *testing.T) {
+	originalRunMergeEmptyRegionsTask := runMergeEmptyRegionsTask
+	runMergeEmptyRegionsTask = func(task func()) {
+		task()
+	}
+	defer func() {
+		runMergeEmptyRegionsTask = originalRunMergeEmptyRegionsTask
+	}()
+	oldValue := variable.EnableDropTableForceMerge.Load()
+	variable.EnableDropTableForceMerge.Store(true)
+	defer variable.EnableDropTableForceMerge.Store(oldValue)
+
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+	dbt := testkit.NewDBTestKit(t, db)
+
+	dbName := "force_merge_api"
+	dbt.MustExec("create database " + dbName)
+	dbt.MustExec("use " + dbName)
+	dbt.MustExec("create table t1 (a int)")
+	dbt.MustExec(`create table pt (a int)
+partition by range (a)
+(partition p0 values less than (10),
+ partition p1 values less than maxvalue)`)
+	dbt.MustExec("create table t2 (a int)")
+
+	is := ts.domain.InfoSchema()
+	t1, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	pt, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr("pt"))
+	require.NoError(t, err)
+	t2, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	pi := pt.Meta().GetPartitionInfo()
+	require.NotNil(t, pi)
+	require.Len(t, pi.Definitions, 2)
+
+	maxTableID, expectedRangeCount := buildExpectedForceMergeRangeCount([]int64{
+		t1.Meta().ID,
+		pi.Definitions[0].ID,
+		pi.Definitions[1].ID,
+		t2.Meta().ID,
+	})
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockForceMergeSendSuccess", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockForceMergeSendSuccess"))
+	}()
+
+	resp, err := ts.postStatus("/merge-empty-regions", contentTypeJSON, bytes.NewBuffer(nil))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
+
+	var result ddl.ForceMergeScanResult
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	require.Equal(t, maxTableID, result.MaxTableID)
+	require.Equal(t, expectedRangeCount, result.RangeCount)
+}
+
 func filterSpaces(bs []byte) []byte {
 	if len(bs) == 0 {
 		return nil
@@ -1031,6 +1103,36 @@ func filterSpaces(bs []byte) []byte {
 		}
 	}
 	return tmp
+}
+
+func buildExpectedForceMergeRangeCount(existingIDs []int64) (int64, int) {
+	existing := make(map[int64]struct{}, len(existingIDs))
+	maxTableID := int64(0)
+	for _, tableID := range existingIDs {
+		existing[tableID] = struct{}{}
+		if tableID > maxTableID {
+			maxTableID = tableID
+		}
+	}
+
+	rangeCount := 0
+	rangeStart := int64(0)
+	for tableID := int64(1); tableID <= maxTableID; tableID++ {
+		if _, ok := existing[tableID]; ok {
+			if rangeStart > 0 {
+				rangeCount++
+				rangeStart = 0
+			}
+			continue
+		}
+		if rangeStart == 0 {
+			rangeStart = tableID
+		}
+	}
+	if rangeStart > 0 {
+		rangeCount++
+	}
+	return maxTableID, rangeCount
 }
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {
