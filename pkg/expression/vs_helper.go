@@ -84,13 +84,16 @@ func InterpretVectorSearchExpr(expr Expression) *VSInfo {
 
 	intest.Assert(vectorConstant.Value.Kind() == types.KindVectorFloat32, "internal: expect vectorFloat32 constant, but got %s", vectorConstant.Value.String())
 
-	// Vector index can only be defined on fixed-dimension vector columns, and TiFlash
-	// expects the query vector to have exactly the same dimension as the indexed column.
+	// This helper is used while deriving vector-index candidates for TopN. A plain
+	// VECTOR column has flen <= 0, so it must be rejected here because it can never
+	// match a vector index.
 	expectedDims := vectorColumn.RetType.GetFlen()
 	if expectedDims <= 0 {
 		return nil
 	}
 	queryVec := vectorConstant.Value.GetVectorFloat32()
+	// TiFlash vector indexes require the query vector dimension to match the
+	// indexed column dimension exactly.
 	if queryVec.Len() != expectedDims {
 		return nil
 	}

@@ -327,6 +327,9 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	require.Equal(t, types.KindMinNotNull, tableScan.Ranges[0].LowVal[0].Kind())
 	require.Equal(t, types.KindMaxValue, tableScan.Ranges[0].HighVal[0].Kind())
 
+	nonFixedDimTableScan := optimizeToTableScan("select * from t1 order by vec_cosine_distance(d, '[1,1,1]') limit 1")
+	require.Empty(t, nonFixedDimTableScan.UsedColumnarIndexes)
+
 	mismatchTableScan := optimizeToTableScan("select * from t1 order by vec_cosine_distance(vec, '[]') limit 1")
 	require.Empty(t, mismatchTableScan.UsedColumnarIndexes)
 }
