@@ -119,3 +119,48 @@ func TestWindowSubqueryOuterRef(tt *testing.T) {
 		}
 	})
 }
+
+func TestWindowWithOuterJoinAndCTE(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t0, t1")
+		defer tk.MustExec("drop table if exists t0, t1")
+		tk.MustExec(`CREATE TABLE t0 (
+  id bigint NOT NULL,
+  k0 int NOT NULL,
+  k1 varchar(64) NOT NULL,
+  k2 bigint NOT NULL,
+  k3 int NOT NULL,
+  p0 varchar(64) NOT NULL,
+  p1 int NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+		tk.MustExec(`CREATE TABLE t1 (
+  id bigint NOT NULL,
+  k0 int NOT NULL,
+  d0 decimal(12,2) NOT NULL,
+  d1 float NOT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+		tk.MustExec("insert into t0 values (1, 10, 'z', 100, 10, 'a', 5), (2, 20, 'y', 200, 20, 'b', 15), (3, 30, 'x', 300, 30, 'c', 25)")
+		tk.MustExec("insert into t1 values (1, 10, 12.34, 11.0), (2, 20, 23.45, 21.0), (3, 30, 34.56, 31.0)")
+
+		var input []string
+		var output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+		suiteData := getWindowPushDownSuiteData()
+		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Rows())
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			})
+			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+		}
+	})
+}

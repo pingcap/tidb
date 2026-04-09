@@ -16,10 +16,21 @@ package stmtsummary
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
+
+func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, gauge.Write(m))
+	return m.GetGauge().GetValue()
+}
 
 func TestStmtWindow(t *testing.T) {
 	ss := NewStmtSummary4Test(5)
@@ -36,12 +47,14 @@ func TestStmtWindow(t *testing.T) {
 	require.Equal(t, 5, ss.window.lru.Size())
 	require.Equal(t, 2, ss.window.evicted.count())
 	require.Equal(t, int64(4), ss.window.evicted.other.ExecCount) // digest1 digest1 digest2 digest2
+	require.Equal(t, int64(2), ss.window.evictedCount.Load())
 	_, err := json.Marshal(ss.window.evicted.other)
 	require.NoError(t, err)
 	ss.Clear()
 	require.Equal(t, 0, ss.window.lru.Size())
 	require.Equal(t, 0, ss.window.evicted.count())
 	require.Equal(t, int64(0), ss.window.evicted.other.ExecCount)
+	require.Equal(t, int64(0), ss.window.evictedCount.Load())
 }
 
 func TestStmtSummary(t *testing.T) {
@@ -67,6 +80,49 @@ func TestStmtSummary(t *testing.T) {
 
 	ss.Clear()
 	require.Equal(t, 0, w.lru.Size())
+}
+
+func TestWindowEvictedCountResetOnRotate(t *testing.T) {
+	ss := NewStmtSummary4Test(2)
+	defer ss.Close()
+	require.NoError(t, ss.SetMaxStmtCount(2))
+	metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV2, 0, 0)
+	t.Cleanup(func() {
+		metrics.SetStmtSummaryWindowMetrics(metrics.StmtSummaryTypeV2, 0, 0)
+	})
+
+	// Fill the LRU cache and trigger evictions.
+	ss.Add(GenerateStmtExecInfo4Test("digest1"))
+	ss.Add(GenerateStmtExecInfo4Test("digest2"))
+	ss.Add(GenerateStmtExecInfo4Test("digest3")) // evicts digest1
+	ss.Add(GenerateStmtExecInfo4Test("digest4")) // evicts digest2
+	require.Equal(t, 2, ss.window.lru.Size())
+	require.Equal(t, int64(2), ss.window.evictedCount.Load())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+
+	// Rotate creates a new window with a fresh counter.
+	ss.rotate(timeNow())
+	require.Equal(t, int64(0), ss.window.evictedCount.Load())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 0.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+
+	// Add more records in the new window.
+	ss.Add(GenerateStmtExecInfo4Test("digest5"))
+	ss.Add(GenerateStmtExecInfo4Test("digest6"))
+	ss.Add(GenerateStmtExecInfo4Test("digest7")) // evicts digest5
+	require.Equal(t, int64(1), ss.window.evictedCount.Load())
+	require.Equal(t, 2, ss.window.lru.Size())
+	ss.windowLock.Lock()
+	ss.updateMetrics()
+	ss.windowLock.Unlock()
+	require.Equal(t, 2.0, readGaugeValue(t, metrics.StmtSummaryWindowRecordCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
+	require.Equal(t, 1.0, readGaugeValue(t, metrics.StmtSummaryWindowEvictedCount.WithLabelValues(metrics.StmtSummaryTypeV2)))
 }
 
 func TestStmtSummaryFlush(t *testing.T) {
@@ -95,4 +151,16 @@ func TestStmtSummaryFlush(t *testing.T) {
 	storage.Lock()
 	require.Equal(t, 3, len(storage.windows))
 	storage.Unlock()
+}
+
+func TestDefaultConfig(t *testing.T) {
+	cfg := &Config{
+		Filename: filepath.Join(t.TempDir(), "test.log"),
+	}
+	ss, err := NewStmtSummary(cfg)
+	require.NoError(t, err)
+	defer ss.Close()
+
+	// Verify RefreshInterval (should be 1800 = 30 min)
+	require.Equal(t, uint32(1800), ss.RefreshInterval())
 }

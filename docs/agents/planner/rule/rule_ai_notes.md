@@ -87,3 +87,25 @@ Reusable lessons:
   - optimizer path/branch conditions.
   This avoids misattributing the issue to impossible DDL concurrency.
 - Regression tests should intentionally force the vulnerable branch (here: `index stats invalid + partial column stats`) instead of relying on random timing.
+
+## 2026-03-25 - IndexMerge handle columns must come from DataSource schema (PR #65798)
+
+Background:
+- A planner fix for PK/common-handle tables updated `setIndexMergeTableScanHandleCols` and `overwritePartialTableScanSchema` to reuse `UnMutableHandleCols` instead of manufacturing `_tidb_rowid`.
+- Review surfaced one remaining inconsistency in `PhysicalIndexScan.InitSchema`: when scanning `p.Columns` for the handle column, the code still created a fresh fallback column if `DataSourceSchema` lookup failed.
+
+Key takeaways:
+- For partial index scans built from `DataSource`, `PhysicalIndexScan.DataSourceSchema` is the original datasource schema (`ds.Schema()`), not a pruned KV schema.
+- PK handle/common handle metadata is established when building `DataSource`, via `HandleCols` / `UnMutableHandleCols`, so the handle column should already be discoverable from `DataSourceSchema`.
+- Creating a synthetic handle column in `InitSchema` hides invariant violations and can silently diverge from the rest of the index-merge handle-column logic.
+
+Implementation choice:
+- Keep the table-scan side consistent by reusing `UnMutableHandleCols` in both `setIndexMergeTableScanHandleCols` and `overwritePartialTableScanSchema`.
+- In `PhysicalIndexScan.InitSchema`, require handle lookup to succeed from `DataSourceSchema`; use `intest.Assert` to make violations explicit in test builds instead of silently fabricating a new column.
+
+Reusable lessons:
+- When fixing planner bugs around handle columns, first identify which representation is the source of truth:
+  - `DataSourceSchema` for logical/original columns,
+  - `HandleCols` / `UnMutableHandleCols` for stable handle identity,
+  - `_tidb_rowid` only for tables that truly need extra handle.
+- If two index-merge construction paths both touch handle columns, patch them together. Fixing only the table-scan side or only the partial-index side usually leaves a second latent failure path behind.

@@ -164,9 +164,38 @@ func TestIntValidation(t *testing.T) {
 	val, err = sv.Validate(vars, "300", vardef.ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "300", val)
-
 	// out of range but permitted due to auto value
 	val, err = sv.Validate(vars, "-1", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+}
+
+func TestPerformanceSchemaSessionConnectAttrsSizeValidation(t *testing.T) {
+	sv := variable.GetSysVar(vardef.PerformanceSchemaSessionConnectAttrsSize)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasSessionScope())
+
+	vars := variable.NewSessionVars(nil)
+
+	val, err := sv.Validate(vars, "-1", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+
+	val, err = sv.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "65536", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	// Out-of-range values should be clamped by int sysvar validation.
+	val, err = sv.Validate(vars, "65537", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	val, err = sv.Validate(vars, "-2", vardef.ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, "-1", val)
 }
@@ -468,6 +497,12 @@ func TestValidateWithRelaxedValidation(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	val := sv.ValidateWithRelaxedValidation(vars, "1", vardef.ScopeGlobal)
 	require.Equal(t, "ON", val)
+
+	sv = variable.GetSysVar(vardef.TiDBAnalyzeVersion)
+	_, err := sv.Validate(vars, "1", vardef.ScopeSession)
+	require.ErrorContains(t, err, "tidb_analyze_version=1 is no longer supported")
+	val = sv.ValidateWithRelaxedValidation(vars, "1", vardef.ScopeSession)
+	require.Equal(t, "1", val)
 
 	// Relaxed validation catches the error and squashes it.
 	// The incorrect value is returned as-is.

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -261,19 +262,41 @@ func constructIndexHashJoinStatic(
 	return indexHashJoins
 }
 
-// constructIndexJoinStatic is used to enumerate current a physical index join with undecided inner plan. Via index join prop
+// calcOuterExpectedCnt computes the expected row count for the outer child of
+// an ordered join (IndexJoin or Apply) given the parent's ExpectedCnt. It
+// accounts for the OptOrderingIdxSelRatio to model extra outer rows that may
+// need to be scanned before the inner side produces enough matching rows.
+// The ordering penalty (rowsToMeetFirst) is only applied when the property
+// requires ordered output.
+func calcOuterExpectedCnt(sctx base.PlanContext, prop *property.PhysicalProperty, outerRowCount, estimatedRowCount float64) float64 {
+	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	hasOrder := !prop.IsSortItemEmpty()
+	if (prop.ExpectedCnt < estimatedRowCount) ||
+		(hasOrder && orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
+		var rowsToMeetFirst float64
+		if hasOrder {
+			rowsToMeetFirst = max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
+		}
+		expCntScale := prop.ExpectedCnt / estimatedRowCount
+		return (outerRowCount * expCntScale) + rowsToMeetFirst
+	}
+	return math.MaxFloat64
+}
+
+// constructIndexJoinStatic is used to enumerate a physical index join with undecided inner plan. Via index join prop
 // pushed down to the inner side, the inner plans will check the admission of valid indexJoinProp and enumerate admitted inner
-// operator. This function is quite similar with constructIndexJoin. While differing in following part:
+// operators. This function is quite similar with constructIndexJoin, differing in the following part:
 //
-// Since constructIndexJoin will fill the physicalIndexJoin some runtime detail even for adjusting the keys, hash-keys, move
-// eq condition into other conditions because the underlying ds couldn't use it or something. This is because previously the
-// index join enumeration can see the complete index chosen result after inner task is built. But for the refactored one, the
-// enumerated physical index here can only see the info it owns. That's why we call the function constructIndexJoinStatic.
+// Since constructIndexJoin will fill the physicalIndexJoin with runtime details (adjusting keys, hash-keys, moving eq
+// conditions into other conditions because the underlying ds couldn't use them, etc.) — because previously the index join
+// enumeration could see the complete index chosen result after the inner task is built — the refactored version here can
+// only see the info it owns at static enumeration time. That's why we call the function constructIndexJoinStatic.
 //
-// The indexJoinProp is passed down to the inner side, which contains the runtime constant inner key, which is used to build the
-// underlying index/pk range. When the inner side is built bottom up, it will return the indexJoinInfo, which contains the runtime
-// information that this physical index join wants. That's introduce second function called completePhysicalIndexJoin, which will
-// fill physicalIndexJoin about all the runtime information it lacks in static enumeration phase.
+// The indexJoinProp is passed down to the inner side; it contains the runtime constant inner key used to build the
+// underlying index/pk range. When the inner side is built bottom-up, it returns the indexJoinInfo, which contains the
+// runtime information this physical index join needs. That's why we introduce the second function completePhysicalIndexJoin,
+// which fills physicalIndexJoin with all runtime information it lacks in the static enumeration phase.
 func constructIndexJoinStatic(
 	p *logicalop.LogicalJoin,
 	prop *property.PhysicalProperty,
@@ -293,22 +316,11 @@ func constructIndexJoinStatic(
 		innerJoinKeys, outerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
-	// outer side expected cnt will be amplified by the prop.ExpectedCnt / p.StatsInfo().RowCount with same ratio.
-	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64,
-		SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
-	orderRatio := p.SCtx().GetSessionVars().OptOrderingIdxSelRatio
-	// Record the variable usage for explain explore.
-	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
-	outerRowCount := outerStats.RowCount
-	estimatedRowCount := p.StatsInfo().RowCount
-	if (prop.ExpectedCnt < estimatedRowCount) ||
-		(orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
-		// Apply the orderRatio to recognize that a large outer table scan may
-		// read additional rows before the inner table reaches the limit values
-		rowsToMeetFirst := max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
-		expCntScale := prop.ExpectedCnt / estimatedRowCount
-		expectedCnt := (outerRowCount * expCntScale) + rowsToMeetFirst
-		chReqProps[outerIdx].ExpectedCnt = expectedCnt
+	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType,
+		ExpectedCnt:       calcOuterExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
+		SortItems:         prop.SortItems,
+		CTEProducerStatus: prop.CTEProducerStatus,
+		NoCopPushDown:     prop.NoCopPushDown,
 	}
 
 	// inner side should pass down the indexJoinProp, which contains the runtime constant inner key, which is used to build the underlying index/pk range.
@@ -341,6 +353,8 @@ func constructIndexJoinStatic(
 		// for static enumeration here, we just pass down the original equal condition for condition adjustment rather
 		// depend on the original logical join node.
 		EqualConditions: p.EqualConditions,
+		// Only count candidates that keep the original Apply outer/inner order.
+		FromDecorrelatedApply: p.FromDecorrelatedApply && outerIdx == 0,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	join.SetSchema(p.Schema())
 	return []base.PhysicalPlan{join}
@@ -829,12 +843,7 @@ func constructDS2TableScanTask(
 		TblColHists:       ds.TblColHists,
 		KeepOrder:         ts.KeepOrder,
 	}
-	copTask.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	copTask.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	ts.PlanPartInfo = copTask.PhysPlanPartInfo
 	selStats := ts.StatsInfo().Scale(ds.SCtx().GetSessionVars(), selectivity)
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, selStats, ds.AstIndexHints)
@@ -936,12 +945,7 @@ func constructDS2IndexScanTask(
 		TblCols:     ds.TblCols,
 		KeepOrder:   is.KeepOrder,
 	}
-	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	if !path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := physicalop.PhysicalTableScan{
@@ -1233,6 +1237,11 @@ func recordLimitToCopWarnings(lp base.LogicalPlan) error {
 func recordIndexJoinHintWarnings(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, inEnforce bool) error {
 	// handle mpp join hints first.
 	if (p.PreferJoinType&h.PreferShuffleJoin) > 0 || (p.PreferJoinType&h.PreferBCJoin) > 0 {
+		// When MPP join enumeration is skipped because the subtree has no usable TiFlash path,
+		// exhaustPhysicalPlans4LogicalJoin has already recorded the hint warning directly.
+		if prop.IndexJoinProp == nil && !canTryMPPJoinForJoin(p) {
+			return nil
+		}
 		var errMsg string
 		if (p.PreferJoinType & h.PreferShuffleJoin) > 0 {
 			errMsg = "The join can not push down to the MPP side, the shuffle_join() hint is invalid"
@@ -1449,7 +1458,7 @@ func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferre
 	preferShuffle := (p.PreferJoinType & h.PreferShuffleJoin) > 0
 	preferBCJ := (p.PreferJoinType & h.PreferBCJoin) > 0
 	if preferShuffle {
-		if physicalHashJoin.StoreTp == kv.TiFlash && physicalHashJoin.MppShuffleJoin {
+		if physicalHashJoin.StoreTp == kv.TiFlash && physicalHashJoin.MppShuffleJoin && logicalop.GetHasTiFlash(lp) {
 			// first: respect the shuffle join hint.
 			// BCJ build side hint are handled in the enumeration phase.
 			return true
@@ -1457,7 +1466,7 @@ func preferHashJoin(lp base.LogicalPlan, physicPlan base.PhysicalPlan) (preferre
 		return false
 	}
 	if preferBCJ {
-		if physicalHashJoin.StoreTp == kv.TiFlash && !physicalHashJoin.MppShuffleJoin {
+		if physicalHashJoin.StoreTp == kv.TiFlash && !physicalHashJoin.MppShuffleJoin && logicalop.GetHasTiFlash(lp) {
 			// first: respect the broadcast join hint.
 			// BCJ build side hint are handled in the enumeration phase.
 			return true
@@ -1937,6 +1946,43 @@ func tryToGetMppHashJoin(super base.LogicalPlan, prop *property.PhysicalProperty
 	return []base.PhysicalPlan{join}
 }
 
+// hasTiFlashReplicaForMPP checks whether this logical subtree still has TiFlash replica paths
+// when strict SQL mode temporarily removes TiFlash from isolation read engines.
+func hasTiFlashReplicaForMPP(lp base.LogicalPlan) bool {
+	ds, ok := lp.(*logicalop.DataSource)
+	if ok {
+		preferTiKVOnly := ds.PreferStoreType&h.PreferTiKV != 0 && ds.PreferStoreType&h.PreferTiFlash == 0
+		return ds.HasTiFlash() && !preferTiKVOnly && ds.SCtx().GetSessionVars().IsMPPAllowed()
+	}
+
+	children := lp.Children()
+	if len(children) == 0 {
+		return false
+	}
+	for _, child := range children {
+		if !hasTiFlashReplicaForMPP(child) {
+			return false
+		}
+	}
+	return true
+}
+
+func canTryMPPJoinForJoin(p *logicalop.LogicalJoin) bool {
+	intest.Assert(len(p.Children()) == 2, "LogicalJoin should have exactly 2 children")
+	hasTiFlashChildren := logicalop.GetHasTiFlash(p.Children()[0]) && logicalop.GetHasTiFlash(p.Children()[1])
+	intest.Assert(logicalop.GetHasTiFlash(p) == hasTiFlashChildren,
+		"LogicalJoin hasTiFlash should be conjunction of children hasTiFlash")
+	// `hasTiFlash` has been propagated in `PreparePossibleProperties` before task enumeration.
+	canTryMPPJoin := util.ShouldCheckTiFlashPushDown(p.SCtx(), logicalop.GetHasTiFlash(p))
+	// In strict SQL mode, non-readonly statements temporarily remove TiFlash from isolation engines.
+	// Keep join enumeration behavior compatible with previous versions in that case.
+	if !canTryMPPJoin && p.SCtx().GetSessionVars().StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode &&
+		hasTiFlashReplicaForMPP(p) {
+		canTryMPPJoin = true
+	}
+	return canTryMPPJoin
+}
+
 // it can generates hash join, index join and sort merge join.
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
@@ -1963,7 +2009,10 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	joins := make([]base.PhysicalPlan, 0, 8)
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
 	if prop.IndexJoinProp == nil {
-		if p.SCtx().GetSessionVars().IsMPPAllowed() {
+		canTryMPPJoin := canTryMPPJoinForJoin(p)
+		// Enumerate MPP join plans only when the subtree has TiFlash path and TiFlash is enabled.
+		// This avoids spurious TiFlash pushdown warnings on pure TiKV plans.
+		if canTryMPPJoin {
 			// prefer hint should be handled in the attachment layer. because the enumerated mpp join may couldn't be built bottom-up.
 			if hasMPPJoinHints(p.PreferJoinType) {
 				// generate them all for later attachment prefer picking. cause underlying ds may not have tiFlash path.
@@ -2105,25 +2154,13 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		canUseCache = false
 	}
 
-	// Compute the expected row count for the outer child.  For a semi/anti-semi
-	// join, each outer row produces at most one output row, so if the parent
-	// expects N rows we need N / selectivity outer rows.  For other join types
-	// the ratio may differ, but using the Apply's own selectivity is still a
-	// reasonable approximation.
+	// When the parent requires ordering, compute the expected outer row count
+	// accounting for the ordering index selectivity ratio, so that ordered
+	// scans model the extra outer rows that may need to be read before the
+	// inner side produces enough matching rows (same logic used by IndexJoin).
 	outerExpectedCnt := math.MaxFloat64
-	if prop.ExpectedCnt < math.MaxFloat64 {
-		outerRowCount := stats0.RowCount
-		applyRowCount := la.StatsInfo().RowCount
-		if applyRowCount > 0 && outerRowCount > 0 {
-			selectivity := applyRowCount / outerRowCount
-			if selectivity > 0 {
-				outerExpectedCnt = prop.ExpectedCnt / selectivity
-			}
-		}
-		// The outer side can never need fewer rows than the parent expects.
-		if outerExpectedCnt < prop.ExpectedCnt {
-			outerExpectedCnt = prop.ExpectedCnt
-		}
+	if !prop.IsSortItemEmpty() {
+		outerExpectedCnt = calcOuterExpectedCnt(la.SCtx(), prop, stats0.RowCount, la.StatsInfo().RowCount)
 	}
 
 	apply := physicalop.PhysicalApply{

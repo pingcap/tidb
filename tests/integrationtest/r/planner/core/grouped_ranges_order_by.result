@@ -939,7 +939,7 @@ where i.x = o.a and i.y in (1, 2, 3)
 order by i.x, i.z limit 1
 );
 id	estRows	task	access object	operator info
-Apply	10000.00	root		CARTESIAN semi join, left side:TableReader
+Apply	8000.00	root		CARTESIAN semi join, left side:TableReader
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
 └─TopN(Probe)	10000.00	root		planner__core__grouped_ranges_order_by.t_inner.x, planner__core__grouped_ranges_order_by.t_inner.z, offset:0, count:1

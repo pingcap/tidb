@@ -24,8 +24,15 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -34,12 +41,41 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+type mockRUV2ConsumptionReporter struct {
+	group     string
+	tikvRUV2  float64
+	tidbRUV2  float64
+	tiflashRU float64
+}
+
+func (*mockRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
+
+func (m *mockRUV2ConsumptionReporter) ReportRUV2Consumption(resourceGroupName string, tikvRUV2, tidbRUV2, tiflashRUV2 float64) {
+	m.group = resourceGroupName
+	m.tikvRUV2 = tikvRUV2
+	m.tidbRUV2 = tidbRUV2
+	m.tiflashRU = tiflashRUV2
+}
+
+type mockRUV2ReportingContext struct {
+	*mock.Context
+	reporter resourcegroup.ConsumptionReporter
+}
+
+func (c *mockRUV2ReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	dctx := c.Context.GetDistSQLCtx()
+	dctx.RUConsumptionReporter = c.reporter
+	dctx.ResourceGroupName = c.GetSessionVars().StmtCtx.ResourceGroupName
+	return dctx
+}
 
 func TestFormatSQL(t *testing.T) {
 	val := executor.FormatSQL("aaaa")
@@ -376,12 +412,22 @@ func TestWriteSlowLog(t *testing.T) {
 	defer func() { logutil.SlowQueryLogger = prev }()
 
 	sql := "select * from t where a = 1;"
+	readSlowQueryCounter := func() float64 {
+		counter := metrics.SlowQueryCounter.WithLabelValues(metrics.LblGeneral)
+		pb := &dto.Metric{}
+		require.NoError(t, counter.Write(pb))
+		return pb.GetCounter().GetValue()
+	}
 	checkWriteSlowLog := func(expectWrite bool) {
+		before := readSlowQueryCounter()
 		tk.MustExec(sql)
+		after := readSlowQueryCounter()
 		if !expectWrite {
 			require.Equal(t, 0, recorded.Len())
+			require.Equal(t, 0.0, after-before)
 		} else {
 			require.NotEqual(t, 0, recorded.Len())
+			require.Equal(t, 1.0, after-before)
 		}
 
 		writeMsg := slices.ContainsFunc(recorded.All(), func(entry observer.LoggedEntry) bool {
@@ -405,6 +451,124 @@ func TestWriteSlowLog(t *testing.T) {
 
 	tk.MustExec(`set global tidb_slow_log_rules="Succ:true"`)
 	checkWriteSlowLog(true)
+}
+
+func TestFinishExecuteStmtReportsTiDBRUV2WithoutSyncingRUDetails(t *testing.T) {
+	original := config.GetGlobalConfig()
+	originalGenerateBinaryPlan := variable.GenerateBinaryPlan.Load()
+	t.Cleanup(func() {
+		if original != nil {
+			config.StoreGlobalConfig(original)
+		}
+		variable.GenerateBinaryPlan.Store(originalGenerateBinaryPlan)
+	})
+	variable.GenerateBinaryPlan.Store(false)
+
+	cfg := config.NewConfig()
+	cfg.RUV2 = config.DefaultRUV2Config()
+	cfg.Instance.EnableSlowLog.Store(false)
+	cfg.Instance.RecordPlanInSlowLog = 0
+	config.StoreGlobalConfig(cfg)
+
+	reporter := &mockRUV2ConsumptionReporter{}
+	ctx := &mockRUV2ReportingContext{
+		Context:  mock.NewContext(),
+		reporter: reporter,
+	}
+	sessVars := ctx.GetSessionVars()
+	sessVars.StartTime = time.Now()
+	sessVars.StmtCtx.StmtType = "Select"
+	sessVars.StmtCtx.OriginalSQL = "select 1"
+	sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+	sessVars.StmtCtx.ResourceGroupName = "rg1"
+
+	goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+	sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+	require.NotNil(t, sessVars.RUV2Metrics)
+	sessVars.RUV2Metrics.AddResultChunkCells(100)
+	sessVars.RUV2Metrics.AddPlanCnt(2)
+	sessVars.RUV2Metrics.AddSessionParserTotal(3)
+
+	expected := sessVars.RUV2Metrics.CalculateRUValues(sessVars.RUV2Weights())
+	ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+	ruDetails.AddTiKVRUV2(23456)
+	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 345, WRU: 67})
+
+	execStmt := &executor.ExecStmt{
+		Ctx:      ctx,
+		GoCtx:    goCtx,
+		StmtNode: &ast.SelectStmt{},
+	}
+	execStmt.FinishExecuteStmt(0, nil, false)
+
+	require.Equal(t, float64(23456), ruDetails.TiKVRUV2())
+	require.Equal(t, "rg1", reporter.group)
+	require.Equal(t, float64(23456), reporter.tikvRUV2)
+	require.Equal(t, expected, reporter.tidbRUV2)
+	require.Equal(t, float64(412), reporter.tiflashRU)
+
+	t.Run("stmt summary ignores optimistic autocommit retry count", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		// Toggle stmt summary off and back on to clear any in-memory rows left by earlier tests.
+		tk.MustExec("set global tidb_enable_stmt_summary = 0")
+		tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+		tk = testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+		tk.MustExec("use test")
+		tk.MustExec("set @@session.tidb_txn_mode = 'optimistic'")
+		tk.MustExec("create table stmt_summary_retry (id int primary key, v int)")
+		tk.MustExec("insert into stmt_summary_retry values (1, 1)")
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `1*return(true)->return(false)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+		}()
+
+		updateSQL := "update stmt_summary_retry set v = v + 1 where id = 1"
+		tk.MustExec(updateSQL)
+		tk.MustQuery(
+			"select sum_exec_retry, sum_exec_retry_time from information_schema.statements_summary where digest_text like ?",
+			"update `stmt_summary_retry`%",
+		).Check(testkit.Rows("0 0"))
+	})
+
+	t.Run("bypass ru skips final reporting", func(t *testing.T) {
+		reporter := &mockRUV2ConsumptionReporter{}
+		ctx := &mockRUV2ReportingContext{
+			Context:  mock.NewContext(),
+			reporter: reporter,
+		}
+		sessVars := ctx.GetSessionVars()
+		sessVars.StartTime = time.Now()
+		sessVars.StmtCtx.StmtType = "Select"
+		sessVars.StmtCtx.OriginalSQL = "select 1"
+		sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+		sessVars.StmtCtx.ResourceGroupName = "rg1"
+
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, sessVars.RUV2Metrics)
+		sessVars.RUV2Metrics.SetBypass(true)
+		sessVars.RUV2Metrics.AddResultChunkCells(100)
+
+		ruDetails := goCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+		ruDetails.AddTiKVRUV2(12345)
+		ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 10, WRU: 20})
+
+		execStmt := &executor.ExecStmt{
+			Ctx:      ctx,
+			GoCtx:    goCtx,
+			StmtNode: &ast.SelectStmt{},
+		}
+		execStmt.FinishExecuteStmt(0, nil, false)
+
+		require.Empty(t, reporter.group)
+		require.Zero(t, reporter.tikvRUV2)
+		require.Zero(t, reporter.tidbRUV2)
+		require.Zero(t, reporter.tiflashRU)
+	})
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {

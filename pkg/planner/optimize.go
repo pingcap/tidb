@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -51,6 +52,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
+const nonPreparedPlanCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
+
+func containUsePlanCacheHintInSQLOrBinding(sctx sessionctx.Context, stmt ast.StmtNode) bool {
+	if hint.ContainTableHintInStmtNode(stmt, hint.HintUsePlanCache) {
+		return true
+	}
+	binding, matched, _ := bindinfo.MatchSQLBinding(sctx, stmt)
+	return matched && binding != nil && binding.Hint != nil && binding.Hint.ContainTableHint(hint.HintUsePlanCache)
+}
+
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
@@ -62,6 +73,13 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		isExplain || // explain external
 		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
 		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
+		return nil, nil, false, nil
+	}
+	if sctx.GetSessionVars().PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
+		!containUsePlanCacheHintInSQLOrBinding(sctx, stmt) {
+		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", nonPreparedPlanCacheHintOnlyNoHintReason))
+		}
 		return nil, nil, false, nil
 	}
 
@@ -478,6 +496,7 @@ func buildAndOptimizeLogicalPlanRound(
 	bestNames *types.NameSlice,
 	bestCost *float64,
 	bestLogicalPlanCtx *logicalPlanBuildCtx,
+	optFlagAdjust func(uint64) uint64,
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
@@ -526,7 +545,16 @@ func buildAndOptimizeLogicalPlanRound(
 		*optimizeStarted = true
 		*beginOpt = time.Now()
 	}
-	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
+	optFlag := builder.GetOptFlag()
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		optFlag&rule.FlagPushDownTopN > 0 &&
+		optFlag&rule.FlagJoinReOrder > 0 {
+		sctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
+	}
+	if optFlagAdjust != nil {
+		optFlag = optFlagAdjust(optFlag)
+	}
+	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -544,6 +572,29 @@ func buildAndOptimizeLogicalPlanRound(
 
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
+
+func shouldTryNonDecorrelationRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanDecorrelatedApply &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin
+}
+
+func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
+}
+
+type flagAdjustFunc func(uint64) uint64
+
+var roundList = [...]flagAdjustFunc{
+	func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+	func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+}
+
+var roundEnabled = [...]func(*variable.SessionVars) bool{
+	shouldTryNonDecorrelationRound,
+	shouldTryOrderAwareReorderRound,
+}
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
@@ -577,8 +628,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 
 	// build multi logical plan from raw AST.
 	var (
-		buildRound                = 1
-		needRestoreLogicalPlanCtx = buildRound > 1
+		needRestoreLogicalPlanCtx = sessVars.EnableAlternativeLogicalPlans
 		bestCost                  = math.MaxFloat64
 		bestPlan                  base.PhysicalPlan
 		bestNames                 types.NameSlice
@@ -588,13 +638,45 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	var initialLogicalPlanCtx logicalPlanBuildCtx
 	if needRestoreLogicalPlanCtx {
 		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
+		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
 	}
-	for i := range buildRound {
-		if needRestoreLogicalPlanCtx && i > 0 {
-			restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
-		}
 
-		p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
+	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
+		ctx,
+		sctx,
+		node,
+		is,
+		hintProcessor,
+		&checked,
+		&optimizeStarted,
+		&beginOpt,
+		needRestoreLogicalPlanCtx,
+		&bestPlan,
+		&bestNames,
+		&bestCost,
+		&bestLogicalPlanCtx,
+		nil,
+	)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	if nonLogical {
+		// keep compatible with the old.
+		return p, names, 0, nil
+	}
+
+	for i, adjust := range roundList {
+		if !roundEnabled[i](sessVars) {
+			continue
+		}
+		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
+		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
+			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
+				failpoint.Return(nil, nil, 0, errors.New("unexpected alternative logical plan round"))
+			}
+		})
+
+		p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
 			ctx,
 			sctx,
 			node,
@@ -608,12 +690,12 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			&bestNames,
 			&bestCost,
 			&bestLogicalPlanCtx,
+			adjust,
 		)
 		if err != nil {
 			return nil, nil, 0, err
 		}
 		if nonLogical {
-			// keep compatible with the old.
 			return p, names, 0, nil
 		}
 	}

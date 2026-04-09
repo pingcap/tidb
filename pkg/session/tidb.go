@@ -197,6 +197,9 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 			session_metrics.TransactionDurationOptimisticAbortGeneral.Observe(duration)
 		}
 	}
+	if sessVars.RUV2Metrics != nil {
+		sessVars.RUV2Metrics.AddTxnCnt(1)
+	}
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
