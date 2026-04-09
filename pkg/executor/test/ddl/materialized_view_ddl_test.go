@@ -324,6 +324,140 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
+func TestExchangePartitionRejectsMaterializedViewRelatedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec(`create table t_base (
+  id bigint not null primary key,
+  v int not null
+)`)
+	tk.MustExec(`create table pt (
+  id bigint not null primary key,
+  v int not null
+)
+partition by range (id) (
+  partition p0 values less than (100),
+  partition p1 values less than maxvalue
+)`)
+	tk.MustExec("insert into t_base values (98, 10), (99, 20)")
+	tk.MustExec("insert into pt values (1, 1), (2, 2), (101, 1001), (102, 1002)")
+
+	tk.MustExec("create materialized view log on t_base (id, v)")
+	tk.MustExec(`create table pt_mlog (
+  id bigint not null,
+  v int not null,
+  _MLOG$_DML_TYPE varchar(1) not null,
+  _MLOG$_OLD_NEW tinyint not null
+)
+partition by range (v) (
+  partition p0 values less than (100),
+  partition p1 values less than maxvalue
+)`)
+	err := tk.ExecToErr("alter table pt_mlog exchange partition p0 with table `$mlog$t_base`")
+	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view log")
+
+	err = tk.ExecToErr("alter table pt exchange partition p0 with table t_base")
+	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view log")
+
+	tk.MustExec(`create materialized view mv (v, cnt, s_id)
+refresh fast
+as
+select v, count(*) as cnt, sum(id) as s_id
+from t_base
+group by v`)
+	tk.MustExec("refresh materialized view mv fast")
+
+	err = tk.ExecToErr("alter table pt exchange partition p0 with table t_base")
+	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table with materialized view dependencies")
+
+	tk.MustExec("create database repro015")
+	tk.MustExec("use repro015")
+	tk.MustExec(`create table t_base (
+  id bigint not null,
+  v int not null primary key
+)
+partition by range (v) (
+  partition p0 values less than (100),
+  partition p1 values less than maxvalue
+)`)
+	tk.MustExec("insert into t_base values (98, 10), (99, 20)")
+	tk.MustExec("create materialized view log on repro015.t_base (id, v)")
+	tk.MustExec(`create materialized view repro015.mv (cnt, v)
+refresh fast
+as
+select count(*) as cnt, v
+from repro015.t_base
+group by v`)
+	tk.MustExec(`create table repro015.` + "`right`" + ` (
+  id bigint not null,
+  v int not null,
+  primary key (v) /*T![clustered_index] CLUSTERED */
+)`)
+	err = tk.ExecToErr("alter table repro015.t_base exchange partition p0 with table repro015.`right`")
+	require.ErrorContains(t, err, "EXCHANGE PARTITION on partitioned table with materialized view dependencies")
+
+	tk.MustExec("drop table repro015.`right`")
+	tk.MustExec("drop materialized view repro015.mv")
+	tk.MustExec("drop materialized view log on repro015.t_base")
+	tk.MustExec("drop table repro015.t_base")
+	tk.MustExec(`create table repro015.t_base (
+  id bigint not null,
+  v int not null
+)`)
+	tk.MustExec(`create table repro015.pt (
+  id bigint not null,
+  v int not null primary key
+)
+partition by range (v) (
+  partition p0 values less than (100),
+  partition p1 values less than maxvalue
+)`)
+	tk.MustExec("create materialized view log on repro015.t_base (id, v)")
+	tk.MustExec(`create materialized view repro015.mv (cnt, v)
+refresh fast
+as
+select count(*) as cnt, v
+from repro015.t_base
+group by v`)
+	tk.MustExec("refresh materialized view repro015.mv fast")
+	err = tk.ExecToErr("alter table repro015.pt exchange partition p0 with table repro015.mv")
+	require.ErrorContains(t, err, "EXCHANGE PARTITION on non-partitioned table materialized view table")
+}
+
+func TestAlterTablePartitioningRejectsMaterializedViewBaseTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t_base (
+  id bigint not null,
+  v int not null
+)`)
+	tk.MustExec("create materialized view log on t_base (id, v)")
+	err := tk.ExecToErr(`alter table t_base
+partition by range (id) (
+  partition p0 values less than (100),
+  partition p1 values less than maxvalue
+)`)
+	require.ErrorContains(t, err, "ALTER TABLE ... PARTITION BY with materialized view log")
+
+	tk.MustExec(`create table t_base_part (
+  id bigint not null,
+  v int not null
+)
+partition by range (id) (
+  partition p0 values less than (100),
+  partition p1 values less than maxvalue
+)`)
+	tk.MustExec("create materialized view log on t_base_part (id, v)")
+	err = tk.ExecToErr("alter table t_base_part remove partitioning")
+	require.ErrorContains(t, err, "ALTER TABLE ... REMOVE PARTITIONING with materialized view log")
+}
+
 func TestShowMaterializedViews(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
