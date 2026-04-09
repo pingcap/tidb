@@ -1,6 +1,6 @@
 # Modify Column Deep Dive (type change, nullability, online reorg)
 
-This doc focuses on **`model.ActionModifyColumn`**, covering `ALTER TABLE ... MODIFY COLUMN`, `ALTER TABLE ... CHANGE COLUMN`, and `ALTER TABLE ... RENAME COLUMN` (implemented as a special case of modify-column).
+This doc focuses on `**model.ActionModifyColumn**`, covering `ALTER TABLE ... MODIFY COLUMN`, `ALTER TABLE ... CHANGE COLUMN`, and `ALTER TABLE ... RENAME COLUMN` (implemented as a special case of modify-column).
 
 Modify column is tricky because it can be:
 
@@ -51,6 +51,69 @@ High-level rules (read `getModifyColumnType` for the exact gates):
 Special-case: `VARCHAR` → `CHAR` may start as `ModifyTypePrecheck` and then “downgrade” to a no-reorg type if data is safe:
 
 - Precheck path: `pkg/ddl/modify_column.go:precheckForVarcharToChar`
+
+## Partition-column compatibility gate
+
+`ALTER TABLE ... MODIFY/CHANGE COLUMN` on a partition column is still handled by
+`model.ActionModifyColumn`; it does **not** become a partition-specific DDL job.
+What changes is that TiDB applies an extra compatibility gate before the modify
+can proceed:
+
+- Precheck path: `pkg/ddl/modify_column.go:checkModifyColumn` →
+`checkPartitionColumnModifiable`
+- Owner-side post-check: `pkg/ddl/modify_column.go:postCheckPartitionModifiableColumn`
+
+This gate covers both:
+
+- `PARTITION BY ... COLUMNS(...)` tables, where the partition column names are in
+`tblInfo.Partition.Columns`
+- Expression partitioning, where TiDB extracts referenced columns from
+`tblInfo.Partition.Expr`
+
+Core guardrails in `pkg/ddl/modify_column.go:checkPartitionColumnModifiable`:
+
+- Renaming a partition column is rejected.
+- The new type must still be a legal partitioning-column type
+(`isColTypeAllowedAsPartitioningCol`).
+- `EvalType`, charset, and collation must stay unchanged.
+- Flag changes are narrowly scoped:
+  - `NULL -> NOT NULL` is rejected.
+  - `NOT NULL -> NULL` is allowed.
+  - default-only and comment-only changes are allowed.
+
+After the whitelist check passes, TiDB still rebuilds partition definitions from
+generated partition metadata (`AppendPartitionInfo` +
+`buildPartitionDefinitionsInfo`). This is the final safety net that catches
+partition-definition values that no longer match the modified column type.
+
+The whitelist itself lives in
+`pkg/ddl/modify_column.go:checkPartitionColumnTypeChangeWhitelist` and is keyed
+by partitioning form:
+
+- `KEY` partition:
+  - allow integer widening
+  - allow `CHAR` / `VARCHAR` / `VARBINARY` length extension
+  - allow `ENUM` / `SET` tail-append
+- `RANGE/LIST COLUMNS` partition:
+  - allow integer widening
+  - allow `DATETIME` / `TIME` fractional-seconds precision extension
+  - allow `CHAR` / `VARCHAR` / `VARBINARY` length extension
+- `RANGE/LIST/HASH` expression partition:
+  - direct-column usage (no function path): only integer widening
+  - `TO_DAYS(col)`: allow `DATETIME` fractional-seconds precision extension
+  - `EXTRACT(... FROM col)`: allow `DATETIME` / `TIME` fractional-seconds
+  precision extension
+  - `UNIX_TIMESTAMP(col)` and any other unsupported function on the target
+  column’s usage path are rejected
+
+The expression-partition classification is per **target-column usage path**, not
+just by the root expression. For example, `TO_DAYS(a) + UNIX_TIMESTAMP(b)` may
+still allow modifying `a`, while changes to `b` remain rejected.
+
+This gate decides whether the modify is allowed at all. If it is allowed,
+partitioned tables still follow the normal modify-column flow, and
+`getModifyColumnType` still conservatively routes partitioned tables to
+`ModifyTypeReorg`.
 
 ## No-reorg paths (metadata-only / metadata+check)
 
@@ -163,10 +226,13 @@ Tests (good starting points):
 - `pkg/ddl/modify_column_test.go`
 - `pkg/ddl/column_modify_test.go`
 - `pkg/ddl/column_change_test.go`
+- `pkg/ddl/tests/partition/db_partition_test.go` (partition-column whitelist,
+nullability, default/comment, and pruning regressions)
 
 ## Common pitfalls checklist
 
 - Partitioned table / TiFlash replica paths are conservatively forced into full reorg (`getModifyColumnType`); don’t assume “fast path” applies.
+- Partition-column modify has an extra whitelist plus partition-definition revalidation; if you change allowed cases, update `checkPartitionColumnModifiable` and the partition regression matrix together.
 - Forgetting to persist mid-flight identifiers (changing column/index IDs) → job can’t resume after retry/owner transfer.
 - Missing schema-sync boundary between state transitions → other nodes may apply incompatible DML rules.
 - Job args compatibility: `ModifyColumnType` and args decoding must remain backward compatible (`getModifyColumnType`’s compat comments).
