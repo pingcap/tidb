@@ -499,12 +499,18 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols
 		}
 		if !columnIDSet.Has(int(col.ID)) {
 			rowLayout = append(rowLayout, col)
+			columnIDSet.Insert(int(col.ID))
 		}
 	}
 
 	for _, col := range p.DataSourceSchema.Columns {
 		if col.ID == model.ExtraPhysTblID && !columnIDSet.Has(int(col.ID)) {
-			rowLayout = append(rowLayout, col.Clone().(*expression.Column))
+			extraPhysTblCol := col.Clone().(*expression.Column)
+			if extraPhysTblCol.RetType != nil {
+				extraPhysTblCol.RetType = extraPhysTblCol.RetType.Clone()
+				extraPhysTblCol.RetType.SetFlag(extraPhysTblCol.RetType.GetFlag() | mysql.NotNullFlag)
+			}
+			rowLayout = append(rowLayout, extraPhysTblCol)
 			columnIDSet.Insert(int(col.ID))
 			break
 		}
@@ -800,9 +806,6 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		StoreType:        path.StoreType,
 		FtsQueryInfo:     path.FtsQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
-	if path.Index.IsTiCIIndex() {
-		is.StoreType = kv.TiCI
-	}
 
 	is.SetNoncacheableReason(path.NoncacheableReason)
 	rowCount := path.CountAfterAccess

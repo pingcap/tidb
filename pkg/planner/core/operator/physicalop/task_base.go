@@ -319,20 +319,8 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	rt.SetPlan(p)
 
 	if len(t.RootTaskConds) > 0 {
-		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
-		// so this Selection will be executed in TiDB.
-		_, isTableScan := t.p.(*PhysicalTableScan)
-		_, isSelection := t.p.(*PhysicalSelection)
-		if isSelection {
-			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
-		}
-		if !isTableScan {
-			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.
-			// It's only for TableScan. This is ensured by converting mppTask to rootTask just after TableScan is built,
-			// so no other operators are added into this mppTask.
-			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
-			return base.InvalidTask.(*RootTask)
-		}
+		// Some filters cannot be pushed down to TiFlash, so keep them as a root Selection
+		// executed in TiDB after the MPP reader.
 		selectivity, err := cardinality.Selectivity(ctx, t.tblColHists, t.RootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))

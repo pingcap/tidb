@@ -56,6 +56,17 @@ var addIndexProgressLogState sync.Map // map[addIndexProgressLogKey]GetIndexProg
 var mockTiCICreateIndexRequest atomic.Value          // stores []byte of CreateIndexRequest for tests.
 var mockTiCIPreSplitImportShardsRequest atomic.Value // stores []byte of PreSplitImportShardsRequest for tests.
 
+// MetaServiceStatusError is returned when MetaService replies with a non-success status.
+type MetaServiceStatusError struct {
+	Method string
+	Status ErrorCode
+}
+
+// Error implements the error interface.
+func (e *MetaServiceStatusError) Error() string {
+	return fmt.Sprintf("%s failed: %d", e.Method, e.Status)
+}
+
 // GetMockTiCICreateIndexRequest returns the marshaled CreateIndexRequest bytes captured by the
 // `MockCreateTiCIIndexRequest` failpoint. It returns nil if nothing was captured.
 func GetMockTiCICreateIndexRequest() []byte {
@@ -838,8 +849,12 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 	if err != nil {
 		return nil, err
 	}
-	if resp.Status != 0 {
-		return nil, fmt.Errorf("GetShardLocalCacheInfo failed: %d", resp.Status)
+	status := ErrorCode(resp.Status)
+	if status != ErrorCode_SUCCESS {
+		return nil, &MetaServiceStatusError{
+			Method: "GetShardLocalCacheInfo",
+			Status: status,
+		}
 	}
 
 	var s = "ShardLocalCacheInfos:["

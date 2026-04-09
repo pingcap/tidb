@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -207,13 +208,42 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 }
 
 func (p *PhysicalIndexLookUpReader) adjustReadReqType(_ base.PlanContext) {
-	if p.IndexStoreType == kv.TiFlash {
+	if p.IndexStoreType == kv.TiFlash || p.IndexStoreType == kv.TiCI {
 		_, ok := p.IndexPlan.(*PhysicalExchangeSender)
 		if ok {
 			p.ReadReqType = MPP
 			return
 		}
 		p.ReadReqType = BatchCop
+	}
+}
+
+func containTiCIIndexScan(p base.PhysicalPlan) bool {
+	if p == nil {
+		return false
+	}
+	if is, ok := p.(*PhysicalIndexScan); ok {
+		return is.Index != nil && is.Index.IsTiCIIndex() && is.FtsQueryInfo != nil
+	}
+	for _, child := range p.Children() {
+		if containTiCIIndexScan(child) {
+			return true
+		}
+	}
+	return false
+}
+
+func rewriteTiCIIndexStoreToTiFlash(p base.PhysicalPlan) {
+	if p == nil {
+		return
+	}
+	if is, ok := p.(*PhysicalIndexScan); ok {
+		if is.Index != nil && is.Index.IsTiCIIndex() && is.FtsQueryInfo != nil {
+			is.StoreType = kv.TiFlash
+		}
+	}
+	for _, child := range p.Children() {
+		rewriteTiCIIndexStoreToTiFlash(child)
 	}
 }
 
@@ -303,9 +333,23 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType,
 // BuildIndexLookUpTask builds a index look up task from a cop task.
 func BuildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 	newTask := &RootTask{}
+	indexPlan := t.IndexPlan
+	// For TiCI index side in IndexLookUp, wrap the index subtree by a pass-through
+	// ExchangeSender so the executor can dispatch it through MPP protocol while keeping
+	// the table probe side on TiKV.
+	if containTiCIIndexScan(indexPlan) {
+		rewriteTiCIIndexStoreToTiFlash(indexPlan)
+		if _, isSender := indexPlan.(*PhysicalExchangeSender); !isSender {
+			sender := PhysicalExchangeSender{
+				ExchangeType: tipb.ExchangeType_PassThrough,
+			}.Init(ctx, indexPlan.StatsInfo())
+			sender.SetChildren(indexPlan)
+			indexPlan = sender
+		}
+	}
 	p := PhysicalIndexLookUpReader{
 		TablePlan:        t.TablePlan,
-		IndexPlan:        t.IndexPlan,
+		IndexPlan:        indexPlan,
 		ExtraHandleCol:   t.ExtraHandleCol,
 		CommonHandleCols: t.CommonHandleCols,
 		ExpectedCnt:      t.ExpectCnt,

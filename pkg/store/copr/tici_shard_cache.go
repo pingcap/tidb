@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +38,9 @@ import (
 const (
 	btreeDegree           = 32
 	defaultShardsPerBatch = 1024
+	// Keep retry window long enough for TiCI worker registration/scheduling to converge
+	// in integration environments right after index creation.
+	maxScanRangesRetry = 30
 )
 
 // Shard represents a shard of data for tici.
@@ -155,6 +159,33 @@ func (c *TiCIShardCacheClient) ScanRanges(ctx context.Context, tableID int64, in
 	}
 
 	return ret, nil
+}
+
+func isRetryableTiCIMetaStatusErr(err error) bool {
+	var statusErr *tici.MetaServiceStatusError
+	if !errors.As(err, &statusErr) {
+		return false
+	}
+	return statusErr.Status == tici.ErrorCode_TRY_AGAIN ||
+		statusErr.Status == tici.ErrorCode_WORKER_NOT_FOUND ||
+		statusErr.Status == tici.ErrorCode_SHARD_NOT_SCHEDULED
+}
+
+func isRetryableTiCIMetaErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isRetryableTiCIMetaStatusErr(err) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "getshardlocalcacheinfo failed: 13") ||
+		strings.Contains(msg, "getshardlocalcacheinfo failed:13") ||
+		strings.Contains(msg, "getshardlocalcacheinfo failed: 14") ||
+		strings.Contains(msg, "getshardlocalcacheinfo failed:14") ||
+		strings.Contains(msg, "worker_not_found") ||
+		strings.Contains(msg, "shard_not_scheduled") ||
+		strings.Contains(msg, "try_again")
 }
 
 // Close closes the gRPC client connection.
@@ -422,9 +453,23 @@ func (s *TiCIShardCache) BatchLoadShardsWithKeyRanges(
 	if len(keyRanges) == 0 {
 		return nil, nil
 	}
-	shards, err = s.client.ScanRanges(ctx, tableID, indexID, keyRanges, limit)
-	if err != nil {
-		return
+	retryBackoff := 200 * time.Millisecond
+	for attempt := 0; attempt <= maxScanRangesRetry; attempt++ {
+		shards, err = s.client.ScanRanges(ctx, tableID, indexID, keyRanges, limit)
+		if err == nil {
+			break
+		}
+		if !isRetryableTiCIMetaErr(err) || attempt == maxScanRangesRetry {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryBackoff):
+			if retryBackoff < time.Second {
+				retryBackoff *= 2
+			}
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

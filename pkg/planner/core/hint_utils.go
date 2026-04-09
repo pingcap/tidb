@@ -500,28 +500,38 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 	}
 	switch x := p.(type) {
 	case *physicalop.PhysicalTableReader:
-		ts := x.TablePlans[0].(*physicalop.PhysicalTableScan)
-		if ts.TableAsName != nil && ts.TableAsName.L != "" {
-			return &ts.DBName, ts.TableAsName
-		}
-		return &ts.DBName, &ts.Table.Name
+		// Historically PhysicalTableReader contains PhysicalTableScan, but for TiFlash/Mpp
+		// it can also contain other leaf plans (e.g. PhysicalIndexScan for TiCI FTS).
+		return extractTableNameFromScanPlan(x.TablePlans[0])
 	case *physicalop.PhysicalIndexReader:
 		is := x.IndexPlans[0].(*physicalop.PhysicalIndexScan)
-		if is.TableAsName != nil && is.TableAsName.L != "" {
-			return &is.DBName, is.TableAsName
-		}
-		return &is.DBName, &is.Table.Name
+		return pickAsNameOrTableName(&is.DBName, is.TableAsName, &is.Table.Name)
 	case *physicalop.PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*physicalop.PhysicalIndexScan)
-		if is.TableAsName != nil && is.TableAsName.L != "" {
-			return &is.DBName, is.TableAsName
-		}
-		return &is.DBName, &is.Table.Name
+		return pickAsNameOrTableName(&is.DBName, is.TableAsName, &is.Table.Name)
 	case *physicalop.PhysicalSort, *physicalop.PhysicalSelection, *physicalop.PhysicalUnionScan, *physicalop.PhysicalProjection,
 		*physicalop.PhysicalHashAgg, *physicalop.PhysicalStreamAgg:
 		return extractTableAsName(p.Children()[0])
 	}
 	return nil, nil
+}
+
+func extractTableNameFromScanPlan(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
+	switch leaf := p.(type) {
+	case *physicalop.PhysicalTableScan:
+		return pickAsNameOrTableName(&leaf.DBName, leaf.TableAsName, &leaf.Table.Name)
+	case *physicalop.PhysicalIndexScan:
+		return pickAsNameOrTableName(&leaf.DBName, leaf.TableAsName, &leaf.Table.Name)
+	default:
+		return nil, nil
+	}
+}
+
+func pickAsNameOrTableName(dbName *ast.CIStr, tableAsName *ast.CIStr, tableName *ast.CIStr) (db *ast.CIStr, table *ast.CIStr) {
+	if tableAsName != nil && tableAsName.L != "" {
+		return dbName, tableAsName
+	}
+	return dbName, tableName
 }
 
 // genJoinOrderHintFromRootPhysicalJoin is the entry point of generating join order hint.

@@ -78,6 +78,7 @@ go_test(
         "kv_test.go",
         "main_test.go",
         "mock_test.go",
+        "mpp_test.go",
         "option_test.go",
         "txn_test.go",
         "utils_test.go",
@@ -85,7 +86,7 @@ go_test(
     ],
     embed = [":kv"],
     flaky = True,
-    shard_count = 27,
+    shard_count = 28,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/keyspace",

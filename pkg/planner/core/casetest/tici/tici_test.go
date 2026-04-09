@@ -443,3 +443,136 @@ func TestTiCIWithWrongColumn(t *testing.T) {
 	tk.MustContainErrMsg("explain select * from t where fts_match_word('text1', a)", "Doesn't support match search on a non-string column without fulltext index")
 	tk.MustContainErrMsg("explain select * from t where fts_match_phrase('text1', a)", "Doesn't support match search on a non-string column without fulltext index")
 }
+
+func runTiCITest(t *testing.T, fn func(*testkit.TestKit)) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
+	}()
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	tk.MustExec("use test")
+	fn(tk)
+}
+
+func TestTiCINonCoveringUsesDoubleRead(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table fts1(
+			id bigint primary key,
+			page_num bigint,
+			content text,
+			fulltext index ft_content(content)
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "fts1")
+
+		sql := `explain format='brief' select * from fts1 where match(content) against('"red"' in boolean mode)`
+		tk.MustQuery(sql).CheckContain("IndexLookUp")
+		tk.MustQuery(sql).CheckContain("IndexRangeScan")
+		tk.MustQuery(sql).CheckContain("TableRowIDScan")
+		tk.MustQuery(sql).CheckContain("mpp[tiflash]")
+		tk.MustQuery(sql).CheckContain("cop[tikv]")
+	})
+}
+
+func TestTiCICoveringWithoutTiFlashReplicaNoMPP(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table fts_no_replica(
+			id bigint primary key,
+			content text,
+			fulltext index ft_content(content)
+		)`)
+		tk.MustExec("set tidb_allow_mpp=on")
+		tk.MustExec("set tidb_enforce_mpp=off")
+
+		sql := `explain format='brief' select id from fts_no_replica where match(content) against('"red"' in boolean mode)`
+		tk.MustQuery(sql).CheckContain("mpp[tiflash]")
+	})
+}
+
+func TestTiCIJoinNoMPPPlan(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table fts1(
+			id bigint primary key,
+			page_num bigint,
+			content text,
+			fulltext index ft_content(content)
+		)`)
+		tk.MustExec(`create table fts2(
+			id bigint primary key,
+			page_num bigint,
+			content text,
+			fulltext index ft_content(content)
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "fts1")
+		testkit.SetTiFlashReplica(t, dom, "test", "fts2")
+
+		tk.MustExec("set tidb_allow_mpp=off")
+		tk.MustExec("set tidb_enforce_mpp=off")
+
+		sql := `explain format='brief' select f.id, t.id from fts1 f join fts2 t on f.page_num=t.page_num where match(f.content) against('"red"' in boolean mode)`
+		tk.MustQuery(sql).CheckContain("HashJoin")
+		tk.MustQuery(sql).CheckContain("IndexRangeScan")
+		tk.MustQuery(sql).CheckContain("mpp[tiflash]")
+	})
+}
+
+func TestTiCIWithTiFlashReplicaNoMPPNoTiFlashCop(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table docs_ng(
+			id bigint primary key,
+			content text,
+			fulltext index ft(content)
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "docs_ng")
+
+		tk.MustExec("set tidb_allow_mpp=off")
+		tk.MustExec("set tidb_allow_tiflash_cop=off")
+		tk.MustExec("set tidb_enforce_mpp=off")
+
+		sql := `explain format='brief' select max(id) from docs_ng where match(content) against('"red"' in boolean mode)`
+		tk.MustQuery(sql).CheckContain("mpp[tiflash]")
+	})
+}
+
+func TestTiCIJoinWithNonTiCITable(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table fts1(
+			id bigint primary key,
+			page_num bigint,
+			content text,
+			fulltext index ft_content(content)
+		)`)
+		tk.MustExec(`create table t2(
+			id bigint primary key,
+			page_num bigint
+		)`)
+		dom := domain.GetDomain(tk.Session())
+		testkit.SetTiFlashReplica(t, dom, "test", "fts1")
+
+		tk.MustExec("set tidb_allow_mpp=off")
+		tk.MustExec("set tidb_enforce_mpp=off")
+
+		sql := `explain format='brief' select f.id, t.id from fts1 f join t2 t on f.page_num=t.page_num where match(f.content) against('"red"' in boolean mode)`
+		tk.MustQuery(sql).CheckContain("HashJoin")
+		tk.MustQuery(sql).CheckContain("IndexRangeScan")
+		tk.MustQuery(sql).CheckContain("mpp[tiflash]")
+		tk.MustQuery(sql).CheckContain("cop[tikv]")
+	})
+}

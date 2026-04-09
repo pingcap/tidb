@@ -1529,8 +1529,13 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.
-		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
-			continue
+		// Flash-only tasks keep TiFlash paths; allow TiCI path since it runs in TiFlash MPP.
+		if prop.IsFlashProp() {
+			if path.StoreType != kv.TiFlash {
+				if !(path.Index != nil && path.Index.IsTiCIIndex() && path.FtsQueryInfo != nil) {
+					continue
+				}
+			}
 		}
 		if len(path.PartialAlternativeIndexPaths) > 0 {
 			// OR normal index merge path, try to determine every index partial path for this property.
@@ -2266,6 +2271,9 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 // convertToIndexScan converts the DataSource to index scan with idx.
 func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty,
 	candidate *candidatePath) (task base.Task, err error) {
+	isTiCICandidate := candidate.path.Index != nil &&
+		candidate.path.Index.IsTiCIIndex() &&
+		(candidate.path.FtsQueryInfo != nil || expression.ContainsFullTextSearchFn(candidate.path.AccessConds...))
 	if candidate.path.Index.MVIndex {
 		// MVIndex is special since different index rows may return the same _row_id and this can break some assumptions of IndexReader.
 		// Currently only support using IndexMerge to access MVIndex instead of IndexReader.
@@ -2273,7 +2281,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		return base.InvalidTask, nil
 	}
 	// TiCI currently can not set the order property.
-	if candidate.path.FtsQueryInfo != nil && !prop.IsSortItemEmpty() {
+	if isTiCICandidate && !prop.IsSortItemEmpty() {
 		return base.InvalidTask, nil
 	}
 	if !candidate.path.IsSingleScan {
@@ -2310,6 +2318,75 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 
 	path := candidate.path
 	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan)
+	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
+	// For TiCI index scan, we also plan it into TiFlash MPP pipeline.
+	// NOTE: TiCI access path keeps StoreType=kv.TiCI (so it remains an IndexScan).
+	isTiCIPath := is.Index != nil && is.Index.IsTiCIIndex() &&
+		(is.FtsQueryInfo != nil || isTiCICandidate)
+	// Non-covering TiCI access must stay as IndexLookUp(root): index side can run by
+	// MPP protocol, but it still needs table probe on TiKV. A pure MPP task here is invalid.
+	if isTiCIPath && !candidate.path.IsSingleScan && prop.TaskTp == property.MppTaskType {
+		return base.InvalidTask, nil
+	}
+	// TiCI path is MPP-only. Even for non-covering scans, IndexLookUp can fetch
+	// base table columns after index-side MPP returns handles.
+	canUseTiCIInMpp := isTiCIPath
+	isTiFlashStorePath := is.StoreType == kv.TiFlash
+	supportsMPPPath := isTiFlashStorePath || canUseTiCIInMpp
+	canConvertRootToMPP := prop.TaskTp == property.RootTaskType &&
+		supportsMPPPath &&
+		(ds.SCtx().GetSessionVars().IsMPPAllowed() || isTiCIPath)
+	forceRootToMPP := canConvertRootToMPP &&
+		(config.GetGlobalConfig().DisaggregatedTiFlash || ds.SCtx().GetSessionVars().IsTiFlashCopBanned() || isTiCIPath)
+	needMPPPath := prop.TaskTp == property.MppTaskType || forceRootToMPP
+	if needMPPPath && !supportsMPPPath {
+		return base.InvalidTask, nil
+	}
+	if !needMPPPath {
+		// Disaggregated TiFlash only accepts MPP for both TiFlash and TiCI MPP paths.
+		if config.GetGlobalConfig().DisaggregatedTiFlash && supportsMPPPath {
+			return base.InvalidTask, nil
+		}
+		// tidb_allow_tiflash_cop only bans classic TiFlash cop/batchCop; TiCI cop path should remain valid.
+		if ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && isTiFlashStorePath {
+			return base.InvalidTask, nil
+		}
+		// TiCI index scan is MPP-only.
+		if isTiCIPath {
+			return base.InvalidTask, nil
+		}
+	}
+
+	useTiCICopLookupPath := isTiCIPath && !candidate.path.IsSingleScan && prop.TaskTp == property.RootTaskType
+	if needMPPPath && !useTiCICopLookupPath {
+		if isTiCIPath {
+			// TiCI IndexScan is executed by TiFlash MPP pipeline. Keep TiCI semantics in executor
+			// payload (FtsQueryInfo), but mark store type as TiFlash for MPP request type wiring.
+			is.StoreType = kv.TiFlash
+		}
+		// TiCI currently can not keep order.
+		if !prop.IsSortItemEmpty() {
+			return base.InvalidTask, nil
+		}
+		mppTask := physicalop.NewMppTask(is, property.AnyType, nil, ds.TblColHists, nil)
+		finalStats := ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt)
+		if err = addPushedDownSelectionToMppTask4PhysicalIndexScan(is, mppTask, path, finalStats); err != nil {
+			return base.InvalidTask, err
+		}
+		var t base.Task = mppTask
+		if !mppTask.Invalid() {
+			if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
+				return base.InvalidTask, nil
+			}
+			if prop.TaskTp == property.RootTaskType {
+				t = t.ConvertToRootTask(ds.SCtx())
+			}
+		}
+		return t, nil
+	}
+	// Non-covering TiCI index access still needs table probe (IndexLookUp). In this case,
+	// keep the cop task shape and let IndexLookUp wrap TiCI index side by MPP protocol.
+	// Returning a pure MPP IndexScan here would lose base-table columns required by lookup/join.
 	cop := &physicalop.CopTask{
 		IndexPlan:   is,
 		TblColHists: ds.TblColHists,
@@ -2472,6 +2549,29 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 		}
 		tableSel.SetChildren(copTask.TablePlan)
 		copTask.TablePlan = tableSel
+	}
+	return nil
+}
+
+func addPushedDownSelectionToMppTask4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, mppTask *physicalop.MppTask, path *util.AccessPath, finalStats *property.StatsInfo) error {
+	indexConds, tableConds := path.IndexFilters, path.TableFilters
+	tableConds, mppTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
+
+	var newRootConds []expression.Expression
+	pctx := util.GetPushDownCtx(is.SCtx())
+	indexConds, newRootConds = expression.PushDownExprs(pctx, indexConds, is.StoreType)
+	mppTask.RootTaskConds = append(mppTask.RootTaskConds, newRootConds...)
+
+	tableConds, newRootConds = expression.PushDownExprs(pctx, tableConds, is.StoreType)
+	mppTask.RootTaskConds = append(mppTask.RootTaskConds, newRootConds...)
+
+	pushedDownConds := make([]expression.Expression, 0, len(indexConds)+len(tableConds))
+	pushedDownConds = append(pushedDownConds, indexConds...)
+	pushedDownConds = append(pushedDownConds, tableConds...)
+	if len(pushedDownConds) > 0 {
+		sel := physicalop.PhysicalSelection{Conditions: pushedDownConds}.Init(is.SCtx(), finalStats, is.QueryBlockOffset())
+		sel.SetChildren(is)
+		mppTask.SetPlan(sel)
 	}
 	return nil
 }
