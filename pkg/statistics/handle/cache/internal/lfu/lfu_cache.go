@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/dgraph-io/ristretto"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
@@ -89,17 +90,25 @@ func adjustMemCost(totalMemCost int64) (result int64, err error) {
 
 // Get implements statsCacheInner
 func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
-	result, ok := s.cache.Get(tid)
+	result, ok := s.resultKeySet.Get(tid)
 	if !ok {
-		return s.resultKeySet.Get(tid)
+		cached, ok := s.cache.Get(tid)
+		if !ok {
+			return nil, false
+		}
+		return cached.(*statistics.Table), true
 	}
-	return result.(*statistics.Table), ok
+	// Touch the primary cache when the item is present so its frequency still reflects reads,
+	// but return the latest value from resultKeySet because Ristretto applies writes asynchronously.
+	_, _ = s.cache.Get(tid)
+	return result, true
 }
 
 // Put implements statsCacheInner
 func (s *LFU) Put(tblID int64, tbl *statistics.Table) bool {
 	cost := tbl.MemoryUsage().TotalTrackingMemUsage()
 	s.resultKeySet.AddKeyValue(tblID, tbl)
+	failpoint.Inject("beforeLFUCacheSet", func() {})
 	s.addCost(cost)
 	return s.cache.Set(tblID, tbl, cost)
 }

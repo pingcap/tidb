@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/testutil"
 	"github.com/stretchr/testify/require"
@@ -44,6 +45,43 @@ func TestLFUPutGetDel(t *testing.T) {
 	lfu.wait()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 	require.Equal(t, 0, len(lfu.Values()))
+}
+
+func TestLFUGetReturnsLatestValueWhilePrimaryCacheLags(t *testing.T) {
+	lfu, err := NewLFU(1 << 20)
+	require.NoError(t, err)
+
+	oldTable := testutil.NewMockStatisticsTable(1, 0, false, false, false)
+	newTable := testutil.NewMockStatisticsTable(1, 1, true, true, true)
+	lfu.Put(1, oldTable)
+	lfu.wait()
+
+	const fpName = "github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/lfu/beforeLFUCacheSet"
+	require.NoError(t, failpoint.Enable(fpName, "pause"))
+
+	putDone := make(chan struct{})
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(fpName))
+		select {
+		case <-putDone:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for blocked LFU put to finish")
+		}
+	})
+
+	go func() {
+		lfu.Put(1, newTable)
+		close(putDone)
+	}()
+
+	require.Eventually(t, func() bool {
+		tbl, ok := lfu.resultKeySet.Get(1)
+		return ok && tbl.GetIdx(1) != nil
+	}, time.Second, 10*time.Millisecond)
+
+	tbl, ok := lfu.Get(1)
+	require.True(t, ok)
+	require.NotNil(t, tbl.GetIdx(1))
 }
 
 func TestLFUFreshMemUsage(t *testing.T) {

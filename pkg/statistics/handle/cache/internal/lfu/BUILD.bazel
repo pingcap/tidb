@@ -17,6 +17,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "@com_github_dgraph_io_ristretto//:ristretto",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -28,10 +29,11 @@ go_test(
     embed = [":lfu"],
     flaky = True,
     race = "on",
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "//pkg/statistics",
         "//pkg/statistics/handle/cache/internal/testutil",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )
