@@ -225,15 +225,26 @@ where touter.a < (
 )
 order by touter.a, touter.b`
 
-	explainRows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+	explainRows := tk.MustQuery("explain format='brief' " + sql).Rows()
 	foundLocalIndexLookUp := false
+	foundIndexScan := false
+	foundTableRowIDScan := false
 	for _, row := range explainRows {
-		if strings.Contains(row[0].(string), "LocalIndexLookUp") {
+		rowText := fmt.Sprint(row...)
+		if strings.Contains(rowText, "LocalIndexLookUp") {
 			foundLocalIndexLookUp = true
-			break
+		}
+		if strings.Contains(rowText, "idx_a") &&
+			(strings.Contains(rowText, "IndexRangeScan") || strings.Contains(rowText, "IndexFullScan")) {
+			foundIndexScan = true
+		}
+		if strings.Contains(rowText, "TableRowIDScan") {
+			foundTableRowIDScan = true
 		}
 	}
 	require.True(t, foundLocalIndexLookUp)
+	require.True(t, foundIndexScan)
+	require.True(t, foundTableRowIDScan)
 	tk.MustQuery(sql).Check(testkit.Rows("20 1", "24 5"))
 }
 
