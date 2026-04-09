@@ -3212,13 +3212,59 @@ func TestModifyColumnPartitionedTableGlobalIndexConsistency(t *testing.T) {
 	tk.MustQuery("select count(*) from t_global_idx").Check(testkit.Rows("5"))
 }
 
-func hasPartitionInPlan(rows [][]any, partitionName string) bool {
+// hasPartitionInPlan returns true only when some explain row uses exactly the
+// expected partitions.
+// Example: expected "p0" matches "partition:p0".
+// Example: expected "p0" does not match "partition:p0,p1".
+func hasPartitionInPlan(rows [][]any, partitionNames ...string) bool {
 	for _, row := range rows {
-		if strings.Contains(fmt.Sprint(row...), "partition:"+partitionName) {
+		partitions := extractPartitionsFromExplainRow(row)
+		if len(partitions) == 0 {
+			continue
+		}
+		if samePartitionSet(partitions, partitionNames) {
 			return true
 		}
 	}
 	return false
+}
+
+// extractPartitionsFromExplainRow finds the "partition:" part in one explain
+// row and splits it into partition names.
+// Example: "table:t, partition:p0,p1" -> ["p0", "p1"].
+func extractPartitionsFromExplainRow(row []any) []string {
+	for _, cell := range row {
+		for _, segment := range strings.Split(fmt.Sprint(cell), ", ") {
+			if !strings.HasPrefix(segment, "partition:") {
+				continue
+			}
+			partitions := strings.Split(strings.TrimPrefix(segment, "partition:"), ",")
+			result := make([]string, 0, len(partitions))
+			for _, partition := range partitions {
+				partition = strings.TrimSpace(partition)
+				if partition != "" {
+					result = append(result, partition)
+				}
+			}
+			return result
+		}
+	}
+	return nil
+}
+
+// samePartitionSet compares two partition lists as sets.
+// Order does not matter, but extra or missing partitions are not allowed.
+// Example: ["p1", "p0"] == ["p0", "p1"].
+// Example: ["p0", "p1"] != ["p0"].
+func samePartitionSet(actual, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	actual = slices.Clone(actual)
+	expected = slices.Clone(expected)
+	slices.Sort(actual)
+	slices.Sort(expected)
+	return slices.Equal(actual, expected)
 }
 
 // Covers modify-column on LIST COLUMNS and KEY partitioned tables and verifies index-read correctness after type change.
