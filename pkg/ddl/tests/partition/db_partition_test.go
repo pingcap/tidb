@@ -3372,6 +3372,21 @@ func TestModifyColumnPartitionedTableKeyPartitionWhitelist(t *testing.T) {
 		tk.MustQuery(`select count(*) from t_key_wl_str where a in ('a','bbb','cccc')`).Check(testkit.Rows("3"))
 	})
 
+	t.Run("string collation change rejected", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_key_wl_str_collate")
+		tk.MustExec(`create table t_key_wl_str_collate (
+			a varchar(8) character set utf8mb4 collate utf8mb4_bin,
+			b int
+		) partition by key(a) partitions 3`)
+		tk.MustExec(`insert into t_key_wl_str_collate values ('a',1),('bbb',2),('cccc',3)`)
+		tk.MustGetErrCode(
+			`alter table t_key_wl_str_collate modify column a varchar(32) character set utf8mb4 collate utf8mb4_general_ci`,
+			errno.ErrUnsupportedDDLOperation,
+		)
+	})
+
 	t.Run("float to double rejected", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
