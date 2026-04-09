@@ -3214,11 +3214,11 @@ func TestModifyColumnPartitionedTableGlobalIndexConsistency(t *testing.T) {
 	tk.MustQuery("select count(*) from t_global_idx").Check(testkit.Rows("5"))
 }
 
-// hasPartitionInPlan returns true only when some explain row uses exactly the
-// expected partitions.
+// hasExactPartitionsInPlan returns true only when some explain row uses exactly
+// the expected partition set.
 // Example: expected "p0" matches "partition:p0".
 // Example: expected "p0" does not match "partition:p0,p1".
-func hasPartitionInPlan(rows [][]any, partitionNames ...string) bool {
+func hasExactPartitionsInPlan(rows [][]any, partitionNames ...string) bool {
 	for _, row := range rows {
 		partitions := extractPartitionsFromExplainRow(row)
 		if len(partitions) == 0 {
@@ -3802,10 +3802,10 @@ func TestModifyColumnPartitionedTableExpressionWhitelist(t *testing.T) {
 		)`)
 		tk.MustExec(`insert into t_expr_todays values ('2024-01-01 00:00:00',1),('2024-02-01 00:00:00',2)`)
 		beforeToDays := tk.MustQuery(`explain format='brief' select * from t_expr_todays where dt = '2024-01-01 00:00:00'`).Rows()
-		require.True(t, hasPartitionInPlan(beforeToDays, "p0"), "before modify to_days should prune p0")
+		require.True(t, hasExactPartitionsInPlan(beforeToDays, "p0"), "before modify to_days should prune p0")
 		tk.MustExec(`alter table t_expr_todays modify column dt datetime(3)`)
 		afterToDays := tk.MustQuery(`explain format='brief' select * from t_expr_todays where dt = '2024-01-01 00:00:00'`).Rows()
-		require.True(t, hasPartitionInPlan(afterToDays, "p0"), "after modify to_days should still prune p0")
+		require.True(t, hasExactPartitionsInPlan(afterToDays, "p0"), "after modify to_days should still prune p0")
 		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 		tk.MustExec(`admin check table t_expr_todays`)
 	})
@@ -3855,10 +3855,10 @@ func TestModifyColumnPartitionedTableExpressionWhitelist(t *testing.T) {
 		)`)
 		tk.MustExec(`insert into t_expr_extract values ('00:00:10',1),('00:00:40',2)`)
 		beforeExtract := tk.MustQuery(`explain format='brief' select * from t_expr_extract where tm = '00:00:10'`).Rows()
-		require.True(t, hasPartitionInPlan(beforeExtract, "p0"), "before modify extract should prune p0")
+		require.True(t, hasExactPartitionsInPlan(beforeExtract, "p0"), "before modify extract should prune p0")
 		tk.MustExec(`alter table t_expr_extract modify column tm time(3)`)
 		afterExtract := tk.MustQuery(`explain format='brief' select * from t_expr_extract where tm = '00:00:10'`).Rows()
-		require.True(t, hasPartitionInPlan(afterExtract, "p0"), "after modify extract should still prune p0")
+		require.True(t, hasExactPartitionsInPlan(afterExtract, "p0"), "after modify extract should still prune p0")
 		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 		tk.MustExec(`admin check table t_expr_extract`)
 	})
