@@ -34,11 +34,7 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/sem",
         "//pkg/util/stringutil",
-<<<<<<< HEAD
-=======
         "//pkg/util/tls",
-        "@com_github_google_btree//:btree",
->>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
         "@com_github_lestrrat_go_jwx_v2//jwk",
         "@com_github_lestrrat_go_jwx_v2//jws",
         "@com_github_lestrrat_go_jwx_v2//jwt",

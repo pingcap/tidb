@@ -111,11 +111,8 @@ var tableIDMap = map[string]int64{
 	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
 	tableNameSessionConnectAttrs:             autoid.PerformanceSchemaDBID + 32,
 	tableNameSessionAccountConnectAttrs:      autoid.PerformanceSchemaDBID + 33,
-<<<<<<< HEAD
-=======
-	tableNameGlobalVariables:                 autoid.PerformanceSchemaDBID + 34,
-	tableNameStatusByConnection:              autoid.PerformanceSchemaDBID + 35,
->>>>>>> af24a62da27 (infoschema, server: add per connection TLS status (#62563))
+	// tableNameGlobalVariables
+	tableNameStatusByConnection: autoid.PerformanceSchemaDBID + 35,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
