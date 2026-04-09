@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -1173,10 +1174,13 @@ func cleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 		logutil.DDLLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.Stringer("job", job), zap.Error(err))
 	}
 
-	// Clean up both backfill progress and total counter metrics to avoid unbounded growth.
-	// This is safe to do even if the metrics were never created (DeleteLabelValues is a no-op for non-existent labels).
+	// Clean up backfill metrics registered by tableID.
+	// For non-partitioned tables and partition DDL operations (reorganize, etc.),
+	// the metric is registered under job.TableID (the logical table ID).
+	// For add-index on partitioned tables, metrics are registered per partition ID;
+	// those are cleaned up later when applyCreateTable rebuilds the infoschema.
 	if job != nil {
-		cleanupBackfillMetrics(job.Type, job.SchemaName, job.TableName)
+		metrics.DDLClearBackfillMetrics(job.TableID)
 	}
 }
 

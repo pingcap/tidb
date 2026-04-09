@@ -342,6 +342,22 @@ func DDLClearBackfillMetrics(tableID int64) {
 	}
 }
 
+// GetBackfillLabelsForTest returns the registered label set for the given table ID.
+// It is only used in tests.
+func GetBackfillLabelsForTest(tableID int64) map[string]struct{} {
+	backfillMetricsRegistry.mu.Lock()
+	defer backfillMetricsRegistry.mu.Unlock()
+	set, ok := backfillMetricsRegistry.byTblID[tableID]
+	if !ok {
+		return nil
+	}
+	out := make(map[string]struct{}, len(set))
+	for k := range set {
+		out[k] = struct{}{}
+	}
+	return out
+}
+
 // RegisterLightningCommonMetricsForDDL returns the registered common metrics.
 func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
 	mu.Lock()

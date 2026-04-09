@@ -17,65 +17,78 @@ package ddl
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/stretchr/testify/require"
 )
 
-func TestBackfillMetricsCleanupAddIndex(t *testing.T) {
-	progressLabel := generateReorgLabel(metrics.LblAddIndex, "test_db", "test_table", "idx1")
-	mergeProgressLabel := generateReorgLabel(metrics.LblAddIndexMerge, "test_db", "test_table", "idx1")
-	totalLabel := generateReorgLabel(metrics.LblAddIdxRate, "test_db", "test_table", "idx1")
-	mergeTotalLabel := generateReorgLabel(metrics.LblMergeTmpIdxRate, "test_db", "test_table", "idx1")
-	conflictLabel := generateReorgLabel(metrics.LblAddIdxRate+"-conflict", "test_db", "test_table", "idx1")
+func TestBackfillMetricsCleanupByTableID(t *testing.T) {
+	const tableID int64 = 12345
 
-	getBackfillProgressByLabel(metrics.LblAddIndex, "test_db", "test_table", "idx1").Set(50)
-	getBackfillProgressByLabel(metrics.LblAddIndexMerge, "test_db", "test_table", "idx1").Set(25)
-	getBackfillTotalByLabel(metrics.LblAddIdxRate, "test_db", "test_table", "idx1").Add(100)
-	getBackfillTotalByLabel(metrics.LblMergeTmpIdxRate, "test_db", "test_table", "idx1").Add(20)
-	getBackfillTotalByLabel(metrics.LblAddIdxRate+"-conflict", "test_db", "test_table", "idx1").Add(1)
+	// Register progress and total metrics for an add-index backfill.
+	progressGauge := getBackfillProgressByTableID(tableID, metrics.LblAddIndex, "test_db", "test_table", "idx1")
+	progressGauge.Set(50.0)
 
-	require.True(t, hasActiveBackfillProgressLabel(progressLabel))
-	require.True(t, hasActiveBackfillProgressLabel(mergeProgressLabel))
-	require.True(t, hasActiveBackfillTotalLabel(totalLabel))
-	require.True(t, hasActiveBackfillTotalLabel(mergeTotalLabel))
-	require.True(t, hasActiveBackfillTotalLabel(conflictLabel))
+	totalCounter := getBackfillTotalByTableID(tableID, metrics.LblAddIdxRate, "test_db", "test_table", "idx1")
+	totalCounter.Add(100.0)
 
-	cleanupBackfillMetrics(model.ActionAddIndex, "test_db", "test_table")
+	conflictCounter := getBackfillTotalByTableID(tableID, metrics.LblAddIdxRate+"-conflict", "test_db", "test_table", "idx1")
+	conflictCounter.Add(1.0)
 
-	require.False(t, hasActiveBackfillProgressLabel(progressLabel))
-	require.False(t, hasActiveBackfillProgressLabel(mergeProgressLabel))
-	require.False(t, hasActiveBackfillTotalLabel(totalLabel))
-	require.False(t, hasActiveBackfillTotalLabel(mergeTotalLabel))
-	require.False(t, hasActiveBackfillTotalLabel(conflictLabel))
+	// Verify the metrics are registered in the registry.
+	labels := metrics.GetBackfillLabelsForTest(tableID)
+	require.NotEmpty(t, labels, "expected metrics to be registered for tableID %d", tableID)
+
+	// Clear metrics using the tableID-based cleanup.
+	metrics.DDLClearBackfillMetrics(tableID)
+
+	// After cleanup, the registry should have no entries for this tableID.
+	labels = metrics.GetBackfillLabelsForTest(tableID)
+	require.Empty(t, labels, "expected no metrics after cleanup for tableID %d, got %v", tableID, labels)
 }
 
-func TestBackfillMetricsCleanupModifyColumn(t *testing.T) {
-	progressLabel := generateReorgLabel(metrics.LblModifyColumn, "test_db", "test_table", "col_a")
-	totalLabel := generateReorgLabel(metrics.LblUpdateColRate, "test_db", "test_table", "col_a")
+func TestBackfillMetricsCleanupPartitionedTable(t *testing.T) {
+	const logicalTableID int64 = 100
+	partIDs := []int64{101, 102, 103}
 
-	getBackfillProgressByLabel(metrics.LblModifyColumn, "test_db", "test_table", "col_a").Set(10)
-	getBackfillTotalByLabel(metrics.LblUpdateColRate, "test_db", "test_table", "col_a").Add(1)
+	// Simulate metrics registered per partition (as add-index does).
+	for _, pid := range partIDs {
+		getBackfillProgressByTableID(pid, metrics.LblAddIndex, "test_db", "test_table", "idx1").Set(10.0)
+		getBackfillTotalByTableID(pid, metrics.LblAddIdxRate, "test_db", "test_table", "idx1").Add(50.0)
+	}
 
-	require.True(t, hasActiveBackfillProgressLabel(progressLabel))
-	require.True(t, hasActiveBackfillTotalLabel(totalLabel))
+	// Verify all partition metrics are registered.
+	for _, pid := range partIDs {
+		labels := metrics.GetBackfillLabelsForTest(pid)
+		require.NotEmpty(t, labels, "expected metrics for partition %d", pid)
+	}
 
-	cleanupBackfillMetrics(model.ActionModifyColumn, "test_db", "test_table")
+	// Clear each partition individually (as applyCreateTable does).
+	for _, pid := range partIDs {
+		metrics.DDLClearBackfillMetrics(pid)
+	}
 
-	require.False(t, hasActiveBackfillProgressLabel(progressLabel))
-	require.False(t, hasActiveBackfillTotalLabel(totalLabel))
+	// All partition metrics should be gone.
+	for _, pid := range partIDs {
+		labels := metrics.GetBackfillLabelsForTest(pid)
+		require.Empty(t, labels, "expected no metrics after cleanup for partition %d", pid)
+	}
+
+	// Logical table should also have no stale entries.
+	labels := metrics.GetBackfillLabelsForTest(logicalTableID)
+	require.Empty(t, labels, "expected no metrics for logical table")
 }
 
-func hasActiveBackfillProgressLabel(label string) bool {
-	backfillLabelsMu.Lock()
-	_, ok := activeBackfillProgressLabels[label]
-	backfillLabelsMu.Unlock()
-	return ok
-}
+func TestBackfillMetricsIdempotentCleanup(t *testing.T) {
+	const tableID int64 = 99999
 
-func hasActiveBackfillTotalLabel(label string) bool {
-	backfillLabelsMu.Lock()
-	_, ok := activeBackfillTotalLabels[label]
-	backfillLabelsMu.Unlock()
-	return ok
+	// Cleanup on a table that was never registered should be a no-op (no panic).
+	metrics.DDLClearBackfillMetrics(tableID)
+
+	// Register and cleanup twice.
+	getBackfillProgressByTableID(tableID, metrics.LblModifyColumn, "test_db", "test_table", "col_a").Set(75.0)
+	metrics.DDLClearBackfillMetrics(tableID)
+	metrics.DDLClearBackfillMetrics(tableID) // second cleanup should be safe
+
+	labels := metrics.GetBackfillLabelsForTest(tableID)
+	require.Empty(t, labels)
 }
