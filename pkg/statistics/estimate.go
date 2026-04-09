@@ -153,29 +153,23 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 
 func estimateGlobalSingletonInRange(ndvSketches, singletonSketches []*FMSketch, outOfRangeNDVSketch *FMSketch) int64 {
 	var globalSingleton int64
-	var prefixNDV *FMSketch
+	var prefixNDVSketch *FMSketch
 	for i := range ndvSketches {
-		other := mergeCopiedFMSketch(nil, prefixNDV)
+		other := mergeCopiedFMSketch(nil, prefixNDVSketch)
 		for j := i + 1; j < len(ndvSketches); j++ {
 			other = mergeCopiedFMSketch(other, ndvSketches[j])
 		}
 		other = mergeCopiedFMSketch(other, outOfRangeNDVSketch)
 
-		ndvOther := int64(0)
-		if other != nil {
-			ndvOther = other.NDV()
-		}
+		ndvOther := other.NDV()
 		other = mergeCopiedFMSketch(other, singletonSketches[i])
 
-		ndvUnion := int64(0)
-		if other != nil {
-			ndvUnion = other.NDV()
-		}
+		ndvUnion := other.NDV()
 		// FM sketch NDV estimates are not monotone under merge, so the estimated
 		// union can be smaller than ndvOther. Clamp the per-node contribution to 0.
 		// In practice, this appears to be fairly rare.
 		globalSingleton += max(0, ndvUnion-ndvOther)
-		prefixNDV = mergeCopiedFMSketch(prefixNDV, ndvSketches[i])
+		prefixNDVSketch = mergeCopiedFMSketch(prefixNDVSketch, ndvSketches[i])
 	}
 	return globalSingleton
 }
