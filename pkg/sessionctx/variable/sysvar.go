@@ -681,6 +681,16 @@ var defaultSysVars = []*SysVar{
 	}},
 
 	/* The system variables below have GLOBAL scope  */
+	{Scope: vardef.ScopeGlobal, Name: vardef.PerformanceSchemaSessionConnectAttrsSize,
+		Value: strconv.FormatInt(vardef.DefConnectAttrsSize, 10),
+		Type:  vardef.TypeInt, MinValue: -1, MaxValue: 65536,
+		GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+			return strconv.FormatInt(vardef.ConnectAttrsSize.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.ConnectAttrsSize.Store(TidbOptInt64(val, vardef.DefConnectAttrsSize))
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.MaxPreparedStmtCount, Value: strconv.FormatInt(vardef.DefMaxPreparedStmtCount, 10), Type: vardef.TypeInt, MinValue: -1, MaxValue: 1048576,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			num, err := strconv.ParseInt(val, 10, 64)
@@ -1548,6 +1558,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableNonPreparedPlanCacheForDML, Value: BoolToOnOff(vardef.DefTiDBEnableNonPreparedPlanCacheForDML), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableNonPreparedPlanCacheForDML = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheStrategy, Value: vardef.DefTiDBPlanCacheStrategy, Type: vardef.TypeEnum, PossibleValues: []string{vardef.TiDBPlanCacheStrategyAll, vardef.TiDBPlanCacheStrategyHintOnly}, SetSession: func(s *SessionVars, val string) error {
+		s.PlanCacheStrategy = val
 		return nil
 	}},
 	{
@@ -2438,6 +2452,10 @@ var defaultSysVars = []*SysVar{
 		s.SetEnableIndexMerge(TiDBOptOn(val))
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableNoBackslashEscapesInLike, Value: BoolToOnOff(vardef.DefTiDBEnableNoBackslashEscapesInLike), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableNoBackslashEscapesInLike = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableTablePartition, Value: vardef.On, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, "AUTO"}, Validation: func(vars *SessionVars, s string, s2 string, flag vardef.ScopeFlag) (string, error) {
 		if s == vardef.Off {
 			vars.StmtCtx.AppendWarning(errors.NewNoStackError("tidb_enable_table_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
@@ -2516,6 +2534,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableNoDecorrelateInSelect, Value: BoolToOnOff(vardef.DefOptEnableNoDecorrelateInSelect), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableNoDecorrelateInSelect = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableAlternativeLogicalPlans, Value: BoolToOnOff(vardef.DefOptEnableAlternativeLogicalPlans), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAlternativeLogicalPlans = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictDoubleTypeCheck, Value: BoolToOnOff(vardef.DefEnableStrictDoubleTypeCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -3404,6 +3426,10 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheInvalidationOnFreshStats, Value: BoolToOnOff(vardef.DefTiDBPlanCacheInvalidationOnFreshStats), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PlanCacheInvalidationOnFreshStats = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPlanCacheSkipStatsOnBinding, Value: BoolToOnOff(vardef.DefTiDBPlanCacheSkipStatsOnBinding), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.PlanCacheSkipStatsOnBinding = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiFlashReplicaRead, Value: vardef.DefTiFlashReplicaRead, Type: vardef.TypeEnum, PossibleValues: []string{vardef.DefTiFlashReplicaRead, vardef.ClosestAdaptiveStr, vardef.ClosestReplicasStr},

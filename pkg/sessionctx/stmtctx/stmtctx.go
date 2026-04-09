@@ -472,6 +472,16 @@ type StatementContext struct {
 	UseDynamicPruneMode bool
 	// ColRefFromPlan mark the column ref used by assignment in update statement.
 	ColRefFromUpdatePlan intset.FastIntSet
+	// AlternativeLogicalPlanDecorrelatedApply indicates whether the current logical
+	// optimization round decorrelated at least one Apply into Join.
+	AlternativeLogicalPlanDecorrelatedApply bool
+	// AlternativeLogicalPlanSameOrderIndexJoin indicates whether the current first
+	// round already produced a same-order index join candidate for a decorrelated Apply.
+	AlternativeLogicalPlanSameOrderIndexJoin bool
+	// AlternativeLogicalPlanOrderAwareJoinReorder indicates whether at least one
+	// logical build round produced an order-aware join reorder candidate that is
+	// worth exploring in a dedicated alternative round.
+	AlternativeLogicalPlanOrderAwareJoinReorder bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -548,7 +558,6 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
 	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
-	sc.RelatedTableIDs = make(map[int64]struct{})
 	return sc
 }
 
@@ -644,6 +653,32 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
 	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
+}
+
+// ResetAlternativeLogicalPlanSignals clears the statement-local signals used by the
+// alternative logical plan feature.
+func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = false
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
+}
+
+// MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
+// been decorrelated into a Join in the current round.
+func (sc *StatementContext) MarkAlternativeLogicalPlanDecorrelatedApply() {
+	sc.AlternativeLogicalPlanDecorrelatedApply = true
+}
+
+// MarkAlternativeLogicalPlanSameOrderIndexJoin records that the current first round
+// has already produced a same-order index join candidate for a decorrelated Apply.
+func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
+	sc.AlternativeLogicalPlanSameOrderIndexJoin = true
+}
+
+// MarkAlternativeLogicalPlanOrderAwareJoinReorder records that the current
+// logical build round produced an order-aware join reorder candidate.
+func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
+	sc.AlternativeLogicalPlanOrderAwareJoinReorder = true
 }
 
 // CtxID returns the context id of the statement

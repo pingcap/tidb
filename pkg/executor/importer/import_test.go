@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/user"
@@ -580,6 +581,29 @@ func TestParseFileType(t *testing.T) {
 			require.Equal(t, tc.expected, actual)
 		})
 	}
+
+	t.Run("unsupported parser format returns unsupported-format error", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		filePath := filepath.Join(tmpDir, "data.txt")
+		require.NoError(t, os.WriteFile(filePath, []byte("1\n"), 0o644))
+
+		_, err := newLoadDataParser(
+			context.Background(),
+			zap.NewNop(),
+			"unsupported",
+			0,
+			nil,
+			&config.CSVConfig{},
+			nil,
+			LoadDataReaderInfo{
+				Opener: func(context.Context) (io.ReadSeekCloser, error) {
+					return os.Open(filePath)
+				},
+			},
+		)
+		require.True(t, exeerrors.ErrLoadDataUnsupportedFormat.Equal(err))
+		require.False(t, exeerrors.ErrLoadDataWrongFormatConfig.Equal(err))
+	})
 }
 
 func TestGetDefMaxEngineSize(t *testing.T) {

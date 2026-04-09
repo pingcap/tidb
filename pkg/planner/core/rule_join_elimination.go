@@ -49,6 +49,35 @@ func appendUniqueCorrelatedCols(target []*expression.Column, corCols []*expressi
 	return target
 }
 
+// buildOuterJoinNullExtendedProjection rewrites an outer join whose inner child is guaranteed
+// to produce zero rows into a projection on top of the outer child.
+// Columns from the original inner side are replaced with typed NULLs.
+func buildOuterJoinNullExtendedProjection(
+	join *logicalop.LogicalJoin,
+	outerPlan base.LogicalPlan,
+) base.LogicalPlan {
+	exprs := make([]expression.Expression, 0, join.Schema().Len())
+	allFromOuter := true
+	for _, col := range join.Schema().Columns {
+		if outerPlan.Schema().Contains(col) {
+			exprs = append(exprs, col.Clone())
+			continue
+		}
+		allFromOuter = false
+		retType := col.RetType.Clone()
+		retType.DelFlag(mysql.NotNullFlag)
+		exprs = append(exprs, expression.NewNullWithFieldType(retType))
+	}
+	if allFromOuter {
+		return outerPlan
+	}
+	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(join.SCtx(), join.QueryBlockOffset())
+	proj.SetSchema(join.Schema().Clone())
+	proj.SetOutputNames(join.OutputNames().Shallow())
+	proj.SetChildren(outerPlan)
+	return proj
+}
+
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
 //  1. outer join elimination: For example left outer join, if the parent doesn't use the
 //     columns from right table and the join key of right table(the inner table) is a unique
@@ -69,6 +98,9 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 
 	outerPlan := p.Children()[1^innerChildIdx]
 	innerPlan := p.Children()[innerChildIdx]
+	if innerDual, ok := innerPlan.(*logicalop.LogicalTableDual); ok && innerDual.RowCount == 0 {
+		return buildOuterJoinNullExtendedProjection(p, outerPlan), true, nil
+	}
 
 	// in case of count(*) FROM R LOJ S, the parentCols is empty, but
 	// still need to proceed to check whether we can eliminate outer join.

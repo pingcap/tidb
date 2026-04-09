@@ -73,8 +73,9 @@ type CursorRUV2Tracker struct {
 	ruDetails         *clientutil.RUDetails
 	resourceGroupName string
 	weights           execdetails.RUV2Weights
-	reportedTiDBRU    int64
+	reportedTiDBRU    float64
 	reportedTiKVRUV2  float64
+	reportedTiFlashRU float64
 	mu                sync.Mutex
 }
 
@@ -89,6 +90,9 @@ func NewCursorRUV2Tracker(
 	if metrics == nil && ruDetails == nil {
 		return nil
 	}
+	if metrics != nil && metrics.Bypass() {
+		return nil
+	}
 	tracker := &CursorRUV2Tracker{
 		reporter:          reporter,
 		resourceGroupName: resourceGroupName,
@@ -101,6 +105,7 @@ func NewCursorRUV2Tracker(
 	}
 	if ruDetails != nil {
 		tracker.reportedTiKVRUV2 = ruDetails.TiKVRUV2()
+		tracker.reportedTiFlashRU = ruDetails.TiflashRU()
 	}
 	return tracker
 }
@@ -119,26 +124,34 @@ func (t *CursorRUV2Tracker) reportDelta() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	var currentTiDBRU int64
+	var currentTiDBRU float64
 	if t.metrics != nil {
 		currentTiDBRU = t.metrics.CalculateRUValues(t.weights)
 	}
 	currentTiKVRUV2 := t.reportedTiKVRUV2
+	currentTiFlashRU := t.reportedTiFlashRU
 	if t.ruDetails != nil {
 		currentTiKVRUV2 = t.ruDetails.TiKVRUV2()
+		currentTiFlashRU = t.ruDetails.TiflashRU()
 	}
 
 	if t.reporter != nil && len(t.resourceGroupName) > 0 {
-		if deltaTiKVRUV2 := currentTiKVRUV2 - t.reportedTiKVRUV2; deltaTiKVRUV2 > 0 {
-			t.reporter.ReportTiKVRUV2Consumption(t.resourceGroupName, deltaTiKVRUV2)
-		}
-		if deltaTiDBRU := currentTiDBRU - t.reportedTiDBRU; deltaTiDBRU > 0 {
-			t.reporter.ReportTiDBRUV2Consumption(t.resourceGroupName, float64(deltaTiDBRU))
+		deltaTiKVRUV2 := currentTiKVRUV2 - t.reportedTiKVRUV2
+		deltaTiDBRU := currentTiDBRU - t.reportedTiDBRU
+		deltaTiFlashRU := currentTiFlashRU - t.reportedTiFlashRU
+		if deltaTiKVRUV2 > 0 || deltaTiDBRU > 0 || deltaTiFlashRU > 0 {
+			t.reporter.ReportRUV2Consumption(
+				t.resourceGroupName,
+				max(deltaTiKVRUV2, 0),
+				max(deltaTiDBRU, 0),
+				max(deltaTiFlashRU, 0),
+			)
 		}
 	}
 
 	t.reportedTiDBRU = currentTiDBRU
 	t.reportedTiKVRUV2 = currentTiKVRUV2
+	t.reportedTiFlashRU = currentTiFlashRU
 }
 
 type cursorRUV2Trackable interface {

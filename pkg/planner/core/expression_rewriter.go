@@ -755,11 +755,14 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 	b := planCtx.builder
 	ci := b.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
+	asScalar := er.asScalar
+	er.asScalar = true
 	v.L.Accept(er)
 	if er.err != nil {
 		return v, true
 	}
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
+	er.asScalar = asScalar
 	subq, ok := v.R.(*ast.SubqueryExpr)
 	if !ok {
 		er.err = errors.Errorf("Unknown compare type %T", v.R)
@@ -841,10 +844,11 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 		useMin := ((v.Op == opcode.LT || v.Op == opcode.LE) && v.All) || ((v.Op == opcode.GT || v.Op == opcode.GE) && !v.All)
 		er.handleOtherComparableSubq(planCtx, lexpr, rexpr, np, useMin, v.Op.String(), v.All, noDecorrelate)
 	}
+	er.ctxStackPop(1)
 	if er.asScalar {
 		// The parent expression only use the last column in schema, which represents whether the condition is matched.
-		er.ctxStack[len(er.ctxStack)-1] = planCtx.plan.Schema().Columns[planCtx.plan.Schema().Len()-1]
-		er.ctxNameStk[len(er.ctxNameStk)-1] = planCtx.plan.OutputNames()[planCtx.plan.Schema().Len()-1]
+		col := planCtx.plan.Schema().Columns[planCtx.plan.Schema().Len()-1]
+		er.ctxStackAppend(col, planCtx.plan.OutputNames()[planCtx.plan.Schema().Len()-1])
 	}
 	return v, true
 }
@@ -2258,6 +2262,20 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 		return
 	}
 
+	escape := v.Escape
+	evalCtx := er.sctx.GetEvalCtx()
+	if !v.EscapeExplicit && evalCtx.SQLMode().HasNoBackslashEscapesMode() &&
+		evalCtx.GetOptionalPropSet().Contains(exprctx.OptPropSessionVars) {
+		sessionVars, err := expropt.SessionVarsPropReader{}.GetSessionVars(evalCtx)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if sessionVars.EnableNoBackslashEscapesInLike {
+			escape = 0
+		}
+	}
+
 	char, col := er.sctx.GetCharsetInfo()
 	var function expression.Expression
 	fieldType := &types.FieldType{}
@@ -2270,7 +2288,7 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 			return
 		}
 		if !isNull {
-			patValue, patTypes := stringutil.CompilePattern(patString, v.Escape)
+			patValue, patTypes := stringutil.CompilePattern(patString, escape)
 			if stringutil.IsExactMatch(patTypes) && er.ctxStack[l-2].GetType(er.sctx.GetEvalCtx()).EvalType() == types.ETString {
 				op := ast.EQ
 				if v.Not {
@@ -2289,9 +2307,9 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 		if !v.IsLike {
 			funcName = ast.Ilike
 		}
-		types.DefaultTypeForValue(int(v.Escape), fieldType, char, col)
+		types.DefaultTypeForValue(int(escape), fieldType, char, col)
 		function = er.notToExpression(v.Not, funcName, v.Type.DeepCopy(),
-			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(v.Escape)), RetType: fieldType})
+			er.ctxStack[l-2], er.ctxStack[l-1], &expression.Constant{Value: types.NewIntDatum(int64(escape)), RetType: fieldType})
 	}
 
 	er.ctxStackPop(2)
@@ -2449,9 +2467,15 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 				retTp.SetDecimal(0)
 				types.SetBinChsClnFlag(retTp)
 			}
+			lhsTp := lhs.GetType(er.sctx.GetEvalCtx())
+			// Keep the IFNULL call when its inferred return type differs from the non-null column.
+			// Replacing it with CAST can change comparison semantics for mixed-type expressions.
+			if lhsTp.GetType() != retTp.GetType() || lhsTp.GetCharset() != retTp.GetCharset() || lhsTp.GetCollate() != retTp.GetCollate() ||
+				lhsTp.GetFlen() != retTp.GetFlen() || lhsTp.GetDecimal() != retTp.GetDecimal() || lhsTp.GetFlag() != retTp.GetFlag() {
+				return false
+			}
 			er.ctxStackPop(len(v.Args))
-			casted := expression.BuildCastFunction(er.sctx, lhs, retTp)
-			er.ctxStackAppend(casted, types.EmptyName)
+			er.ctxStackAppend(lhs, types.EmptyName)
 			return true
 		}
 
@@ -2720,8 +2744,6 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 	switch x := p.(type) {
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
-	case *logicalop.LogicalApply:
-		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *logicalop.LogicalJoin:
 		if x.FullSchema != nil {
 			idx, err := expression.FindFieldName(x.FullNames, v)
@@ -2732,6 +2754,20 @@ func findFieldNameFromNaturalUsingJoin(p base.LogicalPlan, v *ast.ColumnName) (c
 				return x.FullSchema.Columns[idx], x.FullNames[idx], nil
 			}
 		}
+	case *logicalop.LogicalApply:
+		// LogicalApply embeds LogicalJoin, so it also has FullSchema/FullNames for USING/NATURAL joins.
+		// When FullSchema is nil, treat Apply as a transparent wrapper and recurse into the outer
+		// (left) child, which may itself be a LogicalJoin with FullSchema for a USING/NATURAL join.
+		if x.FullSchema == nil {
+			return findFieldNameFromNaturalUsingJoin(x.Children()[0], v)
+		}
+		idx, err := expression.FindFieldName(x.FullNames, v)
+		if err != nil {
+			return nil, nil, err
+		}
+		if idx >= 0 {
+			return x.FullSchema.Columns[idx], x.FullNames[idx], nil
+		}
 	}
 	return nil, nil, nil
 }
@@ -2741,6 +2777,18 @@ func resolveRedundantColumnFromNaturalUsingJoinPlan(p base.LogicalPlan, col *exp
 	case *logicalop.LogicalLimit, *logicalop.LogicalSelection, *logicalop.LogicalTopN, *logicalop.LogicalSort, *logicalop.LogicalMaxOneRow:
 		// These nodes preserve child's column identity; continue tracing down.
 		return resolveRedundantColumnFromNaturalUsingJoinPlan(p.Children()[0], col)
+	case *logicalop.LogicalApply:
+		// LogicalApply embeds LogicalJoin, so handle it the same way for USING/NATURAL remapping.
+		if x.JoinType == base.InnerJoin && x.FullSchema != nil && x.FullSchema.Contains(col) {
+			if mappedCol, mappedName := x.ResolveRedundantColumn(col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
+		for _, child := range x.Children() {
+			if mappedCol, mappedName := resolveRedundantColumnFromNaturalUsingJoinPlan(child, col); mappedCol != nil {
+				return mappedCol, mappedName
+			}
+		}
 	case *logicalop.LogicalJoin:
 		// Remapping is only defined for inner JOIN ... USING/NATURAL semantics.
 		// When an ancestor join contains this column but has no mapping, continue

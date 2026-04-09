@@ -12,7 +12,6 @@ go_library(
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/meta/model",
-        "//pkg/metrics",
         "//pkg/parser",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",

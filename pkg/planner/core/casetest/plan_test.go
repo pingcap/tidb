@@ -428,6 +428,14 @@ func TestHandleEQAll(t *testing.T) {
 		tk.MustQuery("select c1 from t2 where (c1 = all (select /*+ use_INDEX(t2, i1) */ c1 from t2))").Check(testkit.Rows("7", "7"))
 		tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ IGNORE_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
 		tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ use_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (c int)")
+		tk.MustExec("insert into t values (1)")
+
+		expr := "(not exists (select 1 from t)) <= all (select c from t)"
+		tk.MustQuery("select " + expr).Check(testkit.Rows("1"))
+		tk.MustQuery("select * from t where " + expr).Check(testkit.Rows("1"))
+		tk.MustNotHavePlan("select * from t where "+expr, "TableDual")
 	})
 }
 
@@ -440,6 +448,9 @@ func TestOuterJoinElimination(t *testing.T) {
 		tk.MustExec(`create table t2_uk (a int, b int, c int, unique key(a))`)
 		tk.MustExec(`create table t2_nnuk (a int not null, b int, c int, unique key(a))`)
 		tk.MustExec(`create table t2_pk (a int, b int, c int, primary key(a))`)
+
+		tk.MustNotHavePlan("select * from t1 left join t2 on false", "Join")
+		tk.MustNotHavePlan("select * from t1 right join t2 on false", "Join")
 
 		// only when t2.a has unique attribute, we can eliminate the outer join.
 		// nullable unique index is not allowed to trigger the outer join elinimation.

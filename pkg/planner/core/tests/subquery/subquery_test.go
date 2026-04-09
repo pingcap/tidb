@@ -27,22 +27,22 @@ func TestCollateSubQuery(t *testing.T) {
 	tk.MustExec("create table t(id int, col varchar(100), key ix(col)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("create table t1(id varchar(100)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	samePlan := testkit.Rows(
-		"IndexHashJoin 8000.00 root  inner join, inner:IndexLookUp, outer key:Column#8, inner key:test.t.col, equal cond:eq(Column#8, test.t.col)",
-		"├─HashAgg(Build) 6400.00 root  group by:Column#13, funcs:firstrow(Column#13)->Column#8",
-		"│ └─TableReader 6400.00 root  data:HashAgg",
-		"│   └─HashAgg 6400.00 cop[tikv]  group by:cast(test.t1.id, var_string(100)), ",
-		"│     └─Selection 8000.00 cop[tikv]  not(isnull(cast(test.t1.id, var_string(100))))",
-		"│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp(Probe) 8000.00 root  ",
-		"  ├─Selection(Build) 8000.00 cop[tikv]  not(isnull(test.t.col))",
-		"  │ └─IndexRangeScan 8008.01 cop[tikv] table:t, index:ix(col) range: decided by [eq(test.t.col, Column#8)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 8000.00 cop[tikv] table:t keep order:false, stats:pseudo")
-	tk.MustQuery(`explain format="brief" select * from t use index(ix) where col in (select cast(id as char) from t1);`).
+		"IndexHashJoin root  inner join, inner:IndexLookUp, outer key:Column, inner key:test.t.col, equal cond:eq(Column, test.t.col)",
+		"├─HashAgg(Build) root  group by:Column, funcs:firstrow(Column)->Column",
+		"│ └─TableReader root  data:HashAgg",
+		"│   └─HashAgg cop[tikv]  group by:cast(test.t1.id, var_string(100)), ",
+		"│     └─Selection cop[tikv]  not(isnull(cast(test.t1.id, var_string(100))))",
+		"│       └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp(Probe) root  ",
+		"  ├─Selection(Build) cop[tikv]  not(isnull(test.t.col))",
+		"  │ └─IndexRangeScan cop[tikv] table:t, index:ix(col) range: decided by [eq(test.t.col, Column)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) cop[tikv] table:t keep order:false, stats:pseudo")
+	tk.MustQuery(`explain format="plan_tree" select * from t use index(ix) where col in (select cast(id as char) from t1);`).
 		Check(samePlan)
 	tk.MustExec(`set collation_connection='utf8_bin';`)
-	tk.MustQuery(`explain format="brief" select * from t use index(ix) where col in (select cast(id as char) from t1);`).
+	tk.MustQuery(`explain format="plan_tree" select * from t use index(ix) where col in (select cast(id as char) from t1);`).
 		Check(samePlan)
 	tk.MustExec(`set collation_connection='latin1_bin';`)
-	tk.MustQuery(`explain format="brief" select * from t use index(ix) where col in (select cast(id as char) from t1);`).
+	tk.MustQuery(`explain format="plan_tree" select * from t use index(ix) where col in (select cast(id as char) from t1);`).
 		Check(samePlan)
 }

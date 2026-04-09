@@ -413,6 +413,13 @@
               "intervalFactor": 2,
               "legendFormat": "total",
               "refId": "B"
+            },
+            {
+              "expr": "sum(rate(tidb_server_slow_query_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "SlowQuery",
+              "refId": "C"
             }
           ],
           "thresholds": [],

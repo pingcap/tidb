@@ -318,9 +318,9 @@ func TestMPPHintsScope(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 		tk.MustExec("select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"))
 		tk.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"))
 		tk.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
 		tk.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
@@ -1700,6 +1700,11 @@ func TestSemiJoinRewriter(t *testing.T) {
 func TestDisableReuseChunk(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
 		tk.MustExec("use test")
+		originMaxMemoryLimitForOverlongType := core.MaxMemoryLimitForOverlongType
+		defer func() {
+			core.MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+		}()
+
 		tk.MustExec("drop table if exists t1;")
 		tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
 		tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
