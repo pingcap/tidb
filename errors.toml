@@ -216,6 +216,11 @@ error = '''
 failed to update PD
 '''
 
+["BR:PiTR:ErrCheckpointWatchRestart"]
+error = '''
+checkpoint watch needs restart
+'''
+
 ["BR:PiTR:ErrInvalidTaskInfo"]
 error = '''
 task info is invalid

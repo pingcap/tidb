@@ -237,6 +237,10 @@ func TestPartitionsTable(t *testing.T) {
 
 		tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 			testkit.Rows("p0 6", "p1 11", "p2 16"))
+		pid := tk.MustQuery("select TIDB_PARTITION_ID from information_schema.PARTITIONS where table_name='test_partitions' and partition_name='p1';").Rows()[0][0]
+		tk.MustQuery(fmt.Sprintf("select TABLE_NAME, PARTITION_NAME, TIDB_PARTITION_ID from information_schema.PARTITIONS where TIDB_PARTITION_ID=%v;", pid)).Check(
+			testkit.Rows(fmt.Sprintf("test_partitions p1 %v", pid)),
+		)
 
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 			testkit.Rows(

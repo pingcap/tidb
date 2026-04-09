@@ -320,5 +320,21 @@ JOIN
 			`      └─Selection cop[tikv]  not(isnull(test.t3_issue60076.b))`,
 			`        └─TableFullScan cop[tikv] table:t3_issue60076 keep order:false, stats:pseudo`))
 		tk.MustQuery(`show warnings`).Check(testkit.Rows())
+
+		tk.MustExec(`create table t_int_issue67366 (id int primary key auto_increment, val varchar(100))`)
+		tk.MustExec(`create table t_varchar_issue67366 (id varchar(20) primary key, info text)`)
+		tk.MustQuery(`explain format='plan_tree' select /* issue:67366 */ count(*) from t_int_issue67366 join t_varchar_issue67366 on t_int_issue67366.id = t_varchar_issue67366.id`).CheckContain("cast(test.t_varchar_issue67366.id, bigint(20) BINARY)")
+		tk.MustQuery(`show warnings`).Check(testkit.Rows(
+			`Warning 1105 Implicit type or collation conversion on join keys (test.t_int_issue67366.id = test.t_varchar_issue67366.id) may make indexes unusable`,
+		))
+
+		tk.MustExec(`drop table if exists issue66859_t0, issue66859_t1, issue66859_t2`)
+		tk.MustExec(`create table issue66859_t0(c0 int)`)
+		tk.MustExec(`create table issue66859_t1 like issue66859_t0`)
+		tk.MustExec(`create index i0 on issue66859_t1((5))`)
+		tk.MustExec(`insert into issue66859_t0(c0) values(-1)`)
+		tk.MustQuery(`select /* issue:66859 */ issue66859_t0.c0 as ref0, issue66859_t1.c0 as ref2
+			from issue66859_t0 left join issue66859_t1 on issue66859_t0.c0 = issue66859_t1.c0
+			where 5 >= issue66859_t0.c0`).Check(testkit.Rows("-1 <nil>"))
 	})
 }

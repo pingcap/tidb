@@ -3468,6 +3468,7 @@ Warning	1292	Incorrect datetime value: '2024-00-00 00:00:00'
 Warning	1292	Incorrect datetime value: '2024-00-01 00:00:00'
 Warning	1292	Incorrect datetime value: '2024-12-00 00:00:00'
 drop table if exists t;
+set sql_mode = default;
 SELECT GET_FORMAT(TIME, 'usa'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'UsA'), GET_FORMAT(time, 'UsA'), GET_FORMAT(TIme, 'UsA');
 GET_FORMAT(TIME, 'usa')	GET_FORMAT(TIME, 'USA')	GET_FORMAT(TIME, 'UsA')	GET_FORMAT(time, 'UsA')	GET_FORMAT(TIme, 'UsA')
 %h:%i:%s %p	%h:%i:%s %p	%h:%i:%s %p	%h:%i:%s %p	%h:%i:%s %p

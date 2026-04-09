@@ -4565,6 +4565,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 		idxCols:                    is.IdxCols,
 		colLens:                    is.IdxColLens,
 		idxPlans:                   v.IndexPlans,
+		idxPlanUnNatureOrders:      v.IndexPlansUnNatureOrders,
 		tblPlans:                   v.TablePlans,
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),

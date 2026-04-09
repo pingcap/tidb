@@ -549,10 +549,10 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 		tk.MustExec(`insert into t_issue56915 value(1,1,'[1,2,3,4,5]');`)
 		tk.MustExec(`insert into t_issue56915 value(1,1,'[6]');`)
 		tk.MustExec(`analyze table t_issue56915 all columns;`)
-		tk.MustQuery("explain format = brief select /* issue:56915 */ * from t_issue56915 where a = 1 and 6 member of (j);").Check(testkit.Rows(
-			"IndexMerge 1.00 root  type: union",
-			"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t_issue56915, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false, stats:partial[j:unInitialized]",
-			"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t_issue56915 keep order:false, stats:partial[j:unInitialized]",
+		tk.MustQuery("explain format = 'plan_tree' select /* issue:56915 */ * from t_issue56915 where a = 1 and 6 member of (j);").Check(testkit.Rows(
+			"IndexMerge root  type: union",
+			"├─IndexRangeScan(Build) cop[tikv] table:t_issue56915, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false, stats:partial[j:unInitialized]",
+			"└─TableRowIDScan(Probe) cop[tikv] table:t_issue56915 keep order:false, stats:partial[j:unInitialized]",
 		))
 
 		// issue:63290

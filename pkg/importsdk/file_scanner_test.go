@@ -130,6 +130,32 @@ func TestFileScanner(t *testing.T) {
 		require.Error(t, err)
 	})
 
+	t.Run("CreateSchemasAndTablesIgnoresDropTableInSchemaFile", func(t *testing.T) {
+		dropDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dropDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dropDir, "db1.t_drop-schema.sql"),
+			[]byte("DROP TABLE t_drop; CREATE TABLE t_drop (id INT);"),
+			0o644,
+		))
+
+		dropDB, dropMock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer dropDB.Close()
+
+		dropScanner, err := NewFileScanner(ctx, "file://"+dropDir, dropDB, defaultSDKConfig())
+		require.NoError(t, err)
+		defer dropScanner.Close()
+
+		dropMock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA.*").WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
+		dropMock.ExpectExec(regexp.QuoteMeta("CREATE DATABASE IF NOT EXISTS `db1`")).WillReturnResult(sqlmock.NewResult(0, 0))
+		dropMock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `db1`.`t_drop`")).WillReturnResult(sqlmock.NewResult(0, 0))
+
+		err = dropScanner.CreateSchemasAndTables(ctx)
+		require.NoError(t, err)
+		require.NoError(t, dropMock.ExpectationsWereMet())
+	})
+
 	t.Run("EstimateImportDataSize", func(t *testing.T) {
 		estimateDir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
@@ -263,6 +289,41 @@ func TestFileScanner(t *testing.T) {
 		require.Len(t, estimate.Tables, 1)
 		require.Equal(t, "good", estimate.Tables[0].Table)
 		require.Positive(t, estimate.Tables[0].SourceSize)
+		require.Equal(t, estimate.Tables[0].SourceSize, estimate.TotalSourceSize)
+		require.Equal(t, estimate.Tables[0].TiKVSize, estimate.TotalTiKVSize)
+	})
+
+	t.Run("EstimateImportDataSizeMultiStatementSchema", func(t *testing.T) {
+		estimateDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "test_db-schema-create.sql"), []byte("CREATE DATABASE test_db;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "test_db.users-schema.sql"),
+			[]byte(strings.Join([]string{
+				"CREATE DATABASE IF NOT EXISTS test_db;",
+				"USE test_db;",
+				"DROP TABLE IF EXISTS users;",
+				"CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255), KEY idx_name (name));",
+			}, "\n")),
+			0o644,
+		))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "test_db.users.001.csv"),
+			[]byte("1,alice\n2,bob\n"),
+			0o644,
+		))
+
+		cfg := defaultSDKConfig()
+		cfg.skipInvalidFiles = true
+		estimateScanner, err := NewFileScanner(ctx, "file://"+estimateDir, db, cfg)
+		require.NoError(t, err)
+		defer estimateScanner.Close()
+
+		estimate, err := estimateScanner.EstimateImportDataSize(ctx)
+		require.NoError(t, err)
+		require.Len(t, estimate.Tables, 1)
+		require.Equal(t, "users", estimate.Tables[0].Table)
+		require.Positive(t, estimate.Tables[0].SourceSize)
+		require.Positive(t, estimate.Tables[0].TiKVSize)
 		require.Equal(t, estimate.Tables[0].SourceSize, estimate.TotalSourceSize)
 		require.Equal(t, estimate.Tables[0].TiKVSize, estimate.TotalTiKVSize)
 	})

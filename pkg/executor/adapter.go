@@ -1708,7 +1708,7 @@ func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
 
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.RUV2Metrics == nil {
+	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
 	}
 

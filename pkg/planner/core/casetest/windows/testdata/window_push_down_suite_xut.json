@@ -632,9 +632,8 @@
           "          └─Window root  avg(test.t1.d0)->Column over(order by test.t0.k0 desc, test.t0.p1 range between unbounded preceding and current row)",
           "            └─Sort root  test.t0.k0:desc, test.t0.p1",
           "              └─Selection root  not(in(test.t1.k0, 73, 35, 61))",
-          "                └─HashJoin root  right outer join, left side:TableDual, equal:[eq(test.t1.k0, test.t0.k0)], other cond:le(cast(test.t0.k3, double BINARY), test.t1.d1)",
-          "                  ├─TableDual(Build) root  rows:0",
-          "                  └─TableReader(Probe) root  data:TableFullScan",
+          "                └─Projection root  <nil>->test.t0.p0, <nil>->test.t0.p1, <nil>->test.t1.k0, <nil>->test.t1.d0, <nil>->test.t1.d1, test.t0.id, test.t0.k0, test.t0.k1, test.t0.k3",
+          "                  └─TableReader root  data:TableFullScan",
           "                    └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo"
         ],
         "Result": null
@@ -651,9 +650,8 @@
           "          └─Window root  avg(test.t1.d0)->Column over(order by test.t0.k0 desc, test.t0.p1 range between current row and unbounded following)",
           "            └─Sort root  test.t0.k0:desc, test.t0.p1",
           "              └─Selection root  not(in(test.t1.k0, 73, 35, 61))",
-          "                └─HashJoin root  right outer join, left side:TableDual, equal:[eq(test.t1.k0, test.t0.k0)], other cond:le(cast(test.t0.k3, double BINARY), test.t1.d1)",
-          "                  ├─TableDual(Build) root  rows:0",
-          "                  └─TableReader(Probe) root  data:TableFullScan",
+          "                └─Projection root  <nil>->test.t0.p0, <nil>->test.t0.p1, <nil>->test.t1.k0, <nil>->test.t1.d0, <nil>->test.t1.d1, test.t0.id, test.t0.k0, test.t0.k1, test.t0.k3",
+          "                  └─TableReader root  data:TableFullScan",
           "                    └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo"
         ],
         "Result": null
