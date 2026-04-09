@@ -71,22 +71,23 @@ const (
 	GlobalIndexVersionV2 uint8 = 2
 )
 
-// globalIndexV1Supported tracks whether all TiDB nodes in the cluster support
-// GlobalIndexVersionV1 key encoding. This is set by the DDL version detection
-// loop and checked when creating new global indexes to prevent V1 indexes from
-// being created during rolling upgrades where old nodes cannot handle V1 format.
-var globalIndexV1Supported atomic.Bool
+// globalIndexMaxVersion tracks the maximum GlobalIndexVersion supported by all
+// TiDB nodes in the cluster. This is set by the DDL version detection loop and
+// checked when creating new global indexes to prevent V1/V2 indexes from being
+// created during rolling upgrades where old nodes cannot handle the new format.
+// 0 means only legacy (V0) is safe; 1 means V1 is safe; 2 means V2 is safe.
+var globalIndexMaxVersion atomic.Uint32
 
-// SetGlobalIndexV1Supported sets whether GlobalIndexVersionV1 is supported
+// SetGlobalIndexMaxVersion sets the maximum GlobalIndexVersion supported
 // by all nodes in the cluster.
-func SetGlobalIndexV1Supported(supported bool) {
-	globalIndexV1Supported.Store(supported)
+func SetGlobalIndexMaxVersion(ver uint8) {
+	globalIndexMaxVersion.Store(uint32(ver))
 }
 
-// GetGlobalIndexV1Supported returns whether GlobalIndexVersionV1 is supported
+// GetGlobalIndexMaxVersion returns the maximum GlobalIndexVersion supported
 // by all nodes in the cluster.
-func GetGlobalIndexV1Supported() bool {
-	return globalIndexV1Supported.Load()
+func GetGlobalIndexMaxVersion() uint8 {
+	return uint8(globalIndexMaxVersion.Load())
 }
 
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
@@ -521,10 +522,10 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 
 func init() {
 	if kerneltype.IsNextGen() {
-		// For now, we don't need to detect job version and global index v1 support for NextGen
-		// as they are always V2 and support global index v1.
+		// For now, we don't need to detect job version and global index support for NextGen
+		// as they always support the latest version.
 		// To keep align with the logic of `JobVersion`, we set it in the init function of model
 		// package. The `JobVersion` is set in the init function of `job.go`.
-		SetGlobalIndexV1Supported(true)
+		SetGlobalIndexMaxVersion(GlobalIndexVersionV2)
 	}
 }

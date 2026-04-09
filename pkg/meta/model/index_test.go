@@ -71,8 +71,8 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_2")))
 }
 
-func TestGlobalIndexV1SupportedForNextGen(t *testing.T) {
+func TestGlobalIndexMaxVersionForNextGen(t *testing.T) {
 	if kerneltype.IsNextGen() {
-		require.True(t, GetGlobalIndexV1Supported())
+		require.Equal(t, GlobalIndexVersionV2, GetGlobalIndexMaxVersion())
 	}
 }
