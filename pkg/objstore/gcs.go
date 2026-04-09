@@ -461,11 +461,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *storeapi.Option
 skipHandleCred:
 
 	if gcs.Endpoint != "" {
-		endpoint := gcs.Endpoint
-		if !strings.HasSuffix(endpoint, "/storage/v1/") {
-			endpoint = strings.TrimRight(endpoint, "/") + "/storage/v1/"
-		}
-		clientOps = append(clientOps, option.WithEndpoint(endpoint))
+		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
 
 	httpClient := opts.HTTPClient

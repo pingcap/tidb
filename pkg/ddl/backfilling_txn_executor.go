@@ -184,7 +184,6 @@ func newReorgDistSQLCtxWithReorgMeta(kvClient kv.Client, reorgMeta *model.DDLReo
 	ctx := newDefaultReorgDistSQLCtx(kvClient, warnHandler)
 	ctx.Location = loc
 	ctx.ErrCtx = errctx.NewContextWithLevels(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode), ctx.WarnHandler)
-	ctx.EnablePaging = true
 	ctx.ResourceGroupName = reorgMeta.ResourceGroupName
 	return ctx, nil
 }
