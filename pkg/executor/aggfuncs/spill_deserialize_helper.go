@@ -186,6 +186,7 @@ func (s *deserializeHelper) deserializePartialResult4AvgFloat64(dst *partialResu
 		s.pab.Reset(s.column, s.readRowIndex)
 		dst.sum = util.DeserializeFloat64(s.pab)
 		dst.count = util.DeserializeInt64(s.pab)
+		dst.comp = util.DeserializeFloat64(s.pab)
 		s.readRowIndex++
 		return true
 	}

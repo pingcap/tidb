@@ -114,7 +114,8 @@ func (s *SerializeHelper) serializePartialResult4AvgDecimal(value partialResult4
 func (s *SerializeHelper) serializePartialResult4AvgFloat64(value partialResult4AvgFloat64) []byte {
 	s.buf = s.buf[:0]
 	s.buf = util.SerializeFloat64(value.sum, s.buf)
-	return util.SerializeInt64(value.count, s.buf)
+	s.buf = util.SerializeInt64(value.count, s.buf)
+	return util.SerializeFloat64(value.comp, s.buf)
 }
 
 func (s *SerializeHelper) serializePartialResult4SumDecimal(value partialResult4SumDecimal) []byte {

@@ -317,6 +317,15 @@ type baseAvgFloat64 struct {
 type partialResult4AvgFloat64 struct {
 	sum   float64
 	count int64
+	comp  float64 // Kahan summation compensation
+}
+
+// kahanSum implements Kahan compensated summation.
+func kahanSum(p *partialResult4AvgFloat64, input float64) {
+	y := input - p.comp
+	t := p.sum + y
+	p.comp = (t - p.sum) - y
+	p.sum = t
 }
 
 func (*baseAvgFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -327,6 +336,7 @@ func (*baseAvgFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgFloat64)(pr)
 	p.sum = 0
 	p.count = 0
+	p.comp = 0
 }
 
 func (e *baseAvgFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
@@ -334,7 +344,7 @@ func (e *baseAvgFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr Part
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
 	} else {
-		chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
+		chk.AppendFloat64(e.ordinal, (p.sum+p.comp)/float64(p.count))
 	}
 	return nil
 }
@@ -374,7 +384,7 @@ func (e *avgOriginal4Float64HighPrecision) UpdatePartialResult(sctx AggFuncUpdat
 			continue
 		}
 
-		p.sum += input
+		kahanSum(p, input)
 		p.count++
 	}
 	return 0, nil
@@ -396,7 +406,7 @@ func (e *avgOriginal4Float64) Slide(sctx AggFuncUpdateContext, getRow func(uint6
 		if isNull {
 			continue
 		}
-		p.sum += input
+		kahanSum(p, input)
 		p.count++
 	}
 	for i := range shiftStart {
@@ -407,7 +417,7 @@ func (e *avgOriginal4Float64) Slide(sctx AggFuncUpdateContext, getRow func(uint6
 		if isNull {
 			continue
 		}
-		p.sum -= input
+		kahanSum(p, -input)
 		p.count--
 	}
 	return nil
@@ -435,7 +445,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx AggFuncUpdateContext, rows
 		if isNull {
 			continue
 		}
-		p.sum += inputSum
+		kahanSum(p, inputSum)
 		p.count += inputCount
 	}
 	return 0, nil
@@ -443,7 +453,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx AggFuncUpdateContext, rows
 
 func (*avgPartial4Float64) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4AvgFloat64)(src), (*partialResult4AvgFloat64)(dst)
-	p2.sum += p1.sum
+	kahanSum(p2, p1.sum+p1.comp)
 	p2.count += p1.count
 	return 0, nil
 }
@@ -469,6 +479,7 @@ func (*avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	p.sum = float64(0)
 	p.count = int64(0)
+	p.comp = float64(0)
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
@@ -483,7 +494,7 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx AggFuncUpdateCont
 			continue
 		}
 
-		p.sum += input
+		kahanSum(&p.partialResult4AvgFloat64, input)
 		p.count++
 		memDelta += p.valSet.Insert(input)
 	}
@@ -496,6 +507,6 @@ func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateCon
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
+	chk.AppendFloat64(e.ordinal, (p.sum+p.comp)/float64(p.count))
 	return nil
 }

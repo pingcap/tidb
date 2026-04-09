@@ -2109,3 +2109,26 @@ AND `f` <= 1753718399
 AND `g` = 0
 GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
 id	settle_time	a	total_amount	settlement_amount	total_fee
+DROP TABLE IF EXISTS t_avg_prec1, t_avg_prec2;
+CREATE TABLE t_avg_prec1 (c0 BLOB NOT NULL);
+CREATE TABLE t_avg_prec2 (c0 TINYBLOB NOT NULL);
+INSERT INTO t_avg_prec2 (c0) VALUES (0x302E36373033313336383532353434373535);
+INSERT INTO t_avg_prec2 (c0) VALUES (0x55755F6CE9BC9031733F);
+INSERT INTO t_avg_prec2 (c0) VALUES ('');
+INSERT INTO t_avg_prec2 (c0) VALUES ('');
+INSERT INTO t_avg_prec2 (c0) VALUES ('');
+INSERT INTO t_avg_prec1 (c0) VALUES (0x32303639303530303736);
+SELECT AVG((t_avg_prec1.c0) * (t_avg_prec1.c0)) AS r1 FROM t_avg_prec1;
+r1
+4280968216995606000
+SELECT AVG((t_avg_prec1.c0) * (t_avg_prec1.c0)) AS r2 FROM t_avg_prec2, t_avg_prec1;
+r2
+4280968216995606000
+SELECT
+  (SELECT AVG((t_avg_prec1.c0) * (t_avg_prec1.c0)) FROM t_avg_prec1)
+  =
+  (SELECT AVG((t_avg_prec1.c0) * (t_avg_prec1.c0)) FROM t_avg_prec2, t_avg_prec1)
+AS results_match;
+results_match
+1
+DROP TABLE t_avg_prec1, t_avg_prec2;
