@@ -17,7 +17,9 @@ package model
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -65,6 +67,24 @@ const (
 	// is encoded in the key ONLY!
 	GlobalIndexVersionV2 uint8 = 2
 )
+
+// globalIndexV1Supported tracks whether all TiDB nodes in the cluster support
+// GlobalIndexVersionV1 key encoding. This is set by the DDL version detection
+// loop and checked when creating new global indexes to prevent V1 indexes from
+// being created during rolling upgrades where old nodes cannot handle V1 format.
+var globalIndexV1Supported atomic.Bool
+
+// SetGlobalIndexV1Supported sets whether GlobalIndexVersionV1 is supported
+// by all nodes in the cluster.
+func SetGlobalIndexV1Supported(supported bool) {
+	globalIndexV1Supported.Store(supported)
+}
+
+// GetGlobalIndexV1Supported returns whether GlobalIndexVersionV1 is supported
+// by all nodes in the cluster.
+func GetGlobalIndexV1Supported() bool {
+	return globalIndexV1Supported.Load()
+}
 
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
 func GenUniqueChangingIndexName(tblInfo *TableInfo, idxInfo *IndexInfo) string {
@@ -262,7 +282,8 @@ type IndexInfo struct {
 	// 0=legacy, or unique with all NOT NULL columns, or clustered.
 	// 1=v1 with partition ID in key and value.
 	// 2=v2 with partition ID in key only (TODO).
-	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
+	GlobalIndexVersion uint8              `json:"global_index_version,omitempty"`
+	RegionSplitPolicy  *RegionSplitPolicy `json:"region_split_policy,omitempty"` // RegionSplitPolicy is the persistent split policy.
 }
 
 // Hash64 implement HashEquals interface.
@@ -301,6 +322,9 @@ func (index *IndexInfo) Clone() *IndexInfo {
 		for i := range index.AffectColumn {
 			ni.AffectColumn[i] = index.AffectColumn[i].Clone()
 		}
+	}
+	if index.RegionSplitPolicy != nil {
+		ni.RegionSplitPolicy = index.RegionSplitPolicy.Clone()
 	}
 	return &ni
 }
@@ -382,6 +406,35 @@ func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 	return ColumnarIndexTypeNA
 }
 
+// RegionSplitPolicy defines the persistent region split policy for an index
+type RegionSplitPolicy struct {
+	// Lower bound values (stored as string representation)
+	Lower []string `json:"lower"`
+
+	// Upper bound values (stored as string representation)
+	Upper []string `json:"upper"`
+
+	// Number of regions to split into
+	Regions int64 `json:"regions"`
+}
+
+// Clone clones RegionSplitPolicy
+func (r *RegionSplitPolicy) Clone() *RegionSplitPolicy {
+	if r == nil {
+		return nil
+	}
+	nr := *r
+	if len(r.Lower) > 0 {
+		nr.Lower = make([]string, len(r.Lower))
+		copy(nr.Lower, r.Lower)
+	}
+	if len(r.Upper) > 0 {
+		nr.Upper = make([]string, len(r.Upper))
+		copy(nr.Upper, r.Upper)
+	}
+	return &nr
+}
+
 // HasCondition checks whether the index has a partial index condition.
 func (index *IndexInfo) HasCondition() bool {
 	return len(index.ConditionExprString) > 0
@@ -461,4 +514,14 @@ func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexC
 		}
 	}
 	return -1, nil
+}
+
+func init() {
+	if kerneltype.IsNextGen() {
+		// For now, we don't need to detect job version and global index v1 support for NextGen
+		// as they are always V2 and support global index v1.
+		// To keep align with the logic of `JobVersion`, we set it in the init function of model
+		// package. The `JobVersion` is set in the init function of `job.go`.
+		SetGlobalIndexV1Supported(true)
+	}
 }

@@ -275,6 +275,22 @@ func (c *s3Client) IsObjectExists(ctx context.Context, name string) (bool, error
 	return true, nil
 }
 
+func (c *s3Client) HeadObject(ctx context.Context, name string) (*s3like.HeadObjectResp, error) {
+	key := c.ObjectKey(name)
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String(c.Bucket),
+		Key:    aws.String(key),
+	}
+
+	output, err := c.svc.HeadObject(ctx, input)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &s3like.HeadObjectResp{
+		ReplicationStatus: string(output.ReplicationStatus),
+	}, nil
+}
+
 func (c *s3Client) ListObjects(ctx context.Context, extraPrefix, startAfter string, continuationToken *string, maxKeys int) (*s3like.ListResp, error) {
 	prefix := c.ObjectKey(extraPrefix)
 	var startAfterKey *string

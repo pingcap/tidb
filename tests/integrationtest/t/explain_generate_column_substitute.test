@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 set names utf8mb4;
 drop table if exists t;
 create table t(a int, b real, c bigint as ((a+1)) virtual, e real as ((b+a)));
