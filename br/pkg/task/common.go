@@ -28,13 +28,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/tikv/client-go/v2/config"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -167,9 +168,9 @@ func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
 	return securityOption
 }
 
-// Convert the TLS config to the PD security option.
-func (tls *TLSConfig) ToKVSecurity() config.Security {
-	return config.Security{
+// Convert the TLS config to the KV security option.
+func (tls *TLSConfig) ToKVSecurity() tikvcfg.Security {
+	return tikvcfg.Security{
 		ClusterSSLCA:   tls.CA,
 		ClusterSSLCert: tls.Cert,
 		ClusterSSLKey:  tls.Key,
@@ -392,6 +393,29 @@ func DefaultConfig() Config {
 		log.Panic("infallible operation failed.", zap.Error(err))
 	}
 	return cfg
+}
+
+// ApplyTiDBRuntimeConfig applies runtime PD/TLS settings from TiDB global config
+// to an in-process BR config without changing CLI flag defaults.
+func ApplyTiDBRuntimeConfig(cfg *Config) {
+	tidbCfg := tidbconfig.GetGlobalConfig()
+	if tidbCfg.Path != "" {
+		pds := make([]string, 0, 1)
+		for _, pdAddr := range strings.Split(tidbCfg.Path, ",") {
+			pdAddr = strings.TrimSpace(pdAddr)
+			if pdAddr != "" {
+				pds = append(pds, pdAddr)
+			}
+		}
+		if len(pds) > 0 {
+			cfg.PD = pds
+		}
+	}
+	cfg.TLS = TLSConfig{
+		CA:   tidbCfg.Security.ClusterSSLCA,
+		Cert: tidbCfg.Security.ClusterSSLCert,
+		Key:  tidbCfg.Security.ClusterSSLKey,
+	}
 }
 
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.

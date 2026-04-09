@@ -11,6 +11,7 @@ import (
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -299,6 +300,10 @@ func expectedDefaultBackupConfig() BackupConfig {
 		UseBackupMetaV2:  true,
 		UseCheckpoint:    true,
 		TableConcurrency: 64,
+		SnapshotRepoBackupOptions: SnapshotRepoBackupOptions{
+			Layout:    repo.LayoutLegacy,
+			OnPending: snapshotRepoOnPendingError,
+		},
 	}
 }
 
@@ -323,6 +328,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		BatchFlushInterval:       16000000000,
 		DdlBatchSize:             0x80,
 		WithPlacementPolicy:      "STRICT",
+		Layout:                   repo.LayoutLegacy,
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,
 	}
@@ -332,6 +338,22 @@ func TestDefault(t *testing.T) {
 	def := DefaultConfig()
 	defaultConfig := expectedDefaultConfig()
 	require.Equal(t, defaultConfig, def)
+}
+
+func TestApplyTiDBRuntimeConfigUsesRuntimePD(t *testing.T) {
+	oldCfg := *config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&oldCfg)
+	})
+
+	cfg := oldCfg
+	cfg.Store = config.StoreTypeTiKV
+	cfg.Path = "127.0.0.1:12379,127.0.0.1:22379"
+	config.StoreGlobalConfig(&cfg)
+
+	def := DefaultConfig()
+	ApplyTiDBRuntimeConfig(&def)
+	require.Equal(t, []string{"127.0.0.1:12379", "127.0.0.1:22379"}, def.PD)
 }
 
 func TestDefaultBackup(t *testing.T) {

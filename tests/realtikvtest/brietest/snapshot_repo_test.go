@@ -88,6 +88,7 @@ func cleanupRestoreRegistry(tk *testkit.TestKit) {
 func (s *snapshotRepoSuite) backupConfig() task.BackupConfig {
 	s.t.Helper()
 	cfg := task.DefaultBackupConfig(task.DefaultConfig())
+	task.ApplyTiDBRuntimeConfig(&cfg.Config)
 	cfg.Storage = s.repoURI
 	cfg.Layout = repo.LayoutRepoV1
 	cfg.UseCheckpoint = true
@@ -103,6 +104,7 @@ func (s *snapshotRepoSuite) backupConfig() task.BackupConfig {
 func (s *snapshotRepoSuite) restoreConfig(backupID repo.BackupID) task.RestoreConfig {
 	s.t.Helper()
 	cfg := task.DefaultRestoreConfig(task.DefaultConfig())
+	task.ApplyTiDBRuntimeConfig(&cfg.Config)
 	cfg.Storage = s.repoURI
 	cfg.Layout = repo.LayoutRepoV1
 	cfg.BackupID = backupID
@@ -120,6 +122,7 @@ func (s *snapshotRepoSuite) restoreConfig(backupID repo.BackupID) task.RestoreCo
 func (s *snapshotRepoSuite) taskConfig() task.Config {
 	s.t.Helper()
 	cfg := task.DefaultConfig()
+	task.ApplyTiDBRuntimeConfig(&cfg)
 	cfg.Storage = s.repoURI
 	return cfg
 }
