@@ -10,6 +10,7 @@ go_library(
         "rule_column_pruning.go",
         "rule_constant_propagation.go",
         "rule_init.go",
+        "rule_join_key_type_cast.go",
         "rule_max_min_eliminate.go",
         "rule_order_aware_join_reorder.go",
         "rule_outer_join_to_semi_join.go",

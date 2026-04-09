@@ -1363,6 +1363,8 @@ type SessionVars struct {
 
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
+	// EnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
+	EnableNoBackslashEscapesInLike bool
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
@@ -1623,6 +1625,9 @@ type SessionVars struct {
 
 	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	EnableNonPreparedPlanCacheForDML bool
+
+	// PlanCacheStrategy controls plan cache strategy.
+	PlanCacheStrategy string
 
 	// EnableFuzzyBinding indicates whether to enable fuzzy binding.
 	EnableFuzzyBinding bool
@@ -2393,6 +2398,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		WaitSplitRegionFinish:            vardef.DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:           vardef.DefWaitSplitRegionTimeout,
 		enableIndexMerge:                 vardef.DefTiDBEnableIndexMerge,
+		EnableNoBackslashEscapesInLike:   vardef.DefTiDBEnableNoBackslashEscapesInLike,
 		NoopFuncsMode:                    TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
 		replicaRead:                      kv.ReplicaReadLeader,
 		AllowRemoveAutoInc:               vardef.DefTiDBAllowRemoveAutoInc,
@@ -2407,6 +2413,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		WindowingUseHighPrecision:        true,
 		PrevFoundInPlanCache:             vardef.DefTiDBFoundInPlanCache,
 		FoundInPlanCache:                 vardef.DefTiDBFoundInPlanCache,
+		PlanCacheStrategy:                vardef.DefTiDBPlanCacheStrategy,
 		PrevFoundInBinding:               vardef.DefTiDBFoundInBinding,
 		FoundInBinding:                   vardef.DefTiDBFoundInBinding,
 		SelectLimit:                      math.MaxUint64,

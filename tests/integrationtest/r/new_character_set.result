@@ -88,7 +88,7 @@ set names utf8mb4;
 set @@character_set_client=gbk;
 set @@character_set_connection=gbk;
 select hex('一a'), '一a';
-hex('涓?')	涓?
+hex(0xe4b88061)	涓?
 E4B83F	涓?
 set @@sql_mode=default;
 set @@character_set_client=default;
