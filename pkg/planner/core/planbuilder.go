@@ -3924,12 +3924,14 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			res.SourceColumnCount,
 		)
 	}
-	var fullUpdateInnerSource base.PhysicalPlan
-	var fullUpdateInnerColumnCount int
-	var fullUpdateIndexRanges ranger.MutableRanges
-	var fullUpdateKeyOff2IdxOff []int
-	var fullUpdateKeyResultColIdxes []int
-	var fullUpdateOutputMVOffsets []int
+	var (
+		fullUpdateInnerSource       base.PhysicalPlan
+		fullUpdateInnerColumnCount  int
+		fullUpdateIndexRanges       ranger.MutableRanges
+		fullUpdateKeyOff2IdxOff     []int
+		fullUpdateKeyResultColIdxes []int
+		fullUpdateOutputMVOffsets   []int
+	)
 	if res.FullUpdateLookupTemplateSelect != nil {
 		if res.FullUpdateLookupColumnCount <= 0 {
 			return nil, errors.New("mvmerge full-update lookup template: invalid output column count")
