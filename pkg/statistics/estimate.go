@@ -156,8 +156,8 @@ func estimateGlobalSingletonInRange(ndvSketches, singletonSketches []*FMSketch, 
 	var prefixNDVSketch *FMSketch
 	for i := range ndvSketches {
 		other := mergeCopiedFMSketch(nil, prefixNDVSketch)
-		for j := i + 1; j < len(ndvSketches); j++ {
-			other = mergeCopiedFMSketch(other, ndvSketches[j])
+		for _, sketch := range ndvSketches[i+1:] {
+			other = mergeCopiedFMSketch(other, sketch)
 		}
 		other = mergeCopiedFMSketch(other, outOfRangeNDVSketch)
 
