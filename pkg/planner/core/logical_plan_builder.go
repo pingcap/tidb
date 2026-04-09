@@ -2082,7 +2082,10 @@ func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, name *types.FieldNa
 	if colInfo == nil {
 		return nil, nil, nil
 	}
-	if colInfo.ID != col.ID {
+	// For CTE-derived columns (where OrigTblName differs from TblName),
+	// the column ID was reallocated by getResultCTESchema and won't match
+	// the source table's column ID. Skip the ID check in this case.
+		if name.TblName.L == name.OrigTblName.L && colInfo.ID != col.ID {
 		return nil, nil, nil
 	}
 	policy, ok := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
@@ -5084,18 +5087,18 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			b.computeCTEInlineFlag(cte)
 
 			if cte.recurLP == nil && cte.isInline {
-				// Save b.buildingCTE state and set to false to prevent infinite recursion
-				// Note: We do NOT truncate b.outerCTEs here because buildDataSourceFromCTEMerge
-				// needs access to it when setting b.buildingCTE = true for masking fix
-				// Also save b.isCTE to restore it after inline merge
+				// Save and truncate outerCTEs to prevent infinite recursion during inline merge.
+				// Also set b.buildingCTE to false - b.isCTE is set to true inside
+				// buildDataSourceFromCTEMerge so masking is properly skipped.
+				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
+				copy(saveCte, b.outerCTEs[i:])
+				b.outerCTEs = b.outerCTEs[:i]
 				o := b.buildingCTE
-				oldIsCTE := b.isCTE
 				b.buildingCTE = false
-				b.isCTE = false
 				//nolint:all_revive,revive
 				defer func() {
+					b.outerCTEs = append(b.outerCTEs, saveCte...)
 					b.buildingCTE = o
-					b.isCTE = oldIsCTE
 				}()
 				return b.buildDataSourceFromCTEMerge(ctx, cte.def)
 			}
@@ -5162,9 +5165,10 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
-	// Set b.isCTE and b.buildingCTE to true during CTE definition building
-	// This ensures masking is skipped in CTE definition
-	// We restore the old values after building
+	// Set b.isCTE to true to ensure masking is skipped during CTE definition building
+	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior
+	// We also set b.buildingCTE because buildTableRefs -> buildResultSetNode(false)
+	// will overwrite b.isCTE, so we need b.buildingCTE as a backup flag.
 	oldIsCTE := b.isCTE
 	oldBuildingCTE := b.buildingCTE
 	b.isCTE = true
@@ -8211,9 +8215,13 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 	// Clone output names to avoid mutating shared structs (important for LATERAL subqueries)
 	clonedNames := make([]*types.FieldName, len(outPutNames))
 	for i, name := range outPutNames {
+		origTblName := name.OrigTblName
+		if origTblName.L == "" {
+			origTblName = name.TblName
+		}
 		clonedNames[i] = &types.FieldName{
 			DBName:            name.DBName,
-			OrigTblName:       name.OrigTblName,
+			OrigTblName:       origTblName,
 			OrigColName:       name.OrigColName,
 			TblName:           def.Name, // Set to CTE name
 			ColName:           name.ColName,
