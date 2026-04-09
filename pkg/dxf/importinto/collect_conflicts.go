@@ -257,8 +257,8 @@ func (e *collectConflictsStepExecutor) ResetSummary() {
 func (*collectConflictsStepExecutor) Accepted(_ int64) {}
 
 // Processed implements Collector.Processed interface.
-func (e *collectConflictsStepExecutor) Processed(processed, _ int64) {
-	e.summary.Processed.Add(processed)
+func (e *collectConflictsStepExecutor) Processed(processedConflictKVs, _ int64) {
+	e.summary.Processed.Add(processedConflictKVs)
 }
 
 // getConflictRowFilenamePrefix returns the file name prefix to store the conflict

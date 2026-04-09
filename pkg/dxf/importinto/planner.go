@@ -714,6 +714,7 @@ func generateCollectConflictsSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]p
 	if err != nil {
 		return nil, err
 	}
+	// For conflict handling steps, RowCnt stores conflict KV pair counts.
 	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {
@@ -743,6 +744,7 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([
 	if err != nil {
 		return nil, err
 	}
+	// For conflict handling steps, RowCnt stores conflict KV pair counts.
 	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {

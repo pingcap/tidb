@@ -125,6 +125,7 @@ func (h *BaseHandler) Run(ctx context.Context, pairCh chan *external.KVPair) err
 		if err := h.Handle(ctx, kvPair); err != nil {
 			return errors.Trace(err)
 		}
+		// Each item in pairCh is one conflict KV pair.
 		h.collector.Processed(1, 0)
 	}
 	return nil

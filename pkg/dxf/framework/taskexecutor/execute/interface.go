@@ -202,13 +202,14 @@ type Collector interface {
 	// The difference between Accepted and Processed is that Accepted is called
 	// when the data is accepted to be processed.
 	Accepted(bytes int64)
-	// Processed is used collects metrics.
-	// `processed` is the number of processed units, and `rows` is the number of rows processed.
-	// The meaning of `processed` may vary by scenario, for example:
-	//   - During encoding, it represents the number of bytes read from the source data file.
-	//   - During merge sort, it represents the number of bytes merged.
-	//   - During conflict handling, it represents the number of conflicted rows processed.
-	Processed(processed, rows int64)
+	// Processed collects progress metrics.
+	// `processedUnits` is the number of processed units, and `rows` is the number
+	// of rows processed.
+	// The meaning of `processedUnits` may vary by scenario, for example:
+	//   - During encoding, it represents bytes read from source data files.
+	//   - During merge sort, it represents bytes merged.
+	//   - During conflict handling, it represents processed conflict KV pairs.
+	Processed(processedUnits, rows int64)
 }
 
 // NoopCollector is a no-op implementation of Collector.
@@ -234,8 +235,8 @@ func (c *TestCollector) Accepted(bytes int64) {
 }
 
 // Processed implements Collector.Processed
-func (c *TestCollector) Processed(bytes, rows int64) {
-	c.ProcessedCnt.Add(bytes)
+func (c *TestCollector) Processed(processedUnits, rows int64) {
+	c.ProcessedCnt.Add(processedUnits)
 	c.Rows.Add(rows)
 }
 

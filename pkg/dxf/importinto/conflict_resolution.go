@@ -167,8 +167,8 @@ func (e *conflictResolutionStepExecutor) ResetSummary() {
 func (*conflictResolutionStepExecutor) Accepted(_ int64) {}
 
 // Processed implements Collector.Processed interface.
-func (e *conflictResolutionStepExecutor) Processed(processed, _ int64) {
-	e.summary.Processed.Add(processed)
+func (e *conflictResolutionStepExecutor) Processed(processedConflictKVs, _ int64) {
+	e.summary.Processed.Add(processedConflictKVs)
 }
 
 // when create encoder, if the table have generated column, when calling
