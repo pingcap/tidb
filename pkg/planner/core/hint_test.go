@@ -168,5 +168,23 @@ func TestSetVarPartialOrderedIndexForTopN(t *testing.T) {
 		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
 		testKit.MustExec(`explain select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ * from t order by b limit 10;`)
 		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+
+		// Regression test: the partial-order prefix column must be resolved against
+		// the child schema even when the index's last column is a prefix column.
+		testKit.MustExec(`create table t_multi(a int, b varchar(30), c varchar(30), key idx_ab_prefix(a, b(15)))`)
+		testKit.MustExec(`insert into t_multi values
+			(1, 'alpha', 'first'),
+			(1, 'beta', 'second'),
+			(1, 'gamma', 'third'),
+			(2, 'alpha', 'fourth'),
+			(2, 'beta', 'fifth'),
+			(2, 'gamma', 'sixth')`)
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = COST`)
+		testKit.MustQuery(`select /*+ use_index(t_multi, idx_ab_prefix) */ * from t_multi order by a, b limit 3 offset 2`).
+			Check(testkit.Rows(
+				"1 gamma third",
+				"2 alpha fourth",
+				"2 beta fifth",
+			))
 	})
 }
