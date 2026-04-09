@@ -20,17 +20,26 @@ go_library(
     deps = [
         "//pkg/executor/internal/exec",
         "//pkg/expression",
+<<<<<<< HEAD
         "//pkg/planner/core",
+=======
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/operator/physicalop",
+>>>>>>> e8ae09d88e8 (executor: Support rank topn (#65704))
         "//pkg/planner/util",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/channel",
         "//pkg/util/chunk",
+        "//pkg/util/codec",
+        "//pkg/util/collate",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/disk",
+        "//pkg/util/hack",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/ranger",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -62,6 +71,7 @@ go_test(
         "benchmark_test.go",
         "parallel_sort_spill_test.go",
         "parallel_sort_test.go",
+        "rank_topn_test.go",
         "sort_spill_test.go",
         "sort_test.go",
         "sortexec_pkg_test.go",
@@ -69,7 +79,7 @@ go_test(
     ],
     embed = [":sortexec"],
     flaky = True,
-    shard_count = 19,
+    shard_count = 20,
     deps = [
         "//pkg/config",
         "//pkg/executor/internal/exec",
@@ -80,7 +90,13 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/planner/util",
+<<<<<<< HEAD
         "//pkg/sessionctx/variable",
+=======
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+>>>>>>> e8ae09d88e8 (executor: Support rank topn (#65704))
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/types",

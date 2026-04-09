@@ -209,9 +209,18 @@ fi
 
 rm -rf $mysql_tester_log
 
+<<<<<<< HEAD
 ports=($(find_multiple_available_ports 4000 2))
 port=${ports[0]}
 status=${ports[1]}
+=======
+if [ "$runs_on_port" -eq 0 ]
+then
+    ports=($(find_multiple_available_ports 4000 2))
+    port=6999
+    status=${ports[1]}
+fi
+>>>>>>> e8ae09d88e8 (executor: Support rank topn (#65704))
 
 function start_tidb_server()
 {
