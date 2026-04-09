@@ -614,10 +614,14 @@ func TestNextGenMeteringWithConflictResolution(t *testing.T) {
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
 	s.Regexp(`requests\{get: 15, put: 16\}`, gotMeterData.Load())
 	s.Regexp(`obj_store\{r: 3[.\d]*KiB, w: 3[.\d]*KiB\}`, gotMeterData.Load())
-	clusterMatch := regexp.MustCompile(`cluster\{r: 174B, w: (\d+)B\}`).FindStringSubmatch(gotMeterData.Load())
-	s.Len(clusterMatch, 2)
-	clusterWriteBytes, err := strconv.Atoi(clusterMatch[1])
+	clusterMatch := regexp.MustCompile(`cluster\{r: 174B, w: ([0-9]+(?:\.[0-9]+)?)\s*(B|KiB)?\}`).FindStringSubmatch(gotMeterData.Load())
+	s.Len(clusterMatch, 3)
+	clusterWrite, err := strconv.ParseFloat(clusterMatch[1], 64)
 	s.NoError(err)
+	clusterWriteBytes := clusterWrite
+	if clusterMatch[2] == "KiB" {
+		clusterWriteBytes *= 1024
+	}
 	// Ingest retries can increase write traffic accounting; assert the minimum
 	// deterministic bytes and tolerate retry inflation.
 	s.GreaterOrEqual(clusterWriteBytes, 250)
