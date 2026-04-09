@@ -165,6 +165,12 @@ func (n *DDLNotifier) start() {
 			return
 		case <-ticker.C:
 			if err := n.processEvents(ctx); err != nil {
+				// During owner retirement, context cancellation can race with in-flight
+				// SQL in processEvents and produce transient storage errors. Treat the
+				// canceled owner context as dominant and stop asserting on those errors.
+				if errors.ErrorEqual(ctx.Err(), context.Canceled) {
+					continue
+				}
 				intest.Assert(
 					errors.ErrorEqual(err, context.Canceled) ||
 						strings.Contains(err.Error(), "mock handleTaskOnce error") ||

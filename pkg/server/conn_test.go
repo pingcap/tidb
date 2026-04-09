@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
@@ -2313,6 +2314,9 @@ func TestConnAddMetrics(t *testing.T) {
 }
 
 func TestIssue54335(t *testing.T) {
+	if !intest.InTest {
+		t.Skip("requires intest build tags")
+	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	// There is no underlying netCon, use failpoint to avoid panic
