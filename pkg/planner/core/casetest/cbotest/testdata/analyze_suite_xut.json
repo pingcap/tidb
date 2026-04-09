@@ -609,8 +609,15 @@
     "Cases": [
       {
         "SQL": "explain format = 'brief' SELECT COUNT(*) FROM t_small s STRAIGHT_JOIN t_big b ON b.id1 = s.id4 WHERE s.id1 = '10001' AND s.id2 = 0 AND s.id3 = 123456789 AND b.id2 = 10001 AND b.id3 = 0 AND b.id4 = 20991231;",
-        "Contains": [
-          "HashJoin"
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#16",
+          "└─HashJoin 1230902.53 root  inner join, equal:[eq(repro_hash_join_issue.t_small.id4, repro_hash_join_issue.t_big.id1)]",
+          "  ├─TableReader(Build) 1355.80 root  data:Selection",
+          "  │ └─Selection 1355.80 cop[tikv]  eq(repro_hash_join_issue.t_small.id1, \"10001\"), eq(repro_hash_join_issue.t_small.id2, 0), eq(repro_hash_join_issue.t_small.id3, 123456789)",
+          "  │   └─TableFullScan 4899.00 cop[tikv] table:s keep order:false",
+          "  └─IndexReader(Probe) 2214298.99 root  index:Selection",
+          "    └─Selection 2214298.99 cop[tikv]  eq(repro_hash_join_issue.t_big.id2, 10001), eq(repro_hash_join_issue.t_big.id3, 0), eq(repro_hash_join_issue.t_big.id4, 20991231)",
+          "      └─IndexFullScan 2234295.00 cop[tikv] table:b, index:idx_id1_id2_id3_id4_id5(id1, id2, id3, id4, id5) keep order:false"
         ]
       }
     ]
