@@ -536,7 +536,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if rc != nil {
 			progress = rc.setMaxProgress(progress)
 		}
-		logutil.DDLLogger().Info("update backfill progress",
+		logutil.DDLLogger().Debug("update backfill progress",
 			zap.Float64("progress", progress),
 			zap.Int64("addedRowCount", addedRowCount),
 			zap.Int64("estimated totalCount", totalCount))
