@@ -1,26 +1,8 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-<<<<<<< HEAD:br/pkg/httputil/BUILD.bazel
     name = "httputil",
     srcs = ["http.go"],
     importpath = "github.com/pingcap/tidb/br/pkg/httputil",
-=======
-    name = "util",
-    srcs = [
-        "escape.go",
-        "hash64.go",
-    ],
-    importpath = "github.com/pingcap/tidb/pkg/parser/util",
->>>>>>> 534678dacfc (parser: Replace non-UTF8 characters with hex encoding (#66592)):pkg/parser/util/BUILD.bazel
     visibility = ["//visibility:public"],
-)
-
-go_test(
-    name = "util_test",
-    timeout = "short",
-    srcs = ["escape_test.go"],
-    embed = [":util"],
-    flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
 )

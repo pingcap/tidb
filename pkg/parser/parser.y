@@ -5504,47 +5504,7 @@ ExplainSym:
 |	"DESC"
 
 ExplainStmt:
-<<<<<<< HEAD
 	ExplainSym TableName
-=======
-	ExplainSym "EXPLORE" SelectStmt
-	{
-		startOffset := parser.startOffset(&yyS[yypt])
-		stmt := $3
-		parser.setNodeText(stmt, strings.TrimSpace(parser.src[startOffset:]))
-		$$ = &ast.ExplainStmt{
-			Stmt:    stmt,
-			Explore: true,
-		}
-	}
-|	ExplainSym "EXPLORE" stringLit
-	{
-		$$ = &ast.ExplainStmt{
-			SQLDigest: $3,
-			Explore:   true,
-		}
-	}
-|	ExplainSym "EXPLORE" "ANALYZE" SelectStmt
-	{
-		startOffset := parser.startOffset(&yyS[yypt])
-		stmt := $4
-		parser.setNodeText(stmt, strings.TrimSpace(parser.src[startOffset:]))
-		$$ = &ast.ExplainStmt{
-			Stmt:    stmt,
-			Explore: true,
-			Analyze: true,
-		}
-	}
-|	ExplainSym "EXPLORE" "ANALYZE" stringLit
-	{
-		$$ = &ast.ExplainStmt{
-			SQLDigest: $4,
-			Explore:   true,
-			Analyze:   true,
-		}
-	}
-|	ExplainSym TableName
->>>>>>> 534678dacfc (parser: Replace non-UTF8 characters with hex encoding (#66592))
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt: &ast.ShowStmt{
