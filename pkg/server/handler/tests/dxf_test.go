@@ -175,30 +175,30 @@ func TestDXFAPI(t *testing.T) {
 
 		parseTaskHistoryResp := func(t *testing.T, body []byte) struct {
 			Items []struct {
-				ID              int64  `json:"id"`
-				TaskKey         string `json:"task_key"`
-				Keyspace        string `json:"keyspace"`
-				State           string `json:"state"`
-				StartTime       string `json:"start_time"`
-				StateUpdateTime string `json:"state_update_time"`
-				EndTime         string `json:"end_time"`
-			} `json:"items"`
-			NextPageToken string `json:"next_page_token"`
-			TotalCount    int64  `json:"total_count"`
+				ID              int64
+				Key             string
+				Keyspace        string
+				State           string
+				StartTime       string
+				StateUpdateTime string
+				EndTime         string
+			}
+			NextPageToken string
+			TotalCount    int64
 		} {
 			t.Helper()
 			out := struct {
 				Items []struct {
-					ID              int64  `json:"id"`
-					TaskKey         string `json:"task_key"`
-					Keyspace        string `json:"keyspace"`
-					State           string `json:"state"`
-					StartTime       string `json:"start_time"`
-					StateUpdateTime string `json:"state_update_time"`
-					EndTime         string `json:"end_time"`
-				} `json:"items"`
-				NextPageToken string `json:"next_page_token"`
-				TotalCount    int64  `json:"total_count"`
+					ID              int64
+					Key             string
+					Keyspace        string
+					State           string
+					StartTime       string
+					StateUpdateTime string
+					EndTime         string
+				}
+				NextPageToken string
+				TotalCount    int64
 			}{}
 			require.NoError(t, json.Unmarshal(body, &out))
 			return out
@@ -240,7 +240,7 @@ func TestDXFAPI(t *testing.T) {
 			require.NotEmpty(t, firstPage.NextPageToken)
 			require.Equal(t, ids[4], firstPage.Items[0].ID)
 			require.Equal(t, ids[3], firstPage.Items[1].ID)
-			require.Equal(t, "history-key-5", firstPage.Items[0].TaskKey)
+			require.Equal(t, "history-key-5", firstPage.Items[0].Key)
 			require.Equal(t, "succeed", firstPage.Items[0].State)
 			require.NotEmpty(t, firstPage.Items[0].StartTime)
 			require.NotEmpty(t, firstPage.Items[0].StateUpdateTime)
