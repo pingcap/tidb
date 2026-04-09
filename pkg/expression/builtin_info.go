@@ -275,7 +275,11 @@ func (b *builtinCurrentRoleSig) evalString(ctx EvalContext, row chunk.Row) (res 
 	}
 	sortedRes := make([]string, 0, 10)
 	for _, r := range roles {
-		sortedRes = append(sortedRes, r.String())
+		role := r.Username
+		if r.Hostname != "" {
+			role += "@" + r.Hostname
+		}
+		sortedRes = append(sortedRes, role)
 	}
 	slices.Sort(sortedRes)
 	for i, r := range sortedRes {

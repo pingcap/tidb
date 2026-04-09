@@ -131,7 +131,7 @@ func TestCurrentRole(t *testing.T) {
 
 	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
-	require.Equal(t, "`r_1`@`%`,`r_2`@`localhost`", d.GetString())
+	require.Equal(t, "r_1@%,r_2@localhost", d.GetString())
 	require.Equal(t, f.PbCode(), f.Clone().PbCode())
 }
 
