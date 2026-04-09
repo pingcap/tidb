@@ -16,7 +16,6 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -90,64 +89,17 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 
 // HistoryTaskSummary contains summary fields for one history task.
 type HistoryTaskSummary struct {
-	*proto.TaskBase `json:"-"`
-	StartTime       time.Time `json:"start_time"`
-	StateUpdateTime time.Time `json:"state_update_time"`
-	EndTime         time.Time `json:"end_time"`
-}
-
-type historyTaskSummaryJSON struct {
-	ID              int64           `json:"id"`
-	TaskKey         string          `json:"task_key"`
-	Type            proto.TaskType  `json:"type"`
-	State           proto.TaskState `json:"state"`
-	Step            proto.Step      `json:"step"`
-	Priority        int             `json:"priority"`
-	Concurrency     int             `json:"concurrency"`
-	MaxNodeCount    int             `json:"max_node_count"`
-	TargetScope     string          `json:"target_scope"`
-	Keyspace        string          `json:"keyspace"`
-	CreateTime      time.Time       `json:"create_time"`
-	StartTime       time.Time       `json:"start_time"`
-	StateUpdateTime time.Time       `json:"state_update_time"`
-	EndTime         time.Time       `json:"end_time"`
-}
-
-// MarshalJSON keeps the API response format stable while HistoryTaskSummary reuses proto.TaskBase.
-func (s *HistoryTaskSummary) MarshalJSON() ([]byte, error) {
-	if s == nil {
-		return []byte("null"), nil
-	}
-	if s.TaskBase == nil {
-		return json.Marshal(historyTaskSummaryJSON{
-			StartTime:       s.StartTime,
-			StateUpdateTime: s.StateUpdateTime,
-			EndTime:         s.EndTime,
-		})
-	}
-	return json.Marshal(historyTaskSummaryJSON{
-		ID:              s.ID,
-		TaskKey:         s.Key,
-		Type:            s.Type,
-		State:           s.State,
-		Step:            s.Step,
-		Priority:        s.Priority,
-		Concurrency:     s.RequiredSlots,
-		MaxNodeCount:    s.MaxNodeCount,
-		TargetScope:     s.TargetScope,
-		Keyspace:        s.Keyspace,
-		CreateTime:      s.CreateTime,
-		StartTime:       s.StartTime,
-		StateUpdateTime: s.StateUpdateTime,
-		EndTime:         s.EndTime,
-	})
+	*proto.TaskBase
+	StartTime       time.Time
+	StateUpdateTime time.Time
+	EndTime         time.Time
 }
 
 // HistoryTaskPage is the paged result for history task listing.
 type HistoryTaskPage struct {
-	Items         []*HistoryTaskSummary `json:"items"`
-	NextPageToken string                `json:"next_page_token"`
-	TotalCount    int64                 `json:"total_count"`
+	Items         []*HistoryTaskSummary
+	NextPageToken string
+	TotalCount    int64
 }
 
 // ListHistoryTasks lists history tasks with keyset pagination and optional keyspace filter.
