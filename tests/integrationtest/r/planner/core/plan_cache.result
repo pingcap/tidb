@@ -2664,6 +2664,113 @@ select @@tidb_plan_cache_skip_stats_on_binding;
 @@tidb_plan_cache_skip_stats_on_binding
 1
 drop table if exists t;
+create table t(a int, key(a));
+insert into t values (1), (2), (3);
+set tidb_plan_cache_strategy = 'hint_only';
+prepare st1 from 'select * from t where a = ?';
+set @a = 1;
+execute st1 using @a;
+a
+1
+execute st1 using @a;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+prepare st2 from 'select /*+ use_plan_cache() */ * from t where a = ?';
+execute st2 using @a;
+a
+1
+execute st2 using @a;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_non_prepared_plan_cache = 1;
+select * from t where a = 1;
+a
+1
+select * from t where a = 1;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+explain format='plan_cache' select * from t where a = 1;
+id	estRows	task	access object	operator info
+IndexReader_6	10.00	root		index:IndexRangeScan_5
+└─IndexRangeScan_5	10.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1105	skip non-prepared plan-cache: plan cache strategy is hint_only and use_plan_cache hint is absent
+select /*+ use_plan_cache() */ * from t where a = 1;
+a
+1
+select /*+ use_plan_cache() */ * from t where a = 1;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_non_prepared_plan_cache = default;
+set tidb_plan_cache_strategy = default;
+drop table if exists t;
+create table t(a int, key(a));
+insert into t values (1), (2), (3);
+set tidb_plan_cache_strategy = 'hint_only';
+prepare st from 'select * from t where a = ?';
+set @a = 1;
+execute st using @a;
+a
+1
+execute st using @a;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+create binding for select * from t where a=1 using select /*+ use_plan_cache() */ * from t where a=1;
+execute st using @a;
+a
+1
+execute st using @a;
+a
+1
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	1
+drop binding for select * from t where a=1;
+set tidb_plan_cache_strategy = default;
+drop table if exists t;
+create table t(a int, key(a));
+insert into t values (1), (2), (3);
+set tidb_enable_non_prepared_plan_cache = 1;
+set tidb_plan_cache_strategy = 'hint_only';
+select * from t where a = 1;
+a
+1
+select * from t where a = 1;
+a
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+create binding for select * from t where a=1 using select /*+ use_plan_cache() */ * from t where a=1;
+select * from t where a = 1;
+a
+1
+select * from t where a = 1;
+a
+1
+select @@last_plan_from_binding, @@last_plan_from_cache;
+@@last_plan_from_binding	@@last_plan_from_cache
+1	1
+drop binding for select * from t where a=1;
+set tidb_enable_non_prepared_plan_cache = default;
+set tidb_plan_cache_strategy = default;
+drop table if exists t;
 CREATE TABLE t (a int(11) DEFAULT NULL, b date DEFAULT NULL);
 INSERT INTO t VALUES (1, current_date());
 PREPARE stmt FROM 'SELECT a FROM t WHERE b=current_date()';

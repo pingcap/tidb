@@ -954,26 +954,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.CTEStorageMap.(map[int]*CTEStorages))
 	}
-	if sc.LockTableIDs == nil {
-		sc.LockTableIDs = make(map[int64]struct{})
-	} else {
-		clear(sc.LockTableIDs)
-	}
-	if sc.TableStats == nil {
-		sc.TableStats = make(map[int64]any)
-	} else {
-		clear(sc.TableStats)
-	}
-	if sc.RelatedTableIDs == nil {
-		sc.RelatedTableIDs = make(map[int64]struct{})
-	} else {
-		clear(sc.RelatedTableIDs)
-	}
-	if sc.TblInfo2UnionScan == nil {
-		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
-	} else {
-		clear(sc.TblInfo2UnionScan)
-	}
+	// These maps are lazily initialized at their write sites to avoid
+	// allocation overhead for simple queries (e.g. point-gets) that never
+	// use them.  If already allocated (reused StatementContext), clear to
+	// preserve the backing array for the next complex query.  All read
+	// sites handle nil maps safely (len(nil)==0, range over nil is a no-op).
+	clear(sc.LockTableIDs)
+	clear(sc.TableStats)
+	clear(sc.RelatedTableIDs)
+	clear(sc.TblInfo2UnionScan)
 	sc.IsStaleness = false
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
@@ -1155,6 +1144,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.LoadDataStmt:
 		sc.MemSensitive = true
 		sc.InLoadDataStmt = true
+		// LOAD DATA has a dedicated LOW_PRIORITY keyword (not the common stmt.Priority field).
+		// Align it with other statements so downstream KV requests can reuse StmtCtx.Priority.
+		if stmt.LowPriority {
+			sc.Priority = mysql.LowPriority
+		}
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 	case *ast.ImportIntoStmt:

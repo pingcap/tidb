@@ -518,13 +518,14 @@ type IndexLookUpExecutor struct {
 
 	indexPaging bool
 
-	corColInIdxSide bool
-	corColInTblSide bool
-	corColInAccess  bool
-	idxPlans        []base.PhysicalPlan
-	tblPlans        []base.PhysicalPlan
-	idxCols         []*expression.Column
-	colLens         []int
+	corColInIdxSide       bool
+	corColInTblSide       bool
+	corColInAccess        bool
+	idxPlans              []base.PhysicalPlan
+	idxPlanUnNatureOrders map[int]int
+	tblPlans              []base.PhysicalPlan
+	idxCols               []*expression.Column
+	colLens               []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
 	PushedLimit *physicalop.PushedDownLimit
 
@@ -702,7 +703,11 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
+		if e.indexLookUpPushDown {
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExecForUnNatureOrderPlans(e.buildPBCtx, e.idxPlans, e.idxPlanUnNatureOrders)
+		} else {
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
+		}
 		if err != nil {
 			return err
 		}
