@@ -1543,7 +1543,7 @@ partition by range (a) (
         partition p0 values less than (10),
         partition p1 values less than (20)
 );`)
-	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}], "sharding_key":{"columns":["b"]}}'`)
+	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"],"index_info":{"distance_metric":"L2"}}], "sharding_key":{"columns":["b"]}}'`)
 	tbl := external.GetTableByName(t, tk, "test", "pt_create")
 	idx := tbl.Meta().FindIndexByName("idx_hybrid")
 	require.NotNil(t, idx)
@@ -1557,7 +1557,7 @@ partition by range (a) (
         partition p0 values less than (5),
         partition p1 values less than (15)
 );`)
-	tk.MustExec(`alter table pt_alter add columnar index idx_hybrid_alter(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}], "sharding_key":{"columns":["b"]}}'`)
+	tk.MustExec(`alter table pt_alter add columnar index idx_hybrid_alter(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"],"index_info":{"distance_metric":"L2"}}], "sharding_key":{"columns":["b"]}}'`)
 	tbl = external.GetTableByName(t, tk, "test", "pt_alter")
 	idx = tbl.Meta().FindIndexByName("idx_hybrid_alter")
 	require.NotNil(t, idx)
