@@ -236,7 +236,7 @@ func (ops ConsoleOperations) startProgressBarOverTTY(title string, total int,
 func (ops ConsoleOperations) startDynamicProgressBarOverTTY(title string,
 	extraFields ...ExtraField) DynamicProgressWaiter {
 	pb := mpb.New(mpb.WithOutput(ops.Out()), mpb.WithRefreshRate(400*time.Millisecond))
-	bar := buildProgressBar(pb, title, 0, extraFields...)
+	bar := buildDynamicProgressBar(pb, title, 0, extraFields...)
 	return &dynamicPbProgress{
 		pbProgress: &pbProgress{
 			bar:      bar,
@@ -254,6 +254,20 @@ func adjustTotal(pb *mpb.Progress, title string, total int, extraFields ...Extra
 }
 
 func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...ExtraField) *mpb.Bar {
+	return buildProgressBarWithDecorator(pb, title, total, decor.NewPercentage("%02.2f"), extraFields...)
+}
+
+func buildDynamicProgressBar(pb *mpb.Progress, title string, total int, extraFields ...ExtraField) *mpb.Bar {
+	return buildProgressBarWithDecorator(pb, title, total, decor.CountersNoUnit("%d/%d"), extraFields...)
+}
+
+func buildProgressBarWithDecorator(
+	pb *mpb.Progress,
+	title string,
+	total int,
+	progressDecorator decor.Decorator,
+	extraFields ...ExtraField,
+) *mpb.Bar {
 	greenTitle := color.GreenString(title)
 	return pb.New(int64(total),
 		// Play as if the old BR style.
@@ -269,7 +283,7 @@ func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...
 		}),
 		mpb.PrependDecorators(decor.OnAbort(decor.OnComplete(decor.Name(greenTitle),
 			fmt.Sprintf("%s  ::", title)), fmt.Sprintf("%s  ::", title))),
-		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"),
+		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(progressDecorator,
 			printFinalMessage(extraFields))), color.RedString("ABORTED"))),
 	)
 }

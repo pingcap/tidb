@@ -229,6 +229,7 @@ func TestRunRepoSnapshotDeleteWithConsoleUsesProgressBar(t *testing.T) {
 		PendingDeleted:  1,
 	}, result)
 	requireRepoSnapshotProgress(t, console, "Deleting snapshot backup...", 4, 4)
+	requireRepoSnapshotExtraField(t, console, "deleted", "4 files")
 }
 
 func TestRunRepoSnapshotPendingDiscardWithConsoleUsesProgressBar(t *testing.T) {
@@ -253,6 +254,7 @@ func TestRunRepoSnapshotPendingDiscardWithConsoleUsesProgressBar(t *testing.T) {
 		PendingDeleted:  1,
 	}, result)
 	requireRepoSnapshotProgress(t, console, "Discarding pending snapshot backup...", 4, 4)
+	requireRepoSnapshotExtraField(t, console, "deleted", "4 files")
 }
 
 func TestRunRepoSnapshotOrphansDeleteWithConsoleUsesProgressBar(t *testing.T) {
@@ -271,6 +273,7 @@ func TestRunRepoSnapshotOrphansDeleteWithConsoleUsesProgressBar(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, deleted)
 	requireRepoSnapshotProgress(t, console, "Deleting orphan snapshot objects...", 2, 2)
+	requireRepoSnapshotExtraField(t, console, "deleted", "2 files")
 }
 
 func TestRunRepoSnapshotListIgnoresProgressWaitCancelAfterSuccess(t *testing.T) {
@@ -473,9 +476,12 @@ type repoSnapshotTestConsole struct {
 func (c *repoSnapshotTestConsole) StartProgressBar(
 	title string,
 	total int,
-	_ ...glue.ExtraField,
+	extraFields ...glue.ExtraField,
 ) glue.ProgressWaiter {
-	progress := &repoSnapshotTestProgress{title: title, waitErr: c.waitErr}
+	progress := &repoSnapshotTestProgress{title: title, waitErr: c.waitErr, extraFields: extraFields}
+	if total == glue.OnlyOneTask {
+		total = 1
+	}
 	progress.SetTotal(int64(total))
 	c.progressBars = append(c.progressBars, progress)
 	return progress
@@ -483,21 +489,22 @@ func (c *repoSnapshotTestConsole) StartProgressBar(
 
 func (c *repoSnapshotTestConsole) StartDynamicProgressBar(
 	title string,
-	_ ...glue.ExtraField,
+	extraFields ...glue.ExtraField,
 ) glue.DynamicProgressWaiter {
-	progress := &repoSnapshotTestProgress{title: title, waitErr: c.waitErr}
+	progress := &repoSnapshotTestProgress{title: title, waitErr: c.waitErr, extraFields: extraFields}
 	c.progressBars = append(c.progressBars, progress)
 	return progress
 }
 
 type repoSnapshotTestProgress struct {
-	title     string
-	waitErr   error
-	total     atomic.Int64
-	closed    atomic.Bool
-	waited    atomic.Bool
-	completed atomic.Bool
-	count     atomic.Int64
+	title       string
+	waitErr     error
+	extraFields []glue.ExtraField
+	total       atomic.Int64
+	closed      atomic.Bool
+	waited      atomic.Bool
+	completed   atomic.Bool
+	count       atomic.Int64
 }
 
 func (p *repoSnapshotTestProgress) Inc() {
@@ -558,4 +565,23 @@ func requireRepoSnapshotProgress(
 	require.True(t, progress.completed.Load())
 	require.True(t, progress.waited.Load())
 	require.True(t, progress.closed.Load())
+}
+
+func requireRepoSnapshotExtraField(
+	t *testing.T,
+	console *repoSnapshotTestConsole,
+	key string,
+	expected string,
+) {
+	t.Helper()
+	require.Len(t, console.progressBars, 1)
+	progress := console.progressBars[0]
+	for _, extraField := range progress.extraFields {
+		field := extraField()
+		if field[0] == key {
+			require.Equal(t, expected, field[1])
+			return
+		}
+	}
+	require.Failf(t, "missing extra field", "key %q not found", key)
 }

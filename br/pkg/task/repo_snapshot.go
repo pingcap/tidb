@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"iter"
 	"slices"
 	"strings"
@@ -152,8 +153,15 @@ func RunRepoSnapshotDelete(
 	cfg RepoSnapshotDeleteConfig,
 ) (*RepoSnapshotDeleteResult, error) {
 	console := normalizeRepoSnapshotConsole(consoleGlue)
+	var deleteResult *RepoSnapshotDeleteResult
 	extraFields := []glue.ExtraField{
 		glue.WithConstExtraField("backup-id", cfg.BackupID.String()),
+		withDeletedFilesExtraField(func() int {
+			if deleteResult == nil {
+				return 0
+			}
+			return deleteResult.MetadataDeleted + deleteResult.DataDeleted + deleteResult.PendingDeleted
+		}),
 	}
 	return runRepoSnapshotDynamicProgressTask(
 		ctx,
@@ -163,7 +171,7 @@ func RunRepoSnapshotDelete(
 		func(addTotal func(int64), advance func(int64)) (*RepoSnapshotDeleteResult, error) {
 			return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotDeleteResult, error) {
 				snapshotOps := repo.SnapshotOpsExtension(storage)
-				return snapshotOps.DeleteSnapshot(
+				result, err := snapshotOps.DeleteSnapshot(
 					ctx,
 					cfg.BackupID,
 					repo.WithMutationProgress(
@@ -171,6 +179,10 @@ func RunRepoSnapshotDelete(
 						func(count int) { advance(int64(count)) },
 					),
 				)
+				if result != nil {
+					deleteResult = result
+				}
+				return result, err
 			})
 		},
 	)
@@ -192,9 +204,16 @@ func RunRepoSnapshotPendingDiscard(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		var discardResult *RepoSnapshotPendingDiscardResult
 		extraFields := []glue.ExtraField{
 			glue.WithConstExtraField("backup-id", target.BackupID.String()),
 			glue.WithConstExtraField("state", target.State),
+			withDeletedFilesExtraField(func() int {
+				if discardResult == nil {
+					return 0
+				}
+				return discardResult.MetadataDeleted + discardResult.DataDeleted + discardResult.PendingDeleted
+			}),
 		}
 		return runRepoSnapshotDynamicProgressTask(
 			ctx,
@@ -202,7 +221,7 @@ func RunRepoSnapshotPendingDiscard(
 			"Discarding pending snapshot backup...",
 			extraFields,
 			func(addTotal func(int64), advance func(int64)) (*RepoSnapshotPendingDiscardResult, error) {
-				return snapshotOps.DiscardPendingSnapshot(
+				result, err := snapshotOps.DiscardPendingSnapshot(
 					ctx,
 					*target,
 					repo.WithMutationProgress(
@@ -210,6 +229,10 @@ func RunRepoSnapshotPendingDiscard(
 						func(count int) { advance(int64(count)) },
 					),
 				)
+				if result != nil {
+					discardResult = result
+				}
+				return result, err
 			},
 		)
 	})
@@ -254,21 +277,24 @@ func RunRepoSnapshotOrphansDelete(
 	cfg RepoSnapshotOrphansConfig,
 ) (int, error) {
 	console := normalizeRepoSnapshotConsole(consoleGlue)
+	deletedCount := 0
 	return runRepoSnapshotDynamicProgressTask(
 		ctx,
 		console,
 		"Deleting orphan snapshot objects...",
-		nil,
+		[]glue.ExtraField{withDeletedFilesExtraField(func() int { return deletedCount })},
 		func(addTotal func(int64), advance func(int64)) (int, error) {
 			return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (int, error) {
 				snapshotOps := repo.SnapshotOpsExtension(storage)
-				return snapshotOps.DeleteSnapshotOrphans(
+				deleted, err := snapshotOps.DeleteSnapshotOrphans(
 					ctx,
 					repo.WithMutationProgress(
 						func(count int) { addTotal(int64(count)) },
 						func(count int) { advance(int64(count)) },
 					),
 				)
+				deletedCount = deleted
+				return deleted, err
 			})
 		},
 	)
@@ -282,6 +308,16 @@ func normalizeRepoSnapshotConsole(consoleGlue glue.ConsoleGlue) repoSnapshotCons
 		return console
 	}
 	return glue.ConsoleOperations{ConsoleGlue: consoleGlue}
+}
+
+func withDeletedFilesExtraField(count func() int) glue.ExtraField {
+	return glue.WithCallbackExtraField("deleted", func() string {
+		deleted := count()
+		if deleted == 1 {
+			return "1 file"
+		}
+		return fmt.Sprintf("%d files", deleted)
+	})
 }
 
 func waitRepoSnapshotProgressDone(progress glue.ProgressWaiter) {
@@ -301,7 +337,7 @@ func runRepoSnapshotSpinnerTask[T any](
 	if console == nil {
 		return fn()
 	}
-	progress := console.StartProgressBar(title, 1, append([]glue.ExtraField{glue.WithTimeCost()}, extraFields...)...)
+	progress := console.StartProgressBar(title, glue.OnlyOneTask, append([]glue.ExtraField{glue.WithTimeCost()}, extraFields...)...)
 	defer progress.Close()
 	result, err := fn()
 	if err != nil {
