@@ -147,6 +147,49 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 			tk.MustQuery("show warnings").Check(testkit.Rows(output61792[i].Warn...))
 		}
 
+		// repro_hash_join_issue
+		tk.MustExec("create database if not exists repro_hash_join_issue")
+		tk.MustExec("use repro_hash_join_issue")
+		tk.MustExec("CREATE TABLE t_small (\n" +
+			"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+			"  id1 VARCHAR(10) NOT NULL,\n" +
+			"  id2 TINYINT NOT NULL,\n" +
+			"  id3 BIGINT NOT NULL,\n" +
+			"  id4 BIGINT NOT NULL,\n" +
+			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
+			")")
+		tk.MustExec("CREATE TABLE t_big (\n" +
+			"  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n" +
+			"  id1 BIGINT NOT NULL,\n" +
+			"  id2 INT NOT NULL,\n" +
+			"  id3 TINYINT NOT NULL,\n" +
+			"  id4 INT NOT NULL,\n" +
+			"  id5 BIGINT NOT NULL,\n" +
+			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+			"  KEY idx_id1_id2_id3_id4_id5 (id1, id2, id3, id4, id5)\n" +
+			")")
+		require.NoError(t, testkit.LoadTableStats("t_small.json", dom))
+		require.NoError(t, testkit.LoadTableStats("t_big.json", dom))
+		tk.MustExec("set @@session.tidb_cost_model_version = 2")
+		tk.MustExec("set @@session.tidb_opt_index_join_scan_ratio_threshold = 0.5")
+
+		var inputReproHashJoinIssue []string
+		var outputReproHashJoinIssue []struct {
+			SQL      string
+			Contains []string
+		}
+		analyzeSuiteData.LoadTestCasesByName("TestReproHashJoinIssue", t, &inputReproHashJoinIssue, &outputReproHashJoinIssue, cascades, caller)
+		for i, tt := range inputReproHashJoinIssue {
+			rows := testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			planText := strings.Join(rows, "\n")
+			testdata.OnRecord(func() {
+				outputReproHashJoinIssue[i].SQL = tt
+			})
+			for _, one := range outputReproHashJoinIssue[i].Contains {
+				require.Contains(t, planText, one)
+			}
+		}
+
 		// issue:59563
 		tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 		tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
