@@ -91,14 +91,15 @@ done
 echo "backup start..."
 run_br --pd $PD_ADDR backup full -s "gcs://$BUCKET/$DB?endpoint=http://$GCS_HOST:$GCS_PORT"
 
-# old version backup full v4.0.8 and disable check-requirements
-echo "v4.0.8 backup start..."
-bin/brv4.0.8 backup full \
-    -L "debug" \
-    --ca "$TEST_DIR/certs/ca.pem" \
-    --cert "$TEST_DIR/certs/br.pem" \
-    --key "$TEST_DIR/certs/br.key" \
-    --pd $PD_ADDR -s "gcs://$BUCKET/${DB}_old?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+if [ "${TEST_LEGACY_BR_GCS:-false}" = "true" ]; then
+    echo "v4.0.8 backup start..."
+    bin/brv4.0.8 backup full \
+        -L "debug" \
+        --ca "$TEST_DIR/certs/ca.pem" \
+        --cert "$TEST_DIR/certs/br.pem" \
+        --key "$TEST_DIR/certs/br.key" \
+        --pd $PD_ADDR -s "gcs://$BUCKET/${DB}_old?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/" --check-requirements=false
+fi
 
 # clean up
 for i in $(seq $DB_COUNT); do
@@ -129,28 +130,29 @@ else
     echo "TEST: [$TEST_NAME] new version successd!"
 fi
 
-# clean up
-for i in $(seq $DB_COUNT); do
-    run_sql "DROP DATABASE $DB${i};"
-done
+if [ "${TEST_LEGACY_BR_GCS:-false}" = "true" ]; then
+    for i in $(seq $DB_COUNT); do
+        run_sql "DROP DATABASE $DB${i};"
+    done
 
-echo "v4.0.8 version restore start..."
-run_br restore full -s "gcs://$BUCKET/${DB}_old" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT" --check-requirements=false
+    echo "v4.0.8 version restore start..."
+    run_br restore full -s "gcs://$BUCKET/${DB}_old" --pd $PD_ADDR --gcs.endpoint="http://$GCS_HOST:$GCS_PORT" --check-requirements=false
 
-for i in $(seq $DB_COUNT); do
-    row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
-done
+    for i in $(seq $DB_COUNT); do
+        row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
+    done
 
-fail=false
-for i in $(seq $DB_COUNT); do
-    if [ "${row_count_ori[i]}" != "${row_count_new[i]}" ];then
-        fail=true
-        echo "TEST: [$TEST_NAME] fail on database $DB${i}"
+    fail=false
+    for i in $(seq $DB_COUNT); do
+        if [ "${row_count_ori[i]}" != "${row_count_new[i]}" ];then
+            fail=true
+            echo "TEST: [$TEST_NAME] fail on database $DB${i}"
+        fi
+        echo "database $DB${i} [original] row count: ${row_count_ori[i]}, [after br] row count: ${row_count_new[i]}"
+    done
+
+    if $fail; then
+        echo "TEST: [$TEST_NAME] failed!"
+        exit 1
     fi
-    echo "database $DB${i} [original] row count: ${row_count_ori[i]}, [after br] row count: ${row_count_new[i]}"
-done
-
-if $fail; then
-    echo "TEST: [$TEST_NAME] failed!"
-    exit 1
 fi
