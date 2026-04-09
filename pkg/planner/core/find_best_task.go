@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -1026,41 +1025,8 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		// TableScan with cluster table can't keep order.
 		return property.PropNotMatched
 	}
-	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
-		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
-			return property.PropNotMatched
-		}
-
-		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
-			return property.PropNotMatched
-		}
+	if prop.VectorProp.VSInfo != nil && path.Index != nil && findVectorSearchIndexMatch(path.Index, prop.VectorProp.VSInfo, ds.TableInfo) != nil {
 		return property.PropMatched
-	}
-	// Hybrid vector index matching via TiCI.
-	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0 {
-		for _, vecSpec := range path.Index.HybridInfo.Vector {
-			if len(vecSpec.Columns) != 1 {
-				continue
-			}
-			// Get column ID from table info.
-			vecColID := ds.TableInfo.Columns[vecSpec.Columns[0].Offset].ID
-			if vecColID != prop.VectorProp.Column.ID {
-				continue
-			}
-			// Match distance metric.
-			if vecSpec.IndexInfo == nil {
-				continue
-			}
-			propMetric, ok := model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L]
-			if !ok {
-				continue
-			}
-			specMetric := model.DistanceMetric(vecSpec.IndexInfo.DistanceMetric)
-			if propMetric != specMetric {
-				continue
-			}
-			return property.PropMatched
-		}
 	}
 	// Though TiCI index can keep order, we haven't implemented the multi-way merging TiCI index scan result to
 	// satisfy the required order. So we just return PropNotMatched here.
@@ -2643,21 +2609,9 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	// MPP task
 	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
-			// Only the corresponding index can generate a valid task.
-			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
-			distanceMetric := model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L]
-			distanceMetricPB := tipb.VectorDistanceMetric_value[string(distanceMetric)]
-			intest.Assert(distanceMetricPB != 0, "unexpected distance metric")
-
-			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildVectorIndexExtra(
-				candidate.path.Index,
-				tipb.ANNQueryType_OrderBy,
-				tipb.VectorDistanceMetric(distanceMetricPB),
-				prop.VectorProp.TopK,
-				ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-				prop.VectorProp.Vec.SerializeTo(nil),
-				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
-			))
+			vectorIndexExtra := buildVectorIndexExtraForTopN(candidate.path.Index, prop.VectorProp.VSInfo, prop.VectorProp.TopK, ts.Table)
+			intest.Assert(vectorIndexExtra != nil, "The passed vector property is not matched with the index")
+			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, vectorIndexExtra)
 			ts.SetStats(property.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
 		// ********************************** future deprecated start **************************/

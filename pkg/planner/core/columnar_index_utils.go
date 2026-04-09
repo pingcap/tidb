@@ -18,8 +18,17 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+type vectorSearchIndexMatch struct {
+	ColumnInfo        *model.ColumnInfo
+	DistanceMetricPB  tipb.VectorDistanceMetric
+	QueryVector       []byte
+	Dimension         uint32
+	IsTiCIHybridIndex bool
+}
 
 func buildVectorIndexExtra(
 	indexInfo *model.IndexInfo,
@@ -63,6 +72,94 @@ func DistanceMetricToTipb(dm model.DistanceMetric) tipb.VectorDistanceMetric {
 	}
 }
 
+func findVectorSearchIndexMatch(
+	indexInfo *model.IndexInfo,
+	vsInfo *expression.VSInfo,
+	tableInfo *model.TableInfo,
+) *vectorSearchIndexMatch {
+	if indexInfo == nil || vsInfo == nil || tableInfo == nil {
+		return nil
+	}
+
+	distanceMetric, ok := model.IndexableFnNameToDistanceMetric[vsInfo.DistanceFnName.L]
+	if !ok {
+		return nil
+	}
+	distMetricPB := DistanceMetricToTipb(distanceMetric)
+	if distMetricPB == tipb.VectorDistanceMetric_INVALID_DISTANCE_METRIC {
+		return nil
+	}
+	queryVector := vsInfo.Vec.SerializeTo(nil)
+
+	if indexInfo.VectorInfo != nil {
+		if len(indexInfo.Columns) == 0 {
+			return nil
+		}
+		colInfo := tableInfo.Columns[indexInfo.Columns[0].Offset]
+		if colInfo.ID != vsInfo.Column.ID || indexInfo.VectorInfo.DistanceMetric != distanceMetric {
+			return nil
+		}
+		return &vectorSearchIndexMatch{
+			ColumnInfo:       colInfo,
+			DistanceMetricPB: distMetricPB,
+			QueryVector:      queryVector,
+			Dimension:        uint32(indexInfo.VectorInfo.Dimension),
+		}
+	}
+
+	if indexInfo.HybridInfo == nil {
+		return nil
+	}
+	for _, vecSpec := range indexInfo.HybridInfo.Vector {
+		if len(vecSpec.Columns) != 1 || vecSpec.IndexInfo == nil {
+			continue
+		}
+		colInfo := tableInfo.Columns[vecSpec.Columns[0].Offset]
+		if colInfo.ID != vsInfo.Column.ID {
+			continue
+		}
+		if model.DistanceMetric(vecSpec.IndexInfo.DistanceMetric) != distanceMetric {
+			continue
+		}
+		dim := uint32(vsInfo.Vec.Len())
+		if vecSpec.IndexInfo.Dimension != nil {
+			dim = uint32(*vecSpec.IndexInfo.Dimension)
+		}
+		if dim != uint32(vsInfo.Vec.Len()) {
+			continue
+		}
+		return &vectorSearchIndexMatch{
+			ColumnInfo:        colInfo,
+			DistanceMetricPB:  distMetricPB,
+			QueryVector:       queryVector,
+			Dimension:         dim,
+			IsTiCIHybridIndex: true,
+		}
+	}
+	return nil
+}
+
+func buildVectorIndexExtraForTopN(
+	indexInfo *model.IndexInfo,
+	vsInfo *expression.VSInfo,
+	topK uint32,
+	tableInfo *model.TableInfo,
+) *physicalop.ColumnarIndexExtra {
+	match := findVectorSearchIndexMatch(indexInfo, vsInfo, tableInfo)
+	if match == nil || indexInfo == nil || indexInfo.VectorInfo == nil {
+		return nil
+	}
+	return buildVectorIndexExtra(
+		indexInfo,
+		tipb.ANNQueryType_OrderBy,
+		match.DistanceMetricPB,
+		topK,
+		match.ColumnInfo.Name.L,
+		match.QueryVector,
+		tidbutil.ColumnToProto(match.ColumnInfo, false, false),
+	)
+}
+
 // buildTiCIVectorQueryInfo creates a TiCIVectorQueryInfo from index info and vector search properties.
 func buildTiCIVectorQueryInfo(
 	indexInfo *model.IndexInfo,
@@ -70,54 +167,18 @@ func buildTiCIVectorQueryInfo(
 	topK uint32,
 	tableInfo *model.TableInfo,
 ) *tipb.TiCIVectorQueryInfo {
-	if indexInfo.HybridInfo == nil {
-		return nil
-	}
-
-	// Find the matching HybridVectorSpec by column ID.
-	var matchedSpec *model.HybridVectorSpec
-	var vecColInfo *model.ColumnInfo
-	for _, vecSpec := range indexInfo.HybridInfo.Vector {
-		if len(vecSpec.Columns) != 1 {
-			continue
-		}
-		colInfo := tableInfo.Columns[vecSpec.Columns[0].Offset]
-		if colInfo.ID == vsInfo.Column.ID {
-			matchedSpec = vecSpec
-			vecColInfo = colInfo
-			break
-		}
-	}
-	if matchedSpec == nil {
-		return nil
-	}
-
-	// Map distance function name to tipb enum.
-	dm, ok := model.IndexableFnNameToDistanceMetric[vsInfo.DistanceFnName.L]
-	if !ok {
-		return nil
-	}
-	distMetric := DistanceMetricToTipb(dm)
-
-	// Serialize the query vector.
-	queryVector := vsInfo.Vec.SerializeTo(nil)
-
-	// Determine dimension.
-	dim := uint32(vsInfo.Vec.Len())
-	if matchedSpec.IndexInfo != nil && matchedSpec.IndexInfo.Dimension != nil {
-		dim = uint32(*matchedSpec.IndexInfo.Dimension)
-	}
-	if dim != uint32(vsInfo.Vec.Len()) {
+	match := findVectorSearchIndexMatch(indexInfo, vsInfo, tableInfo)
+	if match == nil || !match.IsTiCIHybridIndex {
 		return nil
 	}
 
 	return &tipb.TiCIVectorQueryInfo{
 		IndexId:        indexInfo.ID,
-		ColumnId:       vecColInfo.ID,
-		DistanceMetric: distMetric,
+		ColumnId:       match.ColumnInfo.ID,
+		DistanceMetric: match.DistanceMetricPB,
 		TopK:           topK,
-		QueryVector:    queryVector,
-		Dimension:      dim,
-		ColumnName:     vecColInfo.Name.L,
+		QueryVector:    match.QueryVector,
+		Dimension:      match.Dimension,
+		ColumnName:     match.ColumnInfo.Name.L,
 	}
 }

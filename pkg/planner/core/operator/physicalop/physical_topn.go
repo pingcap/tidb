@@ -266,6 +266,50 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalTopN(p, tasks...)
 }
 
+func appendVectorSearchTopN(
+	ret []base.PhysicalPlan,
+	lt *logicalop.LogicalTopN,
+	prop *property.PhysicalProperty,
+	taskTp property.TaskType,
+	matchIndex func(*logicalop.DataSource) bool,
+) []base.PhysicalPlan {
+	if len(lt.ByItems) != 1 {
+		return ret
+	}
+	vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
+	if vs == nil || lt.ByItems[0].Desc {
+		return ret
+	}
+	ds, ok := lt.Children()[0].(*logicalop.DataSource)
+	if !ok || len(ds.PushedDownConds) > 0 || !matchIndex(ds) {
+		return ret
+	}
+	resultProp := &property.PhysicalProperty{
+		TaskTp:            taskTp,
+		ExpectedCnt:       math.MaxFloat64,
+		CTEProducerStatus: prop.CTEProducerStatus,
+	}
+	resultProp.VectorProp.VSInfo = vs
+	resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
+	topN := PhysicalTopN{
+		ByItems:     lt.ByItems,
+		PartitionBy: lt.PartitionBy,
+		Count:       lt.Count,
+		Offset:      lt.Offset,
+	}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+	topN.SetSchema(lt.Schema())
+	return append(ret, topN)
+}
+
+func hasTiCIHybridVectorPath(ds *logicalop.DataSource) bool {
+	for _, path := range ds.PossibleAccessPaths {
+		if path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	// topN should always generate rootTaskType for:
 	// case1: after v7.5, since tiFlash Cop has been banned, mppTaskType may return invalid task when there are some root conditions.
@@ -304,81 +348,14 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	// If we can generate MPP task and there's vector distance function in the order by column.
 	// We will try to generate a property for possible vector indexes.
 	if mppAllowed {
-		if len(lt.ByItems) != 1 {
-			return ret
-		}
-		vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
-		if vs == nil {
-			return ret
-		}
-		// Currently vector index only accept ascending order.
-		if lt.ByItems[0].Desc {
-			return ret
-		}
-		// Currently, we only deal with the case the TopN is directly above a DataSource.
-		ds, ok := lt.Children()[0].(*logicalop.DataSource)
-		if !ok {
-			return ret
-		}
-		// Reject any filters.
-		if len(ds.PushedDownConds) > 0 {
-			return ret
-		}
-		resultProp := &property.PhysicalProperty{
-			TaskTp:            property.MppTaskType,
-			ExpectedCnt:       math.MaxFloat64,
-			CTEProducerStatus: prop.CTEProducerStatus,
-		}
-		resultProp.VectorProp.VSInfo = vs
-		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
-		topN := PhysicalTopN{
-			ByItems:     lt.ByItems,
-			PartitionBy: lt.PartitionBy,
-			Count:       lt.Count,
-			Offset:      lt.Offset,
-		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
-		topN.SetSchema(lt.Schema())
-		ret = append(ret, topN)
+		ret = appendVectorSearchTopN(ret, lt, prop, property.MppTaskType, func(*logicalop.DataSource) bool {
+			return true
+		})
 	}
 
 	// If there's a vector distance function in the order by column,
 	// try to generate a property for TiCI hybrid vector indexes.
-	if len(lt.ByItems) == 1 {
-		vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
-		if vs != nil && !lt.ByItems[0].Desc {
-			// Check if the child is a DataSource with a TiCI hybrid vector index.
-			if ds, ok := lt.Children()[0].(*logicalop.DataSource); ok {
-				// Filter pushdown for TiCI vector search is not implemented yet.
-				if len(ds.PushedDownConds) > 0 {
-					return ret
-				}
-				hasTiCIHybridVector := false
-				for _, path := range ds.PossibleAccessPaths {
-					if path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0 {
-						hasTiCIHybridVector = true
-						break
-					}
-				}
-				if hasTiCIHybridVector {
-					resultProp := &property.PhysicalProperty{
-						TaskTp:            property.CopSingleReadTaskType,
-						ExpectedCnt:       math.MaxFloat64,
-						CTEProducerStatus: prop.CTEProducerStatus,
-					}
-					resultProp.VectorProp.VSInfo = vs
-					resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
-					topN := PhysicalTopN{
-						ByItems:     lt.ByItems,
-						PartitionBy: lt.PartitionBy,
-						Count:       lt.Count,
-						Offset:      lt.Offset,
-					}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
-					topN.SetSchema(lt.Schema())
-					ret = append(ret, topN)
-				}
-			}
-		}
-	}
+	ret = appendVectorSearchTopN(ret, lt, prop, property.CopSingleReadTaskType, hasTiCIHybridVectorPath)
 
 	return ret
 }
