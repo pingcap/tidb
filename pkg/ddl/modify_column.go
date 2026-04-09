@@ -1719,6 +1719,7 @@ func mergePartitionExprUsageKind(parentKind, funcKind partitionExprColumnUsageKi
 
 func parsePartitionExpr(partExpr string) (ast.ExprNode, error) {
 	// Parse by building SQL: SELECT <partExpr>.
+	/* #nosec G202: partExpr comes from stored partition metadata and is parsed into AST only. */
 	stmt, _, err := parser.New().ParseSQL("SELECT " + partExpr)
 	if err != nil {
 		return nil, err
