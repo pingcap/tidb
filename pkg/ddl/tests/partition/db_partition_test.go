@@ -3553,6 +3553,8 @@ func TestModifyColumnPartitionedTablePartitionColumnNullability(t *testing.T) {
 			)`)
 		tk.MustExec(`insert into t_expr_nullable_ok values ('2024-01-01 00:00:00',1)`)
 		tk.MustExec(`alter table t_expr_nullable_ok modify column a datetime null`)
+		tk.MustExec(`insert into t_expr_nullable_ok values (null,100)`)
+		tk.MustQuery(`select a, v from t_expr_nullable_ok where a is null`).Check(testkit.Rows("<nil> 100"))
 		tk.MustExec(`admin check table t_expr_nullable_ok`)
 	})
 
