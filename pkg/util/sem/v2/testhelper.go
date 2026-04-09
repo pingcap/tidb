@@ -14,7 +14,11 @@
 
 package sem
 
-import "github.com/pingcap/tidb/pkg/sessionctx/variable"
+import (
+	"strings"
+
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+)
 
 // EnableFromPathForTest enables SEM v2 in test using a configuration file.
 func EnableFromPathForTest(configPath string) (func(), error) {
@@ -47,4 +51,24 @@ func EnableFromPathForTest(configPath string) (func(), error) {
 			variable.SetSysVar(name, value)
 		}
 	}, nil
+}
+
+// AddRestrictedPrivilegesForTest adds restricted privileges for test.
+// It's not safe to use this function while using SEM in multiple goroutines.
+func AddRestrictedPrivilegesForTest(privilege string) {
+	if globalSem.Load() == nil {
+		return
+	}
+
+	globalSem.Load().restrictedPrivileges[strings.ToUpper(privilege)] = struct{}{}
+}
+
+// RemoveRestrictedPrivilegesForTest removes restricted privileges for test.
+// It's not safe to use this function while using SEM in multiple goroutines.
+func RemoveRestrictedPrivilegesForTest(privilege string) {
+	if globalSem.Load() == nil {
+		return
+	}
+
+	delete(globalSem.Load().restrictedPrivileges, strings.ToUpper(privilege))
 }

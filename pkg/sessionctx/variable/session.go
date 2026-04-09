@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -210,7 +211,7 @@ type TxnCtxNoNeedToRestore struct {
 	StaleReadTs uint64
 
 	// unchangedKeys is used to store the unchanged keys that needs to lock for pessimistic transaction.
-	unchangedKeys map[string]struct{}
+	unchangedKeys map[string]bool
 
 	PessimisticCacheHit int
 
@@ -258,6 +259,33 @@ type TxnCtxNoNeedToRestore struct {
 	// Read results cannot be directly written into pessimisticLockCache because failed statement need to rollback
 	// its pessimistic locks.
 	CurrentStmtPessimisticLockCache map[string][]byte
+}
+
+// RUV2Weights returns the active TiDB-side RU v2 weights for the current
+// session. The weights come from the global config, but the conversion is kept
+// in the session layer so lower-level utility packages remain config-free.
+func (s *SessionVars) RUV2Weights() execdetails.RUV2Weights {
+	if cfg := config.GetGlobalConfig(); cfg != nil {
+		return ruv2WeightsFromConfig(cfg.RUV2)
+	}
+	return ruv2WeightsFromConfig(config.DefaultRUV2Config())
+}
+
+func ruv2WeightsFromConfig(cfg config.RUV2Config) execdetails.RUV2Weights {
+	return execdetails.RUV2Weights{
+		RUScale:                 cfg.RUScale,
+		ResultChunkCells:        cfg.ResultChunkCells,
+		ExecutorL1:              cfg.ExecutorL1,
+		ExecutorL2:              cfg.ExecutorL2,
+		ExecutorL3:              cfg.ExecutorL3,
+		ExecutorL5InsertRows:    cfg.ExecutorL5InsertRows,
+		PlanCnt:                 cfg.PlanCnt,
+		PlanDeriveStatsPaths:    cfg.PlanDeriveStatsPaths,
+		ResourceManagerReadCnt:  cfg.ResourceManagerReadCnt,
+		ResourceManagerWriteCnt: cfg.ResourceManagerWriteCnt,
+		SessionParserTotal:      cfg.SessionParserTotal,
+		TxnCnt:                  cfg.TxnCnt,
+	}
 }
 
 // SavepointRecord indicates a transaction's savepoint record.
@@ -329,20 +357,38 @@ func (s *SessionVars) GetRowIDShardGenerator() *RowIDShardGenerator {
 }
 
 // AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
-func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte) {
+func (tc *TransactionContext) AddUnchangedKeyForLock(key []byte, shared bool) {
 	if tc.unchangedKeys == nil {
-		tc.unchangedKeys = map[string]struct{}{}
+		tc.unchangedKeys = map[string]bool{}
 	}
-	tc.unchangedKeys[string(key)] = struct{}{}
+	k := string(key)
+	alreadyShared, exist := tc.unchangedKeys[k]
+	tc.unchangedKeys[k] = shared && (!exist || (exist && alreadyShared))
 }
 
-// CollectUnchangedKeysForLock collects unchanged keys for pessimistic lock.
-func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key {
-	for key := range tc.unchangedKeys {
-		buf = append(buf, kv.Key(key))
+// CollectUnchangedKeysForXLock collects unchanged keys for pessimistic lock.
+func (tc *TransactionContext) CollectUnchangedKeysForXLock(buf []kv.Key) []kv.Key {
+	for key, shared := range tc.unchangedKeys {
+		if !shared {
+			buf = append(buf, kv.Key(key))
+		}
 	}
-	tc.unchangedKeys = nil
 	return buf
+}
+
+// CollectUnchangedKeysForSLock collects unchanged keys for pessimistic lock in share mode.
+func (tc *TransactionContext) CollectUnchangedKeysForSLock(buf []kv.Key) []kv.Key {
+	for key, shared := range tc.unchangedKeys {
+		if shared {
+			buf = append(buf, kv.Key(key))
+		}
+	}
+	return buf
+}
+
+// ResetUnchangedKeysForLock resets unchanged keys for lock.
+func (tc *TransactionContext) ResetUnchangedKeysForLock() {
+	tc.unchangedKeys = nil
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
@@ -361,7 +407,6 @@ func (tc *TransactionContext) UpdateDeltaForTable(
 	item := tc.TableDeltaMap[physicalTableID]
 	item.Delta += delta
 	item.Count += count
-	item.TableID = physicalTableID
 	tc.TableDeltaMap[physicalTableID] = item
 }
 
@@ -892,6 +937,10 @@ type SessionVars struct {
 
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
+	// RUV2Metrics stores statement-level RU v2 metrics for current statement.
+	RUV2Metrics *execdetails.RUV2Metrics
+	// RUV2PendingSessionParserTotal stores session parser count before statement context reset.
+	RUV2PendingSessionParserTotal atomic.Int64
 
 	// RefCountOfStmtCtx indicates the reference count of StmtCtx. When the
 	// StmtCtx is accessed by other sessions, e.g. oom-alarm-handler/expensive-query-handler, add one first.
@@ -1136,6 +1185,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
+	// OptIndexPruneThreshold defines the threshold for index pruning optimization.
+	OptIndexPruneThreshold int
+
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
 
@@ -1156,6 +1208,11 @@ type SessionVars struct {
 
 	// EnableNoDecorrelateInSelect enables the NO_DECORRELATE hint for subqueries in the select list.
 	EnableNoDecorrelateInSelect bool
+
+	// EnableAlternativeLogicalPlans enables building an extra non-decorrelate
+	// logical alternative when decorrelation does not produce an equivalent
+	// same-order index join candidate.
+	EnableAlternativeLogicalPlans bool
 
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool
@@ -1203,6 +1260,13 @@ type SessionVars struct {
 	// TiDBOptJoinReorderThreshold defines the minimal number of join nodes
 	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
+
+	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
+	TiDBOptEnableAdvancedJoinReorder bool
+
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel bool
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
@@ -1257,8 +1321,16 @@ type SessionVars struct {
 	// RewritePhaseInfo records all information about the rewriting phase.
 	RewritePhaseInfo
 
-	// DurationOptimization is the duration of optimizing a query.
-	DurationOptimization time.Duration
+	// DurationOptimizer aggregates timing metrics used by the optimizer.
+	DurationOptimizer struct {
+		Total            time.Duration // total time spent in query optimization
+		BindingMatch     time.Duration // time spent matching plan bindings
+		StatsSyncWait    time.Duration // time spent waiting for stats load to complete
+		LogicalOpt       time.Duration // time spent in logical optimization
+		PhysicalOpt      time.Duration // time spent in physical optimization
+		StatsDerive      time.Duration // time spent deriving/estimating statistics
+		TiFlashInfoFetch time.Duration // time spent fetching TiFlash replica information
+	}
 
 	// DurationWaitTS is the duration of waiting for a snapshot TS
 	DurationWaitTS time.Duration
@@ -1291,6 +1363,8 @@ type SessionVars struct {
 
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
+	// EnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
+	EnableNoBackslashEscapesInLike bool
 
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
@@ -1552,12 +1626,20 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	EnableNonPreparedPlanCacheForDML bool
 
+	// PlanCacheStrategy controls plan cache strategy.
+	PlanCacheStrategy string
+
 	// EnableFuzzyBinding indicates whether to enable fuzzy binding.
 	EnableFuzzyBinding bool
 
 	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.
 	PlanCacheInvalidationOnFreshStats bool
+
+	// PlanCacheSkipStatsOnBinding controls if plan cache skips stats-version invalidation when a SQL
+	// binding is matched. Since a binding pins the plan via hints, stats changes cannot alter the
+	// chosen plan, so invalidating the cache entry on stats updates is unnecessary.
+	PlanCacheSkipStatsOnBinding bool
 
 	// NonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	NonPreparedPlanCacheSize uint64
@@ -1580,6 +1662,9 @@ type SessionVars struct {
 
 	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
 	ForeignKeyChecks bool
+
+	// ForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
+	ForeignKeyCheckInSharedLock bool
 
 	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
@@ -1615,6 +1700,9 @@ type SessionVars struct {
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
+	// OptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	// Valid values: "DISABLE" (no optimization), "COST" (enable optimization with cost-based selection)
+	OptPartialOrderedIndexForTopN string
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator
@@ -1656,9 +1744,6 @@ type SessionVars struct {
 	// EnableINLJoinInnerMultiPattern indicates whether enable multi pattern for index join inner side
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
-
-	// EnhanceIndexJoinBuildV2 indicates whether to enhance index join build.
-	EnhanceIndexJoinBuildV2 bool
 
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
@@ -2056,6 +2141,12 @@ func (s *SessionVars) GetExecuteDuration() time.Duration {
 	return time.Since(s.StartTime) - s.DurationCompile
 }
 
+// IsPartialOrderedIndexForTopNEnabled indicates whether the partial ordered index optimization for TOPN queries is enabled.
+// TODO: consider more options other than "COST" in the future.
+func (s *SessionVars) IsPartialOrderedIndexForTopNEnabled() bool {
+	return s.OptPartialOrderedIndexForTopN == "COST"
+}
+
 // PartitionPruneMode presents the prune mode used.
 type PartitionPruneMode string
 
@@ -2123,7 +2214,7 @@ func (p *PlanCacheParamList) String() string {
 		p.forNonPrepCache { // hide non-prep parameter values by default
 		return ""
 	}
-	return " [arguments: " + types.DatumsToStrNoErr(p.paramValues) + "]"
+	return " [arguments: " + types.DatumsToStrNoErrSmart(p.paramValues) + "]"
 }
 
 // Append appends a parameter value to the PlanCacheParams.
@@ -2232,140 +2323,147 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 // NewSessionVars creates a session vars object.
 func NewSessionVars(hctx HookContext) *SessionVars {
 	vars := &SessionVars{
-		UserVars:                      NewUserVars(),
-		systems:                       make(map[string]string),
-		PreparedStmts:                 make(map[uint32]any),
-		PreparedStmtNameToID:          make(map[string]uint32),
-		PlanCacheParams:               NewPlanCacheParamList(),
-		TxnCtx:                        &TransactionContext{},
-		RetryInfo:                     &RetryInfo{},
-		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
-		AutoIncrementIncrement:        vardef.DefAutoIncrementIncrement,
-		AutoIncrementOffset:           vardef.DefAutoIncrementOffset,
-		StmtCtx:                       stmtctx.NewStmtCtx(),
-		AllowAggPushDown:              false,
-		AllowCartesianBCJ:             vardef.DefOptCartesianBCJ,
-		MPPOuterJoinFixedBuildSide:    vardef.DefOptMPPOuterJoinFixedBuildSide,
-		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
-		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
-		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
-		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
-		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
-		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
-		CartesianJoinOrderThreshold:   vardef.DefOptCartesianJoinOrderThreshold,
-		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
-		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
-		EnableSemiJoinRewrite:         vardef.DefOptEnableSemiJoinRewrite,
-		RetryLimit:                    vardef.DefTiDBRetryLimit,
-		DisableTxnAutoRetry:           vardef.DefTiDBDisableTxnAutoRetry,
-		DDLReorgPriority:              kv.PriorityLow,
-		allowInSubqToJoinAndAgg:       vardef.DefOptInSubqToJoinAndAgg,
-		preferRangeScan:               vardef.DefOptPreferRangeScan,
-		EnableCorrelationAdjustment:   vardef.DefOptEnableCorrelationAdjustment,
-		LimitPushDownThreshold:        vardef.DefOptLimitPushDownThreshold,
-		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
-		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
-		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
-		RiskRangeSkewRatio:            vardef.DefOptRiskRangeSkewRatio,
-		cpuFactor:                     vardef.DefOptCPUFactor,
-		copCPUFactor:                  vardef.DefOptCopCPUFactor,
-		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,
-		networkFactor:                 vardef.DefOptNetworkFactor,
-		scanFactor:                    vardef.DefOptScanFactor,
-		descScanFactor:                vardef.DefOptDescScanFactor,
-		seekFactor:                    vardef.DefOptSeekFactor,
-		memoryFactor:                  vardef.DefOptMemoryFactor,
-		diskFactor:                    vardef.DefOptDiskFactor,
-		concurrencyFactor:             vardef.DefOptConcurrencyFactor,
-		IndexScanCostFactor:           vardef.DefOptIndexScanCostFactor,
-		IndexReaderCostFactor:         vardef.DefOptIndexReaderCostFactor,
-		TableReaderCostFactor:         vardef.DefOptTableReaderCostFactor,
-		TableFullScanCostFactor:       vardef.DefOptTableFullScanCostFactor,
-		TableRangeScanCostFactor:      vardef.DefOptTableRangeScanCostFactor,
-		TableRowIDScanCostFactor:      vardef.DefOptTableRowIDScanCostFactor,
-		TableTiFlashScanCostFactor:    vardef.DefOptTableTiFlashScanCostFactor,
-		IndexLookupCostFactor:         vardef.DefOptIndexLookupCostFactor,
-		IndexMergeCostFactor:          vardef.DefOptIndexMergeCostFactor,
-		SortCostFactor:                vardef.DefOptSortCostFactor,
-		TopNCostFactor:                vardef.DefOptTopNCostFactor,
-		LimitCostFactor:               vardef.DefOptLimitCostFactor,
-		StreamAggCostFactor:           vardef.DefOptStreamAggCostFactor,
-		HashAggCostFactor:             vardef.DefOptHashAggCostFactor,
-		MergeJoinCostFactor:           vardef.DefOptMergeJoinCostFactor,
-		HashJoinCostFactor:            vardef.DefOptHashJoinCostFactor,
-		IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
-		SelectivityFactor:             vardef.DefOptSelectivityFactor,
-		enableForceInlineCTE:          vardef.DefOptForceInlineCTE,
-		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
-		CommandValue:                  uint32(mysql.ComSleep),
-		TiDBOptJoinReorderThreshold:   vardef.DefTiDBOptJoinReorderThreshold,
-		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
-		WaitSplitRegionFinish:         vardef.DefTiDBWaitSplitRegionFinish,
-		WaitSplitRegionTimeout:        vardef.DefWaitSplitRegionTimeout,
-		enableIndexMerge:              vardef.DefTiDBEnableIndexMerge,
-		NoopFuncsMode:                 TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
-		replicaRead:                   kv.ReplicaReadLeader,
-		AllowRemoveAutoInc:            vardef.DefTiDBAllowRemoveAutoInc,
-		UsePlanBaselines:              vardef.DefTiDBUsePlanBaselines,
-		EvolvePlanBaselines:           vardef.DefTiDBEvolvePlanBaselines,
-		EnableExtendedStats:           false,
-		IsolationReadEngines:          make(map[kv.StoreType]struct{}),
-		LockWaitTimeout:               vardef.DefInnodbLockWaitTimeout * 1000,
-		MetricSchemaStep:              vardef.DefTiDBMetricSchemaStep,
-		MetricSchemaRangeDuration:     vardef.DefTiDBMetricSchemaRangeDuration,
-		SequenceState:                 NewSequenceState(),
-		WindowingUseHighPrecision:     true,
-		PrevFoundInPlanCache:          vardef.DefTiDBFoundInPlanCache,
-		FoundInPlanCache:              vardef.DefTiDBFoundInPlanCache,
-		PrevFoundInBinding:            vardef.DefTiDBFoundInBinding,
-		FoundInBinding:                vardef.DefTiDBFoundInBinding,
-		SelectLimit:                   math.MaxUint64,
-		AllowAutoRandExplicitInsert:   vardef.DefTiDBAllowAutoRandExplicitInsert,
-		EnableClusteredIndex:          vardef.DefTiDBEnableClusteredIndex,
-		EnableParallelApply:           vardef.DefTiDBEnableParallelApply,
-		ShardAllocateStep:             vardef.DefTiDBShardAllocateStep,
-		EnablePointGetCache:           vardef.DefTiDBPointGetCache,
-		PartitionPruneMode:            *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
-		TxnScope:                      kv.NewDefaultTxnScopeVar(),
-		EnabledRateLimitAction:        vardef.DefTiDBEnableRateLimitAction,
-		EnableAsyncCommit:             vardef.DefTiDBEnableAsyncCommit,
-		Enable1PC:                     vardef.DefTiDBEnable1PC,
-		GuaranteeLinearizability:      vardef.DefTiDBGuaranteeLinearizability,
-		AnalyzeVersion:                vardef.DefTiDBAnalyzeVersion,
-		EnableIndexMergeJoin:          vardef.DefTiDBEnableIndexMergeJoin,
-		AllowFallbackToTiKV:           make(map[kv.StoreType]struct{}),
-		CTEMaxRecursionDepth:          vardef.DefCTEMaxRecursionDepth,
-		TMPTableSize:                  vardef.DefTiDBTmpTableMaxSize,
-		MPPStoreFailTTL:               vardef.DefTiDBMPPStoreFailTTL,
-		Rng:                           mathutil.NewWithTime(),
-		EnableLegacyInstanceScope:     vardef.DefEnableLegacyInstanceScope,
-		RemoveOrderbyInSubquery:       vardef.DefTiDBRemoveOrderbyInSubquery,
-		EnableSkewDistinctAgg:         vardef.DefTiDBSkewDistinctAgg,
-		Enable3StageDistinctAgg:       vardef.DefTiDB3StageDistinctAgg,
-		MaxAllowedPacket:              vardef.DefMaxAllowedPacket,
-		TiFlashFastScan:               vardef.DefTiFlashFastScan,
-		EnableTiFlashReadForWriteStmt: true,
-		ForeignKeyChecks:              vardef.DefTiDBForeignKeyChecks,
-		HookContext:                   hctx,
-		EnableReuseChunk:              vardef.DefTiDBEnableReusechunk,
-		preUseChunkAlloc:              vardef.DefTiDBUseAlloc,
-		chunkPool:                     nil,
-		mppExchangeCompressionMode:    vardef.DefaultExchangeCompressionMode,
-		mppVersion:                    kv.MppVersionUnspecified,
-		EnableLateMaterialization:     vardef.DefTiDBOptEnableLateMaterialization,
-		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
-		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
-		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
-		GroupConcatMaxLen:             vardef.DefGroupConcatMaxLen,
-		EnableRedactLog:               vardef.DefTiDBRedactLog,
-		EnableWindowFunction:          vardef.DefEnableWindowFunction,
-		CostModelVersion:              vardef.DefTiDBCostModelVer,
-		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
-		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
-		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
-		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
-		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
-		IndexLookUpPushDownPolicy:     vardef.DefTiDBIndexLookUpPushDownPolicy,
+		UserVars:                         NewUserVars(),
+		systems:                          make(map[string]string),
+		PreparedStmts:                    make(map[uint32]any),
+		PreparedStmtNameToID:             make(map[string]uint32),
+		PlanCacheParams:                  NewPlanCacheParamList(),
+		TxnCtx:                           &TransactionContext{},
+		RetryInfo:                        &RetryInfo{},
+		ActiveRoles:                      make([]*auth.RoleIdentity, 0, 10),
+		AutoIncrementIncrement:           vardef.DefAutoIncrementIncrement,
+		AutoIncrementOffset:              vardef.DefAutoIncrementOffset,
+		StmtCtx:                          stmtctx.NewStmtCtx(),
+		AllowAggPushDown:                 false,
+		AllowCartesianBCJ:                vardef.DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:       vardef.DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:       vardef.DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:      vardef.DefBroadcastJoinThresholdCount,
+		OptimizerSelectivityLevel:        vardef.DefTiDBOptimizerSelectivityLevel,
+		OptIndexPruneThreshold:           vardef.DefTiDBOptIndexPruneThreshold,
+		RiskScaleNDVSkewRatio:            vardef.DefOptRiskScaleNDVSkewRatio,
+		RiskGroupNDVSkewRatio:            vardef.DefOptRiskGroupNDVSkewRatio,
+		AlwaysKeepJoinKey:                vardef.DefOptAlwaysKeepJoinKey,
+		CartesianJoinOrderThreshold:      vardef.DefOptCartesianJoinOrderThreshold,
+		EnableOuterJoinReorder:           vardef.DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
+		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
+		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,
+		RetryLimit:                       vardef.DefTiDBRetryLimit,
+		DisableTxnAutoRetry:              vardef.DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:                 kv.PriorityLow,
+		allowInSubqToJoinAndAgg:          vardef.DefOptInSubqToJoinAndAgg,
+		preferRangeScan:                  vardef.DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:      vardef.DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:           vardef.DefOptLimitPushDownThreshold,
+		CorrelationThreshold:             vardef.DefOptCorrelationThreshold,
+		CorrelationExpFactor:             vardef.DefOptCorrelationExpFactor,
+		RiskEqSkewRatio:                  vardef.DefOptRiskEqSkewRatio,
+		RiskRangeSkewRatio:               vardef.DefOptRiskRangeSkewRatio,
+		cpuFactor:                        vardef.DefOptCPUFactor,
+		copCPUFactor:                     vardef.DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:      vardef.DefOptTiFlashConcurrencyFactor,
+		networkFactor:                    vardef.DefOptNetworkFactor,
+		scanFactor:                       vardef.DefOptScanFactor,
+		descScanFactor:                   vardef.DefOptDescScanFactor,
+		seekFactor:                       vardef.DefOptSeekFactor,
+		memoryFactor:                     vardef.DefOptMemoryFactor,
+		diskFactor:                       vardef.DefOptDiskFactor,
+		concurrencyFactor:                vardef.DefOptConcurrencyFactor,
+		IndexScanCostFactor:              vardef.DefOptIndexScanCostFactor,
+		IndexReaderCostFactor:            vardef.DefOptIndexReaderCostFactor,
+		TableReaderCostFactor:            vardef.DefOptTableReaderCostFactor,
+		TableFullScanCostFactor:          vardef.DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:         vardef.DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:         vardef.DefOptTableRowIDScanCostFactor,
+		TableTiFlashScanCostFactor:       vardef.DefOptTableTiFlashScanCostFactor,
+		IndexLookupCostFactor:            vardef.DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:             vardef.DefOptIndexMergeCostFactor,
+		SortCostFactor:                   vardef.DefOptSortCostFactor,
+		TopNCostFactor:                   vardef.DefOptTopNCostFactor,
+		LimitCostFactor:                  vardef.DefOptLimitCostFactor,
+		StreamAggCostFactor:              vardef.DefOptStreamAggCostFactor,
+		HashAggCostFactor:                vardef.DefOptHashAggCostFactor,
+		MergeJoinCostFactor:              vardef.DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:               vardef.DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:              vardef.DefOptIndexJoinCostFactor,
+		SelectivityFactor:                vardef.DefOptSelectivityFactor,
+		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
+		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		CommandValue:                     uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
+		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
+		TiDBOptJoinReorderThroughSel:     vardef.DefTiDBOptJoinReorderThroughSel,
+		SlowQueryFile:                    config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:            vardef.DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:           vardef.DefWaitSplitRegionTimeout,
+		enableIndexMerge:                 vardef.DefTiDBEnableIndexMerge,
+		EnableNoBackslashEscapesInLike:   vardef.DefTiDBEnableNoBackslashEscapesInLike,
+		NoopFuncsMode:                    TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
+		replicaRead:                      kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:               vardef.DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:                 vardef.DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:              vardef.DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:              false,
+		IsolationReadEngines:             make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:                  vardef.DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:                 vardef.DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:        vardef.DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                    NewSequenceState(),
+		WindowingUseHighPrecision:        true,
+		PrevFoundInPlanCache:             vardef.DefTiDBFoundInPlanCache,
+		FoundInPlanCache:                 vardef.DefTiDBFoundInPlanCache,
+		PlanCacheStrategy:                vardef.DefTiDBPlanCacheStrategy,
+		PrevFoundInBinding:               vardef.DefTiDBFoundInBinding,
+		FoundInBinding:                   vardef.DefTiDBFoundInBinding,
+		SelectLimit:                      math.MaxUint64,
+		AllowAutoRandExplicitInsert:      vardef.DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:             vardef.DefTiDBEnableClusteredIndex,
+		EnableParallelApply:              vardef.DefTiDBEnableParallelApply,
+		ShardAllocateStep:                vardef.DefTiDBShardAllocateStep,
+		EnablePointGetCache:              vardef.DefTiDBPointGetCache,
+		PartitionPruneMode:               *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
+		TxnScope:                         kv.NewDefaultTxnScopeVar(),
+		EnabledRateLimitAction:           vardef.DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:                vardef.DefTiDBEnableAsyncCommit,
+		Enable1PC:                        vardef.DefTiDBEnable1PC,
+		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
+		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
+		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
+		TMPTableSize:                     vardef.DefTiDBTmpTableMaxSize,
+		MPPStoreFailTTL:                  vardef.DefTiDBMPPStoreFailTTL,
+		Rng:                              mathutil.NewWithTime(),
+		EnableLegacyInstanceScope:        vardef.DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:          vardef.DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:            vardef.DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:          vardef.DefTiDB3StageDistinctAgg,
+		MaxAllowedPacket:                 vardef.DefMaxAllowedPacket,
+		TiFlashFastScan:                  vardef.DefTiFlashFastScan,
+		EnableTiFlashReadForWriteStmt:    true,
+		ForeignKeyChecks:                 vardef.DefTiDBForeignKeyChecks,
+		HookContext:                      hctx,
+		EnableReuseChunk:                 vardef.DefTiDBEnableReusechunk,
+		preUseChunkAlloc:                 vardef.DefTiDBUseAlloc,
+		chunkPool:                        nil,
+		mppExchangeCompressionMode:       vardef.DefaultExchangeCompressionMode,
+		mppVersion:                       kv.MppVersionUnspecified,
+		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
+		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
+		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
+		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
+		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
+		EnableRedactLog:                  vardef.DefTiDBRedactLog,
+		EnableWindowFunction:             vardef.DefEnableWindowFunction,
+		CostModelVersion:                 vardef.DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:              vardef.DefTiDBEnableNAAJ,
+		OptOrderingIdxSelRatio:           vardef.DefTiDBOptOrderingIdxSelRatio,
+		RegardNULLAsPoint:                vardef.DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:          vardef.DefOptEnableProjectionPushDown,
+		SkipMissingPartitionStats:        vardef.DefTiDBSkipMissingPartitionStats,
+		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
+		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
@@ -3098,7 +3196,17 @@ type TableDelta struct {
 	Delta    int64
 	Count    int64
 	InitTime time.Time // InitTime is the time that this delta is generated.
-	TableID  int64
+}
+
+// MergeFrom merges another delta into the receiver and keeps the earliest InitTime.
+func (td *TableDelta) MergeFrom(incoming TableDelta) {
+	td.Delta += incoming.Delta
+	td.Count += incoming.Count
+	if td.InitTime.IsZero() {
+		td.InitTime = incoming.InitTime
+	} else if !incoming.InitTime.IsZero() && incoming.InitTime.Before(td.InitTime) { // This can happen when merges arrive out of order (e.g., overlapping dump/merge runs).
+		td.InitTime = incoming.InitTime
+	}
 }
 
 // Clone returns a cloned TableDelta.
@@ -3107,7 +3215,6 @@ func (td TableDelta) Clone() TableDelta {
 		Delta:    td.Delta,
 		Count:    td.Count,
 		InitTime: td.InitTime,
-		TableID:  td.TableID,
 	}
 }
 

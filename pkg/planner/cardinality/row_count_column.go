@@ -17,8 +17,8 @@ package cardinality
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -216,8 +216,11 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		cnt.MultiplyAll(increaseFactor)
 
-		// handling the out-of-range part
-		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
+		// Calculate if the estimate already covers the full range of realtimeRowCount.
+		// Use a tolerance factor to avoid precision issues.
+		atFullRange := cnt.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
+		// handling the out-of-range part if the estimate does not cover the full range.
+		if !atFullRange && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
 			histNDV := c.NDV
 			// Exclude the TopN
 			if c.StatsVer == statistics.Version2 {
@@ -230,16 +233,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 		totalCount.Add(cnt)
 	}
-	allowZeroEst := fixcontrol.GetBoolWithDefault(
-		sctx.GetSessionVars().GetOptimizerFixControlMap(),
-		fixcontrol.Fix47400,
-		false,
-	)
-	minCount := float64(1)
-	if allowZeroEst {
-		minCount = 0
-	}
-	totalCount.Clamp(minCount, float64(realtimeRowCount))
+	totalCount.Clamp(1.0, float64(realtimeRowCount))
 	return totalCount, nil
 }
 

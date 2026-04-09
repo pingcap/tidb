@@ -875,6 +875,34 @@ func TestPlacementPolicyArgs(t *testing.T) {
 	}
 }
 
+func TestMaskingPolicyArgs(t *testing.T) {
+	inArgs := &MaskingPolicyArgs{
+		Policy:         &MaskingPolicyInfo{ID: 1, Name: ast.NewCIStr("policy"), State: StateDeleteOnly},
+		PolicyName:     ast.NewCIStr("policy_name"),
+		PolicyID:       123,
+		ReplaceOnExist: false,
+	}
+	for _, tp := range []ActionType{ActionCreateMaskingPolicy, ActionAlterMaskingPolicy, ActionDropMaskingPolicy} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			j2.SchemaID = inArgs.PolicyID
+			args, err := GetMaskingPolicyArgs(j2)
+			require.NoError(t, err)
+			if tp == ActionCreateMaskingPolicy {
+				require.EqualValues(t, inArgs.Policy, args.Policy)
+				require.EqualValues(t, inArgs.ReplaceOnExist, args.ReplaceOnExist)
+			} else if tp == ActionAlterMaskingPolicy {
+				require.EqualValues(t, inArgs.Policy, args.Policy)
+				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+			} else {
+				require.EqualValues(t, inArgs.PolicyName, args.PolicyName)
+				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+			}
+		}
+	}
+}
+
 func TestGetSetDefaultValueArgs(t *testing.T) {
 	inArgs := &SetDefaultValueArgs{
 		Col: &ColumnInfo{

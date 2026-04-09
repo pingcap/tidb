@@ -892,6 +892,18 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
+// CompareOpMap records all comparison operators.
+var CompareOpMap = map[string]struct{}{
+	ast.LT:     {},
+	ast.GE:     {},
+	ast.GT:     {},
+	ast.LE:     {},
+	ast.EQ:     {},
+	ast.NE:     {},
+	ast.NullEQ: {},
+	ast.In:     {},
+}
+
 func pushNotAcrossArgs(ctx BuildContext, exprs []Expression, not bool) ([]Expression, bool) {
 	newExprs := make([]Expression, 0, len(exprs))
 	flag := false
@@ -1050,7 +1062,9 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 }
 
 // pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
-// Input `not` indicates whether there's a `NOT` be pushed down.
+// Input `not` indicates whether there's a `NOT` to be pushed down from the parent.
+// Logical operators can cancel double NOT; non-logical expressions are wrapped
+// with is_true_with_null to preserve three-valued logic.
 // Output `changed` indicates whether the output expression differs from the
 // input `expr` because of the pushed-down-not.
 func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expression, changed bool) {
@@ -2335,4 +2349,26 @@ func IsConstNull(expr Expression) bool {
 		}
 	}
 	return false
+}
+
+// IsColOpCol is to whether ScalarFunction meets col op col condition.
+func IsColOpCol(sf *ScalarFunction) (_, _ *Column, _ bool) {
+	args := sf.GetArgs()
+	if len(args) == 2 {
+		col2, ok2 := args[1].(*Column)
+		col1, ok1 := args[0].(*Column)
+		return col1, col2, ok1 && ok2
+	}
+	return nil, nil, false
+}
+
+// ExtractColumnsFromColOpCol is to extract columns from col op col condition.
+func ExtractColumnsFromColOpCol(sf *ScalarFunction) (_, _ *Column) {
+	args := sf.GetArgs()
+	if len(args) == 2 {
+		col2 := args[1].(*Column)
+		col1 := args[0].(*Column)
+		return col1, col2
+	}
+	return nil, nil
 }

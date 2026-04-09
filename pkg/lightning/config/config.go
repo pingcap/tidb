@@ -59,6 +59,10 @@ const (
 	// BackendLocal is a constant for choosing the "Local" backup in the configuration.
 	// In this mode, we write & sort kv pairs with local storage and directly write them to tikv.
 	BackendLocal = "local"
+	// BackendImportInto is a constant for choosing the "ImportInto" backend in the configuration.
+	BackendImportInto = "import-into"
+	// UnlimitedQuota is the default value of DiskQuota, which means no limit.
+	UnlimitedQuota = ByteSize(math.MaxInt64)
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -366,6 +370,13 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		cpuCount := runtime.NumCPU()
 		if l.RegionConcurrency > cpuCount {
 			l.RegionConcurrency = cpuCount
+		}
+	case BackendImportInto:
+		if len(l.MetaSchemaName) == 0 {
+			l.MetaSchemaName = defaultMetaSchemaName
+		}
+		if l.TableConcurrency == 0 {
+			l.TableConcurrency = l.RegionConcurrency
 		}
 	}
 }
@@ -1185,6 +1196,8 @@ func (t *TikvImporter) adjust() error {
 		default:
 			return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
 		}
+	case BackendImportInto:
+		// TODO: add validation if necessary
 	default:
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported `tikv-importer.backend` (%s)",
@@ -1502,7 +1515,7 @@ func NewConfig() *Config {
 			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
 			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
 			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
-			DiskQuota:               ByteSize(math.MaxInt64),
+			DiskQuota:               UnlimitedQuota,
 			DuplicateResolution:     NoneOnDup,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 			BlockSize:               DefaultBlockSize,

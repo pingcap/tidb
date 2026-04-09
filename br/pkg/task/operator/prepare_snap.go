@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/log"
 	preparesnap "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -218,8 +219,11 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext, afterConnectio
 }
 
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error) {
+	// Create GC manager once for global mode (using NullspaceID)
+	mgr := gc.NewManager(cx.pdMgr.GetPDClient(), tikv.NullspaceID)
+
 	// Note: should we remove the service safepoint as soon as this exits?
-	sp := utils.BRServiceSafePoint{
+	sp := gc.BRServiceSafePoint{
 		ID:       spID,
 		TTL:      int64(cx.cfg.TTL.Seconds()),
 		BackupTS: cx.cfg.SafePoint,
@@ -232,17 +236,17 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error
 		logutil.CL(cx).Info("No service safepoint provided, using the minimal resolved TS.", zap.Uint64("min-resolved-ts", rts))
 		sp.BackupTS = rts
 	}
-	err = utils.StartServiceSafePointKeeper(cx, cx.pdMgr.GetPDClient(), sp)
+	err = gc.StartServiceSafePointKeeper(cx, sp, mgr)
 	if err != nil {
 		return err
 	}
 	cx.ReadyL("pause_gc", zap.Object("safepoint", sp))
 	defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
-		cancelSP := utils.BRServiceSafePoint{
+		cancelSP := gc.BRServiceSafePoint{
 			ID:  sp.ID,
 			TTL: 0,
 		}
-		return utils.UpdateServiceSafePoint(ctx, cx.pdMgr.GetPDClient(), cancelSP)
+		return mgr.SetServiceSafePoint(ctx, cancelSP)
 	})
 	// Note: in fact we can directly return here.
 	// But the name `keeper` implies once the function exits,

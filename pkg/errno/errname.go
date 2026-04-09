@@ -913,6 +913,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrFunctionalIndexOnField:                                mysql.Message("Expression index on a column is not supported. Consider using a regular index instead", nil),
 	ErrFKIncompatibleColumns:                                 mysql.Message("Referencing column '%s' and referenced column '%s' in foreign key constraint '%s' are incompatible.", nil),
 	ErrFunctionalIndexRowValueIsNotAllowed:                   mysql.Message("Expression of expression index '%s' cannot refer to a row value", nil),
+	ErrInvalidLateralJoin:                                    mysql.Message("Invalid use of LATERAL: %s", nil),
 	ErrNonBooleanExprForCheckConstraint:                      mysql.Message("An expression of non-boolean type specified to a check constraint '%s'.", nil),
 	ErrColumnCheckConstraintReferencesOtherColumn:            mysql.Message("Column check constraint '%s' references other column.", nil),
 	ErrCheckConstraintNamedFunctionIsNotAllowed:              mysql.Message("An expression of a check constraint '%s' contains disallowed function: %s.", nil),
@@ -1072,6 +1073,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidOptionVal:                 mysql.Message("Invalid option value for %s", nil),
 	ErrDuplicateOption:                  mysql.Message("Option %s specified more than once", nil),
 	ErrLoadDataUnsupportedOption:        mysql.Message("Unsupported option %s for %s", nil),
+	ErrLoadDataDuplicateKeyConflict:     mysql.Message("Duplicate key conflict found. Please resolve conflicts in the input dataset, or set on_duplicate_key to a strategy that can handle conflicts, for example 'capture'", nil),
 	ErrLoadDataJobNotFound:              mysql.Message("Job ID %d doesn't exist", nil),
 	ErrLoadDataInvalidOperation:         mysql.Message("The current job status cannot perform the operation. %s", nil),
 	ErrLoadDataLocalUnsupportedOption:   mysql.Message("Unsupported option for LOAD DATA LOCAL INFILE: %s", nil),
@@ -1082,6 +1084,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrKeyTooLarge:                      mysql.Message("key is too large, the size of given key is %d", nil),
 	ErrProtectedTableMode:               mysql.Message("Table %s is in mode %s", nil),
 	ErrInvalidTableModeSet:              mysql.Message("Invalid mode set from (or by default) %s to %s for table %s", nil),
+	ErrForbiddenDDL:                     mysql.Message("%s is forbidden", nil),
 
 	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 
@@ -1145,6 +1148,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyNotExists:        mysql.Message("Unknown placement policy '%-.192s'", nil),
 	ErrPlacementPolicyWithDirectOption: mysql.Message("Placement policy '%s' can't co-exist with direct placement options", nil),
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
+	ErrMaskingPolicyExists:             mysql.Message("masking policy already exists", nil),
+	ErrMaskingPolicyNotExists:          mysql.Message("masking policy doesn't exist", nil),
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),

@@ -539,9 +539,9 @@ count(*)
 explain format = 'plan_tree' select /*+ inl_join(tt1)*/ count(*) from tt2
 left join tt1 on tt1.listid=tt2.listid;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#13)->Column#7
+StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#13
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─IndexFullScan	cop[tikv]	table:tt2, index:idx_listid(listid)	keep order:false
 set global tidb_partition_prune_mode=default;
 set session tidb_partition_prune_mode=default;

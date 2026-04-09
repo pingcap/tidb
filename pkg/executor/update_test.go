@@ -194,6 +194,41 @@ func TestLockUnchangedUniqueKeys(t *testing.T) {
 	}
 }
 
+func TestLockUnchangedKeysGlobalIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Regression test: UNIQUE GLOBAL index on nullable column with NULL values.
+	// Under pessimistic txn with tidb_lock_unchanged_keys=ON (default),
+	// UPDATE SET col=col was failing because addUnchangedKeysForLockByRow called
+	// tablecodec.GenIndexKey directly without wrapping the handle as PartitionHandle
+	// for V1+ global indexes, causing "handle is not a PartitionHandle" error.
+	tk.MustExec("set @@tidb_lock_unchanged_keys = true")
+	tk.MustExec(`CREATE TABLE t_gi (
+		a INT,
+		b INT,
+		UNIQUE KEY uk_b(b) GLOBAL
+	) PARTITION BY HASH(a) PARTITIONS 4`)
+	tk.MustExec("INSERT INTO t_gi VALUES (1, NULL)")
+	tk.MustExec("INSERT INTO t_gi VALUES (2, NULL)")
+	tk.MustExec("INSERT INTO t_gi VALUES (3, 30)")
+
+	// Unchanged UPDATE with NULL in unique global index column (distinct=false path).
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("UPDATE t_gi SET b = b WHERE a = 1")
+	tk.MustExec("UPDATE t_gi SET a = a WHERE a = 2")
+	tk.MustExec("UPDATE t_gi SET b = b WHERE a = 3")
+	tk.MustExec("commit")
+
+	// INSERT ON DUPLICATE KEY UPDATE with unchanged row.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("INSERT INTO t_gi VALUES (3, 30) ON DUPLICATE KEY UPDATE b = VALUES(b)")
+	tk.MustExec("commit")
+
+	tk.MustExec("ADMIN CHECK TABLE t_gi")
+}
+
 func TestUpdateRowRetryAndThenDupKey(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {

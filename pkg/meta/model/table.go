@@ -48,6 +48,9 @@ const ExtraPhysTblID = -3
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
 const ExtraRowChecksumID = -4
 
+// ExtraCommitTSID is the column ID of column which holds the commit timestamp.
+const ExtraCommitTSID = -5
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -90,6 +93,9 @@ var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
+
+// ExtraCommitTSName is the name of ExtraCommitTSID Column.
+var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
 
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,
@@ -209,6 +215,9 @@ type TableInfo struct {
 	// If it is nil, it means no affinity
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
 
+	// TableSplitPolicy stores region split policy.
+	TableSplitPolicy *RegionSplitPolicy `json:"table_split_policy,omitempty"`
+
 	// Revision is per table schema's version, it will be increased when the schema changed.
 	Revision uint64 `json:"revision"`
 
@@ -283,6 +292,9 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
+	}
+	if t.TableSplitPolicy != nil {
+		nt.TableSplitPolicy = t.TableSplitPolicy.Clone()
 	}
 
 	if t.Affinity != nil {

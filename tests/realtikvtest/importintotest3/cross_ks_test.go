@@ -23,11 +23,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/objstore"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -55,7 +55,7 @@ func TestOnUserKeyspace(t *testing.T) {
 	userTK.MustExec("create table t (a bigint, b varchar(100));")
 	ctx := context.Background()
 	s3Args := "access-key=minioadmin&secret-access-key=minioadmin&endpoint=http%3a%2f%2f0.0.0.0%3a9000"
-	objStore, err := storage.NewFromURL(ctx, fmt.Sprintf("s3://next-gen-test/data?%s", s3Args))
+	objStore, err := objstore.NewFromURL(ctx, fmt.Sprintf("s3://next-gen-test/data?%s", s3Args))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		objStore.Close()

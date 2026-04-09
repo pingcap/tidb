@@ -310,6 +310,10 @@ func (b *builtinDateSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, b
 	if expr.IsZero() && sqlMode(ctx).HasNoZeroDateMode() {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, expr.String()))
 	}
+	// for issue 59417, should return NULL when month or day is zero and sql_mode contains NO_ZERO_IN_DATE
+	if !expr.IsZero() && expr.InvalidZero() && sqlMode(ctx).HasNoZeroInDateMode() {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, expr.String()))
+	}
 
 	expr.SetCoreTime(types.FromDate(expr.Year(), expr.Month(), expr.Day(), 0, 0, 0, 0))
 	expr.SetType(mysql.TypeDate)
@@ -4817,7 +4821,7 @@ func isDuration(str string) bool {
 
 // strDatetimeAddDuration adds duration to datetime string, returns a string value.
 func strDatetimeAddDuration(tc types.Context, d string, arg1 types.Duration) (result string, isNull bool, err error) {
-	arg0, err := types.ParseTime(tc, d, mysql.TypeDatetime, types.MaxFsp)
+	arg0, err := types.ParseTimeWithString(tc, types.HackedStr(d), mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
 		// Return a warning regardless of the sql_mode, this is compatible with MySQL.
 		tc.AppendWarning(err)
@@ -4854,7 +4858,7 @@ func strDurationAddDuration(tc types.Context, d string, arg1 types.Duration) (st
 
 // strDatetimeSubDuration subtracts duration from datetime string, returns a string value.
 func strDatetimeSubDuration(tc types.Context, d string, arg1 types.Duration) (result string, isNull bool, err error) {
-	arg0, err := types.ParseTime(tc, d, mysql.TypeDatetime, types.MaxFsp)
+	arg0, err := types.ParseTimeWithString(tc, types.HackedStr(d), mysql.TypeDatetime, types.MaxFsp)
 	if err != nil {
 		// Return a warning regardless of the sql_mode, this is compatible with MySQL.
 		tc.AppendWarning(err)

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bootstraptest_test
+package bootstraptest
 
 import (
 	"context"
@@ -37,7 +37,9 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -1177,4 +1179,74 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 		row := req.GetRow(0)
 		require.Equal(t, "PREDICATE", row.GetString(0))
 	})
+}
+
+func TestBootstrapInNextGenInvalidSystemTable(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("this is only checked in next-gen kernel")
+	}
+	testenv.SetGOMAXPROCSForTest()
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/mockCreateSystemTableSQL", func(tbl *session.TableBasicInfo) {
+		tbl.SQL = "create table t(id int primary key) partition by hash(id) partitions 4"
+	})
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	_, err = session.BootstrapSession(store)
+	require.ErrorContains(t, err, "system table should not be partitioned table")
+}
+
+// TestUpgradeVersion256PlanCacheSkipStatsOnBinding verifies that upgradeToVer256
+// correctly initializes tidb_plan_cache_skip_stats_on_binding to ON when upgrading
+// from a cluster at version 255 where the variable did not yet exist.
+func TestUpgradeVersion256PlanCacheSkipStatsOnBinding(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV255 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(255))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV255, 255)
+
+	// Remove the variable to simulate a pre-256 cluster where it didn't exist yet.
+	session.MustExec(t, seV255, "DELETE FROM mysql.global_variables WHERE variable_name='tidb_plan_cache_skip_stats_on_binding'")
+	session.MustExec(t, seV255, "commit")
+
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seV255)
+	require.NoError(t, err)
+	require.Equal(t, int64(255), ver)
+	dom.Close()
+
+	domCurrent, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurrent.Close()
+
+	seCurrent := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seCurrent)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	// upgradeToVer256 must have initialized the variable to ON.
+	r := session.MustExecToRecodeSet(t, seCurrent, "SELECT variable_value FROM mysql.global_variables WHERE variable_name='tidb_plan_cache_skip_stats_on_binding'")
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "ON", row.GetString(0))
 }

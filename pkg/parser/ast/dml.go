@@ -535,16 +535,49 @@ type TableSource struct {
 
 	// AsName is the alias name of the table source.
 	AsName CIStr
+
+	// Lateral indicates whether this is a LATERAL derived table.
+	// MySQL 8.0+ syntax: FROM t1, LATERAL (SELECT ...) AS dt
+	// LATERAL allows the derived table to reference columns from tables to its left.
+	Lateral bool
+
+	// ColumnNames is the optional column alias list for derived tables.
+	// e.g. LATERAL (SELECT ...) AS dt(c1, c2)
+	ColumnNames []CIStr
 }
 
 func (*TableSource) resultSet() {}
 
 // Restore implements Node interface.
 func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
+	// Validate AST invariants before emitting any SQL.
+	// Source can be TableName, SelectStmt, SetOprStmt, or JoinNode (parenthesized join).
+	// LATERAL and ColumnNames are only valid on derived tables (SelectStmt, SetOprStmt);
+	// TableName and JoinNode are both excluded.
+	isDerived := false
+	switch n.Source.(type) {
+	case *SelectStmt, *SetOprStmt:
+		isDerived = true
+	}
+	if n.Lateral && !isDerived {
+		return errors.New("LATERAL cannot be applied to a table name, only to derived tables")
+	}
+	if len(n.ColumnNames) > 0 && !isDerived {
+		return errors.New("column alias list cannot be applied to a table name")
+	}
+	if len(n.ColumnNames) > 0 && n.AsName.String() == "" {
+		return errors.New("column list provided without alias for derived table")
+	}
+
 	needParen := false
 	switch n.Source.(type) {
 	case *SelectStmt, *SetOprStmt:
 		needParen = true
+	}
+
+	// Output LATERAL keyword if this is a LATERAL derived table
+	if n.Lateral {
+		ctx.WriteKeyWord("LATERAL ")
 	}
 
 	if tn, tnCase := n.Source.(*TableName); tnCase {
@@ -592,6 +625,16 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 		if asName := n.AsName.String(); asName != "" {
 			ctx.WriteKeyWord(" AS ")
 			ctx.WriteName(asName)
+			if len(n.ColumnNames) > 0 {
+				ctx.WritePlain("(")
+				for i, col := range n.ColumnNames {
+					if i > 0 {
+						ctx.WritePlain(", ")
+					}
+					ctx.WriteName(col.String())
+				}
+				ctx.WritePlain(")")
+			}
 		}
 	}
 
@@ -3060,6 +3103,7 @@ const (
 	ShowCreateSequence
 	ShowCreatePlacementPolicy
 	ShowGrants
+	ShowMaskingPolicies
 	ShowTriggers
 	ShowProcedureStatus
 	ShowFunctionStatus
@@ -3108,6 +3152,7 @@ const (
 	ShowReplicaStatus
 	ShowDistributions
 	ShowDistributionJobs
+	ShowAffinity
 	// showTpCount is the count of all kinds of `SHOW` statements.
 	showTpCount
 )
@@ -3241,6 +3286,17 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE USER ")
 		if err := n.User.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.User")
+		}
+	case ShowMaskingPolicies:
+		ctx.WriteKeyWord("MASKING POLICIES FOR ")
+		if err := n.Table.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+		}
+		if n.Where != nil {
+			ctx.WriteKeyWord(" WHERE ")
+			if err := n.Where.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Where")
+			}
 		}
 	case ShowGrants:
 		ctx.WriteKeyWord("GRANTS")
@@ -3990,6 +4046,15 @@ type SplitRegionStmt struct {
 	SplitOpt *SplitOption
 }
 
+type SplitIndexOption struct {
+	stmtNode
+
+	TableLevel bool
+	PrimaryKey bool
+	IndexName  CIStr
+	SplitOpt   *SplitOption
+}
+
 type SplitOption struct {
 	stmtNode
 
@@ -4144,6 +4209,38 @@ func (n *SplitOption) Accept(v Visitor) (Node, bool) {
 		}
 	}
 	return v.Leave(n)
+}
+
+func (n *SplitIndexOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SplitIndexOption)
+
+	node, ok := n.SplitOpt.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.SplitOpt = node.(*SplitOption)
+
+	return v.Leave(n)
+}
+
+func (n *SplitIndexOption) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SPLIT ")
+
+	// Table split, empty prefix
+	if n.TableLevel {
+	} else if n.PrimaryKey {
+		ctx.WriteKeyWord("PRIMARY KEY ")
+	} else {
+		ctx.WriteKeyWord("INDEX ")
+		ctx.WriteName(n.IndexName.String())
+		ctx.WritePlain(" ")
+	}
+
+	return n.SplitOpt.Restore(ctx)
 }
 
 type FulltextSearchModifier int

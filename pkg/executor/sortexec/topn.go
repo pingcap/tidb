@@ -72,6 +72,14 @@ type TopNExec struct {
 
 // Open implements the Executor Open interface.
 func (e *TopNExec) Open(ctx context.Context) error {
+	if err := e.OpenSelf(); err != nil {
+		return err
+	}
+	return exec.Open(ctx, e.Children(0))
+}
+
+// OpenSelf opens TopNExec itself without opening its children.
+func (e *TopNExec) OpenSelf() error {
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
@@ -119,8 +127,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	} else {
 		e.spillHelper = newTopNSpillerHelper(e, nil, nil, nil, nil, nil, nil, 0, nil)
 	}
-
-	return exec.Open(ctx, e.Children(0))
+	return nil
 }
 
 // Close implements the Executor Close interface.

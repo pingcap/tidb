@@ -25,9 +25,9 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -510,7 +510,7 @@ func NewMergeKVIter(
 	ctx context.Context,
 	paths []string,
 	pathsStartOffset []uint64,
-	exStorage storage.ExternalStorage,
+	exStorage storeapi.Storage,
 	readBufferSize int,
 	checkHotspot bool,
 	outerConcurrency int,
@@ -519,7 +519,7 @@ func NewMergeKVIter(
 	if outerConcurrency <= 0 {
 		return nil, errors.New("outerConcurrency must be positive, caller must ensure that the correct value is passed in")
 	}
-	concurrentReaderConcurrency := max(256/outerConcurrency, 8)
+	concurrentReaderConcurrency := max(concurrentReaderTotalConcurrency/outerConcurrency, 8)
 	// TODO: merge-sort step passes outerConcurrency=0, so this bufSize might be
 	// too large when checkHotspot = true(add-index).
 	largeBufSize := ConcurrentReaderBufferSizePerConc * concurrentReaderConcurrency
@@ -634,7 +634,7 @@ var errMergePropBaseIterClosed = errors.New("mergePropBaseIter is closed")
 func newMergePropBaseIter(
 	ctx context.Context,
 	multiStat MultipleFilesStat,
-	exStorage storage.ExternalStorage,
+	exStorage storeapi.Storage,
 ) (*mergePropBaseIter, error) {
 	var limit int64
 	if multiStat.MaxOverlappingNum <= 0 {
@@ -798,7 +798,7 @@ type MergePropIter struct {
 func NewMergePropIter(
 	ctx context.Context,
 	multiStat []MultipleFilesStat,
-	exStorage storage.ExternalStorage,
+	exStorage storeapi.Storage,
 ) (*MergePropIter, error) {
 	// sort the multiStat by minKey
 	// otherwise, if the number of readers is less than the weight, the kv may not in order

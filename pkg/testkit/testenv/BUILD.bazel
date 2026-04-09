@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/disttask/framework/handle",
+        "//pkg/dxf/framework/handle",
         "//pkg/keyspace",
     ],
 )

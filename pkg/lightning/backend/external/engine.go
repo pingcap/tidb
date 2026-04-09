@@ -28,12 +28,12 @@ import (
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -130,7 +130,7 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
-	storage           storage.ExternalStorage
+	storage           storeapi.Storage
 	dataFiles         []string
 	statsFiles        []string
 	startKey          []byte
@@ -177,7 +177,7 @@ type Engine struct {
 	recordedDupCnt  int
 	recordedDupSize int64
 	dupFile         string
-	dupWriter       storage.ExternalFileWriter
+	dupWriter       objectio.Writer
 	dupKVStore      *KeyValueStore
 }
 
@@ -190,7 +190,7 @@ const (
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	dataFiles []string,
 	statsFiles []string,
 	startKey []byte,
@@ -246,53 +246,12 @@ func NewExternalEngine(
 	}
 }
 
-func getFilesReadConcurrency(
+func (e *Engine) loadRangeBatchData(
 	ctx context.Context,
-	storage storage.ExternalStorage,
-	statsFiles []string,
-	startKey, endKey []byte,
-) ([]uint64, []uint64, error) {
-	result := make([]uint64, len(statsFiles))
-	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage)
-	if err != nil {
-		return nil, nil, err
-	}
-	startOffs, endOffs := offsets[0], offsets[1]
-	totalFileSize := uint64(0)
-	for i := range statsFiles {
-		size := endOffs[i] - startOffs[i]
-		totalFileSize += size
-		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
-		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
-		// always return an offset that is less than or equal to the key.
-		expectedConc += 1
-		// readAllData will enable concurrent read and use large buffer if result[i] > 1
-		// when expectedConc < readAllDataConcThreshold, we don't use concurrent read to
-		// reduce overhead
-		if expectedConc >= readAllDataConcThreshold {
-			result[i] = expectedConc
-		} else {
-			result[i] = 1
-		}
-		// only log for files with expected concurrency > 1, to avoid too many logs
-		if expectedConc > 1 {
-			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-				zap.String("filename", statsFiles[i]),
-				zap.Uint64("startOffset", startOffs[i]),
-				zap.Uint64("endOffset", endOffs[i]),
-				zap.Uint64("expectedConc", expectedConc),
-				zap.Uint64("concurrency", result[i]),
-			)
-		}
-	}
-	// Note: this is the file size of the range group, KV size is smaller, as we
-	// need additional 8*2 for each KV.
-	logutil.Logger(ctx).Info("estimated file size of this range group",
-		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
-	return result, startOffs, nil
-}
-
-func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh chan<- engineapi.DataAndRanges) error {
+	jobKeys [][]byte,
+	startOffsets, estimatedEndOffsets []uint64,
+	outCh chan<- engineapi.DataAndRanges,
+) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
 	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
@@ -327,6 +286,8 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		e.statsFiles,
 		startKey,
 		endKey,
+		startOffsets,
+		estimatedEndOffsets,
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
@@ -557,11 +518,18 @@ func (e *Engine) LoadIngestData(
 	currBatchSize := int(e.workerConcurrency.Load())
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
 
+	readRangesPerKey, err := getReadRangeFromProps(ctx, e.jobKeys, e.statsFiles, e.storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for start := 0; start < len(e.jobKeys)-1; {
 		currBatchSize = e.handleConcurrencyChange(ctx, currBatchSize)
 		// want to generate N ranges, so we need N+1 keys
 		end := min(1+start+currBatchSize, len(e.jobKeys))
-		err = e.loadRangeBatchData(ctx, e.jobKeys[start:end], outCh)
+		startOffsets := readRangesPerKey[start]
+		estimatedEndOffsets := readRangesPerKey[end-1]
+		err = e.loadRangeBatchData(ctx, e.jobKeys[start:end], startOffsets, estimatedEndOffsets, outCh)
 		if err != nil {
 			return err
 		}
@@ -581,7 +549,7 @@ func (e *Engine) lazyInitDupWriter(ctx context.Context) error {
 		return nil
 	}
 	dupFile := filepath.Join(e.filePrefix, "dup")
-	dupWriter, err := e.storage.Create(ctx, dupFile, &storage.WriterOption{
+	dupWriter, err := e.storage.Create(ctx, dupFile, &storeapi.WriterOption{
 		// TODO might need to tune concurrency.
 		// max 150GiB duplicates can be saved, it should be enough, as we split
 		// subtask into 100G each.
@@ -873,7 +841,7 @@ func (m *MemoryIngestData) GetTS() uint64 {
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
 	// Make sure data is not released.
-	intest.Assert(len(m.kvs) > 0)
+	intest.Assert(!m.released.Load(), "data shouldn't be released when IncRef")
 }
 
 // DecRef implements IngestData.DecRef.

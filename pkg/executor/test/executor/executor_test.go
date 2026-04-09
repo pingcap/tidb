@@ -2589,7 +2589,7 @@ func TestQueryWithKill(t *testing.T) {
 					}
 				}
 				if err != nil {
-					require.Equal(t, context.Canceled, err)
+					require.ErrorIs(t, err, context.Canceled)
 				}
 				if rs != nil {
 					rs.Close()

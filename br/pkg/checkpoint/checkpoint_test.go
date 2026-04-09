@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -40,7 +40,7 @@ import (
 func TestCheckpointMetaForBackup(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	s, err := storage.NewLocalStorage(base)
+	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 
 	checkpointMeta := &checkpoint.CheckpointMetadataForBackup{
@@ -59,7 +59,7 @@ func TestCheckpointMetaForBackup(t *testing.T) {
 
 func TestCheckpointMetaForRestoreOnStorage(t *testing.T) {
 	base := t.TempDir()
-	s, err := storage.NewLocalStorage(base)
+	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
 	defer snapshotMetaManager.Close()
@@ -189,7 +189,7 @@ func (t *mockTimer) GetTS(ctx context.Context) (int64, int64, error) {
 func TestCheckpointBackupRunner(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	s, err := storage.NewLocalStorage(base)
+	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	os.MkdirAll(base+checkpoint.CheckpointDataDirForBackup, 0o755)
 	os.MkdirAll(base+checkpoint.CheckpointChecksumDirForBackup, 0o755)
@@ -300,7 +300,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 
 func TestCheckpointRestoreRunnerOnStorage(t *testing.T) {
 	base := t.TempDir()
-	s, err := storage.NewLocalStorage(base)
+	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
 	defer snapshotMetaManager.Close()
@@ -409,7 +409,7 @@ func testCheckpointRestoreRunner(
 
 func TestCheckpointRunnerRetryOnStorage(t *testing.T) {
 	base := t.TempDir()
-	s, err := storage.NewLocalStorage(base)
+	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
 	defer snapshotMetaManager.Close()
@@ -476,7 +476,7 @@ func testCheckpointRunnerRetry(
 
 func TestCheckpointRunnerNoRetryOnStorage(t *testing.T) {
 	base := t.TempDir()
-	s, err := storage.NewLocalStorage(base)
+	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
 	defer snapshotMetaManager.Close()
@@ -531,7 +531,7 @@ func testCheckpointRunnerNoRetry(
 
 func TestCheckpointLogRestoreRunnerOnStorage(t *testing.T) {
 	base := t.TempDir()
-	s, err := storage.NewLocalStorage(base)
+	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, 1, "log", 1)
 	defer logMetaManager.Close()
@@ -648,7 +648,7 @@ func getLockData(p, l int64) ([]byte, error) {
 func TestCheckpointRunnerLock(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	s, err := storage.NewLocalStorage(base)
+	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	os.MkdirAll(base+checkpoint.CheckpointDataDirForBackup, 0o755)
 	os.MkdirAll(base+checkpoint.CheckpointChecksumDirForBackup, 0o755)

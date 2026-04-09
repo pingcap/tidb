@@ -22,10 +22,10 @@ import (
 
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -37,7 +37,7 @@ import (
 func MergeOverlappingFilesV2(
 	ctx context.Context,
 	multiFileStat []MultipleFilesStat,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	startKey []byte,
 	endKey []byte,
 	partSize int64,
@@ -94,13 +94,17 @@ func MergeOverlappingFilesV2(
 		SetOnCloseFunc(onWriterClose).
 		BuildOneFile(store, newFilePrefix, writerID)
 	defer func() {
-		err = splitter.Close()
-		if err != nil {
-			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err))
+		if closeErr := splitter.Close(); closeErr != nil {
+			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(closeErr))
+			if err == nil {
+				err = closeErr
+			}
 		}
-		err = writer.Close(ctx)
-		if err != nil {
-			logutil.Logger(ctx).Warn("close writer failed", zap.Error(err))
+		if closeErr := writer.Close(ctx); closeErr != nil {
+			logutil.Logger(ctx).Warn("close writer failed", zap.Error(closeErr))
+			if err == nil {
+				err = closeErr
+			}
 		}
 	}()
 
@@ -121,7 +125,16 @@ func MergeOverlappingFilesV2(
 		if len(endKeyOfGroup) == 0 {
 			curEnd = kv.Key(endKey).Clone()
 		}
+
 		now := time.Now()
+
+		var readRanges [][]uint64
+		readRanges, err = getReadRangeFromProps(
+			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
+		if err != nil {
+			return err
+		}
+
 		err1 = readAllData(
 			ctx,
 			store,
@@ -129,6 +142,8 @@ func MergeOverlappingFilesV2(
 			statFilesOfGroup,
 			curStart,
 			curEnd,
+			readRanges[0],
+			readRanges[1],
 			bufPool,
 			bufPool,
 			loaded,

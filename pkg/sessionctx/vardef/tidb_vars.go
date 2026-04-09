@@ -171,6 +171,9 @@ const (
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// TiDBOptIndexPruneThreshold is used to control the threshold for index pruning optimization.
+	TiDBOptIndexPruneThreshold = "tidb_opt_index_prune_threshold"
+
 	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
 	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
 
@@ -330,6 +333,11 @@ const (
 
 	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
+
+	// TiDBOptEnableAlternativeLogicalPlans controls whether the optimizer may build
+	// an extra non-decorrelate logical alternative when decorrelation does not
+	// produce an equivalent same-order index join candidate.
+	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
 
 	// TiDBEnableSemiJoinRewrite controls automatic rewrite of semi-join to
 	// inner-join with aggregation (equivalent to SEMI_JOIN_REWRITE() hint).
@@ -657,6 +665,13 @@ const (
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
+	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
+	TiDBOptEnableAdvancedJoinReorder = "tidb_opt_enable_advanced_join_reorder"
+
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
+
 	// TiDBSlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
@@ -672,6 +687,9 @@ const (
 
 	// TiDBEnableIndexMerge indicates to generate IndexMergePath.
 	TiDBEnableIndexMerge = "tidb_enable_index_merge"
+
+	// TiDBEnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
+	TiDBEnableNoBackslashEscapesInLike = "tidb_enable_no_backslash_escapes_in_like"
 
 	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
 	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
@@ -709,7 +727,7 @@ const (
 	// TiDBOptEnableFuzzyBinding indicates whether to enable the universal binding.
 	TiDBOptEnableFuzzyBinding = "tidb_opt_enable_fuzzy_binding"
 
-	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
+	// TiDBEnableExtendedStats is kept only for system variable compatibility. Extended statistics support has been removed.
 	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
 
 	// TiDBIsolationReadEngines indicates the tidb only read from the stores whose engine type is involved in IsolationReadEngines.
@@ -933,6 +951,12 @@ const (
 	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
 	// TiDBEnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	TiDBEnableNonPreparedPlanCacheForDML = "tidb_enable_non_prepared_plan_cache_for_dml"
+	// TiDBPlanCacheStrategy controls plan cache strategy.
+	TiDBPlanCacheStrategy = "tidb_plan_cache_strategy"
+	// TiDBPlanCacheStrategyAll is one strategy value for TiDBPlanCacheStrategy.
+	TiDBPlanCacheStrategyAll = "all"
+	// TiDBPlanCacheStrategyHintOnly is one strategy value for TiDBPlanCacheStrategy.
+	TiDBPlanCacheStrategyHintOnly = "hint_only"
 	// TiDBNonPreparedPlanCacheSize controls the size of non-prepared plan cache.
 	// This variable is deprecated, use tidb_session_plan_cache_size instead.
 	TiDBNonPreparedPlanCacheSize = "tidb_non_prepared_plan_cache_size"
@@ -941,6 +965,10 @@ const (
 	// TiDBPlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.
 	TiDBPlanCacheInvalidationOnFreshStats = "tidb_plan_cache_invalidation_on_fresh_stats"
+	// TiDBPlanCacheSkipStatsOnBinding controls if plan cache skips stats-version invalidation when
+	// a SQL binding is matched. Since a binding pins the plan via hints, stats changes cannot alter
+	// the chosen plan, so invalidating the cache entry on stats updates is unnecessary.
+	TiDBPlanCacheSkipStatsOnBinding = "tidb_plan_cache_skip_stats_on_binding"
 	// TiDBSessionPlanCacheSize controls the size of session plan cache.
 	TiDBSessionPlanCacheSize = "tidb_session_plan_cache_size"
 
@@ -958,6 +986,9 @@ const (
 	// TiDBEnableForeignKey indicates whether to enable foreign key feature.
 	// TODO(crazycs520): remove this after foreign key GA.
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
+
+	// TiDBForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
+	TiDBForeignKeyCheckInSharedLock = "tidb_foreign_key_check_in_shared_lock"
 
 	// TiDBOptRangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no memory
@@ -977,6 +1008,11 @@ const (
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
+	// TiDBOptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	// Examples of queries that can benefit from this optimization:
+	// 1. index a -> order by a, b limit
+	// 2. index a, prefix(b) -> order by a, b limit
+	TiDBOptPartialOrderedIndexForTopN = "tidb_opt_partial_ordered_index_for_topn"
 
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
@@ -1053,7 +1089,7 @@ const (
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
-	// TiDBOptIndexJoinBuild indicates which way to build index join.
+	// TiDBOptIndexJoinBuild is kept for compatibility. Index join build v2 is always enabled now.
 	TiDBOptIndexJoinBuild = "tidb_opt_index_join_build_v2"
 
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
@@ -1438,6 +1474,7 @@ const (
 	DefOptInSubqToJoinAndAgg                = true
 	DefOptPreferRangeScan                   = true
 	DefOptEnableNoDecorrelateInSelect       = false
+	DefOptEnableAlternativeLogicalPlans     = false
 	DefOptEnableSemiJoinRewrite             = false
 	DefBatchInsert                          = false
 	DefBatchDelete                          = false
@@ -1445,7 +1482,7 @@ const (
 	DefCurretTS                             = 0
 	DefInitChunkSize                        = 32
 	DefMinPagingSize                        = int(paging.MinPagingSize)
-	DefMaxPagingSize                        = int(paging.MaxPagingSize)
+	DefMaxPagingSize                        = int(paging.MinAllowedMaxPagingSize)
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
 	DefMaxPreparedStmtCount                 = -1
@@ -1464,6 +1501,7 @@ const (
 	DefBroadcastJoinThresholdCount          = 10 * 1024
 	DefPreferBCJByExchangeDataSize          = false
 	DefTiDBOptimizerSelectivityLevel        = 0
+	DefTiDBOptIndexPruneThreshold           = 20
 	DefTiDBOptimizerEnableNewOFGB           = false
 	DefTiDBEnableOuterJoinReorder           = true
 	DefTiDBEnableNAAJ                       = true
@@ -1506,6 +1544,8 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptEnableAdvancedJoinReorder     = true
+	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
 	DefTiDBSkipIsolationLevelCheck          = false
@@ -1568,8 +1608,9 @@ const (
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
 	DefTiDBStmtSummaryMaxSQLLength                    = 32768
 	DefTiDBCapturePlanBaseline                        = Off
-	DefTiDBIgnoreInlistPlanDigest                     = false
+	DefTiDBIgnoreInlistPlanDigest                     = true
 	DefTiDBEnableIndexMerge                           = true
+	DefTiDBEnableNoBackslashEscapesInLike             = true
 	DefEnableLegacyInstanceScope                      = true
 	DefTiDBTableCacheLease                            = 3 // 3s
 	DefTiDBPersistAnalyzeOptions                      = true
@@ -1637,6 +1678,7 @@ const (
 	DefExecutorConcurrency                            = 5
 	DefTiDBEnableNonPreparedPlanCache                 = false
 	DefTiDBEnableNonPreparedPlanCacheForDML           = true
+	DefTiDBPlanCacheStrategy                          = TiDBPlanCacheStrategyAll
 	DefTiDBNonPreparedPlanCacheSize                   = 100
 	DefTiDBPlanCacheMaxPlanSize                       = 2 * size.MB
 	DefTiDBInstancePlanCacheMaxMemSize                = 100 * size.MB
@@ -1651,6 +1693,7 @@ const (
 	DefTiDBSysProcScanConcurrency                = 1
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
+	DefTiDBForeignKeyCheckInSharedLock           = false
 	DefTiDBOptAdvancedJoinHint                   = true
 	DefTiDBAnalyzePartitionConcurrency           = 2
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
@@ -1664,6 +1707,7 @@ const (
 	DefTiDBGOGCMaxValue                               = 500
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBOptPartialOrderedIndexForTopN              = "DISABLE"
 	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
@@ -1704,6 +1748,7 @@ const (
 	DefTiDBOptOrderingIdxSelRatio                     = 0.01
 	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBPlanCacheSkipStatsOnBinding                = true
 	DefTiDBEnableRowLevelChecksum                     = false
 	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
 	DefAuthenticationLDAPSASLServerPort               = 389
@@ -1753,6 +1798,9 @@ const (
 	DefTiDBMemArbitratorQueryReservedText             = "0"
 	DefTiDBMemArbitratorWaitAverse                    = "0"
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
+	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
+	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
+	DefConnectAttrsSize int64 = 4096
 )
 
 // Process global variables.
@@ -1888,6 +1936,14 @@ var (
 
 	AdvancerCheckPointLagLimit = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 	EnableBindingUsage         = atomic.NewBool(DefTiDBEnableBindingUsage)
+
+	// ConnectAttrsSize is the max aggregate byte size of connection attributes allowed per connection.
+	// Corresponds to performance_schema_session_connect_attrs_size. Default 4096.
+	ConnectAttrsSize = atomic.NewInt64(DefConnectAttrsSize)
+	// ConnectAttrsLongestSeen tracks the largest connection attribute aggregate size seen so far.
+	ConnectAttrsLongestSeen = atomic.NewInt64(0)
+	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
+	ConnectAttrsLost = atomic.NewInt64(0)
 )
 
 func serverMemoryLimitDefaultValue() string {

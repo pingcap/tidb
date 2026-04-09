@@ -22,11 +22,13 @@ import (
 	"io"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -34,9 +36,10 @@ import (
 
 func readAllData(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
+	startOffsets, estimatedEndOffsets []uint64,
 	smallBlockBufPool *membuf.Pool,
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
@@ -57,23 +60,41 @@ func readAllData(
 			output.memKVBuffers = nil
 		} else {
 			// try to fix a bug that the memory is retained in http2 package
-			if gcs, ok := store.(*storage.GCSStorage); ok {
+			if gcs, ok := store.(*objstore.GCSStorage); ok {
 				err = gcs.Reset(ctx)
 			}
 		}
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
-		ctx,
-		store,
-		statsFiles,
-		startKey,
-		endKey,
-	)
-	if err != nil {
-		return err
+	concurrences := make([]uint64, len(statsFiles))
+	totalFileSize := uint64(0)
+	bufSize := uint64(ConcurrentReaderBufferSizePerConc)
+	for i := range statsFiles {
+		size := estimatedEndOffsets[i] - startOffsets[i]
+		totalFileSize += size
+		expectedConc := size / bufSize
+		// let the stat internals cover the [startKey, endKey) since the offsets
+		// always point to a position that is less than or equal to the key.
+		expectedConc += 1
+
+		if expectedConc >= readAllDataConcThreshold {
+			concurrences[i] = expectedConc
+		} else {
+			concurrences[i] = 1
+		}
+		if expectedConc > 1 {
+			logutil.Logger(ctx).Info("found hotspot file in readAllData",
+				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffsets[i]),
+				zap.Uint64("endOffset", estimatedEndOffsets[i]),
+				zap.Uint64("expectedConc", expectedConc),
+				zap.Uint64("concurrency", concurrences[i]),
+			)
+		}
 	}
+	logutil.Logger(ctx).Info("estimated file size of this range group",
+		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000
@@ -128,7 +149,7 @@ func readAllData(
 
 func readOneFile(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
@@ -198,7 +219,7 @@ func readOneFile(
 // ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
 // to the returned channel, the channel will be closed when finish read.
 func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
-	store storage.ExternalStorage, files []string) chan *KVPair {
+	store storeapi.Storage, files []string) chan *KVPair {
 	pairCh := make(chan *KVPair)
 	eg.Go(func() error {
 		defer close(pairCh)
@@ -212,7 +233,7 @@ func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
 	return pairCh
 }
 
-func readOneKVFile2Ch(ctx context.Context, store storage.ExternalStorage, file string, outCh chan *KVPair) error {
+func readOneKVFile2Ch(ctx context.Context, store storeapi.Storage, file string, outCh chan *KVPair) error {
 	reader, err := NewKVReader(ctx, file, store, 0, 3*DefaultReadBufferSize)
 	if err != nil {
 		return err
