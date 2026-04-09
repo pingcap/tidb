@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -89,6 +90,13 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 
 // HistoryTaskSummary contains summary fields for one history task.
 type HistoryTaskSummary struct {
+	*proto.TaskBase `json:"-"`
+	StartTime       time.Time `json:"start_time"`
+	StateUpdateTime time.Time `json:"state_update_time"`
+	EndTime         time.Time `json:"end_time"`
+}
+
+type historyTaskSummaryJSON struct {
 	ID              int64           `json:"id"`
 	TaskKey         string          `json:"task_key"`
 	Type            proto.TaskType  `json:"type"`
@@ -103,6 +111,36 @@ type HistoryTaskSummary struct {
 	StartTime       time.Time       `json:"start_time"`
 	StateUpdateTime time.Time       `json:"state_update_time"`
 	EndTime         time.Time       `json:"end_time"`
+}
+
+// MarshalJSON keeps the API response format stable while HistoryTaskSummary reuses proto.TaskBase.
+func (s *HistoryTaskSummary) MarshalJSON() ([]byte, error) {
+	if s == nil {
+		return []byte("null"), nil
+	}
+	if s.TaskBase == nil {
+		return json.Marshal(historyTaskSummaryJSON{
+			StartTime:       s.StartTime,
+			StateUpdateTime: s.StateUpdateTime,
+			EndTime:         s.EndTime,
+		})
+	}
+	return json.Marshal(historyTaskSummaryJSON{
+		ID:              s.ID,
+		TaskKey:         s.Key,
+		Type:            s.Type,
+		State:           s.State,
+		Step:            s.Step,
+		Priority:        s.Priority,
+		Concurrency:     s.RequiredSlots,
+		MaxNodeCount:    s.MaxNodeCount,
+		TargetScope:     s.TargetScope,
+		Keyspace:        s.Keyspace,
+		CreateTime:      s.CreateTime,
+		StartTime:       s.StartTime,
+		StateUpdateTime: s.StateUpdateTime,
+		EndTime:         s.EndTime,
+	})
 }
 
 // HistoryTaskPage is the paged result for history task listing.
@@ -124,12 +162,12 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 	whereParts := make([]string, 0, 2)
 	countArgs := make([]any, 0, 1)
 	if keyspace != "" {
-		whereParts = append(whereParts, "keyspace = %?")
+		whereParts = append(whereParts, "t.keyspace = %?")
 		countArgs = append(countArgs, keyspace)
 	}
 	dataArgs := append(make([]any, 0, len(countArgs)+2), countArgs...)
 	if pageToken > 0 {
-		whereParts = append(whereParts, "id < %?")
+		whereParts = append(whereParts, "t.id < %?")
 		dataArgs = append(dataArgs, pageToken)
 	}
 	whereSQL := ""
@@ -138,9 +176,9 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 	}
 	dataArgs = append(dataArgs, pageSize+1)
 
-	const historyTaskSummaryColumns = `id, task_key, type, state, step, priority, concurrency, max_node_count, target_scope, keyspace, create_time, start_time, state_update_time, end_time`
+	const historyTaskSummaryColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.end_time`
 	rows, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+historyTaskSummaryColumns+` from mysql.tidb_global_task_history`+whereSQL+` order by id desc limit %?`,
+		`select `+historyTaskSummaryColumns+` from mysql.tidb_global_task_history t`+whereSQL+` order by t.id desc limit %?`,
 		dataArgs...)
 	if err != nil {
 		return nil, err
@@ -175,28 +213,17 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 }
 
 func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
-	createTime, _ := r.GetTime(10).GoTime(time.Local)
 	item := &HistoryTaskSummary{
-		ID:           r.GetInt64(0),
-		TaskKey:      r.GetString(1),
-		Type:         proto.TaskType(r.GetString(2)),
-		State:        proto.TaskState(r.GetString(3)),
-		Step:         proto.Step(r.GetInt64(4)),
-		Priority:     int(r.GetInt64(5)),
-		Concurrency:  int(r.GetInt64(6)),
-		MaxNodeCount: int(r.GetInt64(7)),
-		TargetScope:  r.GetString(8),
-		Keyspace:     r.GetString(9),
-		CreateTime:   createTime,
-	}
-	if !r.IsNull(11) {
-		item.StartTime, _ = r.GetTime(11).GoTime(time.Local)
+		TaskBase: row2TaskBasic(r),
 	}
 	if !r.IsNull(12) {
-		item.StateUpdateTime, _ = r.GetTime(12).GoTime(time.Local)
+		item.StartTime, _ = r.GetTime(12).GoTime(time.Local)
 	}
 	if !r.IsNull(13) {
-		item.EndTime, _ = r.GetTime(13).GoTime(time.Local)
+		item.StateUpdateTime, _ = r.GetTime(13).GoTime(time.Local)
+	}
+	if !r.IsNull(14) {
+		item.EndTime, _ = r.GetTime(14).GoTime(time.Local)
 	}
 	return item
 }
