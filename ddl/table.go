@@ -388,7 +388,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
-		reportDDLForceMergeRanges(d.ctx, t, "drop table", job.SchemaName, job.TableName, job.TableID, tblInfo, oldIDs)
+		reportDDLForceMergeRanges(d.ctx, d.infoCache.GetLatest(), "drop table", job.SchemaName, job.TableName, job.TableID, tblInfo, oldIDs)
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
 	}
@@ -815,13 +815,13 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	asyncNotifyEvent(d, &util.Event{Tp: model.ActionTruncateTable, TableInfo: tblInfo})
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	job.Args = []interface{}{startKey, oldPartitionIDs, []string(nil)}
-	reportDDLForceMergeRanges(d.ctx, t, "truncate table", job.SchemaName, job.TableName, tableID, tblInfo, oldPartitionIDs)
+	reportDDLForceMergeRanges(d.ctx, d.infoCache.GetLatest(), "truncate table", job.SchemaName, job.TableName, tableID, tblInfo, oldPartitionIDs)
 	return ver, nil
 }
 
 func reportDDLForceMergeRanges(
 	ctx context.Context,
-	t *meta.Meta,
+	is infoschema.InfoSchema,
 	action string,
 	schemaName string,
 	tableName string,
@@ -839,15 +839,7 @@ func reportDDLForceMergeRanges(
 		physicalTableIDs = []int64{tableID}
 	}
 
-	forceMergeRanges, err := buildForceMergeRanges(t, schemaName, tblInfo, physicalTableIDs)
-	if err != nil {
-		logutil.BgLogger().Error("build "+action+" force merge ranges failed",
-			zap.String("schema", schemaName),
-			zap.String("table", tableName),
-			zap.Int64("tableID", tableID),
-			zap.Error(err))
-		return
-	}
+	forceMergeRanges := buildForceMergeRanges(is, schemaName, tableID, tblInfo, physicalTableIDs)
 	if len(forceMergeRanges) == 0 {
 		return
 	}

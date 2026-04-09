@@ -785,6 +785,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
+	b.is.addTablePartitions(dbInfo.Name.L, tbl)
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	sortedTbls = append(sortedTbls, tbl)
@@ -845,6 +846,7 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	if tableNames, ok := b.is.schemaMap[dbInfo.Name.L]; ok {
 		tblInfo := sortedTbls[idx].Meta()
 		delete(tableNames.tables, tblInfo.Name.L)
+		b.is.removeTablePartitions(tblInfo)
 		affected = appendAffectedIDs(affected, tblInfo)
 	}
 	// Remove the table in sorted table slice.
@@ -883,6 +885,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copySchemasMap(oldIS)
 	b.copyBundlesMap(oldIS)
 	b.copyPoliciesMap(oldIS)
+	b.copyPartitionTablesMap(oldIS)
 	b.copyTemporaryTableIDsMap(oldIS)
 	b.copyReferredForeignKeyMap(oldIS)
 
@@ -907,6 +910,19 @@ func (b *Builder) copyPoliciesMap(oldIS *infoSchema) {
 	is := b.is
 	for _, v := range oldIS.AllPlacementPolicies() {
 		is.policyMap[v.Name.L] = v
+	}
+}
+
+func (b *Builder) copyPartitionTablesMap(oldIS *infoSchema) {
+	is := b.is
+	if len(oldIS.partitionTables) == 0 {
+		is.partitionTables = nil
+		return
+	}
+
+	is.partitionTables = make(map[int64]partitionTableEntry, len(oldIS.partitionTables))
+	for partitionID, entry := range oldIS.partitionTables {
+		is.partitionTables[partitionID] = entry
 	}
 }
 
@@ -1027,6 +1043,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 		schTbls.tables[t.Name.L] = tbl
+		b.is.addTablePartitions(di.Name.L, tbl)
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
@@ -1064,6 +1081,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error)) *B
 			policyMap:             map[string]*model.PolicyInfo{},
 			ruleBundleMap:         map[int64]*placement.Bundle{},
 			sortedTablesBuckets:   make([]sortedTables, bucketCount),
+			partitionTables:       map[int64]partitionTableEntry{},
 			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		},
 		dirtyDB: make(map[string]bool),

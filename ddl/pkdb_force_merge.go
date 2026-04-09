@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
@@ -71,22 +70,26 @@ func ScanForceMergeRanges(is infoschema.InfoSchema) (*ForceMergeScanResult, *For
 }
 
 func buildForceMergeRanges(
-	t *meta.Meta,
+	is infoschema.InfoSchema,
 	schemaName string,
+	tableID int64,
 	tblInfo *model.TableInfo,
 	physicalTableIDs []int64,
-) ([]forceMergeRange, error) {
+) []forceMergeRange {
 	failpoint.Inject("forceMergeBuildEntered", func(_ failpoint.Value) {})
 
-	if shouldSkipForceMerge(schemaName, tblInfo) {
-		return nil, nil
+	if shouldSkipForceMerge(schemaName, tblInfo) || is == nil {
+		return nil
 	}
 	if len(physicalTableIDs) == 0 {
-		return nil, nil
+		return nil
 	}
 
 	candidateTableIDs := make(map[int64]struct{})
+	ignoredTableIDs := make(map[int64]struct{}, len(physicalTableIDs)+1)
+	ignoredTableIDs[tableID] = struct{}{}
 	for _, physicalID := range physicalTableIDs {
+		ignoredTableIDs[physicalID] = struct{}{}
 		if physicalID <= 1 {
 			continue
 		}
@@ -96,9 +99,14 @@ func buildForceMergeRanges(
 		}
 	}
 
-	existingTableIDs, err := findExistingTableIDs(t, candidateTableIDs)
-	if err != nil {
-		return nil, errors.Trace(err)
+	existingTableIDs := make(map[int64]struct{}, len(candidateTableIDs))
+	for candidateTableID := range candidateTableIDs {
+		if _, ok := ignoredTableIDs[candidateTableID]; ok {
+			continue
+		}
+		if tableIDExistsInInfoSchema(is, candidateTableID) {
+			existingTableIDs[candidateTableID] = struct{}{}
+		}
 	}
 
 	ranges := make([]forceMergeRange, 0, len(physicalTableIDs))
@@ -111,7 +119,7 @@ func buildForceMergeRanges(
 			EndTableID:   physicalID,
 		})
 	}
-	return ranges, nil
+	return ranges
 }
 
 func shouldSkipForceMerge(schemaName string, tblInfo *model.TableInfo) bool {
@@ -127,38 +135,12 @@ func shouldSkipForceMerge(schemaName string, tblInfo *model.TableInfo) bool {
 	return tblInfo.ID&autoid.SystemSchemaIDFlag != 0
 }
 
-func findExistingTableIDs(t *meta.Meta, candidateTableIDs map[int64]struct{}) (map[int64]struct{}, error) {
-	existingTableIDs := make(map[int64]struct{})
-	if len(candidateTableIDs) == 0 {
-		return existingTableIDs, nil
+func tableIDExistsInInfoSchema(is infoschema.InfoSchema, tableID int64) bool {
+	if _, ok := is.TableByID(tableID); ok {
+		return true
 	}
-
-	dbs, err := t.ListDatabases()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	for _, dbInfo := range dbs {
-		tables, err := t.ListTables(dbInfo.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, tblInfo := range tables {
-			collectExistingTableID(existingTableIDs, candidateTableIDs, tblInfo.ID)
-			if pi := tblInfo.GetPartitionInfo(); pi != nil {
-				for _, def := range pi.Definitions {
-					collectExistingTableID(existingTableIDs, candidateTableIDs, def.ID)
-				}
-			}
-		}
-	}
-	return existingTableIDs, nil
-}
-
-func collectExistingTableID(existingTableIDs, candidateTableIDs map[int64]struct{}, tableID int64) {
-	if _, ok := candidateTableIDs[tableID]; ok {
-		existingTableIDs[tableID] = struct{}{}
-	}
+	tbl, _, _ := is.FindTableByPartitionID(tableID)
+	return tbl != nil
 }
 
 func findForceMergeStartTableID(existingTableIDs map[int64]struct{}, physicalID int64) int64 {

@@ -161,6 +161,71 @@ func TestAddForceMergeRangesStopsWhenSleepReturnsError(t *testing.T) {
 	require.Equal(t, 1, requestsNum)
 }
 
+func TestAddForceMergeRangesRetriesWithFreshBody(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		requests []addForceMergeRangesRequest
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != path.Join(pdapi.Regions, "force-merge") {
+			t.Errorf("unexpected path: %s", req.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Errorf("read request body failed: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if err := req.Body.Close(); err != nil {
+			t.Errorf("close request body failed: %v", err)
+		}
+
+		var payload addForceMergeRangesRequest
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Errorf("unmarshal request body failed: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		mu.Lock()
+		requests = append(requests, payload)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+		_, err = w.Write([]byte(`{}`))
+		if err != nil {
+			t.Errorf("write response failed: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	originalGetForceMergePDAddrs := getForceMergePDAddrs
+	getForceMergePDAddrs = func() ([]string, error) {
+		return []string{"http://127.0.0.1:1", server.URL}, nil
+	}
+	defer func() {
+		getForceMergePDAddrs = originalGetForceMergePDAddrs
+	}()
+
+	ranges := buildForceMergeKeyRangesForTest(2)
+	require.NoError(t, AddForceMergeRanges(context.Background(), ranges))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, requests, 1)
+	require.Equal(t, []string{
+		hex.EncodeToString(ranges[0].StartKey),
+		hex.EncodeToString(ranges[1].StartKey),
+	}, requests[0].StartKeysHex)
+	require.Equal(t, []string{
+		hex.EncodeToString(ranges[0].EndKey),
+		hex.EncodeToString(ranges[1].EndKey),
+	}, requests[0].EndKeysHex)
+}
+
 func buildForceMergeKeyRangesForTest(n int) []ForceMergeKeyRange {
 	ranges := make([]ForceMergeKeyRange, 0, n)
 	for i := 0; i < n; i++ {

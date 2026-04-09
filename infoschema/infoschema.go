@@ -83,6 +83,12 @@ type schemaTables struct {
 	tables map[string]table.Table
 }
 
+type partitionTableEntry struct {
+	tbl           table.Table
+	schemaName    string
+	partitionInfo model.PartitionDefinition
+}
+
 const bucketCount = 512
 
 type infoSchema struct {
@@ -97,6 +103,9 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
+
+	// partitionTables maps a partition ID to its owning table metadata.
+	partitionTables map[int64]partitionTableEntry
 
 	// temporaryTables stores the temporary table ids
 	temporaryTableIDs map[int64]struct{}
@@ -122,6 +131,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	result.partitionTables = make(map[int64]partitionTableEntry)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
@@ -131,6 +141,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	for _, tb := range tbList {
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
+		result.addTablePartitions(dbInfo.Name.L, tbl)
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
@@ -149,6 +160,7 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	result.partitionTables = make(map[int64]partitionTableEntry)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
@@ -158,6 +170,7 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	for _, tb := range tbList {
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
+		result.addTablePartitions(dbInfo.Name.L, tbl)
 		bucketIdx := tableBucketIdx(tb.ID)
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
@@ -258,6 +271,33 @@ func (is *infoSchema) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBIn
 	return nil, false
 }
 
+func (is *infoSchema) addTablePartitions(schemaName string, tbl table.Table) {
+	pi := tbl.Meta().GetPartitionInfo()
+	if pi == nil || len(pi.Definitions) == 0 {
+		return
+	}
+	if is.partitionTables == nil {
+		is.partitionTables = make(map[int64]partitionTableEntry)
+	}
+	for _, def := range pi.Definitions {
+		is.partitionTables[def.ID] = partitionTableEntry{
+			tbl:           tbl,
+			schemaName:    schemaName,
+			partitionInfo: def,
+		}
+	}
+}
+
+func (is *infoSchema) removeTablePartitions(tblInfo *model.TableInfo) {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil || len(pi.Definitions) == 0 || len(is.partitionTables) == 0 {
+		return
+	}
+	for _, def := range pi.Definitions {
+		delete(is.partitionTables, def.ID)
+	}
+}
+
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
 	slice := is.sortedTablesBuckets[tableBucketIdx(id)]
 	idx := slice.searchTable(id)
@@ -301,22 +341,16 @@ func (is *infoSchema) SchemaTables(schema model.CIStr) (tables []table.Table) {
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
-// FindTableByPartitionID will traverse all the tables to find the partitionID partition in which partition-table.
 func (is *infoSchema) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	for _, v := range is.schemaMap {
-		for _, tbl := range v.tables {
-			pi := tbl.Meta().GetPartitionInfo()
-			if pi == nil {
-				continue
-			}
-			for _, p := range pi.Definitions {
-				if p.ID == partitionID {
-					return tbl, v.dbInfo, &p
-				}
-			}
-		}
+	entry, ok := is.partitionTables[partitionID]
+	if !ok {
+		return nil, nil, nil
 	}
-	return nil, nil, nil
+	schemaTables, ok := is.schemaMap[entry.schemaName]
+	if !ok {
+		return nil, nil, nil
+	}
+	return entry.tbl, schemaTables.dbInfo, &entry.partitionInfo
 }
 
 // HasTemporaryTable returns whether information schema has temporary table

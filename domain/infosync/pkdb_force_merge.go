@@ -15,7 +15,6 @@
 package infosync
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -24,7 +23,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"go.uber.org/zap"
 )
 
 // ForceMergeKeyRange describes one PD key range that should be force merged.
@@ -69,10 +70,12 @@ func AddForceMergeRanges(ctx context.Context, ranges []ForceMergeKeyRange) error
 
 	addrs, err := getForceMergePDAddrs()
 	if err != nil {
+		logutil.BgLogger().Error("get PD addresses for force merge failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
-	for start := 0; start < len(ranges); start += forceMergeMaxBatchSize {
+	totalBatches := (len(ranges) + forceMergeMaxBatchSize - 1) / forceMergeMaxBatchSize
+	for batchIdx, start := 0, 0; start < len(ranges); batchIdx, start = batchIdx+1, start+forceMergeMaxBatchSize {
 		end := start + forceMergeMaxBatchSize
 		if end > len(ranges) {
 			end = len(ranges)
@@ -80,30 +83,66 @@ func AddForceMergeRanges(ctx context.Context, ranges []ForceMergeKeyRange) error
 
 		body, err := marshalAddForceMergeRangesRequest(ranges[start:end])
 		if err != nil {
+			logutil.BgLogger().Error("marshal force merge ranges batch failed",
+				zap.Int("batchIndex", batchIdx+1),
+				zap.Int("batchCount", totalBatches),
+				zap.Int("rangeCount", end-start),
+				zap.Int("totalRangeCount", len(ranges)),
+				zap.Error(err))
 			return errors.Trace(err)
 		}
 
-		res, err := doRequest(
+		res, err := doRequestWithBodyBytes(
 			ctx,
 			"AddForceMergeRanges",
 			addrs,
 			path.Join(pdapi.Regions, "force-merge"),
 			"POST",
-			bytes.NewBuffer(body),
+			body,
 		)
 		if err != nil {
+			logutil.BgLogger().Error("send force merge ranges batch to PD failed",
+				zap.Int("batchIndex", batchIdx+1),
+				zap.Int("batchCount", totalBatches),
+				zap.Int("rangeCount", end-start),
+				zap.Int("totalRangeCount", len(ranges)),
+				zap.Error(err))
 			return errors.Trace(err)
 		}
 		if res == nil {
-			return fmt.Errorf("InfoSyncer returns error in AddForceMergeRanges")
+			err = fmt.Errorf("InfoSyncer returns error in AddForceMergeRanges")
+			logutil.BgLogger().Error("send force merge ranges batch to PD failed",
+				zap.Int("batchIndex", batchIdx+1),
+				zap.Int("batchCount", totalBatches),
+				zap.Int("rangeCount", end-start),
+				zap.Int("totalRangeCount", len(ranges)),
+				zap.Error(err))
+			return err
 		}
+
+		logutil.BgLogger().Info("sent force merge ranges batch to PD",
+			zap.Int("batchIndex", batchIdx+1),
+			zap.Int("batchCount", totalBatches),
+			zap.Int("rangeCount", end-start),
+			zap.Int("sentRangeCount", end),
+			zap.Int("totalRangeCount", len(ranges)))
 
 		if end < len(ranges) {
 			if err := forceMergeBatchSleep(ctx, forceMergeBatchSleepTime); err != nil {
+				logutil.BgLogger().Error("sleep between force merge range batches failed",
+					zap.Int("batchIndex", batchIdx+1),
+					zap.Int("batchCount", totalBatches),
+					zap.Int("sentRangeCount", end),
+					zap.Int("totalRangeCount", len(ranges)),
+					zap.Error(err))
 				return errors.Trace(err)
 			}
 		}
 	}
+
+	logutil.BgLogger().Info("sent all force merge ranges to PD",
+		zap.Int("batchCount", totalBatches),
+		zap.Int("totalRangeCount", len(ranges)))
 	return nil
 }
 

@@ -15,9 +15,12 @@
 package ddl
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
@@ -53,6 +56,30 @@ func TestFindForceMergeStartTableID(t *testing.T) {
 	require.Equal(t, int64(1), findForceMergeStartTableID(nil, 50))
 }
 
+func TestBuildForceMergeRangesUsesPartitionLookup(t *testing.T) {
+	is := infoschema.MockInfoSchema([]*model.TableInfo{
+		mockForceMergeTableInfo(10),
+		mockForceMergeTableInfo(11, 12),
+	})
+
+	ranges := buildForceMergeRanges(is, "test", 14, mockForceMergeTableInfo(14), []int64{14})
+	require.Equal(t, []forceMergeRange{{StartTableID: 13, EndTableID: 14}}, ranges)
+}
+
+func TestBuildForceMergeRangesIgnoresCurrentTableIDs(t *testing.T) {
+	currentTable := mockForceMergeTableInfo(16, 17, 18)
+	is := infoschema.MockInfoSchema([]*model.TableInfo{
+		mockForceMergeTableInfo(15),
+		currentTable,
+	})
+
+	ranges := buildForceMergeRanges(is, "test", 16, currentTable, []int64{17, 18})
+	require.Equal(t, []forceMergeRange{
+		{StartTableID: 16, EndTableID: 17},
+		{StartTableID: 16, EndTableID: 18},
+	}, ranges)
+}
+
 func TestForceMergeDisabledSkipsDDLLogic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer func() {
@@ -77,6 +104,27 @@ func TestForceMergeDisabledSkipsDDLLogic(t *testing.T) {
 
 	tk.MustExec("create table t_force_merge_truncate (a int)")
 	tk.MustExec("truncate table t_force_merge_truncate")
+}
+
+func mockForceMergeTableInfo(tableID int64, partitionIDs ...int64) *model.TableInfo {
+	tblInfo := &model.TableInfo{
+		ID:    tableID,
+		Name:  model.NewCIStr(fmt.Sprintf("t_%d", tableID)),
+		State: model.StatePublic,
+	}
+	if len(partitionIDs) == 0 {
+		return tblInfo
+	}
+
+	defs := make([]model.PartitionDefinition, 0, len(partitionIDs))
+	for idx, partitionID := range partitionIDs {
+		defs = append(defs, model.PartitionDefinition{
+			ID:   partitionID,
+			Name: model.NewCIStr(fmt.Sprintf("p_%d", idx)),
+		})
+	}
+	tblInfo.Partition = &model.PartitionInfo{Definitions: defs}
+	return tblInfo
 }
 
 func TestForceMergeOnlyRunsAfterSuccessfulDDL(t *testing.T) {
