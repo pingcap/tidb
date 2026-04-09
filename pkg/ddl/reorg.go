@@ -564,7 +564,14 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		}
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 	}
-	getBackfillProgressByTableID(reorgInfo.PhysicalTableID, label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
+	// For partition DDLs, use the stable logical table ID instead of PhysicalTableID
+	// which changes as the job walks partitions. This ensures the progress metric
+	// is consistently keyed to the logical table and matches the seeding/cleanup in partition.go.
+	metricTableID := reorgInfo.PhysicalTableID
+	if reorgInfo.Type == model.ActionReorganizePartition || reorgInfo.Type == model.ActionRemovePartitioning || reorgInfo.Type == model.ActionAlterTablePartitioning {
+		metricTableID = tblInfo.ID
+	}
+	getBackfillProgressByTableID(metricTableID, label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
 }
 
 func getTableEstimatedCount(w *worker, tblInfo *model.TableInfo) int64 {
@@ -1168,7 +1175,9 @@ func cleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 
 	// Clean up both backfill progress and total counter metrics to avoid unbounded growth.
 	// This is safe to do even if the metrics were never created (DeleteLabelValues is a no-op for non-existent labels).
-	cleanupBackfillMetrics(job.Type, job.SchemaName, job.TableName)
+	if job != nil {
+		cleanupBackfillMetrics(job.Type, job.SchemaName, job.TableName)
+	}
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
