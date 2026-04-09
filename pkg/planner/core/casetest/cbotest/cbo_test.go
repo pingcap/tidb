@@ -168,26 +168,24 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 			"  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
 			"  KEY idx_id1_id2_id3_id4_id5 (id1, id2, id3, id4, id5)\n" +
 			")")
-		require.NoError(t, testkit.LoadTableStats("t_small.json", dom))
-		require.NoError(t, testkit.LoadTableStats("t_big.json", dom))
+		require.NoError(t, testkit.LoadTableStats("repro_hash_join_issue_t_small.json", dom))
+		require.NoError(t, testkit.LoadTableStats("repro_hash_join_issue_t_big.json", dom))
 		tk.MustExec("set @@session.tidb_cost_model_version = 2")
 		tk.MustExec("set @@session.tidb_opt_index_join_scan_ratio_threshold = 0.5")
 
 		var inputReproHashJoinIssue []string
 		var outputReproHashJoinIssue []struct {
-			SQL      string
-			Contains []string
+			SQL  string
+			Plan []string
 		}
 		analyzeSuiteData.LoadTestCasesByName("TestReproHashJoinIssue", t, &inputReproHashJoinIssue, &outputReproHashJoinIssue, cascades, caller)
 		for i, tt := range inputReproHashJoinIssue {
-			rows := testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			planText := strings.Join(rows, "\n")
+			plan := tk.MustQuery(tt)
 			testdata.OnRecord(func() {
 				outputReproHashJoinIssue[i].SQL = tt
+				outputReproHashJoinIssue[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
 			})
-			for _, one := range outputReproHashJoinIssue[i].Contains {
-				require.Contains(t, planText, one)
-			}
+			plan.Check(testkit.Rows(outputReproHashJoinIssue[i].Plan...))
 		}
 
 		// issue:59563
