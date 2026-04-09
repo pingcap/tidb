@@ -2375,6 +2375,10 @@ var defaultSysVars = []*SysVar{
 		s.IndexJoinCostFactor = tidbOptFloat64(val, vardef.DefOptIndexJoinCostFactor)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinScanRatioThreshold, Value: strconv.FormatFloat(vardef.DefOptIndexJoinScanRatioThreshold, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexJoinScanRatioThreshold = tidbOptFloat64(val, vardef.DefOptIndexJoinScanRatioThreshold)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptSelectivityFactor, Value: strconv.FormatFloat(vardef.DefOptSelectivityFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		s.SelectivityFactor = tidbOptFloat64(val, vardef.DefOptSelectivityFactor)
 		return nil

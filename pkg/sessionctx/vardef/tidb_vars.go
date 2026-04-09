@@ -404,23 +404,24 @@ const (
 
 	// The following optimizer cost factors represent a multiplier for each optimizer physical operator.
 	// These factors are used to adjust the cost of each operator to influence the optimizer's plan selection.
-	TiDBOptIndexScanCostFactor        = "tidb_opt_index_scan_cost_factor"
-	TiDBOptIndexReaderCostFactor      = "tidb_opt_index_reader_cost_factor"
-	TiDBOptTableReaderCostFactor      = "tidb_opt_table_reader_cost_factor"
-	TiDBOptTableFullScanCostFactor    = "tidb_opt_table_full_scan_cost_factor"
-	TiDBOptTableRangeScanCostFactor   = "tidb_opt_table_range_scan_cost_factor"
-	TiDBOptTableRowIDScanCostFactor   = "tidb_opt_table_rowid_scan_cost_factor"
-	TiDBOptTableTiFlashScanCostFactor = "tidb_opt_table_tiflash_scan_cost_factor"
-	TiDBOptIndexLookupCostFactor      = "tidb_opt_index_lookup_cost_factor"
-	TiDBOptIndexMergeCostFactor       = "tidb_opt_index_merge_cost_factor"
-	TiDBOptSortCostFactor             = "tidb_opt_sort_cost_factor"
-	TiDBOptTopNCostFactor             = "tidb_opt_topn_cost_factor"
-	TiDBOptLimitCostFactor            = "tidb_opt_limit_cost_factor"
-	TiDBOptStreamAggCostFactor        = "tidb_opt_stream_agg_cost_factor"
-	TiDBOptHashAggCostFactor          = "tidb_opt_hash_agg_cost_factor"
-	TiDBOptMergeJoinCostFactor        = "tidb_opt_merge_join_cost_factor"
-	TiDBOptHashJoinCostFactor         = "tidb_opt_hash_join_cost_factor"
-	TiDBOptIndexJoinCostFactor        = "tidb_opt_index_join_cost_factor"
+	TiDBOptIndexScanCostFactor         = "tidb_opt_index_scan_cost_factor"
+	TiDBOptIndexReaderCostFactor       = "tidb_opt_index_reader_cost_factor"
+	TiDBOptTableReaderCostFactor       = "tidb_opt_table_reader_cost_factor"
+	TiDBOptTableFullScanCostFactor     = "tidb_opt_table_full_scan_cost_factor"
+	TiDBOptTableRangeScanCostFactor    = "tidb_opt_table_range_scan_cost_factor"
+	TiDBOptTableRowIDScanCostFactor    = "tidb_opt_table_rowid_scan_cost_factor"
+	TiDBOptTableTiFlashScanCostFactor  = "tidb_opt_table_tiflash_scan_cost_factor"
+	TiDBOptIndexLookupCostFactor       = "tidb_opt_index_lookup_cost_factor"
+	TiDBOptIndexMergeCostFactor        = "tidb_opt_index_merge_cost_factor"
+	TiDBOptSortCostFactor              = "tidb_opt_sort_cost_factor"
+	TiDBOptTopNCostFactor              = "tidb_opt_topn_cost_factor"
+	TiDBOptLimitCostFactor             = "tidb_opt_limit_cost_factor"
+	TiDBOptStreamAggCostFactor         = "tidb_opt_stream_agg_cost_factor"
+	TiDBOptHashAggCostFactor           = "tidb_opt_hash_agg_cost_factor"
+	TiDBOptMergeJoinCostFactor         = "tidb_opt_merge_join_cost_factor"
+	TiDBOptHashJoinCostFactor          = "tidb_opt_hash_join_cost_factor"
+	TiDBOptIndexJoinCostFactor         = "tidb_opt_index_join_cost_factor"
+	TiDBOptIndexJoinScanRatioThreshold = "tidb_opt_index_join_scan_ratio_threshold"
 
 	// The following selectivity factors represent a multiplier for the selectivity of each predicate.
 	// These factors are used to determine the selectivity of predicates in the optimizer's cost model.
@@ -1460,6 +1461,7 @@ const (
 	DefOptMergeJoinCostFactor               = 1.0
 	DefOptHashJoinCostFactor                = 1.0
 	DefOptIndexJoinCostFactor               = 1.0
+	DefOptIndexJoinScanRatioThreshold       = 0.0
 	DefOptSelectivityFactor                 = 0.8
 	DefOptForceInlineCTE                    = false
 	DefOptInSubqToJoinAndAgg                = true

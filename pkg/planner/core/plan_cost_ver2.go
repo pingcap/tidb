@@ -123,6 +123,9 @@ const (
 	TiFlashStartupRowPenalty = 10000
 	// MaxPenaltyRowCount applies a penalty for high risk scans
 	MaxPenaltyRowCount = 1000
+	// IndexJoinScanRatioPenaltyMultiplier is a large penalty used to effectively reject
+	// IndexJoin/IndexHashJoin when the estimated total probe rows are already close to a full scan.
+	IndexJoinScanRatioPenaltyMultiplier = 1e12
 )
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
@@ -747,6 +750,44 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 	return p.PlanCostVer2, nil
 }
 
+func getIndexJoinFullScanRows(probe base.PhysicalPlan) float64 {
+	tblStats := physicalop.GetTblStats(probe)
+	if tblStats == nil || tblStats.RealtimeCount <= 0 {
+		return 0
+	}
+	return float64(tblStats.RealtimeCount)
+}
+
+func indexJoinScanRatioPenaltyCostVer2(
+	option *costusage.PlanCostOption,
+	threshold, buildRows, probeRowsOne, probeRowSize float64,
+	probe base.PhysicalPlan,
+	scanFactor costusage.CostVer2Factor,
+) costusage.CostVer2 {
+	if threshold <= 0 || buildRows <= 1 {
+		return costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	}
+	innerFullScanRows := getIndexJoinFullScanRows(probe)
+	if innerFullScanRows <= 0 {
+		return costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	}
+	probeRowsTot := buildRows * probeRowsOne
+	if probeRowsTot <= 0 {
+		return costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	}
+	ratio := probeRowsTot / innerFullScanRows
+	if ratio < threshold {
+		return costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	}
+	probeRowSize = max(probeRowSize, MinRowSize)
+	penaltyValue := max(innerFullScanRows, probeRowsTot) * max(math.Log2(probeRowSize), 1) * scanFactor.Value *
+		IndexJoinScanRatioPenaltyMultiplier * max(ratio/threshold, 1)
+	return costusage.NewCostVer2(option, scanFactor, penaltyValue, func() string {
+		return fmt.Sprintf("index_join_scan_ratio_penalty(rows=%v/full_scan_rows=%v,threshold=%v)*%v",
+			probeRowsTot, innerFullScanRows, threshold, scanFactor)
+	})
+}
+
 func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, indexJoinType int) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalIndexJoin)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -827,8 +868,14 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	// since this part of cost might be magnified by index join, see #62499.
 	numRanges := getNumberOfRanges(probe)
 	seekingCost := indexJoinSeekingCostVer2(option, buildRows, float64(numRanges), scanFactor)
+	scanRatioPenaltyCost := costusage.NewZeroCostVer2(costusage.TraceCost(option))
+	if indexJoinType != 2 {
+		scanRatioPenaltyCost = indexJoinScanRatioPenaltyCostVer2(option,
+			p.SCtx().GetSessionVars().IndexJoinScanRatioThreshold, buildRows, probeRowsOne, probeRowSize, probe, scanFactor)
+	}
 
-	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
+	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, seekingCost, scanRatioPenaltyCost,
+		costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
