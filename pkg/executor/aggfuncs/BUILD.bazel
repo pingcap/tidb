@@ -94,6 +94,7 @@ go_test(
     race = "on",
     shard_count = 50,
     deps = [
+        "//pkg/executor/internal/util",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/kv",
