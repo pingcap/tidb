@@ -172,8 +172,8 @@ func (s *externalCheckpointStorage) checkLockFile(ctx context.Context, now int64
 	} else if lock.LockId != s.lockId {
 		return errors.Errorf("The existing lock will expire in %d seconds. "+
 			"There may be another BR(%d) running. If not, you can wait for the lock to expire, "+
-			"or delete the file `%s%s` manually.",
-			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(s.storage.URI(), "/"), s.CheckpointLockPath)
+			"or delete the file `%s/%s` manually.",
+			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(s.storage.URI(), "/"), strings.TrimLeft(s.CheckpointLockPath, "/"))
 	}
 
 	return nil
