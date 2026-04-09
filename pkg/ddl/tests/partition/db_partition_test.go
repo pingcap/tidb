@@ -2935,11 +2935,13 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 	tk.MustExec(`set sql_mode = default`)
 	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
 	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
-	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
+	// The partition-column whitelist now rejects shrink changes before sql_mode-based
+	// truncation handling can apply.
+	tk.MustGetErrCode(`alter table t modify a varchar(5)`, errno.ErrUnsupportedDDLOperation)
 	tk.MustExec(`set sql_mode = ''`)
-	tk.MustExec(`alter table t modify a varchar(5)`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1265 2 warnings with this error code, first warning: Data truncated for column 'a', value is ' 654321'"))
+	tk.MustGetErrCode(`alter table t modify a varchar(5)`, errno.ErrUnsupportedDDLOperation)
 	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`select count(*) from t`).Check(testkit.Rows("2"))
 }
 
 func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
@@ -3501,6 +3503,27 @@ func TestModifyColumnPartitionedTableRangeListColumnsWhitelist(t *testing.T) {
 		tk.MustExec(`insert into t_list_cols_wl_varbin values ('a',1),('b',2)`)
 		tk.MustExec(`alter table t_list_cols_wl_varbin modify column a varbinary(4)`)
 		tk.MustExec(`admin check table t_list_cols_wl_varbin`)
+	})
+
+	t.Run("list columns varchar shrink under empty sql_mode rejected", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_list_cols_wl_varchar_shrink")
+		tk.MustExec(`create table t_list_cols_wl_varchar_shrink (
+			a varchar(6),
+			b int
+		) partition by list columns(a) (
+			partition p0 values in ('123456'),
+			partition p1 values in ('654321')
+		)`)
+		tk.MustExec(`insert into t_list_cols_wl_varchar_shrink values ('123456',1),('654321',2)`)
+		tk.MustExec(`set session sql_mode = ''`)
+		tk.MustGetErrCode(
+			`alter table t_list_cols_wl_varchar_shrink modify column a varchar(5)`,
+			errno.ErrUnsupportedDDLOperation,
+		)
+		tk.MustExec(`admin check table t_list_cols_wl_varchar_shrink`)
+		tk.MustQuery(`select count(*) from t_list_cols_wl_varchar_shrink`).Check(testkit.Rows("2"))
 	})
 
 	t.Run("list columns binary extension rejected", func(t *testing.T) {
