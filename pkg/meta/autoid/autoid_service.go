@@ -62,7 +62,7 @@ type ClientDiscover struct {
 }
 
 const (
-	autoIDLeaderPath = "tidb/autoid/leader"
+	autoIDLeaderPath = "/tidb/autoid/leader"
 )
 
 // NewClientDiscover creates a ClientDiscover object.
