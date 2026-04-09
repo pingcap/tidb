@@ -1207,8 +1207,6 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.
 	return s, nil
 }
 
-<<<<<<< HEAD
-=======
 func estimateCompressionRatio(
 	ctx context.Context,
 	filePath string,
@@ -1224,7 +1222,13 @@ func estimateCompressionRatio(
 			failpoint.Return(2.0, nil)
 		}
 	})
-	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	fileMeta := mydump.SourceFileMeta{
+		Path:        filePath,
+		FileSize:    fileSize,
+		Compression: mydump.ParseCompressionOnFileExtension(filePath),
+		Type:        tp,
+	}
+	rows, rowSize, err := mydump.SampleParquetRowSize(ctx, fileMeta, store)
 	if err != nil {
 		return 1.0, err
 	}
@@ -1323,7 +1327,6 @@ func (r *compressionEstimator) estimate(
 	return compressRatio
 }
 
->>>>>>> e60489c4525 (importer: sample a portion of compressed files to speed up import spec generation (#64769))
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
@@ -1377,12 +1380,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	var (
 		totalSize  int64
 		sourceType mydump.SourceType
-<<<<<<< HEAD
-=======
 		// sizeExpansionRatio is the estimated size expansion for parquet format.
 		// For non-parquet format, it's always 1.0.
 		sizeExpansionRatio = 1.0
->>>>>>> e60489c4525 (importer: sample a portion of compressed files to speed up import spec generation (#64769))
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1445,20 +1445,13 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		var err error
-<<<<<<< HEAD
-		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
-=======
-		var processedFiles []*mydump.SourceFileMeta
 		var once sync.Once
 
 		ce := newCompressionRecorder()
 
-		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
->>>>>>> e60489c4525 (importer: sample a portion of compressed files to speed up import spec generation (#64769))
+		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				path, size := f.Path, f.Size
-<<<<<<< HEAD
-=======
 				// pick arbitrary one file to detect the format.
 				var err2 error
 				once.Do(func() {
@@ -1469,7 +1462,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if err2 != nil {
 					return nil, err2
 				}
->>>>>>> e60489c4525 (importer: sample a portion of compressed files to speed up import spec generation (#64769))
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1477,12 +1469,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Compression: compressTp,
 					Type:        sourceType,
 				}
-<<<<<<< HEAD
-				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-=======
 				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
 				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
->>>>>>> e60489c4525 (importer: sample a portion of compressed files to speed up import spec generation (#64769))
 				return &fileMeta, nil
 			}); err != nil {
 			return err
