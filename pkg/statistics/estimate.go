@@ -135,32 +135,31 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 
 	mid := len(ndvSketches) - len(ndvSketches)/2
 	var leftHalfNDV *FMSketch
-	for i := range mid {
-		leftHalfNDV = mergeCopiedFMSketch(leftHalfNDV, ndvSketches[i])
+	for _, sketch := range ndvSketches[:mid] {
+		leftHalfNDV = mergeCopiedFMSketch(leftHalfNDV, sketch)
 	}
 	var rightHalfNDV *FMSketch
-	for i := mid; i < len(ndvSketches); i++ {
-		rightHalfNDV = mergeCopiedFMSketch(rightHalfNDV, ndvSketches[i])
+	for _, sketch := range ndvSketches[mid:] {
+		rightHalfNDV = mergeCopiedFMSketch(rightHalfNDV, sketch)
 	}
 
 	// NOTE: For each node, we still merge every other node's NDV sketch.
-	globalSingleton := estimateGlobalSingletonInRange(ndvSketches, singletonSketches, 0, mid, nil, rightHalfNDV)
-	globalSingleton += estimateGlobalSingletonInRange(ndvSketches, singletonSketches, mid, len(ndvSketches), leftHalfNDV, nil)
+	globalSingleton := estimateGlobalSingletonInRange(ndvSketches[:mid], singletonSketches[:mid], rightHalfNDV)
+	globalSingleton += estimateGlobalSingletonInRange(ndvSketches[mid:], singletonSketches[mid:], leftHalfNDV)
 	// SAFETY: Each per-node contribution is clamped to >= 0 before accumulation.
 	intest.Assert(globalSingleton >= 0, "globalSingleton must be positive")
 	return uint64(globalSingleton)
 }
 
-func estimateGlobalSingletonInRange(ndvSketches, singletonSketches []*FMSketch, start, end int, beforeRangeNDV, afterRangeNDV *FMSketch) int64 {
+func estimateGlobalSingletonInRange(ndvSketches, singletonSketches []*FMSketch, outOfRangeNDVSketch *FMSketch) int64 {
 	var globalSingleton int64
 	var prefixNDV *FMSketch
-	for i := start; i < end; i++ {
-		other := mergeCopiedFMSketch(nil, beforeRangeNDV)
-		other = mergeCopiedFMSketch(other, prefixNDV)
-		for j := i + 1; j < end; j++ {
+	for i := range ndvSketches {
+		other := mergeCopiedFMSketch(nil, prefixNDV)
+		for j := i + 1; j < len(ndvSketches); j++ {
 			other = mergeCopiedFMSketch(other, ndvSketches[j])
 		}
-		other = mergeCopiedFMSketch(other, afterRangeNDV)
+		other = mergeCopiedFMSketch(other, outOfRangeNDVSketch)
 
 		ndvOther := int64(0)
 		if other != nil {
