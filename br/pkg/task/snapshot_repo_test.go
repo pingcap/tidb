@@ -22,6 +22,7 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
@@ -317,6 +318,50 @@ func TestPrepareSnapshotBackupStorageResumePendingBackup(t *testing.T) {
 	require.Equal(t, snapshotpaths.PendingFile(cfgHash, backupID), resolved.pendingFile)
 	require.True(t, resolved.resumeCheckpoint)
 	require.Contains(t, resolved.MetadataStorage.URI(), snapshotpaths.MetadataDir(backupID))
+}
+
+func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *testing.T) {
+	ctx := context.Background()
+	storage := objstore.NewMemStorage()
+	prepared := &preparedSnapshotBackupStorage{
+		resolvedSnapshotStorage: resolvedSnapshotStorage{
+			Layout:          repo.LayoutRepoV1,
+			BackupID:        repo.BackupID(0x1234),
+			MetadataStorage: storage,
+		},
+		resumeCheckpoint: true,
+	}
+	cfgHash := []byte("hash")
+	require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, storage, &checkpoint.CheckpointMetadataForBackup{
+		ConfigHash: cfgHash,
+		BackupTS:   0x2222,
+		BackupID:   0x5678,
+	}))
+
+	err := activateSnapshotBackupResume(ctx, &backup.Client{}, prepared, cfgHash)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "checkpoint metadata backup id")
+}
+
+func TestActivateSnapshotBackupResumeAllowsLegacyCheckpointMetadataWithoutBackupID(t *testing.T) {
+	ctx := context.Background()
+	storage := objstore.NewMemStorage()
+	prepared := &preparedSnapshotBackupStorage{
+		resolvedSnapshotStorage: resolvedSnapshotStorage{
+			Layout:          repo.LayoutRepoV1,
+			BackupID:        repo.BackupID(0x1234),
+			MetadataStorage: storage,
+		},
+		resumeCheckpoint: true,
+	}
+	cfgHash := []byte("hash")
+	require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, storage, &checkpoint.CheckpointMetadataForBackup{
+		ConfigHash: cfgHash,
+		BackupTS:   0x2222,
+	}))
+
+	err := activateSnapshotBackupResume(ctx, &backup.Client{}, prepared, cfgHash)
+	require.NoError(t, err)
 }
 
 func TestPrepareSnapshotBackupStorageRejectsPendingWhenErrorMode(t *testing.T) {

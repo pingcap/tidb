@@ -111,11 +111,18 @@ func (l *snapshotRepoBackupLifecycle) StartCheckpoint(
 		}
 		l.pendingMarkerCreated = true
 	}
-	if err := client.StartCheckpointRunner(ctx, cfgHash, backupTS, safePointID, progressCallBack); err != nil {
+	if err := client.StartCheckpointRunner(ctx, cfgHash, backupTS, l.repoCheckpointBackupID(), safePointID, progressCallBack); err != nil {
 		l.rollbackStartCheckpoint(ctx, client)
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (l *snapshotRepoBackupLifecycle) repoCheckpointBackupID() uint64 {
+	if l == nil || l.resolvedStorage == nil {
+		return 0
+	}
+	return uint64(l.resolvedStorage.BackupID)
 }
 
 func (l *snapshotRepoBackupLifecycle) pendingFileForCheckpoint() (string, error) {

@@ -17,7 +17,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 30,
+    shard_count = 33,
     deps = [
         "//br/pkg/checkpoint",
         "//br/pkg/gc",

@@ -841,6 +841,15 @@ func activateSnapshotBackupResume(
 	if err := client.LoadCheckpointMetadataFromStorage(ctx, prepared.MetadataStorage); err != nil {
 		return errors.Annotatef(err, "load repo-v1 checkpoint metadata for backup %s", prepared.BackupID)
 	}
+	checkpointMeta := client.GetCheckpointMetadata()
+	if checkpointMeta != nil && checkpointMeta.BackupID != 0 && checkpointMeta.BackupID != uint64(prepared.BackupID) {
+		return errors.Annotatef(
+			berrors.ErrInvalidArgument,
+			"repo-v1 checkpoint metadata backup id %d doesn't match resumed backup %s",
+			checkpointMeta.BackupID,
+			prepared.BackupID,
+		)
+	}
 	if err := client.CheckCheckpoint(cfgHash); err != nil {
 		return errors.Annotatef(err, "validate repo-v1 checkpoint metadata for backup %s", prepared.BackupID)
 	}

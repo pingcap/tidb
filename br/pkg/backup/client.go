@@ -15,6 +15,7 @@ import (
 	"github.com/google/btree"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -453,6 +454,10 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
+	// Most backups use one external storage, so these two fields normally point to the same object.
+	// Repo-v1 snapshot backups split them on purpose:
+	//   - storage keeps the original/root backend view for data files and repo-level operations.
+	//   - metaStorage is the metadata view used for backupmeta/checkpoint/lock files.
 	storage     storeapi.Storage
 	metaStorage storeapi.Storage
 	backend     *backuppb.StorageBackend
@@ -587,7 +592,9 @@ func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 	return bc.backend
 }
 
-// GetStorage gets storage for this backup.
+// GetStorage is the historical accessor kept for existing callers.
+// It returns the storage used for backup metadata/checkpoint/lock files;
+// callers that need the original/root backend view should use GetBaseStorage.
 func (bc *Client) GetStorage() storeapi.Storage {
 	if bc.metaStorage != nil {
 		return bc.metaStorage
@@ -595,7 +602,7 @@ func (bc *Client) GetStorage() storeapi.Storage {
 	return bc.storage
 }
 
-// GetBaseStorage gets the storage created from the configured backend before any metadata view rewrite.
+// GetBaseStorage gets the original storage created from the configured backend before any metadata view rewrite.
 func (bc *Client) GetBaseStorage() storeapi.Storage {
 	return bc.storage
 }
@@ -678,6 +685,10 @@ func (bc *Client) GetCheckpointRunner() *checkpoint.CheckpointRunner[checkpoint.
 	return bc.checkpointRunner
 }
 
+func (bc *Client) GetCheckpointMetadata() *checkpoint.CheckpointMetadataForBackup {
+	return bc.checkpointMeta
+}
+
 // StartCheckpointMeta will
 // 1. saves the initial status into the external storage;
 // 2. load the checkpoint data from external storage
@@ -686,6 +697,7 @@ func (bc *Client) StartCheckpointRunner(
 	ctx context.Context,
 	cfgHash []byte,
 	backupTS uint64,
+	backupID uint64,
 	safePointID string,
 	progressCallBack func(ProgressUnit),
 ) (err error) {
@@ -694,6 +706,7 @@ func (bc *Client) StartCheckpointRunner(
 			GCServiceId: safePointID,
 			ConfigHash:  cfgHash,
 			BackupTS:    backupTS,
+			BackupID:    backupID,
 		}
 
 		// sync the checkpoint meta to the external storage at first
@@ -746,6 +759,7 @@ func (bc *Client) SetStorage(
 	return errors.Trace(err)
 }
 
+// SetMetadataStorage overrides what GetStorage returns for metadata/checkpoint/lock files.
 func (bc *Client) SetMetadataStorage(storage storeapi.Storage) {
 	bc.metaStorage = storage
 }
@@ -1166,7 +1180,7 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Key
 	// loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
 	// TODO: clean up the deprecated metafile.datafile in the external storage.
 	if bc.checkpointMeta != nil && bc.checkpointMeta.LoadCheckpointDataMap {
-		pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(_ string, rg checkpoint.BackupValueType) error {
+		pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.GetStorage(), bc.cipher, func(_ string, rg checkpoint.BackupValueType) error {
 			pr, err := progressRangeTree.FindContained(rg.StartKey, rg.EndKey)
 			if err != nil {
 				return errors.Trace(err)
@@ -1333,6 +1347,13 @@ func (bc *Client) OnBackupResponse(
 					logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
 					return nil, err
 				}
+				failpoint.Inject("backup-response-error-after-checkpoint", func(val failpoint.Value) {
+					msg, ok := val.(string)
+					if !ok || msg == "" {
+						msg = "failpoint: backup response error after checkpoint"
+					}
+					failpoint.Return(nil, errors.New(msg))
+				})
 			}
 			pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
 			apiVersion := resp.ApiVersion

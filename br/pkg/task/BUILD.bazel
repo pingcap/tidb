@@ -140,6 +140,7 @@ go_test(
         "//br/pkg/conn",
         "//br/pkg/errors",
         "//br/pkg/gc",
+        "//br/pkg/glue",
         "//br/pkg/gluetidb",
         "//br/pkg/gluetidb/mock",
         "//br/pkg/metautil",

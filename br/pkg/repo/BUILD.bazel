@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "repo",
     srcs = [
+        "docs.go",
         "layout.go",
         "meta.go",
         "snapshotops.go",
@@ -19,6 +20,7 @@ go_library(
         "//pkg/objstore/storeapi",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
+        "@org_golang_x_sync//errgroup",
     ],
 )
 
@@ -30,7 +32,7 @@ go_test(
         "snapshotops_test.go",
     ],
     flaky = True,
-    shard_count = 12,
+    shard_count = 17,
     deps = [
         ":repo",
         "//br/pkg/checkpoint",

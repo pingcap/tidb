@@ -15,10 +15,19 @@
 package backup
 
 import (
+	"context"
 	"sync"
 	"testing"
+	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
+	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,6 +50,12 @@ func TestBuildStoreBackupReqRewritesClonedBackend(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "root/store-7", storeReq.GetStorageBackend().GetS3().Prefix)
 	require.Equal(t, "root", loop.BackupReq.GetStorageBackend().GetS3().Prefix)
+}
+
+type fixedCheckpointTimer struct{}
+
+func (fixedCheckpointTimer) GetTS(context.Context) (int64, int64, error) {
+	return 1, 1, nil
 }
 
 func TestBuildStoreBackupReqRunsBeforeFirstRequestToStoreOncePerStore(t *testing.T) {
@@ -80,4 +95,34 @@ func TestBuildStoreBackupReqRunsBeforeFirstRequestToStoreOncePerStore(t *testing
 	defer mu.Unlock()
 	require.Equal(t, map[uint64]int{7: 1, 8: 1}, calls)
 	require.Equal(t, map[uint64]string{7: "root/store", 8: "root/store"}, seen)
+}
+
+func TestBuildProgressRangeTreeLoadsCheckpointDataFromMetadataStorage(t *testing.T) {
+	ctx := context.Background()
+	rootStorage := objstore.NewMemStorage()
+	metadataStorage := repo.NewPrefixedStorage(rootStorage, snapshotpaths.MetadataDir(repo.BackupID(0x1234)))
+	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+
+	runner, err := checkpoint.StartCheckpointBackupRunnerForTest(ctx, metadataStorage, cipher, time.Hour, fixedCheckpointTimer{})
+	require.NoError(t, err)
+	require.NoError(t, checkpoint.AppendForBackup(ctx, runner, []byte("a"), []byte("b"), []*backuppb.File{{Name: "1.sst"}}))
+	runner.WaitForFinish(ctx, true)
+
+	client := &Client{
+		storage:     rootStorage,
+		metaStorage: metadataStorage,
+		cipher:      cipher,
+		checkpointMeta: &checkpoint.CheckpointMetadataForBackup{
+			LoadCheckpointDataMap: true,
+		},
+	}
+	metaWriter := metautil.NewMetaWriter(objstore.NewMemStorage(), metautil.MetaFileSize, false, "", cipher)
+	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
+	progressTree, err := client.BuildProgressRangeTree(ctx, []rtree.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}}, metaWriter, func(ProgressUnit) {})
+	require.NoError(t, err)
+
+	incomplete, err := progressTree.GetIncompleteRanges()
+	require.NoError(t, err)
+	require.Len(t, incomplete, 0)
+	require.NoError(t, metaWriter.FinishWriteMetas(ctx, metautil.AppendDataFile))
 }
