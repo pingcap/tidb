@@ -334,13 +334,13 @@ func (c *maskPartialFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETString, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString, types.ETInt, types.ETInt, types.ETString)
 	if err != nil {
 		return nil, err
 	}
 	argType := args[0].GetType(ctx.GetEvalCtx())
 	bf.tp = argType.Clone()
-	if types.IsBinaryStr(argType) || types.IsBinaryStr(args[1].GetType(ctx.GetEvalCtx())) {
+	if types.IsBinaryStr(argType) || types.IsBinaryStr(args[3].GetType(ctx.GetEvalCtx())) {
 		return &builtinMaskPartialSig{bf}, nil
 	}
 	return &builtinMaskPartialUTF8Sig{bf}, nil
@@ -364,34 +364,32 @@ func (b *builtinMaskPartialSig) evalString(ctx EvalContext, row chunk.Row) (stri
 	if isNull || err != nil {
 		return "", true, err
 	}
-	pad, isNull, err := b.args[1].EvalString(ctx, row)
+	preserveLeft, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	start, isNull, err := b.args[2].EvalInt(ctx, row)
+	preserveRight, isNull, err := b.args[2].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	length, isNull, err := b.args[3].EvalInt(ctx, row)
+	pad, isNull, err := b.args[3].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if start < 0 {
+	if preserveLeft < 0 || preserveRight < 0 {
 		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_partial")
 	}
 	if len(pad) != 1 {
 		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_partial")
 	}
 	total := int64(len(str))
-	if length <= 0 || start >= total {
+	if preserveLeft+preserveRight >= total {
 		return str, false, nil
 	}
-	end := start + length
-	if end > total {
-		end = total
-	}
-	maskLen := int(end - start)
-	return str[:start] + strings.Repeat(pad, maskLen) + str[end:], false, nil
+	maskLen := int(total - preserveLeft - preserveRight)
+	leftEnd := int(preserveLeft)
+	rightStart := int(total - preserveRight)
+	return str[:leftEnd] + strings.Repeat(pad, maskLen) + str[rightStart:], false, nil
 }
 
 type builtinMaskPartialUTF8Sig struct {
@@ -412,19 +410,19 @@ func (b *builtinMaskPartialUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return "", true, err
 	}
-	pad, isNull, err := b.args[1].EvalString(ctx, row)
+	preserveLeft, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	start, isNull, err := b.args[2].EvalInt(ctx, row)
+	preserveRight, isNull, err := b.args[2].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	length, isNull, err := b.args[3].EvalInt(ctx, row)
+	pad, isNull, err := b.args[3].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if start < 0 {
+	if preserveLeft < 0 || preserveRight < 0 {
 		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_partial")
 	}
 	padRunes := []rune(pad)
@@ -433,16 +431,14 @@ func (b *builtinMaskPartialUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (
 	}
 	runes := []rune(str)
 	total := int64(len(runes))
-	if length <= 0 || start >= total {
+	if preserveLeft+preserveRight >= total {
 		return str, false, nil
 	}
-	end := start + length
-	if end > total {
-		end = total
-	}
-	maskLen := int(end - start)
+	maskLen := int(total - preserveLeft - preserveRight)
+	leftEnd := int(preserveLeft)
+	rightStart := int(total - preserveRight)
 	maskChar := string(padRunes[0])
-	return string(runes[:start]) + strings.Repeat(maskChar, maskLen) + string(runes[end:]), false, nil
+	return string(runes[:leftEnd]) + strings.Repeat(maskChar, maskLen) + string(runes[rightStart:]), false, nil
 }
 
 type maskDateFunctionClass struct {
