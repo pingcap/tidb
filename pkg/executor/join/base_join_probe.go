@@ -16,6 +16,7 @@ package join
 
 import (
 	"bytes"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"unsafe"
@@ -150,6 +151,9 @@ type baseJoinProbe struct {
 	spilledIdx []int
 
 	probeCollision uint64
+
+	serializedKeysLens   []int
+	serializedKeysBuffer []byte
 }
 
 func (j *baseJoinProbe) GetProbeCollision() uint64 {
@@ -235,13 +239,19 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 	if cap(j.serializedKeys) >= logicalRows {
+		clear(j.serializedKeys)
 		j.serializedKeys = j.serializedKeys[:logicalRows]
 	} else {
 		j.serializedKeys = make([][]byte, logicalRows)
 	}
-	for i := range logicalRows {
-		j.serializedKeys[i] = j.serializedKeys[i][:0]
+
+	if cap(j.serializedKeysLens) < logicalRows {
+		j.serializedKeysLens = make([]int, logicalRows)
+	} else {
+		clear(j.serializedKeysLens)
+		j.serializedKeysLens = j.serializedKeysLens[:logicalRows]
 	}
+
 	if j.ctx.ProbeFilter != nil {
 		j.filterVector, err = expression.VectorizedFilter(j.ctx.SessCtx.GetExprCtx().GetEvalCtx(), j.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, j.ctx.ProbeFilter, chunk.NewIterator4Chunk(j.currentChunk), j.filterVector)
 		if err != nil {
@@ -250,11 +260,20 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	}
 
 	// generate serialized key
-	for i, index := range j.keyIndex {
-		err = codec.SerializeKeys(j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), j.currentChunk, j.keyTypes[i], index, j.usedRows, j.filterVector, j.nullKeyVector, j.ctx.hashTableMeta.serializeModes[i], j.serializedKeys)
-		if err != nil {
-			return err
-		}
+	j.serializedKeysBuffer, err = codec.SerializeKeys(
+		j.ctx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(),
+		j.currentChunk,
+		j.keyTypes,
+		j.keyIndex,
+		j.usedRows,
+		j.filterVector,
+		j.nullKeyVector,
+		j.ctx.hashTableMeta.serializeModes,
+		j.serializedKeys,
+		j.serializedKeysLens,
+		j.serializedKeysBuffer)
+	if err != nil {
+		return err
 	}
 
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
@@ -313,6 +332,66 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	return
 }
 
+func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int, hashValueCol *chunk.Column, serializedKeysCol *chunk.Column) {
+	if cap(j.matchedRowsHeaders) >= logicalRowCount {
+		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRowCount]
+	} else {
+		j.matchedRowsHeaders = make([]taggedPtr, logicalRowCount)
+	}
+
+	if cap(j.matchedRowsHashValue) >= logicalRowCount {
+		j.matchedRowsHashValue = j.matchedRowsHashValue[:logicalRowCount]
+	} else {
+		j.matchedRowsHashValue = make([]uint64, logicalRowCount)
+	}
+
+	for i := range int(j.ctx.partitionNumber) {
+		j.hashValues[i] = j.hashValues[i][:0]
+	}
+
+	if cap(j.serializedKeysLens) < logicalRowCount {
+		j.serializedKeysLens = make([]int, logicalRowCount)
+	} else {
+		clear(j.serializedKeysLens)
+		j.serializedKeysLens = j.serializedKeysLens[:logicalRowCount]
+	}
+
+	if cap(j.serializedKeys) >= logicalRowCount {
+		clear(j.serializedKeys)
+		j.serializedKeys = j.serializedKeys[:logicalRowCount]
+	} else {
+		j.serializedKeys = make([][]byte, logicalRowCount)
+	}
+
+	j.spilledIdx = j.spilledIdx[:0]
+
+	totalMemUsage := 0
+	for _, idx := range j.usedRows {
+		oldHashValue := hashValueCol.GetUint64(idx)
+		newHashVal := rehash(oldHashValue, j.rehashBuf, j.hash)
+		j.matchedRowsHashValue[idx] = newHashVal
+		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
+		if !j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
+			keyLen := serializedKeysCol.GetRawLength(idx)
+			j.serializedKeysLens[idx] = keyLen
+			totalMemUsage += keyLen
+		}
+	}
+
+	if cap(j.serializedKeysBuffer) < totalMemUsage {
+		j.serializedKeysBuffer = make([]byte, totalMemUsage)
+	} else {
+		j.serializedKeysBuffer = j.serializedKeysBuffer[:totalMemUsage]
+	}
+
+	start := 0
+	for _, idx := range j.usedRows {
+		keyLen := j.serializedKeysLens[idx]
+		j.serializedKeys[idx] = j.serializedKeysBuffer[start : start : start+keyLen]
+		start += keyLen
+	}
+}
+
 func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	defer func() {
 		if j.ctx.spillHelper.areAllPartitionsSpilled() {
@@ -356,39 +435,19 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 
 	j.usedRows = j.selRows
 
-	if cap(j.matchedRowsHeaders) >= logicalRows {
-		j.matchedRowsHeaders = j.matchedRowsHeaders[:logicalRows]
-	} else {
-		j.matchedRowsHeaders = make([]taggedPtr, logicalRows)
-	}
+	j.preAllocForSetRestoredChunkForProbe(logicalRows, hashValueCol, serializedKeysCol)
 
-	if cap(j.matchedRowsHashValue) >= logicalRows {
-		j.matchedRowsHashValue = j.matchedRowsHashValue[:logicalRows]
-	} else {
-		j.matchedRowsHashValue = make([]uint64, logicalRows)
+	var serializedKeyVectorBufferCapsForTest []int
+	if intest.InTest {
+		serializedKeyVectorBufferCapsForTest = make([]int, len(j.serializedKeys))
+		for i := range j.serializedKeys {
+			serializedKeyVectorBufferCapsForTest[i] = cap(j.serializedKeys[i])
+		}
 	}
-
-	for i := range int(j.ctx.partitionNumber) {
-		j.hashValues[i] = j.hashValues[i][:0]
-	}
-
-	if cap(j.serializedKeys) >= logicalRows {
-		j.serializedKeys = j.serializedKeys[:logicalRows]
-	} else {
-		j.serializedKeys = make([][]byte, logicalRows)
-	}
-
-	for i := range logicalRows {
-		j.serializedKeys[i] = j.serializedKeys[i][:0]
-	}
-
-	j.spilledIdx = j.spilledIdx[:0]
 
 	// rehash all rows
 	for _, idx := range j.usedRows {
-		oldHashValue := hashValueCol.GetUint64(idx)
-		newHashVal := rehash(oldHashValue, j.rehashBuf, j.hash)
-		j.matchedRowsHashValue[idx] = newHashVal
+		newHashVal := j.matchedRowsHashValue[idx]
 		partIndex := generatePartitionIndex(newHashVal, j.ctx.partitionMaskOffset)
 		serializedKeysBytes := serializedKeysCol.GetBytes(idx)
 		if j.ctx.spillHelper.isPartitionSpilled(int(partIndex)) {
@@ -411,6 +470,14 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: newHashVal, pos: idx})
 			j.serializedKeys[idx] = append(j.serializedKeys[idx], serializedKeysBytes...)
 			j.matchedRowsHeaders[idx] = j.ctx.hashTableContext.lookup(int(partIndex), newHashVal)
+		}
+	}
+
+	if intest.InTest {
+		for i := range j.serializedKeys {
+			if serializedKeyVectorBufferCapsForTest[i] < cap(j.serializedKeys[i]) {
+				panic(fmt.Sprintf("Before: %d, After: %d", serializedKeyVectorBufferCapsForTest[i], cap(j.serializedKeys[i])))
+			}
 		}
 	}
 

@@ -16,13 +16,13 @@ package objstore
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/objstore/s3store"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/spf13/pflag"
 )
 
 // DefineFlags adds flags to the flag set corresponding to all backend options.
 func DefineFlags(flags *pflag.FlagSet) {
-	s3store.DefineS3Flags(flags)
+	s3like.DefineS3Flags(flags)
 	defineGCSFlags(flags)
 	defineAzblobFlags(flags)
 }

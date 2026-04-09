@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/testkit"
 	s "github.com/pingcap/tidb/pkg/util/set"
@@ -769,7 +770,9 @@ func TestIndexAdvisorTPCH1(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ7, Frequency: 1})
 
 	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, []ast.RecommendIndexOption{
+		{Option: indexadvisor.OptTimeout, Value: ast.NewValueExpr("2m", "", "")},
+	})
 	require.NoError(t, err) // no error and can get some recommendations
 	require.True(t, len(r) > 0)
 }
@@ -787,7 +790,9 @@ func TestIndexAdvisorTPCH2(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ12, Frequency: 1})
 
 	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, []ast.RecommendIndexOption{
+		{Option: indexadvisor.OptTimeout, Value: ast.NewValueExpr("2m", "", "")},
+	})
 	require.NoError(t, err) // no error and can get some recommendations
 	require.True(t, len(r) > 0)
 }
@@ -805,7 +810,9 @@ func TestIndexAdvisorTPCH3(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ18, Frequency: 1})
 
 	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, []ast.RecommendIndexOption{
+		{Option: indexadvisor.OptTimeout, Value: ast.NewValueExpr("2m", "", "")},
+	})
 	require.NoError(t, err) // no error and can get some recommendations
 	require.True(t, len(r) > 0)
 }
@@ -822,7 +829,9 @@ func TestIndexAdvisorTPCH4(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ22, Frequency: 1})
 
 	ctx := context.WithValue(context.Background(), indexadvisor.TestKey("query_set"), querySet)
-	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
+	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, []ast.RecommendIndexOption{
+		{Option: indexadvisor.OptTimeout, Value: ast.NewValueExpr("2m", "", "")},
+	})
 	require.NoError(t, err) // no error and can get some recommendations
 	require.True(t, len(r) > 0)
 }

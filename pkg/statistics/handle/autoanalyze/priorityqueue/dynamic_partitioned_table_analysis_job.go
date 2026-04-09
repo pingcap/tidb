@@ -49,6 +49,8 @@ type DynamicPartitionedTableAnalysisJob struct {
 	Indicators
 	// Analyze table with this version of statistics.
 	TableStatsVer int
+	// Whether auto-analyze should record that legacy statistics are being rewritten.
+	NeedVersionRewriteWarn bool
 	// Weight is used to calculate the priority of the job.
 	Weight float64
 
@@ -72,15 +74,17 @@ func NewDynamicPartitionedTableAnalysisJob(
 	partitionIDs map[int64]struct{},
 	partitionIndexIDs map[int64][]int64,
 	tableStatsVer int,
+	needVersionRewriteWarn bool,
 	changePercentage float64,
 	tableSize float64,
 	lastAnalysisDuration time.Duration,
 ) *DynamicPartitionedTableAnalysisJob {
 	return &DynamicPartitionedTableAnalysisJob{
-		GlobalTableID:     tableID,
-		PartitionIDs:      partitionIDs,
-		PartitionIndexIDs: partitionIndexIDs,
-		TableStatsVer:     tableStatsVer,
+		GlobalTableID:          tableID,
+		PartitionIDs:           partitionIDs,
+		PartitionIndexIDs:      partitionIndexIDs,
+		TableStatsVer:          tableStatsVer,
+		NeedVersionRewriteWarn: needVersionRewriteWarn,
 		Indicators: Indicators{
 			ChangePercentage:     changePercentage,
 			TableSize:            tableSize,
@@ -282,7 +286,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
 		params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
-		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+		success := exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
 		if !success {
 			return false
 		}
@@ -297,10 +301,8 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	sysProcTracker sysproctrack.Tracker,
 ) (success bool) {
 	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
-	// For version 2, analyze one index will analyze all other indexes and columns.
-	// For version 1, analyze one index will only analyze the specified index.
-	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
-
+	// Analyze version 2 refreshes the partition columns and other indexes when analyzing one index.
+	// Therefore, to avoid redundancy, stop after the first index.
 	for indexName, partitionNames := range j.PartitionIndexNames {
 		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
 		for _, partition := range partitionNames {
@@ -313,18 +315,12 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
 			params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
-			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+			success = exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
 			if !success {
 				return false
 			}
 		}
-		// For version 1, we need to analyze all indexes.
-		if analyzeVersion != 1 {
-			// Halt execution after analyzing one index.
-			// This is because analyzing a single index also analyzes all other indexes and columns.
-			// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
-			break
-		}
+		break
 	}
 	return
 }

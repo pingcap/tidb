@@ -167,7 +167,8 @@ const (
 	// version79 adds the mysql.table_cache_meta table
 	version79 = 79
 	// version80 fixes the issue https://github.com/pingcap/tidb/issues/25422.
-	// If the TiDB upgrading from the 4.x to a newer version, we keep the tidb_analyze_version to 1.
+	// It initializes a missing tidb_analyze_version during upgrade. Earlier bootstrap logic used 1
+	// for compatibility, but the only supported version is 2.
 	version80 = 80
 	// version81 insert "tidb_enable_index_merge|off" to mysql.GLOBAL_VARIABLES if there is no tidb_enable_index_merge.
 	// This will only happens when we upgrade a cluster before 4.0.0 to 4.0.0+.
@@ -473,6 +474,20 @@ const (
 	// version253
 	// Add last_used_date to mysql.bind_info
 	version253 = 253
+
+	// version254
+	// Add index on start_time for mysql.tidb_runaway_watch and done_time for mysql.tidb_runaway_watch_done
+	// to improve the performance of runaway watch sync loop.
+	version254 = 254
+
+	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
+	version255 = 255
+	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
+	version256 = 256
+
+	// version257
+	// Add tidb_enable_no_backslash_escapes_in_like global variable.
+	version257 = 257
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -486,7 +501,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version253
+var currentBootstrapVersion int64 = version257
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -664,6 +679,10 @@ var (
 		{version: version251, fn: upgradeToVer251},
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
+		{version: version254, fn: upgradeToVer254},
+		{version: version255, fn: upgradeToVer255},
+		{version: version256, fn: upgradeToVer256},
+		{version: version257, fn: upgradeToVer257},
 	}
 )
 
@@ -1343,9 +1362,10 @@ func upgradeToVer79(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer80(s sessionapi.Session, _ int64) {
-	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
-	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
-	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeVersion, 1)
+	// Check whether tidb_analyze_version exists in mysql.global_variables.
+	// If it is missing, initialize it to 2. Earlier bootstrap logic used 1 for compatibility,
+	// but the supported write version is now 2 after the legacy analyze version 1 write path was removed.
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeVersion, 2)
 }
 
 // For users that upgrade TiDB from a pre-4.0 version, we want to disable index merge by default.
@@ -2037,4 +2057,39 @@ func upgradeToVer252(s sessionapi.Session, _ int64) {
 
 func upgradeToVer253(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN last_used_date DATE DEFAULT NULL AFTER `plan_digest`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer254(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer255(s sessionapi.Session, _ int64) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBAnalyzeVersion)
+	terror.MustNil(err)
+	// The value should normally never be null, but check defensively to avoid a potential panic.
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return
+	}
+
+	oldValue := rows[0].GetString(0)
+	if oldValue != "1" {
+		return
+	}
+
+	// The current default value of tidb_analyze_version is 2.
+	newValue := strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
+	logutil.BgLogger().Warn(fmt.Sprintf("Rewriting persisted tidb_analyze_version from %s to %s during upgrade", oldValue, newValue))
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE=%? WHERE VARIABLE_NAME=%? AND VARIABLE_VALUE=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, newValue, vardef.TiDBAnalyzeVersion, oldValue)
+}
+
+func upgradeToVer256(s sessionapi.Session, _ int64) {
+	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheSkipStatsOnBinding, vardef.On)
+}
+
+func upgradeToVer257(s sessionapi.Session, _ int64) {
+	// Keep old behavior for upgraded clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableNoBackslashEscapesInLike, vardef.Off)
 }

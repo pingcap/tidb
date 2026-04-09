@@ -102,6 +102,87 @@ type testCase struct {
 	memTableName string
 	prepareData  func(tk *testkit.TestKit) (names []colPredicates)
 	cleanData    func(tk *testkit.TestKit)
+	buildConds   func(names []colPredicates) []string
+}
+
+func buildCartesianConditions(names []colPredicates) []string {
+	conditions := []string{}
+	for i := len(names) - 1; i >= 0; i-- {
+		all := names[i].enumerateAll()
+		if len(conditions) == 0 {
+			conditions = all
+			continue
+		}
+		newConditions := make([]string, 0, len(all)*len(conditions))
+		for _, a := range all {
+			for _, b := range conditions {
+				newConditions = append(newConditions, fmt.Sprintf("%s and %s", a, b))
+			}
+		}
+		conditions = newConditions
+	}
+	return conditions
+}
+
+func buildRepresentativeConditions(names []colPredicates) []string {
+	predicates := make([][]string, 0, len(names))
+	for _, name := range names {
+		all := name.enumerateAll()
+		if len(all) == 0 {
+			continue
+		}
+		predicates = append(predicates, all)
+	}
+
+	conditions := make([]string, 0)
+	seen := make(map[string]struct{})
+	addCondition := func(parts ...string) {
+		cond := strings.Join(parts, " and ")
+		if _, ok := seen[cond]; ok {
+			return
+		}
+		seen[cond] = struct{}{}
+		conditions = append(conditions, cond)
+	}
+
+	for _, all := range predicates {
+		for _, cond := range all {
+			addCondition(cond)
+		}
+	}
+
+	for i := 0; i < len(predicates); i++ {
+		for j := i + 1; j < len(predicates); j++ {
+			for _, left := range predicates[i] {
+				for _, right := range predicates[j] {
+					addCondition(left, right)
+				}
+			}
+		}
+	}
+
+	if len(predicates) <= 1 {
+		return conditions
+	}
+
+	canonical := make([]string, len(predicates))
+	for i, all := range predicates {
+		canonical[i] = all[0]
+	}
+	addCondition(canonical...)
+
+	// Keep each predicate variant covered in a multi-column query, without using
+	// the full Cartesian product that makes the test timing-sensitive.
+	for i, all := range predicates {
+		for _, cond := range all {
+			parts := make([]string, len(canonical))
+			copy(parts, canonical)
+			parts[i] = cond
+			addCondition(parts...)
+		}
+	}
+
+	return conditions
 }
 
 func prepareDataTables(tk *testkit.TestKit) (names []colPredicates) {
@@ -325,21 +406,11 @@ func testMemtableInfoschemaExtractor(t *testing.T, tcs []testCase) {
 	countSQL := 0
 	for _, tc := range tcs {
 		names := tc.prepareData(tk)
-		conditions := []string{}
-		for i := len(names) - 1; i >= 0; i-- {
-			all := names[i].enumerateAll()
-			if len(conditions) == 0 {
-				conditions = all
-			} else {
-				newConditions := []string{}
-				for _, a := range all {
-					for _, b := range conditions {
-						newConditions = append(newConditions, fmt.Sprintf("%s and %s", a, b))
-					}
-				}
-				conditions = newConditions
-			}
+		buildConds := tc.buildConds
+		if buildConds == nil {
+			buildConds = buildCartesianConditions
 		}
+		conditions := buildConds(names)
 
 		countSQL += len(conditions)
 		for _, c := range conditions {
@@ -421,6 +492,7 @@ func TestMemtableInfoschemaExtractorPart4(t *testing.T) {
 			memTableName: infoschema.TableTiDBCheckConstraints,
 			prepareData:  prepareDataTidbCheckConstraints,
 			cleanData:    cleanDataTidbCheckConstraints,
+			buildConds:   buildRepresentativeConditions,
 		},
 		{
 			memTableName: infoschema.TableSequences,

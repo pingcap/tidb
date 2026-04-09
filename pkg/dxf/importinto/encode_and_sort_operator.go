@@ -21,13 +21,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -55,6 +52,7 @@ type encodeAndSortOperator struct {
 	logger            *zap.Logger
 	errCh             chan error
 	indicesGenKV      map[int64]importer.GenKVIndex
+	onDupKey          importer.OnDupKeyMode
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
@@ -79,6 +77,7 @@ func newEncodeAndSortOperator(
 		logger:        executor.logger,
 		errCh:         make(chan error),
 		indicesGenKV:  executor.indicesGenKV,
+		onDupKey:      executor.taskMeta.Plan.GetOnDupKeyMode(),
 	}
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
@@ -122,17 +121,9 @@ func newChunkWorker(
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) (*external.Writer, error) {
-			onDup := engineapi.OnDuplicateKeyIgnore
-			if kerneltype.IsClassic() {
-				idx, ok := op.indicesGenKV[indexID]
-				if !ok {
-					// shouldn't happen normally, unless we have bug at getIndicesGenKV
-					return nil, errors.Errorf("unknown index with ID: %d", indexID)
-				}
-				onDup = engineapi.OnDuplicateKeyRemove
-				if idx.Unique {
-					onDup = engineapi.OnDuplicateKeyRecord
-				}
+			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID, op.onDupKey)
+			if err != nil {
+				return nil, err
 			}
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
@@ -151,10 +142,6 @@ func newChunkWorker(
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
-		onDup := engineapi.OnDuplicateKeyIgnore
-		if kerneltype.IsClassic() {
-			onDup = engineapi.OnDuplicateKeyRecord
-		}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeDataSummary(summary)
@@ -162,7 +149,7 @@ func newChunkWorker(
 			}).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(dataBlockSize).
-			SetOnDup(onDup).
+			SetOnDup(getOnDupForConflictedKV(op.onDupKey)).
 			SetTiKVCodec(op.tableImporter.Backend().GetTiKVCodec())
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
@@ -213,9 +200,9 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := importer.GetNumOfIndexGenKV(plan.DesiredTableInfo)
-	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
-	// we use half of the total available memory for data writer, and the other half
-	// for encoding and other stuffs, it's an experience value, might not optimal.
+	memPerCon := resource.MemoryPerCore()
+	// we use writerMemBudgetRatio of available memory per core for the writer,
+	// and the remaining memory for encoding and other stuffs.
 	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer
 	// takes 3 shares, and each index KV writer takes 1 share.
 	// suppose we have memPerCon = 2G
@@ -225,6 +212,6 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	// 	| 1               | 768/256 MiB           |
 	// 	| 5               | 384/128 MiB           |
 	// 	| 13              | 192/64 MiB            |
-	memPerShare := float64(memPerCon) / 2 / float64(indexKVGroupCnt+3)
+	memPerShare := float64(memPerCon) * writerMemBudgetRatio / float64(indexKVGroupCnt+3)
 	return uint64(memPerShare * 3), uint64(memPerShare)
 }

@@ -64,7 +64,8 @@ func NewTiKVTxn(txn *tikv.KVTxn) kv.Transaction {
 	txn.GetUnionStore().SetEntrySizeLimit(entryLimit, totalLimit)
 
 	return &tikvTxn{
-		txn, make(map[int64]*model.TableInfo), nil, nil, atomic.Bool{},
+		txn, make(map[int64]*model.TableInfo), nil, nil,
+		atomic.Bool{},
 		newMemBuffer(txn.GetMemBuffer(), txn.IsPipelined()),
 	}
 }
@@ -385,23 +386,6 @@ func (txn *tikvTxn) extractKeyExistsErr(errExist *tikverr.ErrKeyExist) error {
 		return ExtractKeyExistsErrFromHandle(key, value, tblInfo)
 	}
 	return ExtractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
-}
-
-// SetAssertion sets an assertion for the key operation.
-func (txn *tikvTxn) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
-	f, err := txn.GetUnionStore().GetMemBuffer().GetFlags(key)
-	if err != nil && !tikverr.IsErrNotFound(err) {
-		return err
-	}
-	if err == nil && f.HasAssertionFlags() {
-		return nil
-	}
-	txn.UpdateMemBufferFlags(key, assertion...)
-	return nil
-}
-
-func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...kv.FlagsOp) {
-	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, getTiKVFlagsOps(flags)...)
 }
 
 func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {

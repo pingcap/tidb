@@ -3,43 +3,64 @@
     "name": "TestWindowPushDownPlans",
     "cases": [
       "set @@tidb_enforce_mpp=1",
-      "explain select *, row_number() over () FROM employee -- 1. empty partition",
-      "explain select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
-      "explain select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
-      "explain select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
-      "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 3.1 with sort key",
-      "explain select *, rank() over w, dense_rank() over w from employee window w as (partition by deptid) -- 4. same kinds, multi function, same window",
-      "explain select *, row_number() over w, rank() over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
-      "explain select *, rank() over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
-      "explain select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
-      "explain select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;"
+      "explain format = 'plan_tree' select *, row_number() over () FROM employee -- 1. empty partition",
+      "explain format = 'plan_tree' select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
+      "explain format = 'plan_tree' select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
+      "explain format = 'plan_tree' select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
+      "explain format = 'plan_tree' select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 3.1 with sort key",
+      "explain format = 'plan_tree' select *, rank() over w, dense_rank() over w from employee window w as (partition by deptid) -- 4. same kinds, multi function, same window",
+      "explain format = 'plan_tree' select *, row_number() over w, rank() over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
+      "explain format = 'plan_tree' select *, rank() over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
+      "explain format = 'plan_tree' select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
+      "explain format = 'plan_tree' select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;"
     ]
   },
   {
     "name": "TestWindowFunctionDescCanPushDown",
     "cases": [
       "set @@tidb_enforce_mpp=1",
-      "explain select *, row_number() over () FROM employee -- 1. pure window functions",
-      "explain select *, rank() over () FROM employee",
-      "explain select *, dense_rank() over () FROM employee",
-      "explain select *, lead(empid) over () FROM employee",
-      "explain select *, lag(empid) over () FROM employee",
-      "explain select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame"
+      "explain format = 'plan_tree' select *, row_number() over () FROM employee -- 1. pure window functions",
+      "explain format = 'plan_tree' select *, rank() over () FROM employee",
+      "explain format = 'plan_tree' select *, dense_rank() over () FROM employee",
+      "explain format = 'plan_tree' select *, lead(empid) over () FROM employee",
+      "explain format = 'plan_tree' select *, lag(empid) over () FROM employee",
+      "explain format = 'plan_tree' select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame"
     ]
   },
   {
     "name": "TestWindowPlanWithOtherOperators",
     "cases": [
       "set @@tidb_enforce_mpp=1",
-      "explain select *, row_number() over () from (select count(distinct empid) from employee) t",
-      "explain select *, row_number() over () from (select count(empid) from employee group by deptid) t",
-      "explain select *, row_number() over (partition by a) from (select count(distinct empid) a from employee) t",
-      "explain select *, row_number() over (partition by deptid) from (select count(empid), deptid from employee group by deptid) t",
-      "explain select count(distinct empid) from (select *, row_number() over () from employee) t",
-      "explain select count(distinct empid) from (select *, row_number() over (partition by deptid) from employee) t",
-      "explain select count(empid) from (select *, row_number() over () a from employee) t group by a",
-      "explain select count(empid) from (select *, row_number() over (partition by deptid) a from employee) t group by a",
-      "explain select row_number() over w2, row_number() over w1 from employee window w2 as (order by deptid), w1 as (partition by deptid);"
+      "explain format = 'plan_tree' select *, row_number() over () from (select count(distinct empid) from employee) t",
+      "explain format = 'plan_tree' select *, row_number() over () from (select count(empid) from employee group by deptid) t",
+      "explain format = 'plan_tree' select *, row_number() over (partition by a) from (select count(distinct empid) a from employee) t",
+      "explain format = 'plan_tree' select *, row_number() over (partition by deptid) from (select count(empid), deptid from employee group by deptid) t",
+      "explain format = 'plan_tree' select count(distinct empid) from (select *, row_number() over () from employee) t",
+      "explain format = 'plan_tree' select count(distinct empid) from (select *, row_number() over (partition by deptid) from employee) t",
+      "explain format = 'plan_tree' select count(empid) from (select *, row_number() over () a from employee) t group by a",
+      "explain format = 'plan_tree' select count(empid) from (select *, row_number() over (partition by deptid) a from employee) t group by a",
+      "explain format = 'plan_tree' select row_number() over w2, row_number() over w1 from employee window w2 as (order by deptid), w1 as (partition by deptid);"
+    ]
+  },
+  {
+    "name": "TestWindowSubqueryOuterRef",
+    "cases": [
+      "select count((select /* issue:56532 */ ref_1.c2 from t1 limit 1)) over (partition by ref_1.c1) from t2 as ref_1 order by ref_1.c1, ref_1.c2",
+      "select coalesce(count(*) over (partition by ref_1.c1), (select /* issue:56532 */ ref_1.c2 from t1)) from t2 as ref_1 order by ref_1.c1, ref_1.c2",
+      "select count(exists(select /* issue:56532 */ 1 from t1 where ref_1.c1 is not null)) over (partition by ref_1.c1) from t2 as ref_1 order by ref_1.c1, ref_1.c2",
+      "select count((select /* issue:56532 */ 1 from t1 where ref_1.c1 is not null limit 1)) over (partition by ref_1.c1) from t2 as ref_1 join t3 using (c1) order by ref_1.c1, ref_1.c2",
+      "select count(*) over w from t2 as ref_1 join t3 using (c1) window w as (partition by exists(select /* issue:56532 */ 1 from t1 where ref_1.c1 is not null)) order by ref_1.c1, ref_1.c2",
+      "select count((select /* issue:56532 */ 1 from t1 where t3.c1 is not null limit 1)) over (partition by ref_1.c1) from t2 as ref_1 join t3 using (c1) where ref_1.c2 is not null order by ref_1.c1, ref_1.c2",
+      "select case when (exists(select /* issue:57594 */ 1)) then count(*) over (partition by 1) else 1 end from t2 as ref_0 order by ref_0.c1, ref_0.c2",
+      "select case when (exists(select /* issue:57594 */ 1 where ref_0.c2)) then 1 else 1 end from t2 as ref_0 order by ref_0.c1, ref_0.c2",
+      "select case when (exists(select /* issue:57594 */ 1 where ref_0.c2)) then count(*) over (partition by 1) else 1 end from t2 as ref_0 order by ref_0.c1, ref_0.c2"
+    ]
+  },
+  {
+    "name": "TestWindowWithOuterJoinAndCTE",
+    "cases": [
+      "WITH cte_0 AS (SELECT t0.k0 AS c0, t0.p0 AS c1, t0.p1 AS c2 FROM t0 WHERE (((t0.p0 < t0.k1) AND (t0.k0 = t0.k3)) AND NOT (t0.k3 IN (83))) ORDER BY t0.id LIMIT 3) SELECT /* issue:66904 */ t0.id AS c0, ROW_NUMBER() OVER w2 AS c1, AVG(t1.d0) OVER (ORDER BY t0.k0 DESC, cte_0.c2 RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS c2 FROM (SELECT cte_0.c0 AS c0, cte_0.c1 AS c1, cte_0.c2 AS c2 FROM cte_0) AS cte_0 LEFT JOIN (SELECT t1.id AS id, t1.k0 AS k0, t1.d0 AS d0, t1.d1 AS d1 FROM t1) AS t1 ON (1 = 0) RIGHT JOIN (SELECT t0.id AS id, t0.k0 AS k0, t0.k1 AS k1, t0.k2 AS k2, t0.k3 AS k3, t0.p0 AS p0, t0.p1 AS p1 FROM t0) AS t0 ON ((t1.k0 = t0.k0) AND (t0.k3 <= t1.d1)) WHERE NOT (t1.k0 IN (73, 35, 61)) WINDOW w2 AS (PARTITION BY cte_0.c1, t1.d1 ORDER BY t0.k0, t0.k1 DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC",
+      "WITH cte_0 AS (SELECT t0.k0 AS c0, t0.p0 AS c1, t0.p1 AS c2 FROM t0 WHERE (((t0.p0 < t0.k1) AND (t0.k0 = t0.k3)) AND NOT (t0.k3 IN (83))) ORDER BY t0.id LIMIT 3) SELECT /* issue:66904 start-bound */ t0.id AS c0, ROW_NUMBER() OVER w2 AS c1, AVG(t1.d0) OVER (ORDER BY t0.k0 DESC, cte_0.c2 RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS c2 FROM (SELECT cte_0.c0 AS c0, cte_0.c1 AS c1, cte_0.c2 AS c2 FROM cte_0) AS cte_0 LEFT JOIN (SELECT t1.id AS id, t1.k0 AS k0, t1.d0 AS d0, t1.d1 AS d1 FROM t1) AS t1 ON (1 = 0) RIGHT JOIN (SELECT t0.id AS id, t0.k0 AS k0, t0.k1 AS k1, t0.k2 AS k2, t0.k3 AS k3, t0.p0 AS p0, t0.p1 AS p1 FROM t0) AS t0 ON ((t1.k0 = t0.k0) AND (t0.k3 <= t1.d1)) WHERE NOT (t1.k0 IN (73, 35, 61)) WINDOW w2 AS (PARTITION BY cte_0.c1, t1.d1 ORDER BY t0.k0, t0.k1 DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY (cte_0.c2 + t0.id) DESC, (t0.k3 - t1.d1) DESC"
     ]
   }
 ]

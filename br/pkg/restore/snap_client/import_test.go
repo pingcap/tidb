@@ -16,7 +16,10 @@ package snapclient_test
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -29,6 +32,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/client/opt"
 )
 
 func TestGetKeyRangeByMode(t *testing.T) {
@@ -207,4 +211,62 @@ func TestSnapImporterRaw(t *testing.T) {
 	}
 	err = importer.Close()
 	require.NoError(t, err)
+}
+
+type flowControlSplitClient struct {
+	split.SplitClient
+
+	t         *testing.T
+	inFlight  atomic.Int32
+	maxFlight int32
+}
+
+func (c *flowControlSplitClient) ScanRegions(
+	ctx context.Context,
+	key, endKey []byte,
+	limit int,
+	opts ...opt.GetRegionOption,
+) ([]*split.RegionInfo, error) {
+	cur := c.inFlight.Add(1)
+	defer c.inFlight.Add(-1)
+	require.LessOrEqual(c.t, cur, c.maxFlight)
+
+	return []*split.RegionInfo{
+		{
+			Region: &metapb.Region{
+				StartKey: key,
+				EndKey:   endKey,
+			},
+			Leader: &metapb.Peer{
+				StoreId: 1,
+			},
+		},
+	}, nil
+}
+
+func TestSnapImporterPDScanRequestFlowControl(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	maxFlight := 1
+	splitClient := &flowControlSplitClient{
+		t:         t,
+		maxFlight: int32(maxFlight),
+	}
+	importClient := newFakeImporterClient()
+	opt := snapclient.NewSnapFileImporterOptionsForTest(
+		splitClient, importClient, generateStores(), snapclient.RewriteModeKeyspace, 10,
+	)
+	opt.SetRegionScanConcurrency(uint(maxFlight))
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBFull, opt)
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for range 200 {
+		wg.Go(func() {
+			_, err := importer.PaginateScanRegionForTest(ctx, []byte{}, []byte{})
+			require.NoError(t, err)
+		})
+	}
+	wg.Wait()
 }

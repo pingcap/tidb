@@ -46,17 +46,27 @@ const (
 	metaName = "meta.json"
 )
 
-// seekPropsOffsets reads the statistic files to find the largest offset of
+var (
+	// getReadRangeFromPropsConcurrency limits the number of stats files scanned in
+	// parallel to avoid bursty object-storage reads when an import step tracks a
+	// large number of files. Use a lower default than the data-reader budget
+	// because props scanning is metadata-heavy and benefits less from high fanout.
+	getReadRangeFromPropsConcurrency = 64
+)
+
+// getReadRangeFromProps reads the statistic files to find the largest offset of
 // corresponding sorted data file such that the key at offset is less than or
 // equal to the given start keys. These returned offsets can be used to seek data
 // file reader, read, parse and skip few smaller keys, and then locate the needed
 // data.
 //
-// Caller can specify multiple ascending keys and seekPropsOffsets will return
-// the offsets list per file for each key.
-func seekPropsOffsets(
+// Caller can specify multiple ascending keys and getReadRangeFromProps will return
+// the offsets per file for each key. For a range [keyA, keyB), the caller can use
+// result[A] as startOffsets and result[B] as estimatedEndOffsets.
+// Empty jobKeys returns an empty result.
+func getReadRangeFromProps(
 	ctx context.Context,
-	starts []kv.Key,
+	jobKeys [][]byte,
 	paths []string,
 	exStorage storeapi.Storage,
 ) (_ [][]uint64, err error) {
@@ -66,12 +76,21 @@ func seekPropsOffsets(
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
-	offsetsPerFile := make([][]uint64, len(paths))
-	for i := range offsetsPerFile {
-		offsetsPerFile[i] = make([]uint64, len(starts))
+	starts := make([]kv.Key, len(jobKeys))
+	for i := range jobKeys {
+		starts[i] = kv.Key(jobKeys[i])
+	}
+	if len(starts) == 0 {
+		return [][]uint64{}, nil
+	}
+
+	readRangesPerKey := make([][]uint64, len(starts))
+	for i := range starts {
+		readRangesPerKey[i] = make([]uint64, len(paths))
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(getReadRangeFromPropsConcurrency)
 	for i := range paths {
 		eg.Go(func() error {
 			r, err2 := newStatsReader(egCtx, exStorage, paths[i], 250*1024)
@@ -87,29 +106,35 @@ func seekPropsOffsets(
 			curKey := starts[keyIdx]
 
 			p, err3 := r.nextProp()
+			var firstKey kv.Key
+			if err3 == nil {
+				firstKey = kv.Key(p.firstKey)
+			}
 			for {
 				if err3 != nil {
 					if goerrors.Is(err3, io.EOF) {
 						// fill the rest of the offsets with the last offset
-						currOffset := offsetsPerFile[i][keyIdx]
+						off := readRangesPerKey[keyIdx][i]
 						for keyIdx++; keyIdx < len(starts); keyIdx++ {
-							offsetsPerFile[i][keyIdx] = currOffset
+							readRangesPerKey[keyIdx][i] = off
 						}
 						return nil
 					}
 					return errors.Trace(err3)
 				}
-				propKey := kv.Key(p.firstKey)
-				for propKey.Cmp(curKey) > 0 {
+				for firstKey.Cmp(curKey) > 0 {
 					keyIdx++
 					if keyIdx >= len(starts) {
 						return nil
 					}
-					offsetsPerFile[i][keyIdx] = offsetsPerFile[i][keyIdx-1]
+					readRangesPerKey[keyIdx][i] = readRangesPerKey[keyIdx-1][i]
 					curKey = starts[keyIdx]
 				}
-				offsetsPerFile[i][keyIdx] = p.offset
+				readRangesPerKey[keyIdx][i] = p.offset
 				p, err3 = r.nextProp()
+				if err3 == nil {
+					firstKey = kv.Key(p.firstKey)
+				}
 			}
 		})
 	}
@@ -117,16 +142,7 @@ func seekPropsOffsets(
 	if err = eg.Wait(); err != nil {
 		return nil, err
 	}
-
-	// TODO(lance6716): change the caller so we don't need to transpose the result
-	offsetsPerKey := make([][]uint64, len(starts))
-	for i := range starts {
-		offsetsPerKey[i] = make([]uint64, len(paths))
-		for j := range paths {
-			offsetsPerKey[i][j] = offsetsPerFile[j][i]
-		}
-	}
-	return offsetsPerKey, nil
+	return readRangesPerKey, nil
 }
 
 // GetAllFileNames returns files with the same non-partitioned dir.
