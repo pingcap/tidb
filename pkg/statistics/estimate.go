@@ -161,9 +161,11 @@ func estimateGlobalSingletonInRange(ndvSketches, singletonSketches []*FMSketch, 
 		}
 		other = mergeCopiedFMSketch(other, outOfRangeNDVSketch)
 
+		// NDV of the union of all other nodes before merging this node's singletons.
 		ndvOther := other.NDV()
 		other = mergeCopiedFMSketch(other, singletonSketches[i])
 
+		// NDV of the union after merging this node's singleton sketch.
 		ndvUnion := other.NDV()
 		// FM sketch NDV estimates are not monotone under merge, so the estimated
 		// union can be smaller than ndvOther. Clamp the per-node contribution to 0.
