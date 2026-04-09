@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -39,11 +40,17 @@ func TestCancelWhileScan(t *testing.T) {
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	for i := range 10000 {
-		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, NOW() - INTERVAL 24 HOUR)", i))
+	const totalRows, batchSize = 1000, 100
+	for i := 0; i < totalRows; i += batchSize {
+		values := make([]string, 0, batchSize)
+		for j := i; j < i+batchSize; j++ {
+			values = append(values, fmt.Sprintf("(%d, NOW() - INTERVAL 24 HOUR)", j))
+		}
+		tk.MustExec("insert into test.t values " + strings.Join(values, ","))
 	}
 	testPhysicalTableCache, err := cache.NewPhysicalTable(ast.NewCIStr("test"), testTable.Meta(), ast.NewCIStr(""))
 	require.NoError(t, err)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", "return(200)")
 
 	delCh := make(chan *ttlworker.TTLDeleteTask)
 	wg := &sync.WaitGroup{}
@@ -55,12 +62,11 @@ func TestCancelWhileScan(t *testing.T) {
 		}
 	}()
 
-	testStart := time.Now()
-	testDuration := time.Second
+	rounds := 10
 	if testflag.Long() {
-		testDuration = time.Minute
+		rounds = 30
 	}
-	for time.Since(testStart) < testDuration {
+	for i := 0; i < rounds; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		ttlTask := ttlworker.NewTTLScanTask(ctx, testPhysicalTableCache, &cache.TTLTask{
 			JobID:            "test",
