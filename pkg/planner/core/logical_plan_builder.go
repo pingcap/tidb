@@ -5080,18 +5080,22 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			if b.buildingCTE {
 				b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = cte.containRecursiveForbiddenOperator || b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator
 			}
-			// Compute cte inline
+// Compute cte inline
 			b.computeCTEInlineFlag(cte)
 
 			if cte.recurLP == nil && cte.isInline {
 				// Save b.buildingCTE state and set to false to prevent infinite recursion
 				// Note: We do NOT truncate b.outerCTEs here because buildDataSourceFromCTEMerge
-				// needs access to it when setting b.buildingCTE = true for the masking fix
+				// needs access to it when setting b.buildingCTE = true for masking fix
+				// Also save b.isCTE to restore it after inline merge
 				o := b.buildingCTE
+				oldIsCTE := b.isCTE
 				b.buildingCTE = false
+				b.isCTE = false
 				//nolint:all_revive,revive
 				defer func() {
 					b.buildingCTE = o
+					b.isCTE = oldIsCTE
 				}()
 				return b.buildDataSourceFromCTEMerge(ctx, cte.def)
 			}
@@ -5158,8 +5162,9 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
-	// Set b.isCTE to true to ensure masking is skipped during CTE definition building
-	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior
+	// Set b.isCTE and b.buildingCTE to true during CTE definition building
+	// This ensures masking is skipped in CTE definition
+	// We restore the old values after building
 	oldIsCTE := b.isCTE
 	oldBuildingCTE := b.buildingCTE
 	b.isCTE = true
@@ -5175,40 +5180,32 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	}
 	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
-	// Create new FieldName objects to avoid modifying shared references
-	newNames := make([]*types.FieldName, len(outPutNames))
-	for i, name := range outPutNames {
+	for _, name := range outPutNames {
 		// Preserve OrigTblName and OrigColName for masking policy lookup
 		// If they are not set, copy from TblName and ColName before overwriting
-		origTblName := name.OrigTblName
-		if origTblName.L == "" {
-			origTblName = name.TblName
+		if name.OrigTblName.L == "" {
+			name.OrigTblName = name.TblName
 		}
-		origColName := name.OrigColName
-		if origColName.L == "" {
-			origColName = name.ColName
+		if name.OrigColName.L == "" {
+			name.OrigColName = name.ColName
 		}
-		newNames[i] = &types.FieldName{
-			DBName:            ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB),
-			OrigTblName:       origTblName,
-			OrigColName:       origColName,
-			TblName:           cte.Name,
-			ColName:           name.ColName,
-			NotExplicitUsable: name.NotExplicitUsable,
-			Redundant:         name.Redundant,
-			Hidden:            name.Hidden,
-		}
+		name.TblName = cte.Name
+		name.DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 
 	if len(cte.ColNameList) > 0 {
-		if len(cte.ColNameList) != len(newNames) {
+		if len(cte.ColNameList) != len(p.OutputNames()) {
 			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
-			newNames[i].ColName = n
+			// Preserve original column name before overwriting
+			if outPutNames[i].OrigColName.L == "" {
+				outPutNames[i].OrigColName = outPutNames[i].ColName
+			}
+			outPutNames[i].ColName = n
 		}
 	}
-	p.SetOutputNames(newNames)
+	p.SetOutputNames(outPutNames)
 	return p, nil
 }
 
