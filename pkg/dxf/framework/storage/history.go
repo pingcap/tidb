@@ -17,11 +17,14 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
@@ -82,6 +85,120 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 		}
 		return err
 	})
+}
+
+// HistoryTaskSummary contains summary fields for one history task.
+type HistoryTaskSummary struct {
+	ID              int64           `json:"id"`
+	TaskKey         string          `json:"task_key"`
+	Type            proto.TaskType  `json:"type"`
+	State           proto.TaskState `json:"state"`
+	Step            proto.Step      `json:"step"`
+	Priority        int             `json:"priority"`
+	Concurrency     int             `json:"concurrency"`
+	MaxNodeCount    int             `json:"max_node_count"`
+	TargetScope     string          `json:"target_scope"`
+	Keyspace        string          `json:"keyspace"`
+	CreateTime      time.Time       `json:"create_time"`
+	StartTime       time.Time       `json:"start_time"`
+	StateUpdateTime time.Time       `json:"state_update_time"`
+	EndTime         time.Time       `json:"end_time"`
+}
+
+// HistoryTaskPage is the paged result for history task listing.
+type HistoryTaskPage struct {
+	Items         []*HistoryTaskSummary `json:"items"`
+	NextPageToken string                `json:"next_page_token"`
+	TotalCount    int64                 `json:"total_count"`
+}
+
+// ListHistoryTasks lists history tasks with keyset pagination and optional keyspace filter.
+func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, pageToken int64, keyspace string) (*HistoryTaskPage, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	if pageSize <= 0 {
+		return nil, fmt.Errorf("page size should be greater than 0")
+	}
+
+	whereParts := make([]string, 0, 2)
+	countArgs := make([]any, 0, 1)
+	if keyspace != "" {
+		whereParts = append(whereParts, "keyspace = %?")
+		countArgs = append(countArgs, keyspace)
+	}
+	dataArgs := append(make([]any, 0, len(countArgs)+2), countArgs...)
+	if pageToken > 0 {
+		whereParts = append(whereParts, "id < %?")
+		dataArgs = append(dataArgs, pageToken)
+	}
+	whereSQL := ""
+	if len(whereParts) > 0 {
+		whereSQL = " where " + strings.Join(whereParts, " and ")
+	}
+	dataArgs = append(dataArgs, pageSize+1)
+
+	const historyTaskSummaryColumns = `id, task_key, type, state, step, priority, concurrency, max_node_count, target_scope, keyspace, create_time, start_time, state_update_time, end_time`
+	rows, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select `+historyTaskSummaryColumns+` from mysql.tidb_global_task_history`+whereSQL+` order by id desc limit %?`,
+		dataArgs...)
+	if err != nil {
+		return nil, err
+	}
+	countRows, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select count(1) from mysql.tidb_global_task_history`+func() string {
+			if keyspace == "" {
+				return ""
+			}
+			return " where keyspace = %?"
+		}(),
+		countArgs...)
+	if err != nil {
+		return nil, err
+	}
+
+	page := &HistoryTaskPage{
+		Items:      make([]*HistoryTaskSummary, 0, min(len(rows), pageSize)),
+		TotalCount: countRows[0].GetInt64(0),
+	}
+	hasMore := len(rows) > pageSize
+	if hasMore {
+		rows = rows[:pageSize]
+	}
+	for _, row := range rows {
+		page.Items = append(page.Items, row2HistoryTaskSummary(row))
+	}
+	if hasMore {
+		page.NextPageToken = strconv.FormatInt(page.Items[len(page.Items)-1].ID, 10)
+	}
+	return page, nil
+}
+
+func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
+	createTime, _ := r.GetTime(10).GoTime(time.Local)
+	item := &HistoryTaskSummary{
+		ID:           r.GetInt64(0),
+		TaskKey:      r.GetString(1),
+		Type:         proto.TaskType(r.GetString(2)),
+		State:        proto.TaskState(r.GetString(3)),
+		Step:         proto.Step(r.GetInt64(4)),
+		Priority:     int(r.GetInt64(5)),
+		Concurrency:  int(r.GetInt64(6)),
+		MaxNodeCount: int(r.GetInt64(7)),
+		TargetScope:  r.GetString(8),
+		Keyspace:     r.GetString(9),
+		CreateTime:   createTime,
+	}
+	if !r.IsNull(11) {
+		item.StartTime, _ = r.GetTime(11).GoTime(time.Local)
+	}
+	if !r.IsNull(12) {
+		item.StateUpdateTime, _ = r.GetTime(12).GoTime(time.Local)
+	}
+	if !r.IsNull(13) {
+		item.EndTime, _ = r.GetTime(13).GoTime(time.Local)
+	}
+	return item
 }
 
 // GCSubtasks deletes the history subtask which is older than the given days.
