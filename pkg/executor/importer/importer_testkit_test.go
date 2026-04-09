@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -328,19 +330,35 @@ func TestProcessChunkWith(t *testing.T) {
 		}
 		ti := getTableImporter(ctx, t, store, "t", "", nil)
 		defer ti.Backend().CloseEngineMgr()
-		rowsCh := make(chan importer.QueryRow, 3)
-		for i := 1; i <= 3; i++ {
-			rowsCh <- importer.QueryRow{
-				ID: int64(i),
-				Data: []types.Datum{
-					types.NewIntDatum(int64((i-1)*3 + 1)),
-					types.NewIntDatum(int64((i-1)*3 + 2)),
-					types.NewIntDatum(int64((i-1)*3 + 3)),
-				},
-			}
+		chkCh := make(chan importer.QueryChunk, 3)
+		fields := make([]*types.FieldType, 0, 3)
+		for i := 0; i < 3; i++ {
+			fields = append(fields, types.NewFieldType(mysql.TypeLong))
 		}
-		close(rowsCh)
-		ti.SetSelectedRowCh(rowsCh)
+		chk := chunk.New(fields, 2, 2)
+		for i := 1; i <= 2; i++ {
+			chk.AppendInt64(0, int64((i-1)*3+1))
+			chk.AppendInt64(1, int64((i-1)*3+2))
+			chk.AppendInt64(2, int64((i-1)*3+3))
+		}
+		chkCh <- importer.QueryChunk{
+			Fields:      fields,
+			Chk:         chk,
+			RowIDOffset: 0,
+		}
+		chk = chunk.New(fields, 1, 1)
+		for i := 3; i <= 3; i++ {
+			chk.AppendInt64(0, int64((i-1)*3+1))
+			chk.AppendInt64(1, int64((i-1)*3+2))
+			chk.AppendInt64(2, int64((i-1)*3+3))
+		}
+		chkCh <- importer.QueryChunk{
+			Fields:      fields,
+			Chk:         chk,
+			RowIDOffset: 2,
+		}
+		close(chkCh)
+		ti.SetSelectedChunkCh(chkCh)
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
