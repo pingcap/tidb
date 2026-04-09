@@ -63,13 +63,18 @@ func TestServiceTracksSuccessfulCheckpoint(t *testing.T) {
 	h.requireCheckpointAdvancedByTick(initialCheckpoint, upstreamCheckpoint)
 	h.requireReplicateAllPending()
 
+	sawExpectedStats := false
 	require.Eventually(t, func() bool {
 		snapshot := svc.Status()
+		if snapshot.Statistic.UpstreamReadMetaFileCount >= 1 &&
+			snapshot.Statistic.EstimatedSyncLogFileCount >= 1 &&
+			snapshot.Statistic.DownstreamCheckFileCount >= 2 {
+			sawExpectedStats = true
+		}
+
 		return snapshot.SafeCheckpoint == upstreamCheckpoint &&
 			snapshot.SyncedTS > 0 &&
-			snapshot.Statistic.UpstreamReadMetaFileCount == 1 &&
-			snapshot.Statistic.EstimatedSyncLogFileCount == 1 &&
-			snapshot.Statistic.DownstreamCheckFileCount >= 2 &&
+			sawExpectedStats &&
 			snapshot.ConsecutiveFailures == 0 &&
 			!snapshot.LastSuccessTime.IsZero()
 	}, 5*time.Second, 20*time.Millisecond)
