@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
