@@ -1058,7 +1058,7 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.Equal(t, allIDs[0], firstPage.Items[0].ID)
 		require.Equal(t, allIDs[1], firstPage.Items[1].ID)
 		require.Equal(t, fmt.Sprintf("%d", allIDs[1]), firstPage.NextPageToken)
-		require.Equal(t, "history-task-5", firstPage.Items[0].TaskKey)
+		require.Equal(t, "history-task-5", firstPage.Items[0].Key)
 		require.Equal(t, "ks1", firstPage.Items[0].Keyspace)
 		require.NotZero(t, firstPage.Items[0].CreateTime)
 		require.NotZero(t, firstPage.Items[0].StartTime)
