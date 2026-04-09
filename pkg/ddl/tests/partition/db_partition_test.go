@@ -3331,6 +3331,33 @@ func TestModifyColumnPartitionedTableKeyPartitionWhitelist(t *testing.T) {
 		tk.MustQuery(`select count(*) from t_key_wl_int`).Check(testkit.Rows("3"))
 	})
 
+	t.Run("int widening by change column", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_key_wl_change")
+		tk.MustExec(`create table t_key_wl_change (
+			a tinyint,
+			b int
+		) partition by key(a) partitions 3`)
+		tk.MustExec(`insert into t_key_wl_change values (1,10),(2,20),(3,30)`)
+		tk.MustExec(`alter table t_key_wl_change change column a a int`)
+		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+		tk.MustExec(`admin check table t_key_wl_change`)
+		tk.MustQuery(`select count(*) from t_key_wl_change`).Check(testkit.Rows("3"))
+	})
+
+	t.Run("rename by change column rejected", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_key_wl_change_rename")
+		tk.MustExec(`create table t_key_wl_change_rename (
+			a tinyint,
+			b int
+		) partition by key(a) partitions 3`)
+		tk.MustExec(`insert into t_key_wl_change_rename values (1,10),(2,20),(3,30)`)
+		tk.MustGetErrCode(`alter table t_key_wl_change_rename change column a a2 int`, errno.ErrDependentByPartitionFunctional)
+	})
+
 	t.Run("string widening", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
