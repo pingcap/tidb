@@ -202,7 +202,7 @@ explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * fr
 # ORDER BY a, b with index (a, b(15))
 explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */  * from t_multi_col order by a, b limit 5;
 select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col order by a, b limit 3 offset 2;
-
+explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col order by a, b limit 3 offset 2;
 # ORDER BY a, b, c with index (a, b, c(10))
 explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_c_prefix) */  * from t_multi_col order by a, b, c limit 5;
 
