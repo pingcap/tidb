@@ -79,6 +79,12 @@ func TestLFUGetReturnsLatestValueWhilePrimaryCacheLags(t *testing.T) {
 		return ok && tbl.GetIdx(1) != nil
 	}, time.Second, 10*time.Millisecond)
 
+	select {
+	case <-putDone:
+		t.Fatal("LFU put finished before Get assertion; failpoint pause was not active")
+	default:
+	}
+
 	tbl, ok := lfu.Get(1)
 	require.True(t, ok)
 	require.NotNil(t, tbl.GetIdx(1))
