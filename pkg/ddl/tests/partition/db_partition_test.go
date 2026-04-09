@@ -3768,6 +3768,7 @@ func TestModifyColumnPartitionedTableExpressionWhitelist(t *testing.T) {
 	t.Run("to_days datetime fsp", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
+		tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 		tk.MustExec("drop table if exists t_expr_todays")
 		tk.MustExec(`create table t_expr_todays (
 			dt datetime,
@@ -3820,6 +3821,7 @@ func TestModifyColumnPartitionedTableExpressionWhitelist(t *testing.T) {
 	t.Run("extract time fsp", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
+		tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 		tk.MustExec("drop table if exists t_expr_extract")
 		tk.MustExec(`create table t_expr_extract (
 			tm time,
