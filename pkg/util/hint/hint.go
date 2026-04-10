@@ -111,6 +111,8 @@ const (
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
 	HintIgnorePlanCache = "ignore_plan_cache"
+	// HintUsePlanCache is a hint to enforce using plan cache.
+	HintUsePlanCache = "use_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
 	// HintMerge is a hint which can switch turning inline for the CTE.
@@ -228,7 +230,9 @@ type StmtHints struct {
 	ResourceGroup string
 	// Do not store plan in either plan cache.
 	IgnorePlanCache bool
-	WriteSlowLog    bool
+	// Use plan cache under strategy that requires explicit hints.
+	UsePlanCache bool
+	WriteSlowLog bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -276,6 +280,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
 		IgnorePlanCache:                sh.IgnorePlanCache,
+		UsePlanCache:                   sh.UsePlanCache,
 		WriteSlowLog:                   sh.WriteSlowLog,
 		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
@@ -409,6 +414,8 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			setVarsOffs = append(setVarsOffs, i)
 		case HintIgnorePlanCache:
 			stmtHints.IgnorePlanCache = true
+		case HintUsePlanCache:
+			stmtHints.UsePlanCache = true
 		case HintWriteSlowLog:
 			stmtHints.WriteSlowLog = true
 		}

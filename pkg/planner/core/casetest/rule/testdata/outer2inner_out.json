@@ -316,11 +316,12 @@
           "│   └─TableFullScan cop[tikv] table:outr1 keep order:false, stats:pseudo",
           "└─HashAgg(Probe) root  group by:test.dd.col_blob_key, funcs:firstrow(test.dd.col_blob_key)->test.dd.col_blob_key",
           "  └─HashJoin root  inner join, equal:[eq(Column, Column)]",
-          "    ├─Projection(Build) root  cast(test.d.col_date, double BINARY)->Column",
-          "    │ └─TableReader root  data:Selection",
-          "    │   └─Selection cop[tikv]  gt(test.dd.col_int_key, 6)",
-          "    │     └─TableFullScan cop[tikv] table:innrcte keep order:false, stats:pseudo",
-          "    └─Projection(Probe) root  test.dd.col_blob_key, cast(test.dd.pk, double BINARY)->Column",
+          "    ├─Projection(Build) root  cast(test.d.col_date, bigint(10) BINARY)->Column",
+          "    │ └─Selection root  eq(cast(cast(test.d.col_date, bigint(10) BINARY), double BINARY), cast(test.d.col_date, double BINARY))",
+          "    │   └─TableReader root  data:Selection",
+          "    │     └─Selection cop[tikv]  gt(test.dd.col_int_key, 6)",
+          "    │       └─TableFullScan cop[tikv] table:innrcte keep order:false, stats:pseudo",
+          "    └─Projection(Probe) root  test.dd.pk, test.dd.col_blob_key, test.dd.pk->Column",
           "      └─TableReader root  data:Selection",
           "        └─Selection cop[tikv]  gt(test.dd.col_int_key, 6), not(isnull(test.dd.col_blob_key))",
           "          └─TableFullScan cop[tikv] table:innr1 keep order:false, stats:pseudo"
@@ -508,12 +509,11 @@
       {
         "SQL": "SELECT * FROM   ti LEFT JOIN (SELECT i FROM ti WHERE FALSE) AS d1 ON ti.i = d1.i WHERE NOT EXISTS (SELECT 1 FROM ti AS inner_t1 WHERE i = d1.i) -- anti semi join",
         "Plan": [
-          "HashJoin root  anti semi join, left side:HashJoin, equal:[eq(test.ti.i, test.ti.i)]",
+          "HashJoin root  anti semi join, left side:Projection, equal:[eq(test.ti.i, test.ti.i)]",
           "├─TableReader(Build) root  data:TableFullScan",
           "│ └─TableFullScan cop[tikv] table:inner_t1 keep order:false, stats:pseudo",
-          "└─HashJoin(Probe) root  left outer join, left side:TableReader, equal:[eq(test.ti.i, test.ti.i)]",
-          "  ├─TableDual(Build) root  rows:0",
-          "  └─TableReader(Probe) root  data:TableFullScan",
+          "└─Projection(Probe) root  test.ti.i, <nil>->test.ti.i",
+          "  └─TableReader root  data:TableFullScan",
           "    └─TableFullScan cop[tikv] table:ti keep order:false, stats:pseudo"
         ]
       },
