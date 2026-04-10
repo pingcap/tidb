@@ -112,6 +112,7 @@ import (
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tidb/pkg/auditlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -1783,11 +1784,32 @@ func (cc *clientConn) audit(ctx context.Context, eventType plugin.GeneralEvent) 
 	}
 }
 
-// handleQuery executes the sql query string and writes result set or result ok to the client.
+// auditLogQuery sends the query event to the audit log manager if it is enabled.
+func (cc *clientConn) auditLogQuery(sql string, start time.Time, queryErr error) {
+	manager := auditlog.GlobalAuditManager()
+	if manager == nil || !manager.IsEnabled() {
+		return
+	}
+	sessVars := cc.ctx.GetSessionVars()
+	user := sessVars.User
+	userName := ""
+	if user != nil {
+		userName = user.Username
+	}
+	dbName := sessVars.CurrentDB
+	connID := cc.connectionID
+	duration := time.Since(start)
+	success := queryErr == nil
+	manager.LogQuery(userName, dbName, sql, connID, duration, success)
+} and writes result set or result ok to the client.
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // Some special queries like `load data` that does not return result, which is handled in handleFileTransInConn.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	defer trace.StartRegion(ctx, "handleQuery").End()
+	queryStart := time.Now()
+	defer func() {
+		cc.auditLogQuery(sql, queryStart, err)
+	}()
 	sessVars := cc.ctx.GetSessionVars()
 	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()

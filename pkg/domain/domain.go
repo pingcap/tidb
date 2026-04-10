@@ -38,6 +38,7 @@ import (
 	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
+	"github.com/pingcap/tidb/pkg/auditlog"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -488,6 +489,12 @@ func (do *Domain) Close() {
 
 	do.runawayManager.Stop()
 
+	// Stop the audit log subsystem if it was initialized.
+	if auditMgr := auditlog.GlobalAuditManager(); auditMgr != nil {
+		auditMgr.Stop()
+		auditlog.SetGlobalAuditManager(nil)
+	}
+
 	do.slowQuery.Close()
 
 	do.cancelFns.mu.Lock()
@@ -840,6 +847,14 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		}
 	}
 
+	// Initialize the built-in audit log subsystem if enabled.
+	if gCfg.AuditLog.Enable {
+		if err = do.initAuditLog(gCfg); err != nil {
+			logutil.BgLogger().Error("failed to initialize audit log", zap.Error(err))
+			// Non-fatal: audit log failure should not prevent server startup.
+		}
+	}
+
 	return nil
 }
 
@@ -852,6 +867,28 @@ func (do *Domain) loadSysKSInfoSchema() error {
 	logutil.BgLogger().Info("loading system keyspace info schema")
 	_, err := do.GetKSStore(keyspace.System)
 	return err
+}
+
+// initAuditLog initializes the built-in audit log subsystem.
+func (do *Domain) initAuditLog(cfg *config.Config) error {
+	writerCfg := auditlog.WriterConfig{
+		LogDir:        cfg.AuditLog.LogDir,
+		BufferSize:    cfg.AuditLog.BufferSize,
+		BatchSize:     cfg.AuditLog.BatchSize,
+		FlushInterval: time.Duration(cfg.AuditLog.FlushInterval) * time.Second,
+		MaxFileSize:   int64(cfg.AuditLog.MaxFileSize) * 1024 * 1024,
+	}
+	writer := auditlog.NewAuditWriter(writerCfg)
+	manager := auditlog.NewAuditManager(writer)
+	if err := manager.Start(); err != nil {
+		return err
+	}
+	auditlog.SetGlobalAuditManager(manager)
+	auditlog.InitAuditMetrics()
+	logutil.BgLogger().Info("audit log subsystem initialized",
+		zap.String("log_dir", cfg.AuditLog.LogDir),
+		zap.Int("buffer_size", cfg.AuditLog.BufferSize))
+	return nil
 }
 
 // GetKSStore returns the kv.Storage for the given keyspace.

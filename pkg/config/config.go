@@ -229,6 +229,7 @@ type Config struct {
 	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
 	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
 	TopSQL              TopSQL `toml:"top-sql" json:"top-sql"`
+	AuditLog            AuditLog `toml:"audit-log" json:"audit-log"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -977,6 +978,34 @@ type IsolationRead struct {
 	Engines []string `toml:"engines" json:"engines"`
 }
 
+// AuditLog is the config for the built-in query audit log subsystem.
+type AuditLog struct {
+	// Enable controls whether the audit log subsystem is active.
+	Enable bool `toml:"enable" json:"enable"`
+	// LogDir is the directory where audit log files are written.
+	LogDir string `toml:"log-dir" json:"log-dir"`
+	// BufferSize is the size of the async event buffer channel.
+	BufferSize int `toml:"buffer-size" json:"buffer-size"`
+	// BatchSize is the number of events to batch before flushing.
+	BatchSize int `toml:"batch-size" json:"batch-size"`
+	// FlushInterval is the maximum time between flushes in seconds.
+	FlushInterval int `toml:"flush-interval" json:"flush-interval"`
+	// MaxFileSize is the maximum size of a single audit log file in MB.
+	MaxFileSize int `toml:"max-file-size" json:"max-file-size"`
+}
+
+// DefaultAuditLog returns the default AuditLog configuration.
+func DefaultAuditLog() AuditLog {
+	return AuditLog{
+		Enable:        false,
+		LogDir:        "/tmp/tidb/audit",
+		BufferSize:    4096,
+		BatchSize:     256,
+		FlushInterval: 5,
+		MaxFileSize:   256,
+	}
+}
+
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
@@ -1181,6 +1210,7 @@ var defaultConf = Config{
 	EnableGlobalKill:                     true,
 	Enable32BitsConnectionID:             true,
 	TrxSummary:                           DefaultTrxSummary(),
+	AuditLog:                             DefaultAuditLog(),
 	DisaggregatedTiFlash:                 false,
 	TiFlashComputeAutoScalerType:         DefASStr,
 	TiFlashComputeAutoScalerAddr:         DefAWSAutoScalerAddr,
