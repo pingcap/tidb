@@ -62,54 +62,78 @@ func TestRecoverTable(t *testing.T) {
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
 
+	// if GC safe point is not exists in mysql.tidb
 	tk.MustGetErrMsg("recover table t_recover", "can not get 'tikv_gc_safe_point'")
+	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
+	// Should recover, and we can drop it straight away.
 	tk.MustExec("recover table t_recover")
 	tk.MustExec("drop table t_recover")
 
 	require.NoError(t, gcutil.EnableGC(tk.Session()))
 
+	// recover job is before GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
 	tk.MustContainErrMsg("recover table t_recover", "Can't find dropped/truncated table 't_recover' in GC safe point")
 
+	// set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// if there is a new table with the same name, should return failed.
 	tk.MustExec("create table t_recover (a int);")
 	tk.MustGetErrMsg("recover table t_recover", infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
 
+	// drop the new table with the same name, then recover table.
 	tk.MustExec("rename table t_recover to t_recover2")
+
+	// do recover table.
 	tk.MustExec("recover table t_recover")
+
+	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (4),(5),(6)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	// check rebase auto id.
 	tk.MustQuery("select a,_tidb_rowid from t_recover;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
 
+	// recover table by none exits job.
 	err := tk.ExecToErr(fmt.Sprintf("recover table by job %d", 10000000))
 	require.Error(t, err)
 
+	// recover table by zero JobID.
+	// related issue: https://github.com/pingcap/tidb/issues/46296
 	err = tk.ExecToErr(fmt.Sprintf("recover table by job %d", 0))
 	require.Error(t, err)
 
+	// Disable GC by manual first, then after recover table, the GC enable status should also be disabled.
 	require.NoError(t, gcutil.DisableGC(tk.Session()))
 
 	tk.MustExec("delete from t_recover where a > 1")
 	tk.MustExec("drop table t_recover")
+
 	tk.MustExec("recover table t_recover")
+
+	// check recover table meta and data record.
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
+	// check recover table autoID.
 	tk.MustExec("insert into t_recover values (7),(8),(9)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
 
+	// Recover truncate table.
 	tk.MustExec("truncate table t_recover")
 	tk.MustExec("rename table t_recover to t_recover_new")
 	tk.MustExec("recover table t_recover")
 	tk.MustExec("insert into t_recover values (10)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
+	// Test for recover one table multiple time.
 	tk.MustExec("drop table t_recover")
 	tk.MustExec("flashback table t_recover to t_recover_tmp")
 	err = tk.ExecToErr("recover table t_recover")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 
+	// Test drop table failed and then recover the table should also be failed.
 	tk.MustExec("drop table if exists t_recover2")
 	tk.MustExec("create table t_recover2 (a int);")
 	jobID := int64(0)
@@ -146,56 +170,81 @@ func TestFlashbackTable(t *testing.T) {
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
+	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
 	require.NoError(t, gcutil.EnableGC(tk.Session()))
 
 	tk.MustExec("insert into t_flashback values (1),(2),(3)")
 	tk.MustExec("drop table t_flashback")
 
+	// Test flash table with not_exist_table_name name.
 	tk.MustGetErrMsg("flashback table t_not_exists", "Can't find localTemporary/dropped/truncated table: t_not_exists in DDL history jobs")
 
+	// Test flashback table failed by there is already a new table with the same name.
+	// If there is a new table with the same name, should return failed.
 	tk.MustExec("create table t_flashback (a int);")
 	tk.MustGetErrMsg("flashback table t_flashback", infoschema.ErrTableExists.GenWithStackByArgs("t_flashback").Error())
 
+	// Drop the new table with the same name, then flashback table.
 	tk.MustExec("rename table t_flashback to t_flashback_tmp")
 
+	// Test for flashback table.
 	tk.MustExec("flashback table t_flashback")
+	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_flashback;").Check(testkit.Rows("1", "2", "3"))
+	// Check flashback table autoID.
 	tk.MustExec("insert into t_flashback values (4),(5),(6)")
 	tk.MustQuery("select * from t_flashback;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	// Check rebase auto id.
 	tk.MustQuery("select a,_tidb_rowid from t_flashback;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
 
+	// Test for flashback to new table.
 	tk.MustExec("drop table t_flashback")
 	tk.MustExec("create table t_flashback (a int);")
 	tk.MustGetErrMsg("flashback table t_flashback to ` `", dbterror.ErrWrongTableName.GenWithStack("Incorrect table name ' '").Error())
 	tk.MustExec("flashback table t_flashback to t_flashback2")
+	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	// Check flashback table autoID.
 	tk.MustExec("insert into t_flashback2 values (7),(8),(9)")
 	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	// Check rebase auto id.
 	tk.MustQuery("select a,_tidb_rowid from t_flashback2;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003", "7 10001", "8 10002", "9 10003"))
 
+	// Test for flashback one table multiple time.
 	err := tk.ExecToErr("flashback table t_flashback to t_flashback4")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
 
+	// Test for flashback truncated table to new table.
 	tk.MustExec("truncate table t_flashback2")
 	tk.MustExec("flashback table t_flashback2 to t_flashback3")
+	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_flashback3;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	// Check flashback table autoID.
 	tk.MustExec("insert into t_flashback3 values (10),(11)")
 	tk.MustQuery("select * from t_flashback3;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"))
+	// Check rebase auto id.
 	tk.MustQuery("select a,_tidb_rowid from t_flashback3;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003", "7 10001", "8 10002", "9 10003", "10 15001", "11 15002"))
 
+	// Test for flashback drop partition table.
 	tk.MustExec("drop table if exists t_p_flashback")
 	tk.MustExec("create table t_p_flashback (a int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t_p_flashback values (1),(2),(3)")
 	tk.MustExec("drop table t_p_flashback")
 	tk.MustExec("flashback table t_p_flashback")
+	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_p_flashback order by a;").Check(testkit.Rows("1", "2", "3"))
+	// Check flashback table autoID.
 	tk.MustExec("insert into t_p_flashback values (4),(5)")
 	tk.MustQuery("select a,_tidb_rowid from t_p_flashback order by a;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002"))
 
+	// Test for flashback truncate partition table.
 	tk.MustExec("truncate table t_p_flashback")
 	tk.MustExec("flashback table t_p_flashback to t_p_flashback1")
+	// Check flashback table meta and data record.
 	tk.MustQuery("select * from t_p_flashback1 order by a;").Check(testkit.Rows("1", "2", "3", "4", "5"))
+	// Check flashback table autoID.
 	tk.MustExec("insert into t_p_flashback1 values (6)")
 	tk.MustQuery("select a,_tidb_rowid from t_p_flashback1 order by a;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 10001"))
 
@@ -236,6 +285,7 @@ func TestRecoverTempTable(t *testing.T) {
 
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
+	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	tk.MustExec("drop table t_recover")
@@ -260,8 +310,11 @@ func TestRecoverTableMeetError(t *testing.T) {
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
 	tk.MustExec("drop table t_recover")
+
+	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
+	// Should recover, and we can drop it straight away.
 	tk.MustExec("recover table t_recover")
 	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3"))
 	tk.MustExec("drop table t_recover")
@@ -279,6 +332,7 @@ func TestRecoverTablePrivilege(t *testing.T) {
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
+	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	tk.MustExec("use test")
@@ -286,16 +340,19 @@ func TestRecoverTablePrivilege(t *testing.T) {
 	tk.MustExec("create table t_recover (a int);")
 	tk.MustExec("drop table t_recover")
 
+	// Recover without drop/create privilege.
 	tk.MustExec("CREATE USER 'testrecovertable'@'localhost';")
 	newTk := testkit.NewTestKit(t, store)
 	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testrecovertable", Hostname: "localhost"}, nil, nil, nil))
 	newTk.MustGetErrCode("recover table t_recover", errno.ErrTableaccessDenied)
 	newTk.MustGetErrCode("flashback table t_recover", errno.ErrTableaccessDenied)
 
+	// Got drop privilege, still failed.
 	tk.MustExec("grant drop on *.* to 'testrecovertable'@'localhost';")
 	newTk.MustGetErrCode("recover table t_recover", errno.ErrTableaccessDenied)
 	newTk.MustGetErrCode("flashback table t_recover", errno.ErrTableaccessDenied)
 
+	// Got select, create and drop privilege, execute success.
 	tk.MustExec("grant select,create on *.* to 'testrecovertable'@'localhost';")
 	newTk.MustExec("use test")
 	newTk.MustExec("recover table t_recover")
@@ -319,15 +376,20 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS)))
 
+	// Get GC safe point error.
 	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(30*time.Second)), "cannot set flashback timestamp to future time")
 	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), "can not get 'tikv_gc_safe_point'")
 
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
+	// Set GC safe point.
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	// out of GC safe point range.
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-60*60*60*time.Second)), int(variable.ErrSnapshotTooOld.Code()))
 
+	// Flashback without super privilege.
 	tk.MustExec("CREATE USER 'testflashback'@'localhost';")
 	newTk := testkit.NewTestKit(t, store)
 	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashback", Hostname: "localhost"}, nil, nil, nil))
@@ -335,12 +397,14 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	tk.MustExec("drop user 'testflashback'@'localhost';")
 
 	if kerneltype.IsClassic() {
+		// detect modify system table
 		nowTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 		require.NoError(t, err)
 		tk.MustExec("truncate table mysql.stats_meta")
 		errorMsg := fmt.Sprintf("[ddl:-1]Detected modified system table during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat))
 		tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat)), errorMsg)
 	}
+	// update tidb_server_version
 	nowTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	require.NoError(t, err)
 	tk.MustExec("update mysql.tidb set VARIABLE_VALUE=VARIABLE_VALUE+1 where VARIABLE_NAME='tidb_server_version'")
@@ -361,15 +425,17 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
+	// Set GC safe point.
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	time.Sleep(time.Second)
 	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	flashbackTs := oracle.GetTimeFromTS(ts)
 	testcases := []struct {
-		name              string
-		sql               string
-		injectSafeTS      uint64
+		name         string
+		sql          string
+		injectSafeTS uint64
+		// compareWithSafeTS will be 0 if FlashbackTS==SafeTS, -1 if FlashbackTS < SafeTS, and +1 if FlashbackTS > SafeTS.
 		compareWithSafeTS int
 	}{
 		{
@@ -397,7 +463,9 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		if testcase.compareWithSafeTS == 1 {
 			start := time.Now()
-			tk.MustContainErrMsg(testcase.sql, "cannot set flashback timestamp after min-resolved-ts")
+			tk.MustContainErrMsg(testcase.sql,
+				"cannot set flashback timestamp after min-resolved-ts")
+			// When set `flashbackGetMinSafeTimeTimeout` = 0, no retry for `getStoreGlobalMinSafeTS`.
 			require.Less(t, time.Since(start), time.Second)
 		} else {
 			tk.MustExec(testcase.sql)
@@ -418,15 +486,17 @@ func TestFlashbackTSOWithSafeTs(t *testing.T) {
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
+	// Set GC safe point.
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	time.Sleep(time.Second)
 	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
 	flashbackTs := oracle.GetTimeFromTS(ts)
 	testcases := []struct {
-		name              string
-		sql               string
-		injectSafeTS      uint64
+		name         string
+		sql          string
+		injectSafeTS uint64
+		// compareWithSafeTS will be 0 if FlashbackTS==SafeTS, -1 if FlashbackTS < SafeTS, and +1 if FlashbackTS > SafeTS.
 		compareWithSafeTS int
 	}{
 		{
@@ -454,7 +524,9 @@ func TestFlashbackTSOWithSafeTs(t *testing.T) {
 			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
 		if testcase.compareWithSafeTS == 1 {
 			start := time.Now()
-			tk.MustContainErrMsg(testcase.sql, "cannot set flashback timestamp after min-resolved-ts")
+			tk.MustContainErrMsg(testcase.sql,
+				"cannot set flashback timestamp after min-resolved-ts")
+			// When set `flashbackGetMinSafeTimeTimeout` = 0, no retry for `getStoreGlobalMinSafeTS`.
 			require.Less(t, time.Since(start), time.Second)
 		} else {
 			tk.MustExec(testcase.sql)
@@ -474,6 +546,7 @@ func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
+	// Set GC safe point.
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	time.Sleep(time.Second)
@@ -499,6 +572,85 @@ func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
 }
 
+func TestFlashbackSchema(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
+
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
+	tk.MustExec("create database if not exists test_flashback")
+	tk.MustExec("use test_flashback")
+	tk.MustExec("drop table if exists t_flashback")
+	tk.MustExec("create table t_flashback (a int)")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	// if GC safe point is not exists in mysql.tidb
+	tk.MustGetErrMsg("flashback database db_not_exists", "can not get 'tikv_gc_safe_point'")
+	// Set GC safe point
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	tk.MustExec("insert into t_flashback values (1),(2),(3)")
+	tk.MustExec("drop database test_flashback")
+
+	// even PD is down, the job can not be canceled for now.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `4*return()`)
+	tk.MustExec("flashback database test_flashback")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr")
+
+	// Test flashback database with db_not_exists name.
+	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")
+	tk.MustGetErrMsg("flashback database test_flashback to test_flashback2", infoschema.ErrDatabaseExists.GenWithStack("Schema 'test_flashback' already been recover to 'test_flashback', can't be recover repeatedly").Error())
+
+	// Test flashback database failed by there is already a new database with the same name.
+	// If there is a new database with the same name, should return failed.
+	tk.MustExec("create database db_flashback")
+	tk.MustGetErrMsg("flashback schema db_flashback", infoschema.ErrDatabaseExists.GenWithStackByArgs("db_flashback").Error())
+
+	//  Test for flashback schema.
+	tk.MustExec("drop database if exists test1")
+	tk.MustExec("create database test1")
+	tk.MustExec("use test1")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("insert into t values (1),(2),(3)")
+	tk.MustExec("insert into t1 values (4),(5),(6)")
+	tk.MustExec("drop database test1")
+	tk.MustExec("flashback schema test1")
+	tk.MustExec("use test1")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("4", "5", "6"))
+	tk.MustExec("drop database test1")
+	tk.MustExec("flashback schema test1 to test2")
+	tk.MustExec("use test2")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("4", "5", "6"))
+
+	tk.MustExec("drop database if exists t_recover")
+	tk.MustExec("create database t_recover")
+	tk.MustExec("drop database t_recover")
+
+	// Recover without drop/create privilege.
+	tk.MustExec("CREATE USER 'testflashbackschema'@'localhost';")
+	newTk := testkit.NewTestKit(t, store)
+	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashbackschema", Hostname: "localhost"}, nil, nil, nil))
+	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
+
+	// Got drop privilege, still failed.
+	tk.MustExec("grant drop on *.* to 'testflashbackschema'@'localhost';")
+	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
+
+	// Got create and drop privilege, execute success.
+	tk.MustExec("grant create on *.* to 'testflashbackschema'@'localhost';")
+	newTk.MustExec("flashback schema t_recover")
+
+	tk.MustExec("drop user 'testflashbackschema'@'localhost';")
+}
+
 func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
 
@@ -520,7 +672,9 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
+	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	// Set GC enable.
 	require.NoError(t, gcutil.EnableGC(tk.Session()))
 
 	var wg util.WaitGroupWrapper
@@ -537,8 +691,34 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	wg.Wait()
 
 	tk.MustExec("drop database many_tables")
+
 	tk.MustExec("flashback database many_tables")
+
 	tk.MustQuery("select count(*) from many_tables.t_0_0").Check(testkit.Rows("0"))
+}
+
+// mockGC is used to make GC work in the test environment.
+func mockGC(tk *testkit.TestKit) (string, string, string, func()) {
+	originGC := ddlutil.IsEmulatorGCEnable()
+	resetGC := func() {
+		if originGC {
+			ddlutil.EmulatorGCEnable()
+		} else {
+			ddlutil.EmulatorGCDisable()
+		}
+	}
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddlutil.EmulatorGCDisable()
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(tikvutil.GCTimeFormat)
+	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(tikvutil.GCTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// clear GC variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
 }
 
 func TestFlashbackClusterWithManyDBs(t *testing.T) {
@@ -548,6 +728,7 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
+	// Set GC safe point.
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	backup := kv.TxnEntrySizeLimit.Load()
@@ -583,93 +764,6 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 		fmt.Sprintf("return(%v)", injectSafeTS))
 
+	// this test will fail before the fix, because the DDL job KV entry is too large.
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
-}
-
-func TestFlashbackSchema(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
-
-	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
-	tk.MustExec("create database if not exists test_flashback")
-	tk.MustExec("use test_flashback")
-	tk.MustExec("drop table if exists t_flashback")
-	tk.MustExec("create table t_flashback (a int)")
-
-	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
-	defer resetGC()
-
-	tk.MustGetErrMsg("flashback database db_not_exists", "can not get 'tikv_gc_safe_point'")
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-	require.NoError(t, gcutil.EnableGC(tk.Session()))
-
-	tk.MustExec("insert into t_flashback values (1),(2),(3)")
-	tk.MustExec("drop database test_flashback")
-
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `4*return()`)
-	tk.MustExec("flashback database test_flashback")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr")
-
-	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")
-	tk.MustGetErrMsg("flashback database test_flashback to test_flashback2", infoschema.ErrDatabaseExists.GenWithStack("Schema 'test_flashback' already been recover to 'test_flashback', can't be recover repeatedly").Error())
-
-	tk.MustExec("create database db_flashback")
-	tk.MustGetErrMsg("flashback schema db_flashback", infoschema.ErrDatabaseExists.GenWithStackByArgs("db_flashback").Error())
-
-	tk.MustExec("drop database if exists test1")
-	tk.MustExec("create database test1")
-	tk.MustExec("use test1")
-	tk.MustExec("create table t (a int)")
-	tk.MustExec("create table t1 (a int)")
-	tk.MustExec("insert into t values (1),(2),(3)")
-	tk.MustExec("insert into t1 values (4),(5),(6)")
-	tk.MustExec("drop database test1")
-	tk.MustExec("flashback schema test1")
-	tk.MustExec("use test1")
-	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
-	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("4", "5", "6"))
-	tk.MustExec("drop database test1")
-	tk.MustExec("flashback schema test1 to test2")
-	tk.MustExec("use test2")
-	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
-	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("4", "5", "6"))
-
-	tk.MustExec("drop database if exists t_recover")
-	tk.MustExec("create database t_recover")
-	tk.MustExec("drop database t_recover")
-
-	tk.MustExec("CREATE USER 'testflashbackschema'@'localhost';")
-	newTk := testkit.NewTestKit(t, store)
-	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashbackschema", Hostname: "localhost"}, nil, nil, nil))
-	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
-
-	tk.MustExec("grant drop on *.* to 'testflashbackschema'@'localhost';")
-	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
-
-	tk.MustExec("grant create on *.* to 'testflashbackschema'@'localhost';")
-	newTk.MustExec("flashback schema t_recover")
-
-	tk.MustExec("drop user 'testflashbackschema'@'localhost';")
-}
-
-func mockGC(tk *testkit.TestKit) (string, string, string, func()) {
-	originGC := ddlutil.IsEmulatorGCEnable()
-	resetGC := func() {
-		if originGC {
-			ddlutil.EmulatorGCEnable()
-		} else {
-			ddlutil.EmulatorGCDisable()
-		}
-	}
-
-	ddlutil.EmulatorGCDisable()
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(tikvutil.GCTimeFormat)
-	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(tikvutil.GCTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
-	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
 }
