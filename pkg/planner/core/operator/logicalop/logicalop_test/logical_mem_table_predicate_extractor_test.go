@@ -1741,6 +1741,118 @@ func TestTiDBMViews(t *testing.T) {
 	}
 }
 
+func TestTiDBMLogs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql                  string
+		tableSchema          set.StringSet
+		mlogName             set.StringSet
+		mlogID               set.StringSet
+		baseTableSchema      set.StringSet
+		baseTableName        set.StringSet
+		baseTableID          set.StringSet
+		tableSchemaPattern   []string
+		mlogNamePattern      []string
+		baseTableNamePattern []string
+		skipRequest          bool
+	}{
+		{
+			sql:         `select * from information_schema.tidb_mlogs where table_schema='TEST';`,
+			tableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:      `select * from information_schema.tidb_mlogs where mlog_name='$MLOG$T';`,
+			mlogName: set.NewStringSet("$mlog$t"),
+		},
+		{
+			sql:    `select * from information_schema.tidb_mlogs where mlog_id in (1, 2, 3);`,
+			mlogID: set.NewStringSet("1", "2", "3"),
+		},
+		{
+			sql:             `select * from information_schema.tidb_mlogs where base_table_schema='TEST';`,
+			baseTableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:           `select * from information_schema.tidb_mlogs where base_table_name='T';`,
+			baseTableName: set.NewStringSet("t"),
+		},
+		{
+			sql:         `select * from information_schema.tidb_mlogs where base_table_id in ('10', '11');`,
+			baseTableID: set.NewStringSet("10", "11"),
+		},
+		{
+			sql:             `select * from information_schema.tidb_mlogs where mlog_name like '$MLOG$%';`,
+			mlogNamePattern: []string{"$mlog$%"},
+		},
+		{
+			sql:                  `select * from information_schema.tidb_mlogs where base_table_name like 'T%';`,
+			baseTableNamePattern: []string{"t%"},
+		},
+		{
+			sql:         `select * from information_schema.tidb_mlogs where base_table_id='1' and base_table_id='2';`,
+			skipRequest: true,
+		},
+	}
+
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		mlogExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTiDBMLogsExtractor)
+		require.Equal(t, ca.skipRequest, mlogExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.tableSchema.Count(), mlogExtractor.ColPredicates["table_schema"].Count())
+		if ca.tableSchema.Count() > 0 && mlogExtractor.ColPredicates["table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, mlogExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mlogName.Count(), mlogExtractor.ColPredicates["mlog_name"].Count())
+		if ca.mlogName.Count() > 0 && mlogExtractor.ColPredicates["mlog_name"].Count() > 0 {
+			require.EqualValues(t, ca.mlogName, mlogExtractor.ColPredicates["mlog_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mlogID.Count(), mlogExtractor.ColPredicates["mlog_id"].Count())
+		if ca.mlogID.Count() > 0 && mlogExtractor.ColPredicates["mlog_id"].Count() > 0 {
+			require.EqualValues(t, ca.mlogID, mlogExtractor.ColPredicates["mlog_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.baseTableSchema.Count(), mlogExtractor.ColPredicates["base_table_schema"].Count())
+		if ca.baseTableSchema.Count() > 0 && mlogExtractor.ColPredicates["base_table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.baseTableSchema, mlogExtractor.ColPredicates["base_table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.baseTableName.Count(), mlogExtractor.ColPredicates["base_table_name"].Count())
+		if ca.baseTableName.Count() > 0 && mlogExtractor.ColPredicates["base_table_name"].Count() > 0 {
+			require.EqualValues(t, ca.baseTableName, mlogExtractor.ColPredicates["base_table_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.baseTableID.Count(), mlogExtractor.ColPredicates["base_table_id"].Count())
+		if ca.baseTableID.Count() > 0 && mlogExtractor.ColPredicates["base_table_id"].Count() > 0 {
+			require.EqualValues(t, ca.baseTableID, mlogExtractor.ColPredicates["base_table_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.tableSchemaPattern), len(mlogExtractor.LikePatterns["table_schema"]))
+		if len(ca.tableSchemaPattern) > 0 && len(mlogExtractor.LikePatterns["table_schema"]) > 0 {
+			require.EqualValues(t, ca.tableSchemaPattern, mlogExtractor.LikePatterns["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.mlogNamePattern), len(mlogExtractor.LikePatterns["mlog_name"]))
+		if len(ca.mlogNamePattern) > 0 && len(mlogExtractor.LikePatterns["mlog_name"]) > 0 {
+			require.EqualValues(t, ca.mlogNamePattern, mlogExtractor.LikePatterns["mlog_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.baseTableNamePattern), len(mlogExtractor.LikePatterns["base_table_name"]))
+		if len(ca.baseTableNamePattern) > 0 && len(mlogExtractor.LikePatterns["base_table_name"]) > 0 {
+			require.EqualValues(t, ca.baseTableNamePattern, mlogExtractor.LikePatterns["base_table_name"], "SQL: %v", ca.sql)
+		}
+	}
+}
+
 func TestTikvRegionStatusExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

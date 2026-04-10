@@ -381,6 +381,23 @@ func TestInformationSchemaTiDBMViews(t *testing.T) {
 		Check(testkit.Rows("1"))
 }
 
+func TestInformationSchemaTiDBMLogs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("create materialized view log on t (a, b) purge start with now() next date_add(now(), interval 1 hour)")
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	mlogID := baseTable.Meta().MaterializedViewBase.MLogID
+	baseID := baseTable.Meta().ID
+
+	tk.MustQuery("select table_catalog, table_schema, mlog_id, mlog_name, mlog_columns, base_table_catalog, base_table_schema, base_table_id, base_table_name, purge_method, purge_start, purge_next from information_schema.tidb_mlogs where table_schema = 'test' and mlog_name = '$mlog$t'").
+		Check(testkit.Rows(fmt.Sprintf("def test %d $mlog$t a,b def test %d t DEFERRED NOW() DATE_ADD(NOW(), INTERVAL 1 HOUR)", mlogID, baseID)))
+}
+
 func TestCreateMaterializedViewLogColumnKeyFlag(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -118,6 +118,21 @@ func newMViewTableInfo(id int64, name string, updateTS uint64) *model.TableInfo 
 	}
 }
 
+func newMLogTableInfo(id int64, name string, baseTableID int64) *model.TableInfo {
+	return &model.TableInfo{
+		ID:    id,
+		Name:  pmodel.NewCIStr(name),
+		State: model.StatePublic,
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID:    baseTableID,
+			Columns:        []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+			PurgeMethod:    "DEFERRED",
+			PurgeStartWith: "CURRENT_TIMESTAMP",
+			PurgeNext:      "CURRENT_TIMESTAMP + INTERVAL 1 HOUR",
+		},
+	}
+}
+
 func TestSetDataFromCheckConstraints(t *testing.T) {
 	tblInfos := []*model.TableInfo{
 		{
@@ -374,5 +389,186 @@ func TestSetDataFromTiDBMViews(t *testing.T) {
 			types.NewTime(types.FromGoTime(model.TSConvert2Time(updateTS).In(loc)), mysql.TypeDatetime, types.DefaultFsp),
 			mt.rows[0][6].GetMysqlTime(),
 		)
+	})
+}
+
+func TestSetDataFromTiDBMLogs(t *testing.T) {
+	t.Run("wrong extractor type", func(t *testing.T) {
+		mt := memtableRetriever{
+			extractor: &plannercore.InfoSchemaTablesExtractor{},
+		}
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), defaultCtx())
+		require.ErrorContains(t, err, "wrong extractor type")
+	})
+
+	t.Run("skip request", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMLogsExtractor()
+		ex.SkipRequest = true
+		mt := memtableRetriever{extractor: ex}
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Nil(t, mt.rows)
+	})
+
+	t.Run("returns list schemas error", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMLogsExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			plannercore.MLogName: set.NewStringSet("$mlog$err"),
+		}
+		mt := memtableRetriever{
+			is: &tableByNameErrorInfoSchema{
+				InfoSchema: infoschema.MockInfoSchema(nil),
+				err:        errors.New("boom"),
+			},
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mlog_columns"),
+			},
+		}
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), defaultCtx())
+		require.ErrorContains(t, err, "boom")
+	})
+
+	t.Run("columns are eligible", func(t *testing.T) {
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				{ID: 1, Name: pmodel.NewCIStr("base"), State: model.StatePublic},
+				newMLogTableInfo(2, "$mlog$deny", 1),
+				newMLogTableInfo(3, "$mlog$keep", 1),
+			}),
+			extractor: plannercore.NewInfoSchemaTiDBMLogsExtractor(),
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mlog_name"),
+				newColumnInfo("base_table_name"),
+				newColumnInfo("mlog_columns"),
+			},
+		}
+
+		sctx := defaultCtx()
+		pm := &stubPrivilegeManager{
+			allow: func(db, table string) bool {
+				return table != "$mlog$deny"
+			},
+		}
+		privilege.BindPrivilegeManager(sctx, pm)
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), sctx)
+		require.NoError(t, err)
+		require.ElementsMatch(t, []string{"test.$mlog$deny", "test.$mlog$keep"}, pm.calls)
+		require.Len(t, mt.rows, 1)
+
+		row := mt.rows[0]
+		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[0])
+		require.Equal(t, types.NewStringDatum("test"), row[1])
+		require.Equal(t, types.NewIntDatum(3), row[2])
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), row[3])
+		require.Equal(t, types.NewStringDatum("a,b"), row[4])
+		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[5])
+		require.Equal(t, types.NewStringDatum("test"), row[6])
+		require.Equal(t, types.NewStringDatum("1"), row[7])
+		require.Equal(t, types.NewStringDatum("base"), row[8])
+		require.Equal(t, types.NewStringDatum("DEFERRED"), row[9])
+		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP"), row[10])
+		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP + INTERVAL 1 HOUR"), row[11])
+	})
+
+	t.Run("uses base predicates only", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMLogsExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			plannercore.BaseTableName: set.NewStringSet("base_keep"),
+		}
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				{ID: 1, Name: pmodel.NewCIStr("base_drop"), State: model.StatePublic},
+				{ID: 2, Name: pmodel.NewCIStr("base_keep"), State: model.StatePublic},
+				newMLogTableInfo(3, "$mlog$drop", 1),
+				newMLogTableInfo(4, "$mlog$keep", 2),
+			}),
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mlog_name"),
+			},
+		}
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][3])
+	})
+
+	t.Run("uses mlog predicates only", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMLogsExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			plannercore.MLogName: set.NewStringSet("$mlog$keep"),
+		}
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				{ID: 1, Name: pmodel.NewCIStr("base_drop"), State: model.StatePublic},
+				{ID: 2, Name: pmodel.NewCIStr("base_keep"), State: model.StatePublic},
+				newMLogTableInfo(3, "$mlog$drop", 1),
+				newMLogTableInfo(4, "$mlog$keep", 2),
+			}),
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mlog_name"),
+			},
+		}
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][3])
+		require.Equal(t, types.NewStringDatum("base_keep"), mt.rows[0][8])
+	})
+
+	t.Run("uses mlog and base predicates together", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMLogsExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			plannercore.MLogID:        set.NewStringSet("3", "4"),
+			plannercore.BaseTableName: set.NewStringSet("base_keep"),
+		}
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				{ID: 1, Name: pmodel.NewCIStr("base_drop"), State: model.StatePublic},
+				{ID: 2, Name: pmodel.NewCIStr("base_keep"), State: model.StatePublic},
+				newMLogTableInfo(3, "$mlog$keep1", 1),
+				newMLogTableInfo(4, "$mlog$keep2", 2),
+			}),
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mlog_name"),
+			},
+		}
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum("$mlog$keep2"), mt.rows[0][3])
+		require.Equal(t, types.NewStringDatum("base_keep"), mt.rows[0][8])
+	})
+
+	t.Run("predicates are not eligible", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBMLogsExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			"purge_next": set.NewStringSet("ignored"),
+		}
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				{ID: 1, Name: pmodel.NewCIStr("base"), State: model.StatePublic},
+				newMLogTableInfo(2, "$mlog$keep", 1),
+			}),
+			extractor: ex,
+			columns: []*model.ColumnInfo{
+				newColumnInfo("mlog_name"),
+			},
+		}
+
+		err := mt.setDataFromTiDBMLogs(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum("CURRENT_TIMESTAMP + INTERVAL 1 HOUR"), mt.rows[0][11])
 	})
 }
