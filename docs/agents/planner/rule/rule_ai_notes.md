@@ -109,3 +109,27 @@ Reusable lessons:
   - `HandleCols` / `UnMutableHandleCols` for stable handle identity,
   - `_tidb_rowid` only for tables that truly need extra handle.
 - If two index-merge construction paths both touch handle columns, patch them together. Fixing only the table-scan side or only the partial-index side usually leaves a second latent failure path behind.
+
+## 2026-04-08 - Outer join elimination can treat window top1 as unique (PR #67519)
+
+Background:
+- A planner change extends outer join elimination so the inner side can be treated as unique when it is a `Selection` over a `LogicalWindow` computing `row_number()`.
+
+Key takeaways:
+- The uniqueness proof is shape-sensitive, not a general window-property deduction.
+- The current rule only accepts:
+  - exactly one window function and it is `row_number()`,
+  - a `ROWS BETWEEN CURRENT ROW AND CURRENT ROW` frame,
+  - a selection predicate proving the window result column has upper bound `1`,
+  - partition-by columns fully covered by the inner join keys.
+- `hasRowNumberUpperBoundOne` intentionally covers only simple patterns:
+  - `rn = 1` via `isColEqConst`,
+  - simple `<` / `<=` upper bounds recognized by `expression.FindUpperBound`.
+- More complex forms such as `BETWEEN`, `IN (1)`, or compound rewrites are intentionally left out until there is a concrete need and proof they are normalized reliably before join elimination.
+
+Implementation choice:
+- Keep the helper local to `rule_join_elimination.go` and document the uniqueness argument directly at the helper boundary.
+- Prefer narrow syntactic recognition over broader but fragile expression reasoning, because a false positive here would make outer join elimination unsound.
+
+Review note:
+- Reviewers explicitly asked for comments on both the window-top1 uniqueness helper and the row-number upper-bound matcher, because the correctness argument is not obvious from the function names alone.
