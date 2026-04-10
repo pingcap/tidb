@@ -126,6 +126,7 @@ import (
 	hintStraightJoin          "STRAIGHT_JOIN"
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
+	hintJoinToApply           "JOIN_TO_APPLY"
 	hintNoDecorrelate         "NO_DECORRELATE"
 
 	/* Other keywords */
@@ -705,6 +706,7 @@ NullaryHintName:
 |	"IGNORE_PLAN_CACHE"
 |	"STRAIGHT_JOIN"
 |	"SEMI_JOIN_REWRITE"
+|	"JOIN_TO_APPLY"
 |	"NO_DECORRELATE"
 
 HintQueryType:
@@ -791,6 +793,7 @@ Identifier:
 |	"STRAIGHT_JOIN"
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
+|	"JOIN_TO_APPLY"
 |	"NO_DECORRELATE"
 /* other keywords */
 |	"OLAP"

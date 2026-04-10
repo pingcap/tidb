@@ -1923,7 +1923,7 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 			switch tableHint.HintName.L {
 			case hint.HintMemoryQuota, hint.HintUseToja, hint.HintNoIndexMerge,
 				hint.HintMaxExecutionTime, hint.HintIgnoreIndex, hint.HintReadFromStorage,
-				hint.HintMerge, hint.HintSemiJoinRewrite, hint.HintNoDecorrelate:
+				hint.HintMerge, hint.HintSemiJoinRewrite, hint.HintJoinToApply, hint.HintNoDecorrelate:
 				hints = append(hints, tableHint)
 			}
 		}

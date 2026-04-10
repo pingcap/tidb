@@ -117,6 +117,8 @@ const (
 	HintMerge = "merge"
 	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
 	HintSemiJoinRewrite = "semi_join_rewrite"
+	// HintJoinToApply is a hint to enable the JoinToApply rewrite for the current statement.
+	HintJoinToApply = "join_to_apply"
 	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
 	HintNoDecorrelate = "no_decorrelate"
 
@@ -217,6 +219,7 @@ type StmtHints struct {
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
 	StraightJoinOrder       bool
+	EnableJoinToApply       bool
 	// EnableCascadesPlanner is use cascades planner for a single query only.
 	EnableCascadesPlanner bool
 	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
@@ -269,6 +272,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
 		NoIndexMergeHint:               sh.NoIndexMergeHint,
 		StraightJoinOrder:              sh.StraightJoinOrder,
+		EnableJoinToApply:              sh.EnableJoinToApply,
 		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
@@ -308,7 +312,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, joinToApplyHintCnt, resourceGroupHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -340,6 +344,9 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 		case "straight_join":
 			hintOffs[hint.HintName.L] = i
 			straightJoinHintCnt++
+		case HintJoinToApply:
+			hintOffs[hint.HintName.L] = i
+			joinToApplyHintCnt++
 		case HintWriteSlowLog:
 			stmtHints.WriteSlowLog = true
 		case "hypo_index":
@@ -464,6 +471,14 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 		}
 		stmtHints.StraightJoinOrder = true
 	}
+	// Handle JOIN_TO_APPLY
+	if joinToApplyHintCnt != 0 {
+		if joinToApplyHintCnt > 1 {
+			warn := errors.NewNoStackError("JOIN_TO_APPLY() is defined more than once, only the last definition takes effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.EnableJoinToApply = true
+	}
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {
 		if readReplicaHintCnt > 1 {
@@ -520,7 +535,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 // isStmtHint checks whether this hint is a statement-level hint.
 func isStmtHint(h *ast.TableOptimizerHint) bool {
 	switch h.HintName.L {
-	case "max_execution_time", "memory_quota", "resource_group":
+	case "max_execution_time", "memory_quota", "resource_group", HintJoinToApply:
 		return true
 	default:
 		return false

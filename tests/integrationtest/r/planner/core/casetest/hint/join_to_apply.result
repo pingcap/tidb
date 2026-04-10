@@ -1,0 +1,261 @@
+set tidb_cost_model_version=2;
+drop table if exists jt_outer, jt_inner, jt_outer_multi, jt_inner_multi;
+create table jt_outer(a int, b int);
+create table jt_inner(k int, ts int, v int, index idx_k_ts(k, ts));
+create table jt_outer_multi(a int, b int);
+create table jt_inner_multi(a int, b int, ts int, v int, index idx_ab_ts(a, b, ts));
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+select i.k as fk, i.v,
+row_number() over (partition by i.k order by i.ts desc) as rn
+from jt_inner i use index(idx_k_ts)
+) f on o.a = f.fk and f.rn = 1;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__casetest__hint__join_to_apply.jt_outer.a, planner__core__casetest__hint__join_to_apply.jt_inner.v
+└─Apply	10000.00	root		CARTESIAN left outer join
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+  └─Selection(Probe)	80000.00	root		eq(Column#9, 1)
+    └─Shuffle	100000.00	root		execution info: concurrency:5, data sources:[IndexLookUp]
+      └─Window	100000.00	root		row_number()->Column#9 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner.k order by planner__core__casetest__hint__join_to_apply.jt_inner.ts desc rows between current row and current row)
+        └─Sort	100000.00	root		planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_inner.ts:desc
+          └─ShuffleReceiver	10.00	root		
+            └─IndexLookUp	100000.00	root		
+              ├─IndexRangeScan(Build)	100000.00	cop[tikv]	table:i, index:idx_k_ts(k, ts)	range: decided by [eq(planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_outer.a)], keep order:false, stats:pseudo
+              └─TableRowIDScan(Probe)	100000.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+explain format = 'brief'
+select o.a, f.v
+from jt_outer o
+left join (
+select i.k as fk, i.v,
+row_number() over (partition by i.k order by i.ts desc) as rn
+from jt_inner i use index(idx_k_ts)
+) f on o.a = f.fk and f.rn = 1;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__hint__join_to_apply.jt_outer.a, planner__core__casetest__hint__join_to_apply.jt_inner.k)]
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+└─Selection(Probe)	7992.00	root		eq(Column#9, 1)
+  └─Shuffle	9990.00	root		execution info: concurrency:5, data sources:[IndexLookUp]
+    └─Window	9990.00	root		row_number()->Column#9 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner.k order by planner__core__casetest__hint__join_to_apply.jt_inner.ts desc rows between current row and current row)
+      └─Sort	9990.00	root		planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_inner.ts:desc
+        └─ShuffleReceiver	9990.00	root		
+          └─IndexLookUp	9990.00	root		
+            ├─IndexFullScan(Build)	9990.00	cop[tikv]	table:i, index:idx_k_ts(k, ts)	keep order:false, stats:pseudo
+            └─TableRowIDScan(Probe)	9990.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+select i.k as fk, i.v,
+row_number() over (partition by i.k order by i.ts desc) as rn
+from jt_inner i use index(idx_k_ts)
+) f on o.a = f.fk and f.rn <= 2 and f.v > 0;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__casetest__hint__join_to_apply.jt_outer.a, planner__core__casetest__hint__join_to_apply.jt_inner.v
+└─Apply	10000.00	root		CARTESIAN left outer join
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+  └─Selection(Probe)	80000.00	root		gt(planner__core__casetest__hint__join_to_apply.jt_inner.v, 0), le(Column#9, 2)
+    └─Shuffle	100000.00	root		execution info: concurrency:5, data sources:[IndexLookUp]
+      └─Window	100000.00	root		row_number()->Column#9 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner.k order by planner__core__casetest__hint__join_to_apply.jt_inner.ts desc rows between current row and current row)
+        └─Sort	100000.00	root		planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_inner.ts:desc
+          └─ShuffleReceiver	10.00	root		
+            └─IndexLookUp	100000.00	root		
+              ├─IndexRangeScan(Build)	100000.00	cop[tikv]	table:i, index:idx_k_ts(k, ts)	range: decided by [eq(planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_outer.a)], keep order:false, stats:pseudo
+              └─TableRowIDScan(Probe)	100000.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+explain format = 'brief'
+select o.a, f.v
+from jt_outer o
+left join (
+select i.k as fk, i.v,
+row_number() over (partition by i.k order by i.ts desc) as rn
+from jt_inner i use index(idx_k_ts)
+) f on o.a = f.fk and f.rn <= 2 and f.v > 0;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__hint__join_to_apply.jt_outer.a, planner__core__casetest__hint__join_to_apply.jt_inner.k)]
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+└─Selection(Probe)	7992.00	root		gt(planner__core__casetest__hint__join_to_apply.jt_inner.v, 0), le(Column#9, 2)
+  └─Shuffle	9990.00	root		execution info: concurrency:5, data sources:[IndexLookUp]
+    └─Window	9990.00	root		row_number()->Column#9 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner.k order by planner__core__casetest__hint__join_to_apply.jt_inner.ts desc rows between current row and current row)
+      └─Sort	9990.00	root		planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_inner.ts:desc
+        └─ShuffleReceiver	9990.00	root		
+          └─IndexLookUp	9990.00	root		
+            ├─IndexFullScan(Build)	9990.00	cop[tikv]	table:i, index:idx_k_ts(k, ts)	keep order:false, stats:pseudo
+            └─TableRowIDScan(Probe)	9990.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+select i.k as fk, i.v,
+row_number() over (partition by i.k order by i.ts desc) as rn
+from jt_inner i use index(idx_k_ts)
+where i.v > 0
+) f on o.a = f.fk and f.rn = 1;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__casetest__hint__join_to_apply.jt_outer.a, planner__core__casetest__hint__join_to_apply.jt_inner.v
+└─Apply	10000.00	root		CARTESIAN left outer join
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+  └─Selection(Probe)	26666.67	root		eq(Column#9, 1)
+    └─Shuffle	33333.33	root		execution info: concurrency:2, data sources:[IndexLookUp]
+      └─Window	33333.33	root		row_number()->Column#9 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner.k order by planner__core__casetest__hint__join_to_apply.jt_inner.ts desc rows between current row and current row)
+        └─Sort	33333.33	root		planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_inner.ts:desc
+          └─ShuffleReceiver	3.33	root		
+            └─IndexLookUp	33333.33	root		
+              ├─IndexRangeScan(Build)	100000.00	cop[tikv]	table:i, index:idx_k_ts(k, ts)	range: decided by [eq(planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_outer.a)], keep order:false, stats:pseudo
+              └─Selection(Probe)	33333.33	cop[tikv]		gt(planner__core__casetest__hint__join_to_apply.jt_inner.v, 0)
+                └─TableRowIDScan	100000.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+explain format = 'brief'
+select o.a, f.v
+from jt_outer o
+left join (
+select i.k as fk, i.v,
+row_number() over (partition by i.k order by i.ts desc) as rn
+from jt_inner i use index(idx_k_ts)
+where i.v > 0
+) f on o.a = f.fk and f.rn = 1;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__hint__join_to_apply.jt_outer.a, planner__core__casetest__hint__join_to_apply.jt_inner.k)]
+├─Selection(Build)	2664.00	root		eq(Column#9, 1)
+│ └─Shuffle	3330.00	root		execution info: concurrency:5, data sources:[IndexLookUp]
+│   └─Window	3330.00	root		row_number()->Column#9 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner.k order by planner__core__casetest__hint__join_to_apply.jt_inner.ts desc rows between current row and current row)
+│     └─Sort	3330.00	root		planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_inner.ts:desc
+│       └─ShuffleReceiver	3330.00	root		
+│         └─IndexLookUp	3330.00	root		
+│           ├─IndexFullScan(Build)	9990.00	cop[tikv]	table:i, index:idx_k_ts(k, ts)	keep order:false, stats:pseudo
+│           └─Selection(Probe)	3330.00	cop[tikv]		gt(planner__core__casetest__hint__join_to_apply.jt_inner.v, 0)
+│             └─TableRowIDScan	9990.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+select i.k as fk, i.v,
+row_number() over (partition by i.k order by i.ts desc) as rn
+from jt_inner i
+) f on o.b = f.v and f.rn = 1;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__hint__join_to_apply.jt_outer.b, planner__core__casetest__hint__join_to_apply.jt_inner.v)]
+├─Selection(Build)	8000.00	root		eq(Column#9, 1), not(isnull(planner__core__casetest__hint__join_to_apply.jt_inner.v))
+│ └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[TableReader]
+│   └─Window	10000.00	root		row_number()->Column#9 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner.k order by planner__core__casetest__hint__join_to_apply.jt_inner.ts desc rows between current row and current row)
+│     └─Sort	10000.00	root		planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_inner.ts:desc
+│       └─ShuffleReceiver	10000.00	root		
+│         └─TableReader	10000.00	root		data:TableFullScan
+│           └─TableFullScan	10000.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	JOIN_TO_APPLY() is inapplicable because no join key matches the window partition columns.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+select i.k as fk, i.v,
+row_number() over (partition by i.k order by i.ts desc) as rn
+from jt_inner i ignore index(idx_k_ts)
+) f on o.a = f.fk and f.rn = 1;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__hint__join_to_apply.jt_outer.a, planner__core__casetest__hint__join_to_apply.jt_inner.k)]
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+└─Selection(Probe)	7992.00	root		eq(Column#9, 1)
+  └─Shuffle	9990.00	root		execution info: concurrency:5, data sources:[TableReader]
+    └─Window	9990.00	root		row_number()->Column#9 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner.k order by planner__core__casetest__hint__join_to_apply.jt_inner.ts desc rows between current row and current row)
+      └─Sort	9990.00	root		planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_inner.ts:desc
+        └─ShuffleReceiver	9990.00	root		
+          └─TableReader	9990.00	root		data:Selection
+            └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__join_to_apply.jt_inner.k))
+              └─TableFullScan	10000.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	JOIN_TO_APPLY() is inapplicable because the inner datasource has no usable TiKV access path on the correlated key.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer_multi o
+left join (
+select i.a as fa, i.b as fb, i.v,
+row_number() over (partition by i.a, i.b order by i.ts desc) as rn
+from jt_inner_multi i use index(idx_ab_ts)
+) f on o.a = f.fa and f.rn = 1;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		planner__core__casetest__hint__join_to_apply.jt_outer_multi.a, planner__core__casetest__hint__join_to_apply.jt_inner_multi.v
+└─Apply	10000.00	root		CARTESIAN left outer join
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+  └─Selection(Probe)	80000.00	root		eq(Column#10, 1)
+    └─Shuffle	100000.00	root		execution info: concurrency:5, data sources:[IndexLookUp]
+      └─Window	100000.00	root		row_number()->Column#10 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner_multi.a, planner__core__casetest__hint__join_to_apply.jt_inner_multi.b order by planner__core__casetest__hint__join_to_apply.jt_inner_multi.ts desc rows between current row and current row)
+        └─Sort	100000.00	root		planner__core__casetest__hint__join_to_apply.jt_inner_multi.a, planner__core__casetest__hint__join_to_apply.jt_inner_multi.b, planner__core__casetest__hint__join_to_apply.jt_inner_multi.ts:desc
+          └─ShuffleReceiver	10.00	root		
+            └─IndexLookUp	100000.00	root		
+              ├─IndexRangeScan(Build)	100000.00	cop[tikv]	table:i, index:idx_ab_ts(a, b, ts)	range: decided by [eq(planner__core__casetest__hint__join_to_apply.jt_inner_multi.a, planner__core__casetest__hint__join_to_apply.jt_outer_multi.a)], keep order:false, stats:pseudo
+              └─TableRowIDScan(Probe)	100000.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+explain format = 'brief'
+select o.a, f.v
+from jt_outer_multi o
+left join (
+select i.a as fa, i.b as fb, i.v,
+row_number() over (partition by i.a, i.b order by i.ts desc) as rn
+from jt_inner_multi i use index(idx_ab_ts)
+) f on o.a = f.fa and f.rn = 1;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__hint__join_to_apply.jt_outer_multi.a, planner__core__casetest__hint__join_to_apply.jt_inner_multi.a)]
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+└─Selection(Probe)	7992.00	root		eq(Column#10, 1)
+  └─Shuffle	9990.00	root		execution info: concurrency:5, data sources:[IndexLookUp]
+    └─Window	9990.00	root		row_number()->Column#10 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner_multi.a, planner__core__casetest__hint__join_to_apply.jt_inner_multi.b order by planner__core__casetest__hint__join_to_apply.jt_inner_multi.ts desc rows between current row and current row)
+      └─Sort	9990.00	root		planner__core__casetest__hint__join_to_apply.jt_inner_multi.a, planner__core__casetest__hint__join_to_apply.jt_inner_multi.b, planner__core__casetest__hint__join_to_apply.jt_inner_multi.ts:desc
+        └─ShuffleReceiver	9990.00	root		
+          └─IndexLookUp	9990.00	root		
+            ├─IndexFullScan(Build)	9990.00	cop[tikv]	table:i, index:idx_ab_ts(a, b, ts)	keep order:false, stats:pseudo
+            └─TableRowIDScan(Probe)	9990.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.b, f.v
+from jt_outer_multi o
+left join (
+select i.a as fa, i.b as fb, i.v,
+row_number() over (partition by i.a, i.b order by i.ts desc) as rn
+from jt_inner_multi i use index(idx_ab_ts)
+) f on o.b = f.fb and f.rn = 1;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__hint__join_to_apply.jt_outer_multi.b, planner__core__casetest__hint__join_to_apply.jt_inner_multi.b)]
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+└─Selection(Probe)	7992.00	root		eq(Column#10, 1)
+  └─Shuffle	9990.00	root		execution info: concurrency:5, data sources:[IndexLookUp]
+    └─Window	9990.00	root		row_number()->Column#10 over(partition by planner__core__casetest__hint__join_to_apply.jt_inner_multi.a, planner__core__casetest__hint__join_to_apply.jt_inner_multi.b order by planner__core__casetest__hint__join_to_apply.jt_inner_multi.ts desc rows between current row and current row)
+      └─Sort	9990.00	root		planner__core__casetest__hint__join_to_apply.jt_inner_multi.a, planner__core__casetest__hint__join_to_apply.jt_inner_multi.b, planner__core__casetest__hint__join_to_apply.jt_inner_multi.ts:desc
+        └─ShuffleReceiver	9990.00	root		
+          └─IndexLookUp	9990.00	root		
+            ├─Selection(Build)	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__join_to_apply.jt_inner_multi.b))
+            │ └─IndexFullScan	10000.00	cop[tikv]	table:i, index:idx_ab_ts(a, b, ts)	keep order:false, stats:pseudo
+            └─TableRowIDScan(Probe)	9990.00	cop[tikv]	table:i	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	JOIN_TO_APPLY() is inapplicable because the inner datasource has no usable TiKV access path on the correlated key.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.mx
+from jt_outer o
+left join (
+select i.k as fk, max(i.v) as mx
+from jt_inner i use index(idx_k_ts)
+group by i.k
+) f on o.a = f.fk;
+id	estRows	task	access object	operator info
+IndexJoin	10000.00	root		left outer join, inner:HashAgg, outer key:planner__core__casetest__hint__join_to_apply.jt_outer.a, inner key:planner__core__casetest__hint__join_to_apply.jt_inner.k, equal cond:eq(planner__core__casetest__hint__join_to_apply.jt_outer.a, planner__core__casetest__hint__join_to_apply.jt_inner.k)
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:o	keep order:false, stats:pseudo
+└─HashAgg(Probe)	9990.00	root		group by:planner__core__casetest__hint__join_to_apply.jt_inner.k, funcs:max(Column#11)->Column#8, funcs:firstrow(planner__core__casetest__hint__join_to_apply.jt_inner.k)->planner__core__casetest__hint__join_to_apply.jt_inner.k
+  └─IndexLookUp	9990.00	root		
+    ├─Selection(Build)	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__join_to_apply.jt_inner.k))
+    │ └─IndexRangeScan	10000.00	cop[tikv]	table:i, index:idx_k_ts(k, ts)	range: decided by [eq(planner__core__casetest__hint__join_to_apply.jt_inner.k, planner__core__casetest__hint__join_to_apply.jt_outer.a)], keep order:false, stats:pseudo
+    └─HashAgg(Probe)	9990.00	cop[tikv]		group by:planner__core__casetest__hint__join_to_apply.jt_inner.k, funcs:max(planner__core__casetest__hint__join_to_apply.jt_inner.v)->Column#11
+      └─TableRowIDScan	9990.00	cop[tikv]	table:i	keep order:false, stats:pseudo

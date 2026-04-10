@@ -1,0 +1,128 @@
+# TestJoinToApplyHint
+set tidb_cost_model_version=2;
+drop table if exists jt_outer, jt_inner, jt_outer_multi, jt_inner_multi;
+create table jt_outer(a int, b int);
+create table jt_inner(k int, ts int, v int, index idx_k_ts(k, ts));
+create table jt_outer_multi(a int, b int);
+create table jt_inner_multi(a int, b int, ts int, v int, index idx_ab_ts(a, b, ts));
+
+# Eligible window shape: with hint rewrites to Apply; without hint stays as Join.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+	select i.k as fk, i.v,
+	       row_number() over (partition by i.k order by i.ts desc) as rn
+	from jt_inner i use index(idx_k_ts)
+) f on o.a = f.fk and f.rn = 1;
+
+explain format = 'brief'
+select o.a, f.v
+from jt_outer o
+left join (
+	select i.k as fk, i.v,
+	       row_number() over (partition by i.k order by i.ts desc) as rn
+	from jt_inner i use index(idx_k_ts)
+) f on o.a = f.fk and f.rn = 1;
+
+# The rewrite does not depend on rn = 1 specifically.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+	select i.k as fk, i.v,
+	       row_number() over (partition by i.k order by i.ts desc) as rn
+	from jt_inner i use index(idx_k_ts)
+) f on o.a = f.fk and f.rn <= 2 and f.v > 0;
+
+explain format = 'brief'
+select o.a, f.v
+from jt_outer o
+left join (
+	select i.k as fk, i.v,
+	       row_number() over (partition by i.k order by i.ts desc) as rn
+	from jt_inner i use index(idx_k_ts)
+) f on o.a = f.fk and f.rn <= 2 and f.v > 0;
+
+# Transparent operators below Window should not block the rewrite.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+	select i.k as fk, i.v,
+	       row_number() over (partition by i.k order by i.ts desc) as rn
+	from jt_inner i use index(idx_k_ts)
+	where i.v > 0
+) f on o.a = f.fk and f.rn = 1;
+
+explain format = 'brief'
+select o.a, f.v
+from jt_outer o
+left join (
+	select i.k as fk, i.v,
+	       row_number() over (partition by i.k order by i.ts desc) as rn
+	from jt_inner i use index(idx_k_ts)
+	where i.v > 0
+) f on o.a = f.fk and f.rn = 1;
+
+# Join key does not map to the partition columns, so rewrite is unsafe.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+	select i.k as fk, i.v,
+	       row_number() over (partition by i.k order by i.ts desc) as rn
+	from jt_inner i
+) f on o.b = f.v and f.rn = 1;
+show warnings;
+
+# Join key matches the partition column, but IGNORE INDEX removes the usable access path.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer o
+left join (
+	select i.k as fk, i.v,
+	       row_number() over (partition by i.k order by i.ts desc) as rn
+	from jt_inner i ignore index(idx_k_ts)
+) f on o.a = f.fk and f.rn = 1;
+show warnings;
+
+# Partial partition coverage is still safe when the correlated key hits a leading index prefix.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.v
+from jt_outer_multi o
+left join (
+	select i.a as fa, i.b as fb, i.v,
+	       row_number() over (partition by i.a, i.b order by i.ts desc) as rn
+	from jt_inner_multi i use index(idx_ab_ts)
+) f on o.a = f.fa and f.rn = 1;
+
+explain format = 'brief'
+select o.a, f.v
+from jt_outer_multi o
+left join (
+	select i.a as fa, i.b as fb, i.v,
+	       row_number() over (partition by i.a, i.b order by i.ts desc) as rn
+	from jt_inner_multi i use index(idx_ab_ts)
+) f on o.a = f.fa and f.rn = 1;
+
+# Safe on semantics, but b alone is not a usable leading access prefix for idx_ab_ts(a, b, ts).
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.b, f.v
+from jt_outer_multi o
+left join (
+	select i.a as fa, i.b as fb, i.v,
+	       row_number() over (partition by i.a, i.b order by i.ts desc) as rn
+	from jt_inner_multi i use index(idx_ab_ts)
+) f on o.b = f.fb and f.rn = 1;
+show warnings;
+
+# Aggregation is a future barrier type; Phase 1 should leave it unchanged.
+explain format = 'brief'
+select /*+ JOIN_TO_APPLY() */ o.a, f.mx
+from jt_outer o
+left join (
+	select i.k as fk, max(i.v) as mx
+	from jt_inner i use index(idx_k_ts)
+	group by i.k
+) f on o.a = f.fk;

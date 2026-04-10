@@ -484,6 +484,9 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	b.hintProcessor = processor
 	b.isForUpdateRead = sctx.GetSessionVars().IsPessimisticReadConsistency()
 	b.noDecorrelate = sctx.GetSessionVars().EnableNoDecorrelateInSelect
+	if sctx.GetSessionVars().StmtCtx.EnableJoinToApply {
+		b.optFlag |= rule.FlagJoinToApply
+	}
 	if savedBlockNames == nil {
 		return b, nil
 	}
