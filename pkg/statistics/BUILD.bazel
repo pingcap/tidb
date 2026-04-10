@@ -72,6 +72,7 @@ go_test(
         "bench_daily_test.go",
         "builder_test.go",
         "cmsketch_test.go",
+        "estimate_test.go",
         "fmsketch_test.go",
         "histogram_fuzz_test.go",
         "histogram_test.go",
@@ -87,7 +88,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 50,
+=======
+    shard_count = 44,
+>>>>>>> 8c843f63bfd (statistics: add global singleton estimation for sample-based NDV (#67593))
     deps = [
         "//pkg/config",
         "//pkg/meta/model",
