@@ -606,10 +606,11 @@ func convertMegaTasksToTasks(megaTasks []megaTask) []task {
 
 // cmdMegaList lists all mega tests
 func cmdMegaList(args ...string) bool {
-	// Build the mega test binary first
-	if err := buildMegaTestBinary(); err != nil {
-		log.Println("build mega test binary error", err)
-		return false
+	// Verify the mega binary exists (should be built by Makefile already)
+	workDir, _ := os.Getwd()
+	megaBinary = filepath.Join(workDir, "bazel-bin/pkg/testkit/mega/mega_test_/mega_test")
+	if _, err := os.Stat(megaBinary); err != nil {
+		log.Fatalf("mega test binary not found at %s — run 'make bazel-mega-binary' first", megaBinary)
 	}
 
 	tests, err := listMegaTests()

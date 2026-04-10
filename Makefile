@@ -206,7 +206,7 @@ ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(CLEAN_UT_BINARY)
 
 .PHONY: ut-mega
-ut-mega: tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Phase 2: mega integration tests)
+ut-mega: tools/bin/ut tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Phase 2: mega integration tests)
 	@echo "=== Enabling failpoints ==="
 	@tools/bin/failpoint-ctl enable
 	@echo "=== Updating BUILD.bazel files (gazelle) ==="
@@ -216,12 +216,15 @@ ut-mega: tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Ph
 		--define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false \
 		|| { $(MAKE) ut-mega-cleanup; exit 1; }
 	@echo "=== Phase 2: Building mega binary ==="
-	@bazel build //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false
+	@$(MAKE) bazel-mega-binary
 	@echo "=== Phase 2: Running mega tests ==="
-	@cd tools/check && go build -o ../../bin/ut ./... && cd ../..
-	@bin/ut --mega run \
+	@tools/bin/ut --mega run \
 		|| { $(MAKE) ut-mega-cleanup; exit 1; }
 	@$(MAKE) ut-mega-cleanup
+
+.PHONY: bazel-mega-binary
+bazel-mega-binary: ## Build the mega test binary (change this target to switch to go test -c)
+	bazel build //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false
 
 .PHONY: ut-mega-cleanup
 ut-mega-cleanup:
@@ -229,17 +232,17 @@ ut-mega-cleanup:
 	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
 
 .PHONY: ut-mega-test
-ut-mega-test: tools/bin/failpoint-ctl ## Run specific mega tests (usage: make ut-mega-test X=ddl/Options)
+ut-mega-test: tools/bin/ut tools/bin/failpoint-ctl ## Run specific mega tests (usage: make ut-mega-test X=ddl/Options)
 	@tools/bin/failpoint-ctl enable
 	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
-	@bazel build //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false
-	@cd tools/check && go build -o ../../bin/ut ./... && cd ../..
-	@bin/ut --mega run '$(X)' \
+	@$(MAKE) bazel-mega-binary
+	@tools/bin/ut --mega run '$(X)' \
 		; RET=$$?; $(MAKE) ut-mega-cleanup; exit $$RET
 
 .PHONY: ut-mega-list
-ut-mega-list: ## List all mega tests
-	bash scripts/mega_runner.sh -list
+ut-mega-list: tools/bin/ut ## List all mega tests
+	@$(MAKE) bazel-mega-binary
+	@tools/bin/ut --mega list
 
 .PHONY: gotest_in_verify_ci
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
