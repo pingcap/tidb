@@ -231,7 +231,7 @@ func buildAllForceMergeRanges(is infoschema.InfoSchema) (int64, []forceMergeRang
 }
 
 func forceMergeTableOccupiesKeyspace(tblInfo *model.TableInfo) bool {
-	return tblInfo != nil && tblInfo.IsBaseTable()
+	return tblInfo != nil && tblInfo.IsBaseTable() && tblInfo.TempTableType == model.TempTableNone
 }
 
 func collectForceMergeTableIDs(dst []int64, tableID int64, tblInfo *model.TableInfo, physicalTableIDs []int64) []int64 {

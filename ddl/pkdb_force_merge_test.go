@@ -138,6 +138,23 @@ func TestBuildAllForceMergeRangesTreatsSkippedSystemTablesAsOccupied(t *testing.
 	}, ranges)
 }
 
+func TestBuildAllForceMergeRangesIgnoresTemporaryTables(t *testing.T) {
+	tempTable := mockForceMergeTableInfo(5)
+	tempTable.TempTableType = model.TempTableGlobal
+	is := infoschema.MockInfoSchema([]*model.TableInfo{
+		mockForceMergeTableInfo(3),
+		tempTable,
+		mockForceMergeTableInfo(8),
+	})
+
+	maxTableID, ranges := buildAllForceMergeRanges(is)
+	require.Equal(t, int64(8), maxTableID)
+	require.Equal(t, []forceMergeRange{
+		{StartTableID: 1, EndTableID: 2},
+		{StartTableID: 4, EndTableID: 7},
+	}, ranges)
+}
+
 func TestBuildForceMergeRangesIncludesPartitionGlobalIndexRange(t *testing.T) {
 	currentTable := mockForceMergePartitionedTableWithGlobalIndex(20, 30, 31)
 	is := infoschema.MockInfoSchema([]*model.TableInfo{

@@ -111,7 +111,7 @@ func AddForceMergeRanges(ctx context.Context, ranges []ForceMergeKeyRange) error
 			return errors.Trace(err)
 		}
 		if respBody == nil {
-			err = fmt.Errorf("InfoSyncer returns error in AddForceMergeRanges")
+			err = fmt.Errorf("PD %s endpoint is unsupported or rejected by precondition", route)
 			logutil.BgLogger().Error("send force merge ranges batch to PD failed", forceMergeBatchLogFields(
 				batchNumber, totalBatches, batchRangeCount, totalRangeCount, zap.Error(err),
 			)...)
