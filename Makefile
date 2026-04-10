@@ -216,7 +216,7 @@ ut-mega: tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Ph
 		--define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false \
 		|| { $(MAKE) ut-mega-cleanup; exit 1; }
 	@echo "=== Phase 2: Running mega integration tests ==="
-	UNIT_TEST_TAGS=$(UNIT_TEST_TAGS) bash scripts/mega_runner.sh -timeout $(if $(filter long,$(T)),36000,3600) \
+	UNIT_TEST_TAGS=$(UNIT_TEST_TAGS) bash scripts/mega_runner.sh -timeout $(if $(filter long,$(T)),600,180) \
 		|| { $(MAKE) ut-mega-cleanup; exit 1; }
 	@$(MAKE) ut-mega-cleanup
 
