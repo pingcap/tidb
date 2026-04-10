@@ -30,9 +30,11 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"sort"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
@@ -77,6 +79,28 @@ func createBasicHTTPHandlerTestSuite() *basicHTTPHandlerTestSuite {
 	ts := &basicHTTPHandlerTestSuite{}
 	ts.testServerClient = newTestServerClient()
 	return ts
+}
+
+func getMergeEmptyRegionsHandler(t *testing.T, ts *basicHTTPHandlerTestSuite) *mergeEmptyRegionsHandler {
+	t.Helper()
+
+	corsHandler, ok := ts.server.statusServer.Handler.(CorsHandler)
+	require.True(t, ok)
+
+	serveMux, ok := corsHandler.handler.(*http.ServeMux)
+	require.True(t, ok)
+
+	req := httptest.NewRequest(http.MethodPost, "/merge-empty-regions", nil)
+	handler, _ := serveMux.Handler(req)
+	router, ok := handler.(*mux.Router)
+	require.True(t, ok)
+
+	var match mux.RouteMatch
+	require.True(t, router.Match(req, &match))
+
+	mergeHandler, ok := match.Handler.(*mergeEmptyRegionsHandler)
+	require.True(t, ok)
+	return mergeHandler
 }
 
 func TestRegionIndexRange(t *testing.T) {
@@ -1020,13 +1044,6 @@ func TestAllHistory(t *testing.T) {
 }
 
 func TestDDLForceMergeAPI(t *testing.T) {
-	originalRunMergeEmptyRegionsTask := runMergeEmptyRegionsTask
-	runMergeEmptyRegionsTask = func(task func()) {
-		task()
-	}
-	defer func() {
-		runMergeEmptyRegionsTask = originalRunMergeEmptyRegionsTask
-	}()
 	oldValue := variable.EnableDropTableForceMerge.Load()
 	variable.EnableDropTableForceMerge.Store(true)
 	defer variable.EnableDropTableForceMerge.Store(oldValue)
@@ -1034,6 +1051,7 @@ func TestDDLForceMergeAPI(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
+	handler := getMergeEmptyRegionsHandler(t, ts)
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	require.NoError(t, err)
@@ -1087,6 +1105,9 @@ partition by range (a)
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
 	require.Equal(t, maxTableID, result.MaxTableID)
 	require.Equal(t, expectedRangeCount, result.RangeCount)
+	require.Eventually(t, func() bool {
+		return atomic.LoadUint32(&handler.running) == 0
+	}, time.Second, 10*time.Millisecond)
 }
 
 func filterSpaces(bs []byte) []byte {

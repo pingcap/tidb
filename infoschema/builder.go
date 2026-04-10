@@ -1081,7 +1081,6 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error)) *B
 			policyMap:             map[string]*model.PolicyInfo{},
 			ruleBundleMap:         map[int64]*placement.Bundle{},
 			sortedTablesBuckets:   make([]sortedTables, bucketCount),
-			partitionTables:       map[int64]partitionTableEntry{},
 			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
 		},
 		dirtyDB: make(map[string]bool),

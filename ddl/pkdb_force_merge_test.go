@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -77,6 +77,21 @@ func TestBuildForceMergeRangesIgnoresCurrentTableIDs(t *testing.T) {
 	require.Equal(t, []forceMergeRange{
 		{StartTableID: 16, EndTableID: 17},
 		{StartTableID: 16, EndTableID: 18},
+	}, ranges)
+}
+
+func TestBuildAllForceMergeRangesUsesSortedPhysicalIDs(t *testing.T) {
+	is := infoschema.MockInfoSchema([]*model.TableInfo{
+		mockForceMergeTableInfo(3),
+		mockForceMergeTableInfo(6, 7, 10),
+	})
+
+	maxTableID, ranges := buildAllForceMergeRanges(is)
+	require.Equal(t, int64(10), maxTableID)
+	require.Equal(t, []forceMergeRange{
+		{StartTableID: 1, EndTableID: 2},
+		{StartTableID: 4, EndTableID: 6},
+		{StartTableID: 8, EndTableID: 9},
 	}, ranges)
 }
 

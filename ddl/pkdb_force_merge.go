@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
-const forceMergeLookbackTableIDs int64 = 99
+const forceMergeLookbackTableIDs int64 = 100
 
 type forceMergeRange struct {
 	StartTableID int64 `json:"start_table_id"`
@@ -85,29 +85,7 @@ func buildForceMergeRanges(
 		return nil
 	}
 
-	candidateTableIDs := make(map[int64]struct{})
-	ignoredTableIDs := make(map[int64]struct{}, len(physicalTableIDs)+1)
-	ignoredTableIDs[tableID] = struct{}{}
-	for _, physicalID := range physicalTableIDs {
-		ignoredTableIDs[physicalID] = struct{}{}
-		if physicalID <= 1 {
-			continue
-		}
-		lowerBound := forceMergeLowerBound(physicalID)
-		for tableID := physicalID - 1; tableID >= lowerBound; tableID-- {
-			candidateTableIDs[tableID] = struct{}{}
-		}
-	}
-
-	existingTableIDs := make(map[int64]struct{}, len(candidateTableIDs))
-	for candidateTableID := range candidateTableIDs {
-		if _, ok := ignoredTableIDs[candidateTableID]; ok {
-			continue
-		}
-		if tableIDExistsInInfoSchema(is, candidateTableID) {
-			existingTableIDs[candidateTableID] = struct{}{}
-		}
-	}
+	existingTableIDs := findExistingCandidateTableIDs(is, tableID, physicalTableIDs)
 
 	ranges := make([]forceMergeRange, 0, len(physicalTableIDs))
 	for _, physicalID := range physicalTableIDs {
@@ -133,6 +111,37 @@ func shouldSkipForceMerge(schemaName string, tblInfo *model.TableInfo) bool {
 		return true
 	}
 	return tblInfo.ID&autoid.SystemSchemaIDFlag != 0
+}
+
+func findExistingCandidateTableIDs(is infoschema.InfoSchema, tableID int64, physicalTableIDs []int64) map[int64]struct{} {
+	ignoredTableIDs := make(map[int64]struct{}, len(physicalTableIDs)+1)
+	ignoredTableIDs[tableID] = struct{}{}
+	for _, physicalID := range physicalTableIDs {
+		ignoredTableIDs[physicalID] = struct{}{}
+	}
+
+	checkedTableIDs := make(map[int64]struct{})
+	existingTableIDs := make(map[int64]struct{})
+	for _, physicalID := range physicalTableIDs {
+		if physicalID <= 1 {
+			continue
+		}
+
+		lowerBound := forceMergeLowerBound(physicalID)
+		for candidateTableID := physicalID - 1; candidateTableID >= lowerBound; candidateTableID-- {
+			if _, ok := ignoredTableIDs[candidateTableID]; ok {
+				continue
+			}
+			if _, ok := checkedTableIDs[candidateTableID]; ok {
+				continue
+			}
+			checkedTableIDs[candidateTableID] = struct{}{}
+			if tableIDExistsInInfoSchema(is, candidateTableID) {
+				existingTableIDs[candidateTableID] = struct{}{}
+			}
+		}
+	}
+	return existingTableIDs
 }
 
 func tableIDExistsInInfoSchema(is infoschema.InfoSchema, tableID int64) bool {
@@ -166,8 +175,7 @@ func buildAllForceMergeRanges(is infoschema.InfoSchema) (int64, []forceMergeRang
 		return 0, nil
 	}
 
-	existingTableIDs := make(map[int64]struct{})
-	maxTableID := int64(0)
+	existingTableIDs := make([]int64, 0)
 	for _, dbInfo := range is.AllSchemas() {
 		schemaName := dbInfo.Name.L
 		for _, tbl := range is.SchemaTables(dbInfo.Name) {
@@ -175,60 +183,52 @@ func buildAllForceMergeRanges(is infoschema.InfoSchema) (int64, []forceMergeRang
 			if shouldSkipForceMerge(schemaName, tblInfo) {
 				continue
 			}
-
-			// Force merge works on physical table ranges, so partitioned tables
-			// contribute their partition IDs instead of the logical table ID.
-			if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-				for _, def := range pi.Definitions {
-					if def.ID <= 0 {
-						continue
-					}
-					existingTableIDs[def.ID] = struct{}{}
-					if def.ID > maxTableID {
-						maxTableID = def.ID
-					}
-				}
-				continue
-			}
-
-			if tblInfo.ID <= 0 {
-				continue
-			}
-			existingTableIDs[tblInfo.ID] = struct{}{}
-			if tblInfo.ID > maxTableID {
-				maxTableID = tblInfo.ID
-			}
+			existingTableIDs = appendPhysicalTableIDs(existingTableIDs, tblInfo)
 		}
 	}
 
-	if maxTableID == 0 {
+	if len(existingTableIDs) == 0 {
 		return 0, nil
 	}
 
-	ranges := make([]forceMergeRange, 0)
-	rangeStart := int64(0)
-	for tableID := int64(1); tableID <= maxTableID; tableID++ {
-		if _, ok := existingTableIDs[tableID]; ok {
-			if rangeStart > 0 {
-				ranges = append(ranges, forceMergeRange{
-					StartTableID: rangeStart,
-					EndTableID:   tableID - 1,
-				})
-				rangeStart = 0
-			}
+	sort.Slice(existingTableIDs, func(i, j int) bool {
+		return existingTableIDs[i] < existingTableIDs[j]
+	})
+	maxTableID := existingTableIDs[len(existingTableIDs)-1]
+
+	ranges := make([]forceMergeRange, 0, len(existingTableIDs))
+	nextRangeStart := int64(1)
+	for _, existingTableID := range existingTableIDs {
+		if existingTableID < nextRangeStart {
 			continue
 		}
-		if rangeStart == 0 {
-			rangeStart = tableID
+		if existingTableID > nextRangeStart {
+			ranges = append(ranges, forceMergeRange{
+				StartTableID: nextRangeStart,
+				EndTableID:   existingTableID - 1,
+			})
 		}
-	}
-	if rangeStart > 0 {
-		ranges = append(ranges, forceMergeRange{
-			StartTableID: rangeStart,
-			EndTableID:   maxTableID,
-		})
+		nextRangeStart = existingTableID + 1
 	}
 	return maxTableID, ranges
+}
+
+func appendPhysicalTableIDs(physicalTableIDs []int64, tblInfo *model.TableInfo) []int64 {
+	// Force merge works on physical table ranges, so partitioned tables
+	// contribute their partition IDs instead of the logical table ID.
+	if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+		for _, def := range pi.Definitions {
+			if def.ID > 0 {
+				physicalTableIDs = append(physicalTableIDs, def.ID)
+			}
+		}
+		return physicalTableIDs
+	}
+
+	if tblInfo.ID > 0 {
+		physicalTableIDs = append(physicalTableIDs, tblInfo.ID)
+	}
+	return physicalTableIDs
 }
 
 func sendForceMergeRangesToPD(ctx context.Context, ranges []forceMergeRange) error {

@@ -74,67 +74,58 @@ func AddForceMergeRanges(ctx context.Context, ranges []ForceMergeKeyRange) error
 		return errors.Trace(err)
 	}
 
-	totalBatches := (len(ranges) + forceMergeMaxBatchSize - 1) / forceMergeMaxBatchSize
+	route := path.Join(pdapi.Regions, "force-merge")
+	totalRangeCount := len(ranges)
+	totalBatches := (totalRangeCount + forceMergeMaxBatchSize - 1) / forceMergeMaxBatchSize
 	for batchIdx, start := 0, 0; start < len(ranges); batchIdx, start = batchIdx+1, start+forceMergeMaxBatchSize {
 		end := start + forceMergeMaxBatchSize
 		if end > len(ranges) {
 			end = len(ranges)
 		}
+		batchNumber := batchIdx + 1
+		batchRangeCount := end - start
 
 		body, err := marshalAddForceMergeRangesRequest(ranges[start:end])
 		if err != nil {
-			logutil.BgLogger().Error("marshal force merge ranges batch failed",
-				zap.Int("batchIndex", batchIdx+1),
-				zap.Int("batchCount", totalBatches),
-				zap.Int("rangeCount", end-start),
-				zap.Int("totalRangeCount", len(ranges)),
-				zap.Error(err))
+			logutil.BgLogger().Error("marshal force merge ranges batch failed", forceMergeBatchLogFields(
+				batchNumber, totalBatches, batchRangeCount, totalRangeCount, zap.Error(err),
+			)...)
 			return errors.Trace(err)
 		}
 
-		res, err := doRequestWithBodyBytes(
+		respBody, err := doRequestWithBodyBytes(
 			ctx,
 			"AddForceMergeRanges",
 			addrs,
-			path.Join(pdapi.Regions, "force-merge"),
+			route,
 			"POST",
 			body,
 		)
 		if err != nil {
-			logutil.BgLogger().Error("send force merge ranges batch to PD failed",
-				zap.Int("batchIndex", batchIdx+1),
-				zap.Int("batchCount", totalBatches),
-				zap.Int("rangeCount", end-start),
-				zap.Int("totalRangeCount", len(ranges)),
-				zap.Error(err))
+			logutil.BgLogger().Error("send force merge ranges batch to PD failed", forceMergeBatchLogFields(
+				batchNumber, totalBatches, batchRangeCount, totalRangeCount, zap.Error(err),
+			)...)
 			return errors.Trace(err)
 		}
-		if res == nil {
+		if respBody == nil {
 			err = fmt.Errorf("InfoSyncer returns error in AddForceMergeRanges")
-			logutil.BgLogger().Error("send force merge ranges batch to PD failed",
-				zap.Int("batchIndex", batchIdx+1),
-				zap.Int("batchCount", totalBatches),
-				zap.Int("rangeCount", end-start),
-				zap.Int("totalRangeCount", len(ranges)),
-				zap.Error(err))
+			logutil.BgLogger().Error("send force merge ranges batch to PD failed", forceMergeBatchLogFields(
+				batchNumber, totalBatches, batchRangeCount, totalRangeCount, zap.Error(err),
+			)...)
 			return err
 		}
 
-		logutil.BgLogger().Info("sent force merge ranges batch to PD",
-			zap.Int("batchIndex", batchIdx+1),
-			zap.Int("batchCount", totalBatches),
-			zap.Int("rangeCount", end-start),
-			zap.Int("sentRangeCount", end),
-			zap.Int("totalRangeCount", len(ranges)))
+		logutil.BgLogger().Info("sent force merge ranges batch to PD", forceMergeBatchLogFields(
+			batchNumber, totalBatches, batchRangeCount, totalRangeCount, zap.Int("sentRangeCount", end),
+		)...)
 
 		if end < len(ranges) {
 			if err := forceMergeBatchSleep(ctx, forceMergeBatchSleepTime); err != nil {
-				logutil.BgLogger().Error("sleep between force merge range batches failed",
-					zap.Int("batchIndex", batchIdx+1),
-					zap.Int("batchCount", totalBatches),
+				logutil.BgLogger().Error("sleep between force merge range batches failed", forceMergeBatchLogFields(
+					batchNumber, totalBatches, batchRangeCount, totalRangeCount,
 					zap.Int("sentRangeCount", end),
-					zap.Int("totalRangeCount", len(ranges)),
-					zap.Error(err))
+					zap.Error(err),
+				)...)
 				return errors.Trace(err)
 			}
 		}
@@ -142,8 +133,24 @@ func AddForceMergeRanges(ctx context.Context, ranges []ForceMergeKeyRange) error
 
 	logutil.BgLogger().Info("sent all force merge ranges to PD",
 		zap.Int("batchCount", totalBatches),
-		zap.Int("totalRangeCount", len(ranges)))
+		zap.Int("totalRangeCount", totalRangeCount))
 	return nil
+}
+
+func forceMergeBatchLogFields(
+	batchNumber int,
+	totalBatches int,
+	batchRangeCount int,
+	totalRangeCount int,
+	extra ...zap.Field,
+) []zap.Field {
+	fields := []zap.Field{
+		zap.Int("batchIndex", batchNumber),
+		zap.Int("batchCount", totalBatches),
+		zap.Int("rangeCount", batchRangeCount),
+		zap.Int("totalRangeCount", totalRangeCount),
+	}
+	return append(fields, extra...)
 }
 
 func marshalAddForceMergeRangesRequest(ranges []ForceMergeKeyRange) ([]byte, error) {

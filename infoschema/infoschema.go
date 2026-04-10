@@ -131,7 +131,6 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
-	result.partitionTables = make(map[int64]partitionTableEntry)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
@@ -160,7 +159,6 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
-	result.partitionTables = make(map[int64]partitionTableEntry)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,

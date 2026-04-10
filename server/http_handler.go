@@ -389,11 +389,6 @@ type ddlResignOwnerHandler struct {
 	store kv.Storage
 }
 
-// Tests can override this runner to make the background task deterministic.
-var runMergeEmptyRegionsTask = func(task func()) {
-	go util.WithRecovery(task, nil)
-}
-
 type serverInfoHandler struct {
 	*tikvHandlerTool
 }
@@ -1377,7 +1372,7 @@ func (h *mergeEmptyRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 		return
 	}
 
-	runMergeEmptyRegionsTask(func() {
+	go util.WithRecovery(func() {
 		defer func() {
 			atomic.StoreUint32(&h.running, 0)
 		}()
@@ -1385,7 +1380,7 @@ func (h *mergeEmptyRegionsHandler) ServeHTTP(w http.ResponseWriter, req *http.Re
 		if err := task.Send(context.Background()); err != nil {
 			logutil.BgLogger().Error("send merge empty regions force merge ranges failed", zap.Error(err))
 		}
-	})
+	}, nil)
 
 	writeData(w, result)
 }

@@ -17,6 +17,7 @@ package infoschema_test
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -233,6 +234,168 @@ func TestMockInfoSchema(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, tblName, tbl.Meta().Name)
 	require.Equal(t, colInfo, tbl.Cols()[0].ColumnInfo)
+}
+
+func TestMockInfoSchemaFindTableByPartitionID(t *testing.T) {
+	tableInfo := buildPartitionedTableInfoForTest(1234, 2001, 2002)
+	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
+
+	tbl, dbInfo, def := is.FindTableByPartitionID(2002)
+	require.NotNil(t, tbl)
+	require.NotNil(t, dbInfo)
+	require.NotNil(t, def)
+	require.Equal(t, tableInfo.ID, tbl.Meta().ID)
+	require.Equal(t, "test", dbInfo.Name.L)
+	require.Equal(t, int64(2002), def.ID)
+}
+
+func TestBuilderBuildsPartitionLookup(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	tableInfo := buildPartitionedTableInfoForTest(2234, 3001, 3002)
+	dbInfo := &model.DBInfo{
+		ID:     100,
+		Name:   model.NewCIStr("test"),
+		Tables: []*model.TableInfo{tableInfo},
+		State:  model.StatePublic,
+	}
+
+	builder, err := infoschema.NewBuilder(mockRequirement{store}, nil).InitWithDBInfos([]*model.DBInfo{dbInfo}, nil, 1)
+	require.NoError(t, err)
+
+	tbl, schema, def := builder.Build().FindTableByPartitionID(3001)
+	require.NotNil(t, tbl)
+	require.NotNil(t, schema)
+	require.NotNil(t, def)
+	require.Equal(t, tableInfo.ID, tbl.Meta().ID)
+	require.Equal(t, dbInfo.ID, schema.ID)
+	require.Equal(t, int64(3001), def.ID)
+}
+
+func TestInitWithOldInfoSchemaRetainsPartitionLookup(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	oldIS := infoschema.MockInfoSchema([]*model.TableInfo{
+		buildPartitionedTableInfoForTest(3234, 4001, 4002),
+	})
+
+	newIS := infoschema.NewBuilder(mockRequirement{store}, nil).InitWithOldInfoSchema(oldIS).Build()
+	tbl, dbInfo, def := newIS.FindTableByPartitionID(4002)
+	require.NotNil(t, tbl)
+	require.NotNil(t, dbInfo)
+	require.NotNil(t, def)
+	require.Equal(t, int64(3234), tbl.Meta().ID)
+	require.Equal(t, "test", dbInfo.Name.L)
+	require.Equal(t, int64(4002), def.ID)
+}
+
+func TestPartitionLookupAfterTruncateAndDrop(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt_lookup (a int)
+partition by range (a)
+(partition p0 values less than (10),
+ partition p1 values less than maxvalue)`)
+
+	is := dom.InfoSchema()
+	oldPartitionIDs := getPartitionIDsForTest(t, is, "test", "pt_lookup")
+	requirePartitionLookupForTest(t, is, "test", "pt_lookup", oldPartitionIDs, true)
+
+	tk.MustExec("truncate table pt_lookup")
+	is = dom.InfoSchema()
+	requirePartitionLookupForTest(t, is, "test", "pt_lookup", oldPartitionIDs, false)
+	newPartitionIDs := getPartitionIDsForTest(t, is, "test", "pt_lookup")
+	requirePartitionLookupForTest(t, is, "test", "pt_lookup", newPartitionIDs, true)
+
+	tk.MustExec("drop table pt_lookup")
+	is = dom.InfoSchema()
+	requirePartitionLookupForTest(t, is, "test", "pt_lookup", newPartitionIDs, false)
+}
+
+func buildPartitionedTableInfoForTest(tableID int64, partitionIDs ...int64) *model.TableInfo {
+	colInfo := &model.ColumnInfo{
+		ID:        1,
+		Name:      model.NewCIStr("a"),
+		Offset:    0,
+		State:     model.StatePublic,
+		FieldType: *types.NewFieldType(mysql.TypeLong),
+	}
+
+	defs := make([]model.PartitionDefinition, 0, len(partitionIDs))
+	for idx, partitionID := range partitionIDs {
+		def := model.PartitionDefinition{
+			ID:   partitionID,
+			Name: model.NewCIStr("p" + strconv.Itoa(idx)),
+		}
+		if idx == len(partitionIDs)-1 {
+			def.LessThan = []string{"MAXVALUE"}
+		} else {
+			def.LessThan = []string{strconv.Itoa(idx + 1)}
+		}
+		defs = append(defs, def)
+	}
+
+	return &model.TableInfo{
+		ID:      tableID,
+		Name:    model.NewCIStr("pt"),
+		Columns: []*model.ColumnInfo{colInfo},
+		State:   model.StatePublic,
+		Partition: &model.PartitionInfo{
+			Type:        model.PartitionTypeRange,
+			Expr:        "a",
+			Definitions: defs,
+		},
+	}
+}
+
+func getPartitionIDsForTest(t *testing.T, is infoschema.InfoSchema, dbName, tableName string) []int64 {
+	t.Helper()
+
+	tbl, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+	require.NoError(t, err)
+	pi := tbl.Meta().GetPartitionInfo()
+	require.NotNil(t, pi)
+
+	partitionIDs := make([]int64, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		partitionIDs = append(partitionIDs, def.ID)
+	}
+	return partitionIDs
+}
+
+func requirePartitionLookupForTest(t *testing.T, is infoschema.InfoSchema, dbName, tableName string, partitionIDs []int64, shouldExist bool) {
+	t.Helper()
+
+	for _, partitionID := range partitionIDs {
+		tbl, dbInfo, def := is.FindTableByPartitionID(partitionID)
+		if shouldExist {
+			require.NotNil(t, tbl)
+			require.NotNil(t, dbInfo)
+			require.NotNil(t, def)
+			require.Equal(t, tableName, tbl.Meta().Name.L)
+			require.Equal(t, dbName, dbInfo.Name.L)
+			require.Equal(t, partitionID, def.ID)
+			continue
+		}
+
+		require.Nil(t, tbl)
+		require.Nil(t, dbInfo)
+		require.Nil(t, def)
+	}
 }
 
 func checkApplyCreateNonExistsSchemaDoesNotPanic(t *testing.T, txn kv.Transaction, builder *infoschema.Builder) {
