@@ -135,6 +135,10 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 	if err != nil {
 		return nil, err
 	}
+	// Intentionally keep this as a separate best-effort read.
+	// Under concurrent task transfers, Items and TotalCount may observe slightly
+	// different snapshots, which is acceptable for this observability API.
+	// Pagination correctness relies on page rows + NextPageToken from the page query.
 	countRows, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select count(1) from mysql.tidb_global_task_history`+func() string {
 			if keyspace == "" {
