@@ -200,17 +200,30 @@ func TestResolveUnfinishedPendingBackups(t *testing.T) {
 	require.False(t, exists)
 }
 
-func TestResolveUnfinishedPendingBackupsRejectsInconsistentState(t *testing.T) {
+func TestResolveUnfinishedPendingBackupsCleansTransientStateWithoutCheckpointMeta(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
 	cfgHash := []byte("hash")
 	backupID := repo.BackupID(3)
+	metadataStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID))
 
 	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile(cfgHash, backupID), []byte("{}")))
+	require.NoError(t, metadataStorage.WriteFile(ctx, checkpoint.CheckpointLockPathForBackup, []byte("lock")))
+	require.NoError(t, metadataStorage.WriteFile(ctx, checkpoint.CheckpointDataDirForBackup+"/partial.cpt", []byte("data")))
 
-	_, err := resolveUnfinishedPendingBackups(ctx, storage, cfgHash)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "inconsistent")
+	unfinished, err := resolveUnfinishedPendingBackups(ctx, storage, cfgHash)
+	require.NoError(t, err)
+	require.Empty(t, unfinished)
+
+	exists, err := storage.FileExists(ctx, snapshotpaths.PendingFile(cfgHash, backupID))
+	require.NoError(t, err)
+	require.False(t, exists)
+	exists, err = metadataStorage.FileExists(ctx, checkpoint.CheckpointLockPathForBackup)
+	require.NoError(t, err)
+	require.False(t, exists)
+	exists, err = metadataStorage.FileExists(ctx, checkpoint.CheckpointDataDirForBackup+"/partial.cpt")
+	require.NoError(t, err)
+	require.False(t, exists)
 }
 
 func TestResolveSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {

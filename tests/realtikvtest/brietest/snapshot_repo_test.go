@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -172,10 +174,15 @@ func (s *snapshotRepoSuite) backupDataFiles(backupID repo.BackupID) []*backuppb.
 	return files
 }
 
+func (s *snapshotRepoSuite) runRestore(cfg task.RestoreConfig) error {
+	s.t.Helper()
+	return task.RunRestore(context.Background(), &TestKitGlue{tk: s.tk}, task.FullRestoreCmd, &cfg)
+}
+
 func (s *snapshotRepoSuite) restore(backupID repo.BackupID) {
 	s.t.Helper()
 	cfg := s.restoreConfig(backupID)
-	require.NoError(s.t, task.RunRestore(context.Background(), &TestKitGlue{tk: s.tk}, task.FullRestoreCmd, &cfg))
+	require.NoError(s.t, s.runRestore(cfg))
 }
 
 func (s *snapshotRepoSuite) repoPath(rel string) string {
@@ -247,6 +254,36 @@ func (s *snapshotRepoSuite) sstFiles(backupID repo.BackupID) []string {
 		require.NoError(s.t, err)
 	}
 	return matches
+}
+
+func (s *snapshotRepoSuite) allDataBackupIDs() []repo.BackupID {
+	s.t.Helper()
+	matches, err := filepath.Glob(filepath.Join(s.repoDir, "_data", "snapshot", "*", "*"))
+	require.NoError(s.t, err)
+	uniq := make(map[repo.BackupID]struct{})
+	for _, dir := range matches {
+		backupID, err := repo.ParseBackupIDStorageName(filepath.Base(dir))
+		require.NoError(s.t, err)
+		uniq[backupID] = struct{}{}
+	}
+	ids := make([]repo.BackupID, 0, len(uniq))
+	for backupID := range uniq {
+		ids = append(ids, backupID)
+	}
+	return ids
+}
+
+func (s *snapshotRepoSuite) allMetadataBackupIDs() []repo.BackupID {
+	s.t.Helper()
+	matches, err := filepath.Glob(filepath.Join(s.repoDir, "_meta", "snapshot", "*"))
+	require.NoError(s.t, err)
+	ids := make([]repo.BackupID, 0, len(matches))
+	for _, dir := range matches {
+		backupID, err := repo.ParseBackupIDStorageName(filepath.Base(dir))
+		require.NoError(s.t, err)
+		ids = append(ids, backupID)
+	}
+	return ids
 }
 
 func (s *snapshotRepoSuite) requirePathExists(rel string) {
@@ -475,6 +512,7 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 	}
 	for _, fp := range []string{
 		"github.com/pingcap/tidb/br/pkg/backup/backup-response-error-after-checkpoint",
+		"github.com/pingcap/tidb/br/pkg/restore/snap_client/corrupt-files",
 	} {
 		fp := fp
 		t.Cleanup(func() {
@@ -489,6 +527,7 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 	})
 	suite.tk.MustExec("create database " + suite.dbName)
 	suite.tk.MustExec("create table " + suite.dbName + ".t(id int primary key, v longtext)")
+	suite.tk.MustExec("create table " + suite.dbName + ".t_tail(id int primary key, v varchar(64))")
 	_ = suite.tk.MustQuery(fmt.Sprintf("split table %s.t between (0) and (4096000) regions 32", suite.dbName))
 
 	payload := strings.Repeat("x", 3072)
@@ -506,27 +545,50 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 		}
 		suite.tk.MustExec(builder.String())
 	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/backup-response-error-after-checkpoint", "1*return(\"failpoint: backup response error after checkpoint\")"))
+	suite.tk.MustExec("insert into " + suite.dbName + ".t_tail values (1, 'tail-1'), (2, 'tail-2'), (3, 'tail-3')")
+	checkpointFP := "github.com/pingcap/tidb/br/pkg/backup/backup-response-error-after-checkpoint"
+	killBackupAfterCheckpoint := func(cfg task.BackupConfig) {
+		require.NoError(t, failpoint.Enable(checkpointFP, "1*return(\"failpoint: backup response error after checkpoint\")"))
+		_, err := suite.runBackup(cfg)
+		require.ErrorContains(t, err, "backup response error after checkpoint")
+		require.NoError(t, failpoint.Disable(checkpointFP))
+	}
+	assertSingleBackupPath := func(expected repo.BackupID) {
+		require.Equal(t, []repo.BackupID{expected}, suite.pendingBackupIDs())
+		checkpointMeta := suite.checkpointMetadata(expected)
+		require.Equal(t, uint64(expected), checkpointMeta.BackupID)
+		require.NotZero(t, checkpointMeta.BackupTS)
+		require.ElementsMatch(t, []repo.BackupID{expected}, suite.allMetadataBackupIDs())
+		require.ElementsMatch(t, []repo.BackupID{expected}, suite.allDataBackupIDs())
+		require.NotEmpty(t, suite.dataDirs(expected))
+	}
+
 	failedCfg := suite.backupConfig()
 	failedCfg.RateLimit = 1 << 20
-	_, err := suite.runBackup(failedCfg)
-	require.ErrorContains(t, err, "backup response error after checkpoint")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/backup-response-error-after-checkpoint"))
+	killBackupAfterCheckpoint(failedCfg)
 
 	pendingIDs := suite.pendingBackupIDs()
 	require.Len(t, pendingIDs, 1)
 	failedBackupID := pendingIDs[0]
-	checkpointMeta := suite.checkpointMetadata(failedBackupID)
-	require.Equal(t, uint64(failedBackupID), checkpointMeta.BackupID)
-	require.NotZero(t, checkpointMeta.BackupTS)
 	checkpointLockPath := filepath.ToSlash(filepath.Join(snapshotpaths.MetadataDir(failedBackupID), checkpoint.CheckpointLockPathForBackup))
-	require.NoError(t, os.Remove(suite.repoPath(checkpointLockPath)))
 	partialSSTCount := len(suite.sstFiles(failedBackupID))
 	require.Greater(t, partialSSTCount, 0)
+	assertSingleBackupPath(failedBackupID)
 
 	resumeCfg := suite.backupConfig()
 	resumeCfg.RateLimit = 1 << 20
 	require.NoError(t, json.Unmarshal([]byte(`{"on-pending":"resume"}`), &resumeCfg.SnapshotRepoBackupOptions))
+	_, err := suite.runBackup(resumeCfg)
+	require.ErrorContains(t, err, "another BR")
+	assertSingleBackupPath(failedBackupID)
+
+	for range 3 {
+		require.NoError(t, os.Remove(suite.repoPath(checkpointLockPath)))
+		killBackupAfterCheckpoint(resumeCfg)
+		assertSingleBackupPath(failedBackupID)
+	}
+
+	require.NoError(t, os.Remove(suite.repoPath(checkpointLockPath)))
 	resumedBackupID, err := suite.runBackup(resumeCfg)
 	require.NoError(t, err)
 
@@ -534,8 +596,58 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 	require.Equal(t, failedBackupID, resumedBackupID)
 	require.GreaterOrEqual(t, finalSSTCount, partialSSTCount)
 	require.Empty(t, suite.pendingFiles())
+	require.ElementsMatch(t, []repo.BackupID{failedBackupID}, suite.allMetadataBackupIDs())
+	require.ElementsMatch(t, []repo.BackupID{failedBackupID}, suite.allDataBackupIDs())
 
 	suite.tk.MustExec("drop database " + suite.dbName)
-	suite.restore(resumedBackupID)
+
+	originSplitTableRegion := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, originSplitTableRegion)
+
+	restoreCheckpointFP := "github.com/pingcap/tidb/br/pkg/restore/snap_client/corrupt-files"
+	restoreCfg := suite.restoreConfig(resumedBackupID)
+	restoreCfg.UseCheckpoint = true
+	require.NoError(t, failpoint.Enable(restoreCheckpointFP, `return("corrupt-last-table-files")`))
+	err = suite.runRestore(restoreCfg)
+	require.ErrorContains(t, err, "skip the last table files")
+	require.NoError(t, failpoint.Disable(restoreCheckpointFP))
+
+	registryRows := suite.tk.MustQuery(fmt.Sprintf(
+		"select id, status from %s.%s order by id",
+		registry.RestoreRegistryDBName,
+		registry.RestoreRegistryTableName,
+	)).Rows()
+	require.Len(t, registryRows, 1)
+	require.Equal(t, "paused", registryRows[0][1])
+	restoreID, err := strconv.ParseUint(fmt.Sprint(registryRows[0][0]), 10, 64)
+	require.NoError(t, err)
+	checkpointDB := fmt.Sprintf("%s_%d", checkpoint.SnapshotRestoreCheckpointDatabaseName, restoreID)
+	t.Cleanup(func() {
+		suite.tk.MustExec("drop database if exists `" + checkpointDB + "`")
+	})
+	suite.tk.MustQuery(
+		fmt.Sprintf("select schema_name from information_schema.schemata where schema_name = '%s'", checkpointDB),
+	).Check(testkit.Rows(checkpointDB))
+	checkpointRows := suite.tk.MustQuery(fmt.Sprintf("select count(*) from `%s`.cpt_data", checkpointDB)).Rows()
+	checkpointRangeCount, err := strconv.Atoi(fmt.Sprint(checkpointRows[0][0]))
+	require.NoError(t, err)
+	require.Greater(t, checkpointRangeCount, 0)
+
+	resumeRestoreCfg := suite.restoreConfig(resumedBackupID)
+	resumeRestoreCfg.UseCheckpoint = true
+	require.NoError(t, failpoint.Enable(restoreCheckpointFP, `return("only-last-table-files")`))
+	require.NoError(t, suite.runRestore(resumeRestoreCfg))
+	require.NoError(t, failpoint.Disable(restoreCheckpointFP))
+
+	suite.tk.MustQuery(fmt.Sprintf(
+		"select count(*) from %s.%s",
+		registry.RestoreRegistryDBName,
+		registry.RestoreRegistryTableName,
+	)).Check(testkit.Rows("0"))
+	suite.tk.MustQuery(
+		fmt.Sprintf("select schema_name from information_schema.schemata where schema_name = '%s'", checkpointDB),
+	).Check(testkit.Rows())
 	suite.tk.MustQuery(fmt.Sprintf("select count(*) from %s.t", suite.dbName)).Check(testkit.Rows("4096"))
+	suite.tk.MustQuery(fmt.Sprintf("select count(*) from %s.t_tail", suite.dbName)).Check(testkit.Rows("3"))
 }

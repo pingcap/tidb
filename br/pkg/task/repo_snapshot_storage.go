@@ -112,7 +112,6 @@ func (l *snapshotRepoBackupLifecycle) StartCheckpoint(
 		l.pendingMarkerCreated = true
 	}
 	if err := client.StartCheckpointRunner(ctx, cfgHash, backupTS, l.repoCheckpointBackupID(), safePointID, progressCallBack); err != nil {
-		l.rollbackStartCheckpoint(ctx, client)
 		return errors.Trace(err)
 	}
 	return nil
@@ -140,25 +139,6 @@ func (l *snapshotRepoBackupLifecycle) pendingFileForCheckpoint() (string, error)
 		)
 	}
 	return l.pendingFile, nil
-}
-
-func (l *snapshotRepoBackupLifecycle) rollbackStartCheckpoint(ctx context.Context, client *backup.Client) {
-	if l == nil {
-		return
-	}
-	removePendingMarker := true
-	if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, client.GetStorage()); removeErr != nil {
-		log.Warn("failed to roll back checkpoint metadata after checkpoint setup failure", zap.Error(removeErr))
-		removePendingMarker = false
-	}
-	if l.pendingMarkerCreated && removePendingMarker {
-		if removeErr := l.resolvedStorage.RootStorage.DeleteFile(ctx, l.pendingFile); removeErr != nil {
-			log.Warn("failed to roll back repo-v1 pending marker after checkpoint setup failure",
-				zap.String("path", l.pendingFile),
-				zap.Error(removeErr))
-		}
-		l.pendingMarkerCreated = false
-	}
 }
 
 func (l *snapshotRepoBackupLifecycle) FinishCheckpoint(ctx context.Context, client *backup.Client, flush bool) {
@@ -434,11 +414,13 @@ func resolveUnfinishedPendingBackups(ctx context.Context, rootStorage storeapi.S
 			return nil, errors.Trace(err)
 		}
 		if !hasCheckpoint {
-			return nil, errors.Annotatef(
-				berrors.ErrInvalidArgument,
-				"found inconsistent repo-v1 pending backup %s: pending marker exists but neither %s nor %s was found",
-				entry.backupID, metautil.MetaFile, checkpoint.CheckpointMetaPathForBackup,
-			)
+			if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, metadataStorage); removeErr != nil {
+				return nil, errors.Annotatef(removeErr, "remove transient checkpoint state for %s", entry.backupID)
+			}
+			if removeErr := rootStorage.DeleteFile(ctx, entry.path); removeErr != nil {
+				return nil, errors.Annotatef(removeErr, "remove transient pending marker for %s", entry.backupID)
+			}
+			continue
 		}
 		unfinished = append(unfinished, entry.backupID)
 	}
