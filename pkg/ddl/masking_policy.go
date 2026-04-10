@@ -53,51 +53,46 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 		return ver, errors.Trace(err)
 	}
 
-	// Use database-scoped uniqueness check
-	existPolicy, err := w.getMaskingPolicyByDBAndNameFromSysTable(jobCtx.stepCtx, policyInfo.DBName.L, policyInfo.Name.L)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	existOnColumn, err := w.getMaskingPolicyByTableColumnFromSysTable(jobCtx.stepCtx, policyInfo.TableID, policyInfo.ColumnID)
+	existingPolicies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, policyInfo.TableID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if existPolicy != nil {
-		if existPolicy.TableID != policyInfo.TableID || existPolicy.ColumnID != policyInfo.ColumnID {
+	for _, existPolicy := range existingPolicies {
+		if existPolicy.Name.L == policyInfo.Name.L && existPolicy.ColumnID != policyInfo.ColumnID {
 			job.State = model.JobStateCancelled
 			return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
-		if !replaceOnExist {
+		if existPolicy.ColumnID == policyInfo.ColumnID && existPolicy.Name.L != policyInfo.Name.L {
 			job.State = model.JobStateCancelled
 			return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
+		if existPolicy.Name.L == policyInfo.Name.L && existPolicy.ColumnID == policyInfo.ColumnID {
+			if !replaceOnExist {
+				job.State = model.JobStateCancelled
+				return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
+			}
 
-		replacePolicy := existPolicy.Clone()
-		replacePolicy.Expression = policyInfo.Expression
-		replacePolicy.Status = policyInfo.Status
-		replacePolicy.MaskingType = policyInfo.MaskingType
-		replacePolicy.RestrictOps = policyInfo.RestrictOps
-		replacePolicy.UpdatedAt = policyInfo.UpdatedAt
-		if err = w.updateMaskingPolicyInSysTable(jobCtx, replacePolicy); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			replacePolicy := existPolicy.Clone()
+			replacePolicy.Expression = policyInfo.Expression
+			replacePolicy.Status = policyInfo.Status
+			replacePolicy.MaskingType = policyInfo.MaskingType
+			replacePolicy.RestrictOps = policyInfo.RestrictOps
+			replacePolicy.UpdatedAt = policyInfo.UpdatedAt
+			if err = w.updateMaskingPolicyInSysTable(jobCtx, replacePolicy); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+
+			job.SchemaID = replacePolicy.ID
+			ver, err = updateSchemaVersion(jobCtx, job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, nil)
+			return ver, nil
 		}
-
-		job.SchemaID = replacePolicy.ID
-		ver, err = updateSchemaVersion(jobCtx, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, nil)
-		return ver, nil
-	}
-
-	if existOnColumn != nil {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existOnColumn.Name.O)
 	}
 
 	switch policyInfo.State {
@@ -210,29 +205,6 @@ func (w *worker) getMaskingPolicyByNameFromSysTable(ctx context.Context, policyN
 	return policies[0], nil
 }
 
-// getMaskingPolicyByDBAndNameFromSysTable queries masking policy by database name and policy name.
-func (w *worker) getMaskingPolicyByDBAndNameFromSysTable(ctx context.Context, dbName, policyName string) (*model.MaskingPolicyInfo, error) {
-	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "db_name = %? AND policy_name = %?", dbName, policyName)
-	if err != nil {
-		return nil, err
-	}
-	if len(policies) == 0 {
-		return nil, nil
-	}
-	return policies[0], nil
-}
-
-func (w *worker) getMaskingPolicyByTableColumnFromSysTable(ctx context.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, error) {
-	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "table_id = %? AND column_id = %?", tableID, columnID)
-	if err != nil {
-		return nil, err
-	}
-	if len(policies) == 0 {
-		return nil, nil
-	}
-	return policies[0], nil
-}
-
 func (w *worker) getMaskingPolicyByIDFromSysTable(ctx context.Context, policyID int64) (*model.MaskingPolicyInfo, error) {
 	policies, err := w.queryMaskingPoliciesFromSysTable(ctx, "policy_id = %?", policyID)
 	if err != nil {
@@ -263,11 +235,6 @@ func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, whereClau
 		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 		FROM mysql.tidb_masking_policy
 		WHERE policy_name = %?
-		ORDER BY policy_id`
-	case "db_name = %? AND policy_name = %?":
-		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
-		FROM mysql.tidb_masking_policy
-		WHERE db_name = %? AND policy_name = %?
 		ORDER BY policy_id`
 	case "policy_id = %?":
 		query = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by

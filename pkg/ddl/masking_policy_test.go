@@ -170,37 +170,35 @@ func TestMaskingPolicyModifyColumnGuard(t *testing.T) {
 	))
 }
 
-// TestMaskingPolicyDatabaseScopedUniqueness tests that masking policies are unique per database,
-// not globally unique. This allows the same policy name to exist in different databases.
-func TestMaskingPolicyDatabaseScopedUniqueness(t *testing.T) {
+// TestMaskingPolicyTableScopedUniqueness verifies policy name uniqueness is table-scoped.
+func TestMaskingPolicyTableScopedUniqueness(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	// Create two databases
+	// Create two databases and three tables.
 	tk.MustExec("drop database if exists db1")
 	tk.MustExec("drop database if exists db2")
 	tk.MustExec("create database db1")
 	tk.MustExec("create database db2")
 
-	// Create tables in each database
 	tk.MustExec("use db1")
 	tk.MustExec("create table t1 (c varchar(20))")
-	tk.MustExec("use db2")
 	tk.MustExec("create table t2 (c varchar(20))")
+	tk.MustExec("use db2")
+	tk.MustExec("create table t3 (c varchar(20))")
 
-	// Create masking policy with same name in db1
+	// Same policy name on different tables in the same database should succeed.
 	tk.MustExec("use db1")
 	tk.MustExec("create masking policy simple_mask on t1(c) as c enable")
-	tk.MustQuery("select policy_name, db_name from mysql.tidb_masking_policy where policy_name = 'simple_mask'").
-		Check(testkit.Rows("simple_mask db1"))
-
-	// Create masking policy with same name in db2 - should succeed (database-scoped uniqueness)
-	tk.MustExec("use db2")
 	tk.MustExec("create masking policy simple_mask on t2(c) as c enable")
-	tk.MustQuery("select policy_name, db_name from mysql.tidb_masking_policy where policy_name = 'simple_mask' order by db_name").
-		Check(testkit.Rows("simple_mask db1", "simple_mask db2"))
 
-	// Try to create duplicate policy in same database - should fail
+	// Same policy name in another database should also succeed.
+	tk.MustExec("use db2")
+	tk.MustExec("create masking policy simple_mask on t3(c) as c enable")
+	tk.MustQuery("select policy_name, db_name, table_name from mysql.tidb_masking_policy where policy_name = 'simple_mask' order by db_name, table_name").
+		Check(testkit.Rows("simple_mask db1 t1", "simple_mask db1 t2", "simple_mask db2 t3"))
+
+	// Duplicate policy name on the same table should fail.
 	tk.MustExec("use db1")
 	tk.MustGetErrCode("create masking policy simple_mask on t1(c) as c enable", errno.ErrMaskingPolicyExists)
 

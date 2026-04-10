@@ -6463,19 +6463,28 @@ func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spe
 	return e.createMaskingPolicyWithInfo(ctx, policyInfo, OnExistError)
 }
 
-func (e *executor) getMaskingPolicyByNameForDDL(ctx sessionctx.Context, dbName, policyName ast.CIStr) (*model.MaskingPolicyInfo, error) {
-	if policy, ok := e.infoCache.GetLatest().MaskingPolicyByDBAndName(dbName.L, policyName.L); ok {
-		return policy, nil
+func (e *executor) getMaskingPolicyByNameForDDL(
+	ctx sessionctx.Context,
+	tableID int64,
+	columns []*model.ColumnInfo,
+	policyName ast.CIStr,
+) (*model.MaskingPolicyInfo, error) {
+	is := e.infoCache.GetLatest()
+	for _, col := range columns {
+		policy, ok := is.MaskingPolicyByTableColumn(tableID, col.ID)
+		if ok && policy != nil && policy.Name.L == policyName.L {
+			return policy, nil
+		}
 	}
 	rows, _, err := ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 		kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
 		nil,
 		`SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, CAST(status AS CHAR), masking_type, restrict_on, created_at, updated_at, created_by
 FROM mysql.tidb_masking_policy
-WHERE LOWER(db_name) = %? AND LOWER(policy_name) = %?
+WHERE table_id = %? AND LOWER(policy_name) = %?
 ORDER BY policy_id
 LIMIT 1`,
-		dbName.L,
+		tableID,
 		policyName.L,
 	)
 	if err != nil {
@@ -6492,12 +6501,12 @@ LIMIT 1`,
 }
 
 func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, err := e.getMaskingPolicyByNameForDDL(ctx, schema.Name, policyName)
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6547,12 +6556,12 @@ func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ide
 }
 
 func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
-	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, err := e.getMaskingPolicyByNameForDDL(ctx, schema.Name, policyName)
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6594,12 +6603,12 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 }
 
 func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	policyName := spec.MaskingPolicyName
-	policy, err := e.getMaskingPolicyByNameForDDL(ctx, schema.Name, policyName)
+	policy, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6634,9 +6643,9 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 
 func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *model.MaskingPolicyInfo, onExist OnExist) error {
 	is := e.infoCache.GetLatest()
-	// Check database-scoped uniqueness: same name can exist in different databases
-	if existPolicy, ok := is.MaskingPolicyByDBAndName(policy.DBName.L, policy.Name.L); ok {
-		if existPolicy.TableID != policy.TableID || existPolicy.ColumnID != policy.ColumnID {
+	// Check if there's already a policy on the same table+column (table-scoped uniqueness).
+	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok {
+		if existPolicy.Name.L != policy.Name.L {
 			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
 		err := dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(policy.Name.O)
@@ -6647,10 +6656,6 @@ func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *m
 		case OnExistError:
 			return err
 		}
-	}
-	// Also check if same table+column already has a different policy
-	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok && existPolicy.Name.L != policy.Name.L {
-		return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 	}
 
 	job := &model.Job{
