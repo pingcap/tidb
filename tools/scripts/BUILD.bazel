@@ -1,0 +1,4 @@
+sh_binary(
+    name = "test_wrapper",
+    srcs = ["test_wrapper.sh"],
+)
