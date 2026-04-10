@@ -1207,6 +1207,126 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.
 	return s, nil
 }
 
+func estimateCompressionRatio(
+	ctx context.Context,
+	filePath string,
+	fileSize int64,
+	tp mydump.SourceType,
+	store storage.ExternalStorage,
+) (float64, error) {
+	if tp != mydump.SourceTypeParquet {
+		return 1.0, nil
+	}
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2.0, nil)
+		}
+	})
+	fileMeta := mydump.SourceFileMeta{
+		Path:        filePath,
+		FileSize:    fileSize,
+		Compression: mydump.ParseCompressionOnFileExtension(filePath),
+		Type:        tp,
+	}
+	rows, rowSize, err := mydump.SampleParquetRowSize(ctx, fileMeta, store)
+	if err != nil {
+		return 1.0, err
+	}
+	// No row in the file, use 2.0 as default compression ratio.
+	if rowSize == 0 || rows == 0 {
+		return 2.0, nil
+	}
+
+	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
+	return compressionRatio, nil
+}
+
+// maxSampledCompressedFiles indicates the max number of files we used to sample
+// compression ratio for each compression type. Consider the extreme case that
+// user data contains all 3 compression types. Then we need to sample about 1,500
+// files. Suppose each file costs 0.5 second (for example, cross region access),
+// we still can finish in one minute with 16 concurrency.
+const maxSampledCompressedFiles = 512
+
+// compressionEstimator estimates compression ratio for different compression types.
+// It uses harmonic mean to get the average compression ratio.
+type compressionEstimator struct {
+	mu      sync.Mutex
+	records map[mydump.Compression][]float64
+	ratio   sync.Map
+}
+
+func newCompressionRecorder() *compressionEstimator {
+	return &compressionEstimator{
+		records: make(map[mydump.Compression][]float64),
+	}
+}
+
+func getHarmonicMean(rs []float64) float64 {
+	if len(rs) == 0 {
+		return 1.0
+	}
+	var (
+		sumInverse float64
+		count      int
+	)
+	for _, r := range rs {
+		if r > 0 {
+			sumInverse += 1.0 / r
+			count++
+		}
+	}
+
+	if count == 0 {
+		return 1.0
+	}
+	return float64(count) / sumInverse
+}
+
+func (r *compressionEstimator) estimate(
+	ctx context.Context,
+	fileMeta mydump.SourceFileMeta,
+	store storage.ExternalStorage,
+) float64 {
+	compressTp := mydump.ParseCompressionOnFileExtension(fileMeta.Path)
+	if compressTp == mydump.CompressionNone {
+		return 1.0
+	}
+	if v, ok := r.ratio.Load(compressTp); ok {
+		return v.(float64)
+	}
+
+	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
+	if err != nil {
+		logutil.Logger(ctx).Error("fail to calculate data file compress ratio",
+			zap.String("category", "loader"),
+			zap.String("path", fileMeta.Path),
+			zap.Stringer("type", fileMeta.Type), zap.Error(err),
+		)
+		return 1.0
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.ratio.Load(compressTp); ok {
+		return compressRatio
+	}
+
+	if r.records[compressTp] == nil {
+		r.records[compressTp] = make([]float64, 0, 256)
+	}
+	if len(r.records[compressTp]) < maxSampledCompressedFiles {
+		r.records[compressTp] = append(r.records[compressTp], compressRatio)
+	}
+	if len(r.records[compressTp]) >= maxSampledCompressedFiles {
+		// Using harmonic mean can better handle outlier values.
+		compressRatio = getHarmonicMean(r.records[compressTp])
+		r.ratio.Store(compressTp, compressRatio)
+	}
+	return compressRatio
+}
+
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
@@ -1260,6 +1380,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	var (
 		totalSize  int64
 		sourceType mydump.SourceType
+		// sizeExpansionRatio is the estimated size expansion for parquet format.
+		// For non-parquet format, it's always 1.0.
+		sizeExpansionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1322,9 +1445,23 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		var err error
+		var once sync.Once
+
+		ce := newCompressionRecorder()
+
 		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				path, size := f.Path, f.Size
+				// pick arbitrary one file to detect the format.
+				var err2 error
+				once.Do(func() {
+					e.detectAndUpdateFormat(path)
+					sourceType = e.getSourceType()
+					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+				})
+				if err2 != nil {
+					return nil, err2
+				}
 				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
 					Path:        path,
@@ -1332,7 +1469,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Compression: compressTp,
 					Type:        sourceType,
 				}
-				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err

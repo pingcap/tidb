@@ -95,10 +95,11 @@ type BaseTaskExecutor struct {
 	// table, but if the task has modified params, it might be updated in memory
 	// to reflect that some param modification have been applied successfully,
 	// see detectAndHandleParamModifyLoop for more detail.
-	task   atomic.Pointer[proto.Task]
-	logger *zap.Logger
-	ctx    context.Context
-	cancel context.CancelFunc
+	task         atomic.Pointer[proto.Task]
+	logger       *zap.Logger
+	sampleLogger *zap.Logger
+	ctx          context.Context
+	cancel       context.CancelFunc
 	Extension
 
 	currSubtaskID atomic.Int64
@@ -123,16 +124,22 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 	)
+	sampleLogger := handle.NewSampleErrVerboseLogger(
+		zap.Int64("task-id", task.ID),
+		zap.String("task-key", task.Key),
+	)
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", param.execID))
+		sampleLogger = sampleLogger.With(zap.String("server-id", param.execID))
 	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
 	subCtx = logutil.WithLogger(subCtx, logger)
 	taskExecutorImpl := &BaseTaskExecutor{
-		Param:  param,
-		ctx:    subCtx,
-		cancel: cancelFunc,
-		logger: logger,
+		Param:        param,
+		ctx:          subCtx,
+		cancel:       cancelFunc,
+		logger:       logger,
+		sampleLogger: sampleLogger,
 	}
 	taskExecutorImpl.task.Store(task)
 	return taskExecutorImpl
@@ -301,7 +308,7 @@ func (e *BaseTaskExecutor) Run() {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				return
 			}
-			e.logger.Error("refresh task failed", zap.Error(err))
+			e.sampleLogger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
 
@@ -346,7 +353,7 @@ func (e *BaseTaskExecutor) Run() {
 		subtask, err := e.taskTable.GetFirstSubtaskInStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
-			e.logger.Warn("get first subtask meets error", zap.Error(err))
+			e.sampleLogger.Warn("get first subtask meets error", zap.Error(err))
 			continue
 		} else if subtask == nil {
 			if noSubtaskCheckCnt >= maxChecksWhenNoSubtask {
@@ -365,7 +372,7 @@ func (e *BaseTaskExecutor) Run() {
 		}
 		if e.stepExec == nil {
 			if err2 := e.createStepExecutor(); err2 != nil {
-				e.logger.Error("create step executor failed",
+				e.sampleLogger.Error("create step executor failed",
 					zap.String("step", proto.Step2Str(task.Type, task.Step)), zap.Error(err2))
 				continue
 			}
@@ -381,9 +388,6 @@ func (e *BaseTaskExecutor) Run() {
 			// task executor keeps running its subtasks even though some subtask
 			// might have failed, we rely on scheduler to detect the error, and
 			// notify task executor or manager to cancel.
-<<<<<<< HEAD:pkg/disttask/framework/taskexecutor/task_executor.go
-			e.logger.Error("run subtask failed", zap.Error(err))
-=======
 			if llog.IsContextCanceledError(err) {
 				// Context canceled is expected when scheduler/manager cancels executor,
 				// so log as info instead of a subtask failure.
@@ -391,7 +395,6 @@ func (e *BaseTaskExecutor) Run() {
 			} else {
 				e.sampleLogger.Error("run subtask failed", zap.Error(err))
 			}
->>>>>>> 79685135013 (pkg/dxf: avoid misleading error log on context cancel (#67612)):pkg/dxf/framework/taskexecutor/task_executor.go
 		} else {
 			// if we run a subtask successfully, we will try to run next subtask
 			// immediately for once.

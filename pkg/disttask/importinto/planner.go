@@ -465,6 +465,12 @@ func splitForOneSubtask(
 	}()
 
 	ret := make([]planner.PipelineSpec, 0, 16)
+	var (
+		subtaskCount      int
+		totalDataFiles    int
+		totalRangeJobKeys int
+		totalRegionKeyCnt int
+	)
 
 	startKey := tidbkv.Key(kvMeta.StartKey)
 	var endKey tidbkv.Key
@@ -478,7 +484,8 @@ func splitForOneSubtask(
 		} else {
 			endKey = tidbkv.Key(endKeyOfGroup).Clone()
 		}
-		logutil.Logger(ctx).Info("kv range as subtask",
+		logutil.Logger(ctx).Debug("kv range as subtask",
+			zap.String("kvGroup", kvGroup),
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)),
 			zap.Int("dataFiles", len(dataFiles)))
@@ -511,12 +518,24 @@ func splitForOneSubtask(
 			TS:             ts,
 		}
 		ret = append(ret, &WriteIngestSpec{m})
+		subtaskCount++
+		totalDataFiles += len(dataFiles)
+		totalRangeJobKeys += len(interiorRangeJobKeys)
+		totalRegionKeyCnt += len(interiorRegionSplitKeys)
 
 		startKey = endKey
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
 	}
+
+	logutil.Logger(ctx).Info("kv range split summary",
+		zap.String("kvGroup", kvGroup),
+		zap.Int("subtasks", subtaskCount),
+		zap.Int("dataFiles", totalDataFiles),
+		zap.Int("rangeJobKeys", totalRangeJobKeys),
+		zap.Int("regionSplitKeys", totalRegionKeyCnt),
+	)
 
 	return ret, nil
 }

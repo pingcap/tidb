@@ -32,7 +32,7 @@ go_test(
     ],
     embed = [":stmtstats"],
     flaky = True,
-    shard_count = 32,
+    shard_count = 31,
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/util/topsql/reporter/metrics",
