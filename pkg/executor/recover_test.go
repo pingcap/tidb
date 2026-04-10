@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -35,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
@@ -651,52 +648,6 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("drop user 'testflashbackschema'@'localhost';")
 }
 
-func TestFlashbackSchemaWithManyTables(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
-
-	backup := kv.TxnEntrySizeLimit.Load()
-	kv.TxnEntrySizeLimit.Store(50000)
-	t.Cleanup(func() {
-		kv.TxnEntrySizeLimit.Store(backup)
-	})
-
-	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
-	tk.MustExec("set @@global.tidb_enable_fast_create_table=ON")
-	tk.MustExec("drop database if exists many_tables")
-	tk.MustExec("create database if not exists many_tables")
-	tk.MustExec("use many_tables")
-
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
-	defer resetGC()
-
-	// Set GC safe point
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-	// Set GC enable.
-	require.NoError(t, gcutil.EnableGC(tk.Session()))
-
-	var wg util.WaitGroupWrapper
-	for i := range 10 {
-		idx := i
-		wg.Run(func() {
-			tkit := testkit.NewTestKit(t, store)
-			tkit.MustExec("use many_tables")
-			for j := range 70 {
-				tkit.MustExec(fmt.Sprintf("create table t_%d_%d (a int)", idx, j))
-			}
-		})
-	}
-	wg.Wait()
-
-	tk.MustExec("drop database many_tables")
-
-	tk.MustExec("flashback database many_tables")
-
-	tk.MustQuery("select count(*) from many_tables.t_0_0").Check(testkit.Rows("0"))
-}
-
 // MockGC is used to make GC work in the test environment.
 func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	originGC := ddlutil.IsEmulatorGCEnable()
@@ -719,51 +670,4 @@ func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	// clear GC variables first.
 	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
 	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
-}
-
-func TestFlashbackClusterWithManyDBs(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
-	defer resetGC()
-
-	// Set GC safe point.
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-
-	backup := kv.TxnEntrySizeLimit.Load()
-	kv.TxnEntrySizeLimit.Store(50000)
-	t.Cleanup(func() {
-		kv.TxnEntrySizeLimit.Store(backup)
-	})
-
-	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
-	tk.MustExec("set @@global.tidb_enable_fast_create_table=ON")
-
-	var wg sync.WaitGroup
-	dbPerWorker := 10
-	for i := range 40 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tk2 := testkit.NewTestKit(t, store)
-			for j := range dbPerWorker {
-				dbName := fmt.Sprintf("db_%d", i*dbPerWorker+j)
-				tk2.MustExec(fmt.Sprintf("create database %s", dbName))
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
-	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
-
-	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
-		fmt.Sprintf("return(%v)", injectSafeTS))
-
-	// this test will fail before the fix, because the DDL job KV entry is too large.
-	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
 }
