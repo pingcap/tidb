@@ -127,7 +127,16 @@ func InitMetrics() {
 }
 
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
+// It is safe to call multiple times (subsequent calls are no-ops).
+var registerMetricsOnce sync.Once
+
 func RegisterMetrics() {
+	registerMetricsOnce.Do(func() {
+		registerMetrics()
+	})
+}
+
+func registerMetrics() {
 	// use new go collector
 	prometheus.DefaultRegisterer.Unregister(collectors.NewGoCollector())
 	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(collectors.MetricsGC, collectors.MetricsMemory, collectors.MetricsScheduler)))

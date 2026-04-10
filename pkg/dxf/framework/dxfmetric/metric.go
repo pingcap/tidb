@@ -15,6 +15,8 @@
 package dxfmetric
 
 import (
+	"sync"
+
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -92,10 +94,15 @@ func InitDistTaskMetrics() {
 }
 
 // Register registers DXF metrics.
+// It is safe to call multiple times with the same registerer.
+var dxfRegisterOnce sync.Once
+
 func Register(register prometheus.Registerer) {
-	register.MustRegister(UsedSlotsGauge)
-	register.MustRegister(WorkerCount)
-	register.MustRegister(FinishedTaskCounter)
-	register.MustRegister(ScheduleEventCounter)
-	register.MustRegister(ExecuteEventCounter)
+	dxfRegisterOnce.Do(func() {
+		register.MustRegister(UsedSlotsGauge)
+		register.MustRegister(WorkerCount)
+		register.MustRegister(FinishedTaskCounter)
+		register.MustRegister(ScheduleEventCounter)
+		register.MustRegister(ExecuteEventCounter)
+	})
 }
