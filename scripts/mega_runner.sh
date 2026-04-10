@@ -12,10 +12,10 @@ set -euo pipefail
 #   mega_runner.sh -run PATTERN          # Run tests matching regex
 #   mega_runner.sh -list                 # List all tests
 #   mega_runner.sh -parallel N           # Max parallel processes (default: 8)
-#   mega_runner.sh -timeout SECS         # Per-test timeout (default: 300)
+#   mega_runner.sh -timeout SECS         # Per-test timeout (default: 180)
 #   mega_runner.sh -retry 3              # Retry failed tests up to N times
 #
-# Output (stdout): one line per test — [OK] name  time
+# Output (stdout): one line per test — [PASS]/[FAIL]/[TIMEOUT] name  time
 # Output (stderr): build info + failure details (for debugging)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -26,7 +26,7 @@ MEGA_BIN="$PROJECT_ROOT/bazel-bin/pkg/testkit/mega/mega_test_/mega_test"
 RUN_PATTERN=""
 LIST_ONLY=false
 PARALLEL=8
-TIMEOUT=300
+TIMEOUT=180
 RETRY=1
 
 while [[ $# -gt 0 ]]; do
@@ -80,6 +80,7 @@ while IFS= read -r line; do
     [[ "$name" == "Total"* ]] && continue
     [[ "$name" == "Package"* ]] && continue
     [[ "$name" == "Registered"* ]] && continue
+    [[ "$name" == "=== "* ]] && continue
     if [[ -n "$RUN_PATTERN" ]]; then
         echo "$name" | grep -qE "$RUN_PATTERN" || continue
     fi
@@ -97,10 +98,9 @@ echo "=== Running $TOTAL tests ($PARALLEL parallel, ${TIMEOUT}s timeout) ===" >&
 RESULT_DIR=$(mktemp -d)
 trap 'rm -rf "$RESULT_DIR"' EXIT
 
-# --- Parallel execution with semaphore ---
-SEMAPHORE_FD=3
+# --- Semaphore for parallelism ---
 mkfifo "$RESULT_DIR/sem"
-eval "exec $SEMAPHORE_FD<>\"$RESULT_DIR/sem\""
+exec 3<>"$RESULT_DIR/sem"
 rm -f "$RESULT_DIR/sem"
 for ((i = 0; i < PARALLEL; i++)); do
     echo >&3
@@ -110,88 +110,112 @@ START_TIME=$SECONDS
 
 for idx in "${!TESTS[@]}"; do
     test_name="${TESTS[$idx]}"
-    # Acquire semaphore
-    read -r -u 3
+    read -r -u 3  # acquire slot
 
     (
         result_file="$RESULT_DIR/$idx"
+        log_file="$RESULT_DIR/$idx.log"
         attempt=1
+        final_status="FAIL"
+        final_elapsed=0
+
         while [[ $attempt -le $RETRY ]]; do
             t0=$SECONDS
-            output=$("$MEGA_BIN" \
+
+            # Run with hard timeout via `timeout` command
+            timeout "$TIMEOUT" "$MEGA_BIN" \
                 -test.run "^TestMega$" \
                 -mega.run "^${test_name}$" \
                 -test.timeout "${TIMEOUT}s" \
-                2>&1) || true
-            exit_code=$?
-            elapsed=$(( SECONDS - t0 ))
+                > "$log_file" 2>&1
+            ec=$?
 
-            if [[ $exit_code -eq 0 ]]; then
-                echo "PASS ${elapsed}" > "$result_file"
-                echo >&3
-                exit 0
+            final_elapsed=$(( SECONDS - t0 ))
+
+            # exit code 124 = timeout killed it; 137 = SIGKILL
+            if [[ $ec -eq 124 || $ec -eq 137 ]]; then
+                final_status="TIMEOUT"
+                break
             fi
 
+            if [[ $ec -eq 0 ]]; then
+                final_status="PASS"
+                break
+            fi
+
+            # Non-zero, non-timeout => test failure
+            final_status="FAIL"
             attempt=$((attempt + 1))
         done
-        # All retries failed
-        echo "FAIL ${elapsed}" > "$result_file"
-        echo "$output" > "${result_file}.log"
-        echo >&3
-        exit 1
+
+        echo "${final_status} ${final_elapsed}" > "$result_file"
+        # Keep log only for failures
+        if [[ "$final_status" == "PASS" ]]; then
+            rm -f "$log_file"
+        fi
+
+        echo >&3  # release slot
     ) &
 done
 
-# Wait for all background jobs
 wait
 
 # --- Report results ---
 PASS=0
 FAIL=0
+TIMEOUT_COUNT=0
 FAIL_LIST=()
 
 for idx in "${!TESTS[@]}"; do
     test_name="${TESTS[$idx]}"
     result_file="$RESULT_DIR/$idx"
+    log_file="$RESULT_DIR/$idx.log"
 
     if [[ -f "$result_file" ]]; then
         status=$(cut -d' ' -f1 "$result_file")
         elapsed=$(cut -d' ' -f2 "$result_file")
         tstr=$(fmt_time "${elapsed:-0}")
 
-        if [[ "$status" == "PASS" ]]; then
-            PASS=$((PASS + 1))
-            printf "[OK]   %-60s %s\n" "$test_name" "$tstr"
-        else
-            FAIL=$((FAIL + 1))
-            FAIL_LIST+=("$test_name")
-            printf "[FAIL] %-60s %s\n" "$test_name" "$tstr"
-            # Failure details to stderr
-            if [[ -f "${result_file}.log" ]]; then
-                {
-                    echo "--- FAILED: $test_name ---"
-                    # Skip registry dump lines, show actual error
-                    grep -v "Registered tests:" "${result_file}.log" \
-                        | grep -E "Error|FAIL|panic|fatal|Trace|test\.go" \
-                        | head -20
-                    echo "--- END ---"
-                } >&2
-            fi
-        fi
+        case "$status" in
+            PASS)
+                PASS=$((PASS + 1))
+                printf "[PASS]   %-60s %s\n" "$test_name" "$tstr"
+                ;;
+            TIMEOUT)
+                TIMEOUT_COUNT=$((TIMEOUT_COUNT + 1))
+                FAIL_LIST+=("$test_name")
+                printf "[TIMEOUT] %-60s %s\n" "$test_name" "$tstr"
+                ;;
+            *)
+                FAIL=$((FAIL + 1))
+                FAIL_LIST+=("$test_name")
+                printf "[FAIL]   %-60s %s\n" "$test_name" "$tstr"
+                # Print failure details to stderr
+                if [[ -f "$log_file" ]]; then
+                    {
+                        echo "--- FAILED: $test_name ---"
+                        grep -v "Registered tests:" "$log_file" \
+                            | grep -E "Error|FAIL|panic|fatal|Trace|test\.go" \
+                            | head -20
+                        echo "--- END ---"
+                    } >&2
+                fi
+                ;;
+        esac
     else
         FAIL=$((FAIL + 1))
         FAIL_LIST+=("$test_name")
-        printf "[FAIL] %-60s ?\n" "$test_name"
+        printf "[FAIL]   %-60s ?\n" "$test_name"
     fi
 done
 
 TOTAL_TIME=$(( SECONDS - START_TIME ))
 echo ""
-echo "=== Results: ${PASS} passed, ${FAIL} failed, ${TOTAL} total in $(fmt_time $TOTAL_TIME) ==="
+echo "=== Results: ${PASS} passed, ${FAIL} failed, ${TIMEOUT_COUNT} timeout, ${TOTAL} total in $(fmt_time $TOTAL_TIME) ==="
 
 if [[ ${#FAIL_LIST[@]} -gt 0 ]]; then
     echo ""
-    echo "Failed tests:"
+    echo "Failed/Timed out tests:"
     for f in "${FAIL_LIST[@]}"; do
         echo "  - $f"
     done
