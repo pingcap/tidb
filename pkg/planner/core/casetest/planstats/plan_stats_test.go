@@ -36,11 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
-	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
->>>>>>> d66a66201e9 (planner, statistics: skip plan cache for sync-load fallback plans (#67411))
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -379,7 +375,7 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 	tk.MustExec("analyze table t all columns")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	colBID := tblInfo.Columns[1].ID

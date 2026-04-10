@@ -256,12 +256,8 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	err := domain.GetDomain(ctx).StatsHandle().SendLoadRequests(stmtCtx, neededHistItems, timeout)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
-<<<<<<< HEAD:pkg/planner/core/rule_collect_plan_stats.go
 		if variable.StatsLoadPseudoTimeout.Load() {
-=======
-		if vardef.StatsLoadPseudoTimeout.Load() {
 			stmtCtx.SetSkipPlanCache(skipPlanCacheReasonSyncLoadFallback)
->>>>>>> d66a66201e9 (planner, statistics: skip plan cache for sync-load fallback plans (#67411)):pkg/planner/core/rule/rule_collect_plan_stats.go
 			logutil.ErrVerboseLogger().Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
@@ -281,12 +277,8 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
-<<<<<<< HEAD:pkg/planner/core/rule_collect_plan_stats.go
 		if variable.StatsLoadPseudoTimeout.Load() {
-=======
-		if vardef.StatsLoadPseudoTimeout.Load() {
 			stmtCtx.SetSkipPlanCache(skipPlanCacheReasonSyncLoadFallback)
->>>>>>> d66a66201e9 (planner, statistics: skip plan cache for sync-load fallback plans (#67411)):pkg/planner/core/rule/rule_collect_plan_stats.go
 			logutil.ErrVerboseLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
