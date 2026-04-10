@@ -69,7 +69,6 @@ const (
 // protobuf fields the current BR binary does not recognize.
 func CheckBackupMetaUnknownFields(
 	backupMeta *backuppb.BackupMeta,
-	checkRequirements bool,
 ) error {
 	if backupMeta == nil || len(backupMeta.XXX_unrecognized) == 0 {
 		return nil
@@ -83,11 +82,7 @@ func CheckBackupMetaUnknownFields(
 		backupMeta.GetClusterVersion(),
 		backupMeta.GetBrVersion(),
 	)
-	if checkRequirements {
-		return err
-	}
-	log.Warn(err.Error())
-	return nil
+	return err
 }
 
 // CheckBackupMetaCompatibility blocks restore when backup metadata requires a
@@ -111,10 +106,17 @@ func CheckBackupMetaCompatibility(
 		if checkRequirements {
 			return err
 		}
-		log.Warn(err.Error())
+		log.Warn("skip backupmeta schema compatibility check error", logutil.ShortError(err))
 		return nil
 	}
-	return CheckBackupMetaUnknownFields(backupMeta, checkRequirements)
+	err := CheckBackupMetaUnknownFields(backupMeta)
+	if err != nil {
+		if checkRequirements {
+			return err
+		}
+		log.Warn("skip backupmeta unknown-fields check error", logutil.ShortError(err))
+	}
+	return nil
 }
 
 // Encrypt encrypts the content according to CipherInfo.

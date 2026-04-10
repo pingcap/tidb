@@ -1333,7 +1333,7 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logInfo, err := getLogInfoFromStorage(ctx, s)
+	logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1929,12 +1929,13 @@ func getLogInfo(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
-	return getLogInfoFromStorage(ctx, s)
+	return getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 }
 
 func getLogInfoFromStorage(
 	ctx context.Context,
 	s storeapi.Storage,
+	checkRequirements bool,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -1943,6 +1944,9 @@ func getLogInfoFromStorage(
 	}
 	backupMeta := &backuppb.BackupMeta{}
 	if err = backupMeta.Unmarshal(metaData); err != nil {
+		return backupLogInfo{}, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibility(backupMeta, checkRequirements); err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
 	// endVersion > 0 represents that the storage has been used for `br backup`
@@ -2015,6 +2019,9 @@ func getFullBackupTS(
 
 	backupmeta := &backuppb.BackupMeta{}
 	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibility(backupmeta, cfg.CheckRequirements); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 

@@ -111,7 +111,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = CheckBackupMetaCompatibility(backupMeta, cfg.CheckRequirements); err != nil {
+	if err = metautil.CheckBackupMetaCompatibility(backupMeta, cfg.CheckRequirements); err != nil {
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)

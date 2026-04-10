@@ -21,7 +21,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -817,25 +816,6 @@ func CheckNewCollationEnable(
 	return enabled, nil
 }
 
-// CheckBackupMetaUnknownFields blocks restore when backup metadata contains
-// protobuf fields the current BR binary does not recognize.
-func CheckBackupMetaUnknownFields(
-	backupMeta *backuppb.BackupMeta,
-	checkRequirements bool,
-) error {
-	return metautil.CheckBackupMetaUnknownFields(backupMeta, checkRequirements)
-}
-
-// CheckBackupMetaCompatibility blocks restore when backup metadata requires a
-// newer metadata schema reader or contains protobuf fields the current BR
-// binary does not recognize.
-func CheckBackupMetaCompatibility(
-	backupMeta *backuppb.BackupMeta,
-	checkRequirements bool,
-) error {
-	return metautil.CheckBackupMetaCompatibility(backupMeta, checkRequirements)
-}
-
 // VerifyDBAndTableInBackup is used to check whether the restore dbs or tables have been backup
 func VerifyDBAndTableInBackup(schemas []*metautil.Database, cfg *RestoreConfig) error {
 	if len(cfg.Schemas) == 0 && len(cfg.Tables) == 0 {
@@ -1240,7 +1220,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UpstreamClusterID == 0 {
 		cfg.UpstreamClusterID = backupMeta.ClusterId
 	}
-	if err := CheckBackupMetaCompatibility(backupMeta, cfg.CheckRequirements); err != nil {
+	if err := metautil.CheckBackupMetaCompatibility(backupMeta, cfg.CheckRequirements); err != nil {
 		return errors.Trace(err)
 	}
 	if loadStatsPhysical || loadSysTablePhysical {
@@ -2753,7 +2733,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			if err != nil {
 				return errors.Trace(err)
 			}
-			logInfo, err := getLogInfoFromStorage(ctx, s)
+			logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 			if err != nil {
 				return errors.Trace(err)
 			}

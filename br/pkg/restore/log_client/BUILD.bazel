@@ -108,6 +108,7 @@ go_test(
         "//br/pkg/glue",
         "//br/pkg/gluetidb",
         "//br/pkg/logutil",
+        "//br/pkg/metautil",
         "//br/pkg/mock",
         "//br/pkg/restore",
         "//br/pkg/restore/ingestrec",
