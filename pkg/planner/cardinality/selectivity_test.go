@@ -2067,8 +2067,6 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	testKit.MustExec("flush stats_delta")
 	testKit.MustExec(`analyze table t`)
 	h := dom.StatsHandle()
-	// Refresh the stats cache metadata before warming query-specific histograms.
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	var (
 		input  []string
@@ -2079,14 +2077,28 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	)
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	// Trigger every explain once so all lazily-needed subset-index stats are queued before we assert plans.
-	for _, query := range input {
-		if strings.HasPrefix(query, "explain") {
-			testKit.MustExec(query)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	hasAsyncLoadForTable := func() bool {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			if item.TableItemID.TableID == tblInfo.ID {
+				return true
+			}
 		}
+		return false
 	}
+	// Use a predicate query that queues async stats loads for this table before checking recorded plans.
+	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 0")
+	testKit.MustExec("explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1")
+	require.True(t, hasAsyncLoadForTable())
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
-	require.Empty(t, asyncload.AsyncLoadHistogramNeededItems.AllItems())
+	stat := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, stat.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
+	require.True(t, stat.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
+	require.True(t, stat.GetCol(tblInfo.Columns[2].ID).IsFullLoad())
+	require.True(t, stat.GetIdx(tblInfo.Indices[0].ID).IsFullLoad())
+	require.False(t, hasAsyncLoadForTable())
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]
@@ -2099,7 +2111,6 @@ func TestSubsetIdxCardinality(t *testing.T) {
 			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
-		require.Empty(t, asyncload.AsyncLoadHistogramNeededItems.AllItems())
 	}
 }
 
