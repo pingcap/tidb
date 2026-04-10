@@ -509,12 +509,11 @@
       {
         "SQL": "SELECT * FROM   ti LEFT JOIN (SELECT i FROM ti WHERE FALSE) AS d1 ON ti.i = d1.i WHERE NOT EXISTS (SELECT 1 FROM ti AS inner_t1 WHERE i = d1.i) -- anti semi join",
         "Plan": [
-          "HashJoin root  anti semi join, left side:HashJoin, equal:[eq(test.ti.i, test.ti.i)]",
+          "HashJoin root  anti semi join, left side:Projection, equal:[eq(test.ti.i, test.ti.i)]",
           "├─TableReader(Build) root  data:TableFullScan",
           "│ └─TableFullScan cop[tikv] table:inner_t1 keep order:false, stats:pseudo",
-          "└─HashJoin(Probe) root  left outer join, left side:TableReader, equal:[eq(test.ti.i, test.ti.i)]",
-          "  ├─TableDual(Build) root  rows:0",
-          "  └─TableReader(Probe) root  data:TableFullScan",
+          "└─Projection(Probe) root  test.ti.i, <nil>->test.ti.i",
+          "  └─TableReader root  data:TableFullScan",
           "    └─TableFullScan cop[tikv] table:ti keep order:false, stats:pseudo"
         ]
       },

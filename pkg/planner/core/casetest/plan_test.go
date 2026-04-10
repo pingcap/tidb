@@ -449,6 +449,9 @@ func TestOuterJoinElimination(t *testing.T) {
 		tk.MustExec(`create table t2_nnuk (a int not null, b int, c int, unique key(a))`)
 		tk.MustExec(`create table t2_pk (a int, b int, c int, primary key(a))`)
 
+		tk.MustNotHavePlan("select * from t1 left join t2 on false", "Join")
+		tk.MustNotHavePlan("select * from t1 right join t2 on false", "Join")
+
 		// only when t2.a has unique attribute, we can eliminate the outer join.
 		// nullable unique index is not allowed to trigger the outer join elinimation.
 		tk.MustHavePlan("select count(*) from t1 left join t2 on t1.a = t2.a", "Join")
