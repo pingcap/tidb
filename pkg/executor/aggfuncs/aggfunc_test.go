@@ -771,6 +771,12 @@ func testParallelDistinctAggFunc(t *testing.T, p parallelDistinctAggTestCase, mu
 	} else {
 		args = []expression.Expression{&expression.Column{RetType: p.dataTypes[0], Index: 0}}
 		ordinal = []int{0}
+
+		// The second arg is useless, just for avoiding the panic in `desc.Split`
+		if p.funcName == ast.AggFuncAvg {
+			args = append(args, args...)
+			ordinal = append(ordinal, 1)
+		}
 	}
 
 	if p.funcName == ast.AggFuncGroupConcat {
