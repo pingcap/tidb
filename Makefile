@@ -216,7 +216,7 @@ ut-mega: tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Ph
 		--define gotags=$(UNIT_TEST_TAGS) \
 		|| { $(MAKE) ut-mega-cleanup; exit 1; }
 	@echo "=== Phase 2: Running mega integration tests ==="
-	bash scripts/mega_runner.sh -timeout $(if $(filter long,$(T)),36000,3600) \
+	UNIT_TEST_TAGS=$(UNIT_TEST_TAGS) bash scripts/mega_runner.sh -timeout $(if $(filter long,$(T)),36000,3600) \
 		|| { $(MAKE) ut-mega-cleanup; exit 1; }
 	@$(MAKE) ut-mega-cleanup
 
@@ -229,7 +229,7 @@ ut-mega-cleanup:
 ut-mega-test: tools/bin/failpoint-ctl ## Run specific mega tests (usage: make ut-mega-test X=ddl/Options)
 	@tools/bin/failpoint-ctl enable
 	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
-	bash scripts/mega_runner.sh -run '$(X)' \
+	UNIT_TEST_TAGS=$(UNIT_TEST_TAGS) bash scripts/mega_runner.sh -run '$(X)' \
 		; RET=$$?; $(MAKE) ut-mega-cleanup; exit $$RET
 
 .PHONY: ut-mega-list

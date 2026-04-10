@@ -55,10 +55,12 @@ fmt_time() {
     fi
 }
 
+GOTAGS="${UNIT_TEST_TAGS:-deadlock,intest}"
+
 # --- Build ---
 echo "=== Building mega test binary ===" >&2
 cd "$PROJECT_ROOT"
-bazel build //pkg/testkit/mega:mega_test --define gotags=deadlock,inject_failpoints_50 2>&1
+bazel build //pkg/testkit/mega:mega_test --define gotags=$GOTAGS 2>&1
 if [ ! -f "$MEGA_BIN" ]; then
     echo "ERROR: mega test binary not found at $MEGA_BIN" >&2
     exit 1
