@@ -1299,6 +1299,9 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	// prevent decorrelation of correlated IN subqueries so they stay as Apply with index lookups.
 	if !noDecorrelate && len(corCols) > 0 && !v.Not {
 		planCtx.builder.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+		if planCtx.builder.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+			planCtx.builder.ctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanPreferCorrelate()
+		}
 		if planCtx.builder.ctx.GetSessionVars().EnableCorrelateSubquery {
 			noDecorrelate = true
 		}

@@ -594,12 +594,20 @@ var alternativeRounds = [...]alternativeRound{
 		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
 		enabled:    shouldTryOrderAwareReorderRound,
 	},
-	{
-		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
-		enabled:    shouldTryCorrelateRound,
-		setup:      func(sv *variable.SessionVars) { sv.EnableCorrelateSubquery = true },
-		cleanup:    func(sv *variable.SessionVars) { sv.EnableCorrelateSubquery = false },
-	},
+	func() alternativeRound {
+		var old bool
+		return alternativeRound{
+			adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
+			enabled:    shouldTryCorrelateRound,
+			setup: func(sv *variable.SessionVars) {
+				old = sv.EnableCorrelateSubquery
+				sv.EnableCorrelateSubquery = true
+			},
+			cleanup: func(sv *variable.SessionVars) {
+				sv.EnableCorrelateSubquery = old
+			},
+		}
+	}(),
 }
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
