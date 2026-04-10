@@ -215,8 +215,11 @@ ut-mega: tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Ph
 	@bash scripts/bazel_unit_test_targets.sh | xargs bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
 		--define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false \
 		|| { $(MAKE) ut-mega-cleanup; exit 1; }
-	@echo "=== Phase 2: Running mega integration tests ==="
-	UNIT_TEST_TAGS=$(UNIT_TEST_TAGS) bash scripts/mega_runner.sh -timeout $(if $(filter long,$(T)),600,180) \
+	@echo "=== Phase 2: Building mega binary ==="
+	@bazel build //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false
+	@echo "=== Phase 2: Running mega tests ==="
+	@cd tools/check && go build -o ../../bin/ut ./... && cd ../..
+	@bin/ut --mega run \
 		|| { $(MAKE) ut-mega-cleanup; exit 1; }
 	@$(MAKE) ut-mega-cleanup
 
@@ -229,7 +232,9 @@ ut-mega-cleanup:
 ut-mega-test: tools/bin/failpoint-ctl ## Run specific mega tests (usage: make ut-mega-test X=ddl/Options)
 	@tools/bin/failpoint-ctl enable
 	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
-	UNIT_TEST_TAGS=$(UNIT_TEST_TAGS) bash scripts/mega_runner.sh -run '$(X)' \
+	@bazel build //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false
+	@cd tools/check && go build -o ../../bin/ut ./... && cd ../..
+	@bin/ut --mega run '$(X)' \
 		; RET=$$?; $(MAKE) ut-mega-cleanup; exit $$RET
 
 .PHONY: ut-mega-list

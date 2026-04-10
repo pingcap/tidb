@@ -18,10 +18,10 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -35,35 +35,15 @@ var (
 	megaTestCount int
 )
 
-// cmdMegaRun runs tests using the mega test framework
+// cmdMegaRun runs tests using the mega test framework.
+// Only runs the mega binary — build is handled by Makefile (bazel build).
 func cmdMegaRun(args ...string) bool {
-	// Enable mega mode
-	megaMode = true
+	// Set mega binary path (built by Makefile's bazel build step)
+	workDir, _ := os.Getwd()
+	megaBinary = filepath.Join(workDir, "bazel-bin/pkg/testkit/mega/mega_test_/mega_test")
 
-	// Phase 1: Build and run mega tests (migrated integration tests)
-	// Bazel needs failpoint-disabled source code
-	fmt.Println("=== Phase 1: Running Mega Tests (migrated integration tests) ===")
-	megaSuccess := runMegaTestPhase(args)
-
-	// Phase 2: Run real unit tests (tests in *_test.go files)
-	// This phase uses go test -c which needs failpoint-enabled source code
-	fmt.Println("\n=== Phase 2: Running Real Unit Tests (internal package tests) ===")
-	unitTestSuccess := runRealUnitTestPhase(args)
-
-	// Both phases must succeed
-	if !megaSuccess || !unitTestSuccess {
-		return false
-	}
-
-	return true
-}
-
-// runMegaTestPhase runs the mega test framework tests
-func runMegaTestPhase(args []string) bool {
-	// Build the mega test binary
-	if err := buildMegaTestBinary(); err != nil {
-		log.Println("build mega test binary error", err)
-		return false
+	if _, err := os.Stat(megaBinary); err != nil {
+		log.Fatalf("mega test binary not found at %s — run 'make ut-mega' which handles building", megaBinary)
 	}
 
 	// Get the list of all available tests from mega
@@ -107,121 +87,14 @@ func runMegaTestPhase(args []string) bool {
 		tasks = tmp
 	}
 
-	megaTestCount = len(tasks)
-	fmt.Printf("Mega tests: %d tests\n", megaTestCount)
+	fmt.Printf("=== Running %d mega tests (%d parallel, 3min timeout) ===\n", len(tasks), p)
 
-	if megaTestCount == 0 {
+	if len(tasks) == 0 {
 		fmt.Println("No mega tests to run")
 		return true
 	}
 
 	return runMegaTests(tasks)
-}
-
-// runRealUnitTestPhase runs the real unit tests (tests in *_test.go files)
-func runRealUnitTestPhase(args []string) bool {
-	// Temporarily disable mega mode to use the original ut flow
-	oldMegaMode := megaMode
-	megaMode = false
-	defer func() { megaMode = oldMegaMode }()
-
-	// Get all packages
-	pkgs, err := listPackages()
-	if err != nil {
-		log.Println("list packages error", err)
-		return false
-	}
-
-	// Filter packages based on args if provided
-	// Also skip /test packages as they are already run in Phase 1 (mega tests)
-	var filteredPkgs []string
-	if len(args) > 0 {
-		// Args might be like "ddl/Options", extract package name
-		pkgSet := make(map[string]struct{})
-		for _, arg := range args {
-			if strings.Contains(arg, "/") {
-				parts := strings.SplitN(arg, "/", 2)
-				if len(parts) >= 1 {
-					// Add both "ddl" and "pkg/ddl" to handle different package formats
-					pkgSet[parts[0]] = struct{}{}
-					pkgSet[filepath.Join("pkg", parts[0])] = struct{}{}
-				}
-			} else {
-				pkgSet[arg] = struct{}{}
-				pkgSet[filepath.Join("pkg", arg)] = struct{}{}
-			}
-		}
-
-		for _, pkg := range pkgs {
-			// Always exclude pkg/testkit/mega from unit test phase
-			// as it should only be run through the mega framework
-			if pkg == "pkg/testkit/mega" {
-				continue
-			}
-			if _, ok := pkgSet[pkg]; ok {
-				filteredPkgs = append(filteredPkgs, pkg)
-			}
-		}
-	} else {
-		for _, pkg := range pkgs {
-			// Skip /test subpackages as they are already run in Phase 1 (mega tests)
-			// These packages have integration tests that are now part of the mega framework
-			if strings.HasSuffix(pkg, "/test") {
-				continue
-			}
-			// Skip pkg/testkit/mega as it contains generated test functions
-			// that should only be run through the mega framework (TestMega), not as standalone tests
-			if pkg == "pkg/testkit/mega" {
-				continue
-			}
-			filteredPkgs = append(filteredPkgs, pkg)
-		}
-	}
-
-	if len(filteredPkgs) == 0 {
-		fmt.Println("No unit test packages to run")
-		return true
-	}
-
-	// Build test binaries for all packages
-	// Note: Some packages may fail to compile (e.g., due to missing exports or dependencies)
-	// but we continue with the packages that successfully compiled
-	start := time.Now()
-	buildErr := buildTestBinaryMulti(filteredPkgs)
-	if buildErr != nil {
-		log.Println("some unit test binaries failed to build, continuing with successfully built packages")
-	}
-	fmt.Printf("Unit test binaries built in %v\n", time.Since(start))
-
-	// List all test cases
-	tasks := make([]task, 0, 500)
-	for _, pkg := range filteredPkgs {
-		exist, err := testBinaryExist(pkg)
-		if err != nil {
-			log.Println("check test binary existence error", pkg, err)
-			continue
-		}
-		if !exist {
-			continue
-		}
-
-		pkgTasks, err := listTestCases(pkg, nil)
-		if err != nil {
-			log.Println("list test cases error", pkg, err)
-			continue
-		}
-		tasks = append(tasks, pkgTasks...)
-	}
-
-	if len(tasks) == 0 {
-		fmt.Println("No unit tests to run")
-		return true
-	}
-
-	fmt.Printf("Unit tests: %d tests\n", len(tasks))
-
-	// Run the unit tests using the original ut flow
-	return runTestCases(tasks)
 }
 
 // buildMegaTestBinary compiles the mega test binary
@@ -473,12 +346,9 @@ func runMegaTests(tasks []megaTask) bool {
 		return true
 	}
 
-	// Group tests by package for batch execution
-	testGroups := groupTestsByPackage(tasks)
-
-	// Create workers for concurrent execution
+	// Create workers for concurrent execution — one task per process, just like ut
 	testWorkerCount := p
-	taskCh := make(chan []megaTask, 100)
+	taskCh := make(chan megaTask, 100)
 	works := make([]megaWorker, testWorkerCount)
 	var wg sync.WaitGroup
 
@@ -487,22 +357,17 @@ func runMegaTests(tasks []megaTask) bool {
 		go works[i].worker(&wg, taskCh)
 	}
 
-	// Shuffle the test groups for better load distribution
-	var groupKeys []string
-	for key := range testGroups {
-		groupKeys = append(groupKeys, key)
-	}
-	sort.Strings(groupKeys)
-	shuffleStrings(groupKeys)
+	// Shuffle for better load distribution
+	shuffleMegaTasks(tasks)
 
 	start := time.Now()
-	for _, key := range groupKeys {
-		taskCh <- testGroups[key]
+	for _, task := range tasks {
+		taskCh <- task
 	}
 	close(taskCh)
 	wg.Wait()
 
-	fmt.Println("run all tasks takes", time.Since(start))
+	fmt.Println("run all mega tests takes", time.Since(start))
 
 	// Collect and write results
 	if junitfile != "" {
@@ -531,15 +396,12 @@ func runMegaTests(tasks []megaTask) bool {
 	return true
 }
 
-// groupTestsByPackage groups tests by their package
-func groupTestsByPackage(tasks []megaTask) map[string][]megaTask {
-	groups := make(map[string][]megaTask)
-	for _, t := range tasks {
-		// Group tests by package, using a pattern that matches all tests in that package
-		key := t.pkg
-		groups[key] = append(groups[key], t)
-	}
-	return groups
+// shuffleMegaTasks randomly shuffles mega tasks
+func shuffleMegaTasks(tasks []megaTask) {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r.Shuffle(len(tasks), func(i, j int) {
+		tasks[i], tasks[j] = tasks[j], tasks[i]
+	})
 }
 
 // megaWorker represents a worker that runs mega tests
@@ -548,20 +410,19 @@ type megaWorker struct {
 	results []megaTestResult
 }
 
-// worker runs mega tests from the task channel
-func (w *megaWorker) worker(wg *sync.WaitGroup, ch chan []megaTask) {
+// worker runs mega tests from the task channel — one test per process
+func (w *megaWorker) worker(wg *sync.WaitGroup, ch chan megaTask) {
 	defer wg.Done()
-	for tasks := range ch {
-		// Run all tests in this group as a single mega invocation
-		res := w.runMegaTestGroup(tasks)
+	for t := range ch {
+		res := w.runSingleMegaTest(t)
+		w.results = append(w.results, res)
 		if res.err != nil {
 			w.Fail = true
 		}
-		w.results = append(w.results, res)
 	}
 }
 
-// megaTestResult represents the result of running a mega test group
+// megaTestResult represents the result of running a mega test
 type megaTestResult struct {
 	pkg      string
 	testName string
@@ -570,29 +431,7 @@ type megaTestResult struct {
 	output   string
 }
 
-// runMegaTestGroup runs a group of tests using mega.test binary
-func (w *megaWorker) runMegaTestGroup(tasks []megaTask) megaTestResult {
-	if len(tasks) == 0 {
-		return megaTestResult{}
-	}
-
-	// Get the package name (all tasks in a group should be from the same package)
-	pkg := tasks[0].pkg
-
-	// Build the mega.run pattern for this group
-	// We can run multiple tests in one invocation by using a pattern
-	// For now, run tests one by one for better isolation
-	for _, t := range tasks {
-		res := w.runSingleMegaTest(t)
-		if res.err != nil {
-			return res
-		}
-	}
-
-	return megaTestResult{pkg: pkg}
-}
-
-// runSingleMegaTest runs a single test using mega.test
+// runSingleMegaTest runs a single test using mega.test binary in an isolated process
 func (w *megaWorker) runSingleMegaTest(t megaTask) megaTestResult {
 	pattern := fmt.Sprintf("%s/%s", t.pkg, t.name)
 
@@ -650,17 +489,18 @@ func (w *megaWorker) runSingleMegaTest(t megaTask) megaTestResult {
 		output:   output.String(),
 	}
 
-	// Output test result immediately
+	// Output test result immediately — PASS to stdout, FAIL/TIMEOUT details to stderr
 	if timedOut {
-		fmt.Printf("[TIMEOUT]  %s %s (>3min)\n", t.pkg, t.name)
+		fmt.Printf("[TIMEOUT]  %s/%s  %.2fs\n", t.pkg, t.name, result.duration.Seconds())
 	} else if err != nil {
-		fmt.Printf("[FAIL]  %s %s\n", t.pkg, t.name)
-		// Print error output for debugging
-		if output.String() != "" {
-			fmt.Printf("Error output:\n%s\n", output.String())
+		fmt.Printf("[FAIL]     %s/%s  %.2fs\n", t.pkg, t.name, result.duration.Seconds())
+		// Print error output to stderr for debugging
+		if output.Len() > 0 {
+			fmt.Fprintf(os.Stderr, "--- FAIL: %s/%s ---\n%s\n--- END ---\n",
+				t.pkg, t.name, filterMegaOutput(output.String()))
 		}
 	} else {
-		fmt.Printf("[PASS]  %s %s (%.2fs)\n", t.pkg, t.name, result.duration.Seconds())
+		fmt.Printf("[PASS]     %s/%s  %.2fs\n", t.pkg, t.name, result.duration.Seconds())
 	}
 
 	return result
@@ -800,4 +640,21 @@ func shuffleStrings(slice []string) {
 		}
 		slice[i], slice[pos] = slice[pos], slice[i]
 	}
+}
+
+// filterMegaOutput removes verbose registry dump lines from mega test output
+func filterMegaOutput(output string) string {
+	var filtered []string
+	for _, line := range strings.Split(output, "\n") {
+		// Skip the huge "Registered tests: [...]" line
+		if strings.Contains(line, "Registered tests:") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	// Only keep last 30 lines to avoid flooding stderr
+	if len(filtered) > 30 {
+		filtered = filtered[len(filtered)-30:]
+	}
+	return strings.Join(filtered, "\n")
 }
