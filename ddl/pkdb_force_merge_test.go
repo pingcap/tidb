@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
@@ -112,6 +114,30 @@ func TestBuildAllForceMergeRangesKeepsPartitionGlobalIndexTableID(t *testing.T) 
 	}, ranges)
 }
 
+func TestBuildAllForceMergeRangesTreatsSkippedSystemTablesAsOccupied(t *testing.T) {
+	is := buildForceMergeInfoSchemaForTest(t,
+		&model.DBInfo{
+			ID:     1,
+			Name:   model.NewCIStr("mysql"),
+			Tables: []*model.TableInfo{mockForceMergeTableInfoWithName(5, "tidb")},
+			State:  model.StatePublic,
+		},
+		&model.DBInfo{
+			ID:     2,
+			Name:   model.NewCIStr("test"),
+			Tables: []*model.TableInfo{mockForceMergeTableInfo(8)},
+			State:  model.StatePublic,
+		},
+	)
+
+	maxTableID, ranges := buildAllForceMergeRanges(is)
+	require.Equal(t, int64(8), maxTableID)
+	require.Equal(t, []forceMergeRange{
+		{StartTableID: 1, EndTableID: 4},
+		{StartTableID: 6, EndTableID: 7},
+	}, ranges)
+}
+
 func TestBuildForceMergeRangesIncludesPartitionGlobalIndexRange(t *testing.T) {
 	currentTable := mockForceMergePartitionedTableWithGlobalIndex(20, 30, 31)
 	is := infoschema.MockInfoSchema([]*model.TableInfo{
@@ -121,8 +147,8 @@ func TestBuildForceMergeRangesIncludesPartitionGlobalIndexRange(t *testing.T) {
 	})
 
 	ranges := buildForceMergeRanges(is, "test", 20, currentTable, []int64{30, 31})
-	require.Equal(t, []forceMergeRange{
-		{StartTableID: 20, EndTableID: 30},
+	require.ElementsMatch(t, []forceMergeRange{
+		{StartTableID: 26, EndTableID: 30},
 		{StartTableID: 26, EndTableID: 31},
 		{StartTableID: 20, EndTableID: 20},
 	}, ranges)
@@ -185,6 +211,12 @@ func mockForceMergeTableInfo(tableID int64, partitionIDs ...int64) *model.TableI
 	return tblInfo
 }
 
+func mockForceMergeTableInfoWithName(tableID int64, tableName string, partitionIDs ...int64) *model.TableInfo {
+	tblInfo := mockForceMergeTableInfo(tableID, partitionIDs...)
+	tblInfo.Name = model.NewCIStr(tableName)
+	return tblInfo
+}
+
 func mockForceMergePartitionedTableWithGlobalIndex(tableID int64, partitionIDs ...int64) *model.TableInfo {
 	tblInfo := mockForceMergeTableInfo(tableID, partitionIDs...)
 	tblInfo.Indices = []*model.IndexInfo{
@@ -195,6 +227,24 @@ func mockForceMergePartitionedTableWithGlobalIndex(tableID int64, partitionIDs .
 		},
 	}
 	return tblInfo
+}
+
+type mockForceMergeRequirement struct{}
+
+func (mockForceMergeRequirement) Store() kv.Storage {
+	return nil
+}
+
+func (mockForceMergeRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return nil
+}
+
+func buildForceMergeInfoSchemaForTest(t *testing.T, dbInfos ...*model.DBInfo) infoschema.InfoSchema {
+	t.Helper()
+
+	builder, err := infoschema.NewBuilder(mockForceMergeRequirement{}, nil).InitWithDBInfos(dbInfos, nil, 1)
+	require.NoError(t, err)
+	return builder.Build()
 }
 
 func TestForceMergeOnlyRunsAfterSuccessfulDDL(t *testing.T) {

@@ -81,7 +81,7 @@ func buildForceMergeRanges(
 	if shouldSkipForceMerge(schemaName, tblInfo) || is == nil {
 		return nil
 	}
-	targetTableIDs := collectForceMergeTableIDs(tableID, tblInfo, physicalTableIDs)
+	targetTableIDs := collectForceMergeTableIDs(nil, tableID, tblInfo, physicalTableIDs)
 	if len(targetTableIDs) == 0 {
 		return nil
 	}
@@ -176,66 +176,91 @@ func buildAllForceMergeRanges(is infoschema.InfoSchema) (int64, []forceMergeRang
 		return 0, nil
 	}
 
-	existingTableIDs := make([]int64, 0)
+	occupiedTableIDs := make([]int64, 0)
+	maxTableID := int64(0)
 	for _, dbInfo := range is.AllSchemas() {
 		schemaName := dbInfo.Name.L
 		for _, tbl := range is.SchemaTables(dbInfo.Name) {
 			tblInfo := tbl.Meta()
+			if !forceMergeTableOccupiesKeyspace(tblInfo) {
+				continue
+			}
+
+			tableIDs := collectForceMergeTableIDs(nil, tblInfo.ID, tblInfo, nil)
+			occupiedTableIDs = append(occupiedTableIDs, tableIDs...)
+
+			// The response only reports the largest non-skipped table ID, but gap
+			// detection must still treat skipped live tables as occupied keyspace.
 			if shouldSkipForceMerge(schemaName, tblInfo) {
 				continue
 			}
-			existingTableIDs = collectForceMergeTableIDs(tblInfo.ID, tblInfo, existingTableIDs)
+			for _, tableID := range tableIDs {
+				if tableID > maxTableID {
+					maxTableID = tableID
+				}
+			}
 		}
 	}
 
-	if len(existingTableIDs) == 0 {
+	if maxTableID == 0 {
 		return 0, nil
 	}
 
-	sort.Slice(existingTableIDs, func(i, j int) bool {
-		return existingTableIDs[i] < existingTableIDs[j]
+	sort.Slice(occupiedTableIDs, func(i, j int) bool {
+		return occupiedTableIDs[i] < occupiedTableIDs[j]
 	})
-	maxTableID := existingTableIDs[len(existingTableIDs)-1]
 
-	ranges := make([]forceMergeRange, 0, len(existingTableIDs))
+	ranges := make([]forceMergeRange, 0, len(occupiedTableIDs))
 	nextRangeStart := int64(1)
-	for _, existingTableID := range existingTableIDs {
-		if existingTableID < nextRangeStart {
+	for _, occupiedTableID := range occupiedTableIDs {
+		if occupiedTableID > maxTableID {
+			break
+		}
+		if occupiedTableID < nextRangeStart {
 			continue
 		}
-		if existingTableID > nextRangeStart {
+		if occupiedTableID > nextRangeStart {
 			ranges = append(ranges, forceMergeRange{
 				StartTableID: nextRangeStart,
-				EndTableID:   existingTableID - 1,
+				EndTableID:   occupiedTableID - 1,
 			})
 		}
-		nextRangeStart = existingTableID + 1
+		nextRangeStart = occupiedTableID + 1
 	}
 	return maxTableID, ranges
 }
 
-func collectForceMergeTableIDs(tableID int64, tblInfo *model.TableInfo, tableIDs []int64) []int64 {
+func forceMergeTableOccupiesKeyspace(tblInfo *model.TableInfo) bool {
+	return tblInfo != nil && tblInfo.IsBaseTable()
+}
+
+func collectForceMergeTableIDs(dst []int64, tableID int64, tblInfo *model.TableInfo, physicalTableIDs []int64) []int64 {
 	if tblInfo == nil {
-		return tableIDs
+		return dst
 	}
 
-	if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-		for _, def := range pi.Definitions {
-			if def.ID > 0 {
-				tableIDs = append(tableIDs, def.ID)
+	pi := tblInfo.GetPartitionInfo()
+	if len(physicalTableIDs) > 0 {
+		for _, physicalID := range physicalTableIDs {
+			if physicalID > 0 {
+				dst = append(dst, physicalID)
 			}
 		}
-		// Global indexes of partitioned tables use the logical table ID prefix.
-		if hasGlobalIndex(tblInfo) && tableID > 0 {
-			tableIDs = append(tableIDs, tableID)
+	} else if pi != nil && len(pi.Definitions) > 0 {
+		for _, def := range pi.Definitions {
+			if def.ID > 0 {
+				dst = append(dst, def.ID)
+			}
 		}
-		return tableIDs
+	} else if tableID > 0 {
+		dst = append(dst, tableID)
 	}
 
-	if tableID > 0 {
-		tableIDs = append(tableIDs, tableID)
+	// Global indexes of partitioned tables use the logical table ID prefix.
+	if pi != nil && len(pi.Definitions) > 0 && hasGlobalIndex(tblInfo) && tableID > 0 {
+		dst = append(dst, tableID)
 	}
-	return tableIDs
+	return dst
 }
 
 func sendForceMergeRangesToPD(ctx context.Context, ranges []forceMergeRange) error {
