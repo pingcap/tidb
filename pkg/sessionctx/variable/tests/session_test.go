@@ -997,6 +997,8 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	mock := variable.NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
+	// Prevent AWS SDK IMDS probing from creating background HTTP goroutines.
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	cloudStorageURI := variable.GetSysVar(vardef.TiDBCloudStorageURI)
 	require.Len(t, vardef.CloudStorageURI.Load(), 0)
 	defer func() {

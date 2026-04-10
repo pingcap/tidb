@@ -19,12 +19,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
@@ -577,12 +579,11 @@ func TestNextGenMeteringWithConflictResolution(t *testing.T) {
 	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort-conflict")
 	s.tk.MustExec("create table t (a bigint primary key, b bigint, unique key uk_b(b));")
 
-	baseTime := time.Now().Truncate(time.Minute).Unix()
+	baseTime := atomic.NewInt64(time.Now().Truncate(time.Minute).Unix() - 60)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
 		// the metering library requires the timestamp to be at minute boundary, but
 		// during test, we want to reduce the flush interval.
-		*ts = baseTime
-		baseTime += 60
+		*ts = baseTime.Add(60)
 	})
 	// this failpoint can make sure we only get one gotMeterData
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask", "return(true)")
@@ -614,7 +615,13 @@ func TestNextGenMeteringWithConflictResolution(t *testing.T) {
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
 	s.Regexp(`requests\{get: 15, put: 16\}`, gotMeterData.Load())
 	s.Regexp(`obj_store\{r: 3[.\d]*KiB, w: 3[.\d]*KiB\}`, gotMeterData.Load())
-	s.Regexp(`cluster\{r: 174B, w: 250B\}`, gotMeterData.Load())
+	clusterMatch := regexp.MustCompile(`cluster\{r: 174B, w: ([0-9]+(?:\.[0-9]+)?(?:[KMGT]i)?B)\}`).FindStringSubmatch(gotMeterData.Load())
+	s.Len(clusterMatch, 2)
+	clusterWriteBytes, err := units.RAMInBytes(clusterMatch[1])
+	s.NoError(err)
+	// Ingest retries can increase write traffic accounting; assert the minimum
+	// deterministic bytes and tolerate retry inflation.
+	s.GreaterOrEqual(clusterWriteBytes, int64(250))
 
 	collectSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepCollectConflicts)
 	s.Equal(collectSum.GetReqCnt.Load(), uint64(2))

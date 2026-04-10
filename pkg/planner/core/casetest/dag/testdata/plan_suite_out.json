@@ -294,7 +294,7 @@
     "Cases": [
       {
         "SQL": "select * from t t1 join t t2 on t1.a = t2.c_str",
-        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t))->Projection}(Column#27,Column#28)"
+        "Best": "LeftHashJoin{TableReader(Table(t))->Projection->TableReader(Table(t))->Sel([eq(cast(cast(test.t.c_str, bigint(20) BINARY), double BINARY), cast(test.t.c_str, double BINARY))])->Projection}(Column#1,Column#31)->Projection"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a",

@@ -53,6 +53,10 @@ type joinGroup struct {
 
 	// All leading hints for this join group.
 	leadingHints []*hint.PlanHints
+	// Whether this join group contains any user-provided LEADING hint. Internal
+	// ordered-leading preferences reuse the same builder path but should not emit
+	// user-facing hint warnings.
+	hasUserLeadingHint bool
 	// Join method hints for each vertex in this join group.
 	// Key is the planID of the vertex.
 	// This is for restore join method hints after join reorder.
@@ -70,6 +74,7 @@ type joinGroup struct {
 func (g *joinGroup) merge(other *joinGroup) {
 	g.vertexes = append(g.vertexes, other.vertexes...)
 	g.leadingHints = append(g.leadingHints, other.leadingHints...)
+	g.hasUserLeadingHint = g.hasUserLeadingHint || other.hasUserLeadingHint
 	if len(other.vertexHints) > 0 {
 		if g.vertexHints == nil {
 			g.vertexHints = make(map[int]*JoinMethodHint, len(other.vertexHints))
@@ -113,12 +118,17 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	}
 
 	var curLeadingHint *hint.PlanHints
+	var curLeadingHintFromUser bool
 	if join.PreferJoinOrder {
 		curLeadingHint = join.HintInfo
+		curLeadingHintFromUser = true
+	} else if join.InternalPreferJoinOrder {
+		curLeadingHint = join.InternalHintInfo
 	}
 	defer func() {
 		if curLeadingHint != nil {
 			resJoinGroup.leadingHints = append(resJoinGroup.leadingHints, curLeadingHint)
+			resJoinGroup.hasUserLeadingHint = resJoinGroup.hasUserLeadingHint || curLeadingHintFromUser
 		}
 	}()
 
@@ -250,7 +260,7 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 		}
 		p.SetChildren(newChildren...)
 
-		if len(joinGroup.leadingHints) > 0 {
+		if joinGroup.hasUserLeadingHint && len(joinGroup.leadingHints) > 0 {
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check the join type or the join algorithm hint")
 		}
 		return p, nil
@@ -481,7 +491,7 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 	}
 
 	leadingHint, hasDifferent := CheckAndGenerateLeadingHint(j.group.leadingHints)
-	if hasDifferent {
+	if hasDifferent && j.group.hasUserLeadingHint {
 		j.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
 	}
@@ -506,7 +516,9 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		return newNode, true, nil
 	}
 	warn := func() {
-		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+		if j.group.hasUserLeadingHint {
+			j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+		}
 	}
 
 	// BuildLeadingTreeFromList may modify nodes slice, so we need to clone it first.
@@ -517,7 +529,9 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		return nil, nil, err
 	}
 	if !ok {
-		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table is valid")
+		if j.group.hasUserLeadingHint {
+			j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table is valid")
+		}
 		return nil, nodes, nil
 	}
 	return nodeWithHint, nodesAfterHint, nil

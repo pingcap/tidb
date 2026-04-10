@@ -38,6 +38,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 )
 
+type likeEscapeSpec struct {
+	escape   string
+	explicit bool
+}
+
 func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool) {
 	switch strings.ToUpper(name) {
 	case ast.MaskingPolicyRestrictNameInsertIntoSelect:
@@ -1141,6 +1146,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
+	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
 	AlterJobOptionList                     "Alter job option list"
@@ -1667,7 +1673,6 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	LikeOrIlikeEscapeOpt            "like or ilike escape option"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
@@ -2257,7 +2262,7 @@ AlterTableSpecSingleOpt:
 		partitionMethod := ast.PartitionMethod{Expr: $7}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeLastPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2268,7 +2273,7 @@ AlterTableSpecSingleOpt:
 		partitionMethod := ast.PartitionMethod{Expr: $7}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeFirstPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2440,7 +2445,7 @@ AlterTableSpec:
 		partitionMethod := ast.PartitionMethod{Expr: $6}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 		$$ = &ast.AlterTableSpec{
 			NoWriteToBinlog: noWriteToBinlog,
 			Tp:              ast.AlterTableAddLastPartition,
@@ -2677,7 +2682,7 @@ AlterTableSpec:
 		partitionMethod := ast.PartitionMethod{Expr: $6}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 		$$ = &ast.AlterTableSpec{
 			IfExists:  $8.(bool),
 			Tp:        ast.AlterTableDropFirstPartition,
@@ -4019,7 +4024,7 @@ ColumnOption:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.endOffset(&yyS[yypt-1])
 		expr := $4
-		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(expr, parser.src[startOffset:endOffset])
 
 		$$ = &ast.ColumnOption{
 			Tp:     ast.ColumnOptionGenerated,
@@ -5052,7 +5057,7 @@ PartitionIntervalOpt:
 		}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionInterval.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(partitionInterval, parser.src[startOffset:endOffset])
 		$$ = partitionInterval
 	}
 
@@ -5430,7 +5435,7 @@ CreateViewStmt:
 		} else {
 			x.CheckOption = ast.CheckOptionCascaded
 		}
-		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		parser.setNodeText(selStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 		$$ = x
 	}
 
@@ -5778,7 +5783,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$2.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+		parser.setNodeText($2, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "FORMAT" "=" stringLit TraceableStmt
 	{
@@ -5788,7 +5793,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$5.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+		parser.setNodeText($5, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" TraceableStmt
 	{
@@ -5797,7 +5802,7 @@ TraceStmt:
 			TracePlan: true,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$3.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+		parser.setNodeText($3, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
 	{
@@ -5807,7 +5812,7 @@ TraceStmt:
 			TracePlanTarget: $5,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$6.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+		parser.setNodeText($6, string(parser.src[startOffset:]))
 	}
 
 ExplainSym:
@@ -5820,7 +5825,7 @@ ExplainStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		stmt := $3
-		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(stmt, strings.TrimSpace(parser.src[startOffset:]))
 		$$ = &ast.ExplainStmt{
 			Stmt:    stmt,
 			Explore: true,
@@ -5837,7 +5842,7 @@ ExplainStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		stmt := $4
-		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(stmt, strings.TrimSpace(parser.src[startOffset:]))
 		$$ = &ast.ExplainStmt{
 			Stmt:    stmt,
 			Explore: true,
@@ -6797,36 +6802,50 @@ PredicateExpr:
 	}
 |	BitExpr LikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		escape := $4
+		escapeSpec := $4.(*likeEscapeSpec)
+		escape := escapeSpec.escape
+		explicit := escapeSpec.explicit
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
-		} else if len(escape) == 0 {
-			escape = "\\"
+		}
+		// When ESCAPE empty string is specified, escape is empty and explicit is true.
+		// This means no escape character should be used (Escape = 0).
+		var escapeChar byte
+		if len(escape) > 0 {
+			escapeChar = escape[0]
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Expr:    $1,
-			Pattern: $3,
-			Not:     !$2.(bool),
-			Escape:  escape[0],
-			IsLike:  true,
+			Expr:           $1,
+			Pattern:        $3,
+			Not:            !$2.(bool),
+			Escape:         escapeChar,
+			EscapeExplicit: explicit,
+			IsLike:         true,
 		}
 	}
 |	BitExpr IlikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		escape := $4
+		escapeSpec := $4.(*likeEscapeSpec)
+		escape := escapeSpec.escape
+		explicit := escapeSpec.explicit
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
-		} else if len(escape) == 0 {
-			escape = "\\"
+		}
+		// When ESCAPE empty string is specified, escape is empty and explicit is true.
+		// This means no escape character should be used (Escape = 0).
+		var escapeChar byte
+		if len(escape) > 0 {
+			escapeChar = escape[0]
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Expr:    $1,
-			Pattern: $3,
-			Not:     !$2.(bool),
-			Escape:  escape[0],
-			IsLike:  false,
+			Expr:           $1,
+			Pattern:        $3,
+			Not:            !$2.(bool),
+			Escape:         escapeChar,
+			EscapeExplicit: explicit,
+			IsLike:         false,
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -6846,11 +6865,11 @@ RegexpSym:
 LikeOrIlikeEscapeOpt:
 	%prec empty
 	{
-		$$ = "\\"
+		$$ = &likeEscapeSpec{escape: "\\", explicit: false}
 	}
 |	"ESCAPE" stringLit
 	{
-		$$ = $2
+		$$ = &likeEscapeSpec{escape: $2, explicit: true}
 	}
 
 Field:
@@ -6901,7 +6920,7 @@ FieldList:
 		field.Offset = parser.startOffset(&yyS[yypt])
 		if field.Expr != nil {
 			endOffset := parser.yylval.offset
-			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+			parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
 		$$ = []*ast.SelectField{field}
 	}
@@ -6912,7 +6931,7 @@ FieldList:
 		field.Offset = parser.startOffset(&yyS[yypt])
 		if field.Expr != nil {
 			endOffset := parser.yylval.offset
-			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+			parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
 		$$ = append(fl, field)
 	}
@@ -8378,7 +8397,7 @@ SimpleExpr:
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		endOffset := parser.endOffset(&yyS[yypt])
 		expr := $2
-		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(expr, parser.src[startOffset:endOffset])
 		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 |	'(' ExpressionList ',' Expression ')'
@@ -9784,7 +9803,7 @@ SelectStmtFromDualTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-1].offset - 1
-			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+			parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
@@ -9799,7 +9818,7 @@ SelectStmtFromTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-5])
-			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+			parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Where = $4.(ast.ExprNode)
@@ -10850,14 +10869,14 @@ SubSelect:
 		parser.setLastSelectFieldText(rs, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SetOprStmt ')'
 	{
 		rs := $2.(*ast.SetOprStmt)
 		src := parser.src
-		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SelectStmtWithClause ')'
@@ -10868,11 +10887,11 @@ SubSelect:
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
 			// See the implementation of yyParse function
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -10891,11 +10910,11 @@ SubSelect:
 			endOffset := parser.endOffset(&yyS[yypt])
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -12613,9 +12632,10 @@ ShowLikeOrWhereOpt:
 |	"LIKE" SimpleExpr
 	{
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Pattern: $2,
-			Escape:  '\\',
-			IsLike:  true,
+			Pattern:        $2,
+			Escape:         '\\',
+			EscapeExplicit: false,
+			IsLike:         true,
 		}
 	}
 |	"WHERE" Expression
@@ -13016,7 +13036,7 @@ StatementList:
 		if $1 != nil {
 			s := $1
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(parser.lexer.client, lexer.stmtText())
+				parser.setNodeText(s, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -13026,7 +13046,7 @@ StatementList:
 		if $3 != nil {
 			s := $3
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(parser.lexer.client, lexer.stmtText())
+				parser.setNodeText(s, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -14833,11 +14853,11 @@ CreateBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
@@ -14851,7 +14871,7 @@ CreateBindingStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		hintedStmt := $5
-		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  hintedStmt,
@@ -14903,7 +14923,7 @@ DropBindingStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
@@ -14917,11 +14937,11 @@ DropBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
@@ -14946,7 +14966,7 @@ SetBindingStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.SetBindingStmt{
 			BindingStatusType: $3.(ast.BindingStatusType),
@@ -14960,11 +14980,11 @@ SetBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.SetBindingStmt{
 			BindingStatusType: $3.(ast.BindingStatusType),
@@ -16505,7 +16525,7 @@ PlanReplayerStmt:
 			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(x.Stmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}
@@ -16524,7 +16544,7 @@ PlanReplayerStmt:
 			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(x.Stmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}
@@ -17355,7 +17375,7 @@ CreateProcedureStmt:
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $8
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
 		startOffset = parser.startOffset(&yyS[yypt-3])
 		if parser.src[startOffset] == '(' {
 			startOffset++
