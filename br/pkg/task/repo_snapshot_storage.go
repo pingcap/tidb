@@ -391,6 +391,29 @@ func resolveSnapshotBackupMeta(
 	return resolved, backupMeta, nil
 }
 
+// ResolveSnapshotBackupMeta resolves one snapshot backup reference and reads its backupmeta.
+func ResolveSnapshotBackupMeta(
+	ctx context.Context,
+	storageName string,
+	cfg *Config,
+	layout repo.Layout,
+	backupID repo.BackupID,
+) (*backuppb.StorageBackend, storeapi.Storage, *backuppb.BackupMeta, error) {
+	rootBackend, rootStorage, err := GetStorage(ctx, storageName, cfg)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	resolved, backupMeta, err := resolveSnapshotBackupMeta(ctx, &RestoreConfig{
+		Config:   *cfg,
+		Layout:   layout,
+		BackupID: backupID,
+	}, rootBackend, rootStorage)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	return resolved.RootBackend, resolved.MetadataStorage, backupMeta, nil
+}
+
 func resolveUnfinishedPendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHash []byte) ([]repo.BackupID, error) {
 	entries, err := listPendingBackups(ctx, rootStorage, cfgHash)
 	if err != nil {

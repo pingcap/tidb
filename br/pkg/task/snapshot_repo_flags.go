@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/spf13/pflag"
 )
@@ -87,7 +88,8 @@ func DefineSnapshotRepoFlags(flags *pflag.FlagSet, includeBackupID bool) {
 	}
 }
 
-func parseSnapshotStorageLayoutFlag(flags *pflag.FlagSet) (repo.Layout, error) {
+// ParseSnapshotStorageLayoutFlag parses the shared snapshot storage layout flag.
+func ParseSnapshotStorageLayoutFlag(flags *pflag.FlagSet) (repo.Layout, error) {
 	if flags.Lookup(flagStorageLayout) == nil {
 		return repo.LayoutLegacy, nil
 	}
@@ -98,7 +100,12 @@ func parseSnapshotStorageLayoutFlag(flags *pflag.FlagSet) (repo.Layout, error) {
 	return repo.ParseLayout(raw)
 }
 
-func parseSnapshotBackupIDFlag(flags *pflag.FlagSet) (repo.BackupID, error) {
+func parseSnapshotStorageLayoutFlag(flags *pflag.FlagSet) (repo.Layout, error) {
+	return ParseSnapshotStorageLayoutFlag(flags)
+}
+
+// ParseSnapshotBackupIDFlag parses the shared snapshot backup id flag.
+func ParseSnapshotBackupIDFlag(flags *pflag.FlagSet) (repo.BackupID, error) {
 	if flags.Lookup(flagBackupID) == nil {
 		return 0, nil
 	}
@@ -111,6 +118,21 @@ func parseSnapshotBackupIDFlag(flags *pflag.FlagSet) (repo.BackupID, error) {
 		return 0, nil
 	}
 	return repo.ParseBackupID(raw)
+}
+
+func parseSnapshotBackupIDFlag(flags *pflag.FlagSet) (repo.BackupID, error) {
+	return ParseSnapshotBackupIDFlag(flags)
+}
+
+// ValidateSnapshotRestoreStorage validates the layout/backup-id combination for a snapshot reference.
+func ValidateSnapshotRestoreStorage(layout repo.Layout, backupID repo.BackupID) error {
+	if layout.IsRepoV1() && backupID.IsZero() {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s is required when --%s=repo-v1", flagBackupID, flagStorageLayout)
+	}
+	if !layout.IsRepoV1() && !backupID.IsZero() {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s requires --%s=repo-v1", flagBackupID, flagStorageLayout)
+	}
+	return nil
 }
 
 func parseSnapshotOnPendingFlag(flags *pflag.FlagSet) (snapshotRepoOnPendingAction, error) {

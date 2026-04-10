@@ -270,5 +270,6 @@ func newStreamRestoreCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, true)
 	task.DefineStreamRestoreFlags(command)
+	task.DefineSnapshotRepoFlags(command.Flags(), true)
 	return command
 }

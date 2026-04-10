@@ -1996,28 +1996,19 @@ func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, uint64, error) {
-	_, s, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
+	_, _, backupMeta, err := ResolveSnapshotBackupMeta(
+		ctx,
+		cfg.FullBackupStorage,
+		&cfg.Config,
+		cfg.Layout,
+		cfg.BackupID,
+	)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-
-	decryptedMetaData, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, &cfg.CipherInfo)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-
-	backupmeta := &backuppb.BackupMeta{}
-	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
 	// start and end are identical in full backup, pick random one
-	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
+	return backupMeta.GetEndVersion(), backupMeta.GetClusterId(), nil
 }
 
 func buildRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restoreutils.RewriteRules {

@@ -56,6 +56,24 @@ func TestSnapshotRepoBackupFlagsOnPending(t *testing.T) {
 	require.Equal(t, snapshotRepoOnPendingResume, action)
 }
 
+func TestParseStreamRestoreFlagsRequireFullBackupStorageForSnapshotReference(t *testing.T) {
+	flags := pflag.NewFlagSet("point", pflag.ContinueOnError)
+	DefineRestoreFlags(flags)
+	flags.String(FlagStreamStartTS, "", "")
+	flags.String(FlagStreamRestoreTS, "", "")
+	flags.String(FlagStreamFullBackupStorage, "", "")
+	flags.Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "")
+	flags.Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "")
+	flags.Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "")
+	DefineSnapshotRepoFlags(flags, true)
+	require.NoError(t, flags.Parse([]string{"--storage-layout=repo-v1", "--backup-id=61453"}))
+
+	cfg := &RestoreConfig{}
+	require.NoError(t, cfg.ParseFromFlags(flags, true))
+	err := cfg.ParseStreamRestoreFlags(flags)
+	require.ErrorContains(t, err, "require --full-backup-storage for point restore")
+}
+
 func TestRewriteDataBackendForStore(t *testing.T) {
 	local := &backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: "/tmp/repo"}},

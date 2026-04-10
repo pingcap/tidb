@@ -432,6 +432,14 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
 			FlagStreamStartTS, FlagStreamFullBackupStorage)
 	}
+	if len(cfg.FullBackupStorage) == 0 && (flags.Changed(flagStorageLayout) || flags.Changed(flagBackupID)) {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s and --%s require --%s for point restore",
+			flagStorageLayout,
+			flagBackupID,
+			FlagStreamFullBackupStorage,
+		)
+	}
 
 	if cfg.PitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
 		return errors.Trace(err)
@@ -533,11 +541,8 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
-	if cfg.Layout.IsRepoV1() && cfg.BackupID.IsZero() {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s is required when --%s=repo-v1", flagBackupID, flagStorageLayout)
-	}
-	if !cfg.Layout.IsRepoV1() && !cfg.BackupID.IsZero() {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s requires --%s=repo-v1", flagBackupID, flagStorageLayout)
+	if err := ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
+		return err
 	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
