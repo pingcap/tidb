@@ -33,6 +33,7 @@ func IsContextCanceled(err error) bool {
 var (
 	ErrUnknown                      = errors.Normalize("internal error", errors.RFCCodeText("BR:Common:ErrUnknown"))
 	ErrInvalidArgument              = errors.Normalize("invalid argument", errors.RFCCodeText("BR:Common:ErrInvalidArgument"))
+	ErrOperationAborted             = errors.Normalize("operation aborted by user", errors.RFCCodeText("BR:Common:ErrOperationAborted"))
 	ErrUndefinedRestoreDbOrTable    = errors.Normalize("undefined restore databases or tables", errors.RFCCodeText("BR:Common:ErrUndefinedDbOrTable"))
 	ErrVersionMismatch              = errors.Normalize("version mismatch", errors.RFCCodeText("BR:Common:ErrVersionMismatch"))
 	ErrFailedToConnect              = errors.Normalize("failed to make gRPC channels", errors.RFCCodeText("BR:Common:ErrFailedToConnect"))

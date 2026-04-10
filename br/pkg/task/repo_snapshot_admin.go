@@ -15,6 +15,7 @@
 package task
 
 import (
+	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -23,14 +24,18 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 type RepoSnapshotListConfig struct {
@@ -45,26 +50,33 @@ type RepoSnapshotGetConfig struct {
 
 type RepoSnapshotDeleteConfig struct {
 	Config
-	BackupID repo.BackupID
+	BackupID   repo.BackupID
+	SkipPrompt bool
 }
 
 type RepoSnapshotDeleteResult = repo.SnapshotDeleteResult
 
 type RepoSnapshotPendingDiscardConfig struct {
 	Config
-	BackupID repo.BackupID
+	BackupID   repo.BackupID
+	SkipPrompt bool
 }
 
 type RepoSnapshotPendingDiscardResult = repo.PendingDiscardResult
 
 type RepoSnapshotOrphansConfig struct {
 	Config
+	SkipPrompt bool
 }
 
 type repoSnapshotConsole interface {
 	glue.ConsoleGlue
 	StartProgressBar(title string, total int, extraFields ...glue.ExtraField) glue.ProgressWaiter
 	StartDynamicProgressBar(title string, extraFields ...glue.ExtraField) glue.DynamicProgressWaiter
+	PromptBool(string) bool
+	Println(...any)
+	Printf(string, ...any)
+	IsInteractive() bool
 }
 
 type repoSnapshotMetaView string
@@ -73,6 +85,8 @@ const (
 	repoSnapshotMetaViewBasic  repoSnapshotMetaView = "basic"
 	repoSnapshotMetaViewTables repoSnapshotMetaView = "tables"
 	repoSnapshotMetaViewFiles  repoSnapshotMetaView = "files"
+
+	repoSnapshotPromptSampleLimit = 5
 )
 
 type repoSnapshotBasicView struct {
@@ -108,6 +122,13 @@ type repoSnapshotFileView struct {
 	TotalKVs   uint64 `json:"total-kvs"`
 	TotalBytes uint64 `json:"total-bytes"`
 	SHA256     string `json:"sha256"`
+}
+
+type repoSnapshotDeletePreview struct {
+	HasBasic   bool
+	Basic      repoSnapshotBasicView
+	HasPending bool
+	Pending    repo.PendingBackup
 }
 
 func RunRepoSnapshotList(
@@ -154,22 +175,25 @@ func RunRepoSnapshotDelete(
 ) (*RepoSnapshotDeleteResult, error) {
 	console := normalizeRepoSnapshotConsole(consoleGlue)
 	var deleteResult *RepoSnapshotDeleteResult
-	extraFields := []glue.ExtraField{
-		glue.WithConstExtraField("backup-id", cfg.BackupID.String()),
-		withDeletedFilesExtraField(func() int {
-			if deleteResult == nil {
-				return 0
-			}
-			return deleteResult.MetadataDeleted + deleteResult.DataDeleted + deleteResult.PendingDeleted
-		}),
-	}
-	return runRepoSnapshotDynamicProgressTask(
-		ctx,
-		console,
-		"Deleting snapshot backup...",
-		extraFields,
-		func(addTotal func(int64), advance func(int64)) (*RepoSnapshotDeleteResult, error) {
-			return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotDeleteResult, error) {
+	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotDeleteResult, error) {
+		if err := confirmRepoSnapshotDelete(ctx, console, storage, &cfg); err != nil {
+			return nil, errors.Trace(err)
+		}
+		extraFields := []glue.ExtraField{
+			glue.WithConstExtraField("backup-id", cfg.BackupID.String()),
+			withDeletedFilesExtraField(func() int {
+				if deleteResult == nil {
+					return 0
+				}
+				return deleteResult.MetadataDeleted + deleteResult.DataDeleted + deleteResult.PendingDeleted
+			}),
+		}
+		return runRepoSnapshotDynamicProgressTask(
+			ctx,
+			console,
+			"Deleting snapshot backup...",
+			extraFields,
+			func(addTotal func(int64), advance func(int64)) (*RepoSnapshotDeleteResult, error) {
 				snapshotOps := repo.SnapshotOpsExtension(storage)
 				result, err := snapshotOps.DeleteSnapshot(
 					ctx,
@@ -183,9 +207,9 @@ func RunRepoSnapshotDelete(
 					deleteResult = result
 				}
 				return result, err
-			})
-		},
-	)
+			},
+		)
+	})
 }
 
 func RunRepoSnapshotPendingDiscard(
@@ -202,6 +226,12 @@ func RunRepoSnapshotPendingDiscard(
 		}
 		target, err := selectPendingBackupForDiscard(cfg.BackupID, pendingBackups)
 		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err := validateRepoSnapshotPendingDiscardTarget(target); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err := confirmRepoSnapshotPendingDiscard(console, &cfg, target); err != nil {
 			return nil, errors.Trace(err)
 		}
 		var discardResult *RepoSnapshotPendingDiscardResult
@@ -278,14 +308,21 @@ func RunRepoSnapshotOrphansDelete(
 ) (int, error) {
 	console := normalizeRepoSnapshotConsole(consoleGlue)
 	deletedCount := 0
-	return runRepoSnapshotDynamicProgressTask(
-		ctx,
-		console,
-		"Deleting orphan snapshot objects...",
-		[]glue.ExtraField{withDeletedFilesExtraField(func() int { return deletedCount })},
-		func(addTotal func(int64), advance func(int64)) (int, error) {
-			return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (int, error) {
-				snapshotOps := repo.SnapshotOpsExtension(storage)
+	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (int, error) {
+		snapshotOps := repo.SnapshotOpsExtension(storage)
+		hasOrphans, err := confirmRepoSnapshotOrphansDelete(ctx, console, &cfg, snapshotOps)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if !hasOrphans {
+			return 0, nil
+		}
+		return runRepoSnapshotDynamicProgressTask(
+			ctx,
+			console,
+			"Deleting orphan snapshot objects...",
+			[]glue.ExtraField{withDeletedFilesExtraField(func() int { return deletedCount })},
+			func(addTotal func(int64), advance func(int64)) (int, error) {
 				deleted, err := snapshotOps.DeleteSnapshotOrphans(
 					ctx,
 					repo.WithMutationProgress(
@@ -295,9 +332,9 @@ func RunRepoSnapshotOrphansDelete(
 				)
 				deletedCount = deleted
 				return deleted, err
-			})
-		},
-	)
+			},
+		)
+	})
 }
 
 func normalizeRepoSnapshotConsole(consoleGlue glue.ConsoleGlue) repoSnapshotConsole {
@@ -318,6 +355,173 @@ func withDeletedFilesExtraField(count func() int) glue.ExtraField {
 		}
 		return fmt.Sprintf("%d files", deleted)
 	})
+}
+
+func shouldConfirmRepoSnapshotMutation(console repoSnapshotConsole, skipPrompt bool) bool {
+	return !skipPrompt && console != nil && console.IsInteractive()
+}
+
+func confirmRepoSnapshotDelete(
+	ctx context.Context,
+	console repoSnapshotConsole,
+	storage storeapi.Storage,
+	cfg *RepoSnapshotDeleteConfig,
+) error {
+	if !shouldConfirmRepoSnapshotMutation(console, cfg.SkipPrompt) {
+		return nil
+	}
+	preview := collectRepoSnapshotDeletePreview(ctx, storage, &cfg.Config, cfg.BackupID)
+	console.Printf("About to delete snapshot backup %s (%s).\n", cfg.BackupID, formatRepoSnapshotBackupTime(cfg.BackupID))
+	console.Println("This permanently removes snapshot metadata, data files, and pending markers for this backup.")
+	if preview.HasBasic {
+		printRepoSnapshotConfirmField(console, "backup-size", formatRepoSnapshotBytes(preview.Basic.BackupSize))
+		switch {
+		case preview.Basic.IsRawKV:
+			printRepoSnapshotConfirmField(console, "backup-type", "raw-kv")
+		case preview.Basic.IsTxnKV:
+			printRepoSnapshotConfirmField(console, "backup-type", "txn-kv")
+		}
+	}
+	if preview.HasPending {
+		printRepoSnapshotConfirmField(
+			console,
+			"pending-markers",
+			fmt.Sprintf("%d (%s)", len(preview.Pending.MarkerPaths), preview.Pending.State),
+		)
+	}
+	if !console.PromptBool("Continue? ") {
+		return errors.Trace(berrors.ErrOperationAborted)
+	}
+	return nil
+}
+
+func collectRepoSnapshotDeletePreview(
+	ctx context.Context,
+	storage storeapi.Storage,
+	cfg *Config,
+	backupID repo.BackupID,
+) repoSnapshotDeletePreview {
+	preview := repoSnapshotDeletePreview{}
+	metadataStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID))
+	if backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, cfg); err == nil {
+		preview.HasBasic = true
+		preview.Basic = convertRepoSnapshotBasicView(*backupMeta)
+	}
+	if pendingBackups, err := repo.SnapshotOpsExtension(storage).ListPendingBackups(ctx); err == nil {
+		for _, pending := range pendingBackups {
+			if pending.BackupID == backupID {
+				preview.HasPending = true
+				preview.Pending = pending
+				break
+			}
+		}
+	}
+	return preview
+}
+
+func validateRepoSnapshotPendingDiscardTarget(target *repo.PendingBackup) error {
+	switch target.State {
+	case repo.PendingBackupStateStale, repo.PendingBackupStateUnfinished:
+		return nil
+	default:
+		return errors.Annotatef(
+			berrors.ErrInvalidArgument,
+			"found inconsistent repo-v1 pending backup %s: pending marker exists but neither %s nor %s was found",
+			target.BackupID,
+			metautil.MetaFile,
+			checkpoint.CheckpointMetaPathForBackup,
+		)
+	}
+}
+
+func confirmRepoSnapshotPendingDiscard(
+	console repoSnapshotConsole,
+	cfg *RepoSnapshotPendingDiscardConfig,
+	target *repo.PendingBackup,
+) error {
+	if !shouldConfirmRepoSnapshotMutation(console, cfg.SkipPrompt) {
+		return nil
+	}
+	console.Printf("About to discard pending snapshot backup %s (%s).\n", target.BackupID, formatRepoSnapshotBackupTime(target.BackupID))
+	printRepoSnapshotConfirmField(console, "state", string(target.State))
+	printRepoSnapshotConfirmField(console, "pending-markers", fmt.Sprintf("%d", len(target.MarkerPaths)))
+	switch target.State {
+	case repo.PendingBackupStateStale:
+		console.Println("This only removes stale pending markers; completed snapshot metadata and data files are kept.")
+	case repo.PendingBackupStateUnfinished:
+		console.Println("This permanently removes checkpoint/metadata files, data files, and pending markers for the unfinished backup.")
+	}
+	if !console.PromptBool("Continue? ") {
+		return errors.Trace(berrors.ErrOperationAborted)
+	}
+	return nil
+}
+
+func confirmRepoSnapshotOrphansDelete(
+	ctx context.Context,
+	console repoSnapshotConsole,
+	cfg *RepoSnapshotOrphansConfig,
+	snapshotOps repo.SnapshotOps,
+) (bool, error) {
+	if !shouldConfirmRepoSnapshotMutation(console, cfg.SkipPrompt) {
+		return true, nil
+	}
+	samplePaths, hasMore, err := collectRepoSnapshotOrphanSamples(ctx, snapshotOps, repoSnapshotPromptSampleLimit)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(samplePaths) == 0 {
+		return false, nil
+	}
+	if hasMore {
+		console.Println("About to delete orphan snapshot objects.")
+		console.Printf("The exact count is not precomputed before confirmation; showing the first %d discovered object(s).\n", len(samplePaths))
+	} else {
+		console.Printf("About to delete %d orphan snapshot object(s).\n", len(samplePaths))
+	}
+	console.Println("These objects are not referenced by any completed snapshot backup and will be permanently removed.")
+	console.Println("Sample orphan objects:")
+	for _, orphanPath := range samplePaths {
+		console.Printf("  - %s\n", orphanPath)
+	}
+	if hasMore {
+		console.Println("  ... more orphan objects may exist")
+	}
+	if !console.PromptBool("Continue? ") {
+		return false, errors.Trace(berrors.ErrOperationAborted)
+	}
+	return true, nil
+}
+
+func collectRepoSnapshotOrphanSamples(
+	ctx context.Context,
+	snapshotOps repo.SnapshotOps,
+	limit int,
+) ([]string, bool, error) {
+	samplePaths := make([]string, 0, limit)
+	for err, orphanPath := range snapshotOps.WalkSnapshotOrphans(ctx) {
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		if len(samplePaths) < limit {
+			samplePaths = append(samplePaths, orphanPath)
+			continue
+		}
+		return samplePaths, true, nil
+	}
+	return samplePaths, false, nil
+}
+
+func printRepoSnapshotConfirmField(console repoSnapshotConsole, key string, value string) {
+	console.Printf("  %s: %s\n", key, value)
+}
+
+func formatRepoSnapshotBytes(size uint64) string {
+	return fmt.Sprintf("%d (%s)", size, units.HumanSize(float64(size)))
+}
+
+func formatRepoSnapshotBackupTime(backupID repo.BackupID) string {
+	return utils.FormatDate(oracle.GetTimeFromTS(uint64(backupID)))
 }
 
 func waitRepoSnapshotProgressDone(progress glue.ProgressWaiter) {
@@ -545,30 +749,19 @@ func collectRepoSnapshotTables(ctx context.Context, reader *metautil.MetaReader)
 					return nil, errors.Trace(err)
 				}
 				slices.SortFunc(tables, func(a, b repoSnapshotTableView) int {
-					switch {
-					case a.DBName < b.DBName:
-						return -1
-					case a.DBName > b.DBName:
-						return 1
-					case a.TableName < b.TableName:
-						return -1
-					case a.TableName > b.TableName:
-						return 1
-					case a.KVCount < b.KVCount:
-						return -1
-					case a.KVCount > b.KVCount:
-						return 1
-					case a.KVSize < b.KVSize:
-						return -1
-					case a.KVSize > b.KVSize:
-						return 1
-					case a.TiFlashReplica < b.TiFlashReplica:
-						return -1
-					case a.TiFlashReplica > b.TiFlashReplica:
-						return 1
-					default:
-						return 0
+					if c := cmp.Compare(a.DBName, b.DBName); c != 0 {
+						return c
 					}
+					if c := cmp.Compare(a.TableName, b.TableName); c != 0 {
+						return c
+					}
+					if c := cmp.Compare(a.KVCount, b.KVCount); c != 0 {
+						return c
+					}
+					if c := cmp.Compare(a.KVSize, b.KVSize); c != 0 {
+						return c
+					}
+					return cmp.Compare(a.TiFlashReplica, b.TiFlashReplica)
 				})
 				return tables, nil
 			}
@@ -606,26 +799,16 @@ func collectRepoSnapshotFiles(ctx context.Context, reader *metautil.MetaReader) 
 					return nil, errors.Trace(err)
 				}
 				slices.SortFunc(files, func(a, b repoSnapshotFileView) int {
-					switch {
-					case a.Name < b.Name:
-						return -1
-					case a.Name > b.Name:
-						return 1
-					case a.CF < b.CF:
-						return -1
-					case a.CF > b.CF:
-						return 1
-					case a.StartKey < b.StartKey:
-						return -1
-					case a.StartKey > b.StartKey:
-						return 1
-					case a.EndKey < b.EndKey:
-						return -1
-					case a.EndKey > b.EndKey:
-						return 1
-					default:
-						return 0
+					if c := cmp.Compare(a.Name, b.Name); c != 0 {
+						return c
 					}
+					if c := cmp.Compare(a.CF, b.CF); c != 0 {
+						return c
+					}
+					if c := cmp.Compare(a.StartKey, b.StartKey); c != 0 {
+						return c
+					}
+					return cmp.Compare(a.EndKey, b.EndKey)
 				})
 				return files, nil
 			}
