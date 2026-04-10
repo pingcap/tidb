@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "scheduler.go",
+        "scheduler_manager.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/domain/infosync",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/mock",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/scheduler/mock",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/testutil",
+        "//pkg/keyspace",
+        "//pkg/kv",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util/disttask",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_mock//gomock",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "scheduler_manager_test.go",
+        "scheduler_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 15,
+)

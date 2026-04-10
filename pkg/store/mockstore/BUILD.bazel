@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "mockstore",
     srcs = [
+        "export_helper.go",
         "mockstore.go",
         "redirector.go",
         "tikv.go",
@@ -29,35 +30,5 @@ go_library(
         "@com_github_tikv_client_go_v2//util/async",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//constants",
-    ],
-)
-
-go_test(
-    name = "mockstore_test",
-    timeout = "short",
-    srcs = [
-        "cluster_test.go",
-        "main_test.go",
-        "tikv_test.go",
-    ],
-    embed = [":mockstore"],
-    flaky = True,
-    shard_count = 2,
-    deps = [
-        "//pkg/config",
-        "//pkg/kv",
-        "//pkg/sessionctx/stmtctx",
-        "//pkg/tablecodec",
-        "//pkg/testkit/testmain",
-        "//pkg/testkit/testsetup",
-        "//pkg/types",
-        "//pkg/util/codec",
-        "//pkg/util/rowcodec",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//config",
-        "@com_github_tikv_client_go_v2//testutils",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

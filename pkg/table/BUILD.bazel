@@ -1,10 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "table",
     srcs = [
         "column.go",
         "constraint.go",
+        "export_helper.go",
         "index.go",
         "table.go",
     ],
@@ -39,36 +40,5 @@ go_library(
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "table_test",
-    timeout = "short",
-    srcs = [
-        "column_test.go",
-        "main_test.go",
-        "table_test.go",
-    ],
-    embed = [":table"],
-    flaky = True,
-    race = "on",
-    shard_count = 11,
-    deps = [
-        "//pkg/errctx",
-        "//pkg/errno",
-        "//pkg/expression",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "//pkg/parser/charset",
-        "//pkg/parser/mysql",
-        "//pkg/parser/terror",
-        "//pkg/sessionctx/stmtctx",
-        "//pkg/testkit/testsetup",
-        "//pkg/types",
-        "//pkg/util/collate",
-        "//pkg/util/mock",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

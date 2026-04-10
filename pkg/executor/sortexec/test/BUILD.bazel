@@ -1,0 +1,54 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "benchmark.go",
+        "parallel_sort.go",
+        "parallel_sort_spill.go",
+        "register_gen.go",
+        "sort.go",
+        "sort_spill.go",
+        "topn_spill.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/sortexec/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/testutil",
+        "//pkg/executor/internal/util",
+        "//pkg/executor/sortexec",
+        "//pkg/expression",
+        "//pkg/expression/exprstatic",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/planner/util",
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/memory",
+        "//pkg/util/mock",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "parallel_sort_spill_test.go",
+        "parallel_sort_test.go",
+        "sort_spill_test.go",
+        "sort_test.go",
+        "topn_spill_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 17,
+)

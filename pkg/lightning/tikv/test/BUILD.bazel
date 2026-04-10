@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "tikv.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/tikv/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/lightning/tikv",
+        "//pkg/testkit/mega/register",
+        "@com_github_coreos_go_semver//semver",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//http",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["tikv_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 4,
+)

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "conflictedkv",
@@ -34,43 +34,6 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "conflictedkv_test",
-    timeout = "short",
-    srcs = [
-        "collector_test.go",
-        "deleter_test.go",
-        "handler_test.go",
-        "row_handle_test.go",
-    ],
-    embed = [":conflictedkv"],
-    flaky = True,
-    shard_count = 8,
-    deps = [
-        "//pkg/config/kerneltype",
-        "//pkg/executor/importer",
-        "//pkg/kv",
-        "//pkg/lightning/backend/encode",
-        "//pkg/lightning/backend/external",
-        "//pkg/lightning/backend/kv",
-        "//pkg/lightning/common",
-        "//pkg/lightning/verification",
-        "//pkg/objstore",
-        "//pkg/parser/ast",
-        "//pkg/session",
-        "//pkg/table",
-        "//pkg/tablecodec",
-        "//pkg/testkit",
-        "//pkg/types",
-        "//pkg/util",
-        "@com_github_docker_go_units//:go-units",
-        "@com_github_pingcap_kvproto//pkg/keyspacepb",
-        "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_zap//:zap",
     ],

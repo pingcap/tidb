@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/resourcemanager/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/resourcemanager",
+        "//pkg/resourcemanager/scheduler",
+        "//pkg/resourcemanager/util",
+        "//pkg/testkit/mega/register",
+        "@com_github_stretchr_testify//require",
+    ],
+)

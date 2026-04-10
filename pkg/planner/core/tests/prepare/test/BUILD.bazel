@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "prepare.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/tests/prepare/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/errno",
+        "//pkg/executor",
+        "//pkg/expression",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/metrics",
+        "//pkg/parser",
+        "//pkg/parser/auth",
+        "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
+        "//pkg/session",
+        "//pkg/session/sessionapi",
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/hint",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["prepare_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 24,
+)

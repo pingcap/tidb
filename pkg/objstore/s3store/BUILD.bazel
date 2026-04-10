@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "s3store",
@@ -49,38 +49,5 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "s3store_test",
-    timeout = "short",
-    srcs = [
-        "client_test.go",
-        "main_test.go",
-        "retry_test.go",
-        "s3_flags_test.go",
-        "s3_test.go",
-    ],
-    embed = [":s3store"],
-    flaky = True,
-    shard_count = 50,
-    deps = [
-        "//pkg/objstore",
-        "//pkg/objstore/objectio",
-        "//pkg/objstore/recording",
-        "//pkg/objstore/s3like",
-        "//pkg/objstore/s3store/mock",
-        "//pkg/objstore/storeapi",
-        "//pkg/testkit/testfailpoint",
-        "@com_github_aws_aws_sdk_go_v2//aws",
-        "@com_github_aws_aws_sdk_go_v2_service_s3//:s3",
-        "@com_github_aws_aws_sdk_go_v2_service_s3//types",
-        "@com_github_aws_smithy_go//:smithy-go",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/brpb",
-        "@com_github_spf13_pflag//:pflag",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_mock//gomock",
     ],
 )

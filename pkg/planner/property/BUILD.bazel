@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "property",
     srcs = [
+        "export_helper.go",
         "logical_property.go",
         "physical_property.go",
         "stats_info.go",
@@ -22,19 +23,5 @@ go_library(
         "//pkg/util/size",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
-    ],
-)
-
-go_test(
-    name = "property_test",
-    timeout = "short",
-    srcs = ["physical_property_test.go"],
-    embed = [":property"],
-    flaky = True,
-    deps = [
-        "//pkg/expression",
-        "//pkg/planner/funcdep",
-        "//pkg/util/intset",
-        "@com_github_stretchr_testify//require",
     ],
 )

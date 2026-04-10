@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/memo/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/memo",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/util",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/util",
+        "//pkg/util/mock",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_zyedidia_generic//hashmap",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

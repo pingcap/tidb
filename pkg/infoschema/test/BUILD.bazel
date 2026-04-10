@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = [
+        "builder.go",
+        "exports.go",
+        "infoschema_nokit.go",
+        "main.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/infoschema/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/infoschema/internal",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

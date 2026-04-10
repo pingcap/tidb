@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/tracing/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/testkit/mega/register",
+        "//pkg/util/tracing",
+        "@com_github_opentracing_basictracer_go//:basictracer-go",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["util_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

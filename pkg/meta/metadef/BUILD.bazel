@@ -1,9 +1,10 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "metadef",
     srcs = [
         "db.go",
+        "export_helper.go",
         "system.go",
         "system_tables_def.go",
     ],
@@ -13,17 +14,4 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
     ],
-)
-
-go_test(
-    name = "metadef_test",
-    timeout = "short",
-    srcs = [
-        "db_test.go",
-        "system_test.go",
-    ],
-    embed = [":metadef"],
-    flaky = True,
-    shard_count = 4,
-    deps = ["@com_github_stretchr_testify//require"],
 )

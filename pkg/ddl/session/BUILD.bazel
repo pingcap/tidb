@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "session",
@@ -27,19 +27,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "session_test",
-    timeout = "short",
-    srcs = ["session_pool_test.go"],
-    flaky = True,
-    shard_count = 4,
-    deps = [
-        ":session",
-        "//pkg/testkit",
-        "@com_github_ngaut_pools//:pools",
-        "@com_github_stretchr_testify//require",
     ],
 )

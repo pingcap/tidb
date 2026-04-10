@@ -1,4 +1,23 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/util/traceevent/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/traceevent",
+        "//pkg/util/tracing",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//trace",
+        "@org_uber_go_zap//:zap",
+    ],
+)
 
 go_test(
     name = "test_test",
@@ -12,6 +31,7 @@ go_test(
         "//pkg/kv",
         "//pkg/session",
         "//pkg/testkit",
+        "//pkg/testkit/mega/register",
         "//pkg/util/logutil",
         "//pkg/util/traceevent",
         "//pkg/util/tracing",

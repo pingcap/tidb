@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "indexadvisor",
@@ -35,28 +35,5 @@ go_library(
         "@com_github_google_uuid//:uuid",
         "@com_github_pkg_errors//:errors",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "indexadvisor_test",
-    timeout = "short",
-    srcs = [
-        "indexadvisor_sql_test.go",
-        "indexadvisor_test.go",
-        "indexadvisor_tpch_test.go",
-        "optimizer_test.go",
-        "options_test.go",
-        "utils_test.go",
-    ],
-    flaky = True,
-    shard_count = 48,
-    deps = [
-        ":indexadvisor",
-        "//pkg/parser/ast",
-        "//pkg/parser/mysql",
-        "//pkg/testkit",
-        "//pkg/util/set",
-        "@com_github_stretchr_testify//require",
     ],
 )

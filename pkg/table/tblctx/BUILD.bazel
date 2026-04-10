@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "tblctx",
@@ -23,25 +23,5 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/rowcodec",
         "//pkg/util/tableutil",
-    ],
-)
-
-go_test(
-    name = "tblctx_test",
-    timeout = "short",
-    srcs = ["buffers_test.go"],
-    embed = [":tblctx"],
-    flaky = True,
-    shard_count = 5,
-    deps = [
-        "//pkg/errctx",
-        "//pkg/kv",
-        "//pkg/parser/mysql",
-        "//pkg/sessionctx/variable",
-        "//pkg/tablecodec",
-        "//pkg/types",
-        "//pkg/util/rowcodec",
-        "@com_github_stretchr_testify//mock",
-        "@com_github_stretchr_testify//require",
     ],
 )

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "issyncer",
@@ -41,29 +41,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "issyncer_test",
-    timeout = "short",
-    srcs = [
-        "deferfn_test.go",
-        "loader_test.go",
-        "syncer_test.go",
-    ],
-    embed = [":issyncer"],
-    flaky = True,
-    shard_count = 7,
-    deps = [
-        "//pkg/infoschema",
-        "//pkg/kv",
-        "//pkg/meta",
-        "//pkg/meta/metadef",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "//pkg/parser/mysql",
-        "//pkg/store/mockstore",
-        "@com_github_stretchr_testify//require",
     ],
 )

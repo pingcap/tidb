@@ -1,9 +1,10 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "pattern",
     srcs = [
         "engine.go",
+        "export_helper.go",
         "pattern.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/pattern",
@@ -11,21 +12,5 @@ go_library(
     deps = [
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
-    ],
-)
-
-go_test(
-    name = "pattern_test",
-    timeout = "short",
-    srcs = [
-        "engine_test.go",
-        "pattern_test.go",
-    ],
-    embed = [":pattern"],
-    flaky = True,
-    shard_count = 5,
-    deps = [
-        "//pkg/planner/core/operator/logicalop",
-        "@com_github_stretchr_testify//require",
     ],
 )

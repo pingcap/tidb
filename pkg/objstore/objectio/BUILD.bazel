@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "objectio",
@@ -12,21 +12,5 @@ go_library(
         "//pkg/objstore/compressedio",
         "//pkg/objstore/recording",
         "@com_github_pingcap_errors//:errors",
-    ],
-)
-
-go_test(
-    name = "objectio_test",
-    timeout = "short",
-    srcs = ["writer_test.go"],
-    flaky = True,
-    shard_count = 3,
-    deps = [
-        "//pkg/objstore",
-        "//pkg/objstore/compressedio",
-        "//pkg/objstore/storeapi",
-        "@com_github_klauspost_compress//zstd",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
     ],
 )

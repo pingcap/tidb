@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "sessionctx",
@@ -21,22 +21,5 @@ go_library(
         "//pkg/util/sli",
         "//pkg/util/topsql/stmtstats",
         "@com_github_tikv_client_go_v2//oracle",
-    ],
-)
-
-go_test(
-    name = "sessionctx_test",
-    timeout = "short",
-    srcs = [
-        "context_test.go",
-        "main_test.go",
-    ],
-    embed = [":sessionctx"],
-    flaky = True,
-    race = "on",
-    deps = [
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

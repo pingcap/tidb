@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "history.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/testutil",
+        "//pkg/dxf/importinto/jobhistory",
+        "//pkg/dxf/importinto/taskkey",
+        "//pkg/testkit/mega/register",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["history_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

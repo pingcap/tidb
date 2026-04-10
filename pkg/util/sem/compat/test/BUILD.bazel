@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "sem_integration.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/sem/compat/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore/s3like",
+        "//pkg/parser/auth",
+        "//pkg/planner/core",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util/sem/compat",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["sem_integration_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

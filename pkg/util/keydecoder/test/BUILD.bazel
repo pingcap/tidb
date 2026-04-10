@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/util/keydecoder/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/planner/core",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/testkit/testutil",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/keydecoder",
+        "@com_github_stretchr_testify//assert",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

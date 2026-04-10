@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "copr",
@@ -75,46 +75,5 @@ go_library(
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
-    ],
-)
-
-go_test(
-    name = "copr_test",
-    timeout = "short",
-    srcs = [
-        "batch_coprocessor_test.go",
-        "coprocessor_cache_test.go",
-        "coprocessor_test.go",
-        "key_ranges_test.go",
-        "main_test.go",
-        "mpp_probe_test.go",
-        "region_cache_test.go",
-    ],
-    embed = [":copr"],
-    flaky = True,
-    race = "on",
-    shard_count = 40,
-    deps = [
-        "//pkg/kv",
-        "//pkg/store/driver/backoff",
-        "//pkg/testkit/testsetup",
-        "//pkg/util/logutil",
-        "//pkg/util/paging",
-        "//pkg/util/tiflash",
-        "//pkg/util/trxevents",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_kvproto//pkg/coprocessor",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_pingcap_kvproto//pkg/mpp",
-        "@com_github_stathat_consistent//:consistent",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//config",
-        "@com_github_tikv_client_go_v2//testutils",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_client_go_v2//tikvrpc",
-        "@com_github_tikv_client_go_v2//util/async",
-        "@org_uber_go_goleak//:goleak",
-        "@org_uber_go_zap//:zap",
     ],
 )

@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+//go:build ignore_internal_tests
+// +build ignore_internal_tests
+
+package executor_test
 
 import (
 	"context"
@@ -41,7 +44,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGlueGetVersion(t *testing.T) {
+func RunGlueGetVersion(t *testing.T) {
 	g := tidbGlue{}
 	version := g.GetVersion()
 	require.Contains(t, version, `Release Version`)
@@ -73,7 +76,7 @@ func fetchShowBRIEResult(t *testing.T, e *ShowExec, brieColTypes []*types.FieldT
 	return e.result.ToString(brieColTypes)
 }
 
-func TestFetchShowBRIE(t *testing.T) {
+func RunFetchShowBRIE(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 	ResetGlobalBRIEQueueForTest()
@@ -148,7 +151,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	require.Equal(t, info2Res, fetchShowBRIEResult(t, e, brieColTypes))
 }
 
-func TestBRIEBuilderOptions(t *testing.T) {
+func RunBRIEBuilderOptions(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})

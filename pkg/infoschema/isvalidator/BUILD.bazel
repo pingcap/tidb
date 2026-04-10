@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "isvalidator",
@@ -14,21 +14,5 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "isvalidator_test",
-    timeout = "short",
-    srcs = ["validator_test.go"],
-    embed = [":isvalidator"],
-    flaky = True,
-    deps = [
-        "//pkg/infoschema/validatorapi",
-        "//pkg/sessionctx/vardef",
-        "//pkg/util",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@com_github_tikv_client_go_v2//txnkv/transaction",
     ],
 )

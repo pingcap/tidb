@@ -1,25 +1,13 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "ucadata",
     srcs = [
         "data.go",
+        "export_helper.go",
         "unicode_0900_ai_ci_data_generated.go",
         "unicode_ci_data_generated.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/collate/ucadata",
     visibility = ["//visibility:public"],
-)
-
-go_test(
-    name = "ucadata_test",
-    timeout = "short",
-    srcs = [
-        "unicode_0900_ai_ci_data_test.go",
-        "unicode_ci_data_original_test.go",
-        "unicode_ci_data_test.go",
-    ],
-    embed = [":ucadata"],
-    flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
 )

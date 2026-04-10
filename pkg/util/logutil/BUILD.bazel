@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "logutil",
     srcs = [
+        "export_helper.go",
         "general_logger.go",
         "hex.go",
         "log.go",
@@ -22,30 +23,6 @@ go_library(
         "@org_golang_x_net//http/httpproxy",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//buffer",
-        "@org_uber_go_zap//zapcore",
-    ],
-)
-
-go_test(
-    name = "logutil_test",
-    timeout = "short",
-    srcs = [
-        "hex_test.go",
-        "log_test.go",
-        "main_test.go",
-    ],
-    embed = [":logutil"],
-    flaky = True,
-    deps = [
-        "//pkg/kv",
-        "//pkg/testkit/testsetup",
-        "//pkg/util/tracing",
-        "@com_github_google_uuid//:uuid",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_pingcap_log//:log",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
-        "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
 )

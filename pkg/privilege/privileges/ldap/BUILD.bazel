@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "ldap",
@@ -19,19 +19,4 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
-)
-
-go_test(
-    name = "ldap_test",
-    timeout = "short",
-    srcs = ["ldap_common_test.go"],
-    embed = [":ldap"],
-    embedsrcs = [
-        "test/ca.crt",
-        "test/ldap.crt",
-        "test/ldap.key",
-    ],
-    flaky = True,
-    shard_count = 4,
-    deps = ["@com_github_stretchr_testify//require"],
 )

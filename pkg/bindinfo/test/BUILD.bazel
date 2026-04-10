@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = [
+        "binding_auto.go",
+        "binding_operator.go",
+        "main.go",
+        "register_gen.go",
+        "session_handle.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/bindinfo/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/bindinfo",
+        "//pkg/config",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/parser/terror",
+        "//pkg/server",
+        "//pkg/session/sessionapi",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/stmtsummary",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

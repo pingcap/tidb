@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "ingest",
@@ -62,39 +62,5 @@ go_library(
         "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "ingest_test",
-    timeout = "moderate",
-    srcs = [
-        "checkpoint_test.go",
-        "env_test.go",
-        "integration_test.go",
-        "main_test.go",
-        "mem_root_test.go",
-    ],
-    flaky = True,
-    race = "on",
-    shard_count = 31,
-    deps = [
-        ":ingest",
-        "//pkg/config",
-        "//pkg/config/kerneltype",
-        "//pkg/ddl/ingest/testutil",
-        "//pkg/ddl/session",
-        "//pkg/ddl/testutil",
-        "//pkg/errno",
-        "//pkg/meta/model",
-        "//pkg/testkit",
-        "//pkg/testkit/testfailpoint",
-        "@com_github_ngaut_pools//:pools",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@com_github_tikv_pd_client//:client",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

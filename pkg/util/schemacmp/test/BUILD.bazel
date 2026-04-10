@@ -1,0 +1,40 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "lattice.go",
+        "register_gen.go",
+        "table.go",
+        "type.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/schemacmp/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/ddl",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner",
+        "//pkg/sessionctx",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "//pkg/util/schemacmp",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "lattice_test.go",
+        "table_test.go",
+        "type_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+)

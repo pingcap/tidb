@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "expensivequery",
@@ -15,17 +15,5 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
-    ],
-)
-
-go_test(
-    name = "expensivequery_test",
-    timeout = "short",
-    srcs = ["expensivequery_test.go"],
-    embed = [":expensivequery"],
-    flaky = True,
-    deps = [
-        "//pkg/testkit/testsetup",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

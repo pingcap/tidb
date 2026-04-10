@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "terror",
@@ -10,18 +10,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "terror_test",
-    timeout = "short",
-    srcs = ["terror_test.go"],
-    embed = [":terror"],
-    flaky = True,
-    shard_count = 6,
-    deps = [
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
     ],
 )

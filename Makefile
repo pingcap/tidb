@@ -205,6 +205,37 @@ ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
+.PHONY: ut-mega
+ut-mega: tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Phase 2: mega integration tests)
+	@echo "=== Enabling failpoints ==="
+	@tools/bin/failpoint-ctl enable
+	@echo "=== Updating BUILD.bazel files (gazelle) ==="
+	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	@echo "=== Phase 1: Running unit tests with bazel ==="
+	@bash scripts/bazel_unit_test_targets.sh | xargs bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
+		--define gotags=$(UNIT_TEST_TAGS) \
+		|| { $(MAKE) ut-mega-cleanup; exit 1; }
+	@echo "=== Phase 2: Running mega integration tests ==="
+	bash scripts/mega_runner.sh -timeout $(if $(filter long,$(T)),36000,3600) \
+		|| { $(MAKE) ut-mega-cleanup; exit 1; }
+	@$(MAKE) ut-mega-cleanup
+
+.PHONY: ut-mega-cleanup
+ut-mega-cleanup:
+	@tools/bin/failpoint-ctl disable
+	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+
+.PHONY: ut-mega-test
+ut-mega-test: tools/bin/failpoint-ctl ## Run specific mega tests (usage: make ut-mega-test X=ddl/Options)
+	@tools/bin/failpoint-ctl enable
+	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	bash scripts/mega_runner.sh -run '$(X)' \
+		; RET=$$?; $(MAKE) ut-mega-cleanup; exit $$RET
+
+.PHONY: ut-mega-list
+ut-mega-list: ## List all mega tests
+	bash scripts/mega_runner.sh -list
+
 .PHONY: gotest_in_verify_ci
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
@@ -350,9 +381,9 @@ bazel-failpoint-disable:
 	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
 
 .PHONY: tools/bin/ut
-tools/bin/ut: tools/check/ut.go tools/check/longtests.go
+tools/bin/ut: tools/check/ut.go tools/check/longtests.go tools/check/ut_mega.go
 	cd tools/check; \
-	$(GO) build -o ../bin/ut ut.go longtests.go
+	$(GO) build -o ../bin/ut ut.go longtests.go ut_mega.go
 
 .PHONY: tools/bin/xprog
 tools/bin/xprog: tools/check/xprog/xprog.go

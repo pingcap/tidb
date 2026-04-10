@@ -1,26 +1,12 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "checksum",
-    srcs = ["checksum.go"],
+    srcs = [
+        "checksum.go",
+        "export_helper.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/checksum",
     visibility = ["//visibility:public"],
     deps = ["//pkg/util/zeropool"],
-)
-
-go_test(
-    name = "checksum_test",
-    timeout = "short",
-    srcs = [
-        "checksum_test.go",
-        "main_test.go",
-    ],
-    embed = [":checksum"],
-    flaky = True,
-    deps = [
-        "//pkg/testkit/testsetup",
-        "//pkg/util/encrypt",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
-    ],
 )

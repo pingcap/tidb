@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "servermemorylimit",
@@ -15,19 +15,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "servermemorylimit_test",
-    timeout = "short",
-    srcs = ["servermemorylimit_test.go"],
-    embed = [":servermemorylimit"],
-    flaky = True,
-    race = "on",
-    deps = [
-        "//pkg/session/sessmgr",
-        "//pkg/types",
-        "@com_github_stretchr_testify//require",
     ],
 )

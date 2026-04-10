@@ -79,3 +79,7 @@ var
 # Personal config files
 /*config.toml
 .cache
+#mega
+/mega
+/mega.test
+*.test

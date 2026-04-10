@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "config",
@@ -26,32 +26,5 @@ go_library(
         "@com_github_uber_jaeger_client_go//config",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "config_test",
-    timeout = "short",
-    srcs = [
-        "config_test.go",
-        "config_util_test.go",
-        "main_test.go",
-        "store_test.go",
-    ],
-    data = glob(["**"]),
-    embed = [":config"],
-    flaky = True,
-    shard_count = 31,
-    deps = [
-        "//pkg/config/kerneltype",
-        "//pkg/testkit/testsetup",
-        "//pkg/util/logutil",
-        "@com_github_burntsushi_toml//:toml",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_log//:log",
-        "@com_github_pingcap_metering_sdk//config",
-        "@com_github_stretchr_testify//require",
-        "@com_github_uber_jaeger_client_go//config",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

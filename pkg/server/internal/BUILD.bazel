@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "internal",
@@ -14,21 +14,5 @@ go_library(
         "//pkg/sessionctx/vardef",
         "@com_github_klauspost_compress//zstd",
         "@com_github_pingcap_errors//:errors",
-    ],
-)
-
-go_test(
-    name = "internal_test",
-    timeout = "short",
-    srcs = ["packetio_test.go"],
-    embed = [":internal"],
-    flaky = True,
-    shard_count = 8,
-    deps = [
-        "//pkg/parser/mysql",
-        "//pkg/server/internal/testutil",
-        "//pkg/server/internal/util",
-        "@com_github_klauspost_compress//zstd",
-        "@com_github_stretchr_testify//require",
     ],
 )

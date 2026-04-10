@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "ddl",
@@ -24,25 +24,5 @@ go_library(
         "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "ddl_test",
-    timeout = "short",
-    srcs = ["ddl_test.go"],
-    flaky = True,
-    shard_count = 24,
-    deps = [
-        ":ddl",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "//pkg/planner/cardinality",
-        "//pkg/statistics/handle/ddl/testutil",
-        "//pkg/statistics/handle/storage",
-        "//pkg/statistics/handle/util",
-        "//pkg/testkit",
-        "//pkg/util",
-        "@com_github_stretchr_testify//require",
     ],
 )

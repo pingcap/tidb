@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "xf_decorrelate_apply.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/rule/apply/decorrelateapply/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/planner/cascades",
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/memo",
+        "//pkg/planner/cascades/rule/apply/decorrelateapply",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "//pkg/util/plancodec",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["xf_decorrelate_apply_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

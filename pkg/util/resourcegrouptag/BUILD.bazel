@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "resourcegrouptag",
@@ -12,26 +12,5 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//tikvrpc",
-    ],
-)
-
-go_test(
-    name = "resourcegrouptag_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "resource_group_tag_test.go",
-    ],
-    embed = [":resourcegrouptag"],
-    flaky = True,
-    deps = [
-        "//pkg/testkit/testsetup",
-        "//pkg/util/hack",
-        "@com_github_pingcap_kvproto//pkg/coprocessor",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikvrpc",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

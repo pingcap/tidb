@@ -201,6 +201,29 @@ func (l *SimpleLRUCache) Keys() []Key {
 	return keys
 }
 
+// Capacity returns the capacity of the cache.
+func (l *SimpleLRUCache) Capacity() uint {
+	return l.capacity
+}
+
+// Elements returns the number of elements in the cache.
+// Deprecated: Use Size() instead for better clarity.
+func (l *SimpleLRUCache) Elements() uint {
+	return l.size
+}
+
+// GetCache returns the internal cache list for testing purposes.
+// This is exported for testing the internal structure of the cache.
+func (l *SimpleLRUCache) GetCache() *list.List {
+	return l.cache
+}
+
+// GetElements returns the internal elements map for testing purposes.
+// This is exported for testing the internal structure of the cache.
+func (l *SimpleLRUCache) GetElements() map[string]*list.Element {
+	return l.elements
+}
+
 // SetCapacity sets capacity of the cache.
 func (l *SimpleLRUCache) SetCapacity(capacity uint) error {
 	if capacity < 1 {

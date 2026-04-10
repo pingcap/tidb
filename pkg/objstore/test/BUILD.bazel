@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "batch.go",
+        "locking.go",
+        "register_gen.go",
+        "storage.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "//pkg/testkit/mega/register",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "batch_test.go",
+        "locking_test.go",
+        "storage_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 10,
+)

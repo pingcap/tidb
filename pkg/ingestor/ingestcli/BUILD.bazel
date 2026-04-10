@@ -1,9 +1,10 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "ingestcli",
     srcs = [
         "client.go",
+        "export_helper.go",
         "ingest_err.go",
         "interface.go",
     ],
@@ -23,31 +24,5 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "ingestcli_test",
-    timeout = "short",
-    srcs = [
-        "client_test.go",
-        "ingest_err_test.go",
-    ],
-    embed = [":ingestcli"],
-    flaky = True,
-    shard_count = 11,
-    deps = [
-        "//br/pkg/restore/split",
-        "//pkg/ingestor/errdef",
-        "//pkg/ingestor/ingestmetric",
-        "//pkg/lightning/common",
-        "//pkg/util",
-        "@com_github_pingcap_kvproto//pkg/errorpb",
-        "@com_github_pingcap_kvproto//pkg/import_sstpb",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_prometheus_client_golang//prometheus",
-        "@com_github_prometheus_client_model//go",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//opt",
     ],
 )

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "tablecodec",
@@ -22,37 +22,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_tikv_client_go_v2//tikv",
-    ],
-)
-
-go_test(
-    name = "tablecodec_test",
-    timeout = "short",
-    srcs = [
-        "bench_test.go",
-        "main_test.go",
-        "tablecodec_test.go",
-    ],
-    embed = [":tablecodec"],
-    flaky = True,
-    shard_count = 25,
-    deps = [
-        "//pkg/kv",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "//pkg/parser/mysql",
-        "//pkg/parser/terror",
-        "//pkg/sessionctx/stmtctx",
-        "//pkg/testkit/testsetup",
-        "//pkg/types",
-        "//pkg/util/benchdaily",
-        "//pkg/util/codec",
-        "//pkg/util/collate",
-        "//pkg/util/rowcodec",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_kvproto//pkg/keyspacepb",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

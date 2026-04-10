@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "notifier",
@@ -25,35 +25,5 @@ go_library(
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "notifier_test",
-    timeout = "short",
-    srcs = [
-        "events_test.go",
-        "store_test.go",
-        "testkit_test.go",
-    ],
-    embed = [":notifier"],
-    flaky = True,
-    shard_count = 12,
-    deps = [
-        "//pkg/config/kerneltype",
-        "//pkg/ddl/session",
-        "//pkg/meta/metadef",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "//pkg/sessionctx",
-        "//pkg/testkit",
-        "//pkg/testkit/testfailpoint",
-        "//pkg/types",
-        "//pkg/util",
-        "//pkg/util/chunk",
-        "@com_github_ngaut_pools//:pools",
-        "@com_github_pingcap_log//:log",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_atomic//:atomic",
     ],
 )

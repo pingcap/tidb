@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "util",
@@ -13,17 +13,5 @@ go_library(
         "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_atomic//:atomic",
-    ],
-)
-
-go_test(
-    name = "util_test",
-    timeout = "short",
-    srcs = ["shard_pool_map_test.go"],
-    embed = [":util"],
-    flaky = True,
-    deps = [
-        "//pkg/util/intest",
-        "@com_github_stretchr_testify//require",
     ],
 )

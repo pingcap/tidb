@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "testfork",
@@ -9,13 +9,4 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],
-)
-
-go_test(
-    name = "testfork_test",
-    timeout = "short",
-    srcs = ["fork_test.go"],
-    embed = [":testfork"],
-    flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
 )

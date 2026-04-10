@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "chunk",
@@ -10,6 +10,7 @@ go_library(
         "codec.go",
         "column.go",
         "compare.go",
+        "export_helper.go",
         "iterator.go",
         "list.go",
         "mutrow.go",
@@ -39,43 +40,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_golang_x_sys//cpu",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "chunk_test",
-    timeout = "short",
-    srcs = [
-        "alloc_test.go",
-        "chunk_in_disk_test.go",
-        "chunk_test.go",
-        "chunk_util_test.go",
-        "codec_test.go",
-        "column_test.go",
-        "iterator_test.go",
-        "list_test.go",
-        "main_test.go",
-        "mutrow_test.go",
-        "pool_test.go",
-        "row_container_test.go",
-        "row_in_disk_test.go",
-    ],
-    embed = [":chunk"],
-    flaky = True,
-    race = "on",
-    shard_count = 50,
-    deps = [
-        "//pkg/config",
-        "//pkg/parser/mysql",
-        "//pkg/testkit/testsetup",
-        "//pkg/types",
-        "//pkg/util/collate",
-        "//pkg/util/memory",
-        "//pkg/util/sqlkiller",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

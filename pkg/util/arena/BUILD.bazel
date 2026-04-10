@@ -1,24 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "arena",
-    srcs = ["arena.go"],
+    srcs = [
+        "arena.go",
+        "export_helper.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/arena",
     visibility = ["//visibility:public"],
-)
-
-go_test(
-    name = "arena_test",
-    timeout = "short",
-    srcs = [
-        "arena_test.go",
-        "main_test.go",
-    ],
-    embed = [":arena"],
-    flaky = True,
-    deps = [
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//assert",
-        "@org_uber_go_goleak//:goleak",
-    ],
 )

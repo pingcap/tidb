@@ -147,14 +147,21 @@ type CTEStorages struct {
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
-	txnManager := sessiontxn.GetTxnManager(ctx)
+	var txnScope, readReplicaScope string
+	getTxnManager := sessiontxn.GetTxnManager
+	if getTxnManager != nil {
+		if txnManager := getTxnManager(ctx); txnManager != nil {
+			txnScope = txnManager.GetTxnScope()
+			readReplicaScope = txnManager.GetReadReplicaScope()
+		}
+	}
 	return &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
 		isStaleness:      staleread.IsStmtStaleness(ctx),
-		txnScope:         txnManager.GetTxnScope(),
-		readReplicaScope: txnManager.GetReadReplicaScope(),
+		txnScope:         txnScope,
+		readReplicaScope: readReplicaScope,
 	}
 }
 

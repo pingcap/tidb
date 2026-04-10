@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "table.go",
+        "task_state.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/framework/storage/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/schstatus",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/dxf/framework/testutil",
+        "//pkg/kv",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "table_test.go",
+        "task_state_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 26,
+)

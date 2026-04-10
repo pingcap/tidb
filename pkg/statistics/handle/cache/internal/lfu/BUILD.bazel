@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "lfu",
@@ -18,20 +18,5 @@ go_library(
         "//pkg/util/memory",
         "@com_github_dgraph_io_ristretto//:ristretto",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "lfu_test",
-    timeout = "short",
-    srcs = ["lfu_cache_test.go"],
-    embed = [":lfu"],
-    flaky = True,
-    race = "on",
-    shard_count = 10,
-    deps = [
-        "//pkg/statistics",
-        "//pkg/statistics/handle/cache/internal/testutil",
-        "@com_github_stretchr_testify//require",
     ],
 )

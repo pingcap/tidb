@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "metrics",
@@ -48,28 +48,5 @@ go_library(
         "@com_github_prometheus_client_model//go",
         "@com_github_tikv_client_go_v2//metrics",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "metrics_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "metrics_internal_test.go",
-        "metrics_test.go",
-    ],
-    embed = [":metrics"],
-    flaky = True,
-    shard_count = 5,
-    deps = [
-        "//pkg/parser/terror",
-        "//pkg/statistics/handle/cache",
-        "//pkg/testkit/testsetup",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_prometheus_client_golang//prometheus",
-        "@com_github_prometheus_client_model//go",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

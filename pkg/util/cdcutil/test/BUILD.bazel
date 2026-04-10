@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "cdc.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/cdcutil/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/testkit/mega/register",
+        "//pkg/util/cdcutil",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_tests_v3//integration",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["cdc_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

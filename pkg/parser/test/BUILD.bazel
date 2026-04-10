@@ -1,0 +1,44 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "digester.go",
+        "helpers.go",
+        "hintparser.go",
+        "keywords.go",
+        "lateral.go",
+        "parser.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/charset",
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/parser/opcode",
+        "//pkg/parser/terror",
+        "//pkg/parser/test_driver",
+        "//pkg/testkit/mega/register",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "digester_test.go",
+        "hintparser_test.go",
+        "keywords_test.go",
+        "lateral_test.go",
+        "parser_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 50,
+)

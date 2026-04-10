@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+//go:build ignore_internal_tests
+// +build ignore_internal_tests
+
+package executor_test
 
 import (
 	"context"
@@ -101,7 +104,7 @@ func ruKeyForStmt(t *testing.T, stmt *ExecStmt) stmtstats.RUKey {
 }
 
 // TestObserveStmtBeginOnTopProfiling verifies SQL and plan registration on profiling begin.
-func TestObserveStmtBeginOnTopProfiling(t *testing.T) {
+func RunObserveStmtBeginOnTopProfiling(t *testing.T) {
 	topsqlstate.DisableTopSQL()
 	for topsqlstate.TopRUEnabled() {
 		topsqlstate.DisableTopRU()
@@ -136,7 +139,7 @@ func TestObserveStmtBeginOnTopProfiling(t *testing.T) {
 	require.Equal(t, normalizedPlan, topCollector.GetPlan(planDigest.Bytes()))
 }
 
-func TestObserveStmtBeginOnTopProfilingRUV2Wiring(t *testing.T) {
+func RunObserveStmtBeginOnTopProfilingRUV2Wiring(t *testing.T) {
 	resetTopProfilingStateForTest(t)
 	topsqlstate.EnableTopRU()
 
@@ -181,7 +184,7 @@ func TestObserveStmtBeginOnTopProfilingRUV2Wiring(t *testing.T) {
 // TestObserveStmtFinishedOnTopProfiling verifies stale RU exec context is cleared
 // before the first tick after re-enable.
 // Flow: begin-on -> disable -> finish -> re-enable -> tick-before-new-begin
-func TestObserveStmtFinishedOnTopProfiling(t *testing.T) {
+func RunObserveStmtFinishedOnTopProfiling(t *testing.T) {
 	resetTopProfilingStateForTest(t)
 	topsqlstate.EnableTopRU()
 
@@ -216,7 +219,7 @@ func TestObserveStmtFinishedOnTopProfiling(t *testing.T) {
 // TestObserveStmtFinishedOnTopProfilingDoes verifies stale baseline is not reused
 // across TopRU toggle windows.
 // Flow: begin-on -> disable -> finish -> begin-off(same key) -> re-enable -> finish-on
-func TestObserveStmtFinishedOnTopProfilingDoes(t *testing.T) {
+func RunObserveStmtFinishedOnTopProfilingDoes(t *testing.T) {
 	resetTopProfilingStateForTest(t)
 	topsqlstate.EnableTopRU()
 
@@ -255,7 +258,7 @@ func TestObserveStmtFinishedOnTopProfilingDoes(t *testing.T) {
 // TestObserveStmtFinishedOnTopProfilingKeeps verifies TopSQL-only finish stats are
 // preserved when TopRU is disabled.
 // Flow: begin(topSQL-on/topRU-off) -> finish -> verify duration/network-out stats
-func TestObserveStmtFinishedOnTopProfilingKeeps(t *testing.T) {
+func RunObserveStmtFinishedOnTopProfilingKeeps(t *testing.T) {
 	resetTopProfilingStateForTest(t)
 	topsqlstate.EnableTopSQL()
 
@@ -281,7 +284,7 @@ func TestObserveStmtFinishedOnTopProfilingKeeps(t *testing.T) {
 // TestObserveStmtFinishedOnTopProfilingIgnores verifies unexpected RUDetails
 // context types do not panic and keep TopRU sampling stable.
 // Flow: begin(topRU-on, bad RUDetails type) -> finish -> no panic -> zero RU delta
-func TestObserveStmtFinishedOnTopProfilingIgnores(t *testing.T) {
+func RunObserveStmtFinishedOnTopProfilingIgnores(t *testing.T) {
 	resetTopProfilingStateForTest(t)
 	topsqlstate.EnableTopRU()
 

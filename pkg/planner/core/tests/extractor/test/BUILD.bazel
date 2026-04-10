@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "main.go",
+        "memtable_infoschema_extractor.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/tests/extractor/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/planner/core",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["memtable_infoschema_extractor_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 4,
+)

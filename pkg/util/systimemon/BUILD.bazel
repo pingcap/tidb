@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "systimemon",
@@ -8,22 +8,5 @@ go_library(
     deps = [
         "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "systimemon_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "systime_mon_test.go",
-    ],
-    embed = [":systimemon"],
-    flaky = True,
-    deps = [
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

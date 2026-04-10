@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "longtests.go",
         "ut.go",
+        "ut_mega.go",
     ],
     importpath = "github.com/pingcap/tidb/tools/check",
     visibility = ["//visibility:private"],

@@ -1,9 +1,10 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "rule",
     srcs = [
         "binder.go",
+        "export_helper.go",
         "rule.go",
         "rule_type.go",
     ],
@@ -14,24 +15,5 @@ go_library(
         "//pkg/planner/cascades/pattern",
         "//pkg/planner/cascades/util",
         "//pkg/planner/core/base",
-    ],
-)
-
-go_test(
-    name = "rule_test",
-    timeout = "short",
-    srcs = ["binder_test.go"],
-    embed = [":rule"],
-    flaky = True,
-    shard_count = 8,
-    deps = [
-        "//pkg/parser/ast",
-        "//pkg/planner/cascades/memo",
-        "//pkg/planner/cascades/pattern",
-        "//pkg/planner/cascades/util",
-        "//pkg/planner/core/operator/logicalop",
-        "//pkg/util/mock",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
     ],
 )

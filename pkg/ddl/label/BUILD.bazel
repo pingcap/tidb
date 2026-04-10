@@ -1,10 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "label",
     srcs = [
         "attributes.go",
         "errors.go",
+        "export_helper.go",
         "rule.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ddl/label",
@@ -15,25 +16,5 @@ go_library(
         "//pkg/util/codec",
         "@com_github_tikv_pd_client//http",
         "@in_gopkg_yaml_v2//:yaml_v2",
-    ],
-)
-
-go_test(
-    name = "label_test",
-    timeout = "short",
-    srcs = [
-        "attributes_test.go",
-        "main_test.go",
-        "rule_test.go",
-    ],
-    embed = [":label"],
-    flaky = True,
-    shard_count = 8,
-    deps = [
-        "//pkg/parser/ast",
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//http",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

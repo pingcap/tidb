@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "unistore",
@@ -50,29 +50,5 @@ go_library(
         "@com_github_tikv_pd_client//servicediscovery",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//metadata",
-    ],
-)
-
-go_test(
-    name = "unistore_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "pd_test.go",
-        "raw_handler_test.go",
-    ],
-    embed = [":unistore"],
-    flaky = True,
-    shard_count = 6,
-    deps = [
-        "//pkg/testkit/testsetup",
-        "@com_github_asaskevich_govalidator//:govalidator",
-        "@com_github_pingcap_kvproto//pkg/keyspacepb",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_kvproto//pkg/pdpb",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//:client",
-        "@com_github_tikv_pd_client//constants",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

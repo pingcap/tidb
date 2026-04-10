@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "mysql",
@@ -21,19 +21,4 @@ go_library(
         "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_errors//:errors",
     ],
-)
-
-go_test(
-    name = "mysql_test",
-    timeout = "short",
-    srcs = [
-        "const_test.go",
-        "error_test.go",
-        "privs_test.go",
-        "type_test.go",
-    ],
-    embed = [":mysql"],
-    flaky = True,
-    shard_count = 11,
-    deps = ["@com_github_stretchr_testify//require"],
 )

@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "meta.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/meta/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/ddl",
+        "//pkg/dxf/framework/schstatus",
+        "//pkg/infoschema/context",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/metadef",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/terror",
+        "//pkg/planner/core",
+        "//pkg/session",
+        "//pkg/store/mockstore",
+        "//pkg/testkit/mega/register",
+        "//pkg/util",
+        "//pkg/util/dbterror",
+        "//pkg/util/intest",
+        "//pkg/util/mock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["meta_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 24,
+)

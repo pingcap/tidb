@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "spool",
     srcs = [
+        "export_helper.go",
         "option.go",
         "spool.go",
     ],
@@ -18,25 +19,5 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_sasha_s_go_deadlock//:go-deadlock",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "spool_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "spool_test.go",
-    ],
-    embed = [":spool"],
-    flaky = True,
-    race = "on",
-    shard_count = 6,
-    deps = [
-        "//pkg/resourcemanager/pool",
-        "//pkg/resourcemanager/util",
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

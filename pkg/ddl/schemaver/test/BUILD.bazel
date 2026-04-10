@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "syncer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/schemaver/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/ddl/schemaver",
+        "//pkg/ddl/util",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit/mega/register",
+        "//pkg/util",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_api_v3//mvccpb",
+        "@io_etcd_go_etcd_server_v3//etcdserver",
+        "@io_etcd_go_etcd_tests_v3//integration",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["syncer_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 2,
+)

@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "profile.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/profile/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/session",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/profile",
+        "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["profile_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

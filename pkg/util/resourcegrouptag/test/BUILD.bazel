@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/util/resourcegrouptag/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/hack",
+        "//pkg/util/resourcegrouptag",
+        "@com_github_pingcap_kvproto//pkg/coprocessor",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

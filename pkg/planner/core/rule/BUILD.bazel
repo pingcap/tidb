@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "rule",
@@ -58,35 +58,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "rule_test",
-    timeout = "short",
-    srcs = [
-        "collect_column_stats_usage_test.go",
-        "rule_partition_pruning_test.go",
-    ],
-    flaky = True,
-    shard_count = 13,
-    deps = [
-        ":rule",
-        "//pkg/expression",
-        "//pkg/infoschema",
-        "//pkg/meta/model",
-        "//pkg/parser",
-        "//pkg/parser/ast",
-        "//pkg/planner/core",
-        "//pkg/planner/core/base",
-        "//pkg/planner/core/resolve",
-        "//pkg/planner/util/coretestsdk",
-        "//pkg/session",
-        "//pkg/testkit/ddlhelper",
-        "//pkg/testkit/testfailpoint",
-        "//pkg/types",
-        "//pkg/util/hint",
-        "//pkg/util/mock",
-        "@com_github_stretchr_testify//require",
     ],
 )

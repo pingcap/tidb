@@ -1,17 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "queue",
-    srcs = ["queue.go"],
+    srcs = [
+        "export_helper.go",
+        "queue.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/queue",
     visibility = ["//visibility:public"],
-)
-
-go_test(
-    name = "queue_test",
-    timeout = "short",
-    srcs = ["queue_test.go"],
-    embed = [":queue"],
-    flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
 )

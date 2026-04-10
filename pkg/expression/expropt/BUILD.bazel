@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "expropt",
@@ -28,22 +28,5 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
-    ],
-)
-
-go_test(
-    name = "expropt_test",
-    timeout = "short",
-    srcs = ["optional_test.go"],
-    embed = [":expropt"],
-    flaky = True,
-    deps = [
-        "//pkg/expression/exprctx",
-        "//pkg/infoschema/context",
-        "//pkg/kv",
-        "//pkg/parser/auth",
-        "//pkg/sessionctx/variable",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
     ],
 )

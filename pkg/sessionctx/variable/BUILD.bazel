@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "variable",
@@ -93,39 +93,5 @@ go_library(
         "@org_golang_x_time//rate",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "variable_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "mock_globalaccessor_test.go",
-        "removed_test.go",
-        "statusvar_test.go",
-        "sysvar_test.go",
-        "varsutil_test.go",
-    ],
-    embed = [":variable"],
-    flaky = True,
-    shard_count = 50,
-    deps = [
-        "//pkg/config",
-        "//pkg/config/kerneltype",
-        "//pkg/executor/join/joinversion",
-        "//pkg/kv",
-        "//pkg/parser/mysql",
-        "//pkg/parser/terror",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit/testsetup",
-        "//pkg/util/gctuner",
-        "//pkg/util/memory",
-        "//pkg/util/timeutil",
-        "//pkg/util/traceevent",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-        "@io_opencensus_go//stats/view",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

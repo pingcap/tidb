@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "perfschema",
@@ -32,31 +32,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_pd_client//http",
-    ],
-)
-
-go_test(
-    name = "perfschema_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "tables_test.go",
-    ],
-    data = glob(["testdata/**"]),
-    embed = [":perfschema"],
-    flaky = True,
-    shard_count = 4,
-    deps = [
-        "//pkg/kv",
-        "//pkg/parser/terror",
-        "//pkg/session",
-        "//pkg/store/mockstore",
-        "//pkg/testkit",
-        "//pkg/testkit/testsetup",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//http",
-        "@io_opencensus_go//stats/view",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

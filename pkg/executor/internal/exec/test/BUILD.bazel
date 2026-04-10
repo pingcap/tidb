@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "indexusage.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/internal/exec/test",
+    visibility = ["//pkg/executor:__subpackages__"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/executor/internal/exec",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/types/parser_driver",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["indexusage_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 6,
+)

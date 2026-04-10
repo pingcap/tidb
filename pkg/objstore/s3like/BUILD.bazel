@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "s3like",
@@ -29,20 +29,5 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@com_github_spf13_pflag//:pflag",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "s3like_test",
-    timeout = "short",
-    srcs = ["permission_test.go"],
-    flaky = True,
-    deps = [
-        ":s3like",
-        "//pkg/objstore/s3like/mock",
-        "//pkg/objstore/storeapi",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_mock//gomock",
     ],
 )

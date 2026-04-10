@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "operator",
@@ -14,18 +14,5 @@ go_library(
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/resourcemanager/util",
         "@org_golang_x_sync//errgroup",
-    ],
-)
-
-go_test(
-    name = "operator_test",
-    timeout = "short",
-    srcs = ["pipeline_test.go"],
-    embed = [":operator"],
-    flaky = True,
-    deps = [
-        "//pkg/resourcemanager/pool/workerpool",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
     ],
 )

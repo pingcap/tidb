@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "bindinfo",
@@ -47,44 +47,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pkg_errors//:errors",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "bindinfo_test",
-    timeout = "moderate",
-    srcs = [
-        "binding_auto_test.go",
-        "binding_cache_test.go",
-        "binding_operator_test.go",
-        "binding_plan_evolution_test.go",
-        "binding_plan_generation_test.go",
-        "main_test.go",
-        "session_handle_test.go",
-    ],
-    data = glob(["testdata/**"]),
-    embed = [":bindinfo"],
-    flaky = True,
-    shard_count = 50,
-    deps = [
-        "//pkg/config",
-        "//pkg/parser",
-        "//pkg/parser/ast",
-        "//pkg/parser/auth",
-        "//pkg/parser/format",
-        "//pkg/parser/terror",
-        "//pkg/planner/util/fixcontrol",
-        "//pkg/server",
-        "//pkg/session/sessionapi",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit",
-        "//pkg/testkit/testdata",
-        "//pkg/testkit/testmain",
-        "//pkg/testkit/testsetup",
-        "//pkg/util/stmtsummary",
-        "@com_github_ngaut_pools//:pools",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

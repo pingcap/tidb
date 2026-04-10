@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "sqlbuilder",
@@ -14,33 +14,5 @@ go_library(
         "//pkg/types",
         "//pkg/util/sqlescape",
         "@com_github_pingcap_errors//:errors",
-    ],
-)
-
-go_test(
-    name = "sqlbuilder_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "sql_test.go",
-    ],
-    flaky = True,
-    shard_count = 5,
-    deps = [
-        ":sqlbuilder",
-        "//pkg/kv",
-        "//pkg/meta/model",
-        "//pkg/parser",
-        "//pkg/parser/ast",
-        "//pkg/parser/mysql",
-        "//pkg/parser/terror",
-        "//pkg/testkit",
-        "//pkg/testkit/testsetup",
-        "//pkg/ttl/cache",
-        "//pkg/types",
-        "//pkg/util/dbterror",
-        "//pkg/util/sqlexec",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

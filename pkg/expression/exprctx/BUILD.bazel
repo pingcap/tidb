@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "exprctx",
@@ -18,23 +18,5 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/mathutil",
         "@com_github_pingcap_errors//:errors",
-    ],
-)
-
-go_test(
-    name = "exprctx_test",
-    timeout = "short",
-    srcs = [
-        "context_override_test.go",
-        "optional_test.go",
-    ],
-    embed = [":exprctx"],
-    flaky = True,
-    shard_count = 4,
-    deps = [
-        "//pkg/errctx",
-        "//pkg/expression/exprstatic",
-        "//pkg/types",
-        "@com_github_stretchr_testify//require",
     ],
 )

@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/timer/tablestore/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/resolve",
+        "//pkg/session/sessmgr",
+        "//pkg/session/syssession",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/timer/api",
+        "//pkg/timer/tablestore",
+        "//pkg/types",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

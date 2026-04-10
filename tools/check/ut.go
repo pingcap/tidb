@@ -89,7 +89,13 @@ ut run --short
 
 // test with long flag
 // when the '--long' flag is set, ut will only run the long tests and have different strategies for concurrency to make them stabler.
-ut run --long`
+ut run --long
+
+// use mega mode (monolithic test framework)
+// In mega mode, all tests are compiled into a single binary for faster compilation.
+ut --mega run
+ut --mega list
+ut --mega build`
 
 	fmt.Println(msg)
 	return true
@@ -111,6 +117,11 @@ var buildParallel int
 var workDir string
 
 func cmdList(args ...string) bool {
+	// Use mega mode if --mega flag is set
+	if mega {
+		return cmdMegaList(args...)
+	}
+
 	pkgs, err := listPackages()
 	if err != nil {
 		log.Println("list package error", err)
@@ -171,6 +182,16 @@ func cmdList(args ...string) bool {
 }
 
 func cmdBuild(args ...string) bool {
+	// Use mega mode if --mega flag is set
+	if mega {
+		// Build the mega test binary
+		if err := buildMegaTestBinary(); err != nil {
+			log.Println("build mega test binary error", err)
+			return false
+		}
+		return true
+	}
+
 	pkgs, err := listPackages()
 	if err != nil {
 		log.Println("list package error", err)
@@ -223,6 +244,11 @@ func cmdRunMulti(pkgs ...string) bool {
 }
 
 func cmdRun(args ...string) bool {
+	// Use mega mode if --mega flag is set
+	if mega {
+		return cmdMegaRun(args...)
+	}
+
 	var err error
 	pkgs, err := listPackages()
 	if err != nil {
@@ -510,6 +536,7 @@ var coverFileTempDir string
 var race bool
 var short bool
 var long bool
+var mega bool
 
 var except string
 var only string
@@ -523,6 +550,7 @@ func main() {
 	race = handleFlag("--race")
 	short = handleFlag("--short")
 	long = handleFlag("--long")
+	mega = handleFlag("--mega")
 
 	if coverprofile != "" {
 		var err error

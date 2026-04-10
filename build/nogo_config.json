@@ -1371,6 +1371,9 @@
   "bootstrap": {
     "only_files": {
       "pkg/session/": "bootstrap code"
+    },
+    "exclude_files": {
+      "pkg/session/test/": "test files use actual schemas from parent package instead of literals"
     }
   },
   "appends": {

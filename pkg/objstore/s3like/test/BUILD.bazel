@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "permission.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/s3like/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore/s3like",
+        "//pkg/objstore/s3like/mock",
+        "//pkg/objstore/storeapi",
+        "//pkg/testkit/mega/register",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["permission_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

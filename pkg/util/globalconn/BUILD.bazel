@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "globalconn",
@@ -13,20 +13,5 @@ go_library(
         "@com_github_ngaut_sync2//:sync2",
         "@org_modernc_mathutil//:mathutil",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "globalconn_test",
-    timeout = "short",
-    srcs = [
-        "globalconn_test.go",
-        "pool_test.go",
-    ],
-    flaky = True,
-    deps = [
-        ":globalconn",
-        "@com_github_stretchr_testify//assert",
-        "@org_modernc_mathutil//:mathutil",
     ],
 )

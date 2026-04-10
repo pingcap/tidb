@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "compat",
@@ -13,28 +13,6 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/sem",
         "//pkg/util/sem/v2:sem",
-        "@com_github_stretchr_testify//require",
-    ],
-)
-
-go_test(
-    name = "compat_test",
-    timeout = "short",
-    srcs = [
-        "compat_test.go",
-        "sem_integration_test.go",
-    ],
-    embed = [":compat"],
-    flaky = True,
-    deps = [
-        "//pkg/objstore/s3like",
-        "//pkg/parser/auth",
-        "//pkg/parser/mysql",
-        "//pkg/planner/core",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit",
-        "//pkg/testkit/testfailpoint",
-        "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
     ],
 )

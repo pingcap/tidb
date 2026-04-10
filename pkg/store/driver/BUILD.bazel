@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "driver",
@@ -30,40 +30,5 @@ go_library(
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//keepalive",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "driver_test",
-    timeout = "short",
-    srcs = [
-        "client_test.go",
-        "config_test.go",
-        "main_test.go",
-        "snap_interceptor_test.go",
-        "sql_fail_test.go",
-        "txn_test.go",
-    ],
-    embed = [":driver"],
-    flaky = True,
-    shard_count = 8,
-    deps = [
-        "//pkg/kv",
-        "//pkg/session",
-        "//pkg/store/mockstore",
-        "//pkg/testkit",
-        "//pkg/testkit/testsetup",
-        "//pkg/util",
-        "//pkg/util/tracing",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_stretchr_testify//mock",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//config",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_client_go_v2//tikvrpc",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

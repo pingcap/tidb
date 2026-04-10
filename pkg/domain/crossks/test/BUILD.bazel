@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "cross_ks.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/domain/crossks/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/dxf/framework/storage",
+        "//pkg/executor/importer",
+        "//pkg/infoschema",
+        "//pkg/keyspace",
+        "//pkg/kv",
+        "//pkg/meta/metadef",
+        "//pkg/sessionctx",
+        "//pkg/store",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util/etcd",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//util",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_tests_v3//integration",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["cross_ks_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 2,
+)

@@ -1,0 +1,55 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "main.go",
+        "plan_replayer.go",
+        "register_gen.go",
+        "statistics_handler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/server/handler/optimizor/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/metrics",
+        "//pkg/parser/ast",
+        "//pkg/server",
+        "//pkg/server/handler/optimizor",
+        "//pkg/server/internal/testserverclient",
+        "//pkg/server/internal/testutil",
+        "//pkg/server/internal/util",
+        "//pkg/session",
+        "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/util",
+        "//pkg/store/mockstore/unistore",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/replayer",
+        "//pkg/util/topsql/state",
+        "@com_github_burntsushi_toml//:toml",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "plan_replayer_test.go",
+        "statistics_handler_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 10,
+)

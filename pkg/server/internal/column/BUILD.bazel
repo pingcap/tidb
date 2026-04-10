@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "column",
@@ -21,26 +21,5 @@ go_library(
         "//pkg/util/hack",
         "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "column_test",
-    timeout = "short",
-    srcs = [
-        "column_test.go",
-        "result_encoder_test.go",
-    ],
-    embed = [":column"],
-    flaky = True,
-    shard_count = 5,
-    deps = [
-        "//pkg/parser/charset",
-        "//pkg/parser/mysql",
-        "//pkg/server/internal/util",
-        "//pkg/types",
-        "//pkg/util/chunk",
-        "//pkg/util/context",
-        "@com_github_stretchr_testify//require",
     ],
 )

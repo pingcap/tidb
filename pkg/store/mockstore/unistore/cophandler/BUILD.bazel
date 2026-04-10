@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "cophandler",
@@ -57,41 +57,5 @@ go_library(
         "@com_github_twmb_murmur3//:murmur3",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "cophandler_test",
-    timeout = "short",
-    srcs = [
-        "cop_handler_test.go",
-        "main_test.go",
-    ],
-    embed = [":cophandler"],
-    flaky = True,
-    shard_count = 5,
-    deps = [
-        "//pkg/expression",
-        "//pkg/kv",
-        "//pkg/parser/mysql",
-        "//pkg/sessionctx/stmtctx",
-        "//pkg/store/mockstore/unistore/lockstore",
-        "//pkg/store/mockstore/unistore/tikv/dbreader",
-        "//pkg/store/mockstore/unistore/tikv/mvcc",
-        "//pkg/tablecodec",
-        "//pkg/testkit/testsetup",
-        "//pkg/types",
-        "//pkg/util/chunk",
-        "//pkg/util/codec",
-        "//pkg/util/collate",
-        "//pkg/util/rowcodec",
-        "//pkg/util/timeutil",
-        "@com_github_pingcap_badger//:badger",
-        "@com_github_pingcap_badger//y",
-        "@com_github_pingcap_kvproto//pkg/coprocessor",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

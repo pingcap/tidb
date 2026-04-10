@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "autoanalyze",
@@ -32,40 +32,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "autoanalyze_test",
-    timeout = "short",
-    srcs = ["autoanalyze_test.go"],
-    flaky = True,
-    shard_count = 14,
-    deps = [
-        ":autoanalyze",
-        "//pkg/domain",
-        "//pkg/domain/infosync",
-        "//pkg/domain/serverinfo",
-        "//pkg/keyspace",
-        "//pkg/parser/ast",
-        "//pkg/parser/mysql",
-        "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
-        "//pkg/sessionctx/variable",
-        "//pkg/statistics",
-        "//pkg/statistics/handle/ddl/testutil",
-        "//pkg/statistics/handle/util",
-        "//pkg/statistics/handle/util/test",
-        "//pkg/store/mockstore",
-        "//pkg/testkit",
-        "//pkg/testkit/testfailpoint",
-        "//pkg/types",
-        "//pkg/util/chunk",
-        "//pkg/util/mock",
-        "//pkg/util/sqlexec/mock",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@org_uber_go_mock//gomock",
     ],
 )
