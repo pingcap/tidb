@@ -405,6 +405,24 @@ func doRequestWithBodyBytes(ctx context.Context, apiName string, addrs []string,
 	})
 }
 
+func doRequestWithBodyBytesTimeoutPerAddress(
+	ctx context.Context,
+	timeout time.Duration,
+	apiName string,
+	addrs []string,
+	route, method string,
+	body []byte,
+) ([]byte, error) {
+	return doRequestWithBodyFactoryAndContextFactory(ctx, apiName, addrs, route, method, func() io.Reader {
+		return bytes.NewReader(body)
+	}, func(parent context.Context) (context.Context, context.CancelFunc) {
+		if timeout <= 0 {
+			return parent, func() {}
+		}
+		return context.WithTimeout(parent, timeout)
+	})
+}
+
 func doRequestWithBodyFactory(
 	ctx context.Context,
 	apiName string,
@@ -412,17 +430,34 @@ func doRequestWithBodyFactory(
 	route, method string,
 	bodyFactory func() io.Reader,
 ) ([]byte, error) {
+	return doRequestWithBodyFactoryAndContextFactory(ctx, apiName, addrs, route, method, bodyFactory, nil)
+}
+
+func doRequestWithBodyFactoryAndContextFactory(
+	ctx context.Context,
+	apiName string,
+	addrs []string,
+	route, method string,
+	bodyFactory func() io.Reader,
+	requestContextFactory func(context.Context) (context.Context, context.CancelFunc),
+) ([]byte, error) {
 	var err error
 	var req *http.Request
 	var res *http.Response
 	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
+		requestCtx := ctx
+		cancel := func() {}
+		if requestContextFactory != nil {
+			requestCtx, cancel = requestContextFactory(ctx)
+		}
 		var body io.Reader
 		if bodyFactory != nil {
 			body = bodyFactory()
 		}
-		req, err = http.NewRequestWithContext(ctx, method, url, body)
+		req, err = http.NewRequestWithContext(requestCtx, method, url, body)
 		if err != nil {
+			cancel()
 			return nil, err
 		}
 		if body != nil {
@@ -436,6 +471,7 @@ func doRequestWithBodyFactory(
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				terror.Log(res.Body.Close())
+				cancel()
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
@@ -453,8 +489,10 @@ func doRequestWithBodyFactory(
 				}
 			}
 			terror.Log(res.Body.Close())
+			cancel()
 			return bodyBytes, err
 		}
+		cancel()
 		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
 		logutil.BgLogger().Warn("fail to doRequest",
 			zap.Error(err),

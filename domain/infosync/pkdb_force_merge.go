@@ -95,16 +95,15 @@ func AddForceMergeRanges(ctx context.Context, ranges []ForceMergeKeyRange) error
 			return errors.Trace(err)
 		}
 
-		requestCtx, cancel := context.WithTimeout(ctx, forceMergePDRequestTimeout)
-		respBody, err := doRequestWithBodyBytes(
-			requestCtx,
+		respBody, err := doRequestWithBodyBytesTimeoutPerAddress(
+			ctx,
+			forceMergePDRequestTimeout,
 			"AddForceMergeRanges",
 			addrs,
 			route,
 			"POST",
 			body,
 		)
-		cancel()
 		if err != nil {
 			logutil.BgLogger().Error("send force merge ranges batch to PD failed", forceMergeBatchLogFields(
 				batchNumber, totalBatches, batchRangeCount, totalRangeCount, zap.Error(err),
