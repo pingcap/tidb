@@ -16,6 +16,7 @@ package tests
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,8 +25,12 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func TestDXFScheduleAPI(t *testing.T) {
@@ -87,13 +92,15 @@ func TestDXFScheduleAPI(t *testing.T) {
 			}
 		}
 	})
-<<<<<<< HEAD
-=======
 
 	t.Run("active task api", func(t *testing.T) {
-		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET method", func() (*http.Response, error) {
-			return ts.PostStatus("/dxf/task/active", "", bytes.NewBuffer([]byte("")))
-		})
+		resp, err := ts.PostStatus("/dxf/task/active", "", bytes.NewBuffer([]byte("")))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.Contains(t, string(body), "This api only support GET method")
+		require.NoError(t, resp.Body.Close())
 
 		tm, err := storage.GetTaskManager()
 		require.NoError(t, err)
@@ -109,9 +116,12 @@ func TestDXFScheduleAPI(t *testing.T) {
 		_, err = tm.CreateTask(ctx, "active-key-3", proto.ImportInto, "ks1", 8, "", 0, proto.ExtraParams{}, []byte("test"))
 		require.NoError(t, err)
 
-		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
-			return ts.FetchStatus("/dxf/task/active")
-		})
+		resp, err = ts.FetchStatus("/dxf/task/active")
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		body, err = io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
 		out := struct {
 			Total       int64            `json:"total"`
 			PerKeyspace map[string]int64 `json:"per_keyspace"`
@@ -121,50 +131,6 @@ func TestDXFScheduleAPI(t *testing.T) {
 		require.EqualValues(t, 1, out.PerKeyspace["SYSTEM"])
 		require.EqualValues(t, 2, out.PerKeyspace["ks1"])
 	})
-
-	t.Run("task max_runtime_slots api", func(t *testing.T) {
-		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support POST method", func() (*http.Response, error) {
-			return ts.FetchStatus("/dxf/task/1/max_runtime_slots")
-		})
-		tm, err := storage.GetTaskManager()
-		require.NoError(t, err)
-		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-		require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
-		id, err := tm.CreateTask(ctx, "key1", proto.ImportInto, "", 8, "", 0, proto.ExtraParams{}, []byte("test"))
-		require.NoError(t, err)
-
-		for _, c := range [][2]string{
-			{"/dxf/task/0/max_runtime_slots", "invalid task ID"},
-			{"/dxf/task/aa/max_runtime_slots", "invalid task ID"},
-			{"/dxf/task/1/max_runtime_slots", "invalid value "},
-			{"/dxf/task/1/max_runtime_slots?value=aa", "invalid value "},
-			{"/dxf/task/1/max_runtime_slots?value=0", "invalid value "},
-			{"/dxf/task/1/max_runtime_slots?value=1&target_step=a", "invalid target step"},
-			{"/dxf/task/1/max_runtime_slots?value=1&target_step=1&target_step=aa", "invalid target step"},
-			{"/dxf/task/1123123/max_runtime_slots?value=1&target_step=1", "task not found"},
-			{fmt.Sprintf("/dxf/task/%d/max_runtime_slots?value=10", id), "max runtime slots should be less than required slots(8)"},
-			{fmt.Sprintf("/dxf/task/%d/max_runtime_slots?value=6&target_step=100", id), "invalid target step 100 for task type ImportInto"},
-		} {
-			path, errMsg := c[0], c[1]
-			runAndCheckReqFn(t, http.StatusBadRequest, errMsg, func() (*http.Response, error) {
-				return ts.PostStatus(path, "", bytes.NewBuffer([]byte("")))
-			})
-		}
-
-		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
-			return ts.PostStatus(fmt.Sprintf("/dxf/task/%d/max_runtime_slots?value=6&target_step=3", id), "", bytes.NewBuffer([]byte("")))
-		})
-		out := struct {
-			RequiredSlots   int      `json:"required_slots"`
-			MaxRuntimeSlots int      `json:"max_runtime_slots"`
-			TargetSteps     []string `json:"target_steps"`
-		}{}
-		require.NoError(t, json.Unmarshal(body, &out))
-		require.Equal(t, 8, out.RequiredSlots)
-		require.Equal(t, 6, out.MaxRuntimeSlots)
-		require.Equal(t, []string{"encode"}, out.TargetSteps)
-	})
->>>>>>> cbb1898ccfe (dxf: add http api to get info of all active tasks for nextgen (#66215))
 }
 
 func TestDXFScheduleTuneAPI(t *testing.T) {

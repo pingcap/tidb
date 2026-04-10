@@ -49,11 +49,7 @@ go_test(
     ],
     embed = [":storage"],
     flaky = True,
-<<<<<<< HEAD:pkg/disttask/framework/storage/BUILD.bazel
-    shard_count = 26,
-=======
-    shard_count = 28,
->>>>>>> cbb1898ccfe (dxf: add http api to get info of all active tasks for nextgen (#66215)):pkg/dxf/framework/storage/BUILD.bazel
+    shard_count = 27,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
