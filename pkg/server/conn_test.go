@@ -919,41 +919,49 @@ func TestShutDown(t *testing.T) {
 	require.NoError(t, err)
 	srv.SetDomain(dom)
 
-	cc = &clientConn{server: srv}
-	cc.SetCtx(tc)
-
-	waitMap := [][]bool{
-		// Reading, Not Reading
-		{false, true}, // Not InTxn
-		{true, true},  // InTxn
+	waitCases := []struct {
+		name       string
+		inTxn      bool
+		reading    bool
+		shouldWait bool
+	}{
+		{name: "not-in-txn-reading", inTxn: false, reading: true, shouldWait: false},
+		{name: "not-in-txn-dispatching", inTxn: false, reading: false, shouldWait: true},
+		{name: "in-txn-reading", inTxn: true, reading: true, shouldWait: true},
+		{name: "in-txn-dispatching", inTxn: true, reading: false, shouldWait: true},
 	}
-	for idx, waitMap := range waitMap {
-		inTxn := idx > 0
-		for idx, shouldWait := range waitMap {
-			reading := idx == 0
-			if inTxn {
-				cc.getCtx().GetSessionVars().SetInTxn(true)
+	for _, tt := range waitCases {
+		t.Run(tt.name, func(t *testing.T) {
+			caseSession, err := session.CreateSession4Test(store)
+			require.NoError(t, err)
+			caseConn := &clientConn{server: srv}
+			caseConn.SetCtx(&TiDBContext{Session: caseSession})
+			caseConn.getCtx().GetSessionVars().SetInTxn(tt.inTxn)
+			if tt.reading {
+				caseConn.setStatus(connStatusReading)
 			} else {
-				cc.getCtx().GetSessionVars().SetInTxn(false)
-			}
-			if reading {
-				cc.CompareAndSwapStatus(cc.getStatus(), connStatusReading)
-			} else {
-				cc.CompareAndSwapStatus(cc.getStatus(), connStatusDispatching)
+				caseConn.setStatus(connStatusDispatching)
 			}
 
-			srv.clients[dom.NextConnID()] = cc
+			connID := dom.NextConnID()
+			srv.clients[connID] = caseConn
 
 			waitTime := 100 * time.Millisecond
 			begin := time.Now()
 			srv.DrainClients(waitTime, waitTime)
-
-			if shouldWait {
+			if tt.shouldWait {
 				require.Greater(t, time.Since(begin), waitTime)
 			} else {
 				require.Less(t, time.Since(begin), waitTime)
 			}
-		}
+
+			// `DrainClients` should notify and cancel active work first, instead of directly
+			// closing the session from another goroutine.
+			require.Equal(t, int32(connStatusWaitShutdown), caseConn.getStatus())
+			_, ok := srv.clients[connID]
+			require.True(t, ok)
+			require.NoError(t, caseConn.Close())
+		})
 	}
 }
 

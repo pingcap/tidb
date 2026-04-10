@@ -1046,11 +1046,14 @@ func (s *Server) KillAllConnections() {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	for _, conn := range s.clients {
-		conn.setStatus(connStatusShutdown)
-		if err := conn.closeWithoutLock(); err != nil {
-			terror.Log(err)
-		}
+		// Don't close the session from this goroutine directly. If the connection is
+		// dispatching a statement, closing the session concurrently may race with SQL
+		// execution and invalidate txn state unexpectedly.
+		conn.setStatus(connStatusWaitShutdown)
 		if conn.bufReadConn != nil {
+			if err := conn.bufReadConn.SetWriteDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting write deadline for kill.", zap.Error(err))
+			}
 			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
 				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 			}
