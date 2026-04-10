@@ -313,7 +313,8 @@ func EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error)
 	return encode(loc, b, v, false)
 }
 
-func encodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {
+// EncodeHashChunkRowIdx encodes value for further comparison
+func EncodeHashChunkRowIdx(typeCtx types.Context, row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {
 	if row.IsNull(idx) {
 		flag = NilFlag
 		return
@@ -1186,7 +1187,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 func HashChunkRow(typeCtx types.Context, w io.Writer, row chunk.Row, allTypes []*types.FieldType, colIdx []int, buf []byte) (err error) {
 	var b []byte
 	for i, idx := range colIdx {
-		buf[0], b, err = encodeHashChunkRowIdx(typeCtx, row, allTypes[i], idx)
+		buf[0], b, err = EncodeHashChunkRowIdx(typeCtx, row, allTypes[i], idx)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1213,11 +1214,11 @@ func EqualChunkRow(typeCtx types.Context,
 	}
 	for i := range colIdx1 {
 		idx1, idx2 := colIdx1[i], colIdx2[i]
-		flag1, b1, err := encodeHashChunkRowIdx(typeCtx, row1, allTypes1[i], idx1)
+		flag1, b1, err := EncodeHashChunkRowIdx(typeCtx, row1, allTypes1[i], idx1)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		flag2, b2, err := encodeHashChunkRowIdx(typeCtx, row2, allTypes2[i], idx2)
+		flag2, b2, err := EncodeHashChunkRowIdx(typeCtx, row2, allTypes2[i], idx2)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
