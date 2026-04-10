@@ -52,7 +52,7 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da
 	github.com/docker/go-units v0.5.0
 	github.com/emirpasic/gods v1.18.1
-	github.com/fatih/color v1.18.0
+	github.com/fatih/color v1.19.0
 	github.com/felixge/fgprof v0.9.3
 	github.com/fsouza/fake-gcs-server v1.44.0
 	github.com/go-ldap/ldap/v3 v3.4.4
@@ -63,7 +63,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d
-	github.com/golangci/golangci-lint/v2 v2.11.3
+	github.com/golangci/golangci-lint/v2 v2.11.4
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.8.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
@@ -353,7 +353,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250707201910-8d1bb00bc6a7 // indirect
 	google.golang.org/protobuf v1.36.10
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
