@@ -224,7 +224,7 @@ ut-mega: tools/bin/ut tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel u
 
 .PHONY: bazel-mega-binary
 bazel-mega-binary: ## Build the mega test binary (change this target to switch to go test -c)
-	bazel build //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false
+	bazel build //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS)
 
 .PHONY: ut-mega-cleanup
 ut-mega-cleanup:
