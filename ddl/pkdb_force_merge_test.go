@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -95,6 +96,48 @@ func TestBuildAllForceMergeRangesUsesSortedPhysicalIDs(t *testing.T) {
 	}, ranges)
 }
 
+func TestBuildAllForceMergeRangesKeepsPartitionGlobalIndexTableID(t *testing.T) {
+	is := infoschema.MockInfoSchema([]*model.TableInfo{
+		mockForceMergeTableInfo(8),
+		mockForceMergePartitionedTableWithGlobalIndex(10, 14, 16),
+	})
+
+	maxTableID, ranges := buildAllForceMergeRanges(is)
+	require.Equal(t, int64(16), maxTableID)
+	require.Equal(t, []forceMergeRange{
+		{StartTableID: 1, EndTableID: 7},
+		{StartTableID: 9, EndTableID: 9},
+		{StartTableID: 11, EndTableID: 13},
+		{StartTableID: 15, EndTableID: 15},
+	}, ranges)
+}
+
+func TestBuildForceMergeRangesIncludesPartitionGlobalIndexRange(t *testing.T) {
+	currentTable := mockForceMergePartitionedTableWithGlobalIndex(20, 30, 31)
+	is := infoschema.MockInfoSchema([]*model.TableInfo{
+		mockForceMergeTableInfo(19),
+		mockForceMergeTableInfo(25),
+		currentTable,
+	})
+
+	ranges := buildForceMergeRanges(is, "test", 20, currentTable, []int64{30, 31})
+	require.Equal(t, []forceMergeRange{
+		{StartTableID: 20, EndTableID: 30},
+		{StartTableID: 26, EndTableID: 31},
+		{StartTableID: 20, EndTableID: 20},
+	}, ranges)
+	require.Equal(t, []infosync.ForceMergeKeyRange{
+		{
+			StartKey: codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(20)),
+			EndKey:   codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(21)),
+		},
+		{
+			StartKey: codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(26)),
+			EndKey:   codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(32)),
+		},
+	}, buildForceMergeKeyRanges(ranges))
+}
+
 func TestForceMergeDisabledSkipsDDLLogic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer func() {
@@ -139,6 +182,18 @@ func mockForceMergeTableInfo(tableID int64, partitionIDs ...int64) *model.TableI
 		})
 	}
 	tblInfo.Partition = &model.PartitionInfo{Definitions: defs}
+	return tblInfo
+}
+
+func mockForceMergePartitionedTableWithGlobalIndex(tableID int64, partitionIDs ...int64) *model.TableInfo {
+	tblInfo := mockForceMergeTableInfo(tableID, partitionIDs...)
+	tblInfo.Indices = []*model.IndexInfo{
+		{
+			ID:     1,
+			Name:   model.NewCIStr(fmt.Sprintf("idx_%d", tableID)),
+			Global: true,
+		},
+	}
 	return tblInfo
 }
 

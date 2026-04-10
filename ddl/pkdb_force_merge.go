@@ -81,14 +81,15 @@ func buildForceMergeRanges(
 	if shouldSkipForceMerge(schemaName, tblInfo) || is == nil {
 		return nil
 	}
-	if len(physicalTableIDs) == 0 {
+	targetTableIDs := collectForceMergeTableIDs(tableID, tblInfo, physicalTableIDs)
+	if len(targetTableIDs) == 0 {
 		return nil
 	}
 
-	existingTableIDs := findExistingCandidateTableIDs(is, tableID, physicalTableIDs)
+	existingTableIDs := findExistingCandidateTableIDs(is, tableID, targetTableIDs)
 
-	ranges := make([]forceMergeRange, 0, len(physicalTableIDs))
-	for _, physicalID := range physicalTableIDs {
+	ranges := make([]forceMergeRange, 0, len(targetTableIDs))
+	for _, physicalID := range targetTableIDs {
 		if physicalID <= 0 {
 			continue
 		}
@@ -183,7 +184,7 @@ func buildAllForceMergeRanges(is infoschema.InfoSchema) (int64, []forceMergeRang
 			if shouldSkipForceMerge(schemaName, tblInfo) {
 				continue
 			}
-			existingTableIDs = appendPhysicalTableIDs(existingTableIDs, tblInfo)
+			existingTableIDs = collectForceMergeTableIDs(tblInfo.ID, tblInfo, existingTableIDs)
 		}
 	}
 
@@ -213,22 +214,28 @@ func buildAllForceMergeRanges(is infoschema.InfoSchema) (int64, []forceMergeRang
 	return maxTableID, ranges
 }
 
-func appendPhysicalTableIDs(physicalTableIDs []int64, tblInfo *model.TableInfo) []int64 {
-	// Force merge works on physical table ranges, so partitioned tables
-	// contribute their partition IDs instead of the logical table ID.
+func collectForceMergeTableIDs(tableID int64, tblInfo *model.TableInfo, tableIDs []int64) []int64 {
+	if tblInfo == nil {
+		return tableIDs
+	}
+
 	if pi := tblInfo.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
 		for _, def := range pi.Definitions {
 			if def.ID > 0 {
-				physicalTableIDs = append(physicalTableIDs, def.ID)
+				tableIDs = append(tableIDs, def.ID)
 			}
 		}
-		return physicalTableIDs
+		// Global indexes of partitioned tables use the logical table ID prefix.
+		if hasGlobalIndex(tblInfo) && tableID > 0 {
+			tableIDs = append(tableIDs, tableID)
+		}
+		return tableIDs
 	}
 
-	if tblInfo.ID > 0 {
-		physicalTableIDs = append(physicalTableIDs, tblInfo.ID)
+	if tableID > 0 {
+		tableIDs = append(tableIDs, tableID)
 	}
-	return physicalTableIDs
+	return tableIDs
 }
 
 func sendForceMergeRangesToPD(ctx context.Context, ranges []forceMergeRange) error {

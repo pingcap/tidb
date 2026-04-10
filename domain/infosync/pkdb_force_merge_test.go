@@ -226,6 +226,36 @@ func TestAddForceMergeRangesRetriesWithFreshBody(t *testing.T) {
 	}, requests[0].EndKeysHex)
 }
 
+func TestAddForceMergeRangesUsesPerRequestTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte(`{}`))
+		if err != nil {
+			t.Errorf("write response failed: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	originalGetForceMergePDAddrs := getForceMergePDAddrs
+	getForceMergePDAddrs = func() ([]string, error) {
+		return []string{server.URL}, nil
+	}
+	defer func() {
+		getForceMergePDAddrs = originalGetForceMergePDAddrs
+	}()
+
+	originalForceMergePDRequestTimeout := forceMergePDRequestTimeout
+	forceMergePDRequestTimeout = 20 * time.Millisecond
+	defer func() {
+		forceMergePDRequestTimeout = originalForceMergePDRequestTimeout
+	}()
+
+	err := AddForceMergeRanges(context.Background(), buildForceMergeKeyRangesForTest(1))
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
 func buildForceMergeKeyRangesForTest(n int) []ForceMergeKeyRange {
 	ranges := make([]ForceMergeKeyRange, 0, n)
 	for i := 0; i < n; i++ {
