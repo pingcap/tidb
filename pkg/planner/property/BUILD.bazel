@@ -33,7 +33,9 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/expression",
+        "//pkg/parser/ast",
         "//pkg/planner/funcdep",
+        "//pkg/types",
         "//pkg/util/intset",
         "@com_github_stretchr_testify//require",
     ],
