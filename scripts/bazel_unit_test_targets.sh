@@ -5,10 +5,17 @@
 
 set -euo pipefail
 
-# bazel_unit_test_targets.sh - Generate bazel test targets for Phase 1
-# Excludes pkg/*/test (covered by mega) and pkg/testkit/mega (test framework)
-# Keeps executor/join/test/{indexjoin,mergejoin} and table/tables/test/partition
-# (not covered by mega)
+# bazel_unit_test_targets.sh - Generate bazel test targets for Phase 1 (real unit tests only).
+#
+# Excludes:
+#   - pkg/*/test/...      (registered in mega via init())
+#   - pkg/*/tests/...     (independent integration tests, slow, sharded)
+#   - pkg/testkit/mega    (test framework itself)
+#   - integrationtest     (heavy integration tests)
+#
+# Keeps:
+#   - executor/join/test/{indexjoin,mergejoin}  (not in mega)
+#   - table/tables/test/partition                (not in mega)
 
 EXCEPTIONS_RE="^//pkg/(executor/join/test/(indexjoin|mergejoin)|table/tables/test/partition):"
 
@@ -18,6 +25,14 @@ trap 'rm -f "$TMPFILE"' EXIT
 bazel query 'kind("go_test", //pkg/...)' --output=label 2>/dev/null | while IFS= read -r target; do
     # Skip mega framework
     if [[ "$target" == *"/pkg/testkit/mega"* ]]; then
+        continue
+    fi
+    # Skip integrationtest
+    if [[ "$target" == *"/integrationtest/"* ]] || [[ "$target" == *"/integrationtest:"* ]]; then
+        continue
+    fi
+    # Skip pkg/*/tests/* (independent integration tests with their own TestMain)
+    if [[ "$target" == *"/tests/"* ]] || [[ "$target" == *"/tests:"* ]]; then
         continue
     fi
     # Skip pkg/*/test targets (covered by mega) unless they match exceptions
