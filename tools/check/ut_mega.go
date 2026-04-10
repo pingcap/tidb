@@ -216,17 +216,13 @@ func parseMegaTestList(output string) ([]megaTask, error) {
 			continue
 		}
 
-		// Parse lines like "  - bindinfo/BestPlanInBaselines" (note: two spaces before the dash)
+		// Parse lines like "  - server_handler_optimizor/DumpPlanReplayerAPI"
 		if len(line) >= 4 && line[0:2] == "  " && line[2] == '-' {
 			// Remove the leading "  - " prefix
 			testPath := strings.TrimPrefix(line, "  - ")
 			parts := strings.SplitN(testPath, "/", 2)
 			if len(parts) == 2 {
-				// The mega CLI displays package names with underscores (planner_indexadvisor)
-				// but the actual registered names use slashes (planner/indexadvisor)
-				// Convert underscores back to slashes for proper lookup
-				pkg := strings.ReplaceAll(parts[0], "_", "/")
-				tasks = append(tasks, megaTask{pkg: pkg, name: parts[1]})
+				tasks = append(tasks, megaTask{pkg: parts[0], name: parts[1]})
 			}
 		}
 	}
