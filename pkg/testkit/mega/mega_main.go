@@ -46,7 +46,6 @@ func RunMega(t *testing.T) {
 	defer store.Close()
 
 	t.Log("Mega test framework initialized")
-	t.Log("Registered tests:", register.GlobalRegistry().ListAll())
 
 	if *testRunPattern != "" {
 		t.Log("Running tests matching pattern:", *testRunPattern)

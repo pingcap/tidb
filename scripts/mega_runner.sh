@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-# mega_runner.sh - Build mega binary, then run each test in its own process (like ut).
+# mega_runner.sh - Build mega binary, run each test in its own process.
 #
 # Usage:
 #   mega_runner.sh                       # Run all mega tests in parallel
@@ -13,7 +13,10 @@ set -euo pipefail
 #   mega_runner.sh -list                 # List all tests
 #   mega_runner.sh -parallel N           # Max parallel processes (default: 8)
 #   mega_runner.sh -timeout SECS         # Per-test timeout (default: 300)
-#   mega_runner.sh -run PATTERN -retry 3 # Retry failed tests up to N times
+#   mega_runner.sh -retry 3              # Retry failed tests up to N times
+#
+# Output (stdout): one line per test — [OK] name  time
+# Output (stderr): build info + failure details (for debugging)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -37,16 +40,30 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+fmt_time() {
+    local secs=$1
+    if [[ $secs -lt 10 ]]; then
+        printf "0.%ds" "$secs"
+    else
+        local m=$((secs / 60))
+        local s=$((secs % 60))
+        if [[ $m -gt 0 ]]; then
+            printf "%dm%ds" "$m" "$s"
+        else
+            printf "%ds" "$s"
+        fi
+    fi
+}
+
 # --- Build ---
-echo "=== Building mega test binary ==="
+echo "=== Building mega test binary ===" >&2
 cd "$PROJECT_ROOT"
 bazel build //pkg/testkit/mega:mega_test --define gotags=deadlock,inject_failpoints_50 2>&1
-
 if [ ! -f "$MEGA_BIN" ]; then
-    echo "ERROR: mega test binary not found at $MEGA_BIN"
+    echo "ERROR: mega test binary not found at $MEGA_BIN" >&2
     exit 1
 fi
-echo "=== Build complete ==="
+echo "=== Build complete ===" >&2
 
 # --- List mode ---
 if [ "$LIST_ONLY" = true ]; then
@@ -54,119 +71,126 @@ if [ "$LIST_ONLY" = true ]; then
 fi
 
 # --- Collect test names ---
-echo "=== Collecting test names ==="
 RAW=$("$MEGA_BIN" -test.run "^TestMega$" -mega.list 2>/dev/null || true)
-# Parse lines like "  - pkg/name" or "pkg/name"
 TESTS=()
 while IFS= read -r line; do
-    name="${line#  - }"  # strip leading "  - "
-    name="${name#  }"    # strip leading spaces
-    # Filter by pattern if given
-    if [[ -n "$RUN_PATTERN" ]]; then
-        if ! echo "$name" | grep -qE "$RUN_PATTERN"; then
-            continue
-        fi
-    fi
-    # Skip empty / header lines
+    name="${line#  - }"
+    name="${name#  }"
     [[ -z "$name" ]] && continue
     [[ "$name" == "Total"* ]] && continue
     [[ "$name" == "Package"* ]] && continue
     [[ "$name" == "Registered"* ]] && continue
+    if [[ -n "$RUN_PATTERN" ]]; then
+        echo "$name" | grep -qE "$RUN_PATTERN" || continue
+    fi
     TESTS+=("$name")
 done <<< "$RAW"
 
 TOTAL=${#TESTS[@]}
 if [[ $TOTAL -eq 0 ]]; then
-    echo "No tests matched."
+    echo "No tests matched." >&2
     exit 0
 fi
-echo "=== Running $TOTAL tests ($PARALLEL parallel, ${TIMEOUT}s timeout each) ==="
+echo "=== Running $TOTAL tests ($PARALLEL parallel, ${TIMEOUT}s timeout) ===" >&2
 
-# --- Run one test in an isolated process ---
-run_one() {
-    local test_name="$1"
-    local attempt=1
+# --- Temp dir ---
+RESULT_DIR=$(mktemp -d)
+trap 'rm -rf "$RESULT_DIR"' EXIT
 
-    while [[ $attempt -le $RETRY ]]; do
-        local output
-        output=$(timeout "$TIMEOUT" "$MEGA_BIN" \
-            -test.run "^TestMega$" \
-            -mega.run "^${test_name}$" \
-            -test.timeout "${TIMEOUT}s" \
-            2>&1)
-        local exit_code=$?
-
-        if [[ $exit_code -eq 0 ]]; then
-            echo "  [PASS] $test_name"
-            return 0
-        fi
-
-        if [[ $attempt -lt $RETRY ]]; then
-            echo "  [RETRY $attempt/$RETRY] $test_name (exit=$exit_code)"
-            attempt=$((attempt + 1))
-            continue
-        fi
-
-        echo "  [FAIL] $test_name (exit=$exit_code)"
-        echo "$output" | tail -20 | sed 's/^/    /'
-        return 1
-    done
-}
-
-export -f run_one
-export MEGA_BIN TIMEOUT RETRY
-
-# --- Parallel execution ---
-PASS=0
-FAIL=0
-FAIL_LIST=()
-
-SEMAPHORE="/tmp/mega_sem_$$"
-mkfifo "$SEMAPHORE"
-exec 3<>"$SEMAPHORE"
-rm -f "$SEMAPHORE"
-# Initialize semaphore with $PARALLEL tokens
+# --- Parallel execution with semaphore ---
+SEMAPHORE_FD=3
+mkfifo "$RESULT_DIR/sem"
+eval "exec $SEMAPHORE_FD<>\"$RESULT_DIR/sem\""
+rm -f "$RESULT_DIR/sem"
 for ((i = 0; i < PARALLEL; i++)); do
     echo >&3
 done
 
 START_TIME=$SECONDS
 
-for test_name in "${TESTS[@]}"; do
-    # Acquire semaphore slot
+for idx in "${!TESTS[@]}"; do
+    test_name="${TESTS[$idx]}"
+    # Acquire semaphore
     read -r -u 3
 
     (
-        if run_one "$test_name"; then
-            echo "PASS" > "/tmp/mega_result_${test_name//\//_}_$$"
-        else
-            echo "FAIL" > "/tmp/mega_result_${test_name//\//_}_$$"
-        fi
-        # Release semaphore
+        result_file="$RESULT_DIR/$idx"
+        attempt=1
+        while [[ $attempt -le $RETRY ]]; do
+            t0=$SECONDS
+            output=$("$MEGA_BIN" \
+                -test.run "^TestMega$" \
+                -mega.run "^${test_name}$" \
+                -test.timeout "${TIMEOUT}s" \
+                2>&1) || true
+            exit_code=$?
+            elapsed=$(( SECONDS - t0 ))
+
+            if [[ $exit_code -eq 0 ]]; then
+                echo "PASS ${elapsed}" > "$result_file"
+                echo >&3
+                exit 0
+            fi
+
+            attempt=$((attempt + 1))
+        done
+        # All retries failed
+        echo "FAIL ${elapsed}" > "$result_file"
+        echo "$output" > "${result_file}.log"
         echo >&3
+        exit 1
     ) &
-done <&3
+done
 
+# Wait for all background jobs
 wait
-exec 3>&-
 
-# Collect results
-for test_name in "${TESTS[@]}"; do
-    result_file="/tmp/mega_result_${test_name//\//_}_$$"
-    if [[ -f "$result_file" ]] && [[ "$(cat "$result_file")" == "PASS" ]]; then
-        PASS=$((PASS + 1))
+# --- Report results ---
+PASS=0
+FAIL=0
+FAIL_LIST=()
+
+for idx in "${!TESTS[@]}"; do
+    test_name="${TESTS[$idx]}"
+    result_file="$RESULT_DIR/$idx"
+
+    if [[ -f "$result_file" ]]; then
+        status=$(cut -d' ' -f1 "$result_file")
+        elapsed=$(cut -d' ' -f2 "$result_file")
+        tstr=$(fmt_time "${elapsed:-0}")
+
+        if [[ "$status" == "PASS" ]]; then
+            PASS=$((PASS + 1))
+            printf "[OK]   %-60s %s\n" "$test_name" "$tstr"
+        else
+            FAIL=$((FAIL + 1))
+            FAIL_LIST+=("$test_name")
+            printf "[FAIL] %-60s %s\n" "$test_name" "$tstr"
+            # Failure details to stderr
+            if [[ -f "${result_file}.log" ]]; then
+                {
+                    echo "--- FAILED: $test_name ---"
+                    # Skip registry dump lines, show actual error
+                    grep -v "Registered tests:" "${result_file}.log" \
+                        | grep -E "Error|FAIL|panic|fatal|Trace|test\.go" \
+                        | head -20
+                    echo "--- END ---"
+                } >&2
+            fi
+        fi
     else
         FAIL=$((FAIL + 1))
         FAIL_LIST+=("$test_name")
+        printf "[FAIL] %-60s ?\n" "$test_name"
     fi
-    rm -f "$result_file"
 done
 
-ELAPSED=$(( SECONDS - START_TIME ))
+TOTAL_TIME=$(( SECONDS - START_TIME ))
 echo ""
-echo "=== Results: $PASS passed, $FAIL failed, $TOTAL total in ${ELAPSED}s ==="
+echo "=== Results: ${PASS} passed, ${FAIL} failed, ${TOTAL} total in $(fmt_time $TOTAL_TIME) ==="
 
 if [[ ${#FAIL_LIST[@]} -gt 0 ]]; then
+    echo ""
     echo "Failed tests:"
     for f in "${FAIL_LIST[@]}"; do
         echo "  - $f"

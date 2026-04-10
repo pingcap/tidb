@@ -110,7 +110,7 @@ func (r *Registry) RunByPattern(t *testing.T, pattern string) {
 		t.Fatalf("no tests matched pattern %q", pattern)
 	}
 
-	t.Logf("Running %d tests matching pattern %q", len(matched), pattern)
+	// Run matched tests
 	for _, m := range matched {
 		t.Run(m.pkg+"/"+m.name, func(t *testing.T) {
 			fn, ok := r.Get(m.pkg, m.name)
