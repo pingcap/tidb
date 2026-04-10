@@ -1099,40 +1099,35 @@ func (e *InfoSchemaTiDBMLogsExtractor) ListSchemasAndTablesByBase(
 		return nil, nil, nil
 	}
 
-	baseTableIDs := make(map[int64]struct{}, len(baseTables))
-	for _, baseTable := range baseTables {
-		baseTableIDs[baseTable.ID] = struct{}{}
-	}
-
 	type schemaAndTable struct {
 		schema pmodel.CIStr
 		table  *model.TableInfo
 	}
 
-	allSchemas := is.AllSchemaNames()
-	slices.SortFunc(allSchemas, func(a, b pmodel.CIStr) int {
-		return strings.Compare(a.L, b.L)
-	})
-
-	schemaAndTbls := make([]schemaAndTable, 0, len(baseTableIDs))
-	for _, schema := range allSchemas {
-		tables, err := is.SchemaTableInfos(ctx, schema)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
+	schemaAndTbls := make([]schemaAndTable, 0, len(baseTables))
+	seenMLogIDs := make(map[int64]struct{}, len(baseTables))
+	for _, baseTable := range baseTables {
+		baseInfo := baseTable.MaterializedViewBase
+		if baseInfo == nil || baseInfo.MLogID == 0 {
+			continue
 		}
-		if ctx.Err() != nil {
-			return nil, nil, errors.Trace(ctx.Err())
+		if _, ok := seenMLogIDs[baseInfo.MLogID]; ok {
+			continue
 		}
-		for _, tableInfo := range tables {
-			mlogInfo := tableInfo.MaterializedViewLog
-			if mlogInfo == nil {
-				continue
-			}
-			if _, ok := baseTableIDs[mlogInfo.BaseTableID]; !ok {
-				continue
-			}
-			schemaAndTbls = append(schemaAndTbls, schemaAndTable{schema: schema, table: tableInfo})
+		mlogTbl, ok := is.TableByID(ctx, baseInfo.MLogID)
+		if !ok {
+			continue
 		}
+		mlogMeta := mlogTbl.Meta()
+		if mlogMeta.MaterializedViewLog == nil {
+			continue
+		}
+		mlogSchema, ok := infoschema.SchemaByTable(is, mlogMeta)
+		if !ok {
+			continue
+		}
+		seenMLogIDs[baseInfo.MLogID] = struct{}{}
+		schemaAndTbls = append(schemaAndTbls, schemaAndTable{schema: mlogSchema.Name, table: mlogMeta})
 	}
 
 	slices.SortFunc(schemaAndTbls, func(a, b schemaAndTable) int {

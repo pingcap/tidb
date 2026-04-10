@@ -118,6 +118,18 @@ func newMViewTableInfo(id int64, name string, updateTS uint64) *model.TableInfo 
 	}
 }
 
+func newBaseTableInfo(id int64, name string, mlogID int64) *model.TableInfo {
+	tbl := &model.TableInfo{
+		ID:    id,
+		Name:  pmodel.NewCIStr(name),
+		State: model.StatePublic,
+	}
+	if mlogID != 0 {
+		tbl.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: mlogID}
+	}
+	return tbl
+}
+
 func newMLogTableInfo(id int64, name string, baseTableID int64) *model.TableInfo {
 	return &model.TableInfo{
 		ID:    id,
@@ -482,8 +494,8 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 		}
 		mt := memtableRetriever{
 			is: infoschema.MockInfoSchema([]*model.TableInfo{
-				{ID: 1, Name: pmodel.NewCIStr("base_drop"), State: model.StatePublic},
-				{ID: 2, Name: pmodel.NewCIStr("base_keep"), State: model.StatePublic},
+				newBaseTableInfo(1, "base_drop", 3),
+				newBaseTableInfo(2, "base_keep", 4),
 				newMLogTableInfo(3, "$mlog$drop", 1),
 				newMLogTableInfo(4, "$mlog$keep", 2),
 			}),
