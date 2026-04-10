@@ -1,4 +1,4 @@
-// Copyright 2026 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,22 +15,489 @@
 package recovertest
 
 import (
+	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
+
+func TestRecoverTable(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("create table t_recover (a int);")
+
+	timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	tk.MustExec("insert into t_recover values (1),(2),(3)")
+	tk.MustExec("drop table t_recover")
+
+	tk.MustGetErrMsg("recover table t_recover", "can not get 'tikv_gc_safe_point'")
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	tk.MustExec("recover table t_recover")
+	tk.MustExec("drop table t_recover")
+
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeAfterDrop))
+	tk.MustContainErrMsg("recover table t_recover", "Can't find dropped/truncated table 't_recover' in GC safe point")
+
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustExec("create table t_recover (a int);")
+	tk.MustGetErrMsg("recover table t_recover", infoschema.ErrTableExists.GenWithStackByArgs("t_recover").Error())
+
+	tk.MustExec("rename table t_recover to t_recover2")
+	tk.MustExec("recover table t_recover")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("insert into t_recover values (4),(5),(6)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	tk.MustQuery("select a,_tidb_rowid from t_recover;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
+
+	err := tk.ExecToErr(fmt.Sprintf("recover table by job %d", 10000000))
+	require.Error(t, err)
+
+	err = tk.ExecToErr(fmt.Sprintf("recover table by job %d", 0))
+	require.Error(t, err)
+
+	require.NoError(t, gcutil.DisableGC(tk.Session()))
+
+	tk.MustExec("delete from t_recover where a > 1")
+	tk.MustExec("drop table t_recover")
+	tk.MustExec("recover table t_recover")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1"))
+	tk.MustExec("insert into t_recover values (7),(8),(9)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9"))
+
+	tk.MustExec("truncate table t_recover")
+	tk.MustExec("rename table t_recover to t_recover_new")
+	tk.MustExec("recover table t_recover")
+	tk.MustExec("insert into t_recover values (10)")
+	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
+
+	tk.MustExec("drop table t_recover")
+	tk.MustExec("flashback table t_recover to t_recover_tmp")
+	err = tk.ExecToErr("recover table t_recover")
+	require.True(t, infoschema.ErrTableExists.Equal(err))
+
+	tk.MustExec("drop table if exists t_recover2")
+	tk.MustExec("create table t_recover2 (a int);")
+	jobID := int64(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionDropTable && jobID == 0 {
+			jobID = job.ID
+		}
+	})
+	tk.MustExec("drop table t_recover2")
+	tk.MustExec("recover table by job " + strconv.Itoa(int(jobID)))
+	err = tk.ExecToErr("recover table by job " + strconv.Itoa(int(jobID)))
+	require.Error(t, err)
+	require.Equal(t, "[schema:1050]Table 't_recover2' already been recover to 't_recover2', can't be recover repeatedly", err.Error())
+
+	gcEnable, err := gcutil.CheckGCEnable(tk.Session())
+	require.NoError(t, err)
+	require.False(t, gcEnable)
+}
+
+func TestFlashbackTable(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
+	}()
+
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test_flashback")
+	tk.MustExec("use test_flashback")
+	tk.MustExec("drop table if exists t_flashback")
+	tk.MustExec("create table t_flashback (a int);")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	tk.MustExec("insert into t_flashback values (1),(2),(3)")
+	tk.MustExec("drop table t_flashback")
+
+	tk.MustGetErrMsg("flashback table t_not_exists", "Can't find localTemporary/dropped/truncated table: t_not_exists in DDL history jobs")
+
+	tk.MustExec("create table t_flashback (a int);")
+	tk.MustGetErrMsg("flashback table t_flashback", infoschema.ErrTableExists.GenWithStackByArgs("t_flashback").Error())
+
+	tk.MustExec("rename table t_flashback to t_flashback_tmp")
+
+	tk.MustExec("flashback table t_flashback")
+	tk.MustQuery("select * from t_flashback;").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("insert into t_flashback values (4),(5),(6)")
+	tk.MustQuery("select * from t_flashback;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	tk.MustQuery("select a,_tidb_rowid from t_flashback;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003"))
+
+	tk.MustExec("drop table t_flashback")
+	tk.MustExec("create table t_flashback (a int);")
+	tk.MustGetErrMsg("flashback table t_flashback to ` `", dbterror.ErrWrongTableName.GenWithStack("Incorrect table name ' '").Error())
+	tk.MustExec("flashback table t_flashback to t_flashback2")
+	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6"))
+	tk.MustExec("insert into t_flashback2 values (7),(8),(9)")
+	tk.MustQuery("select * from t_flashback2;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.MustQuery("select a,_tidb_rowid from t_flashback2;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003", "7 10001", "8 10002", "9 10003"))
+
+	err := tk.ExecToErr("flashback table t_flashback to t_flashback4")
+	require.True(t, infoschema.ErrTableExists.Equal(err))
+
+	tk.MustExec("truncate table t_flashback2")
+	tk.MustExec("flashback table t_flashback2 to t_flashback3")
+	tk.MustQuery("select * from t_flashback3;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9"))
+	tk.MustExec("insert into t_flashback3 values (10),(11)")
+	tk.MustQuery("select * from t_flashback3;").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"))
+	tk.MustQuery("select a,_tidb_rowid from t_flashback3;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 5003", "7 10001", "8 10002", "9 10003", "10 15001", "11 15002"))
+
+	tk.MustExec("drop table if exists t_p_flashback")
+	tk.MustExec("create table t_p_flashback (a int) partition by hash(a) partitions 4;")
+	tk.MustExec("insert into t_p_flashback values (1),(2),(3)")
+	tk.MustExec("drop table t_p_flashback")
+	tk.MustExec("flashback table t_p_flashback")
+	tk.MustQuery("select * from t_p_flashback order by a;").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("insert into t_p_flashback values (4),(5)")
+	tk.MustQuery("select a,_tidb_rowid from t_p_flashback order by a;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002"))
+
+	tk.MustExec("truncate table t_p_flashback")
+	tk.MustExec("flashback table t_p_flashback to t_p_flashback1")
+	tk.MustQuery("select * from t_p_flashback1 order by a;").Check(testkit.Rows("1", "2", "3", "4", "5"))
+	tk.MustExec("insert into t_p_flashback1 values (6)")
+	tk.MustQuery("select a,_tidb_rowid from t_p_flashback1 order by a;").Check(testkit.Rows("1 1", "2 2", "3 3", "4 5001", "5 5002", "6 10001"))
+
+	tk.MustExec("drop database if exists Test2")
+	tk.MustExec("create database Test2")
+	tk.MustExec("use Test2")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2)")
+	tk.MustExec("drop table t")
+	tk.MustExec("flashback table t")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database if exists Test3")
+	tk.MustExec("create database Test3")
+	tk.MustExec("use Test3")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database Test3")
+	tk.MustExec("use Test2")
+	tk.MustExec("flashback table t")
+	tk.MustExec("insert into t values (3)")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+}
+
+func TestRecoverTempTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("create global temporary table t_recover (a int) on commit delete rows;")
+
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists tmp2_recover")
+	tk.MustExec("create temporary table tmp2_recover (a int);")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	tk.MustExec("drop table t_recover")
+	tk.MustGetErrCode("recover table t_recover;", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("flashback table t_recover;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("drop table tmp2_recover")
+	tk.MustGetErrMsg("recover table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
+	tk.MustGetErrMsg("flashback table tmp2_recover;", "Can't find localTemporary/dropped/truncated table: tmp2_recover in DDL history jobs")
+}
+
+func TestRecoverTableMeetError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@GLOBAL.tidb_ddl_error_count_limit=3")
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("create table t_recover (a int);")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	tk.MustExec("insert into t_recover values (1),(2),(3)")
+	tk.MustExec("drop table t_recover")
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	tk.MustExec("recover table t_recover")
+	tk.MustQuery("select * from t_recover").Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("drop table t_recover")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(1)`))
+	tk.MustContainErrMsg("recover table t_recover", "mock update version and tableInfo error")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"))
+	tk.MustContainErrMsg("select * from t_recover", "Table 'test_recover.t_recover' doesn't exist")
+}
+
+func TestRecoverTablePrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_recover")
+	tk.MustExec("create table t_recover (a int);")
+	tk.MustExec("drop table t_recover")
+
+	tk.MustExec("CREATE USER 'testrecovertable'@'localhost';")
+	newTk := testkit.NewTestKit(t, store)
+	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testrecovertable", Hostname: "localhost"}, nil, nil, nil))
+	newTk.MustGetErrCode("recover table t_recover", errno.ErrTableaccessDenied)
+	newTk.MustGetErrCode("flashback table t_recover", errno.ErrTableaccessDenied)
+
+	tk.MustExec("grant drop on *.* to 'testrecovertable'@'localhost';")
+	newTk.MustGetErrCode("recover table t_recover", errno.ErrTableaccessDenied)
+	newTk.MustGetErrCode("flashback table t_recover", errno.ErrTableaccessDenied)
+
+	tk.MustExec("grant select,create on *.* to 'testrecovertable'@'localhost';")
+	newTk.MustExec("use test")
+	newTk.MustExec("recover table t_recover")
+	newTk.MustExec("drop table t_recover")
+	newTk.MustExec("flashback table t_recover")
+
+	tk.MustExec("drop user 'testrecovertable'@'localhost';")
+}
+
+func TestRecoverClusterMeetError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(30*time.Second)), "Not support flashback cluster in non-TiKV env")
+
+	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	flashbackTs := oracle.GetTimeFromTS(ts)
+
+	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", injectSafeTS)))
+
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(30*time.Second)), "cannot set flashback timestamp to future time")
+	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), "can not get 'tikv_gc_safe_point'")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-60*60*60*time.Second)), int(variable.ErrSnapshotTooOld.Code()))
+
+	tk.MustExec("CREATE USER 'testflashback'@'localhost';")
+	newTk := testkit.NewTestKit(t, store)
+	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashback", Hostname: "localhost"}, nil, nil, nil))
+	newTk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), errno.ErrPrivilegeCheckFail)
+	tk.MustExec("drop user 'testflashback'@'localhost';")
+
+	if kerneltype.IsClassic() {
+		nowTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+		tk.MustExec("truncate table mysql.stats_meta")
+		errorMsg := fmt.Sprintf("[ddl:-1]Detected modified system table during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat))
+		tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat)), errorMsg)
+	}
+	nowTS, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	tk.MustExec("update mysql.tidb set VARIABLE_VALUE=VARIABLE_VALUE+1 where VARIABLE_NAME='tidb_server_version'")
+	errorMsg := fmt.Sprintf("[ddl:-1]Detected TiDB upgrade during [%s, now), can't do flashback", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat))
+	tk.MustGetErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(nowTS).Format(types.TimeFSPFormat)), errorMsg)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
+}
+
+func TestFlashbackWithSafeTs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	time.Sleep(time.Second)
+	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	flashbackTs := oracle.GetTimeFromTS(ts)
+	testcases := []struct {
+		name              string
+		sql               string
+		injectSafeTS      uint64
+		compareWithSafeTS int
+	}{
+		{
+			name:              "5 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs),
+			compareWithSafeTS: 0,
+		},
+		{
+			name:              "10 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)),
+			compareWithSafeTS: -1,
+		},
+		{
+			name:              "5 seconds ago to now, safeTS 10 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(-10 * time.Second)),
+			compareWithSafeTS: 1,
+		},
+	}
+	for _, testcase := range testcases {
+		t.Log(testcase.name)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
+		if testcase.compareWithSafeTS == 1 {
+			start := time.Now()
+			tk.MustContainErrMsg(testcase.sql, "cannot set flashback timestamp after min-resolved-ts")
+			require.Less(t, time.Since(start), time.Second)
+		} else {
+			tk.MustExec(testcase.sql)
+		}
+	}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout"))
+}
+
+func TestFlashbackTSOWithSafeTs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	time.Sleep(time.Second)
+	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	flashbackTs := oracle.GetTimeFromTS(ts)
+	testcases := []struct {
+		name              string
+		sql               string
+		injectSafeTS      uint64
+		compareWithSafeTS int
+	}{
+		{
+			name:              "5 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs),
+			compareWithSafeTS: 0,
+		},
+		{
+			name:              "10 seconds ago to now, safeTS 5 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second)),
+			compareWithSafeTS: -1,
+		},
+		{
+			name:              "5 seconds ago to now, safeTS 10 secs ago",
+			sql:               fmt.Sprintf("flashback cluster to tso %d", ts),
+			injectSafeTS:      oracle.GoTimeToTS(flashbackTs.Add(-10 * time.Second)),
+			compareWithSafeTS: 1,
+		},
+	}
+	for _, testcase := range testcases {
+		t.Log(testcase.name)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", testcase.injectSafeTS)))
+		if testcase.compareWithSafeTS == 1 {
+			start := time.Now()
+			tk.MustContainErrMsg(testcase.sql, "cannot set flashback timestamp after min-resolved-ts")
+			require.Less(t, time.Since(start), time.Second)
+		} else {
+			tk.MustExec(testcase.sql)
+		}
+	}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout"))
+}
+
+func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+
+	time.Sleep(time.Second)
+	ts, _ := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	flashbackTs := oracle.GetTimeFromTS(ts)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", oracle.GoTimeToTS(flashbackTs.Add(-10*time.Minute)))))
+
+	go func() {
+		time.Sleep(2 * time.Second)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", oracle.GoTimeToTS(flashbackTs.Add(10*time.Minute)))))
+	}()
+
+	start := time.Now()
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
+	duration := time.Since(start)
+	require.Greater(t, duration, 2*time.Second)
+	require.Less(t, duration, 5*time.Second)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
+}
 
 func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
@@ -117,6 +584,74 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 		fmt.Sprintf("return(%v)", injectSafeTS))
 
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
+}
+
+func TestFlashbackSchema(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`)
+
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 2")
+	tk.MustExec("create database if not exists test_flashback")
+	tk.MustExec("use test_flashback")
+	tk.MustExec("drop table if exists t_flashback")
+	tk.MustExec("create table t_flashback (a int)")
+
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
+	defer resetGC()
+
+	tk.MustGetErrMsg("flashback database db_not_exists", "can not get 'tikv_gc_safe_point'")
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	tk.MustExec("insert into t_flashback values (1),(2),(3)")
+	tk.MustExec("drop database test_flashback")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr", `4*return()`)
+	tk.MustExec("flashback database test_flashback")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockClearTablePlacementAndBundlesErr")
+
+	tk.MustGetErrMsg("flashback database db_not_exists", "Can't find dropped database: db_not_exists in DDL history jobs")
+	tk.MustGetErrMsg("flashback database test_flashback to test_flashback2", infoschema.ErrDatabaseExists.GenWithStack("Schema 'test_flashback' already been recover to 'test_flashback', can't be recover repeatedly").Error())
+
+	tk.MustExec("create database db_flashback")
+	tk.MustGetErrMsg("flashback schema db_flashback", infoschema.ErrDatabaseExists.GenWithStackByArgs("db_flashback").Error())
+
+	tk.MustExec("drop database if exists test1")
+	tk.MustExec("create database test1")
+	tk.MustExec("use test1")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("insert into t values (1),(2),(3)")
+	tk.MustExec("insert into t1 values (4),(5),(6)")
+	tk.MustExec("drop database test1")
+	tk.MustExec("flashback schema test1")
+	tk.MustExec("use test1")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("4", "5", "6"))
+	tk.MustExec("drop database test1")
+	tk.MustExec("flashback schema test1 to test2")
+	tk.MustExec("use test2")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select a from t1 order by a").Check(testkit.Rows("4", "5", "6"))
+
+	tk.MustExec("drop database if exists t_recover")
+	tk.MustExec("create database t_recover")
+	tk.MustExec("drop database t_recover")
+
+	tk.MustExec("CREATE USER 'testflashbackschema'@'localhost';")
+	newTk := testkit.NewTestKit(t, store)
+	require.NoError(t, newTk.Session().Auth(&auth.UserIdentity{Username: "testflashbackschema", Hostname: "localhost"}, nil, nil, nil))
+	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
+
+	tk.MustExec("grant drop on *.* to 'testflashbackschema'@'localhost';")
+	newTk.MustGetErrCode("flashback database t_recover", errno.ErrDBaccessDenied)
+
+	tk.MustExec("grant create on *.* to 'testflashbackschema'@'localhost';")
+	newTk.MustExec("flashback schema t_recover")
+
+	tk.MustExec("drop user 'testflashbackschema'@'localhost';")
 }
 
 func mockGC(tk *testkit.TestKit) (string, string, string, func()) {
