@@ -23,7 +23,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
@@ -96,4 +98,88 @@ func TestCancelWhileScan(t *testing.T) {
 
 	close(delCh)
 	wg.Wait()
+}
+
+func TestCancelWhileScanAtStatementBoundary(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	origBatchSize := vardef.TTLScanBatchSize.Load()
+	vardef.TTLScanBatchSize.Store(30)
+	t.Cleanup(func() {
+		vardef.TTLScanBatchSize.Store(origBatchSize)
+	})
+
+	tk.MustExec("create table test.t (id int primary key, created_at datetime) TTL= created_at + interval 1 hour")
+	tk.MustExec("split table test.t between (0) and (30000) regions 30")
+	for i := range 30 {
+		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, NOW() - INTERVAL 24 HOUR)", i*1000))
+	}
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	testPhysicalTableCache, err := cache.NewPhysicalTable(ast.NewCIStr("test"), testTable.Meta(), ast.NewCIStr(""))
+	require.NoError(t, err)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", "return(2000)")
+
+	taskCtx, cancelTask := context.WithCancel(context.Background())
+	defer cancelTask()
+	ttlTask := ttlworker.NewTTLScanTask(taskCtx, testPhysicalTableCache, &cache.TTLTask{
+		JobID:            "test",
+		TableID:          testTable.Meta().ID,
+		ScanID:           1,
+		ScanRangeStart:   nil,
+		ScanRangeEnd:     nil,
+		ExpireTime:       time.Now().Add(-12 * time.Hour),
+		OwnerID:          "test",
+		OwnerAddr:        "test",
+		OwnerHBTime:      time.Now(),
+		Status:           cache.TaskStatusRunning,
+		StatusUpdateTime: time.Now(),
+		State:            &cache.TTLTaskState{},
+		CreatedTime:      time.Now(),
+	})
+
+	triggerCancel := make(chan struct{})
+	var cancelOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeResetSQLKillerForTTLScan", func(stmt ast.StmtNode) {
+		if _, ok := stmt.(*ast.SelectStmt); !ok {
+			return
+		}
+
+		cancelOnce.Do(func() {
+			cancelTask()
+			close(triggerCancel)
+			time.Sleep(100 * time.Millisecond)
+		})
+	})
+
+	delCh := make(chan *ttlworker.TTLDeleteTask)
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		for range delCh {
+		}
+	}()
+
+	doScanDone := make(chan struct{})
+	go func() {
+		defer close(doScanDone)
+		ttlTask.DoScan(context.Background(), delCh, dom.AdvancedSysSessionPool())
+	}()
+
+	select {
+	case <-triggerCancel:
+	case <-time.After(10 * time.Second):
+		require.FailNow(t, "TTL scan SELECT was not reached")
+	}
+
+	select {
+	case <-doScanDone:
+	case <-time.After(time.Second):
+		require.FailNow(t, "TTL scan was not canceled within 1s after statement-boundary cancel")
+	}
+
+	close(delCh)
+	<-doneCh
 }
