@@ -116,7 +116,7 @@ func rewriteContextCanceledWithKillSignal(stmt *ExecStmt, err error) error {
 	if stmt == nil || errors.Cause(err) != context.Canceled {
 		return err
 	}
-	sqlKiller := stmt.Ctx.GetSessionVars().SQLKiller
+	sqlKiller := &stmt.Ctx.GetSessionVars().SQLKiller
 	if sqlKiller.GetKillSignal() == 0 {
 		return err
 	}
