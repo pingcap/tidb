@@ -150,7 +150,7 @@ ifneq ("$(CI)", "")
 else
     BAZEL_CMD_CONFIG := --remote_cache=https://cache.hawkingrei.com/bazelcache --noremote_upload_local_results
 endif
-BAZEL_TEST_CMD_CONFIG = $(BAZEL_CMD_CONFIG) --norun_validations --run_under=//tools/scripts:test_wrapper --test_output=all
+BAZEL_TEST_CMD_CONFIG = $(BAZEL_CMD_CONFIG) --norun_validations
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...,//lightning/...
 TIDB_SERVER_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server
 IMPORTER_PATH := ./bazel-bin/cmd/importer/importer_/importer
