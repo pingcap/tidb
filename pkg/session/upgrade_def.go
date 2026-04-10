@@ -479,13 +479,20 @@ const (
 	// Add index on start_time for mysql.tidb_runaway_watch and done_time for mysql.tidb_runaway_watch_done
 	// to improve the performance of runaway watch sync loop.
 	version254 = 254
+
 	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
 	version255 = 255
+
 	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
 	version256 = 256
-	// version257 increases resource group name related columns from varchar(32) to varchar(64)
-	// for MySQL compatibility.
+
+	// version257
+	// Add tidb_enable_no_backslash_escapes_in_like global variable.
 	version257 = 257
+
+	// version258 increases resource group name related columns from varchar(32) to varchar(64)
+	// for MySQL compatibility.
+	version258 = 258
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -499,7 +506,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version257
+var currentBootstrapVersion int64 = version258
 
 // this list must be ordered by version in ascending order, and the function
 // name must follow the same pattern as `upgradeToVer<version>`.
@@ -680,6 +687,7 @@ var upgradeToVerFunctions = []versionedUpgradeFunction{
 	{version: version255, fn: upgradeToVer255},
 	{version: version256, fn: upgradeToVer256},
 	{version: version257, fn: upgradeToVer257},
+	{version: version258, fn: upgradeToVer258},
 }
 
 // upgradeToVer2 updates to version 2.
@@ -2085,11 +2093,16 @@ func upgradeToVer256(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheSkipStatsOnBinding, vardef.On)
 }
 
-// upgradeToVer257 widens resource group name related columns from varchar(32) to
+func upgradeToVer257(s sessionapi.Session, _ int64) {
+	// Keep old behavior for upgraded clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableNoBackslashEscapesInLike, vardef.Off)
+}
+
+// upgradeToVer258 widens resource group name related columns from varchar(32) to
 // varchar(64) for MySQL compatibility. The corresponding CREATE TABLE definitions
 // in metadef/system_tables_def.go are updated in the same change so that new
 // clusters are created with varchar(64) from the start.
-func upgradeToVer257(s sessionapi.Session, _ int64) {
+func upgradeToVer258(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `resource_group_name` VARCHAR(64) NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch MODIFY COLUMN `resource_group_name` VARCHAR(64) NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch MODIFY COLUMN `switch_group_name` VARCHAR(64) DEFAULT ''")

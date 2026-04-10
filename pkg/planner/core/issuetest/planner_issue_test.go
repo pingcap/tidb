@@ -594,18 +594,18 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 			"  │ │   │ └─TableReader(Probe) root  data:Selection",
 			"  │ │   │   └─Selection cop[tikv]  not(isnull(test.t2.c13))",
 			"  │ │   │     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  │ │   └─HashJoin(Probe) root  CARTESIAN left outer join, left side:TableReader",
-			"  │ │     ├─TableDual(Build) root  rows:0",
-			"  │ │     └─TableReader(Probe) root  data:Selection",
+			"  │ │   └─Projection(Probe) root  test.t1.vkey, <nil>->test.t1.c10",
+			"  │ │     └─TableReader root  data:Selection",
 			"  │ │       └─Selection cop[tikv]  not(isnull(test.t1.vkey))",
 			"  │ │         └─TableFullScan cop[tikv] table:b keep order:false, stats:pseudo",
-			"  │ └─Projection(Probe) root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column",
+			"  │ └─Projection(Probe) root  test.t2.c12, test.t2.c14, test.t2.c12->Column",
 			"  │   └─TableReader root  data:Selection",
 			"  │     └─Selection cop[tikv]  not(isnull(test.t2.c14))",
 			"  │       └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  └─Projection(Probe) root  cast(test.t3.vkey, double BINARY)->Column",
-			"    └─TableReader root  data:TableFullScan",
-			"      └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"))
+			"  └─Projection(Probe) root  cast(test.t3.vkey, bigint(0) BINARY)->Column",
+			"    └─Selection root  eq(cast(cast(test.t3.vkey, bigint(0) BINARY), double BINARY), cast(test.t3.vkey, double BINARY))",
+			"      └─TableReader root  data:TableFullScan",
+			"        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"))
 	}
 
 	// issue-58999-view-equality-expression-join-key-panic
