@@ -430,6 +430,150 @@ func TestTimeScalarFunctionPushDownResult(t *testing.T) {
 	tk.MustExec("admin reload expr_pushdown_blacklist;")
 }
 
+func TestTrimPushDownToTiKV(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(
+		id int primary key,
+		c varchar(64) charset utf8mb4 collate utf8mb4_general_ci,
+		c_bin varchar(64) charset utf8mb4 collate utf8mb4_bin,
+		c_ascii varchar(64) charset ascii collate ascii_bin,
+		vb varbinary(64)
+	);`)
+	tk.MustExec(`insert into t values
+		(1, '  x  ', '  x  ', '  x  ', x'207820'),
+		(2, 'xybarxy', 'xybarxy', 'xybarxy', x'20787920'),
+		(3, 'xyxybarxy', 'xyxybarxy', 'xyxybarxy', x'2078797820'),
+		(4, 'xybarxyxy', 'xybarxyxy', 'xybarxyxy', x'207879787920'),
+		(5, 'xyxybarxyxy', 'xyxybarxyxy', 'xyxybarxyxy', x'207879787920'),
+		(6, '', '', '', x''),
+		(7, null, null, null, null),
+		(8, '   ', '   ', '   ', x'202020'),
+		(9, '好好bar好好', '好好bar好好', null, x''),
+		(10, 'bar', 'bar', 'bar', x'626172'),
+		(11, 'x', 'x', 'x', x'78'),
+		(12, 'ff', 'ff', 'ff', x'20ff20'),
+		(13, null, null, null, x'20ff7820'),
+		(14, null, null, null, x'00207820');`)
+
+	resetBlacklist := func() {
+		tk.MustExec("delete from mysql.expr_pushdown_blacklist where name != 'date_add'")
+		tk.MustExec("admin reload expr_pushdown_blacklist;")
+	}
+	t.Cleanup(resetBlacklist)
+	resetBlacklist()
+
+	testcases := []struct {
+		name     string
+		sql      string
+		expected []string
+	}{
+		{
+			name:     "trim_1_arg",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(c) = 'x' order by id;",
+			expected: []string{"1", "11"},
+		},
+		{
+			name:     "trim_2_args",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim('xy' from c) = 'bar' order by id;",
+			expected: []string{"2", "3", "4", "5", "10"},
+		},
+		{
+			name:     "trim_leading",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(leading 'xy' from c) = 'barxy' order by id;",
+			expected: []string{"2", "3"},
+		},
+		{
+			name:     "trim_trailing",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(trailing 'xy' from c) = 'xybar' order by id;",
+			expected: []string{"2", "4"},
+		},
+		{
+			name:     "trim_both",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(both 'xy' from c) = 'bar' order by id;",
+			expected: []string{"2", "3", "4", "5", "10"},
+		},
+		{
+			name:     "trim_null_input",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(c) is null order by id;",
+			expected: []string{"7", "13", "14"},
+		},
+		{
+			name:     "trim_empty_string",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(c) = '' order by id;",
+			expected: []string{"6", "8"},
+		},
+		{
+			name:     "trim_empty_pattern",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim('' from c) = 'bar' order by id;",
+			expected: []string{"10"},
+		},
+		{
+			name:     "trim_pattern_longer_than_input",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim('xy' from c) = 'x' order by id;",
+			expected: []string{"11"},
+		},
+		{
+			name:     "trim_2_args_null_input",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim('xy' from c) is null order by id;",
+			expected: []string{"7", "13", "14"},
+		},
+		{
+			name:     "trim_multibyte_general_ci",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim('好' from c) = 'bar' and c like '%好%' order by id;",
+			expected: []string{"9"},
+		},
+		{
+			name:     "trim_multibyte_bin",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim('好' from c_bin) = 'bar' and c_bin like '%好%' order by id;",
+			expected: []string{"9"},
+		},
+		{
+			name:     "trim_ascii_charset",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(c_ascii) = 'x' order by id;",
+			expected: []string{"1", "11"},
+		},
+		{
+			name:     "trim_binary_string",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(vb) = x'78' order by id;",
+			expected: []string{"1", "11"},
+		},
+		{
+			name:     "trim_invalid_utf8_binary",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(vb) = x'ff' order by id;",
+			expected: []string{"12"},
+		},
+		{
+			name:     "trim_binary_empty_result",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(vb) = x'' order by id;",
+			expected: []string{"6", "8", "9"},
+		},
+		{
+			name:     "trim_binary_invalid_utf8_middle",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(vb) = x'ff78' order by id;",
+			expected: []string{"13"},
+		},
+		{
+			name:     "trim_binary_with_nul",
+			sql:      "select /*+read_from_storage(tikv[t])*/ id from t where trim(vb) = x'002078' order by id;",
+			expected: []string{"14"},
+		},
+	}
+
+	for _, testcase := range testcases {
+		resetBlacklist()
+		r1 := tk.MustQuery(testcase.sql).Rows()
+		require.EqualValues(t, testkit.Rows(testcase.expected...), r1, testcase.name)
+
+		tk.MustExec("insert into mysql.expr_pushdown_blacklist(name) values('trim');")
+		tk.MustExec("admin reload expr_pushdown_blacklist;")
+		r2 := tk.MustQuery(testcase.sql).Rows()
+		require.EqualValues(t, r1, r2, testcase.name)
+	}
+}
+
 func TestNumberFunctionPushDown(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
