@@ -406,8 +406,15 @@ func registerMetrics() {
 }
 
 // Register registers custom collectors.
+// It is safe to call multiple times; already-registered collectors are silently skipped.
 func Register(cs ...prometheus.Collector) {
-	prometheus.MustRegister(cs...)
+	for _, c := range cs {
+		if err := prometheus.Register(c); err != nil {
+			if _, ok := err.(prometheus.AlreadyRegisteredError); !ok {
+				panic(err)
+			}
+		}
+	}
 }
 
 // Unregister unregisters custom collectors.
