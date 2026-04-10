@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -41,7 +42,6 @@ const (
 	mvTableAlias    = "mv"
 
 	deltaCntStarName = "__mvmerge_delta_cnt_star"
-	removedRowsName  = "__mvmerge_removed_rows"
 )
 
 func optimizeForTest(sctx sessionctx.Context, is infoschema.InfoSchema) func(ctx context.Context, sel *ast.SelectStmt) (corebase.PhysicalPlan, types.NameSlice, error) {
@@ -124,7 +124,7 @@ func TestBuildCountSum(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		mvmerge.BuildOptions{FromTS: 10},
 		nil,
 	)
 	require.NoError(t, err)
@@ -225,7 +225,7 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		mvmerge.BuildOptions{FromTS: 10},
 		nil,
 	)
 	require.NoError(t, err)
@@ -269,12 +269,12 @@ func TestBuildCountExprSumExpr(t *testing.T) {
 	})
 }
 
-func TestBuildMinMaxHasRemovedGate(t *testing.T) {
+func TestBuildMLogDeltaSelectTiFlashHint(t *testing.T) {
 	sctx := core.MockContext()
 
-	baseID := int64(10)
-	mlogID := int64(20)
-	mvID := int64(30)
+	baseID := int64(1011)
+	mlogID := int64(2022)
+	mvID := int64(3033)
 
 	base := &model.TableInfo{
 		ID:    baseID,
@@ -303,6 +303,285 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	}
 	mv := &model.TableInfo{
 		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+
+	testCases := []struct {
+		name           string
+		tiFlashReplica *model.TiFlashReplicaInfo
+	}{
+		{
+			name:           "available replica keeps hint",
+			tiFlashReplica: &model.TiFlashReplicaInfo{Count: 1, Available: true},
+		},
+		{
+			name:           "missing replica still keeps hint",
+			tiFlashReplica: nil,
+		},
+		{
+			name:           "unavailable replica still keeps hint",
+			tiFlashReplica: &model.TiFlashReplicaInfo{Count: 1, Available: false},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mlogClone := *mlog
+			mlogClone.TiFlashReplica = tc.tiFlashReplica
+			is := infoschema.MockInfoSchema([]*model.TableInfo{base, &mlogClone, mv})
+			domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+			res, err := mvmerge.Build(
+				sctx.GetPlanCtx(),
+				is,
+				mv,
+				mvmerge.BuildOptions{FromTS: 10},
+				nil,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, res.MergeSourceSelect)
+			require.NotNil(t, res.MergeSourceSelect.From)
+			require.NotNil(t, res.MergeSourceSelect.From.TableRefs)
+
+			deltaSrc, ok := res.MergeSourceSelect.From.TableRefs.Left.(*ast.TableSource)
+			require.True(t, ok)
+			deltaSel, ok := deltaSrc.Source.(*ast.SelectStmt)
+			require.True(t, ok)
+			require.Len(t, deltaSel.TableHints, 1)
+			tableHint := deltaSel.TableHints[0]
+			require.Equal(t, hint.HintReadFromStorage, tableHint.HintName.L)
+			require.Equal(t, hint.HintTiFlash, tableHint.HintData.(pmodel.CIStr).L)
+			require.Len(t, tableHint.Tables, 1)
+			require.Equal(t, mlogClone.Name.L, tableHint.Tables[0].TableName.L)
+			item, ok := is.TableItemByID(mlogClone.ID)
+			require.True(t, ok)
+			require.Equal(t, item.DBName.L, tableHint.Tables[0].DBName.L)
+		})
+	}
+}
+
+func TestBuildMLogDeltaSelectCommitTSWindow(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(1111)
+	mlogID := int64(2222)
+	mvID := int64(3333)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 10, ToTS: 20},
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res.MergeSourceSelect)
+	require.NotNil(t, res.MergeSourceSelect.From)
+	require.NotNil(t, res.MergeSourceSelect.From.TableRefs)
+
+	deltaSrc, ok := res.MergeSourceSelect.From.TableRefs.Left.(*ast.TableSource)
+	require.True(t, ok)
+	deltaSel, ok := deltaSrc.Source.(*ast.SelectStmt)
+	require.True(t, ok)
+	require.NotNil(t, deltaSel.Where)
+
+	predicates := collectAndPredicates(t, deltaSel.Where)
+	tsValueByOp := make(map[opcode.Op]any, 2)
+	for _, pred := range predicates {
+		left, ok := pred.L.(*ast.ColumnNameExpr)
+		if !ok {
+			continue
+		}
+		if left.Name.Name.L != model.ExtraCommitTSName.L {
+			continue
+		}
+		valueExpr, ok := pred.R.(ast.ValueExpr)
+		require.True(t, ok)
+		tsValueByOp[pred.Op] = valueExpr.GetValue()
+	}
+
+	require.EqualValues(t, 10, tsValueByOp[opcode.GT])
+	require.EqualValues(t, 20, tsValueByOp[opcode.LE])
+}
+
+func TestBuildMergeSourceSelectJoinOperatorByMVNullability(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(4011)
+	mlogID := int64(4022)
+	mvID := int64(4033)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "y", 1, mysql.TypeLong),
+			mkCol(3, "cnt", 2, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, b, count(1) from t group by a, b",
+		},
+	}
+	mv.Columns[0].FieldType.AddFlag(mysql.NotNullFlag)
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 10},
+		nil,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, res.MergeSourceSelect)
+	require.NotNil(t, res.MergeSourceSelect.From)
+	require.NotNil(t, res.MergeSourceSelect.From.TableRefs)
+	require.NotNil(t, res.MergeSourceSelect.From.TableRefs.On)
+
+	predicates := collectAndPredicates(t, res.MergeSourceSelect.From.TableRefs.On.Expr)
+	require.Len(t, predicates, 2)
+
+	opByMVCol := make(map[string]opcode.Op, len(predicates))
+	for _, pred := range predicates {
+		leftTable, leftCol := columnNameRef(t, pred.L)
+		rightTable, rightCol := columnNameRef(t, pred.R)
+		require.Equal(t, deltaTableAlias, leftTable)
+		require.Equal(t, mvTableAlias, rightTable)
+		require.Equal(t, leftCol, rightCol)
+		opByMVCol[rightCol] = pred.Op
+	}
+	require.Equal(t, opcode.EQ, opByMVCol["x"])
+	require.Equal(t, opcode.NullEQ, opByMVCol["y"])
+}
+
+func TestBuildMinMaxHasRemovedGate(t *testing.T) {
+	sctx := core.MockContext()
+	sctx.GetSessionVars().EnableINLJoinInnerMultiPattern = true
+
+	baseID := int64(10)
+	mlogID := int64(20)
+	mvID := int64(30)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  pmodel.NewCIStr("idx_a"),
+				State: model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Name: pmodel.NewCIStr("a"), Offset: 0},
+				},
+			},
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	base.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mlog.Columns[1].FieldType.AddFlag(mysql.NotNullFlag)
+	mv := &model.TableInfo{
+		ID:    mvID,
 		Name:  pmodel.NewCIStr("mv_minmax_tbl"),
 		State: model.StatePublic,
 		Columns: []*model.ColumnInfo{
@@ -324,24 +603,32 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		mvmerge.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.NoError(t, err)
 	plan, outputNames, err := optimizeForTest(sctx, is)(context.Background(), res.MergeSourceSelect)
 	require.NoError(t, err)
-	require.NotNil(t, res.RemovedRowCountDelta)
 	require.Equal(t, 1, res.CountStarMVOffset)
+	require.NotNil(t, res.FullUpdateLookupTemplateSelect)
+	fullPlan, fullOutputNames, err := optimizeForTest(sctx, is)(context.Background(), res.FullUpdateLookupTemplateSelect)
+	require.NoError(t, err)
+	require.NotNil(t, fullPlan)
+	indexJoin := findIndexJoinPlan(fullPlan)
+	require.NotNilf(t, indexJoin, "lookup template best plan: %s", core.ToString(fullPlan))
+	require.Equal(t, res.FullUpdateLookupColumnCount, fullPlan.Schema().Len())
+	require.Equal(t, res.FullUpdateLookupColumnCount, len(fullOutputNames))
+	requireOutputColNames(t, fullOutputNames, []string{"x", "mx", "mn"})
 
 	var hasMax, hasMin bool
 	for _, ai := range res.AggInfos {
 		if ai.Kind == mvmerge.AggMax {
 			hasMax = true
-			requireDependencies(t, ai, []int{1, 3})
+			requireDependencies(t, ai, []int{1, 2, 3, 4})
 		}
 		if ai.Kind == mvmerge.AggMin {
 			hasMin = true
-			requireDependencies(t, ai, []int{2, 3})
+			requireDependencies(t, ai, []int{5, 6, 7, 8})
 		}
 		if ai.Kind == mvmerge.AggCountStar {
 			requireDependencies(t, ai, []int{0})
@@ -357,14 +644,95 @@ func TestBuildMinMaxHasRemovedGate(t *testing.T) {
 	requireMergePlanOutputNames(t, plan, outputNames, []fieldNameInfo{
 		{Pos: 0, Tbl: deltaTableAlias, Col: deltaCntStarName},
 		{Pos: 1, Tbl: deltaTableAlias, Col: "__mvmerge_max_in_added_2"},
-		{Pos: 2, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_added_3"},
-		{Pos: 3, Tbl: deltaTableAlias, Col: removedRowsName},
-		{Pos: 4, DB: mvDBName, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
-		{Pos: 5, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
-		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
-		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
-		{Pos: 8, DB: mvDBName, Tbl: mvTableAlias, Col: "__mvmerge_mv_rowid", OrigCol: "_tidb_rowid"},
+		{Pos: 2, Tbl: deltaTableAlias, Col: "__mvmerge_max_cnt_in_added_2"},
+		{Pos: 3, Tbl: deltaTableAlias, Col: "__mvmerge_max_in_removed_2"},
+		{Pos: 4, Tbl: deltaTableAlias, Col: "__mvmerge_max_cnt_in_removed_2"},
+		{Pos: 5, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_added_3"},
+		{Pos: 6, Tbl: deltaTableAlias, Col: "__mvmerge_min_cnt_in_added_3"},
+		{Pos: 7, Tbl: deltaTableAlias, Col: "__mvmerge_min_in_removed_3"},
+		{Pos: 8, Tbl: deltaTableAlias, Col: "__mvmerge_min_cnt_in_removed_3"},
+		{Pos: 9, DB: mvDBName, Tbl: deltaTableAlias, Col: "x", OrigTbl: mlog.Name.O, OrigCol: "a"},
+		{Pos: 10, DB: mvDBName, Tbl: mvTableAlias, Col: "cnt", OrigTbl: mv.Name.O, OrigCol: "cnt"},
+		{Pos: 11, DB: mvDBName, Tbl: mvTableAlias, Col: "mx", OrigTbl: mv.Name.O, OrigCol: "mx"},
+		{Pos: 12, DB: mvDBName, Tbl: mvTableAlias, Col: "mn", OrigTbl: mv.Name.O, OrigCol: "mn"},
+		{Pos: 13, DB: mvDBName, Tbl: mvTableAlias, Col: "__mvmerge_mv_rowid", OrigCol: "_tidb_rowid"},
 	})
+}
+
+func TestBuildMinMaxNullableDependencyOrder(t *testing.T) {
+	sctx := core.MockContext()
+
+	baseID := int64(110)
+	mlogID := int64(120)
+	mvID := int64(130)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  pmodel.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a"), pmodel.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  pmodel.NewCIStr("mv_minmax_nullable_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+			mkCol(3, "cnt_b", 2, mysql.TypeLonglong),
+			mkCol(4, "mx", 3, mysql.TypeLong),
+			mkCol(5, "mn", 4, mysql.TypeLong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), count(b), max(b), min(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mvmerge.Build(
+		sctx.GetPlanCtx(),
+		is,
+		mv,
+		mvmerge.BuildOptions{FromTS: 1},
+		nil,
+	)
+	require.NoError(t, err)
+
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mvmerge.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mvmerge.AggCount:
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{1})
+		case mvmerge.AggMax:
+			requireDependencies(t, ai, []int{2, 3, 4, 5, 12})
+		case mvmerge.AggMin:
+			requireDependencies(t, ai, []int{6, 7, 8, 9, 12})
+		}
+	}
 }
 
 func TestBuildSumWithoutCountExpr(t *testing.T) {
@@ -421,7 +789,7 @@ func TestBuildSumWithoutCountExpr(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		mvmerge.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.ErrorContains(t, err, "requires matching COUNT(expr)")
@@ -481,7 +849,7 @@ func TestBuildMissingCountStar(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		mvmerge.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.ErrorContains(t, err, "must include COUNT(*)")
@@ -537,10 +905,33 @@ func TestBuildMissingOldNew(t *testing.T) {
 		sctx.GetPlanCtx(),
 		is,
 		mv,
-		mvmerge.BuildOptions{FromTS: 1, ToTS: 2},
+		mvmerge.BuildOptions{FromTS: 1},
 		nil,
 	)
 	require.ErrorContains(t, err, model.MaterializedViewLogOldNewColumnName)
+}
+
+func findIndexJoinPlan(plan corebase.PhysicalPlan) *core.PhysicalIndexJoin {
+	if plan == nil {
+		return nil
+	}
+	switch x := plan.(type) {
+	case *core.PhysicalIndexJoin:
+		return x
+	case *core.PhysicalIndexHashJoin:
+		return &x.PhysicalIndexJoin
+	case *core.PhysicalIndexMergeJoin:
+		return &x.PhysicalIndexJoin
+	}
+	for _, child := range plan.Children() {
+		if child == nil {
+			continue
+		}
+		if found := findIndexJoinPlan(child); found != nil {
+			return found
+		}
+	}
+	return nil
 }
 
 func mkCol(id int64, name string, offset int, tp byte) *model.ColumnInfo {
@@ -597,4 +988,31 @@ func requireMergePlanOutputNames(t *testing.T, plan corebase.PhysicalPlan, outpu
 	require.Len(t, outputNames, plan.Schema().Len())
 	require.Len(t, expected, len(outputNames))
 	require.Equal(t, expected, nameSliceInfo(outputNames))
+}
+
+func requireOutputColNames(t *testing.T, outputNames types.NameSlice, expected []string) {
+	t.Helper()
+	require.Len(t, outputNames, len(expected))
+	for i, colName := range expected {
+		require.Equal(t, colName, outputNames[i].ColName.O)
+	}
+}
+
+func collectAndPredicates(t *testing.T, expr ast.ExprNode) []*ast.BinaryOperationExpr {
+	t.Helper()
+
+	bin, ok := expr.(*ast.BinaryOperationExpr)
+	require.True(t, ok)
+	if bin.Op != opcode.LogicAnd {
+		return []*ast.BinaryOperationExpr{bin}
+	}
+	return append(collectAndPredicates(t, bin.L), collectAndPredicates(t, bin.R)...)
+}
+
+func columnNameRef(t *testing.T, expr ast.ExprNode) (string, string) {
+	t.Helper()
+
+	col, ok := expr.(*ast.ColumnNameExpr)
+	require.True(t, ok)
+	return col.Name.Table.O, col.Name.Name.O
 }
