@@ -447,6 +447,11 @@ func cloneTopN(tn *logicalop.LogicalTopN) (*logicalop.LogicalTopN, bool) {
 // fields from the source path (Index, StoreType, handle flags, hint flags).
 // Analysis fields (Ranges, AccessConds, IdxCols, etc.) are left at zero so
 // that fillIndexPath / deriveTablePathStats start from a clean state.
+//
+// Index-merge fields (PartialIndexPaths, PartialAlternativeIndexPaths, etc.)
+// are intentionally omitted: AllPossibleAccessPaths contains only individual
+// index paths; index merge paths are synthesized later by generateIndexMergePath
+// which runs as part of DeriveStats after fillIndexPath populates these fresh paths.
 func freshAccessPath(src *util.AccessPath) *util.AccessPath {
 	return &util.AccessPath{
 		Index:                 src.Index,

@@ -579,6 +579,7 @@ func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
 // enabled returns true when the round should be attempted.
 // setup/cleanup optionally modify session state before/after plan building.
 type alternativeRound struct {
+	name       string
 	adjustFlag func(uint64) uint64
 	enabled    func(*variable.SessionVars) bool
 	setup      func(*variable.SessionVars)
@@ -587,16 +588,19 @@ type alternativeRound struct {
 
 var alternativeRounds = [...]alternativeRound{
 	{
+		name:       "non-decorrelate",
 		adjustFlag: func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
 		enabled:    shouldTryNonDecorrelationRound,
 	},
 	{
+		name:       "order-aware-reorder",
 		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
 		enabled:    shouldTryOrderAwareReorderRound,
 	},
 	func() alternativeRound {
 		var old bool
 		return alternativeRound{
+			name:       "correlate",
 			adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
 			enabled:    shouldTryCorrelateRound,
 			setup: func(sv *variable.SessionVars) {
@@ -728,6 +732,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			// Alternative rounds are optional optimizations. If one fails,
 			// log and continue — the first round's plan is still valid.
 			logutil.BgLogger().Warn("alternative logical plan round failed",
+				zap.String("round", round.name),
 				zap.Error(err))
 			continue
 		}
