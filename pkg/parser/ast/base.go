@@ -102,6 +102,23 @@ func isPrintable(s []byte) bool {
 	return true
 }
 
+func isIdentChar(b byte) bool {
+	return b == '_' ||
+		(b >= '0' && b <= '9') ||
+		(b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z')
+}
+
+// needsSpaceBeforeHexLiteral returns true when replacing a quoted string with a
+// hex literal would otherwise merge with a preceding identifier-like token
+// (e.g. "_binary'...'" -> "_binary0x..."), producing invalid SQL.
+func needsSpaceBeforeHexLiteral(utf8Text []byte, quoteStart int) bool {
+	if quoteStart <= 0 {
+		return false
+	}
+	return isIdentChar(utf8Text[quoteStart-1])
+}
+
 // convertBinaryStringLiterals processes raw SQL text, converting non-printable
 // single- or double-quoted string literals to 0x hex literals and decoding
 // everything else to UTF-8.
@@ -229,6 +246,9 @@ func convertBinaryStringLiterals(text string, enc charset.Encoding, noBackslashE
 		}
 
 		buf.Write(utf8Text[lastCopiedIdx:utf8QuoteStart])
+		if needsSpaceBeforeHexLiteral(utf8Text, utf8QuoteStart) {
+			buf.WriteByte(' ')
+		}
 		buf.WriteString("0x")
 		for _, b := range content {
 			buf.WriteByte(hexDigits[b>>4])
