@@ -622,6 +622,7 @@ type planMeta struct {
 
 // normalizedSQLMap is a wrapped map used to register normalizedSQL.
 type normalizedSQLMap struct {
+	mu     sync.RWMutex
 	data   atomic.Pointer[sync.Map]
 	length atomic2.Int64
 }
@@ -642,6 +643,9 @@ func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isIn
 		reporter_metrics.IgnoreExceedSQLCounter.Inc()
 		return
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	data := m.data.Load()
 	if normalizedMetaRegisterAfterLoadHook != nil {
 		normalizedMetaRegisterAfterLoadHook()
@@ -657,6 +661,9 @@ func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isIn
 
 // take away all data inside normalizedSQLMap, put them in the returned new normalizedSQLMap.
 func (m *normalizedSQLMap) take() *normalizedSQLMap {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	data := m.data.Load()
 	length := m.length.Load()
 	r := &normalizedSQLMap{}
@@ -693,6 +700,7 @@ type planBinaryCompressFunc func([]byte) string
 
 // normalizedSQLMap is a wrapped map used to register normalizedPlan.
 type normalizedPlanMap struct {
+	mu     sync.RWMutex
 	data   atomic.Pointer[sync.Map]
 	length atomic2.Int64
 }
@@ -710,6 +718,9 @@ func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, i
 		reporter_metrics.IgnoreExceedPlanCounter.Inc()
 		return
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	data := m.data.Load()
 	if normalizedMetaRegisterAfterLoadHook != nil {
 		normalizedMetaRegisterAfterLoadHook()
@@ -725,6 +736,9 @@ func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, i
 
 // take away all data inside normalizedPlanMap, put them in the returned new normalizedPlanMap.
 func (m *normalizedPlanMap) take() *normalizedPlanMap {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	data := m.data.Load()
 	length := m.length.Load()
 	r := &normalizedPlanMap{}

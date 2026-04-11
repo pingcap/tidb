@@ -185,6 +185,7 @@ func TestReportWorkerWaitsForInFlightSQLMetaRegistration(t *testing.T) {
 	registerLoadedOldMap := make(chan struct{})
 	releaseRegister := make(chan struct{})
 	reportWorkerReceivedData := make(chan struct{})
+	takeDone := make(chan struct{})
 
 	reportWorkerBeforeBuildReportDataHook = func() {
 		select {
@@ -235,13 +236,19 @@ func TestReportWorkerWaitsForInFlightSQLMetaRegistration(t *testing.T) {
 		t.Fatal("timed out waiting for RegisterSQL to snapshot the old SQL meta map")
 	}
 
-	tsr.takeDataAndSendToReportChan(60)
+	go func() {
+		tsr.takeDataAndSendToReportChan(60)
+		close(takeDone)
+	}()
 
-	select {
-	case <-reportWorkerReceivedData:
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for reportWorker to dequeue the payload")
-	}
+	require.Never(t, func() bool {
+		select {
+		case <-takeDone:
+			return true
+		default:
+			return false
+		}
+	}, 300*time.Millisecond, 5*time.Millisecond)
 
 	require.Never(t, func() bool {
 		select {
@@ -250,13 +257,23 @@ func TestReportWorkerWaitsForInFlightSQLMetaRegistration(t *testing.T) {
 		default:
 			return false
 		}
-	}, 20*time.Millisecond, time.Millisecond)
+	}, 300*time.Millisecond, 5*time.Millisecond)
 
 	close(releaseRegister)
 	select {
 	case <-registerDone:
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for the in-flight SQL meta registration to finish")
+	}
+	select {
+	case <-takeDone:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for takeDataAndSendToReportChan to return")
+	}
+	select {
+	case <-reportWorkerReceivedData:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for reportWorker to dequeue the payload")
 	}
 
 	select {
