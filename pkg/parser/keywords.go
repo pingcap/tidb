@@ -661,6 +661,7 @@ var Keywords = []KeywordsType{
 	{"HISTOGRAMS_IN_FLIGHT", false, "tidb"},
 	{"JOB", false, "tidb"},
 	{"JOBS", false, "tidb"},
+	{"NDVRATE", false, "tidb"},
 	{"NODE_ID", false, "tidb"},
 	{"NODE_STATE", false, "tidb"},
 	{"OPTIMISTIC", false, "tidb"},
