@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("util_paging", "GrowPagingSize", RunGrowPagingSize)
 	register.Register("util_paging", "CalculateSeekCnt", RunCalculateSeekCnt)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_paging" {
+			InitForMega()
+		}
+	})
 }

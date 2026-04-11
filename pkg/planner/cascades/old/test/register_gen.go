@@ -32,4 +32,9 @@ func init() {
 	register.Register("planner_cascades_old", "Decorrelate", RunDecorrelate)
 	register.Register("planner_cascades_old", "InjectProj", RunInjectProj)
 	register.Register("planner_cascades_old", "MergeAdjacentWindow", RunMergeAdjacentWindow)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_cascades_old" {
+			InitForMega()
+		}
+	})
 }

@@ -13,4 +13,9 @@ func init() {
 	register.Register("store_mockstore_unistore", "MockPDServiceDiscovery", RunMockPDServiceDiscovery)
 	register.Register("store_mockstore_unistore", "MockKeyspaceManager", RunMockKeyspaceManager)
 	register.Register("store_mockstore_unistore", "RawHandler", RunRawHandler)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store_mockstore_unistore" {
+			InitForMega()
+		}
+	})
 }

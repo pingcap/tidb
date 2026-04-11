@@ -33,4 +33,9 @@ func init() {
 	register.Register("statistics/handle/globalstats", "GlobalStatsAndSQLBindingWithConcurrency", RunGlobalStatsAndSQLBindingWithConcurrency)
 	register.Register("statistics/handle/globalstats", "MergeGlobalStatsForCMSketch", RunMergeGlobalStatsForCMSketch)
 	register.Register("statistics/handle/globalstats", "EmptyHists", RunEmptyHists)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/globalstats" {
+			InitForMega()
+		}
+	})
 }

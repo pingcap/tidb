@@ -24,11 +24,14 @@ import (
 	"go.uber.org/goleak"
 )
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
+}
 
+func RunMain(m *testing.M) {
+	InitForMega()
 	if exitCode := m.Run(); exitCode != 0 {
 		os.Exit(exitCode)
 	}

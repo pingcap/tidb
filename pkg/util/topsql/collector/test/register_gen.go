@@ -10,4 +10,9 @@ func init() {
 	register.Register("util_topsql_collector", "PProfCPUProfile", RunPProfCPUProfile)
 	register.Register("util_topsql_collector", "ProcessProfCPUProfile", RunProcessProfCPUProfile)
 	register.Register("util_topsql_collector", "SQLStatsTune", RunSQLStatsTune)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_topsql_collector" {
+			InitForMega()
+		}
+	})
 }

@@ -107,4 +107,9 @@ func init() {
 	register.Register("util/chunk", "Iterator", RunIterator)
 	register.Register("util/chunk", "List", RunList)
 	register.Register("util/chunk", "ListMemoryUsage", RunListMemoryUsage)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util/chunk" {
+			InitForMega()
+		}
+	})
 }

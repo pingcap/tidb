@@ -12,4 +12,9 @@ func init() {
 	register.Register("store/copr/copr/test", "BuildCopIteratorWithRunawayChecker", RunBuildCopIteratorWithRunawayChecker)
 	register.Register("store/copr/copr/test", "QueryWithConcurrentSmallCop", RunQueryWithConcurrentSmallCop)
 	register.Register("store/copr/copr/test", "DMLWithLiteCopWorker", RunDMLWithLiteCopWorker)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store/copr/copr/test" {
+			InitForMega()
+		}
+	})
 }

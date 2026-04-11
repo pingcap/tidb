@@ -59,6 +59,23 @@ type TestData struct {
 func loadTestSuiteData(dir, suiteName string, cascades ...bool) (res TestData, err error) {
 	inCascades := len(cascades) > 0 && cascades[0]
 	res.filePathPrefix = filepath.Join(dir, suiteName)
+
+	// If the file doesn't exist at the relative path, try to find it relative
+	// to the caller's source file. This handles the case where the mega test
+	// binary runs from a different working directory than the package directory.
+	inFile := fmt.Sprintf("%s_in.json", res.filePathPrefix)
+	if _, err := os.Stat(inFile); err != nil {
+		_, callerFile, _, ok := runtime.Caller(2) // caller of LoadTestSuiteData
+		if ok {
+			callerDir := filepath.Dir(callerFile)
+			altPrefix := filepath.Join(callerDir, dir, suiteName)
+			altInFile := fmt.Sprintf("%s_in.json", altPrefix)
+			if _, err := os.Stat(altInFile); err == nil {
+				res.filePathPrefix = altPrefix
+			}
+		}
+	}
+
 	res.input, err = loadTestSuiteCases(fmt.Sprintf("%s_in.json", res.filePathPrefix))
 	if err != nil {
 		return res, err
@@ -175,6 +192,16 @@ func (td *TestData) LoadTestCases(t *testing.T, in any, out any, opts ...string)
 	}
 
 	casesIdx, ok := td.funcMap[funcName]
+	if !ok {
+		// Fallback: mega framework renames Test* to Run*, try the original Test prefix
+		if strings.HasPrefix(funcName, "Run") {
+			casesIdx, ok = td.funcMap["Test"+funcName[3:]]
+		}
+		if !ok {
+			// Also try without any prefix change
+			casesIdx, ok = td.funcMap[funcName]
+		}
+	}
 	require.Truef(t, ok, "Must get test %s", funcName)
 	err := json.Unmarshal(*td.input[casesIdx].Cases, in)
 	require.NoError(t, err)

@@ -35,4 +35,9 @@ func init() {
 	register.Register("sessiontxn_isolation", "PessimisticSerializableTxnContextProviderLockError", RunPessimisticSerializableTxnContextProviderLockError)
 	register.Register("sessiontxn_isolation", "SerializableInitialize", RunSerializableInitialize)
 	register.Register("sessiontxn_isolation", "TidbSnapshotVarInSerialize", RunTidbSnapshotVarInSerialize)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "sessiontxn_isolation" {
+			InitForMega()
+		}
+	})
 }

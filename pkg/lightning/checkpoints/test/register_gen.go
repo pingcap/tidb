@@ -24,4 +24,9 @@ func init() {
 	register.Register("lightning_checkpoints", "DestroyOneErrorCheckpoints", RunDestroyOneErrorCheckpoints)
 	register.Register("lightning_checkpoints", "Dump", RunDump)
 	register.Register("lightning_checkpoints", "MoveCheckpoints", RunMoveCheckpoints)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "lightning_checkpoints" {
+			InitForMega()
+		}
+	})
 }

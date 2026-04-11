@@ -24,9 +24,13 @@ import (
 	"go.uber.org/goleak"
 )
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
 	tikv.EnableFailpoints()
+}
+
+func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -36,6 +40,7 @@ func RunMain(m *testing.M) {
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 	}
+
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
 		time.Sleep(time.Second)

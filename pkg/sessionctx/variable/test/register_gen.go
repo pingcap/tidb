@@ -85,4 +85,9 @@ func init() {
 	register.Register("sessionctx_variable", "SessionStatesSystemVar", RunSessionStatesSystemVar)
 	register.Register("sessionctx_variable", "OnOffHelpers", RunOnOffHelpers)
 	register.Register("sessionctx_variable", "AssertionLevel", RunAssertionLevel)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "sessionctx_variable" {
+			InitForMega()
+		}
+	})
 }

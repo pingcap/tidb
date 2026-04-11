@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_disk", "RemoveDir", RunRemoveDir)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_disk" {
+			InitForMega()
+		}
+	})
 }

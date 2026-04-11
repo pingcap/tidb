@@ -15,4 +15,9 @@ func init() {
 	register.Register("store_driver_txn", "StatementRUV2RPCInterceptorWithGetterFollowsCurrentStatement", RunStatementRUV2RPCInterceptorWithGetterFollowsCurrentStatement)
 	register.Register("store_driver_txn", "UnionIter", RunUnionIter)
 	register.Register("store_driver_txn", "UnionIterErrors", RunUnionIterErrors)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store_driver_txn" {
+			InitForMega()
+		}
+	})
 }

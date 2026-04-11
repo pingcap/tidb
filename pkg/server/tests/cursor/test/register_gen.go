@@ -16,4 +16,9 @@ func init() {
 	register.Register("server_tests_cursor", "LazyExecuteSelection", RunLazyExecuteSelection)
 	register.Register("server_tests_cursor", "LazyExecuteWithParam", RunLazyExecuteWithParam)
 	register.Register("server_tests_cursor", "CursorExceedQuota", RunCursorExceedQuota)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "server_tests_cursor" {
+			InitForMega()
+		}
+	})
 }

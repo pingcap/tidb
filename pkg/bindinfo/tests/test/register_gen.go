@@ -31,4 +31,9 @@ func init() {
 	register.Register("bindinfo/tests", "CrossDBBindingInList", RunCrossDBBindingInList)
 	register.Register("bindinfo/tests", "CrossDBBindingReadFromStorage", RunCrossDBBindingReadFromStorage)
 	register.Register("bindinfo/tests", "CrossDBBindingPlanCache", RunCrossDBBindingPlanCache)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "bindinfo/tests" {
+			InitForMega()
+		}
+	})
 }

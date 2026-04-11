@@ -478,4 +478,9 @@ func init() {
 	register.Register("ddl", "ShowRunningRenameTable", RunShowRunningRenameTable)
 	register.Register("ddl", "CreateSequence", RunCreateSequence)
 	register.Register("ddl", "SequenceFunction", RunSequenceFunction)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ddl" {
+			InitForMega()
+		}
+	})
 }

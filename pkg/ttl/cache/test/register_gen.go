@@ -26,4 +26,9 @@ func init() {
 	register.Register("ttl_cache", "EvalTTLExpireTime", RunEvalTTLExpireTime)
 	register.Register("ttl_cache", "RowToTTLTask", RunRowToTTLTask)
 	register.Register("ttl_cache", "InsertIntoTTLTask", RunInsertIntoTTLTask)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ttl_cache" {
+			InitForMega()
+		}
+	})
 }

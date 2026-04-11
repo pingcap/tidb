@@ -350,4 +350,9 @@ func init() {
 	register.Register("executor", "ShowPlacementForDBPrivilege", RunShowPlacementForDBPrivilege)
 	register.Register("executor", "ShowPlacementForTableAndPartitionPrivilege", RunShowPlacementForTableAndPartitionPrivilege)
 	register.Register("executor", "ShowPlacementHandleRegionStatus", RunShowPlacementHandleRegionStatus)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "executor" {
+			InitForMega()
+		}
+	})
 }

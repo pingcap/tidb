@@ -22,7 +22,14 @@ import (
 	"go.uber.org/goleak"
 )
 
+func InitForMega() {
+	testsetup.SetupForCommonTest()
+
+	session.DisableStats4Test()
+}
+
 func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
@@ -33,9 +40,6 @@ func RunMain(m *testing.M) {
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/privilege/privileges.(*JWKSImpl).LoadJWKS4AuthToken.func1"),
 	}
-	testsetup.SetupForCommonTest()
-
-	session.DisableStats4Test()
 
 	goleak.VerifyTestMain(m, opts...)
 }

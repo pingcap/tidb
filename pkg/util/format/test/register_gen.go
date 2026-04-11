@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_format", "Format", RunFormat)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_format" {
+			InitForMega()
+		}
+	})
 }

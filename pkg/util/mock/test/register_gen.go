@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("util_mock", "SliceIter", RunSliceIter)
 	register.Register("util_mock", "Context", RunContext)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_mock" {
+			InitForMega()
+		}
+	})
 }

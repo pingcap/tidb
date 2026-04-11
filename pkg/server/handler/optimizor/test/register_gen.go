@@ -17,4 +17,9 @@ func init() {
 	register.Register("server_handler_optimizor", "DumpStatsAPI", RunDumpStatsAPI)
 	register.Register("server_handler_optimizor", "StatsPriorityQueueAPI", RunStatsPriorityQueueAPI)
 	register.Register("server_handler_optimizor", "LoadNullStatsFile", RunLoadNullStatsFile)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "server_handler_optimizor" {
+			InitForMega()
+		}
+	})
 }

@@ -15,4 +15,9 @@ func init() {
 	register.Register("util_kvcache", "DeleteAll", RunDeleteAll)
 	register.Register("util_kvcache", "Values", RunValues)
 	register.Register("util_kvcache", "PutProfileName", RunPutProfileName)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_kvcache" {
+			InitForMega()
+		}
+	})
 }

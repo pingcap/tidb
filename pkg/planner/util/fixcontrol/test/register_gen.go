@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("planner/util/fixcontrol", "FixControl", RunFixControl)
 	register.Register("planner/util/fixcontrol", "ParseToMapEmptyValue", RunParseToMapEmptyValue)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner/util/fixcontrol" {
+			InitForMega()
+		}
+	})
 }

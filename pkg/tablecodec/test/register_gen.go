@@ -32,4 +32,9 @@ func init() {
 	register.Register("tablecodec", "V2TableCodec", RunV2TableCodec)
 	register.Register("tablecodec", "DecodeIndexHandleWithPartitionIDInKeyAndValue", RunDecodeIndexHandleWithPartitionIDInKeyAndValue)
 	register.Register("tablecodec", "UniqueGlobalIndexKeyWithNullValues", RunUniqueGlobalIndexKeyWithNullValues)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "tablecodec" {
+			InitForMega()
+		}
+	})
 }

@@ -25,4 +25,9 @@ func init() {
 	register.Register("lightning_common", "SkipReadRowCount", RunSkipReadRowCount)
 	register.Register("lightning_common", "AllocGlobalAutoID", RunAllocGlobalAutoID)
 	register.Register("lightning_common", "RebaseTableAllocators", RunRebaseTableAllocators)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "lightning_common" {
+			InitForMega()
+		}
+	})
 }

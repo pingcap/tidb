@@ -25,9 +25,8 @@ import (
 	"go.uber.org/goleak"
 )
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
-	testmain.ShortCircuitForBench(m)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
@@ -41,7 +40,11 @@ func RunMain(m *testing.M) {
 	// Affected by the order whether a testsuite runs before or after integration test.
 	// Note, SetSystemTZ() is a sync.Once operation.
 	timeutil.SetSystemTZ("system")
+}
 
+func RunMain(m *testing.M) {
+	InitForMega()
+	testmain.ShortCircuitForBench(m)
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),

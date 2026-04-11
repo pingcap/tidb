@@ -29,7 +29,6 @@ go_library(
         "//pkg/planner/indexadvisor/test",
         "//pkg/planner/util/test",
         "//pkg/sessiontxn/test",
-        "//pkg/testkit",
         "//pkg/testkit/mega/register",
         "//pkg/ttl/cache/test",
         "//pkg/ttl/client/test",

@@ -52,4 +52,9 @@ func init() {
 	register.Register("server_handler_tests", "TTL", RunTTL)
 	register.Register("server_handler_tests", "GC", RunGC)
 	register.Register("server_handler_tests", "IngestParam", RunIngestParam)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "server_handler_tests" {
+			InitForMega()
+		}
+	})
 }

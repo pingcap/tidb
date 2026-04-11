@@ -10,4 +10,9 @@ func init() {
 	register.Register("util_printer", "PrintResult", RunPrintResult)
 	register.Register("util_printer", "GetTiDBInfo", RunGetTiDBInfo)
 	register.Register("util_printer", "PrintTiDBInfo", RunPrintTiDBInfo)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_printer" {
+			InitForMega()
+		}
+	})
 }

@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_benchdaily", "BenchDaily", RunBenchDaily)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_benchdaily" {
+			InitForMega()
+		}
+	})
 }

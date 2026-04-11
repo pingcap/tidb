@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("ddl_tests_multivaluedindex", "CreateMultiValuedIndexHasBinaryCollation", RunCreateMultiValuedIndexHasBinaryCollation)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ddl_tests_multivaluedindex" {
+			InitForMega()
+		}
+	})
 }

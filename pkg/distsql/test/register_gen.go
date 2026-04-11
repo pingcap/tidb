@@ -40,4 +40,9 @@ func init() {
 	register.Register("distsql", "NewSelRespChannelIter", RunNewSelRespChannelIter)
 	register.Register("distsql", "SelRespChannelIterRead", RunSelRespChannelIterRead)
 	register.Register("distsql", "SelectResultIter", RunSelectResultIter)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "distsql" {
+			InitForMega()
+		}
+	})
 }

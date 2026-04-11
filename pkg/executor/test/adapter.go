@@ -102,13 +102,13 @@ func RunContextCancelWhenReadFromCopIterator(t *testing.T) {
 	syncCh := make(chan struct{})
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/CtxCancelBeforeReceive",
 		func(ctx context.Context) {
-			if ctx.Value("TestContextCancel") == "test" {
+			if ctx.Value(executor.CtxKeyTestContextCancel) == "test" {
 				syncCh <- struct{}{}
 				<-syncCh
 			}
 		},
 	))
-	ctx := context.WithValue(context.Background(), contextKey("TestContextCancel"), "test")
+	ctx := context.WithValue(context.Background(), executor.CtxKeyTestContextCancel, "test")
 	ctx, cancelFunc := context.WithCancel(ctx)
 	defer cancelFunc()
 	var wg sync.WaitGroup

@@ -11,4 +11,9 @@ func init() {
 	register.Register("util_plancodec", "DecodeDiscardPlan", RunDecodeDiscardPlan)
 	register.Register("util_plancodec", "PlanIDChanged", RunPlanIDChanged)
 	register.Register("util_plancodec", "Reverse", RunReverse)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_plancodec" {
+			InitForMega()
+		}
+	})
 }

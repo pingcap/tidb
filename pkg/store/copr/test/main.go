@@ -33,8 +33,12 @@ func (m *main) Run() int {
 	return c
 }
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
+}
+
+func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -43,5 +47,6 @@ func RunMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
+
 	goleak.VerifyTestMain(&main{m: m}, opts...)
 }

@@ -72,4 +72,9 @@ func init() {
 	register.Register("util/topsql/reporter", "SendTopRURecordsClosesStreamOnUnimplementedSend", RunSendTopRURecordsClosesStreamOnUnimplementedSend)
 	register.Register("util/topsql/reporter", "TopRUGeneratedCases", RunTopRUGeneratedCases)
 	register.Register("util/topsql/reporter", "RemoveInvalidPlanRecord", RunRemoveInvalidPlanRecord)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util/topsql/reporter" {
+			InitForMega()
+		}
+	})
 }

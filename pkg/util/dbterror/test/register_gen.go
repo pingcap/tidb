@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_dbterror", "ErrorRedact", RunErrorRedact)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_dbterror" {
+			InitForMega()
+		}
+	})
 }

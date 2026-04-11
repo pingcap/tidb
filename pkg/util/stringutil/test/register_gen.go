@@ -14,4 +14,9 @@ func init() {
 	register.Register("util_stringutil", "BuildStringFromLabels", RunBuildStringFromLabels)
 	register.Register("util_stringutil", "EscapeGlobQuestionMark", RunEscapeGlobQuestionMark)
 	register.Register("util_stringutil", "MemoizeStr", RunMemoizeStr)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_stringutil" {
+			InitForMega()
+		}
+	})
 }

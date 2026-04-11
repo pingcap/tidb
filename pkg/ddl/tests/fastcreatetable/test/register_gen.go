@@ -10,4 +10,9 @@ func init() {
 	register.Register("ddl_tests_fastcreatetable", "SwitchFastCreateTable", RunSwitchFastCreateTable)
 	register.Register("ddl_tests_fastcreatetable", "DDL", RunDDL)
 	register.Register("ddl_tests_fastcreatetable", "MergedJob", RunMergedJob)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ddl_tests_fastcreatetable" {
+			InitForMega()
+		}
+	})
 }

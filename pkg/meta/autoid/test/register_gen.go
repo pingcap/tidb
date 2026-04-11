@@ -18,4 +18,9 @@ func init() {
 	register.Register("meta_autoid", "InMemoryAlloc", RunInMemoryAlloc)
 	register.Register("meta_autoid", "SequenceAutoid", RunSequenceAutoid)
 	register.Register("meta_autoid", "ConcurrentAllocSequence", RunConcurrentAllocSequence)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "meta_autoid" {
+			InitForMega()
+		}
+	})
 }

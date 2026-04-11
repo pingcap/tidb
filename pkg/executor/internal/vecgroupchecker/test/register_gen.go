@@ -11,4 +11,9 @@ func init() {
 	register.Register("executor/internal/vecgroupchecker", "VecGroupChecker4GroupCount", RunVecGroupChecker4GroupCount)
 	register.Register("executor/internal/vecgroupchecker", "VecGroupChecker", RunVecGroupChecker)
 	register.Register("executor/internal/vecgroupchecker", "Issue53867", RunIssue53867)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "executor/internal/vecgroupchecker" {
+			InitForMega()
+		}
+	})
 }

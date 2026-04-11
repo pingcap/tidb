@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("planner/implementation", "BaseImplementation", RunBaseImplementation)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner/implementation" {
+			InitForMega()
+		}
+	})
 }

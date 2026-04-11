@@ -31,4 +31,9 @@ func init() {
 	register.Register("timer_runtime", "WorkerProcessManualRequest", RunWorkerProcessManualRequest)
 	register.Register("timer_runtime", "HookWorkerLoopPanicRecover", RunHookWorkerLoopPanicRecover)
 	register.Register("timer_runtime", "HookWorkerLoopHandleRequestPanicRecover", RunHookWorkerLoopHandleRequestPanicRecover)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "timer_runtime" {
+			InitForMega()
+		}
+	})
 }

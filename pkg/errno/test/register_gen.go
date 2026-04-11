@@ -10,4 +10,9 @@ func init() {
 	register.Register("errno", "AllErrCodeHasMsg", RunAllErrCodeHasMsg)
 	register.Register("errno", "ReservedErrCodeRange", RunReservedErrCodeRange)
 	register.Register("errno", "CopySafety", RunCopySafety)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "errno" {
+			InitForMega()
+		}
+	})
 }

@@ -12,4 +12,9 @@ func init() {
 	register.Register("util_sem", "IsRestrictedPrivilege", RunIsRestrictedPrivilege)
 	register.Register("util_sem", "IsInvisibleStatusVar", RunIsInvisibleStatusVar)
 	register.Register("util_sem", "IsInvisibleSysVar", RunIsInvisibleSysVar)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_sem" {
+			InitForMega()
+		}
+	})
 }

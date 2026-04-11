@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -145,7 +146,7 @@ func RunPointGetRepeatableRead(t *testing.T) {
 
 	updateWaitCh := make(chan struct{})
 	go func() {
-		ctx := context.WithValue(context.Background(), contextKey("pointGetRepeatableReadTest"), updateWaitCh)
+		ctx := context.WithValue(context.Background(), executor.CtxKeyPointGetRepeatableRead, updateWaitCh)
 		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
 			return fpname == step1 || fpname == step2
 		})
@@ -181,7 +182,7 @@ func RunBatchPointGetRepeatableRead(t *testing.T) {
 
 	updateWaitCh := make(chan struct{})
 	go func() {
-		ctx := context.WithValue(context.Background(), contextKey("batchPointGetRepeatableReadTest"), updateWaitCh)
+		ctx := context.WithValue(context.Background(), executor.CtxKeyBatchPointGetRepeatableRead, updateWaitCh)
 		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
 			return fpname == step1 || fpname == step2
 		})

@@ -65,4 +65,9 @@ func init() {
 	register.Register("expression/integration/test", "Issue55886", RunIssue55886)
 	register.Register("expression/integration/test", "Issue57608", RunIssue57608)
 	register.Register("expression/integration/test", "DeepCopyRetType", RunDeepCopyRetType)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "expression/integration/test" {
+			InitForMega()
+		}
+	})
 }

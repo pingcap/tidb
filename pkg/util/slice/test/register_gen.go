@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_slice", "Slice", RunSlice)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_slice" {
+			InitForMega()
+		}
+	})
 }

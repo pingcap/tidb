@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("tablecodec/rowindexcodec", "GetKeyKind", RunGetKeyKind)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "tablecodec/rowindexcodec" {
+			InitForMega()
+		}
+	})
 }

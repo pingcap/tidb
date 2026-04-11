@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("util_mvmap", "MVMap", RunMVMap)
 	register.Register("util_mvmap", "FNVHash", RunFNVHash)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_mvmap" {
+			InitForMega()
+		}
+	})
 }

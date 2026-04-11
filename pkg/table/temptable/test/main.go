@@ -35,7 +35,12 @@ import (
 	"go.uber.org/goleak"
 )
 
+func InitForMega() {
+	testsetup.SetupForCommonTest()
+}
+
 func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -43,7 +48,7 @@ func RunMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 	}
-	testsetup.SetupForCommonTest()
+
 	goleak.VerifyTestMain(m, opts...)
 }
 

@@ -14,4 +14,9 @@ func init() {
 	register.Register("ttl_session", "SysVarTTLScanBatchSize", RunSysVarTTLScanBatchSize)
 	register.Register("ttl_session", "SysVarTTLScanDeleteBatchSize", RunSysVarTTLScanDeleteBatchSize)
 	register.Register("ttl_session", "SysVarTTLScanDeleteLimit", RunSysVarTTLScanDeleteLimit)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ttl_session" {
+			InitForMega()
+		}
+	})
 }

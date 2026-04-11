@@ -42,6 +42,11 @@ func Register(pkg, name string, fn func(*testing.T)) {
 	globalRegistry.Register(pkg, name, fn)
 }
 
+// RegisterOnBeforeRun registers a hook on the global registry.
+func RegisterOnBeforeRun(fn func(string)) {
+	globalRegistry.RegisterOnBeforeRun(fn)
+}
+
 // Register registers a test function
 func (r *Registry) Register(pkg, name string, fn func(*testing.T)) {
 	r.mu.Lock()
@@ -124,18 +129,18 @@ func (r *Registry) RunByPattern(t *testing.T, pattern string) {
 	pkgHookCalled := make(map[string]bool)
 	for _, m := range matched {
 		if !pkgHookCalled[m.pkg] {
-			for _, fn := range hooks {
-				fn(m.pkg)
+			for _, hook := range hooks {
+				hook(m.pkg)
 			}
 			pkgHookCalled[m.pkg] = true
 		}
-		t.Run(m.pkg+"/"+m.name, func(t *testing.T) {
-			fn, ok := r.Get(m.pkg, m.name)
-			if !ok {
-				t.Fatalf("test %s/%s not found", m.pkg, m.name)
-			}
-			fn(t)
-		})
+		// Call fn directly without t.Run wrapper so that runtime.Caller(1)
+		// in testdata.LoadTestCases returns the correct function name.
+		testFn, ok := r.Get(m.pkg, m.name)
+		if !ok {
+			t.Fatalf("test %s/%s not found", m.pkg, m.name)
+		}
+		testFn(t)
 	}
 }
 
@@ -166,13 +171,12 @@ func (r *Registry) RunAll(t *testing.T) {
 			}
 			pkgHookCalled[e.pkg] = true
 		}
-		testName := e.pkg + "/" + e.name
-		t.Run(testName, func(t *testing.T) {
-			fn, ok := r.Get(e.pkg, e.name)
-			if !ok {
-				t.Fatalf("test %s not found", testName)
-			}
-			fn(t)
-		})
+		// Call fn directly without t.Run wrapper so that runtime.Caller(1)
+		// in testdata.LoadTestCases returns the correct function name.
+		fn, ok := r.Get(e.pkg, e.name)
+		if !ok {
+			t.Fatalf("test %s/%s not found", e.pkg, e.name)
+		}
+		fn(t)
 	}
 }

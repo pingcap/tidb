@@ -11,4 +11,9 @@ func init() {
 	register.Register("util_deadlockhistory", "GetDatum", RunGetDatum)
 	register.Register("util_deadlockhistory", "ErrDeadlockToDeadlockRecord", RunErrDeadlockToDeadlockRecord)
 	register.Register("util_deadlockhistory", "Resize", RunResize)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_deadlockhistory" {
+			InitForMega()
+		}
+	})
 }

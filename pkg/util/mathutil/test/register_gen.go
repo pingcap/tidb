@@ -15,4 +15,9 @@ func init() {
 	register.Register("util_mathutil", "Clamp", RunClamp)
 	register.Register("util_mathutil", "NextPowerOfTwo", RunNextPowerOfTwo)
 	register.Register("util_mathutil", "Divide2Batches", RunDivide2Batches)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_mathutil" {
+			InitForMega()
+		}
+	})
 }

@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_generatedexpr", "ParseExpression", RunParseExpression)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_generatedexpr" {
+			InitForMega()
+		}
+	})
 }

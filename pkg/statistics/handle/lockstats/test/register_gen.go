@@ -20,4 +20,9 @@ func init() {
 	register.Register("statistics/handle/lockstats", "RemoveLockedTables", RunRemoveLockedTables)
 	register.Register("statistics/handle/lockstats", "RemoveLockedPartitions", RunRemoveLockedPartitions)
 	register.Register("statistics/handle/lockstats", "RemoveLockedPartitionsFailedIfTheWholeTableIsLocked", RunRemoveLockedPartitionsFailedIfTheWholeTableIsLocked)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/lockstats" {
+			InitForMega()
+		}
+	})
 }

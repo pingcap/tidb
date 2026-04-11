@@ -30,4 +30,9 @@ func init() {
 	register.Register("statistics/handle/updatetest", "FillMissingStatsMeta", RunFillMissingStatsMeta)
 	register.Register("statistics/handle/updatetest", "NotDumpSysTable", RunNotDumpSysTable)
 	register.Register("statistics/handle/updatetest", "AutoAnalyzePartitionTableAfterAddingIndex", RunAutoAnalyzePartitionTableAfterAddingIndex)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/updatetest" {
+			InitForMega()
+		}
+	})
 }

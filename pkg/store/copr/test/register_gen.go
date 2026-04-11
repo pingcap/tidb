@@ -47,4 +47,9 @@ func init() {
 	register.Register("store_copr", "LocateBucketNilFallback", RunLocateBucketNilFallback)
 	register.Register("store_copr", "LocateBucketOutsideRegionNonNilFallback", RunLocateBucketOutsideRegionNonNilFallback)
 	register.Register("store_copr", "OverlappingRangesCanProduceOutOfOrderRangesAfterSplit", RunOverlappingRangesCanProduceOutOfOrderRangesAfterSplit)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store_copr" {
+			InitForMega()
+		}
+	})
 }

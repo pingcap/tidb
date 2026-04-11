@@ -19,4 +19,9 @@ func init() {
 	register.Register("sessiontxn_staleread", "StaleReadReplicaReadScope", RunStaleReadReplicaReadScope)
 	register.Register("sessiontxn_staleread", "GetStmtReadTSActivateTxnWhenAutocommitOff", RunGetStmtReadTSActivateTxnWhenAutocommitOff)
 	register.Register("sessiontxn_staleread", "GetSnapshotWithStmtReadTSActivateTxnWhenAutocommitOff", RunGetSnapshotWithStmtReadTSActivateTxnWhenAutocommitOff)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "sessiontxn_staleread" {
+			InitForMega()
+		}
+	})
 }

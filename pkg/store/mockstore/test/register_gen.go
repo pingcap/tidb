@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("store_mockstore", "ClusterSplit", RunClusterSplit)
 	register.Register("store_mockstore", "Config", RunConfig)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store_mockstore" {
+			InitForMega()
+		}
+	})
 }

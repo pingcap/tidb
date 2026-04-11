@@ -455,6 +455,13 @@ func (w *megaWorker) runSingleMegaTest(t megaTask) megaTestResult {
 		cmd.Stdout = &output
 		cmd.Stderr = &output
 
+		// Set working directory to the package directory so testdata files can be found.
+		// Package names use underscore as separator (e.g. "server_tests_commontest")
+		// but the actual path uses slash (e.g. "server/tests/commontest").
+		if d := tryMegaDir(t.pkg); d != "" {
+			cmd.Dir = d
+		}
+
 		// Add 3 minute timeout to prevent hanging tests
 		timer := time.AfterFunc(3*time.Minute, func() {
 			if cmd.Process != nil {
@@ -641,6 +648,26 @@ func shuffleStrings(slice []string) {
 }
 
 // filterMegaOutput removes verbose registry dump lines from mega test output
+// tryMegaDir attempts to find the package directory for a mega test.
+// Package names use underscore as separator (e.g. "ddl") but some use
+// underscores for slashes (e.g. "server_tests_commontest" → "server/tests/commontest").
+func tryMegaDir(pkg string) string {
+	// Direct match: pkg = "executor" → "pkg/executor"
+	candidates := []string{
+		filepath.Join("pkg", pkg),
+		filepath.Join("pkg", strings.ReplaceAll(pkg, "_", string(os.PathSeparator))),
+	}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			if abs, err := filepath.Abs(c); err == nil {
+				return abs
+			}
+			return c
+		}
+	}
+	return ""
+}
+
 func filterMegaOutput(output string) string {
 	var filtered []string
 	for _, line := range strings.Split(output, "\n") {

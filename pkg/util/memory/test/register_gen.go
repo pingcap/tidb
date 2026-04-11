@@ -37,4 +37,9 @@ func init() {
 	register.Register("util_memory", "ErrorCode", RunErrorCode)
 	register.Register("util_memory", "OOMActionPriority", RunOOMActionPriority)
 	register.Register("util_memory", "GlobalMemArbitrator", RunGlobalMemArbitrator)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_memory" {
+			InitForMega()
+		}
+	})
 }

@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("util_disjointset", "IntDisjointSet", RunIntDisjointSet)
 	register.Register("util_disjointset", "DisjointSet", RunDisjointSet)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_disjointset" {
+			InitForMega()
+		}
+	})
 }

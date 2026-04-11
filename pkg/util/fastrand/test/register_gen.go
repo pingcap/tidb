@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_fastrand", "Rand", RunRand)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_fastrand" {
+			InitForMega()
+		}
+	})
 }

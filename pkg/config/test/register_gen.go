@@ -38,4 +38,9 @@ func init() {
 	register.Register("config", "KeyspaceName", RunKeyspaceName)
 	register.Register("config", "Metering", RunMetering)
 	register.Register("config", "GetTiKVConfigKeepsZeroRUV2RUScale", RunGetTiKVConfigKeepsZeroRUV2RUScale)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "config" {
+			InitForMega()
+		}
+	})
 }

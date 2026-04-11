@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("server_handler_extractorhandler", "ExtractHandler", RunExtractHandler)
 	register.Register("server_handler_extractorhandler", "ExtractHandlerInfoSchemaV2", RunExtractHandlerInfoSchemaV2)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "server_handler_extractorhandler" {
+			InitForMega()
+		}
+	})
 }

@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("util_cpu", "CPUValue", RunCPUValue)
 	register.Register("util_cpu", "FailpointCPUValue", RunFailpointCPUValue)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_cpu" {
+			InitForMega()
+		}
+	})
 }

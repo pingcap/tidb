@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("util_arena", "SimpleArenaAllocator", RunSimpleArenaAllocator)
 	register.Register("util_arena", "StdAllocator", RunStdAllocator)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_arena" {
+			InitForMega()
+		}
+	})
 }

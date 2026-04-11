@@ -30,8 +30,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-func RunMain(m *testing.M) {
-	testmain.ShortCircuitForBench(m)
+func InitForMega() {
 
 	testsetup.SetupForCommonTest()
 
@@ -43,6 +42,11 @@ func RunMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 	})
 	tikv.EnableFailpoints()
+}
+
+func RunMain(m *testing.M) {
+	InitForMega()
+	testmain.ShortCircuitForBench(m)
 	opts := []goleak.Option{
 		// TODO: figure the reason and shorten this list
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -62,6 +66,7 @@ func RunMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
+
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
 		time.Sleep(time.Second)

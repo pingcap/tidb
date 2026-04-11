@@ -29,7 +29,7 @@ var testDataMap = make(testdata.BookKeeper, 2)
 var stringerSuiteData testdata.TestData
 var transformationRulesSuiteData testdata.TestData
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
@@ -38,7 +38,10 @@ func RunMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "transformation_rules_suite")
 	stringerSuiteData = testDataMap["stringer_suite"]
 	transformationRulesSuiteData = testDataMap["transformation_rules_suite"]
+}
 
+func RunMain(m *testing.M) {
+	InitForMega()
 	if exitCode := m.Run(); exitCode != 0 {
 		os.Exit(exitCode)
 	}

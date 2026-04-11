@@ -71,4 +71,9 @@ func init() {
 	register.Register("server_tests_commontest", "AuditPluginInfoForStarting", RunAuditPluginInfoForStarting)
 	register.Register("server_tests_commontest", "AuditPluginRetrying", RunAuditPluginRetrying)
 	register.Register("server_tests_commontest", "Issue62673", RunIssue62673)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "server_tests_commontest" {
+			InitForMega()
+		}
+	})
 }

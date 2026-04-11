@@ -31,7 +31,7 @@ var testDataMap = make(testdata.BookKeeper)
 var prepareMergeSuiteData testdata.TestData
 var slowQuerySuiteData testdata.TestData
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
 	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	testDataMap.LoadTestSuiteData("testdata", "slow_query_suite")
@@ -47,7 +47,10 @@ func RunMain(m *testing.M) {
 	})
 	tikv.EnableFailpoints()
 	vardef.StatsCacheMemQuota.Store(5000)
+}
 
+func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
@@ -62,6 +65,7 @@ func RunMain(m *testing.M) {
 		// backoff function will lead to sleep, so there is a high probability of goroutine leak while it's doing backoff.
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.(*Config).createBackoffFn.newBackoffFn.func2"),
 	}
+
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()
 		return i

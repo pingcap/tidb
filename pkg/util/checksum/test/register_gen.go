@@ -17,4 +17,9 @@ func init() {
 	register.Register("util_checksum", "WriteDifferentBlockSize", RunWriteDifferentBlockSize)
 	register.Register("util_checksum", "ChecksumWriter", RunChecksumWriter)
 	register.Register("util_checksum", "ChecksumWriterAutoFlush", RunChecksumWriterAutoFlush)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_checksum" {
+			InitForMega()
+		}
+	})
 }

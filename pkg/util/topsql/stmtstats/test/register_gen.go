@@ -43,4 +43,9 @@ func init() {
 	register.Register("util_topsql_stmtstats", "ExecCountBeginBasedTickThenReset", RunExecCountBeginBasedTickThenReset)
 	register.Register("util_topsql_stmtstats", "ExecCountBeginBasedKeySwitchNoCrossPollution", RunExecCountBeginBasedKeySwitchNoCrossPollution)
 	register.Register("util_topsql_stmtstats", "MultiTickDeltaSumEqualsFinalTotal", RunMultiTickDeltaSumEqualsFinalTotal)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_topsql_stmtstats" {
+			InitForMega()
+		}
+	})
 }

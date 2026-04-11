@@ -27,4 +27,9 @@ func init() {
 	register.Register("ddl_tests_serial", "CheckEnumLength", RunCheckEnumLength)
 	register.Register("ddl_tests_serial", "GetReverseKey", RunGetReverseKey)
 	register.Register("ddl_tests_serial", "ForbiddenDDLInNextGen", RunForbiddenDDLInNextGen)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ddl_tests_serial" {
+			InitForMega()
+		}
+	})
 }

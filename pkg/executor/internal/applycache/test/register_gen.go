@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("executor/internal/applycache", "ApplyCache", RunApplyCache)
 	register.Register("executor/internal/applycache", "ApplyCacheConcurrent", RunApplyCacheConcurrent)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "executor/internal/applycache" {
+			InitForMega()
+		}
+	})
 }

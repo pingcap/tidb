@@ -13,4 +13,9 @@ func init() {
 	register.Register("util_collate", "RewriteAndRestoreCollationID", RunRewriteAndRestoreCollationID)
 	register.Register("util_collate", "GetCollator", RunGetCollator)
 	register.Register("util_collate", "CampareInvalidUTF8Rune", RunCampareInvalidUTF8Rune)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_collate" {
+			InitForMega()
+		}
+	})
 }

@@ -15,4 +15,9 @@ func init() {
 	register.Register("util", "TLSVersion", RunTLSVersion)
 	register.Register("util", "CA", RunCA)
 	register.Register("util", "SessionPool", RunSessionPool)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util" {
+			InitForMega()
+		}
+	})
 }

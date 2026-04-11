@@ -21,7 +21,11 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 )
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
+}
+
+func RunMain(m *testing.M) {
+	InitForMega()
 	os.Exit(m.Run())
 }

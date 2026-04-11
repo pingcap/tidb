@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_vitess", "VitessHash", RunVitessHash)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_vitess" {
+			InitForMega()
+		}
+	})
 }

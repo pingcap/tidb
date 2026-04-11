@@ -36,4 +36,9 @@ func init() {
 	register.Register("statistics/handle/handletest", "PrunedIndexesNoAsyncStatsLoad", RunPrunedIndexesNoAsyncStatsLoad)
 	register.Register("statistics/handle/handletest", "PrunedIndexesNoAsyncStatsLoadPartitioned", RunPrunedIndexesNoAsyncStatsLoadPartitioned)
 	register.Register("statistics/handle/handletest", "PrunedIndexesNoAsyncStatsLoadPartitionedStatic", RunPrunedIndexesNoAsyncStatsLoadPartitionedStatic)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/handletest" {
+			InitForMega()
+		}
+	})
 }

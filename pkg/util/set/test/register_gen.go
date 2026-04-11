@@ -14,4 +14,9 @@ func init() {
 	register.Register("util_set", "SetOperation", RunSetOperation)
 	register.Register("util_set", "SetCombination", RunSetCombination)
 	register.Register("util_set", "StringSet", RunStringSet)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_set" {
+			InitForMega()
+		}
+	})
 }

@@ -24,4 +24,9 @@ func init() {
 	register.Register("util_encrypt", "ReadAt", RunReadAt)
 	register.Register("util_encrypt", "SQLDecode", RunSQLDecode)
 	register.Register("util_encrypt", "SQLEncode", RunSQLEncode)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_encrypt" {
+			InitForMega()
+		}
+	})
 }

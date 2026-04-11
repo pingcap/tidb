@@ -33,4 +33,9 @@ func init() {
 	register.Register("util_stmtsummary", "EndTime", RunEndTime)
 	register.Register("util_stmtsummary", "PointGet", RunPointGet)
 	register.Register("util_stmtsummary", "AccessPrivilege", RunAccessPrivilege)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_stmtsummary" {
+			InitForMega()
+		}
+	})
 }

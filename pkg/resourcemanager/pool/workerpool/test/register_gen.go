@@ -12,4 +12,9 @@ func init() {
 	register.Register("resourcemanager/pool/workerpool", "WorkerPoolNoneResult", RunWorkerPoolNoneResult)
 	register.Register("resourcemanager/pool/workerpool", "WorkerPoolCustomChan", RunWorkerPoolCustomChan)
 	register.Register("resourcemanager/pool/workerpool", "WorkerPoolCancelContext", RunWorkerPoolCancelContext)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "resourcemanager/pool/workerpool" {
+			InitForMega()
+		}
+	})
 }

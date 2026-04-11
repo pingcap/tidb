@@ -132,4 +132,9 @@ func init() {
 	register.Register("ddl/tests/partition", "GlobalIndexVersionConstants", RunGlobalIndexVersionConstants)
 	register.Register("ddl/tests/partition", "GlobalIndexTruncateAndDropPartition", RunGlobalIndexTruncateAndDropPartition)
 	register.Register("ddl/tests/partition", "UpdateIndexesResetsGlobalIndexVersion", RunUpdateIndexesResetsGlobalIndexVersion)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ddl/tests/partition" {
+			InitForMega()
+		}
+	})
 }

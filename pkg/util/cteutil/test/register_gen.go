@@ -13,4 +13,9 @@ func init() {
 	register.Register("util_cteutil", "SpillToDisk", RunSpillToDisk)
 	register.Register("util_cteutil", "Reopen", RunReopen)
 	register.Register("util_cteutil", "SwapData", RunSwapData)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_cteutil" {
+			InitForMega()
+		}
+	})
 }

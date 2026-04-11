@@ -12,4 +12,9 @@ func init() {
 	register.Register("util_parser", "Digit", RunDigit)
 	register.Register("util_parser", "Number", RunNumber)
 	register.Register("util_parser", "CharAndAnyChar", RunCharAndAnyChar)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_parser" {
+			InitForMega()
+		}
+	})
 }

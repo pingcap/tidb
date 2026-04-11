@@ -22,4 +22,9 @@ func init() {
 	register.Register("domain", "PlanReplayerInternalQuery", RunPlanReplayerInternalQuery)
 	register.Register("domain", "WriteRUStatistics", RunWriteRUStatistics)
 	register.Register("domain", "GetLastExpectedTime", RunGetLastExpectedTime)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "domain" {
+			InitForMega()
+		}
+	})
 }

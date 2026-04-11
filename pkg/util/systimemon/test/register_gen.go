@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_systimemon", "SystimeMonitor", RunSystimeMonitor)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_systimemon" {
+			InitForMega()
+		}
+	})
 }

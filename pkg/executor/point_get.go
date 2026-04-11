@@ -378,7 +378,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			// 3. Then point get retrieve data from backend after step 2 finished
 			// 4. Check the result
 			failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step1", func() {
-				if ch, ok := ctx.Value("pointGetRepeatableReadTest").(chan struct{}); ok {
+				if ch, ok := ctx.Value(CtxKeyPointGetRepeatableRead).(chan struct{}); ok {
 					// Make `UPDATE` continue
 					close(ch)
 				}

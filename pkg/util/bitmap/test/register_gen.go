@@ -10,4 +10,9 @@ func init() {
 	register.Register("util_bitmap", "ConcurrentBitmapSet", RunConcurrentBitmapSet)
 	register.Register("util_bitmap", "ConcurrentBitmapUniqueSetter", RunConcurrentBitmapUniqueSetter)
 	register.Register("util_bitmap", "ResetConcurrentBitmap", RunResetConcurrentBitmap)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_bitmap" {
+			InitForMega()
+		}
+	})
 }

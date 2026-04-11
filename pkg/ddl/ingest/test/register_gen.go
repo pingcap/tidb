@@ -38,4 +38,9 @@ func init() {
 	register.Register("ddl_ingest", "ModifyColumnWithIndexWithDefaultValue", RunModifyColumnWithIndexWithDefaultValue)
 	register.Register("ddl_ingest", "MemoryRoot", RunMemoryRoot)
 	register.Register("ddl_ingest", "RiskOfDiskFull", RunRiskOfDiskFull)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ddl_ingest" {
+			InitForMega()
+		}
+	})
 }

@@ -15,4 +15,9 @@ func init() {
 	register.Register("server_tests_tls", "StatusAPIWithTLSCNCheck", RunStatusAPIWithTLSCNCheck)
 	register.Register("server_tests_tls", "InvalidTLS", RunInvalidTLS)
 	register.Register("server_tests_tls", "TLSAuto", RunTLSAuto)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "server_tests_tls" {
+			InitForMega()
+		}
+	})
 }

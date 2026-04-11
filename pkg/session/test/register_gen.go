@@ -57,4 +57,9 @@ func init() {
 	register.Register("session", "RUV2MetricsIsolatedPerStatementInExplicitTxn", RunRUV2MetricsIsolatedPerStatementInExplicitTxn)
 	register.Register("session", "SchemaCacheSizeVar", RunSchemaCacheSizeVar)
 	register.Register("session", "UpgradeToVerFunctionsCheck", RunUpgradeToVerFunctionsCheck)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "session" {
+			InitForMega()
+		}
+	})
 }

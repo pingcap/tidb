@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_sys_linux", "GetOSVersion", RunGetOSVersion)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_sys_linux" {
+			InitForMega()
+		}
+	})
 }

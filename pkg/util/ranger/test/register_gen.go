@@ -30,4 +30,9 @@ func init() {
 	register.Register("util_ranger", "IntersectionEmpty", RunIntersectionEmpty)
 	register.Register("util_ranger", "IntersectionSubset", RunIntersectionSubset)
 	register.Register("util_ranger", "IntersectionOverlap", RunIntersectionOverlap)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_ranger" {
+			InitForMega()
+		}
+	})
 }

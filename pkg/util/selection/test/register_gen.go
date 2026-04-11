@@ -11,4 +11,9 @@ func init() {
 	register.Register("util_selection", "SelectionWithDuplicate", RunSelectionWithDuplicate)
 	register.Register("util_selection", "SelectionWithRandomCase", RunSelectionWithRandomCase)
 	register.Register("util_selection", "SelectionWithSerialCase", RunSelectionWithSerialCase)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_selection" {
+			InitForMega()
+		}
+	})
 }

@@ -18,4 +18,9 @@ func init() {
 	register.Register("table", "CastValue", RunCastValue)
 	register.Register("table", "GetDefaultValue", RunGetDefaultValue)
 	register.Register("table", "CastValueStrict", RunCastValueStrict)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "table" {
+			InitForMega()
+		}
+	})
 }

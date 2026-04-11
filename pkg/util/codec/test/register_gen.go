@@ -37,4 +37,9 @@ func init() {
 	register.Register("util_codec", "HashGroupKeyCollation", RunHashGroupKeyCollation)
 	register.Register("util_codec", "HashChunkRowCollation", RunHashChunkRowCollation)
 	register.Register("util_codec", "HashChunkColumnsCollation", RunHashChunkColumnsCollation)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_codec" {
+			InitForMega()
+		}
+	})
 }

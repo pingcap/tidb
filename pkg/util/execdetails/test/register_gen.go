@@ -28,4 +28,9 @@ func init() {
 	register.Register("util_execdetails", "RURuntimeStatsCloneNilPreservesZeroVersion", RunRURuntimeStatsCloneNilPreservesZeroVersion)
 	register.Register("util_execdetails", "RURuntimeStatsMergeRUVersion", RunRURuntimeStatsMergeRUVersion)
 	register.Register("util_execdetails", "RURuntimeStatsMergeKeepsExistingRUVersion", RunRURuntimeStatsMergeKeepsExistingRUVersion)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_execdetails" {
+			InitForMega()
+		}
+	})
 }

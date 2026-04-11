@@ -72,4 +72,9 @@ func init() {
 	register.Register("privilege_privileges", "SQLVariableAccelerateUserCreationUpdate", RunSQLVariableAccelerateUserCreationUpdate)
 	register.Register("privilege_privileges", "GrantOptionWithSEMv2", RunGrantOptionWithSEMv2)
 	register.Register("privilege_privileges", "ProtectUserAndRoleWithRestrictedPrivileges", RunProtectUserAndRoleWithRestrictedPrivileges)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "privilege_privileges" {
+			InitForMega()
+		}
+	})
 }

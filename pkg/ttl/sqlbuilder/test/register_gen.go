@@ -12,4 +12,9 @@ func init() {
 	register.Register("ttl_sqlbuilder", "SQLBuilder", RunSQLBuilder)
 	register.Register("ttl_sqlbuilder", "ScanQueryGenerator", RunScanQueryGenerator)
 	register.Register("ttl_sqlbuilder", "BuildDeleteSQL", RunBuildDeleteSQL)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ttl_sqlbuilder" {
+			InitForMega()
+		}
+	})
 }

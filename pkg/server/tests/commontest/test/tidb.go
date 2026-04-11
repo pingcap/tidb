@@ -3101,7 +3101,7 @@ func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr,
 
 func RunProxyProtocolWithIpFallbackable(t *testing.T) {
 	cfg := util2.NewTestConfig()
-	cfg.Port = 4999
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
 	cfg.ProxyProtocol.Networks = "*"
@@ -3125,9 +3125,10 @@ func RunProxyProtocolWithIpFallbackable(t *testing.T) {
 	<-server2.RunInGoTestChan
 	require.NotNil(t, server.Listener())
 	require.Nil(t, server.Socket())
+	serverPort := testutil.GetPortFromTCPAddr(server.ListenAddr())
 
 	// Prepare Proxy
-	ppProxy := newMockProxyProtocolProxy("127.0.0.1:5000", "127.0.0.1:4999", "192.168.1.2:60055", false)
+	ppProxy := newMockProxyProtocolProxy("127.0.0.1:0", fmt.Sprintf("127.0.0.1:%d", serverPort), "192.168.1.2:60055", false)
 	go func() {
 		ppProxy.Run()
 	}()
@@ -3152,7 +3153,7 @@ func RunProxyProtocolWithIpFallbackable(t *testing.T) {
 	)
 
 	cli2 := testserverclient.NewTestServerClient()
-	cli2.Port = 4999
+	cli2.Port = serverPort
 	cli2.RunTests(t,
 		func(config *mysql.Config) {
 			config.User = "root"

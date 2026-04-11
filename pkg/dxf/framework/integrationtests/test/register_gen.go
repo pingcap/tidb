@@ -32,4 +32,9 @@ func init() {
 	register.Register("dxf/framework/integrationtests", "ModifyTaskConcurrencyAndMeta", RunModifyTaskConcurrencyAndMeta)
 	register.Register("dxf/framework/integrationtests", "ModifyTaskMaxNodeCountForSubtaskBalance", RunModifyTaskMaxNodeCountForSubtaskBalance)
 	register.Register("dxf/framework/integrationtests", "ResourceControl", RunResourceControl)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "dxf/framework/integrationtests" {
+			InitForMega()
+		}
+	})
 }

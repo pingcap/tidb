@@ -33,4 +33,9 @@ func init() {
 	register.Register("planner_core_casetest", "NDVGroupCols", RunNDVGroupCols)
 	register.Register("planner_core_casetest", "TiFlashLateMaterialization", RunTiFlashLateMaterialization)
 	register.Register("planner_core_casetest", "InvertedIndex", RunInvertedIndex)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest" {
+			InitForMega()
+		}
+	})
 }

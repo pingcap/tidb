@@ -23,8 +23,12 @@ import (
 	"go.uber.org/goleak"
 )
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
+}
+
+func RunMain(m *testing.M) {
+	InitForMega()
 	callback := func(i int) int {
 		// wait for leveldb to close, leveldb will be closed in one second
 		time.Sleep(time.Second)

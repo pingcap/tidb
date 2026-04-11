@@ -18,4 +18,9 @@ func init() {
 	register.Register("server_tests", "LoadDataListPartition", RunLoadDataListPartition)
 	register.Register("server_tests", "PrepareExecute", RunPrepareExecute)
 	register.Register("server_tests", "DefaultCharacterAndCollation", RunDefaultCharacterAndCollation)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "server_tests" {
+			InitForMega()
+		}
+	})
 }

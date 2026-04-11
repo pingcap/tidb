@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("server_tests_standby", "Standby", RunStandby)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "server_tests_standby" {
+			InitForMega()
+		}
+	})
 }

@@ -23,4 +23,9 @@ func init() {
 	register.Register("expression_aggregation", "BaseFunc_InferAggRetType", RunBaseFunc_InferAggRetType)
 	register.Register("expression_aggregation", "TypeInfer4AvgSum", RunTypeInfer4AvgSum)
 	register.Register("expression_aggregation", "Distinct", RunDistinct)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "expression_aggregation" {
+			InitForMega()
+		}
+	})
 }

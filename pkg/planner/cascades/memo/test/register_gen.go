@@ -19,4 +19,9 @@ func init() {
 	register.Register("planner_cascades_memo", "MergeGroup", RunMergeGroup)
 	register.Register("planner_cascades_memo", "RecursiveMergeGroup", RunRecursiveMergeGroup)
 	register.Register("planner_cascades_memo", "IteratorLogicalPlan", RunIteratorLogicalPlan)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_cascades_memo" {
+			InitForMega()
+		}
+	})
 }

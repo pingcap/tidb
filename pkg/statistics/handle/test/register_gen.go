@@ -12,4 +12,9 @@ func init() {
 	register.Register("statistics/handle", "GenInitStatsHistogramsSQLTableIDs", RunGenInitStatsHistogramsSQLTableIDs)
 	register.Register("statistics/handle", "GenInitStatsMetaSQLAllRecords", RunGenInitStatsMetaSQLAllRecords)
 	register.Register("statistics/handle", "GenInitStatsMetaSQLTableIDs", RunGenInitStatsMetaSQLTableIDs)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle" {
+			InitForMega()
+		}
+	})
 }

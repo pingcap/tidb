@@ -10,4 +10,9 @@ func init() {
 	register.Register("util_resourcegrouptag", "ResourceGroupTagEncodingPB", RunResourceGroupTagEncodingPB)
 	register.Register("util_resourcegrouptag", "GetResourceGroupLabelByKey", RunGetResourceGroupLabelByKey)
 	register.Register("util_resourcegrouptag", "GetFirstKeyFromRequest", RunGetFirstKeyFromRequest)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_resourcegrouptag" {
+			InitForMega()
+		}
+	})
 }

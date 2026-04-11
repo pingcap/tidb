@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("util_keydecoder", "DecodeKey", RunDecodeKey)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_keydecoder" {
+			InitForMega()
+		}
+	})
 }

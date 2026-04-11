@@ -30,7 +30,7 @@ import (
 	"go.uber.org/goleak"
 )
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	server.RunInGoTest = true
 	server.RunInGoTestChan = make(chan struct{})
 	testsetup.SetupForCommonTest()
@@ -50,6 +50,14 @@ func RunMain(m *testing.M) {
 		_, _ = fmt.Fprintf(os.Stderr, "default: %#v\nglobal: %#v", defaultConfig, globalConfig)
 	}
 
+	// SetupForCommonTest sets StatsLease=-1 which prevents loadStatsWorker from
+	// starting, so InitStatsDone is never closed. Since handler tests don't need
+	// stats initialization, skip the ForceInitStats wait in server.Run.
+	config.GetGlobalConfig().Performance.ForceInitStats = false
+}
+
+func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),

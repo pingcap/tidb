@@ -22,4 +22,9 @@ func init() {
 	register.Register("ddl_tests_adminpause", "PauseResumeCancelAndRerunColumnStmt", RunPauseResumeCancelAndRerunColumnStmt)
 	register.Register("ddl_tests_adminpause", "PauseResumeCancelAndRerunPartitionTableStmt", RunPauseResumeCancelAndRerunPartitionTableStmt)
 	register.Register("ddl_tests_adminpause", "PauseJobDependency", RunPauseJobDependency)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ddl_tests_adminpause" {
+			InitForMega()
+		}
+	})
 }

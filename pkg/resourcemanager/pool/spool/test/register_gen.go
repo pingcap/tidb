@@ -13,4 +13,9 @@ func init() {
 	register.Register("resourcemanager/pool/spool", "RunWithNotEnough", RunRunWithNotEnough)
 	register.Register("resourcemanager/pool/spool", "RunWithNotEnough2", RunRunWithNotEnough2)
 	register.Register("resourcemanager/pool/spool", "WithTaskManager", RunWithTaskManager)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "resourcemanager/pool/spool" {
+			InitForMega()
+		}
+	})
 }

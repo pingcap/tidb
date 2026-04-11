@@ -43,4 +43,9 @@ func init() {
 	register.Register("store_gcworker", "GCWithPendingTxn2", RunGCWithPendingTxn2)
 	register.Register("store_gcworker", "SkipGCAndOnlyResolveLock", RunSkipGCAndOnlyResolveLock)
 	register.Register("store_gcworker", "CalcDeleteRangeConcurrency", RunCalcDeleteRangeConcurrency)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store_gcworker" {
+			InitForMega()
+		}
+	})
 }

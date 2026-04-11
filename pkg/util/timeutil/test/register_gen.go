@@ -13,4 +13,9 @@ func init() {
 	register.Register("util_timeutil", "InferOneStepLinkForPath", RunInferOneStepLinkForPath)
 	register.Register("util_timeutil", "ParseTimeZone", RunParseTimeZone)
 	register.Register("util_timeutil", "ConstructTimeZone", RunConstructTimeZone)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_timeutil" {
+			InitForMega()
+		}
+	})
 }

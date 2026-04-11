@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("sessionctx", "BasicCtxTypeToString", RunBasicCtxTypeToString)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "sessionctx" {
+			InitForMega()
+		}
+	})
 }

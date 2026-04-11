@@ -35,7 +35,7 @@ const (
 	waitForCleanDataInterval = time.Millisecond * 100
 )
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
 
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -44,7 +44,10 @@ func RunMain(m *testing.M) {
 	})
 
 	ddl.SetWaitTimeWhenErrorOccurred(time.Microsecond)
+}
 
+func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),

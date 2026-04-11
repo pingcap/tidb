@@ -54,4 +54,9 @@ func init() {
 	register.Register("sessionctx/variable/tests", "SkipSysvarCache", RunSkipSysvarCache)
 	register.Register("sessionctx/variable/tests", "TimeValidationWithTimezone", RunTimeValidationWithTimezone)
 	register.Register("sessionctx/variable/tests", "OrderByDependency", RunOrderByDependency)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "sessionctx/variable/tests" {
+			InitForMega()
+		}
+	})
 }

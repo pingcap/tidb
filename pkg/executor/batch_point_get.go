@@ -45,6 +45,20 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
+// contextKeyType is used as context key type to avoid collisions (SA1029).
+type contextKeyType string
+
+// CtxKeyBatchPointGetRepeatableRead is the context key for synchronizing
+// the batch point get repeatable read failpoint test.
+var CtxKeyBatchPointGetRepeatableRead = contextKeyType("batchPointGetRepeatableReadTest")
+
+// CtxKeyPointGetRepeatableRead is the context key for synchronizing
+// the point get repeatable read failpoint test.
+var CtxKeyPointGetRepeatableRead = contextKeyType("pointGetRepeatableReadTest")
+
+// CtxKeyTestContextCancel is the context key for the coprocessor cancel test.
+var CtxKeyTestContextCancel = contextKeyType("TestContextCancel")
+
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
 	exec.BaseExecutor
@@ -367,7 +381,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		// 3. Then point get retrieve data from backend after step 2 finished
 		// 4. Check the result
 		failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step1", func() {
-			if ch, ok := ctx.Value("batchPointGetRepeatableReadTest").(chan struct{}); ok {
+			if ch, ok := ctx.Value(CtxKeyBatchPointGetRepeatableRead).(chan struct{}); ok {
 				// Make `UPDATE` continue
 				close(ch)
 			}

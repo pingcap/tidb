@@ -30,4 +30,9 @@ func init() {
 	// register.Register("infoschema", "Purge", RunPurge)
 	// register.Register("infoschema", "IsTiFlashStore", RunIsTiFlashStore)
 	// register.Register("infoschema", "IsTiFlashWriteNode", RunIsTiFlashWriteNode)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "infoschema" {
+			InitForMega()
+		}
+	})
 }

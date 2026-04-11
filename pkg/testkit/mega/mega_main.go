@@ -22,7 +22,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/mega/register"
 )
 
@@ -41,9 +40,6 @@ func RunMega(t *testing.T) {
 		listTests(t)
 		return
 	}
-
-	store := testkit.CreateMockStore(t)
-	defer store.Close()
 
 	t.Log("Mega test framework initialized")
 

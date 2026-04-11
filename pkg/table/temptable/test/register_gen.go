@@ -23,4 +23,9 @@ func init() {
 	register.Register("table_temptable", "IterTable", RunIterTable)
 	register.Register("table_temptable", "OnIter", RunOnIter)
 	register.Register("table_temptable", "OnIterReverse", RunOnIterReverse)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "table_temptable" {
+			InitForMega()
+		}
+	})
 }

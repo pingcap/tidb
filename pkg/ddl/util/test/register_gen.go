@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("ddl_util", "FolderNotEmpty", RunFolderNotEmpty)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ddl_util" {
+			InitForMega()
+		}
+	})
 }

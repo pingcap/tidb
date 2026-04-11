@@ -24,4 +24,9 @@ func init() {
 	register.Register("planner/memo", "ExploreMark", RunExploreMark)
 	register.Register("planner/memo", "NewGroupExpr", RunNewGroupExpr)
 	register.Register("planner/memo", "GroupExprFingerprint", RunGroupExprFingerprint)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner/memo" {
+			InitForMega()
+		}
+	})
 }

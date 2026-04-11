@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("executor/internal/pdhelper", "TTLCache", RunTTLCache)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "executor/internal/pdhelper" {
+			InitForMega()
+		}
+	})
 }

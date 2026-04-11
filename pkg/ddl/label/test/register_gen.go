@@ -15,4 +15,9 @@ func init() {
 	register.Register("ddl_label", "ApplyAttributesSpec", RunApplyAttributesSpec)
 	register.Register("ddl_label", "DefaultOrEmpty", RunDefaultOrEmpty)
 	register.Register("ddl_label", "Reset", RunReset)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "ddl_label" {
+			InitForMega()
+		}
+	})
 }

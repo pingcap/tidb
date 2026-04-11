@@ -50,4 +50,9 @@ func init() {
 	register.Register("bindinfo", "ExplainExploreAnalyze", RunExplainExploreAnalyze)
 	register.Register("bindinfo", "ExplainExploreVerifyAndBind", RunExplainExploreVerifyAndBind)
 	register.Register("bindinfo", "PlanGeneration", RunPlanGeneration)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "bindinfo" {
+			InitForMega()
+		}
+	})
 }
