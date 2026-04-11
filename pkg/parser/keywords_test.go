@@ -36,7 +36,11 @@ func TestKeywords(t *testing.T) {
 }
 
 func TestKeywordsLength(t *testing.T) {
+<<<<<<< HEAD
 	require.Equal(t, 662, len(parser.Keywords))
+=======
+	require.Equal(t, 678, len(parser.Keywords))
+>>>>>>> 40020bfaf17 (parser: support NDVRATE analyze syntax (#67608))
 
 	reservedNr := 0
 	for _, kw := range parser.Keywords {

@@ -6249,6 +6249,7 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t index a predicate columns", false, ""},
 		{"analyze table t with 10 samplerate", true, "ANALYZE TABLE `t` WITH 10 SAMPLERATE"},
 		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
+<<<<<<< HEAD
 		{"analyze table t with default buckets", true, "ANALYZE TABLE `t` WITH DEFAULT BUCKETS"},
 		{"analyze table t with default topn", true, "ANALYZE TABLE `t` WITH DEFAULT TOPN"},
 		{"analyze table t with default samples", true, "ANALYZE TABLE `t` WITH DEFAULT SAMPLES"},
@@ -6259,6 +6260,10 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t partition a with default buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH DEFAULT BUCKETS"},
 		{"analyze table t with default cmsketch width", false, ""},
 		{"analyze table t with default cmsketch depth", false, ""},
+=======
+		{"analyze table t with 0.05 ndvrate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE"},
+		{"analyze table t with 0.05 ndvrate 0.00001 samplerate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE, 0.00001 SAMPLERATE"},
+>>>>>>> 40020bfaf17 (parser: support NDVRATE analyze syntax (#67608))
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}

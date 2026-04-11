@@ -661,6 +661,11 @@ var Keywords = []KeywordsType{
 	{"HISTOGRAMS_IN_FLIGHT", false, "tidb"},
 	{"JOB", false, "tidb"},
 	{"JOBS", false, "tidb"},
+<<<<<<< HEAD
+=======
+	{"LITE", false, "tidb"},
+	{"NDVRATE", false, "tidb"},
+>>>>>>> 40020bfaf17 (parser: support NDVRATE analyze syntax (#67608))
 	{"NODE_ID", false, "tidb"},
 	{"NODE_STATE", false, "tidb"},
 	{"OPTIMISTIC", false, "tidb"},

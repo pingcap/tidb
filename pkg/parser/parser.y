@@ -869,6 +869,11 @@ import (
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
 	jobs                       "JOBS"
+<<<<<<< HEAD
+=======
+	lite                       "LITE"
+	ndvRate                    "NDVRATE"
+>>>>>>> 40020bfaf17 (parser: support NDVRATE analyze syntax (#67608))
 	nodeID                     "NODE_ID"
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
@@ -3389,6 +3394,10 @@ AnalyzeOptionList:
 	{
 		$$ = append($1.([]ast.AnalyzeOpt), $3.(ast.AnalyzeOpt))
 	}
+|	AnalyzeOptionList AnalyzeOption
+	{
+		$$ = append($1.([]ast.AnalyzeOpt), $2.(ast.AnalyzeOpt))
+	}
 
 AnalyzeOption:
 	NUM "BUCKETS"
@@ -3415,6 +3424,7 @@ AnalyzeOption:
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr($1, "", "")}
 	}
+<<<<<<< HEAD
 |	"DEFAULT" "BUCKETS"
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets}
@@ -3430,6 +3440,11 @@ AnalyzeOption:
 |	"DEFAULT" "SAMPLERATE"
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate}
+=======
+|	NumLiteral "NDVRATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate, Value: ast.NewValueExpr($1, "", "")}
+>>>>>>> 40020bfaf17 (parser: support NDVRATE analyze syntax (#67608))
 	}
 
 /*******************************************************************************************/
@@ -7231,6 +7246,7 @@ TiDBKeyword:
 |	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
+|	"NDVRATE"
 |	"NODE_ID"
 |	"NODE_STATE"
 |	"SAMPLES"
