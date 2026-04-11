@@ -29,14 +29,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
 
-          pr_number="$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}" --jq '.pull_requests[0].number')"
+          pr_number="$(
+            gh api "repos/${REPOSITORY}/pulls" \
+              --method GET \
+              -f state=open \
+              -f head="${HEAD_OWNER}:${HEAD_REF}" \
+              --jq '.[0].number'
+          )"
+
+          if [[ -z "${pr_number}" || "${pr_number}" == "null" ]]; then
+            echo "Unable to resolve pull request for ${HEAD_OWNER}:${HEAD_REF}." >&2
+            exit 1
+          fi
+
           head_repo="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.repo.full_name')"
           head_ref="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.ref')"
           pr_head_sha="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
-          run_head_sha="$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}" --jq '.head_sha')"
 
           printf 'pr_number=%s\n' "${pr_number}" >> "${GITHUB_OUTPUT}"
           printf 'head_repo=%s\n' "${head_repo}" >> "${GITHUB_OUTPUT}"
@@ -49,7 +64,7 @@ jobs:
 
           echo "same_repo=true" >> "${GITHUB_OUTPUT}"
 
-          if [[ "${pr_head_sha}" != "${run_head_sha}" ]]; then
+          if [[ "${pr_head_sha}" != "${RUN_HEAD_SHA}" ]]; then
             echo "stale=true" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
