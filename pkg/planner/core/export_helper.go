@@ -29,6 +29,6 @@ func LogicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 // GetRuntimeFilterGeneratorData returns the test data for runtime filter generator tests
 func GetRuntimeFilterGeneratorData() testdata.TestData {
 	bk := make(testdata.BookKeeper)
-	bk.LoadTestSuiteData("pkg/planner/core/testdata", "runtime_filter_generator_suite")
+	bk.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
 	return bk["runtime_filter_generator_suite"]
 }
