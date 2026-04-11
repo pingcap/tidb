@@ -46,18 +46,18 @@ import (
 )
 
 // contextKeyType is used as context key type to avoid collisions (SA1029).
-type contextKeyType string
+type ContextKeyType string
 
 // CtxKeyBatchPointGetRepeatableRead is the context key for synchronizing
 // the batch point get repeatable read failpoint test.
-var CtxKeyBatchPointGetRepeatableRead = contextKeyType("batchPointGetRepeatableReadTest")
+var CtxKeyBatchPointGetRepeatableRead = ContextKeyType("batchPointGetRepeatableReadTest")
 
 // CtxKeyPointGetRepeatableRead is the context key for synchronizing
 // the point get repeatable read failpoint test.
-var CtxKeyPointGetRepeatableRead = contextKeyType("pointGetRepeatableReadTest")
+var CtxKeyPointGetRepeatableRead = ContextKeyType("pointGetRepeatableReadTest")
 
 // CtxKeyTestContextCancel is the context key for the coprocessor cancel test.
-var CtxKeyTestContextCancel = contextKeyType("TestContextCancel")
+var CtxKeyTestContextCancel = ContextKeyType("TestContextCancel")
 
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {

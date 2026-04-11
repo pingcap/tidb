@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -74,7 +75,7 @@ func RunInspectionSummary(t *testing.T) {
 		},
 	}
 
-	ctx := context.WithValue(context.Background(), contextKey("__mockMetricsTableData"), mockData)
+	ctx := context.WithValue(context.Background(), executor.ContextKeyType("__mockMetricsTableData"), mockData)
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
 		return fpName == fpname
 	})

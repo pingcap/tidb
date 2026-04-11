@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/sysutil"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
@@ -234,8 +235,8 @@ func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, 
 	fpName1 := "github.com/pingcap/tidb/pkg/executor/mockMetricsTableData"
 	require.NoError(t, failpoint.Enable(fpName1, "return"))
 
-	ctx := context.WithValue(context.Background(), contextKey("__mockInspectionTables"), configurations)
-	ctx = context.WithValue(ctx, contextKey("__mockMetricsTableData"), mockData)
+	ctx := context.WithValue(context.Background(), executor.ContextKeyType("__mockInspectionTables"), configurations)
+	ctx = context.WithValue(ctx, executor.ContextKeyType("__mockMetricsTableData"), mockData)
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, currName string) bool {
 		return currName == fpName1 || currName == fpName0
 	})
@@ -329,7 +330,7 @@ func RunThresholdCheckInspection(t *testing.T) {
 		types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "split_check", 0.5),
 	}
 
-	ctx = context.WithValue(ctx, contextKey("__mockMetricsTableData"), mockData)
+	ctx = context.WithValue(ctx, executor.ContextKeyType("__mockMetricsTableData"), mockData)
 	rs, err = tk.Session().Execute(ctx, "select /*+ time_range('2020-02-12 10:35:00','2020-02-12 10:37:00') */ item, type, instance,status_address, value, reference from information_schema.inspection_result where rule='threshold-check' order by item")
 	require.NoError(t, err)
 	result = tk.ResultSetToResultWithCtx(ctx, rs[0], "execute inspect SQL failed")
