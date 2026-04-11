@@ -65,6 +65,18 @@ func TestSysVar(t *testing.T) {
 	// default enable vectorized_expression
 	f = GetSysVar("tidb_enable_vectorized_expression")
 	require.Equal(t, "ON", f.Value)
+
+	autoBuildStats := GetSysVar(TiDBAutoBuildStatsConcurrency)
+	require.NotNil(t, autoBuildStats)
+	buildStats := GetSysVar(TiDBBuildStatsConcurrency)
+	require.NotNil(t, buildStats)
+	require.Equal(t, buildStats.Value, autoBuildStats.Value)
+
+	sysProcScan := GetSysVar(TiDBSysProcScanConcurrency)
+	require.NotNil(t, sysProcScan)
+	analyzeScan := GetSysVar(TiDBAnalyzeDistSQLScanConcurrency)
+	require.NotNil(t, analyzeScan)
+	require.Equal(t, analyzeScan.Value, sysProcScan.Value)
 }
 
 func TestError(t *testing.T) {
