@@ -3,10 +3,17 @@
 package test
 
 import (
+	"github.com/pingcap/tidb/pkg/parser/test_driver"
 	"github.com/pingcap/tidb/pkg/testkit/mega/register"
 )
 
 func init() {
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "parser" {
+			test_driver.Register()
+		}
+	})
+
 	register.Register("parser", "LateralParsing", RunLateralParsing)
 	register.Register("parser", "Simple", RunSimple)
 	register.Register("parser", "SpecialComments", RunSpecialComments)

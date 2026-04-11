@@ -18,29 +18,35 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 )
 
-// ExportedEncodeFromOldRow encodes a row from old format to new format.
-// This is a helper function for testing that decodes an old-format row
-// and re-encodes it using the new encoder.
+// ExportedEncodeFromOldRow encodes a row from old (tablecodec) format to new (rowcodec) format.
+// This is a helper function for testing.
 func ExportedEncodeFromOldRow(encoder *Encoder, loc *time.Location, oldRow []byte, buf []byte) ([]byte, error) {
-	// Decode the old row to get the values
-	decoder := NewDatumMapDecoder(nil, loc)
-	datumMap, err := decoder.DecodeToDatumMap(oldRow, nil)
-	if err != nil {
+	if len(oldRow) > 0 && oldRow[0] == CodecVer {
+		return oldRow, nil
+	}
+	encoder.reset()
+	for len(oldRow) > 1 {
+		var d types.Datum
+		var err error
+		oldRow, d, err = codec.DecodeOne(oldRow)
+		if err != nil {
+			return nil, err
+		}
+		colID := d.GetInt64()
+		oldRow, d, err = codec.DecodeOne(oldRow)
+		if err != nil {
+			return nil, err
+		}
+		encoder.appendColVal(colID, &d)
+	}
+	numCols, notNullIdx := encoder.reformatCols()
+	if err := encoder.encodeRowCols(loc, numCols, notNullIdx); err != nil {
 		return nil, err
 	}
-
-	// Convert datum map to slice
-	colIDs := make([]int64, 0, len(datumMap))
-	values := make([]types.Datum, 0, len(datumMap))
-	for colID, datum := range datumMap {
-		colIDs = append(colIDs, colID)
-		values = append(values, datum)
-	}
-
-	// Encode using the new encoder
-	return encoder.Encode(loc, colIDs, values, NoChecksum{}, buf)
+	return encoder.row.toBytes(buf[:0]), nil
 }
 
 // ExportedGetColIDs returns the column IDs from the encoder.

@@ -40,7 +40,7 @@ func RunSpanFromContext(t *testing.T) {
 		collectedSpan = append(collectedSpan, sp)
 	})
 	sp.Finish()
-	opentracing.ContextWithSpan(ctx, sp)
+	ctx = opentracing.ContextWithSpan(ctx, sp)
 	child := tracing.SpanFromContext(ctx)
 	child.Finish()
 
@@ -61,7 +61,7 @@ func RunChildSpanFromContext(t *testing.T) {
 		collectedSpan = append(collectedSpan, sp)
 	})
 	sp.Finish()
-	opentracing.ContextWithSpan(ctx, sp)
+	ctx = opentracing.ContextWithSpan(ctx, sp)
 	child, _ := tracing.ChildSpanFromContxt(ctx, "test_child")
 	child.Finish()
 
