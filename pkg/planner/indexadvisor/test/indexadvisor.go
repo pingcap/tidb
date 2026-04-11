@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//nolint:staticcheck // Test file uses TestKey() which returns string, acceptable for test code
 package test
 
 import (
@@ -28,9 +27,6 @@ import (
 	s "github.com/pingcap/tidb/pkg/util/set"
 	"github.com/stretchr/testify/require"
 )
-
-// contextKey is a custom type for context keys to avoid collisions with built-in string type
-type contextKey string
 
 func check(ctx context.Context, t *testing.T, tk *testkit.TestKit,
 	expected, SQLs string) {
@@ -80,20 +76,20 @@ func RunIndexAdvisorFrequency(t *testing.T) {
 	querySet := s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where a=1", Frequency: 2})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where b=1", Frequency: 1})
-	ctx := context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx := context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	check(ctx, t, tk, "test.t.a", "")
 
 	querySet = s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where a=1", Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where b=1", Frequency: 2})
-	ctx = context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx = context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	check(ctx, t, tk, "test.t.b", "")
 
 	querySet = s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where a=1", Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where b=1", Frequency: 2})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where c=1", Frequency: 100})
-	ctx = context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx = context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	check(ctx, t, tk, "test.t.c", "")
 }
 
@@ -152,7 +148,7 @@ func RunIndexAdvisorFixControl43817(t *testing.T) {
 	querySet := s.NewSet[indexadvisor.Query]()
 	querySet.Add(indexadvisor.Query{SchemaName: "test",
 		Text: "select * from t1 where a=(select max(a) from t2)", Frequency: 1})
-	ctx := context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx := context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	check(ctx, t, tk, "err", "") // empty query set after filtering invalid queries
 	querySet.Add(indexadvisor.Query{SchemaName: "test",
 		Text: "select * from t1 where a=(select max(a) from t2); select * from t1 where b=1", Frequency: 1})
@@ -373,7 +369,7 @@ func RunIndexAdvisorTPCC(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: q15, Frequency: 1})
 
 	tk.MustExec(`recommend index set max_num_index=3`)
-	ctx := context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx := context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
 	require.NoError(t, err)
 	require.True(t, len(r) > 0)
@@ -528,7 +524,7 @@ FROM (SELECT block_number AS block_receipts
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: q9, Frequency: 1})
 
 	tk.MustExec(`recommend index set max_num_index=3`)
-	ctx := context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx := context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, nil)
 	require.NoError(t, err)
 	require.True(t, len(r) > 0)

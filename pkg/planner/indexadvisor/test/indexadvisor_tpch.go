@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//nolint:staticcheck // Test file uses TestKey() which returns string, acceptable for test code
 package test
 
 import (
@@ -770,7 +769,7 @@ func RunIndexAdvisorTPCH1(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ6, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ7, Frequency: 1})
 
-	ctx := context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx := context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, []ast.RecommendIndexOption{
 		{Option: indexadvisor.OptTimeout, Value: ast.NewValueExpr("2m", "", "")},
 	})
@@ -790,7 +789,7 @@ func RunIndexAdvisorTPCH2(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ11, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ12, Frequency: 1})
 
-	ctx := context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx := context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, []ast.RecommendIndexOption{
 		{Option: indexadvisor.OptTimeout, Value: ast.NewValueExpr("2m", "", "")},
 	})
@@ -810,7 +809,7 @@ func RunIndexAdvisorTPCH3(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ17, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ18, Frequency: 1})
 
-	ctx := context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx := context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, []ast.RecommendIndexOption{
 		{Option: indexadvisor.OptTimeout, Value: ast.NewValueExpr("2m", "", "")},
 	})
@@ -829,7 +828,7 @@ func RunIndexAdvisorTPCH4(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ21, Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: tpchQ22, Frequency: 1})
 
-	ctx := context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx := context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	r, err := indexadvisor.AdviseIndexes(ctx, tk.Session(), nil, []ast.RecommendIndexOption{
 		{Option: indexadvisor.OptTimeout, Value: ast.NewValueExpr("2m", "", "")},
 	})

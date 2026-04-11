@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "replayer",
-    srcs = ["replayer.go"],
+    srcs = [
+        "binding__failpoint_binding__.go",
+        "replayer.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/replayer",
     visibility = ["//visibility:public"],
     deps = [

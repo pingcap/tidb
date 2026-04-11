@@ -4,6 +4,7 @@ go_library(
     name = "tables",
     srcs = [
         "assertion.go",
+        "binding__failpoint_binding__.go",
         "cache.go",
         "index.go",
         "mutation_checker.go",

@@ -4,6 +4,7 @@ go_library(
     name = "log_client",
     srcs = [
         "batch_meta_processor.go",
+        "binding__failpoint_binding__.go",
         "client.go",
         "compacted_file_strategy.go",
         "id_map.go",

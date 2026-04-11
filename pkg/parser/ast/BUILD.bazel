@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "ast.go",
         "base.go",
+        "binding__failpoint_binding__.go",
         "ddl.go",
         "dml.go",
         "expressions.go",

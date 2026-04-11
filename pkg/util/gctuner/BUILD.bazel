@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "gctuner",
     srcs = [
+        "binding__failpoint_binding__.go",
         "export_helper.go",
         "finalizer.go",
         "mem.go",

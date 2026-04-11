@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "taskexecutor",
     srcs = [
+        "binding__failpoint_binding__.go",
         "export_helper.go",
         "interface.go",
         "manager.go",

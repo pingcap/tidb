@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "autoscaler.go",
         "balancer.go",
+        "binding__failpoint_binding__.go",
         "export_helper.go",
         "interface.go",
         "nodes.go",

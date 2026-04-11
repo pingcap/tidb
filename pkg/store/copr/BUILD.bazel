@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "batch_coprocessor.go",
         "batch_request_sender.go",
+        "binding__failpoint_binding__.go",
         "coprocessor.go",
         "coprocessor_cache.go",
         "key_ranges.go",

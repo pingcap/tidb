@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//nolint:staticcheck // Test file uses TestKey() which returns string, acceptable for test code
 package test
 
 import (
@@ -50,7 +49,7 @@ func RunOptionMaxNumIndex(t *testing.T) {
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where a=1", Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where b=1", Frequency: 1})
 	querySet.Add(indexadvisor.Query{SchemaName: "test", Text: "select * from t where c=1", Frequency: 1})
-	ctx := context.WithValue(context.Background(), contextKey(indexadvisor.TestKey("query_set")), querySet)
+	ctx := context.WithValue(context.Background(), indexadvisor.CtxKeyQuerySet, querySet)
 	check(ctx, t, tk, "test.t.a,test.t.b,test.t.c", "") // 3 indexes
 	tk.MustExec(`recommend index set max_num_index=2`)
 	check(ctx, t, tk, "test.t.a,test.t.b", "") // 2 indexes

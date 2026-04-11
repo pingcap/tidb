@@ -31,6 +31,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// testCtxKeyType is used as context key type to avoid collisions (SA1029).
+type testCtxKeyType string
+
+// CtxKeyQuerySet is the context key for injecting a query set in tests.
+var CtxKeyQuerySet = testCtxKeyType("__test_index_advisor_query_set")
+
 // TestKey is the key for test context.
 func TestKey(key string) string {
 	return "__test_index_advisor_" + key
@@ -143,8 +149,8 @@ func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
 			querySet.Add(Query{SchemaName: defaultDB, Text: sql, Frequency: 1})
 		}
 	} else {
-		if intest.InTest && ctx.Value(TestKey("query_set")) != nil {
-			querySet = ctx.Value(TestKey("query_set")).(s.Set[Query])
+		if intest.InTest && ctx.Value(CtxKeyQuerySet) != nil {
+			querySet = ctx.Value(CtxKeyQuerySet).(s.Set[Query])
 		} else {
 			var err error
 			if querySet, err = loadQuerySetFromStmtSummary(sctx, option); err != nil {

@@ -51,7 +51,7 @@ func RunDumpStatsAPI(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
+	cfg.Socket = fmt.Sprintf("/tmp/tm%d.sock", time.Now().UnixNano())
 
 	// RunInGoTestChan is a global channel and will be closed after the first server starts.
 	// Recreate it to avoid racing on subsequent server starts in the same test binary.
@@ -298,7 +298,6 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 }
 
 func RunStatsPriorityQueueAPI(t *testing.T) {
-	tmp := t.TempDir()
 	store := testkit.CreateMockStore(t)
 	driver := server2.NewTiDBDriver(store)
 	client := testserverclient.NewTestServerClient()
@@ -306,7 +305,7 @@ func RunStatsPriorityQueueAPI(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
+	cfg.Socket = fmt.Sprintf("/tmp/tm%d.sock", time.Now().UnixNano())
 
 	// RunInGoTestChan is a global channel and will be closed after the first server starts.
 	// Recreate it to avoid racing on subsequent server starts in the same test binary.
@@ -369,7 +368,7 @@ func RunLoadNullStatsFile(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
+	cfg.Socket = fmt.Sprintf("/tmp/tm%d.sock", time.Now().UnixNano())
 
 	// Creating and running the server
 	// RunInGoTestChan is a global channel and will be closed after the first server starts.

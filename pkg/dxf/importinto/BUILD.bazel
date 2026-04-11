@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "importinto",
     srcs = [
+        "binding__failpoint_binding__.go",
         "clean_up.go",
         "collect_conflicts.go",
         "conflict_resolution.go",
