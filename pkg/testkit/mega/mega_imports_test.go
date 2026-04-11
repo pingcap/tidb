@@ -82,6 +82,7 @@ import (
 	_ "github.com/pingcap/tidb/pkg/parser/ast/test"
 	_ "github.com/pingcap/tidb/pkg/parser/charset/test"
 	_ "github.com/pingcap/tidb/pkg/parser/test"
+	"github.com/pingcap/tidb/pkg/parser/test_driver"
 	_ "github.com/pingcap/tidb/pkg/parser/types/test"
 	_ "github.com/pingcap/tidb/pkg/planner/cascades/base/test"
 	_ "github.com/pingcap/tidb/pkg/planner/cascades/memo/test"
@@ -135,6 +136,7 @@ import (
 	_ "github.com/pingcap/tidb/pkg/store/test"
 	_ "github.com/pingcap/tidb/pkg/structure/test"
 	_ "github.com/pingcap/tidb/pkg/table/tblsession/test"
+	"github.com/pingcap/tidb/pkg/testkit/mega/register"
 	_ "github.com/pingcap/tidb/pkg/testkit/test"
 	_ "github.com/pingcap/tidb/pkg/timer/tablestore/test"
 	_ "github.com/pingcap/tidb/pkg/timer/test"
@@ -211,3 +213,16 @@ import (
 	_ "github.com/pingcap/tidb/pkg/util/zeropool/test"
 	_ "github.com/pingcap/tidb/pkg/workloadlearning/test"
 )
+
+func init() {
+	// Ensure test_driver wins over types/parser_driver for parser tests.
+	// Both packages register ast.NewValueExpr in their init(), but init order
+	// is non-deterministic when multiple packages are linked together.
+	// We only re-register test_driver for parser/ast tests, because other tests
+	// (e.g., ddl) need types/parser_driver to be the active driver.
+	register.GlobalRegistry().RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "parser/ast" {
+			test_driver.Register()
+		}
+	})
+}

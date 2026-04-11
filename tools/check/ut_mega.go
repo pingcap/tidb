@@ -216,13 +216,14 @@ func parseMegaTestList(output string) ([]megaTask, error) {
 			continue
 		}
 
-		// Parse lines like "  - server_handler_optimizor/DumpPlanReplayerAPI"
+		// Parse lines like "  - parser/ast/AddQueryWatchStmtRestore"
 		if len(line) >= 4 && line[0:2] == "  " && line[2] == '-' {
 			// Remove the leading "  - " prefix
 			testPath := strings.TrimPrefix(line, "  - ")
-			parts := strings.SplitN(testPath, "/", 2)
-			if len(parts) == 2 {
-				tasks = append(tasks, megaTask{pkg: parts[0], name: parts[1]})
+			// Split at last "/" — package names can contain "/" (e.g., "parser/ast")
+			lastSlash := strings.LastIndex(testPath, "/")
+			if lastSlash > 0 {
+				tasks = append(tasks, megaTask{pkg: testPath[:lastSlash], name: testPath[lastSlash+1:]})
 			}
 		}
 	}
@@ -647,11 +648,16 @@ func filterMegaOutput(output string) string {
 		if strings.Contains(line, "Registered tests:") {
 			continue
 		}
+		// Skip mega framework boilerplate
+		if strings.Contains(line, "Mega test framework initialized") ||
+			strings.Contains(line, "Running tests matching pattern") {
+			continue
+		}
 		filtered = append(filtered, line)
 	}
-	// Only keep last 30 lines to avoid flooding stderr
-	if len(filtered) > 30 {
-		filtered = filtered[len(filtered)-30:]
+	// Keep last 80 lines to preserve error details
+	if len(filtered) > 80 {
+		filtered = filtered[len(filtered)-80:]
 	}
 	return strings.Join(filtered, "\n")
 }

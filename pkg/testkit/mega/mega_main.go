@@ -85,11 +85,9 @@ func listTests(t *testing.T) {
 	for _, pkg := range packages {
 		tests := testsByPkg[pkg]
 		sort.Strings(tests)
-		// Replace slashes with underscores for display (matches generated test names)
-		displayPkg := strings.ReplaceAll(pkg, "/", "_")
-		fmt.Printf("Package %s (%d tests):\n", displayPkg, len(tests))
+		fmt.Printf("Package %s (%d tests):\n", pkg, len(tests))
 		for _, test := range tests {
-			fmt.Printf("  - %s/%s\n", displayPkg, test)
+			fmt.Printf("  - %s/%s\n", pkg, test)
 		}
 		fmt.Println()
 	}

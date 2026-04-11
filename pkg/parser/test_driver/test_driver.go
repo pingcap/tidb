@@ -27,6 +27,14 @@ import (
 )
 
 func init() {
+	Register()
+}
+
+// Register sets the parser driver functions to use test_driver types.
+// It is called automatically by init(), but can be called explicitly
+// to ensure test_driver is the active driver (e.g., when multiple
+// driver packages are linked into a single binary).
+func Register() {
 	ast.NewValueExpr = newValueExpr
 	ast.NewParamMarkerExpr = newParamMarkerExpr
 	ast.NewDecimal = func(str string) (any, error) {

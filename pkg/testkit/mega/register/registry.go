@@ -16,15 +16,15 @@ package register
 
 import (
 	"regexp"
-	"strings"
 	"sync"
 	"testing"
 )
 
 // Registry manages test registration for the mega framework
 type Registry struct {
-	mu    sync.RWMutex
-	tests map[string]map[string]func(*testing.T) // pkg -> name -> test function
+	mu       sync.RWMutex
+	tests    map[string]map[string]func(*testing.T) // pkg -> name -> test function
+	onBefore []func(string)                         // hooks called before running tests, with pkg name
 }
 
 // Global registry instance
@@ -79,6 +79,14 @@ func (r *Registry) ListAll() []string {
 	return result
 }
 
+// RegisterOnBeforeRun registers a hook to be called before running any test.
+// This is used to ensure proper initialization order (e.g., parser driver registration).
+func (r *Registry) RegisterOnBeforeRun(fn func(string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onBefore = append(r.onBefore, fn)
+}
+
 // RunByPattern runs tests matching the given regex pattern (format: "pkg/name")
 func (r *Registry) RunByPattern(t *testing.T, pattern string) {
 	t.Helper()
@@ -104,14 +112,23 @@ func (r *Registry) RunByPattern(t *testing.T, pattern string) {
 			}
 		}
 	}
+	hooks := make([]func(string), len(r.onBefore))
+	copy(hooks, r.onBefore)
 	r.mu.RUnlock()
 
 	if len(matched) == 0 {
 		t.Fatalf("no tests matched pattern %q", pattern)
 	}
 
-	// Run matched tests
+	// Track which packages have had their hooks called
+	pkgHookCalled := make(map[string]bool)
 	for _, m := range matched {
+		if !pkgHookCalled[m.pkg] {
+			for _, fn := range hooks {
+				fn(m.pkg)
+			}
+			pkgHookCalled[m.pkg] = true
+		}
 		t.Run(m.pkg+"/"+m.name, func(t *testing.T) {
 			fn, ok := r.Get(m.pkg, m.name)
 			if !ok {
@@ -127,24 +144,31 @@ func (r *Registry) RunAll(t *testing.T) {
 	t.Helper()
 
 	r.mu.RLock()
-	testNames := make([]string, 0, len(r.tests))
+	type testEntry struct {
+		pkg  string
+		name string
+	}
+	var entries []testEntry
 	for pkg, tests := range r.tests {
 		for name := range tests {
-			testNames = append(testNames, pkg+"/"+name)
+			entries = append(entries, testEntry{pkg, name})
 		}
 	}
+	hooks := make([]func(string), len(r.onBefore))
+	copy(hooks, r.onBefore)
 	r.mu.RUnlock()
 
-	for _, testName := range testNames {
-		t.Run(testName, func(t *testing.T) {
-			// Parse test name
-			parts := strings.SplitN(testName, "/", 2)
-			if len(parts) != 2 {
-				t.Fatalf("invalid test name: %s", testName)
+	pkgHookCalled := make(map[string]bool)
+	for _, e := range entries {
+		if !pkgHookCalled[e.pkg] {
+			for _, fn := range hooks {
+				fn(e.pkg)
 			}
-			pkg, name := parts[0], parts[1]
-
-			fn, ok := r.Get(pkg, name)
+			pkgHookCalled[e.pkg] = true
+		}
+		testName := e.pkg + "/" + e.name
+		t.Run(testName, func(t *testing.T) {
+			fn, ok := r.Get(e.pkg, e.name)
 			if !ok {
 				t.Fatalf("test %s not found", testName)
 			}
