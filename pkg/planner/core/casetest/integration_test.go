@@ -540,6 +540,24 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 			"└─Selection cop[tikv]  or(eq(test.t_issue52023.a, \"0x05\"), eq(cast(test.t_issue52023.a, double BINARY), 55))",
 			"  └─TableFullScan cop[tikv] table:t_issue52023 keep order:false"))
 
+		// issue:67701
+		tk.MustExec(`drop table if exists t_issue67701`)
+		tk.MustExec(`create table t_issue67701 (
+			user_code varchar(32) not null,
+			key idx_user_code(user_code)
+		)`)
+		tk.MustExec(`insert into t_issue67701 values ('1001'), ('1002'), ('1003')`)
+		tk.MustQuery(`select * from t_issue67701 where user_code in (1001,1002,1003) order by user_code`).Check(testkit.Rows("1001", "1002", "1003"))
+		planRows := tk.MustQuery(`explain format = 'plan_tree' select * from t_issue67701 where user_code in (1001,1002,1003)`).Rows()
+		foundRangeScan := false
+		for _, row := range planRows {
+			if strings.Contains(row[0].(string), "IndexRangeScan") {
+				foundRangeScan = true
+				break
+			}
+		}
+		require.True(t, foundRangeScan, "expect IndexRangeScan for varchar IN with integer literals")
+
 		// issue:56915
 		tk.MustExec(`drop table if exists t_issue56915`)
 		tk.MustExec(`create table t_issue56915(a int, b int, j json, index ia(a), index mvi( (cast(j as signed array)), a, b) );`)

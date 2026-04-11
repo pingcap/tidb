@@ -267,6 +267,7 @@ func TestPreparedPlanCachePlanSelectionRegressions(t *testing.T) {
 	runPreparedPlanCacheInvalidRange(t, tk)
 	runPreparedPlanCacheLeftJoinRangeScan(t, tk)
 	runPreparedPlanCacheInlJoinRangeScan(t, tk)
+	runPreparedPlanCacheVarcharInNumericRangeScan(t, tk)
 	runPreparedPlanCachePointGetSafety(t, tk)
 }
 
@@ -465,6 +466,35 @@ func runPreparedPlanCacheInlJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("deallocate prepare stmt")
+}
+
+func runPreparedPlanCacheVarcharInNumericRangeScan(t *testing.T, tk *testkit.TestKit) {
+	tk.MustExec("use test")
+	tableName := "t_varchar_in_num"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s(user_code varchar(32) not null, key idx_user_code(user_code))", tableName))
+	tk.MustExec(fmt.Sprintf("insert into %s values ('1001'), ('1002'), ('1003')", tableName))
+	tk.MustExec(fmt.Sprintf("prepare stmt from 'select * from %s where user_code in (?, ?)'", tableName))
+	tk.MustExec("set @a=1001, @b=1002")
+	tk.MustQuery("execute stmt using @a, @b").Check(testkit.Rows("1001", "1002"))
+
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+
+	rows := tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Rows()
+	foundRangeScan := false
+	for _, row := range rows {
+		if strings.Contains(row[0].(string), "IndexRangeScan") {
+			foundRangeScan = true
+			break
+		}
+	}
+	require.True(t, foundRangeScan, "expect IndexRangeScan for prepared varchar IN with integer params")
+
+	tk.MustExec("execute stmt using @a, @b")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustExec("deallocate prepare stmt")
 }
 

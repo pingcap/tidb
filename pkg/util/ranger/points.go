@@ -345,22 +345,23 @@ func (r *builder) buildFromBinOp(
 		}
 		return
 	}
+	evalCtx := r.sctx.ExprCtx.GetEvalCtx()
 	var col *expression.Column
 	var ok bool
-	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
+	if col, ok = getAccessColumn(evalCtx, expr.GetArgs()[0]); ok {
 		ft = col.RetType
-		value, err = expr.GetArgs()[1].Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
+		value, err = expr.GetArgs()[1].Eval(evalCtx, chunk.Row{})
 		if err != nil {
 			return nil
 		}
 		op = expr.FuncName.L
 	} else {
-		col, ok = expr.GetArgs()[1].(*expression.Column)
+		col, ok = getAccessColumn(evalCtx, expr.GetArgs()[1])
 		if !ok {
 			return nil
 		}
 		ft = col.RetType
-		value, err = expr.GetArgs()[0].Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
+		value, err = expr.GetArgs()[0].Eval(evalCtx, chunk.Row{})
 		if err != nil {
 			return nil
 		}

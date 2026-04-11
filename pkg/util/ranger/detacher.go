@@ -130,16 +130,18 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 		return offset
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		var constVal *expression.Constant
-		c, ok := f.GetArgs()[0].(*expression.Column)
+		colExpr := f.GetArgs()[0]
+		c, ok := getAccessColumn(evalCtx, colExpr)
 		idxConst := 1
 		if !ok {
 			idxConst = 0
-			if c, ok = f.GetArgs()[1].(*expression.Column); !ok {
+			colExpr = f.GetArgs()[1]
+			if c, ok = getAccessColumn(evalCtx, colExpr); !ok {
 				return -1
 			}
 		}
 
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+		if colExpr.GetType(evalCtx).EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 			return -1
 		}
 		if (f.FuncName.L == ast.LT || f.FuncName.L == ast.GT) && c.RetType.EvalType() != types.ETInt {
@@ -169,11 +171,12 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			}
 		}
 	case ast.In:
-		c, ok := f.GetArgs()[0].(*expression.Column)
+		colExpr := f.GetArgs()[0]
+		c, ok := getAccessColumn(evalCtx, colExpr)
 		if !ok {
 			return -1
 		}
-		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
+		if colExpr.GetType(evalCtx).EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.GetCollate(), collation) {
 			return -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
@@ -182,7 +185,7 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			}
 		}
 		for i, col := range cols {
-			if col.EqualColumn(c) {
+			if col.EqualByExprAndID(evalCtx, c) {
 				return i
 			}
 		}

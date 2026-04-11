@@ -30,6 +30,44 @@ type conditionChecker struct {
 	optPrefixIndexSingleScan bool
 }
 
+// getAccessColumn unwraps the expression and returns the underlying index column if we can
+// safely treat it as a range-building column.
+// Besides plain columns, we also recognize implicit cast(column as number) patterns generated
+// by comparisons like varchar_col IN (1, 2, 3), so that ranger can still build index ranges.
+func getAccessColumn(ctx expression.EvalContext, expr expression.Expression) (*expression.Column, bool) {
+	if col, ok := expr.(*expression.Column); ok {
+		return col, true
+	}
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.Cast {
+		return nil, false
+	}
+	col, ok := sf.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return nil, false
+	}
+	// The enhancement only targets string-to-number implicit casts.
+	colType := col.GetType(ctx)
+	if colType.EvalType() != types.ETString {
+		return nil, false
+	}
+	switch colType.GetType() {
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+	default:
+		return nil, false
+	}
+	// Keep binary/varbinary columns on the original conservative path.
+	if mysql.HasBinaryFlag(colType.GetFlag()) {
+		return nil, false
+	}
+	switch sf.GetType(ctx).EvalType() {
+	case types.ETInt, types.ETReal, types.ETDecimal:
+		return col, true
+	default:
+		return nil, false
+	}
+}
+
 func (c *conditionChecker) isFullLengthColumn() bool {
 	return c.length == types.UnspecifiedLength || c.length == c.checkerCol.GetType(c.ctx).GetFlen()
 }
@@ -209,7 +247,11 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) (isA
 func (c *conditionChecker) matchColumn(expr expression.Expression) bool {
 	// Check if virtual expression column matched
 	if c.checkerCol != nil {
-		return c.checkerCol.EqualByExprAndID(c.ctx, expr)
+		if c.checkerCol.EqualByExprAndID(c.ctx, expr) {
+			return true
+		}
+		col, ok := getAccessColumn(c.ctx, expr)
+		return ok && c.checkerCol.EqualByExprAndID(c.ctx, col)
 	}
 	return false
 }
