@@ -13,4 +13,9 @@ func init() {
 	register.Register("statistics/handle/handletest/analyze", "AnalyzeWithDynamicPartitionPruneMode", RunAnalyzeWithDynamicPartitionPruneMode)
 	register.Register("statistics/handle/handletest/analyze", "FMSWithAnalyzePartition", RunFMSWithAnalyzePartition)
 	register.Register("statistics/handle/handletest/analyze", "AnalyzeMetricsCounters", RunAnalyzeMetricsCounters)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/handletest/analyze" {
+			InitForMega()
+		}
+	})
 }

@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("planner_core_casetest_logicalplan", "GroupBySchema", RunGroupBySchema)
 	register.Register("planner_core_casetest_logicalplan", "LogicalPlanTypeRegression", RunLogicalPlanTypeRegression)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_logicalplan" {
+			InitForMega()
+		}
+	})
 }

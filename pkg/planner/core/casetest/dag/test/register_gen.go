@@ -18,4 +18,9 @@ func init() {
 	register.Register("planner_core_casetest_dag", "DAGPlanBuilderAgg", RunDAGPlanBuilderAgg)
 	register.Register("planner_core_casetest_dag", "DAGPlanBuilderWindow", RunDAGPlanBuilderWindow)
 	register.Register("planner_core_casetest_dag", "DAGPlanBuilderWindowParallel", RunDAGPlanBuilderWindowParallel)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_dag" {
+			InitForMega()
+		}
+	})
 }

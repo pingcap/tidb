@@ -11,4 +11,9 @@ func init() {
 	register.Register("store_mockstore_unistore_lockstore", "Iterator", RunIterator)
 	register.Register("store_mockstore_unistore_lockstore", "Replace", RunReplace)
 	register.Register("store_mockstore_unistore_lockstore", "MemStoreConcurrent", RunMemStoreConcurrent)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store_mockstore_unistore_lockstore" {
+			InitForMega()
+		}
+	})
 }

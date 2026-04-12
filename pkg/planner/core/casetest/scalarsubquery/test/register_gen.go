@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("planner_core_casetest_scalarsubquery", "ExplainNonEvaledSubquery", RunExplainNonEvaledSubquery)
 	register.Register("planner_core_casetest_scalarsubquery", "SubqueryInExplainAnalyze", RunSubqueryInExplainAnalyze)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_scalarsubquery" {
+			InitForMega()
+		}
+	})
 }

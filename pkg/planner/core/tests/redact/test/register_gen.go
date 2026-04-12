@@ -11,4 +11,9 @@ func init() {
 	register.Register("planner_core_tests_redact", "RedactForRangeInfo", RunRedactForRangeInfo)
 	register.Register("planner_core_tests_redact", "JoinNotSupportedByTiFlash", RunJoinNotSupportedByTiFlash)
 	register.Register("planner_core_tests_redact", "RedactTiFlash", RunRedactTiFlash)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_tests_redact" {
+			InitForMega()
+		}
+	})
 }

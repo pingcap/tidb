@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("planner_core_tests_analyze", "AnalyzeVirtualColumns", RunAnalyzeVirtualColumns)
 	register.Register("planner_core_tests_analyze", "AutoAnalyzeForMissingPartition", RunAutoAnalyzeForMissingPartition)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_tests_analyze" {
+			InitForMega()
+		}
+	})
 }

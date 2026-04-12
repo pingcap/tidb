@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("planner_core_tests_rewriter", "VariableRewritter", RunVariableRewritter)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_tests_rewriter" {
+			InitForMega()
+		}
+	})
 }

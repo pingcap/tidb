@@ -10,7 +10,6 @@ go_library(
         "agg_spill.go",
         "agg_stream_executor.go",
         "agg_util.go",
-        "binding__failpoint_binding__.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/aggregate",
     visibility = ["//visibility:public"],

@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "stmtctx",
-    srcs = [
-        "binding__failpoint_binding__.go",
-        "stmtctx.go",
-    ],
+    srcs = ["stmtctx.go"],
     importpath = "github.com/pingcap/tidb/pkg/sessionctx/stmtctx",
     visibility = ["//visibility:public"],
     deps = [

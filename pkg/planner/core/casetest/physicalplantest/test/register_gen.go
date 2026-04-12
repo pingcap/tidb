@@ -45,4 +45,9 @@ func init() {
 	register.Register("planner_core_casetest_physicalplantest", "AllocMPPID", RunAllocMPPID)
 	register.Register("planner_core_casetest_physicalplantest", "SemiJoinRewriter", RunSemiJoinRewriter)
 	register.Register("planner_core_casetest_physicalplantest", "DisableReuseChunk", RunDisableReuseChunk)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_physicalplantest" {
+			InitForMega()
+		}
+	})
 }

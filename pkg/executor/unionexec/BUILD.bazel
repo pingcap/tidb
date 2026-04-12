@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "unionexec",
-    srcs = [
-        "binding__failpoint_binding__.go",
-        "union.go",
-    ],
+    srcs = ["union.go"],
     importpath = "github.com/pingcap/tidb/pkg/executor/unionexec",
     visibility = ["//visibility:public"],
     deps = [

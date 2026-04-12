@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("planner_core_tests_subquery", "CollateSubQuery", RunCollateSubQuery)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_tests_subquery" {
+			InitForMega()
+		}
+	})
 }

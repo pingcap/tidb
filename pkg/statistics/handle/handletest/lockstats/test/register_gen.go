@@ -28,4 +28,9 @@ func init() {
 	register.Register("statistics/handle/handletest/lockstats", "TruncateTableShouldCleanUpLockInfo", RunTruncateTableShouldCleanUpLockInfo)
 	register.Register("statistics/handle/handletest/lockstats", "UnlockPartitionedTableWouldUpdateGlobalCountCorrectly", RunUnlockPartitionedTableWouldUpdateGlobalCountCorrectly)
 	register.Register("statistics/handle/handletest/lockstats", "DeltaInLockInfoCanBeNegative", RunDeltaInLockInfoCanBeNegative)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/handletest/lockstats" {
+			InitForMega()
+		}
+	})
 }

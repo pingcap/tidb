@@ -205,8 +205,8 @@ ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
-.PHONY: ut-mega
-ut-mega: tools/bin/ut tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Phase 2: mega integration tests)
+.PHONY: bazel_coverage_test
+bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Phase 2: mega integration tests)
 	@echo "=== Enabling failpoints ==="
 	@tools/bin/failpoint-ctl enable
 	@echo "=== Updating BUILD.bazel files (gazelle) ==="
@@ -229,7 +229,6 @@ bazel-mega-binary: ## Build the mega test binary. Requires failpoint-ctl enable 
 .PHONY: ut-mega-cleanup
 ut-mega-cleanup:
 	@tools/bin/failpoint-ctl disable
-	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
 
 .PHONY: ut-mega-test
 ut-mega-test: tools/bin/ut tools/bin/failpoint-ctl ## Run specific mega tests (usage: make ut-mega-test X=ddl/Options)
@@ -752,8 +751,8 @@ bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
-.PHONY: bazel_coverage_test
-bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
+.PHONY: bazel_coverage_test_bak
+bazel_coverage_test_bak: bazel-failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS) \

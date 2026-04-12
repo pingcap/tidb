@@ -24,4 +24,9 @@ func init() {
 	register.Register("statistics/handle/handletest/statstest", "DumpStatsDeltaInBatch", RunDumpStatsDeltaInBatch)
 	register.Register("statistics/handle/handletest/statstest", "InitStatsForTableWithTopNButNoBuckets", RunInitStatsForTableWithTopNButNoBuckets)
 	register.Register("statistics/handle/handletest/statstest", "InitStatsMemoryFullBlocksBucketsButKeepsTopN", RunInitStatsMemoryFullBlocksBucketsButKeepsTopN)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/handletest/statstest" {
+			InitForMega()
+		}
+	})
 }

@@ -26,7 +26,7 @@ import (
 
 var testDataMap = make(testdata.BookKeeper)
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "outer2inner", true)
@@ -37,7 +37,10 @@ func RunMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "outer_to_semi_join_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "cdc_join_reorder_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "order_aware_join_reorder_suite", true)
+}
 
+func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),

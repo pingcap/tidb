@@ -4,7 +4,6 @@ go_library(
     name = "priorityqueue",
     srcs = [
         "analysis_job_factory.go",
-        "binding__failpoint_binding__.go",
         "calculator.go",
         "dynamic_partitioned_table_analysis_job.go",
         "heap.go",

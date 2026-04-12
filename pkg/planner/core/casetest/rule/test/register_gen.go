@@ -37,4 +37,9 @@ func init() {
 	register.Register("planner/core/casetest/rule", "TopNPushdown", RunTopNPushdown)
 	register.Register("planner/core/casetest/rule", "EmptySelectionEliminator", RunEmptySelectionEliminator)
 	register.Register("planner/core/casetest/rule", "WrapCastForAggFuncs", RunWrapCastForAggFuncs)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner/core/casetest/rule" {
+			InitForMega()
+		}
+	})
 }

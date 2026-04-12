@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("planner_core_casetest_tpcds", "TPCDSQ64", RunTPCDSQ64)
 	register.Register("planner_core_casetest_tpcds", "BenchDaily", RunBenchDaily)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_tpcds" {
+			InitForMega()
+		}
+	})
 }

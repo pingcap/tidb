@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("store_mockstore_unistore_util_lockwaiter", "LockwaiterBasic", RunLockwaiterBasic)
 	register.Register("store_mockstore_unistore_util_lockwaiter", "LockwaiterConcurrent", RunLockwaiterConcurrent)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store_mockstore_unistore_util_lockwaiter" {
+			InitForMega()
+		}
+	})
 }

@@ -27,7 +27,7 @@ import (
 
 var testDataMap = make(testdata.BookKeeper)
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
@@ -37,6 +37,10 @@ func RunMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
+}
+
+func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),

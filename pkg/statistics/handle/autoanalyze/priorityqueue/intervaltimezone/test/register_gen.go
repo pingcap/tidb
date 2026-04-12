@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("statistics_handle_autoanalyze_priorityqueue_intervaltimezone", "LastFailedAnalysisDurationUseCorrectTimezone", RunLastFailedAnalysisDurationUseCorrectTimezone)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics_handle_autoanalyze_priorityqueue_intervaltimezone" {
+			InitForMega()
+		}
+	})
 }

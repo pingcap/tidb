@@ -20,4 +20,9 @@ func init() {
 	register.Register("util_stmtsummary_v2_tests", "PlanCacheUnqualified2", RunPlanCacheUnqualified2)
 	register.Register("util_stmtsummary_v2_tests", "PlanCacheUnqualified", RunPlanCacheUnqualified)
 	register.Register("util_stmtsummary_v2_tests", "PerformanceSchemaforPlanCache", RunPerformanceSchemaforPlanCache)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "util_stmtsummary_v2_tests" {
+			InitForMega()
+		}
+	})
 }

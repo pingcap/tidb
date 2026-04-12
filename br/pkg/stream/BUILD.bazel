@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "stream",
     srcs = [
-        "binding__failpoint_binding__.go",
         "decode_kv.go",
         "logging_helper.go",
         "meta_kv.go",

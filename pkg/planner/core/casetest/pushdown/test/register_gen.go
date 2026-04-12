@@ -14,4 +14,9 @@ func init() {
 	register.Register("planner_core_casetest_pushdown", "PushDownProjectionForTiFlashCoprocessor", RunPushDownProjectionForTiFlashCoprocessor)
 	register.Register("planner_core_casetest_pushdown", "SelPushDownTiFlash", RunSelPushDownTiFlash)
 	register.Register("planner_core_casetest_pushdown", "JoinNotSupportedByTiFlash", RunJoinNotSupportedByTiFlash)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_pushdown" {
+			InitForMega()
+		}
+	})
 }

@@ -15,4 +15,9 @@ func init() {
 	register.Register("statistics/handle/handletest/initstats", "DropTableBeforeNonLiteInitStats", RunDropTableBeforeNonLiteInitStats)
 	register.Register("statistics/handle/handletest/initstats", "SkipStatsInitWithSkipInitStats", RunSkipStatsInitWithSkipInitStats)
 	register.Register("statistics/handle/handletest/initstats", "NonLiteInitStatsAndCheckTheLastTableStats", RunNonLiteInitStatsAndCheckTheLastTableStats)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/handletest/initstats" {
+			InitForMega()
+		}
+	})
 }

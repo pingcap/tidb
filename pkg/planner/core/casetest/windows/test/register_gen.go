@@ -13,4 +13,9 @@ func init() {
 	register.Register("planner_core_casetest_windows", "WindowSubqueryRewrite", RunWindowSubqueryRewrite)
 	register.Register("planner_core_casetest_windows", "WindowSubqueryOuterRef", RunWindowSubqueryOuterRef)
 	register.Register("planner_core_casetest_windows", "WindowWithOuterJoinAndCTE", RunWindowWithOuterJoinAndCTE)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_windows" {
+			InitForMega()
+		}
+	})
 }

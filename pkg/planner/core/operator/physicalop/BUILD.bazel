@@ -6,7 +6,6 @@ go_library(
         "base_physical_agg.go",
         "base_physical_join.go",
         "base_physical_plan.go",
-        "binding__failpoint_binding__.go",
         "enforce.go",
         "export_helper.go",
         "foreign_key.go",

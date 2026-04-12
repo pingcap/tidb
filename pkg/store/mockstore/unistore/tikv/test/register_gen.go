@@ -39,4 +39,9 @@ func init() {
 	register.Register("store_mockstore_unistore_tikv", "ExceedEndKey", RunExceedEndKey)
 	register.Register("store_mockstore_unistore_tikv", "SortAndDedupHashVals", RunSortAndDedupHashVals)
 	register.Register("store_mockstore_unistore_tikv", "SafeCopy", RunSafeCopy)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store_mockstore_unistore_tikv" {
+			InitForMega()
+		}
+	})
 }

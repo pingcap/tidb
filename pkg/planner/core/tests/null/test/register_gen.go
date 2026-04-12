@@ -9,4 +9,9 @@ import (
 func init() {
 	register.Register("planner_core_tests_null", "Issue54803", RunIssue54803)
 	register.Register("planner_core_tests_null", "Issue56745", RunIssue56745)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_tests_null" {
+			InitForMega()
+		}
+	})
 }

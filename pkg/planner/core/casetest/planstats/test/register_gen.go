@@ -15,4 +15,9 @@ func init() {
 	register.Register("planner_core_casetest_planstats", "CollectDependingVirtualCols", RunCollectDependingVirtualCols)
 	register.Register("planner_core_casetest_planstats", "StatsAnalyzedInDDL", RunStatsAnalyzedInDDL)
 	register.Register("planner_core_casetest_planstats", "PartialStatsInExplain", RunPartialStatsInExplain)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_planstats" {
+			InitForMega()
+		}
+	})
 }

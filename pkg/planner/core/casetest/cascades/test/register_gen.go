@@ -10,4 +10,9 @@ func init() {
 	register.Register("planner_core_casetest_cascades", "CascadesTemplate", RunCascadesTemplate)
 	register.Register("planner_core_casetest_cascades", "DeriveStats", RunDeriveStats)
 	register.Register("planner_core_casetest_cascades", "GroupNDVCols", RunGroupNDVCols)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_cascades" {
+			InitForMega()
+		}
+	})
 }

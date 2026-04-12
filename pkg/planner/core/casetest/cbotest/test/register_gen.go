@@ -25,4 +25,9 @@ func init() {
 	register.Register("planner_core_casetest_cbotest", "TiFlashCostModel", RunTiFlashCostModel)
 	register.Register("planner_core_casetest_cbotest", "IndexEqualUnknown", RunIndexEqualUnknown)
 	register.Register("planner_core_casetest_cbotest", "IndexJoinPreferIndexCoversMoreJoinKeyCols", RunIndexJoinPreferIndexCoversMoreJoinKeyCols)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_cbotest" {
+			InitForMega()
+		}
+	})
 }

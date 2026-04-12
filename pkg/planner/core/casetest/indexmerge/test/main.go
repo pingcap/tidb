@@ -27,13 +27,16 @@ import (
 var testDataMap = make(testdata.BookKeeper)
 var indexMergeSuiteData testdata.TestData
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite", true)
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
+}
 
+func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),

@@ -17,4 +17,9 @@ func init() {
 	register.Register("planner_core_casetest_indexmerge", "PlanCacheMVIndex", RunPlanCacheMVIndex)
 	register.Register("planner_core_casetest_indexmerge", "AnalyzeVectorIndex", RunAnalyzeVectorIndex)
 	register.Register("planner_core_casetest_indexmerge", "AnalyzeColumnarIndex", RunAnalyzeColumnarIndex)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_indexmerge" {
+			InitForMega()
+		}
+	})
 }

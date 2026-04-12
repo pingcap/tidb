@@ -52,4 +52,9 @@ func init() {
 	register.Register("planner/core/casetest/plancache", "PreparedStmtPartitionUnion", RunPreparedStmtPartitionUnion)
 	register.Register("planner/core/casetest/plancache", "PartitionVarcharFullCover", RunPartitionVarcharFullCover)
 	register.Register("planner/core/casetest/plancache", "PartitionIntFullCover", RunPartitionIntFullCover)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner/core/casetest/plancache" {
+			InitForMega()
+		}
+	})
 }

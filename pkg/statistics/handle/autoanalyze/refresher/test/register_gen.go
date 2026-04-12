@@ -19,4 +19,9 @@ func init() {
 	register.Register("statistics/handle/autoanalyze/refresher", "DoNotRetryTableNotExistJob", RunDoNotRetryTableNotExistJob)
 	register.Register("statistics/handle/autoanalyze/refresher", "AnalyzeHighestPriorityTablesWithFailedAnalysis", RunAnalyzeHighestPriorityTablesWithFailedAnalysis)
 	register.Register("statistics/handle/autoanalyze/refresher", "Worker", RunWorker)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/autoanalyze/refresher" {
+			InitForMega()
+		}
+	})
 }

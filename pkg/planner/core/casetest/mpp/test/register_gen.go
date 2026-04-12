@@ -30,4 +30,9 @@ func init() {
 	register.Register("planner_core_casetest_mpp", "MppVersion", RunMppVersion)
 	register.Register("planner_core_casetest_mpp", "MPPJoinWithRemoveUselessExchange", RunMPPJoinWithRemoveUselessExchange)
 	register.Register("planner_core_casetest_mpp", "MPPJoinWithoutUselessExchange", RunMPPJoinWithoutUselessExchange)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_mpp" {
+			InitForMega()
+		}
+	})
 }

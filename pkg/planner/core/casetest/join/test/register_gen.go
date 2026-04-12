@@ -12,4 +12,9 @@ func init() {
 	register.Register("planner_core_casetest_join", "JoinSimplifyCondition", RunJoinSimplifyCondition)
 	register.Register("planner_core_casetest_join", "KeepingJoinKeys", RunKeepingJoinKeys)
 	register.Register("planner_core_casetest_join", "JoinRegression", RunJoinRegression)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_join" {
+			InitForMega()
+		}
+	})
 }

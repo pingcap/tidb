@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "assert.go",  #keep
         "assert_common.go",
-        "binding__failpoint_binding__.go",
         "in_unittest.go",  #keep
         "no_assert.go",
         "not_in_unittest.go",

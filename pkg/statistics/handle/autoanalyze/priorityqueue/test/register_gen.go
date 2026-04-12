@@ -74,4 +74,9 @@ func init() {
 	register.Register("statistics/handle/autoanalyze/priorityqueue", "AnalyzeStaticPartitionedTable", RunAnalyzeStaticPartitionedTable)
 	register.Register("statistics/handle/autoanalyze/priorityqueue", "AnalyzeStaticPartitionedTableIndexes", RunAnalyzeStaticPartitionedTableIndexes)
 	register.Register("statistics/handle/autoanalyze/priorityqueue", "StaticPartitionedTableValidateAndPrepare", RunStaticPartitionedTableValidateAndPrepare)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "statistics/handle/autoanalyze/priorityqueue" {
+			InitForMega()
+		}
+	})
 }

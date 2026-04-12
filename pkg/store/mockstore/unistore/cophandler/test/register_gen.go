@@ -12,4 +12,9 @@ func init() {
 	register.Register("store_mockstore_unistore_cophandler", "ClosureExecutor", RunClosureExecutor)
 	register.Register("store_mockstore_unistore_cophandler", "MppExecutor", RunMppExecutor)
 	register.Register("store_mockstore_unistore_cophandler", "ExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected", RunExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "store_mockstore_unistore_cophandler" {
+			InitForMega()
+		}
+	})
 }

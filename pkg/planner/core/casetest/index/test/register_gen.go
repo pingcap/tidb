@@ -19,4 +19,9 @@ func init() {
 	register.Register("planner_core_casetest_index", "PartialIndexWithPlanCache", RunPartialIndexWithPlanCache)
 	register.Register("planner_core_casetest_index", "PartialIndexWithIndexPrune", RunPartialIndexWithIndexPrune)
 	register.Register("planner_core_casetest_index", "ForceIndexLimit", RunForceIndexLimit)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_index" {
+			InitForMega()
+		}
+	})
 }

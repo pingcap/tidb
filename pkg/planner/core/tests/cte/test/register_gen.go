@@ -8,4 +8,9 @@ import (
 
 func init() {
 	register.Register("planner_core_tests_cte", "CTEWithDifferentSchema", RunCTEWithDifferentSchema)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_tests_cte" {
+			InitForMega()
+		}
+	})
 }

@@ -29,11 +29,20 @@ import (
 
 var testDataMap = make(testdata.BookKeeper)
 
-func RunMain(m *testing.M) {
+func InitForMega() {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "tpcds_suite", true)
 	testsetup.SetupForCommonTest()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
+		conf.Performance.EnableStatsCacheMemQuota = true
+	})
+}
+
+func RunMain(m *testing.M) {
+	InitForMega()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
@@ -43,11 +52,7 @@ func RunMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
+
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()
 		return i

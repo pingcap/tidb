@@ -10,4 +10,9 @@ func init() {
 	register.Register("planner_core_casetest_parallelapply", "LateralHierarchyParallelApply", RunLateralHierarchyParallelApply)
 	register.Register("planner_core_casetest_parallelapply", "ParallelApplyWarnning", RunParallelApplyWarnning)
 	register.Register("planner_core_casetest_parallelapply", "ParallelApplyOrderedPlan", RunParallelApplyOrderedPlan)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_parallelapply" {
+			InitForMega()
+		}
+	})
 }

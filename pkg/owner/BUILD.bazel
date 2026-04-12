@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "owner",
     srcs = [
-        "binding__failpoint_binding__.go",
         "manager.go",
         "mock.go",
         "mock_owner_state.go",

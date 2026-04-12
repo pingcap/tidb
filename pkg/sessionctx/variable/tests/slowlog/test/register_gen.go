@@ -17,4 +17,9 @@ func init() {
 	register.Register("sessionctx_variable_tests_slowlog", "ParseSingleSlowLogField", RunParseSingleSlowLogField)
 	register.Register("sessionctx_variable_tests_slowlog", "ParseSessionSlowLogRules", RunParseSessionSlowLogRules)
 	register.Register("sessionctx_variable_tests_slowlog", "ParseGlobalSlowLogRules", RunParseGlobalSlowLogRules)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "sessionctx_variable_tests_slowlog" {
+			InitForMega()
+		}
+	})
 }

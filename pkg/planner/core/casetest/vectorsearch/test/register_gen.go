@@ -15,4 +15,9 @@ func init() {
 	register.Register("planner_core_casetest_vectorsearch", "VectorSearchWithPKAuto", RunVectorSearchWithPKAuto)
 	register.Register("planner_core_casetest_vectorsearch", "VectorSearchWithPKForceTiKV", RunVectorSearchWithPKForceTiKV)
 	register.Register("planner_core_casetest_vectorsearch", "VectorSearchHeavyFunction", RunVectorSearchHeavyFunction)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_vectorsearch" {
+			InitForMega()
+		}
+	})
 }

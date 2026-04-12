@@ -10,4 +10,9 @@ func init() {
 	register.Register("planner_core_casetest_correlated", "CorrelatedSubquery", RunCorrelatedSubquery)
 	register.Register("planner_core_casetest_correlated", "NaturalJoinWithCorrelatedSubquery", RunNaturalJoinWithCorrelatedSubquery)
 	register.Register("planner_core_casetest_correlated", "WrongDecorrelate", RunWrongDecorrelate)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_correlated" {
+			InitForMega()
+		}
+	})
 }

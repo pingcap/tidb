@@ -26,4 +26,9 @@ func init() {
 	register.Register("planner_core_casetest_partition", "RangeTimePruningExtract", RunRangeTimePruningExtract)
 	register.Register("planner_core_casetest_partition", "PartitionPrunerRegression", RunPartitionPrunerRegression)
 	register.Register("planner_core_casetest_partition", "Cast", RunCast)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_partition" {
+			InitForMega()
+		}
+	})
 }

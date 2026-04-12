@@ -20,4 +20,9 @@ func init() {
 	register.Register("planner_core_casetest_tpch", "Q21", RunQ21)
 	register.Register("planner_core_casetest_tpch", "Q22", RunQ22)
 	register.Register("planner_core_casetest_tpch", "BenchDaily", RunBenchDaily)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_tpch" {
+			InitForMega()
+		}
+	})
 }

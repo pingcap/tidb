@@ -4,7 +4,6 @@ go_library(
     name = "bindinfo",
     srcs = [
         "binding.go",
-        "binding__failpoint_binding__.go",
         "binding_auto.go",
         "binding_cache.go",
         "binding_handle.go",

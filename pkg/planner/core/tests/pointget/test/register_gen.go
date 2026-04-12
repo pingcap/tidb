@@ -15,4 +15,9 @@ func init() {
 	register.Register("planner_core_tests_pointget", "Issue52592", RunIssue52592)
 	register.Register("planner_core_tests_pointget", "Issue52592ForNextGen", RunIssue52592ForNextGen)
 	register.Register("planner_core_tests_pointget", "Issue56832", RunIssue56832)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_tests_pointget" {
+			InitForMega()
+		}
+	})
 }

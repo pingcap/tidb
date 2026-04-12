@@ -14,4 +14,9 @@ func init() {
 	register.Register("planner_core_casetest_binaryplan", "BinaryPlanOfPreparedStmt", RunBinaryPlanOfPreparedStmt)
 	register.Register("planner_core_casetest_binaryplan", "DecodeBinaryPlan", RunDecodeBinaryPlan)
 	register.Register("planner_core_casetest_binaryplan", "UnnecessaryBinaryPlanInSlowLog", RunUnnecessaryBinaryPlanInSlowLog)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_binaryplan" {
+			InitForMega()
+		}
+	})
 }

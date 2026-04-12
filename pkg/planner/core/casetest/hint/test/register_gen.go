@@ -16,4 +16,9 @@ func init() {
 	register.Register("planner_core_casetest_hint", "Hints", RunHints)
 	register.Register("planner_core_casetest_hint", "QBHintHandlerDuplicateObjects", RunQBHintHandlerDuplicateObjects)
 	register.Register("planner_core_casetest_hint", "OptimizerCostFactorHints", RunOptimizerCostFactorHints)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_hint" {
+			InitForMega()
+		}
+	})
 }

@@ -7,7 +7,6 @@ go_library(
         "backup_ebs.go",
         "backup_raw.go",
         "backup_txn.go",
-        "binding__failpoint_binding__.go",
         "common.go",
         "encryption.go",
         "restore.go",

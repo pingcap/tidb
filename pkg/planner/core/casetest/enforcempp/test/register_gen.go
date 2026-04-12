@@ -21,4 +21,9 @@ func init() {
 	register.Register("planner_core_casetest_enforcempp", "RollupMPP", RunRollupMPP)
 	register.Register("planner_core_casetest_enforcempp", "EnforceMPPNewest", RunEnforceMPPNewest)
 	register.Register("planner_core_casetest_enforcempp", "ReadCommittedWithTiflash", RunReadCommittedWithTiflash)
+	register.RegisterOnBeforeRun(func(pkg string) {
+		if pkg == "planner_core_casetest_enforcempp" {
+			InitForMega()
+		}
+	})
 }
