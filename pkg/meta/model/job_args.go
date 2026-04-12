@@ -271,15 +271,19 @@ type CreateMaterializedViewArgs struct {
 	// MLogTableIDs are table IDs of materialized view logs that this MV depends on.
 	// It's used for DDL job discoverability/filtering (e.g. mysql.tidb_ddl_job.table_ids).
 	MLogTableIDs []int64 `json:"mlog_table_ids,omitempty"`
+	// CreatedSchemaVersion records the schema version produced by phase-1 table creation.
+	// It is persisted as explicit job state so phase-2 finish can reuse the correct schema version
+	// without overloading BinlogInfo, which is result-oriented history metadata.
+	CreatedSchemaVersion int64 `json:"created_schema_version,omitempty"`
 }
 
 func (a *CreateMaterializedViewArgs) getArgsV1(*Job) []any {
-	return []any{a.TableInfo, a.MLogTableIDs}
+	return []any{a.TableInfo, a.MLogTableIDs, a.CreatedSchemaVersion}
 }
 
 func (a *CreateMaterializedViewArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
-	return errors.Trace(job.decodeArgs(a.TableInfo, &a.MLogTableIDs))
+	return errors.Trace(job.decodeArgs(a.TableInfo, &a.MLogTableIDs, &a.CreatedSchemaVersion))
 }
 
 // GetCreateMaterializedViewArgs gets the create materialized view args.

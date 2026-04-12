@@ -324,6 +324,24 @@ func TestMaterializedViewDDLBasic(t *testing.T) {
 	require.True(t, baseTable.Meta().MaterializedViewBase == nil || (baseTable.Meta().MaterializedViewBase.MLogID == 0 && len(baseTable.Meta().MaterializedViewBase.MViewIDs) == 0))
 }
 
+func TestCreateMaterializedViewHistoryJobSchemaVersion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_hist_schema_ver (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+
+	rows := tk.MustQuery("admin show ddl jobs where JOB_TYPE='create materialized view'").Rows()
+	require.NotEmpty(t, rows)
+	jobID, err := strconv.ParseInt(fmt.Sprint(rows[0][0]), 10, 64)
+	require.NoError(t, err)
+	historyJob, err := ddl.GetHistoryJobByID(tk.Session(), jobID)
+	require.NoError(t, err)
+	require.Greater(t, historyJob.BinlogInfo.SchemaVersion, int64(0))
+}
+
 func TestExchangePartitionRejectsMaterializedViewRelatedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
