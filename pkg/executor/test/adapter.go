@@ -579,8 +579,12 @@ func RunSlowLogMaxPerSec(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	// Reset to default value first, as other tests in mega binary may have changed it.
+	// In mega binary, other tests may have modified the global variable
+	// and it persists across CreateMockStore calls. Reset it first.
 	tk.MustExec(`set global tidb_slow_log_max_per_sec="0"`)
+
+	// Create a new test kit to pick up the reset global value.
+	tk = testkit.NewTestKit(t, store)
 
 	// default value
 	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
