@@ -108,6 +108,9 @@ lint:tools/bin/revive
 	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_with_keyspace_name.json
 	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_worker.json
 
+.PHONY: nogo
+nogo: lint ## Compatibility target for static-analysis gate
+
 .PHONY: license
 license:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \

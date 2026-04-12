@@ -25,7 +25,6 @@ import (
 	. "github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -352,7 +351,6 @@ func TestTruncateSafepoint(t *testing.T) {
 }
 
 func TestTruncateSafepointForGCS(t *testing.T) {
-	require.True(t, intest.InTest)
 	ctx := context.Background()
 	opts := fakestorage.Options{
 		NoListener: true,
@@ -363,15 +361,15 @@ func TestTruncateSafepointForGCS(t *testing.T) {
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
 
 	gcs := &backuppb.GCS{
-		Bucket:          bucketName,
-		Prefix:          "a/b/",
-		StorageClass:    "NEARLINE",
-		PredefinedAcl:   "private",
-		CredentialsBlob: "Fake Credentials",
+		Bucket:        bucketName,
+		Prefix:        "a/b/",
+		StorageClass:  "NEARLINE",
+		PredefinedAcl: "private",
 	}
 
 	l, err := objstore.NewGCSStorage(ctx, gcs, &storeapi.Options{
 		SendCredentials:  false,
+		NoCredentials:    true,
 		CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
 	})
@@ -678,6 +676,56 @@ func tmp(t *testing.T) *objstore.LocalStorage {
 	require.NoError(t, err)
 	s.IgnoreEnoentForDelete = true
 	return s
+}
+
+type onceErrStorage struct {
+	storeapi.Storage
+	mu        sync.Mutex
+	writeErr  error
+	deleteErr error
+}
+
+func (s *onceErrStorage) consumeWriteErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.writeErr == nil {
+		return nil
+	}
+	err := s.writeErr
+	s.writeErr = nil
+	return err
+}
+
+func (s *onceErrStorage) consumeDeleteErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deleteErr == nil {
+		return nil
+	}
+	err := s.deleteErr
+	s.deleteErr = nil
+	return err
+}
+
+func (s *onceErrStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if err := s.consumeWriteErr(); err != nil {
+		return err
+	}
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+func (s *onceErrStorage) DeleteFile(ctx context.Context, name string) error {
+	if err := s.consumeDeleteErr(); err != nil {
+		return err
+	}
+	return s.Storage.DeleteFile(ctx, name)
+}
+
+func (s *onceErrStorage) DeleteFiles(ctx context.Context, names []string) error {
+	if err := s.consumeDeleteErr(); err != nil {
+		return err
+	}
+	return s.Storage.DeleteFiles(ctx, names)
 }
 
 func mig(ops ...migOP) *backuppb.Migration {
@@ -2668,10 +2716,11 @@ func TestRetry(t *testing.T) {
 	mig2 := mig(mDel(mN(1), lN(2)))
 	pmig(s, 2, mig2)
 
-	require.NoError(t,
-		failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err", `1*return("this disk remembers nothing")`))
 	ctx := context.Background()
-	est := MigrationExtension(s)
+	est := MigrationExtension(&onceErrStorage{
+		Storage:  s,
+		writeErr: errors.New("this disk remembers nothing"),
+	})
 	mg := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
 	require.Len(t, mg.Warnings, 1)
 	require.ErrorContains(t, mg.Warnings[0], "this disk remembers nothing")
@@ -2701,8 +2750,10 @@ func TestRetryRemoveCompaction(t *testing.T) {
 		mTruncatedTo(27),
 	)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/local_delete_file_err", `1*return("this disk will never forget")`))
-	est := MigrationExtension(s)
+	est := MigrationExtension(&onceErrStorage{
+		Storage:   s,
+		deleteErr: errors.New("this disk will never forget"),
+	})
 	mg := est.migrateTo(ctx, mig1)
 	require.Len(t, mg.Warnings, 1)
 	require.ErrorContains(t, mg.Warnings[0], "this disk will never forget")
@@ -2856,9 +2907,17 @@ func TestUnsupportedVersion(t *testing.T) {
 
 	est := MigrationExtension(s)
 	ctx := context.Background()
-	_, err := est.Load(ctx)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "ErrMigrationVersionNotSupported")
+	const failpointPath = "github.com/pingcap/tidb/br/pkg/stream/delay-before-loading-migrations-collect"
+	require.NoError(t, failpoint.Enable(failpointPath, "return(50)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointPath))
+	}()
+
+	for range 20 {
+		_, err := est.Load(ctx)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "ErrMigrationVersionNotSupported")
+	}
 }
 
 func TestCreator(t *testing.T) {

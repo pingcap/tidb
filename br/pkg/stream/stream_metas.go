@@ -702,19 +702,28 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 	opt := &storeapi.WalkOption{
 		SubDir: m.prefix,
 	}
-	items := objstore.UnmarshalDir(ctx, opt, m.s, func(t *OrderedMigration, name string, b []byte) error {
-		t.Path = name
-		var err error
-		t.SeqNum, err = migIdOf(path.Base(name))
+	failpoint.Inject("delay-before-loading-migrations-collect", func(val failpoint.Value) {
+		if delayMS, ok := val.(int); ok {
+			time.Sleep(time.Duration(delayMS) * time.Millisecond)
+		}
+	})
+	collected := make([]*OrderedMigration, 0)
+	err := m.s.WalkDir(ctx, opt, func(filePath string, _ int64) error {
+		content, err := m.s.ReadFile(ctx, filePath)
+		if err != nil {
+			return errors.Annotatef(err, "during reading meta file %s from storage", filePath)
+		}
+
+		item := &OrderedMigration{Path: filePath}
+		item.SeqNum, err = migIdOf(path.Base(filePath))
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = t.unmarshalContent(b)
-		if err != nil {
-			return err
+		if err = item.unmarshalContent(content); err != nil {
+			return errors.Annotatef(err, "failed to unmarshal file %s", filePath)
 		}
 
-		if t.SeqNum == baseMigrationSN {
+		if item.SeqNum == baseMigrationSN {
 			// NOTE: the legacy truncating isn't implemented by appending a migration.
 			// We load their checkpoint here to be compatible with them.
 			// Then we can know a truncation happens so we are safe to remove stale compactions.
@@ -722,33 +731,34 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 			if err != nil {
 				return errors.Annotate(err, "failed to get the truncate safepoint for base migration")
 			}
-			t.Content.TruncatedTo = max(truncatedTs, t.Content.TruncatedTo)
+			item.Content.TruncatedTo = max(truncatedTs, item.Content.TruncatedTo)
 		}
+
+		collected = append(collected, item)
 		return nil
 	})
-	collected := iter.CollectAll(ctx, items)
-	if collected.Err != nil {
-		return Migrations{}, collected.Err
+	if err != nil {
+		return Migrations{}, err
 	}
-	if len(collected.Item) == 0 && cfg.notFoundIsErr {
+	if len(collected) == 0 && cfg.notFoundIsErr {
 		return Migrations{}, errors.Annotatef(berrors.ErrMigrationNotFound, "in the storage %s", m.s.URI())
 	}
-	sort.Slice(collected.Item, func(i, j int) bool {
-		return collected.Item[i].SeqNum < collected.Item[j].SeqNum
+	sort.Slice(collected, func(i, j int) bool {
+		return collected[i].SeqNum < collected[j].SeqNum
 	})
 
 	var result Migrations
-	if len(collected.Item) > 0 && collected.Item[0].SeqNum == baseMigrationSN {
+	if len(collected) > 0 && collected[0].SeqNum == baseMigrationSN {
 		result = Migrations{
-			Base:   &collected.Item[0].Content,
-			Layers: collected.Item[1:],
+			Base:   &collected[0].Content,
+			Layers: collected[1:],
 		}
 	} else {
 		// The BASE migration isn't persisted.
 		// This happens when `migrate-to` wasn't run ever.
 		result = Migrations{
 			Base:   NewMigration(),
-			Layers: collected.Item,
+			Layers: collected,
 		}
 	}
 	return result, nil
