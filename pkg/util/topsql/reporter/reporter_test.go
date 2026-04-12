@@ -197,7 +197,6 @@ func TestReportWorkerWaitsForInFlightSQLMetaRegistration(t *testing.T) {
 
 	tsr := NewRemoteTopSQLReporter(mockPlanBinaryDecoderFunc, mockPlanBinaryCompressFunc)
 	tsr.BindKeyspaceName([]byte("ks-race"))
-	t.Cleanup(tsr.Close)
 	t.Cleanup(func() {
 		select {
 		case <-releaseRegister:
@@ -207,6 +206,7 @@ func TestReportWorkerWaitsForInFlightSQLMetaRegistration(t *testing.T) {
 		normalizedMetaRegisterAfterLoadHook = origRegisterHook
 		reportWorkerBeforeBuildReportDataHook = origReportHook
 	})
+	t.Cleanup(tsr.Close)
 
 	ch := make(chan *ReportData, 1)
 	require.NoError(t, tsr.Register(newMockDataSink(ch)))

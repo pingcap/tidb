@@ -622,8 +622,8 @@ type planMeta struct {
 
 // normalizedSQLMap is a wrapped map used to register normalizedSQL.
 type normalizedSQLMap struct {
-	mu     sync.RWMutex
 	data   atomic.Pointer[sync.Map]
+	mu     sync.RWMutex
 	length atomic2.Int64
 }
 
@@ -700,8 +700,8 @@ type planBinaryCompressFunc func([]byte) string
 
 // normalizedSQLMap is a wrapped map used to register normalizedPlan.
 type normalizedPlanMap struct {
-	mu     sync.RWMutex
 	data   atomic.Pointer[sync.Map]
+	mu     sync.RWMutex
 	length atomic2.Int64
 }
 
