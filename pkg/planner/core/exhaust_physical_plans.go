@@ -708,12 +708,220 @@ func constructIndexHashJoin(
 	return indexHashJoins
 }
 
+<<<<<<< HEAD
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
 	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
+=======
+// constructIndexJoinStatic is used to enumerate a physical index join with undecided inner plan. Via index join prop
+// pushed down to the inner side, the inner plans will check the admission of valid indexJoinProp and enumerate admitted inner
+// operators. This function is quite similar with constructIndexJoin, differing in the following part:
+//
+// Since constructIndexJoin will fill the physicalIndexJoin with runtime details (adjusting keys, hash-keys, moving eq
+// conditions into other conditions because the underlying ds couldn't use them, etc.) — because previously the index join
+// enumeration could see the complete index chosen result after the inner task is built — the refactored version here can
+// only see the info it owns at static enumeration time. That's why we call the function constructIndexJoinStatic.
+//
+// The indexJoinProp is passed down to the inner side; it contains the runtime constant inner key used to build the
+// underlying index/pk range. When the inner side is built bottom-up, it returns the indexJoinInfo, which contains the
+// runtime information this physical index join needs. That's why we introduce the second function completePhysicalIndexJoin,
+// which fills physicalIndexJoin with all runtime information it lacks in the static enumeration phase.
+func constructIndexJoinStatic(
+	p *logicalop.LogicalJoin,
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	indexJoinProp *property.IndexJoinRuntimeProp,
+	outerStats *property.StatsInfo,
+) []base.PhysicalPlan {
+	joinType := p.JoinType
+	var (
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
+		isNullEQ      []bool
+	)
+	if outerIdx == 0 {
+		outerJoinKeys, innerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
+	} else {
+		innerJoinKeys, outerJoinKeys, isNullEQ, _ = p.GetJoinKeys()
+	}
+	chReqProps := make([]*property.PhysicalProperty, 2)
+	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType,
+		ExpectedCnt:       physicalop.CalcChildExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
+		SortItems:         prop.SortItems,
+		CTEProducerStatus: prop.CTEProducerStatus,
+		NoCopPushDown:     prop.NoCopPushDown,
+	}
+
+	// inner side should pass down the indexJoinProp, which contains the runtime constant inner key, which is used to build the underlying index/pk range.
+	chReqProps[1-outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64,
+		CTEProducerStatus: prop.CTEProducerStatus, IndexJoinProp: indexJoinProp, NoCopPushDown: prop.NoCopPushDown}
+
+	// Some runtime details depend on the indexJoinInfo produced by the inner side,
+	// so we defer them to completePhysicalIndexJoin after the inner task is built.
+
+	baseJoin := physicalop.BasePhysicalJoin{
+		InnerChildIdx:   1 - outerIdx,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		// for static enumeration here, we just pass down the original other conditions
+		OtherConditions: p.OtherConditions,
+		JoinType:        joinType,
+		// for static enumeration here, we just pass down the original outerJoinKeys, innerJoinKeys, isNullEQ
+		OuterJoinKeys: outerJoinKeys,
+		InnerJoinKeys: innerJoinKeys,
+		IsNullEQ:      isNullEQ,
+		DefaultValues: p.DefaultValues,
+	}
+
+	join := physicalop.PhysicalIndexJoin{
+		BasePhysicalJoin: baseJoin,
+		// for static enumeration here, we don't need to fill inner plan anymore.
+		// for static enumeration here, the KeyOff2IdxOff, Ranges, CompareFilters, OuterHashKeys, InnerHashKeys are
+		// waiting for attach2Task's complement after see the inner plan's indexJoinInfo returned by underlying ds.
+		//
+		// for static enumeration here, we just pass down the original equal condition for condition adjustment rather
+		// depend on the original logical join node.
+		EqualConditions: p.EqualConditions,
+		// Only count candidates that keep the original Apply outer/inner order.
+		FromDecorrelatedApply: p.FromDecorrelatedApply && outerIdx == 0,
+	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
+	join.SetSchema(p.Schema())
+	return []base.PhysicalPlan{join}
+}
+
+// completePhysicalIndexJoin
+// as you see, completePhysicalIndexJoin is called in attach2Task, when the inner plan of a physical index join or a
+// physical index hash join is built bottom-up. Then indexJoin info is passed bottom-up within the Task to be filled.
+// completePhysicalIndexJoin will fill physicalIndexJoin about all the runtime information it lacks in static enumeration
+// phase.
+// There are several things to be filled:
+// 1. ranges:
+// as the old comment said: when inner plan is TableReader, the parameter `ranges` will be nil. Because pk
+// only have one column. So all of its range is generated during execution time. So set a new ranges{} when it is nil.
+//
+// 2. KeyOff2IdxOffs: fill the keyOff2IdxOffs' -1 and refill the eq condition back to other conditions and adjust inner
+// or outer keys and info.KeyOff2IdxOff has been used above to re-derive newInnerKeys, newOuterKeys, newIsNullEQ,
+// newOtherConds, newKeyOff.
+//
+//	physic.IsNullEQ = newIsNullEQ
+//	physic.InnerJoinKeys = newInnerKeys
+//	physic.OuterJoinKeys = newOuterKeys
+//	physic.OtherConditions = newOtherConds
+//	physic.KeyOff2IdxOff = newKeyOff
+//
+// 3. OuterHashKeys, InnerHashKeys:
+// for indexHashJoin, those not used EQ condition which has been moved into the new other-conditions can be extracted out
+// to build the hash table to avoid lazy evaluation as other conditions.
+//
+//  4. Info's Ranges, IdxColLens, CompareFilters:
+//     the underlying ds chosen path's ranges, idxColLens, and compareFilters.
+//     physic.Ranges = info.Ranges
+//     physic.IdxColLens = info.IdxColLens
+//     physic.CompareFilters = info.CompareFilters
+func completePhysicalIndexJoin(physic *physicalop.PhysicalIndexJoin, rt *physicalop.RootTask, innerS, outerS *expression.Schema, extractOtherEQ bool) base.PhysicalPlan {
+	info := rt.IndexJoinInfo
+	// runtime fill back ranges
+	if info.Ranges == nil {
+		info.Ranges = ranger.Ranges{} // empty range
+	}
+	// set the new key off according to the index join info's keyOff2IdxOff
+	newKeyOff := make([]int, 0, len(info.KeyOff2IdxOff))
+	// IsNullEQ & InnerJoinKeys & OuterJoinKeys in physic may change.
+	newIsNullEQ := make([]bool, 0, len(physic.IsNullEQ))
+	newInnerKeys := make([]*expression.Column, 0, len(physic.InnerJoinKeys))
+	newOuterKeys := make([]*expression.Column, 0, len(physic.OuterJoinKeys))
+	// OtherCondition may change because EQ can be leveraged in hash table retrieve.
+	newOtherConds := make([]expression.Expression, len(physic.OtherConditions), len(physic.OtherConditions)+len(physic.EqualConditions))
+	copy(newOtherConds, physic.OtherConditions)
+	for keyOff, idxOff := range info.KeyOff2IdxOff {
+		// if the keyOff is not used in the index join, we need to move the equal condition back to other conditions to eval them.
+		if info.KeyOff2IdxOff[keyOff] < 0 {
+			newOtherConds = append(newOtherConds, physic.EqualConditions[keyOff])
+			continue
+		}
+		// collecting the really used inner keys, outer keys, isNullEQ, and keyOff2IdxOff.
+		newInnerKeys = append(newInnerKeys, physic.InnerJoinKeys[keyOff])
+		newOuterKeys = append(newOuterKeys, physic.OuterJoinKeys[keyOff])
+		newIsNullEQ = append(newIsNullEQ, physic.IsNullEQ[keyOff])
+		newKeyOff = append(newKeyOff, idxOff)
+	}
+
+	// we can use the `col <eq> col` in new `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
+	// for indexHashJoin, those not used EQ condition which has been moved into new other-conditions can be extracted out
+	// to build the hash table.
+	var outerHashKeys, innerHashKeys []*expression.Column
+	outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
+	// used innerKeys and outerKeys can surely be the hashKeys, besides that, the EQ in otherConds can also be used as hashKeys.
+	copy(outerHashKeys, newOuterKeys)
+	copy(innerHashKeys, newInnerKeys)
+	for i := len(newOtherConds) - 1; extractOtherEQ && i >= 0; i = i - 1 {
+		switch c := newOtherConds[i].(type) {
+		case *expression.ScalarFunction:
+			if c.FuncName.L == ast.EQ {
+				lhs, rhs, ok := expression.IsColOpCol(c)
+				if ok {
+					if lhs.InOperand || rhs.InOperand {
+						// if this other-cond is from a `[not] in` sub-query, do not convert it into eq-cond since
+						// IndexJoin cannot deal with NULL correctly in this case; please see #25799 for more details.
+						continue
+					}
+					// when it arrives here, we can sure that we got a EQ conditions and each side of them is a bare
+					// column, while we don't know whether each of them comes from the inner or outer, so check it.
+					outerSchema, innerSchema := outerS, innerS
+					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, lhs) // nozero
+						innerHashKeys = append(innerHashKeys, rhs) // nozero
+					} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, rhs) // nozero
+						innerHashKeys = append(innerHashKeys, lhs) // nozero
+					}
+					// if not, this EQ function is useless, keep it in new other conditions.
+					newOtherConds = slices.Delete(newOtherConds, i, i+1)
+				}
+			}
+		default:
+			continue
+		}
+	}
+	// then, fill all newXXX runtime info back to the physic indexJoin.
+	// info.KeyOff2IdxOff has been used above to derive newInnerKeys, newOuterKeys, newIsNullEQ, newOtherConds, newKeyOff.
+	physic.IsNullEQ = newIsNullEQ
+	physic.InnerJoinKeys = newInnerKeys
+	physic.OuterJoinKeys = newOuterKeys
+	physic.OtherConditions = newOtherConds
+	physic.KeyOff2IdxOff = newKeyOff
+	// the underlying ds chosen path's ranges, idxColLens, and compareFilters.
+	physic.Ranges = info.Ranges
+	physic.IdxColLens = info.IdxColLens
+	physic.CompareFilters = info.CompareFilters
+	// fill executing hashKeys, which containing inner/outer keys, and extracted EQ keys from otherConds if any.
+	physic.OuterHashKeys = outerHashKeys
+	physic.InnerHashKeys = innerHashKeys
+	// the logical EqualConditions is not used anymore in later phase.
+	physic.EqualConditions = nil
+	// clear rootTask's indexJoinInfo in case of pushing upward, because physical index join is indexJoinInfo's consumer.
+	rt.IndexJoinInfo = nil
+	return physic
+}
+
+// enumerateIndexJoinByOuterIdx will enumerate temporary index joins by index join prop required for its inner child.
+func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
+	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
+	stats0, stats1, schema0, schema1 := getJoinChildStatsAndSchema(ge, p)
+	var outerSchema *expression.Schema
+	var outerStats *property.StatsInfo
+	if outerIdx == 0 {
+		outerSchema = schema0
+		outerStats = stats0
+	} else {
+		outerSchema = schema1
+		outerStats = stats1
+	}
+	// need same order
+>>>>>>> d8c6be61527 (planner: tidb_opt_ordering_index_selectivity_ratio for merge join (#67588))
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
 	if !prop.AllColsFromSchema(outerChild.Schema()) || !all {
@@ -2373,7 +2581,20 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		canUseCache = false
 	}
 
+<<<<<<< HEAD
 	apply := PhysicalApply{
+=======
+	// When the parent requires ordering, compute the expected outer row count
+	// accounting for the ordering index selectivity ratio, so that ordered
+	// scans model the extra outer rows that may need to be read before the
+	// inner side produces enough matching rows (same logic used by IndexJoin).
+	outerExpectedCnt := math.MaxFloat64
+	if !prop.IsSortItemEmpty() {
+		outerExpectedCnt = physicalop.CalcChildExpectedCnt(la.SCtx(), prop, stats0.RowCount, la.StatsInfo().RowCount)
+	}
+
+	apply := physicalop.PhysicalApply{
+>>>>>>> d8c6be61527 (planner: tidb_opt_ordering_index_selectivity_ratio for merge join (#67588))
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
 		CanUseCache:      canUseCache,

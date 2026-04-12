@@ -1338,6 +1338,190 @@ func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
 	require.Less(t, planCost3, planCost4)
 }
 
+<<<<<<< HEAD
+=======
+func TestOrderingIdxSelectivityRatioForMergeJoin(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1, t2")
+	// Use larger tables so that the ExpectedCnt difference from the ordering
+	// penalty produces a measurable child-cost change.
+	testKit.MustExec("create table t1(a int, b int, c int, index ib(b))")
+	testKit.MustExec("create table t2(a int, b int, c int, index ib(b))")
+	testKit.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
+	testKit.MustExec("insert into t2 values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
+	// Double the data several times to reach ~320 rows per table.
+	for i := 0; i < 5; i++ {
+		testKit.MustExec("insert into t1 select a,b,c from t1")
+		testKit.MustExec("insert into t2 select a,b,c from t2")
+	}
+	testKit.MustExec("analyze table t1")
+	testKit.MustExec("analyze table t2")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	// Force merge join via hint with use-index hints so the plan shape stays
+	// stable across ratio values. The ordering index ib(b) matches the
+	// ORDER BY, so the cross-estimation path inflates the IndexScan row
+	// count when the ratio is positive, increasing the merge-join cost.
+	query := "explain format=verbose select /*+ merge_join(t1, t2) */ t1.* from t1 use index(ib) join t2 use index(ib) on t1.b=t2.b where t1.c < t2.c order by t1.b limit 2"
+
+	hasMergeJoin := func(rows [][]any) bool {
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "MergeJoin") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Disable ordering ratio: -1 and 0 should have the same cost.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = -1")
+	rs := testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=-1")
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0")
+	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=0")
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	require.Equal(t, planCost1, planCost2)
+
+	// Increasing the ratio should increase the cost of merge join.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.5")
+	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=0.5")
+	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	require.Less(t, planCost2, planCost3)
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 1")
+	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=1")
+	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err4)
+	require.Less(t, planCost3, planCost4)
+}
+
+func TestOrderingIdxSelectivityRatioForApply(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1, t2")
+	testKit.MustExec("create table t1(a int, b int, c int, index ibc(b, c))")
+	testKit.MustExec("create table t2(a int, b int, c int)")
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+
+	is := dom.InfoSchema()
+	tb1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tbl1 := tb1.Meta()
+	tb2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+	tbl2 := tb2.Meta()
+
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+
+	// Mock stats for t1: 1000 rows, 1000 NDV.
+	mockStatsTbl1 := mockStatsTable(tbl1, 1000)
+	colValues1, err := generateIntDatum(1, 1000)
+	require.NoError(t, err)
+	idxValues1 := make([]types.Datum, 0, len(colValues1))
+	for _, val := range colValues1 {
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, val)
+		require.NoError(t, err)
+		idxValues1 = append(idxValues1, types.NewBytesDatum(b))
+	}
+	for i, col := range tbl1.Columns {
+		mockStatsTbl1.SetCol(col.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(col.ID, colValues1, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tbl1.Columns[i],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	mockStatsTbl1.SetIdx(tbl1.Indices[0].ID, &statistics.Index{
+		Histogram:         *mockStatsHistogram(tbl1.Indices[0].ID, idxValues1, 1, types.NewFieldType(mysql.TypeBlob)),
+		Info:              tbl1.Indices[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	})
+	generateMapsForMockStatsTbl(mockStatsTbl1)
+	stat1 := h.GetPhysicalTableStats(tbl1.ID, tbl1)
+	stat1.HistColl = mockStatsTbl1.HistColl
+
+	// Mock stats for t2: 1000 rows, 1000 NDV.
+	mockStatsTbl2 := mockStatsTable(tbl2, 1000)
+	colValues2, err := generateIntDatum(1, 1000)
+	require.NoError(t, err)
+	for i, col := range tbl2.Columns {
+		mockStatsTbl2.SetCol(col.ID, &statistics.Column{
+			Histogram:         *mockStatsHistogram(col.ID, colValues2, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tbl2.Columns[i],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		})
+	}
+	generateMapsForMockStatsTbl(mockStatsTbl2)
+	stat2 := h.GetPhysicalTableStats(tbl2.ID, tbl2)
+	stat2.HistColl = mockStatsTbl2.HistColl
+
+	// Discourage merge join, hash join, and topn to steer the plan toward Apply + Limit.
+	testKit.MustExec("set @@session.tidb_opt_merge_join_cost_factor = 1000")
+	testKit.MustExec("set @@session.tidb_opt_hash_join_cost_factor = 1000")
+	testKit.MustExec("set @@session.tidb_opt_topn_cost_factor = 1000")
+
+	// Correlated subquery with ORDER BY + LIMIT triggers the Apply plan
+	// with the ordering index selectivity ratio affecting cost.
+	query := "select * from t1 where exists (select /*+ no_decorrelate() */ 1 from t2 where t2.b = t1.b and t2.c > 1) order by t1.b limit 2"
+
+	// hasApply checks that at least one operator in the plan is an Apply.
+	hasApply := func(rows [][]any) bool {
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "Apply") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Disable idx_selectivity_ratio using -1 and 0 - both should have no effect.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = -1")
+	rs := testKit.MustQuery("explain format=verbose " + query).Rows()
+	require.True(t, hasApply(rs), "expected Apply in plan")
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0")
+	rs = testKit.MustQuery("explain format=verbose " + query).Rows()
+	require.True(t, hasApply(rs), "expected Apply in plan")
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	require.Equal(t, planCost1, planCost2)
+
+	// Increasing the ratio should increase the cost of Apply, so the plan cost should increase.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.5")
+	rs = testKit.MustQuery("explain format=verbose " + query).Rows()
+	require.True(t, hasApply(rs), "expected Apply in plan")
+	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	require.Less(t, planCost2, planCost3)
+
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 1")
+	rs = testKit.MustQuery("explain format=verbose " + query).Rows()
+	require.True(t, hasApply(rs), "expected Apply in plan")
+	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err4)
+	require.Less(t, planCost3, planCost4)
+}
+
+>>>>>>> d8c6be61527 (planner: tidb_opt_ordering_index_selectivity_ratio for merge join (#67588))
 func TestCrossValidationSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
