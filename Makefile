@@ -108,6 +108,9 @@ lint:tools/bin/revive
 	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_with_keyspace_name.json
 	go run tools/dashboard-linter/main.go pkg/metrics/nextgengrafana/tidb_worker.json
 
+.PHONY: nogo
+nogo: lint ## Backward-compatible alias for legacy automation invoking `make nogo`
+
 .PHONY: license
 license:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \

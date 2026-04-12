@@ -1136,9 +1136,32 @@ func TestTopRUPipelineInProcessIntegration(t *testing.T) {
 	}, rmclient.DefaultRUVersion)
 
 	require.Eventually(t, func() bool {
+		// Wait until collectWorker has actually merged both hot-key batches.
+		// Channel drain is not enough because receive and addBatch are separate steps.
 		tsr.ruAggregator.mu.Lock()
 		defer tsr.ruAggregator.mu.Unlock()
-		return len(tsr.ruAggregator.buckets) > 0
+
+		for _, bucket := range tsr.ruAggregator.buckets {
+			if bucket == nil || bucket.collecting == nil {
+				continue
+			}
+			userCollecting, ok := bucket.collecting.users["user-hot"]
+			if !ok {
+				continue
+			}
+			hotRecord, ok := userCollecting.records[makeKey(stmtstats.BinaryDigest("sql-hot"), stmtstats.BinaryDigest("plan-hot"))]
+			if !ok {
+				continue
+			}
+
+			hotTotalRU, hotExecCount := 0.0, uint64(0)
+			for _, item := range hotRecord.items {
+				hotTotalRU += item.totalRU
+				hotExecCount += item.execCount
+			}
+			return hotTotalRU >= 17.0 && hotExecCount >= 3
+		}
+		return false
 	}, time.Second, 10*time.Millisecond)
 
 	tsr.takeDataAndSendToReportChan(60)
