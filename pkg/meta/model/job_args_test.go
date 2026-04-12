@@ -167,6 +167,25 @@ func TestCreateTableArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
 		}
 	})
+	t.Run("create materialized view", func(t *testing.T) {
+		inArgs := &CreateMaterializedViewArgs{
+			TableInfo: &TableInfo{
+				ID:               102,
+				MaterializedView: &MaterializedViewInfo{BaseTableIDs: []int64{88}},
+			},
+			MLogTableIDs:         []int64{99},
+			CreatedSchemaVersion: 1234,
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateMaterializedView)))
+			args, err := GetCreateMaterializedViewArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.MLogTableIDs, args.MLogTableIDs)
+			require.EqualValues(t, inArgs.CreatedSchemaVersion, args.CreatedSchemaVersion)
+		}
+	})
 	t.Run("create view", func(t *testing.T) {
 		inArgs := &CreateTableArgs{
 			TableInfo:      &TableInfo{ID: 122},
