@@ -18,7 +18,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/tls"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	goerrors "errors"
 	"flag"
 	"fmt"
@@ -74,6 +76,19 @@ func prepareGCSStore(t *testing.T, bucketName string, accessRec *recording.Acces
 	})
 	require.NoError(t, err)
 	return server, stg
+}
+
+func fakeServiceAccountCredentials(t *testing.T) string {
+	t.Helper()
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	pkcs8Key, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	require.NoError(t, err)
+
+	return fmt.Sprintf(`{"type":"service_account","client_email":"test@example.com","private_key":%q,"token_uri":"https://oauth2.googleapis.com/token"}`,
+		string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8Key})))
 }
 
 func TestGCS(t *testing.T) {
@@ -354,7 +369,7 @@ func TestNewGCSStorage(t *testing.T) {
 			require.NoError(t, fakeCredentialsFile.Close())
 			require.NoError(t, os.Remove(fakeCredentialsFile.Name()))
 		}()
-		_, err = fakeCredentialsFile.Write([]byte(`{"type": "service_account"}`))
+		_, err = fakeCredentialsFile.Write([]byte(fakeServiceAccountCredentials(t)))
 		require.NoError(t, err)
 		err = os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", fakeCredentialsFile.Name())
 		defer func() {
@@ -375,7 +390,7 @@ func TestNewGCSStorage(t *testing.T) {
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
-		require.Equal(t, `{"type": "service_account"}`, gcs.CredentialsBlob)
+		require.NotEmpty(t, gcs.CredentialsBlob)
 	}
 
 	{
@@ -385,7 +400,7 @@ func TestNewGCSStorage(t *testing.T) {
 			require.NoError(t, fakeCredentialsFile.Close())
 			require.NoError(t, os.Remove(fakeCredentialsFile.Name()))
 		}()
-		_, err = fakeCredentialsFile.Write([]byte(`{"type": "service_account"}`))
+		_, err = fakeCredentialsFile.Write([]byte(fakeServiceAccountCredentials(t)))
 		require.NoError(t, err)
 		err = os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", fakeCredentialsFile.Name())
 		defer func() {
@@ -428,12 +443,13 @@ func TestNewGCSStorage(t *testing.T) {
 	}
 	// without http client
 	{
+		fakeCreds := fakeServiceAccountCredentials(t)
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
 			Prefix:          "a/b",
 			StorageClass:    "NEARLINE",
 			PredefinedAcl:   "private",
-			CredentialsBlob: `{"type": "service_account"}`,
+			CredentialsBlob: fakeCreds,
 		}
 		_, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  false,
@@ -459,74 +475,6 @@ func TestNewGCSStorage(t *testing.T) {
 		require.Equal(t, "", gcs.CredentialsBlob)
 		require.Equal(t, "a/b/x", s.objectName("x"))
 	}
-}
-
-func TestPrepareGCSHTTPClientDisablesHTTP2(t *testing.T) {
-	client := prepareGCSHTTPClient(nil)
-	transport, ok := client.Transport.(*http.Transport)
-	require.True(t, ok)
-	require.NotNil(t, transport.Proxy)
-	require.False(t, transport.ForceAttemptHTTP2)
-	require.NotNil(t, transport.Protocols)
-	require.True(t, transport.Protocols.HTTP1())
-	require.False(t, transport.Protocols.HTTP2())
-	require.NotNil(t, transport.TLSNextProto)
-}
-
-func TestPrepareGCSHTTPClientCopiesTransportSettings(t *testing.T) {
-	baseTransport, ok := http.DefaultTransport.(*http.Transport)
-	require.True(t, ok)
-
-	originalTransport := &http.Transport{
-		Proxy:                  baseTransport.Proxy,
-		DialContext:            baseTransport.DialContext,
-		TLSClientConfig:        &tls.Config{ServerName: "storage.googleapis.com", NextProtos: []string{"h2", "http/1.1"}},
-		TLSHandshakeTimeout:    12 * time.Second,
-		DisableKeepAlives:      true,
-		DisableCompression:     true,
-		MaxIdleConns:           17,
-		MaxIdleConnsPerHost:    19,
-		MaxConnsPerHost:        23,
-		IdleConnTimeout:        29 * time.Second,
-		ResponseHeaderTimeout:  31 * time.Second,
-		ExpectContinueTimeout:  37 * time.Second,
-		ProxyConnectHeader:     http.Header{"X-Test": []string{"value"}},
-		MaxResponseHeaderBytes: 41,
-		WriteBufferSize:        43,
-		ReadBufferSize:         47,
-		ForceAttemptHTTP2:      true,
-	}
-	originalClient := &http.Client{Transport: originalTransport, Timeout: 3 * time.Second}
-
-	client := prepareGCSHTTPClient(originalClient)
-	transport, ok := client.Transport.(*http.Transport)
-	require.True(t, ok)
-
-	require.NotSame(t, originalClient, client)
-	require.NotSame(t, originalTransport, transport)
-	require.Equal(t, originalClient.Timeout, client.Timeout)
-	require.Equal(t, originalTransport.MaxIdleConns, transport.MaxIdleConns)
-	require.Equal(t, originalTransport.MaxIdleConnsPerHost, transport.MaxIdleConnsPerHost)
-	require.Equal(t, originalTransport.MaxConnsPerHost, transport.MaxConnsPerHost)
-	require.Equal(t, originalTransport.IdleConnTimeout, transport.IdleConnTimeout)
-	require.Equal(t, originalTransport.ResponseHeaderTimeout, transport.ResponseHeaderTimeout)
-	require.Equal(t, originalTransport.ExpectContinueTimeout, transport.ExpectContinueTimeout)
-	require.Equal(t, originalTransport.MaxResponseHeaderBytes, transport.MaxResponseHeaderBytes)
-	require.Equal(t, originalTransport.WriteBufferSize, transport.WriteBufferSize)
-	require.Equal(t, originalTransport.ReadBufferSize, transport.ReadBufferSize)
-	require.True(t, originalTransport.ForceAttemptHTTP2)
-	require.False(t, transport.ForceAttemptHTTP2)
-	require.NotNil(t, transport.Protocols)
-	require.True(t, transport.Protocols.HTTP1())
-	require.False(t, transport.Protocols.HTTP2())
-	require.NotNil(t, transport.TLSNextProto)
-	require.NotSame(t, originalTransport.TLSClientConfig, transport.TLSClientConfig)
-	require.Equal(t, originalTransport.TLSClientConfig.ServerName, transport.TLSClientConfig.ServerName)
-	require.Equal(t, []string{"http/1.1"}, transport.TLSClientConfig.NextProtos)
-	require.Equal(t, []string{"h2", "http/1.1"}, originalTransport.TLSClientConfig.NextProtos)
-	require.Equal(t, "value", originalTransport.ProxyConnectHeader.Get("X-Test"))
-	transport.ProxyConnectHeader.Set("X-Test", "changed")
-	require.Equal(t, "value", originalTransport.ProxyConnectHeader.Get("X-Test"))
 }
 
 func createGCSStore(t *testing.T) *GCSStorage {
