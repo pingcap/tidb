@@ -2733,8 +2733,8 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
 	intest.AssertFunc(func() bool {
 		for _, obj := range s.RefreshObjects {
-			switch obj.RefreshObjectScope {
-			case ast.RefreshObjectScopeDatabase, ast.RefreshObjectScopeTable:
+			switch obj.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase, ast.StatsObjectScopeTable:
 				if obj.DBName.L == "" {
 					return false
 				}
@@ -2792,12 +2792,12 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 		return origCount == len(s.RefreshObjects)
 	}, "RefreshObjects should be deduplicated in the building phase")
 	tableIDs := make([]int64, 0, len(s.RefreshObjects))
-	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].RefreshObjectScope == ast.RefreshObjectScopeGlobal
+	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
 	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	if !isGlobalScope {
 		for _, refreshObject := range s.RefreshObjects {
-			switch refreshObject.RefreshObjectScope {
-			case ast.RefreshObjectScopeDatabase:
+			switch refreshObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
 				exists := is.SchemaExists(refreshObject.DBName)
 				if !exists {
 					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
@@ -2818,7 +2818,7 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 				for _, table := range tables {
 					tableIDs = append(tableIDs, table.ID)
 				}
-			case ast.RefreshObjectScopeTable:
+			case ast.StatsObjectScopeTable:
 				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
 				if err != nil {
 					if infoschema.ErrTableNotExists.Equal(err) {
