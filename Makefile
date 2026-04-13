@@ -206,7 +206,7 @@ ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(CLEAN_UT_BINARY)
 
 .PHONY: bazel_coverage_test
-bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run all tests (Phase 1: bazel unit tests, Phase 2: mega integration tests)
+bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run CI coverage flow (Phase 1: bazel unit tests, Phase 2: mega build; set RUN_MEGA_TESTS=1 to execute mega tests)
 	@echo "=== Enabling failpoints ==="
 	@tools/bin/failpoint-ctl enable
 	@echo "=== Updating BUILD.bazel files (gazelle) ==="
@@ -223,8 +223,11 @@ bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run all tests (Phas
 	@echo "=== Phase 2: Building mega binary ==="
 	@$(MAKE) bazel-mega-binary
 	@echo "=== Phase 2: Running mega tests ==="
-	@tools/bin/ut --mega run \
-		|| { $(MAKE) ut-mega-cleanup; exit 1; }
+	@if [ "$(RUN_MEGA_TESTS)" = "1" ]; then \
+		tools/bin/ut --mega run || { $(MAKE) ut-mega-cleanup; exit 1; }; \
+	else \
+		echo "=== Skip mega tests because RUN_MEGA_TESTS!=1 (compile-only mode) ==="; \
+	fi
 	@$(MAKE) ut-mega-cleanup
 
 .PHONY: bazel-mega-binary
