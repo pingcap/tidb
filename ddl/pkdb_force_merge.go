@@ -62,7 +62,8 @@ func GetForceMergeRangesForGCDeleteRange(
 
 func supportForceMergeForGCDeleteRange(actionType model.ActionType) bool {
 	switch actionType {
-	case model.ActionDropTable, model.ActionTruncateTable,
+	case model.ActionDropSchema,
+		model.ActionDropTable, model.ActionTruncateTable,
 		model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		return true
 	}

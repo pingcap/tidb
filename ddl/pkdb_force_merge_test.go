@@ -53,6 +53,22 @@ func TestGetForceMergeRangesForGCDeleteRangeUsesDeleteRangeKeys(t *testing.T) {
 	}}, ranges)
 }
 
+func TestGetForceMergeRangesForGCDeleteRangeUsesDeleteRangeKeysForDropSchema(t *testing.T) {
+	setDropTableForceMergeEnabledForTest(t, true)
+
+	dr := ddlutil.DelRangeTask{
+		StartKey: []byte("schema-start"),
+		EndKey:   []byte("schema-end"),
+	}
+	historyJob := newForceMergeGCSchemaJob(model.ActionDropSchema, 201, "test")
+
+	ranges := GetForceMergeRangesForGCDeleteRange(historyJob, dr, nil)
+	require.Equal(t, []infosync.ForceMergeKeyRange{{
+		StartKey: []byte("schema-start"),
+		EndKey:   []byte("schema-end"),
+	}}, ranges)
+}
+
 func TestGetForceMergeRangesForGCDeleteRangeSkipsSystemTable(t *testing.T) {
 	setDropTableForceMergeEnabledForTest(t, true)
 
@@ -223,6 +239,21 @@ func newForceMergeGCJob(
 		TableName:  tableName,
 		BinlogInfo: &model.HistoryInfo{
 			TableInfo: tblInfo,
+		},
+	}
+}
+
+func newForceMergeGCSchemaJob(actionType model.ActionType, schemaID int64, schemaName string) *model.Job {
+	return &model.Job{
+		Type:       actionType,
+		SchemaID:   schemaID,
+		SchemaName: schemaName,
+		BinlogInfo: &model.HistoryInfo{
+			DBInfo: &model.DBInfo{
+				ID:    schemaID,
+				Name:  model.NewCIStr(schemaName),
+				State: model.StateNone,
+			},
 		},
 	}
 }
