@@ -121,6 +121,11 @@ func TestCheckpointTableNotFoundError(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.IsNotFound(err))
 	require.True(t, IsCheckpointTableNotFoundError(err))
+	require.EqualError(
+		t,
+		err,
+		"checkpoint for table `db`.`table` not found; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
+	)
 	require.ErrorContains(t, err, "checkpoint for table `db`.`table`")
 	require.ErrorContains(t, err, "--checkpoint-error-ignore='`db`.`table`'")
 	require.ErrorContains(t, err, "--checkpoint-error-destroy='`db`.`table`'")

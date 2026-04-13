@@ -105,14 +105,11 @@ var (
 	ErrFoundIndexConflictRecords = errors.Normalize("found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundIndexConflictRecords"))
 )
 
-const checkpointTableNotFoundHint = "table checkpoint does not exist; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'"
+const checkpointTableNotFoundHint = "valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'"
 
 // CheckpointTableNotFoundError returns a user-facing error for missing table checkpoints.
 func CheckpointTableNotFoundError(tableName string) error {
-	return errors.Annotatef(
-		errors.NotFoundf("checkpoint for table %s", tableName),
-		checkpointTableNotFoundHint,
-	)
+	return errors.Errorf("checkpoint for table %s not found; %s", tableName, checkpointTableNotFoundHint)
 }
 
 // IsCheckpointTableNotFoundError reports whether err was produced by CheckpointTableNotFoundError.
