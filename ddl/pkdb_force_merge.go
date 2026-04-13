@@ -139,14 +139,14 @@ func GetMergeEmptyRegionsKeyRanges(
 		minTableID = 1
 	}
 
-	occupiedTableIDs, maxTableID := collectMergeEmptyRegionsOccupiedTableIDs(is)
+	occupiedTableIDs, maxTableID := collectMergeEmptyRegionsOccupiedTableIDs(is, minTableID)
 	if maxTableID == 0 || minTableID >= maxTableID {
 		return maxTableID, nil
 	}
 	return maxTableID, buildMergeEmptyRegionsKeyRanges(occupiedTableIDs, minTableID, maxTableID)
 }
 
-func collectMergeEmptyRegionsOccupiedTableIDs(is infoschema.InfoSchema) ([]int64, int64) {
+func collectMergeEmptyRegionsOccupiedTableIDs(is infoschema.InfoSchema, minTableID int64) ([]int64, int64) {
 	occupiedTableIDs := make([]int64, 0)
 	maxTableID := int64(0)
 	for _, dbInfo := range is.AllSchemas() {
@@ -158,9 +158,14 @@ func collectMergeEmptyRegionsOccupiedTableIDs(is infoschema.InfoSchema) ([]int64
 			}
 
 			tableIDs := appendMergeEmptyRegionsTableIDs(nil, tblInfo)
-			occupiedTableIDs = append(occupiedTableIDs, tableIDs...)
+			for _, tableID := range tableIDs {
+				if tableID >= minTableID {
+					occupiedTableIDs = append(occupiedTableIDs, tableID)
+				}
+			}
 			// Keep skipped live tables as occupied keyspace so the background scan
-			// never force merges through system or temporary table ranges.
+			// never force merges through system or temporary table ranges in the
+			// current scan window.
 			if shouldSkipForceMergeTable(schemaName, tblInfo.Name.L, tblInfo) {
 				continue
 			}
