@@ -18,31 +18,49 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/stretchr/testify/require"
 )
 
-func TestRunMain(_ *testing.T) {
-	if _, isIntegrationTest := os.LookupEnv("INTEGRATION_TEST"); !isIntegrationTest {
-		// override exit to pass unit test.
-		exit = func(code int) {}
-	}
-
-	var args []string
-	for _, arg := range os.Args {
-		switch {
-		case arg == "DEVEL":
-		case strings.HasPrefix(arg, "-test."):
-		default:
-			args = append(args, arg)
+func TestRunMain(t *testing.T) {
+	t.Run("run-main", func(t *testing.T) {
+		if _, isIntegrationTest := os.LookupEnv("INTEGRATION_TEST"); !isIntegrationTest {
+			// override exit to pass unit test.
+			exit = func(code int) {}
 		}
-	}
 
-	waitCh := make(chan struct{}, 1)
+		var args []string
+		for _, arg := range os.Args {
+			switch {
+			case arg == "DEVEL":
+			case strings.HasPrefix(arg, "-test."):
+			default:
+				args = append(args, arg)
+			}
+		}
 
-	os.Args = args
-	go func() {
-		main()
-		close(waitCh)
-	}()
+		waitCh := make(chan struct{}, 1)
 
-	<-waitCh
+		os.Args = args
+		go func() {
+			main()
+			close(waitCh)
+		}()
+
+		<-waitCh
+	})
+
+	t.Run("checkpoint table not found does not print stack", func(t *testing.T) {
+		err := common.CheckpointTableNotFoundError("`db`.`table`")
+		require.Equal(t, err.Error(), formatFatalError(err))
+	})
+
+	t.Run("generic errors still print stack", func(t *testing.T) {
+		err := errors.New("boom")
+		formatted := formatFatalError(err)
+		require.NotEqual(t, err.Error(), formatted)
+		require.Contains(t, formatted, "main_test.go")
+	})
 }
