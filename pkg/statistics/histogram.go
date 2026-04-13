@@ -1634,6 +1634,10 @@ func MergePartTopNAndHistToGlobal(
 				b.Count -= b.Repeat
 				b.Repeat = 0
 			}
+			if b.Count == 0 {
+				releasebucket4MergingForRecycle(b)
+				continue
+			}
 			buckets = append(buckets, b)
 		}
 	}
@@ -1660,19 +1664,7 @@ func MergePartTopNAndHistToGlobal(
 		buckets = append(buckets, meta.buildBucket4Merging(&d, analyzeVer))
 	}
 
-	// Phase 5: Remove empty buckets and sort.
-	tail := 0
-	for i := range buckets {
-		if buckets[i].Count != 0 {
-			buckets[tail], buckets[i] = buckets[i], buckets[tail]
-			tail++
-		}
-	}
-	for n := tail; n < len(buckets); n++ {
-		releasebucket4MergingForRecycle(buckets[n])
-	}
-	buckets = buckets[:tail]
-
+	// Phase 5: Sort buckets.
 	if err := sortBucketsByUpperBound(sc.TypeCtx(), buckets); err != nil {
 		return nil, nil, err
 	}

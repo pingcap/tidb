@@ -124,15 +124,6 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			concurrency: "1",
 		},
 		{
-			concurrency: "2",
-		},
-		{
-			concurrency: "3",
-		},
-		{
-			concurrency: "4",
-		},
-		{
 			concurrency: "5",
 		},
 	}

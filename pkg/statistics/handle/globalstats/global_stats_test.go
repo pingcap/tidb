@@ -908,8 +908,6 @@ func TestIssues24349(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	testKit.MustExec("set @@tidb_analyze_version=2")
-	defer testKit.MustExec("set @@tidb_analyze_version=default")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
 	testIssues24349(t, testKit, store)
 }
 
@@ -970,7 +968,7 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec(` create table t (
+	tk.MustExec(`create table t (
 	a int primary key auto_increment,
 	b int not null default 1,
 	c int,
@@ -990,7 +988,7 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 	// Force a full stats cache refresh from storage so all columns/indexes are loaded.
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_topn where table_name = 't' and partition_name = 'global'`).Sort().Check(testkit.Rows(""+
-		"test t global a 0 1 1", // TODO: Remove, since useless! #66236
+		"test t global a 0 1 1", // TODO: Remove, since useless! extension of #66236
 		"test t global b 0 1 100010",
 		"test t global d 0  100010",
 		"test t global idx_ab 1 (1, 1) 1",         // TODO: Also useless, since contains PK as prefix!
@@ -998,7 +996,7 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 		"test t global idx_d 1  100010",
 		"test t global idx_ec 1 (NULL, NULL) 100010", // TODO: Should this be saved, since it includes NULL?
 		"test t global uidx_cd 1 (NULL, ) 100010",    // TODO: Should this be saved, since it includes NULL?
-		// TODO: Where is uidx_e / e ? Empty since NULL?
+		// uidx_e is not collected, due to #66236
 	))
 	tk.MustQuery(`show stats_topn where table_name = 't' and partition_name = 'p0'`).Sort().Check(testkit.Rows(""+
 		"test t p0 a 0 7 1",
@@ -1010,11 +1008,11 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 		"test t p0 idx_ec 1 (NULL, NULL) 14287",
 		"test t p0 uidx_cd 1 (NULL, ) 14287"))
 	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'global'`).Sort().Check(testkit.Rows(""+
-		"test t global a 0 0 7 2 2 9 0", // TODO: Should it not be 7 1 2 9 0 ? Or even 8 1 1 9 0 and no TopN? (Repeats should be 1)
-		"test t global a 0 1 33353 7 9 33355 0",       // TODO: Repeats should be 1 here too?!?
+		"test t global a 0 0 7 0 2 9 0", // TODO: Should it not be 7 1 2 9 0 ? Or even 8 1 1 9 0 and no TopN? (Repeats should be 1)
+		"test t global a 0 1 33353 0 9 33355 0",       // TODO: Repeats should be 1 here too?!?
 		"test t global a 0 2 100009 1 33355 100010 0", // Repeats is correct here!
-		"test t global idx_ab 1 0 7 1 (2, 1) (9, 1) 0",
-		"test t global idx_ab 1 1 33353 7 (9, 1) (33355, 1) 0",
+		"test t global idx_ab 1 0 7 0 (2, 1) (9, 1) 0", // TODO: Repeats should be 1 here too?!?
+		"test t global idx_ab 1 1 33353 0 (9, 1) (33355, 1) 0", // TODO: Repeats should be 1 here too?!?
 		"test t global idx_ab 1 2 100009 1 (33355, 1) (100010, 1) 0"))
 	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p0'`).Sort().Check(testkit.Rows(""+
 		"test t p0 a 0 0 4763 1 14 33348 0",
