@@ -47,6 +47,7 @@ const (
 var forceMergePDRequestTimeout = 20 * time.Second
 
 var forceMergeBatchSleep = sleepForceMergeBatch
+var getPDAddrsForForceMergeFunc = getPDAddrsForForceMerge
 
 // AddForceMergeRanges sends `/regions/force-merge` requests to PD in batches.
 func AddForceMergeRanges(ctx context.Context, ranges []ForceMergeKeyRange) error {
@@ -58,16 +59,9 @@ func AddForceMergeRanges(ctx context.Context, ranges []ForceMergeKeyRange) error
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if is.etcdCli == nil {
-		err = errors.New("pd unavailable")
-		logutil.BgLogger().Error("get PD addresses for force merge failed", zap.Error(err))
-		return err
-	}
-	addrs := is.etcdCli.Endpoints()
-	if len(addrs) == 0 {
-		err = errors.New("pd unavailable")
-		logutil.BgLogger().Error("get PD addresses for force merge failed", zap.Error(err))
-		return err
+	addrs, err := getPDAddrsForForceMergeFunc(is)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	route := path.Join(pdapi.Regions, "force-merge")
@@ -133,6 +127,22 @@ func AddForceMergeRanges(ctx context.Context, ranges []ForceMergeKeyRange) error
 		zap.Int("batchCount", totalBatches),
 		zap.Int("totalRangeCount", totalRangeCount))
 	return nil
+}
+
+func getPDAddrsForForceMerge(is *InfoSyncer) ([]string, error) {
+	if is == nil || is.etcdCli == nil {
+		err := errors.New("pd unavailable")
+		logutil.BgLogger().Error("get PD addresses for force merge failed", zap.Error(err))
+		return nil, err
+	}
+
+	addrs := is.etcdCli.Endpoints()
+	if len(addrs) == 0 {
+		err := errors.New("pd unavailable")
+		logutil.BgLogger().Error("get PD addresses for force merge failed", zap.Error(err))
+		return nil, err
+	}
+	return addrs, nil
 }
 
 func forceMergeBatchLogFields(

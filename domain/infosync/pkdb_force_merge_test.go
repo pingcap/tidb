@@ -29,7 +29,6 @@ import (
 
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
-	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 var forceMergeInfoSyncerTestMu sync.Mutex
@@ -188,6 +187,16 @@ func TestAddForceMergeRangesRetriesWithFreshBody(t *testing.T) {
 
 func TestAddForceMergeRangesUsesPerRequestTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost {
+			t.Errorf("unexpected method: %s", req.Method)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req.URL.Path != path.Join(pdapi.Regions, "force-merge") {
+			t.Errorf("unexpected path: %s", req.URL.Path)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		time.Sleep(200 * time.Millisecond)
 		_, _ = w.Write([]byte(`{}`))
 	}))
@@ -220,9 +229,11 @@ func setForceMergeInfoSyncerForTest(t *testing.T, addrs []string) {
 		oldInfoSyncer = oldValue.(*InfoSyncer)
 	}
 
-	etcdCli, err := clientv3.New(clientv3.Config{Endpoints: addrs})
-	require.NoError(t, err)
-	setGlobalInfoSyncer(&InfoSyncer{etcdCli: etcdCli})
+	oldGetPDAddrsForForceMergeFunc := getPDAddrsForForceMergeFunc
+	getPDAddrsForForceMergeFunc = func(*InfoSyncer) ([]string, error) {
+		return addrs, nil
+	}
+	setGlobalInfoSyncer(&InfoSyncer{})
 
 	t.Cleanup(func() {
 		if oldInfoSyncer != nil {
@@ -230,7 +241,7 @@ func setForceMergeInfoSyncerForTest(t *testing.T, addrs []string) {
 		} else {
 			globalInfoSyncer = atomic.Value{}
 		}
-		_ = etcdCli.Close()
+		getPDAddrsForForceMergeFunc = oldGetPDAddrsForForceMergeFunc
 	})
 }
 
