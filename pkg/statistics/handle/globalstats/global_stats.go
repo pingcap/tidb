@@ -321,6 +321,7 @@ func blockingMergePartitionStats2GlobalStats(
 				return
 			}
 		}
+		allCms[i] = nil // Release for GC.
 
 		// Combined TopN + histogram merge that extracts
 		// histogram upper-bound Repeat counts into the TopN counter.
@@ -332,6 +333,8 @@ func blockingMergePartitionStats2GlobalStats(
 			isIndex, killer, sc.GetSessionVars().StmtCtx,
 			sc.GetSessionVars().AnalyzeVersion,
 		)
+		allTopN[i] = nil // Release for GC.
+		allHg[i] = nil   // Release for GC.
 		if err != nil {
 			return
 		}
