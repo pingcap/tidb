@@ -289,6 +289,10 @@ func TestSlowLogFormat(t *testing.T) {
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
 	ruDetails := util.NewRUDetailsWith(50.0, 100.56, 134*time.Millisecond)
+	seVar.DurationParse = 10
+	seVar.DurationCompile = 10
+	seVar.DurationOptimization = 10
+	seVar.DurationWaitTS = 3
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -296,10 +300,6 @@ func TestSlowLogFormat(t *testing.T) {
 		SQL:               sql,
 		Digest:            digest.String(),
 		TimeTotal:         costTime,
-		TimeParse:         time.Duration(10),
-		TimeCompile:       time.Duration(10),
-		TimeOptimize:      time.Duration(10),
-		TimeWaitTS:        time.Duration(3),
 		IndexNames:        "[t1:a,t2:b]",
 		CopTasks:          copTasks,
 		ExecDetail:        execDetail,
@@ -324,9 +324,7 @@ func TestSlowLogFormat(t *testing.T) {
 		IsWriteCacheTable: true,
 		UsedStats:         &stmtctx.UsedStatsInfo{},
 		ResourceGroupName: "rg1",
-		RRU:               ruDetails.RRU(),
-		WRU:               ruDetails.WRU(),
-		WaitRUDuration:    ruDetails.RUWaitDuration(),
+		RUDetails:         ruDetails,
 		StorageKV:         true,
 		StorageMPP:        false,
 	}
@@ -335,7 +333,6 @@ func TestSlowLogFormat(t *testing.T) {
 	seVar.CurrentDBChanged = false
 	logString := seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+sql, logString)
-
 	seVar.CurrentDBChanged = true
 	logString = seVar.SlowLogFormat(logItems)
 	require.Equal(t, resultFields+"\n"+"use test;\n"+sql, logString)
@@ -392,8 +389,6 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"TimeParse", "TimeCompile", "TimeOptimize", "TimeWaitTS",
-		"RRU", "WRU", "WaitRUDuration",
 		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
