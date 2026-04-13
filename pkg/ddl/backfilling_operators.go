@@ -546,13 +546,14 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 	)
 	// Local ingest may trigger partial import/reset while the scan transaction is
 	// still open, so only the global-sort path can stream results immediately.
-	enableStreaming := w.reorgMeta.UseCloudStorage
+	enableStreaming := w.reorgMeta != nil && w.reorgMeta.UseCloudStorage
 	sendResult := func(idxResult IndexRecordChunk) {
 		sender(idxResult)
+		rowCnt := idxResult.Chunk.NumRows()
 		if w.cpOp != nil {
-			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), idxResult.Done)
+			w.cpOp.UpdateChunk(task.ID, rowCnt, idxResult.Done)
 		}
-		w.totalCount.Add(idxResult.tableScanRowCount)
+		w.totalCount.Add(int64(rowCnt))
 	}
 	var scanCtx context.Context = w.ctx
 	if scanCtx.Value(kvutil.ExecDetailsKey) == nil {
@@ -587,27 +588,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			}
 			w.collector.Accepted(execDetails.UnpackedBytesReceivedKVTotal)
 			execDetails = kvutil.ExecDetails{}
-<<<<<<< HEAD
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx})
-		}
-		return rs.Close()
-	})
-	if err != nil {
-		w.ctx.onError(err)
-	}
-	for i, idxResult := range idxResults {
-		sender(idxResult)
-		rowCnt := idxResult.Chunk.NumRows()
-		if w.cpOp != nil {
-			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, rowCnt, done)
-		}
-		w.totalCount.Add(int64(rowCnt))
-=======
-
-			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
-			lastTableScanRowCount = tableScanRowCount
+			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx}
 			if enableStreaming {
 				sendResult(idxResult)
 			} else {
@@ -621,7 +602,9 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		for _, idxResult := range idxResults {
 			sendResult(idxResult)
 		}
->>>>>>> cb1e1e6ec81 (ddl: release scan chunks earlier to cap the memory usage (#67452))
+	}
+	if err != nil {
+		w.ctx.onError(err)
 	}
 }
 
