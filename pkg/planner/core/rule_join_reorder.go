@@ -338,8 +338,9 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			originalSchema := p.Schema()
 			fallbackOnErr := func(err error) (base.LogicalPlan, error) {
 				if ctx.GetSessionVars().TiDBOptJoinReorderThroughProj {
-					// This optimization is best-effort. If anything goes wrong, fallback to the
-					// original behavior (treat projections as atomic leaves) to keep correctness.
+					// This optimization is best-effort. If anything goes wrong, rerun join reorder
+					// on the current recursively optimized subtree with through-projection extraction
+					// disabled, so Projections are treated as atomic leaves again.
 					saved := ctx.GetSessionVars().TiDBOptJoinReorderThroughProj
 					ctx.GetSessionVars().TiDBOptJoinReorderThroughProj = false
 					defer func() { ctx.GetSessionVars().TiDBOptJoinReorderThroughProj = saved }()
@@ -774,12 +775,14 @@ func (s *baseSingleGroupJoinOrderSolver) buildJoinEdge(
 	return newSf.(*expression.ScalarFunction), expr2Col
 }
 
-func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	originalPlanID := p.ID()
 	proj, ok := p.(*logicalop.LogicalProjection)
 	if !ok {
 		proj = logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
 		proj.SetSchema(p.Schema().Clone())
 		proj.SetChildren(p)
+		s.propagateJoinMethodHint(originalPlanID, proj.ID())
 	}
 	// Avoid injecting duplicate expressions into the same projection.
 	// This keeps plans smaller and allows later predicates to reuse computed columns.
@@ -790,6 +793,20 @@ func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expre
 		}
 	}
 	return proj, proj.AppendExpr(expr)
+}
+
+func (s *baseSingleGroupJoinOrderSolver) propagateJoinMethodHint(oldPlanID, newPlanID int) {
+	if s == nil || oldPlanID == newPlanID || len(s.joinMethodHintInfo) == 0 {
+		return
+	}
+	if _, exists := s.joinMethodHintInfo[newPlanID]; exists {
+		return
+	}
+	if hintInfo, ok := s.joinMethodHintInfo[oldPlanID]; ok {
+		// Keep the original vertex entry for alternative join trees that still use the
+		// unwrapped child, and add an alias for the injected projection wrapper.
+		s.joinMethodHintInfo[newPlanID] = hintInfo
+	}
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.

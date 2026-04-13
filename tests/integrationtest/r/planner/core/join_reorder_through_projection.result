@@ -2386,13 +2386,15 @@ Projection	root		planner__core__join_reorder_through_projection.t1.a, planner__c
 └─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.t2.a, planner__core__join_reorder_through_projection.t3.a)]
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		inner join, equal:[eq(Column, planner__core__join_reorder_through_projection.t1.b)]
-    ├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column
+  └─MergeJoin(Probe)	root		inner join, left key:Column, right key:planner__core__join_reorder_through_projection.t1.b
+    ├─Sort(Build)	root		planner__core__join_reorder_through_projection.t1.b
     │ └─TableReader	root		data:Selection
-    │   └─Selection	cop[tikv]		not(isnull(mul(planner__core__join_reorder_through_projection.t2.b, 2)))
-    │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
-        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    │   └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.t1.b))
+    │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─Sort(Probe)	root		Column
+      └─Projection	root		planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column
+        └─TableReader	root		data:Selection
+          └─Selection	cop[tikv]		not(isnull(mul(planner__core__join_reorder_through_projection.t2.b, 2)))
+            └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 set tidb_opt_join_reorder_through_proj = off;
 drop table if exists t1, t2, t3, t4, t5;
