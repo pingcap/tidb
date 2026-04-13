@@ -34,7 +34,8 @@ const (
 	// MinHistoryTaskPageSize is the minimum page size for history task listing.
 	MinHistoryTaskPageSize = 1
 	// MaxHistoryTaskPageSize is the maximum page size for history task listing.
-	MaxHistoryTaskPageSize = 200
+	MaxHistoryTaskPageSize    = 200
+	historyTaskSummaryColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.end_time`
 )
 
 // TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
@@ -144,7 +145,6 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 	}
 	dataArgs = append(dataArgs, pageSize+1)
 
-	const historyTaskSummaryColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.end_time`
 	rows, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select `+historyTaskSummaryColumns+` from mysql.tidb_global_task_history t`+whereSQL+` order by t.id desc limit %?`,
 		dataArgs...)
