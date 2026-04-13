@@ -52,6 +52,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
+const nonPreparedPlanCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
+
+func containUsePlanCacheHintInSQLOrBinding(sctx sessionctx.Context, stmt ast.StmtNode) bool {
+	if hint.ContainTableHintInStmtNode(stmt, hint.HintUsePlanCache) {
+		return true
+	}
+	binding, matched, _ := bindinfo.MatchSQLBinding(sctx, stmt)
+	return matched && binding != nil && binding.Hint != nil && binding.Hint.ContainTableHint(hint.HintUsePlanCache)
+}
+
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
@@ -63,6 +73,13 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		isExplain || // explain external
 		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
 		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
+		return nil, nil, false, nil
+	}
+	if sctx.GetSessionVars().PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
+		!containUsePlanCacheHintInSQLOrBinding(sctx, stmt) {
+		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", nonPreparedPlanCacheHintOnlyNoHintReason))
+		}
 		return nil, nil, false, nil
 	}
 

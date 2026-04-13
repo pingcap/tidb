@@ -160,6 +160,9 @@ http_archive(
     strip_prefix = "rules_proto-6.0.0",
     urls = [
         "https://github.com/bazelbuild/rules_proto/releases/download/6.0.0/rules_proto-6.0.0.tar.gz",
+        "https://cache.hawkingrei.com/bazelbuild/rules_proto/releases/download/6.0.0/rules_proto-6.0.0.tar.gz",
+        "http://bazel-cache.pingcap.net:8080/bazelbuild/rules_proto/releases/download/6.0.0/rules_proto-6.0.0.tar.gz",
+        "http://ats.apps.svc/bazelbuild/rules_proto/releases/download/6.0.0/rules_proto-6.0.0.tar.gz",
     ],
 )
 

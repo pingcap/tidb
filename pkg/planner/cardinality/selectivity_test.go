@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1838,6 +1839,70 @@ func TestOrderingIdxSelectivityRatioForJoin(t *testing.T) {
 	require.Less(t, planCost3, planCost4)
 }
 
+func TestOrderingIdxSelectivityRatioForMergeJoin(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t1, t2")
+	// Use larger tables so that the ExpectedCnt difference from the ordering
+	// penalty produces a measurable child-cost change.
+	testKit.MustExec("create table t1(a int, b int, c int, index ib(b))")
+	testKit.MustExec("create table t2(a int, b int, c int, index ib(b))")
+	testKit.MustExec("insert into t1 values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
+	testKit.MustExec("insert into t2 values (1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
+	// Double the data several times to reach ~320 rows per table.
+	for i := 0; i < 5; i++ {
+		testKit.MustExec("insert into t1 select a,b,c from t1")
+		testKit.MustExec("insert into t2 select a,b,c from t2")
+	}
+	testKit.MustExec("analyze table t1")
+	testKit.MustExec("analyze table t2")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	// Force merge join via hint with use-index hints so the plan shape stays
+	// stable across ratio values. The ordering index ib(b) matches the
+	// ORDER BY, so the cross-estimation path inflates the IndexScan row
+	// count when the ratio is positive, increasing the merge-join cost.
+	query := "explain format=verbose select /*+ merge_join(t1, t2) */ t1.* from t1 use index(ib) join t2 use index(ib) on t1.b=t2.b where t1.c < t2.c order by t1.b limit 2"
+
+	hasMergeJoin := func(rows [][]any) bool {
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "MergeJoin") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Disable ordering ratio: -1 and 0 should have the same cost.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = -1")
+	rs := testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=-1")
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0")
+	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=0")
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	require.Equal(t, planCost1, planCost2)
+
+	// Increasing the ratio should increase the cost of merge join.
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.5")
+	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=0.5")
+	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	require.Less(t, planCost2, planCost3)
+	testKit.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 1")
+	rs = testKit.MustQuery(query).Rows()
+	require.True(t, hasMergeJoin(rs), "expected MergeJoin with ratio=1")
+	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err4)
+	require.Less(t, planCost3, planCost4)
+}
+
 func TestOrderingIdxSelectivityRatioForApply(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -2076,9 +2141,28 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	)
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	// Trigger async stats loading for the subset-index columns before checking the recorded plans.
-	testKit.MustExec("explain format = 'brief' select distinct a, b, c from t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	hasAsyncLoadForTable := func() bool {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			if item.TableItemID.TableID == tblInfo.ID {
+				return true
+			}
+		}
+		return false
+	}
+	// Use a predicate query that queues async stats loads for this table before checking recorded plans.
+	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 0")
+	testKit.MustExec("explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1")
+	require.True(t, hasAsyncLoadForTable())
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	stat := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, stat.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
+	require.True(t, stat.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
+	require.True(t, stat.GetCol(tblInfo.Columns[2].ID).IsFullLoad())
+	require.True(t, stat.GetIdx(tblInfo.Indices[0].ID).IsFullLoad())
+	require.False(t, hasAsyncLoadForTable())
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]

@@ -18,6 +18,7 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -567,6 +568,33 @@ func TestVectorizedBuiltinTimeEvalOneVec(t *testing.T) {
 
 func TestVectorizedBuiltinTimeFunc(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinTimeCases)
+}
+
+func TestVectorizedTimeFormatEmptyFormatReturnsNull(t *testing.T) {
+	ctx := createContext(t)
+
+	durationType := types.NewFieldType(mysql.TypeDuration)
+	durationType.SetDecimal(types.DefaultFsp)
+	formatType := types.NewFieldType(mysql.TypeString)
+
+	col0 := &Column{RetType: durationType, Index: 0}
+	col1 := &Column{RetType: formatType, Index: 1}
+	f, err := funcs[ast.TimeFormat].getFunction(ctx, []Expression{col0, col1})
+	require.NoError(t, err)
+	require.True(t, f.vectorized() && f.isChildrenVectorized())
+
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{durationType, formatType}, 2)
+	input.AppendDuration(0, types.Duration{Duration: 12*time.Hour + 34*time.Minute + 56*time.Second, Fsp: types.DefaultFsp})
+	input.AppendString(1, "")
+	input.AppendDuration(0, types.Duration{Duration: time.Hour + 2*time.Minute + 3*time.Second, Fsp: types.DefaultFsp})
+	input.AppendString(1, "%H:%i:%s")
+
+	result := chunk.NewColumn(formatType, 2)
+	require.NoError(t, vecEvalType(ctx, f, types.ETString, input, result))
+	require.Equal(t, 2, result.Rows())
+	require.True(t, result.IsNull(0))
+	require.False(t, result.IsNull(1))
+	require.Equal(t, "01:02:03", result.GetString(1))
 }
 
 func BenchmarkVectorizedBuiltinTimeEvalOneVec(b *testing.B) {
