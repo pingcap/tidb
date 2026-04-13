@@ -329,6 +329,19 @@ func TestIgnoreOneErrorCheckpoints(t *testing.T) {
 	require.Equal(t, checkpoints.CheckpointStatusAllWritten/10, cp.Status)
 }
 
+func TestIgnoreOneErrorCheckpointsNotFound(t *testing.T) {
+	ctx := context.Background()
+	cpdb := newFileCheckpointsDB(t, false)
+
+	setInvalidStatus(cpdb)
+
+	err := cpdb.IgnoreErrorCheckpoint(ctx, "db1.t2")
+	require.Error(t, err)
+	require.True(t, errors.IsNotFound(err))
+	require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
+	require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")
+}
+
 func TestDestroyAllErrorCheckpoints(t *testing.T) {
 	ctx := context.Background()
 	cpdb := newFileCheckpointsDB(t, false)
@@ -385,4 +398,18 @@ func TestDestroyOneErrorCheckpoint(t *testing.T) {
 	cp, err = cpdb.Get(ctx, "`db2`.`t3`")
 	require.NoError(t, err)
 	require.Equal(t, checkpoints.CheckpointStatusAllWritten/10, cp.Status)
+}
+
+func TestDestroyOneErrorCheckpointNotFound(t *testing.T) {
+	ctx := context.Background()
+	cpdb := newFileCheckpointsDB(t, false)
+
+	setInvalidStatus(cpdb)
+
+	dtc, err := cpdb.DestroyErrorCheckpoint(ctx, "db1.t2")
+	require.Error(t, err)
+	require.True(t, errors.IsNotFound(err))
+	require.Nil(t, dtc)
+	require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
+	require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")
 }

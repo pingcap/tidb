@@ -85,6 +85,13 @@ const (
 	columnTableName = "table_name"
 )
 
+func checkpointTableNotFoundError(tableName string) error {
+	return errors.Annotatef(
+		errors.NotFoundf("checkpoint for table %s", tableName),
+		"table checkpoint does not exist; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
+	)
+}
+
 // some frequently used SQL statement templates.
 // shared by MySQLCheckpointsDB and GlueCheckpointsDB
 const (
@@ -1676,8 +1683,24 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		if _, e := tx.ExecContext(c, query, args...); e != nil {
 			return errors.Trace(e)
 		}
-		if _, e := tx.ExecContext(c, query2, args...); e != nil {
+		tableResult, e := tx.ExecContext(c, query2, args...)
+		if e != nil {
 			return errors.Trace(e)
+		}
+		if tableName != allTables {
+			affectedRows, e := tableResult.RowsAffected()
+			if e != nil {
+				return errors.Trace(e)
+			}
+			if affectedRows == 0 {
+				found, e := cpdb.hasTableCheckpoint(c, tx, tableName)
+				if e != nil {
+					return errors.Trace(e)
+				}
+				if !found {
+					return checkpointTableNotFoundError(tableName)
+				}
+			}
 		}
 		return nil
 	})
@@ -1759,6 +1782,15 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		if e := rows.Err(); e != nil {
 			return errors.Trace(e)
 		}
+		if tableName != allTables && len(targetTables) == 0 {
+			found, e := cpdb.hasTableCheckpoint(c, tx, tableName)
+			if e != nil {
+				return errors.Trace(e)
+			}
+			if !found {
+				return checkpointTableNotFoundError(tableName)
+			}
+		}
 
 		// Delete the checkpoints
 		if _, e := tx.ExecContext(c, deleteChunkQuery, args...); e != nil {
@@ -1777,6 +1809,24 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	}
 
 	return targetTables, nil
+}
+
+func (cpdb *MySQLCheckpointsDB) hasTableCheckpoint(ctx context.Context, tx *sql.Tx, tableName string) (bool, error) {
+	query := common.SprintfWithIdentifiers(
+		"SELECT 1 FROM %s.%s WHERE table_name = ? LIMIT 1",
+		cpdb.schema,
+		CheckpointTableNameTable,
+	)
+
+	var one int
+	err := tx.QueryRowContext(ctx, query, tableName).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
 }
 
 // DumpTables implements CheckpointsDB.DumpTables.
@@ -1923,17 +1973,30 @@ func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTa
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
-		if !(targetTableName == allTables || targetTableName == tableName) {
-			continue
-		}
-		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
-			tableModel.Status = uint32(CheckpointStatusLoaded)
-		}
-		for _, engineModel := range tableModel.Engines {
-			if engineModel.Status <= uint32(CheckpointStatusMaxInvalid) {
-				engineModel.Status = uint32(CheckpointStatusLoaded)
+	if targetTableName == allTables {
+		for _, tableModel := range cpdb.checkpoints.Checkpoints {
+			if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
+				tableModel.Status = uint32(CheckpointStatusLoaded)
 			}
+			for _, engineModel := range tableModel.Engines {
+				if engineModel.Status <= uint32(CheckpointStatusMaxInvalid) {
+					engineModel.Status = uint32(CheckpointStatusLoaded)
+				}
+			}
+		}
+		return errors.Trace(cpdb.save())
+	}
+
+	tableModel, ok := cpdb.checkpoints.Checkpoints[targetTableName]
+	if !ok {
+		return checkpointTableNotFoundError(targetTableName)
+	}
+	if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
+		tableModel.Status = uint32(CheckpointStatusLoaded)
+	}
+	for _, engineModel := range tableModel.Engines {
+		if engineModel.Status <= uint32(CheckpointStatusMaxInvalid) {
+			engineModel.Status = uint32(CheckpointStatusLoaded)
 		}
 	}
 	return errors.Trace(cpdb.save())
@@ -1946,10 +2009,31 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 
 	var targetTables []DestroyedTableCheckpoint
 
-	for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
-		// Obtain the list of tables
-		if !(targetTableName == allTables || targetTableName == tableName) {
-			continue
+	if targetTableName == allTables {
+		for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
+			// Obtain the list of tables
+			if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
+				var minEngineID, maxEngineID int32 = math.MaxInt32, math.MinInt32
+				for engineID := range tableModel.Engines {
+					if engineID < minEngineID {
+						minEngineID = engineID
+					}
+					if engineID > maxEngineID {
+						maxEngineID = engineID
+					}
+				}
+
+				targetTables = append(targetTables, DestroyedTableCheckpoint{
+					TableName:   tableName,
+					MinEngineID: minEngineID,
+					MaxEngineID: maxEngineID,
+				})
+			}
+		}
+	} else {
+		tableModel, ok := cpdb.checkpoints.Checkpoints[targetTableName]
+		if !ok {
+			return nil, checkpointTableNotFoundError(targetTableName)
 		}
 		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
 			var minEngineID, maxEngineID int32 = math.MaxInt32, math.MinInt32
@@ -1963,7 +2047,7 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 			}
 
 			targetTables = append(targetTables, DestroyedTableCheckpoint{
-				TableName:   tableName,
+				TableName:   targetTableName,
 				MinEngineID: minEngineID,
 				MaxEngineID: maxEngineID,
 			})

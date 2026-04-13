@@ -62,6 +62,13 @@ func (s CheckpointStatus) String() string {
 	}
 }
 
+func checkpointTableNotFoundError(tableName string) error {
+	return errors.Annotatef(
+		errors.NotFoundf("checkpoint for table %s", tableName),
+		"table checkpoint does not exist; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
+	)
+}
+
 // TableCheckpoint represents the checkpoint state for a single table.
 type TableCheckpoint struct {
 	TableName string           `json:"table_name"`
@@ -261,7 +268,11 @@ func (m *FileCheckpointManager) IgnoreError(ctx context.Context, tableName strin
 			}
 		}
 	} else {
-		if cp, ok := m.checkpoints[tableName]; ok && cp.Status == CheckpointStatusFailed {
+		cp, ok := m.checkpoints[tableName]
+		if !ok {
+			return checkpointTableNotFoundError(tableName)
+		}
+		if cp.Status == CheckpointStatusFailed {
 			cp.Status = CheckpointStatusPending
 			cp.Message = ""
 			cp.JobID = 0
@@ -284,7 +295,11 @@ func (m *FileCheckpointManager) DestroyError(ctx context.Context, tableName stri
 			}
 		}
 	} else {
-		if cp, ok := m.checkpoints[tableName]; ok && cp.Status == CheckpointStatusFailed {
+		cp, ok := m.checkpoints[tableName]
+		if !ok {
+			return nil, checkpointTableNotFoundError(tableName)
+		}
+		if cp.Status == CheckpointStatusFailed {
 			destroyed = append(destroyed, cp)
 			delete(m.checkpoints, tableName)
 		}
@@ -464,8 +479,24 @@ func (m *MySQLCheckpointManager) IgnoreError(ctx context.Context, tableName stri
 	}
 	query := fmt.Sprintf("UPDATE %s.%s SET status = ?, message = '', job_id = 0 WHERE table_name = ? AND status = ?",
 		common.EscapeIdentifier(m.schemaName), common.EscapeIdentifier(m.tableName))
-	_, err := m.db.ExecContext(ctx, query, CheckpointStatusPending, tableName, CheckpointStatusFailed)
-	return errors.Trace(err)
+	result, err := m.db.ExecContext(ctx, query, CheckpointStatusPending, tableName, CheckpointStatusFailed)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	affectedRows, err := result.RowsAffected()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if affectedRows == 0 {
+		cp, err := m.Get(ctx, tableName)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if cp == nil {
+			return checkpointTableNotFoundError(tableName)
+		}
+	}
+	return nil
 }
 
 // DestroyError deletes checkpoints that are stuck in failed state.
@@ -522,6 +553,15 @@ func (m *MySQLCheckpointManager) DestroyError(ctx context.Context, tableName str
 
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if tableName != common.AllTables && len(destroyed) == 0 {
+		cp, err := m.Get(ctx, tableName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if cp == nil {
+			return nil, checkpointTableNotFoundError(tableName)
+		}
 	}
 	return destroyed, nil
 }
