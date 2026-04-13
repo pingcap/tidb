@@ -32,14 +32,16 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 )
 
 const (
-	deltaTableAlias = "delta"
-	mvTableAlias    = "mv"
+	deltaTableAlias      = "delta"
+	mvTableAlias         = "mv"
+	fullUpdateOuterAlias = "full_outer"
+	fullUpdateInnerAlias = "full_inner"
 
 	deltaCntStarName = "__mvmerge_delta_cnt_star"
-	removedRowsName  = "__mvmerge_removed_rows"
 	mvRowIDName      = "__mvmerge_mv_rowid"
 )
 
@@ -68,6 +70,17 @@ type BuildResult struct {
 	MergeSourceSelect *ast.SelectStmt
 	// SourceColumnCount is the expected number of output columns of MergeSourceSelect after optimization.
 	SourceColumnCount int
+	// FullUpdateLookupTemplateSelect is an optional intermediate SELECT template for MIN/MAX fallback.
+	// It is built in outer+inner IndexJoin shape so the planner can later optimize it and extract only
+	// the inner lookup child plus lookup metadata for full recomputation. We intentionally do not keep
+	// a plain full-inner scan here: fallback refresh needs to bind one changed group-key tuple at a
+	// time, and reusing IndexJoin lets us inherit the existing key-to-range plumbing for that probe.
+	FullUpdateLookupTemplateSelect *ast.SelectStmt
+	// FullUpdateLookupColumnCount is the expected output column count of FullUpdateLookupTemplateSelect.
+	FullUpdateLookupColumnCount int
+	// FullUpdateLookupMVOffsets maps full-update lookup output columns to MV output offsets.
+	// Its length equals FullUpdateLookupColumnCount when FullUpdateLookupTemplateSelect is not nil.
+	FullUpdateLookupMVOffsets []int
 
 	MVTableID   int64
 	BaseTableID int64
@@ -92,9 +105,6 @@ type BuildResult struct {
 	CountStarMVOffset int
 
 	AggInfos []AggInfo
-
-	// RemovedRowCountDelta is non-nil when MV contains MIN/MAX, used by executor to gate quick-update.
-	RemovedRowCountDelta *DeltaColumn
 }
 
 // DeltaColumn describes one delta payload column in merge-source output.
@@ -140,14 +150,21 @@ type AggInfo struct {
 	//     - matched_count_expr_mv: absolute output offset of matched COUNT(expr) MV column.
 	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
 	//       The same matched COUNT(expr) can be a dependency for multiple aggregate functions.
-	//   - AggMax / AggMin: [self_delta, removed_rows_delta]
+	//   - AggMax / AggMin:
+	//     - [added_val, added_cnt, removed_val, removed_cnt] when argument is NOT NULL.
+	//     - [added_val, added_cnt, removed_val, removed_cnt, matched_count_expr_mv] otherwise.
+	//     - added_cnt/removed_cnt are counts of rows whose argument equals added_val/removed_val
+	//       in the added/removed subdomain respectively (MAX/MIN_COUNT semantics).
 	Dependencies []int
 }
 
 type aggColInfo struct {
-	info      AggInfo
-	deltaName string
-	argExpr   ast.ExprNode
+	info                AggInfo
+	deltaName           string
+	addedCountDeltaName string
+	removedValueDelta   string
+	removedCountDelta   string
+	argExpr             ast.ExprNode
 }
 
 // buildLocalResult contains the parsed MV definition and all metadata derived from it.
@@ -159,6 +176,7 @@ type buildLocalResult struct {
 	// MVSelect is the parsed MV definition SELECT statement.
 	// Note: buildFromLocal may mutate parts of this AST (e.g. strip column qualifiers in WHERE).
 	MVSelect *ast.SelectStmt
+	sctx     planctx.PlanContext
 
 	mvDBName     pmodel.CIStr
 	mv           *model.TableInfo
@@ -181,13 +199,13 @@ func Build(
 	is infoschema.InfoSchema,
 	mv *model.TableInfo,
 	opt BuildOptions,
-	sumArgNotNullByOffset map[int]bool,
+	aggArgNotNullByOffset map[int]bool,
 ) (*BuildResult, error) {
 	local, err := buildLocal(sctx, is, mv)
 	if err != nil {
 		return nil, err
 	}
-	return buildFromLocal(local, opt, sumArgNotNullByOffset)
+	return buildFromLocal(local, opt, aggArgNotNullByOffset)
 }
 
 // buildLocal validates MV/MLoG metadata, parses the MV definition, and derives local layout metadata.
@@ -299,6 +317,7 @@ func buildLocal(
 
 	return &buildLocalResult{
 		MVSelect:          mvSel,
+		sctx:              sctx,
 		mvDBName:          mvDBName,
 		mv:                mv,
 		baseTableID:       baseTableID,
@@ -322,7 +341,7 @@ func buildLocal(
 //	  <stage-1 delta aggregation on mlog>
 //	) AS delta
 //	LEFT JOIN <mv table> AS mv
-//	  ON delta.<group_key_1> <=> mv.<group_key_1>
+//	  ON delta.<group_key_1> [= | <=>] mv.<group_key_1>
 //	 AND ...
 //
 // Stage-1 delta columns are always contiguous at the beginning of output schema, so aggregate
@@ -330,7 +349,7 @@ func buildLocal(
 func buildFromLocal(
 	local *buildLocalResult,
 	opt BuildOptions,
-	sumArgNotNullByOffset map[int]bool,
+	aggArgNotNullByOffset map[int]bool,
 ) (*BuildResult, error) {
 	if local == nil {
 		return nil, errors.New("mvmerge: local result is nil")
@@ -338,28 +357,57 @@ func buildFromLocal(
 	if local.MVSelect == nil {
 		return nil, errors.New("mvmerge: local MVSelect is nil")
 	}
-	if sumArgNotNullByOffset == nil {
-		sumArgNotNullByOffset = inferSumArgNotNullByOffset(local)
+	if aggArgNotNullByOffset == nil {
+		aggArgNotNullByOffset = inferAggArgNotNullByOffset(local)
 	}
 
 	// Stage 2: build merge source SQL in two steps:
 	//   1) aggregate mlog rows into per-group deltas
 	//   2) left join those deltas with current MV snapshot
 	deltaSel, err := buildMLogDeltaSelect(
+		local.sctx,
 		local.mvDBName,
 		local.mlogTable,
 		local.MVSelect,
 		local.mv.Columns,
 		local.groupKeyOffs,
 		local.aggCols,
-		local.hasMinMax,
 		opt,
 	)
 	if err != nil {
 		return nil, err
 	}
+	var fullUpdateSel *ast.SelectStmt
+	fullUpdateColumnCount := 0
+	var fullUpdateMVOffsets []int
+	if local.hasMinMax {
+		fullUpdateSel, fullUpdateMVOffsets, err = buildFullUpdateLookupTemplateSelect(
+			local.sctx,
+			local.mvDBName,
+			local.baseTable,
+			local.MVSelect,
+			local.mv.Columns,
+			local.groupKeySet,
+			local.groupKeyOffs,
+			local.aggCols,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if fullUpdateSel.Fields == nil {
+			return nil, errors.New("mvmerge: full-update lookup template has nil field list")
+		}
+		fullUpdateColumnCount = len(fullUpdateSel.Fields.Fields)
+		if len(fullUpdateMVOffsets) != fullUpdateColumnCount {
+			return nil, errors.Errorf(
+				"mvmerge: full-update lookup template mv-offset mapping length mismatch: got %d, expected %d",
+				len(fullUpdateMVOffsets),
+				fullUpdateColumnCount,
+			)
+		}
+	}
 
-	mergeSel, deltaColumns, removedDelta, rowIDHandleOffset, err := buildMergeSourceSelect(
+	mergeSel, deltaColumns, rowIDHandleOffset, err := buildMergeSourceSelect(
 		local.mvDBName,
 		local.mv,
 		local.mv.Columns,
@@ -367,7 +415,6 @@ func buildFromLocal(
 		local.groupKeyOffs,
 		deltaSel,
 		local.aggCols,
-		local.hasMinMax,
 	)
 	if err != nil {
 		return nil, err
@@ -382,7 +429,11 @@ func buildFromLocal(
 	// TODO: Revisit dependency-check ownership. We currently validate/derive aggregate dependencies
 	// in planner mvmerge, but this may be moved to another stage (for example, MV creation-time checks)
 	// after we evaluate end-to-end guarantees and maintenance cost.
-	sumToCountExprIdx, err := mapSumToCountExprDependencies(local.aggCols, sumArgNotNullByOffset)
+	sumToCountExprIdx, err := mapSumToCountExprDependencies(local.aggCols, aggArgNotNullByOffset)
+	if err != nil {
+		return nil, err
+	}
+	minMaxToCountExprIdx, err := mapMinMaxToCountExprDependencies(local.aggCols, aggArgNotNullByOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +446,7 @@ func buildFromLocal(
 	outAggInfos := make([]AggInfo, 0, len(local.aggCols))
 	for i, ac := range local.aggCols {
 		di := ac.info
-		deps := make([]int, 0, 3)
+		deps := make([]int, 0, 5)
 		if ac.deltaName != "" {
 			off, ok := deltaOffsetByName[ac.deltaName]
 			if !ok {
@@ -405,7 +456,7 @@ func buildFromLocal(
 		}
 		switch di.Kind {
 		case AggSum:
-			if !sumArgNotNullByOffset[di.MVOffset] {
+			if !aggArgNotNullByOffset[di.MVOffset] {
 				countIdx, ok := sumToCountExprIdx[i]
 				if !ok {
 					return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
@@ -414,22 +465,30 @@ func buildFromLocal(
 				deps = append(deps, mvColumnOffsetBase+countAgg.info.MVOffset)
 			}
 		case AggMax, AggMin:
-			if removedDelta == nil {
-				return nil, errors.Errorf(
-					"internal error: %v at mv offset %d requires %s delta",
-					di.Kind,
-					di.MVOffset,
-					removedRowsName,
-				)
+			addedCntOff, ok := deltaOffsetByName[ac.addedCountDeltaName]
+			if !ok {
+				return nil, errors.Errorf("internal error: delta column %s not found in output", ac.addedCountDeltaName)
 			}
-			deps = append(deps, removedDelta.Offset)
+			removedValOff, ok := deltaOffsetByName[ac.removedValueDelta]
+			if !ok {
+				return nil, errors.Errorf("internal error: delta column %s not found in output", ac.removedValueDelta)
+			}
+			removedCntOff, ok := deltaOffsetByName[ac.removedCountDelta]
+			if !ok {
+				return nil, errors.Errorf("internal error: delta column %s not found in output", ac.removedCountDelta)
+			}
+			deps = append(deps, addedCntOff, removedValOff, removedCntOff)
+			if !aggArgNotNullByOffset[di.MVOffset] {
+				countIdx, ok := minMaxToCountExprIdx[i]
+				if !ok {
+					return nil, errors.Errorf("internal error: %v at mv offset %d has no COUNT(expr) dependency", di.Kind, di.MVOffset)
+				}
+				countAgg := local.aggCols[countIdx]
+				deps = append(deps, mvColumnOffsetBase+countAgg.info.MVOffset)
+			}
 		}
 		di.Dependencies = deps
 		outAggInfos = append(outAggInfos, di)
-	}
-	removedRowsDeltaOff := -1
-	if removedDelta != nil {
-		removedRowsDeltaOff = removedDelta.Offset
 	}
 	// TODO: See the TODO above; dependency validation location may be adjusted in future.
 	if err := validateAggDependencies(
@@ -437,7 +496,6 @@ func buildFromLocal(
 		mvColumnOffsetBase,
 		len(local.mv.Columns),
 		expectedLen,
-		removedRowsDeltaOff,
 	); err != nil {
 		return nil, err
 	}
@@ -448,24 +506,20 @@ func buildFromLocal(
 	}
 
 	res := &BuildResult{
-		MergeSourceSelect: mergeSel,
-		SourceColumnCount: expectedLen,
-		MVTableID:         local.mv.ID,
-		BaseTableID:       local.baseTableID,
-		MLogTableID:       local.mlogTableID,
-		MVColumnCount:     len(local.mv.Columns),
-		DeltaColumnCount:  len(deltaColumns),
-		MVTablePKCols:     mvTablePKCols,
-		GroupKeyMVOffsets: append([]int(nil), local.groupKeyOffs...),
-		CountStarMVOffset: local.countStarMVOffset,
-		AggInfos:          outAggInfos,
-		RemovedRowCountDelta: func() *DeltaColumn {
-			if removedDelta == nil {
-				return nil
-			}
-			c := *removedDelta
-			return &c
-		}(),
+		MergeSourceSelect:              mergeSel,
+		SourceColumnCount:              expectedLen,
+		FullUpdateLookupTemplateSelect: fullUpdateSel,
+		FullUpdateLookupColumnCount:    fullUpdateColumnCount,
+		FullUpdateLookupMVOffsets:      append([]int(nil), fullUpdateMVOffsets...),
+		MVTableID:                      local.mv.ID,
+		BaseTableID:                    local.baseTableID,
+		MLogTableID:                    local.mlogTableID,
+		MVColumnCount:                  len(local.mv.Columns),
+		DeltaColumnCount:               len(deltaColumns),
+		MVTablePKCols:                  mvTablePKCols,
+		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),
+		CountStarMVOffset:              local.countStarMVOffset,
+		AggInfos:                       outAggInfos,
 	}
 	return res, nil
 }
@@ -541,10 +595,13 @@ func buildMVTablePKHandleCols(
 	}
 }
 
-// inferSumArgNotNullByOffset infers SUM argument nullability from base-table column flags.
-// If SUM(arg) is known NOT NULL, executor does not need a matching COUNT(arg) dependency.
-func inferSumArgNotNullByOffset(local *buildLocalResult) map[int]bool {
-	if local == nil || local.baseTable == nil || len(local.baseTable.Columns) == 0 || len(local.aggCols) == 0 {
+// inferAggArgNotNullByOffset infers aggregate argument nullability from base-table column flags.
+// If an aggregate argument is known NOT NULL, executor does not need COUNT(expr) dependencies.
+func inferAggArgNotNullByOffset(local *buildLocalResult) map[int]bool {
+	if local == nil || local.baseTable == nil {
+		return nil
+	}
+	if len(local.baseTable.Columns) == 0 || len(local.aggCols) == 0 {
 		return nil
 	}
 
@@ -558,7 +615,7 @@ func inferSumArgNotNullByOffset(local *buildLocalResult) map[int]bool {
 
 	out := make(map[int]bool)
 	for _, ac := range local.aggCols {
-		if ac.info.Kind != AggSum || ac.info.ArgColName == "" {
+		if ac.info.ArgColName == "" {
 			continue
 		}
 		if baseColNotNull[ac.info.ArgColName] {
@@ -584,6 +641,40 @@ func parseSelectFromSQL(sctx planctx.PlanContext, sql string) (*ast.SelectStmt, 
 		return nil, errors.Errorf("expected select statement, got %T", stmt)
 	}
 	return sel, nil
+}
+
+func parseExprFromSQL(sctx planctx.PlanContext, exprSQL string) (ast.ExprNode, error) {
+	sel, err := parseSelectFromSQL(sctx, "select "+exprSQL)
+	if err != nil {
+		return nil, err
+	}
+	if sel.Fields == nil || len(sel.Fields.Fields) != 1 || sel.Fields.Fields[0] == nil {
+		return nil, errors.New("failed to parse expression: expected one select field")
+	}
+	return sel.Fields.Fields[0].Expr, nil
+}
+
+func cloneExprByRestore(sctx planctx.PlanContext, expr ast.ExprNode) (ast.ExprNode, error) {
+	if expr == nil {
+		return nil, nil
+	}
+	exprSQL, err := restoreExprStrict(expr)
+	if err != nil {
+		return nil, err
+	}
+	return parseExprFromSQL(sctx, exprSQL)
+}
+
+func restoreExprStrict(expr ast.ExprNode) (string, error) {
+	if expr == nil {
+		return "", errors.New("expression is nil")
+	}
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := expr.Restore(ctx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
 // extractGroupKeyOffsetsFromMVSelect maps GROUP BY columns back to their offsets in SELECT output.
@@ -686,7 +777,11 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 					MVOffset:   i,
 					ArgColName: argCol.Name.Name.L,
 				},
-				deltaName: fmt.Sprintf("__mvmerge_max_in_added_%d", i),
+				deltaName:           fmt.Sprintf("__mvmerge_max_in_added_%d", i),
+				addedCountDeltaName: fmt.Sprintf("__mvmerge_max_cnt_in_added_%d", i),
+				removedValueDelta:   fmt.Sprintf("__mvmerge_max_in_removed_%d", i),
+				removedCountDelta:   fmt.Sprintf("__mvmerge_max_cnt_in_removed_%d", i),
+				argExpr:             stripColumnQualifier(agg.Args[0]),
 			})
 		case ast.AggFuncMin:
 			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
@@ -700,7 +795,11 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 					MVOffset:   i,
 					ArgColName: argCol.Name.Name.L,
 				},
-				deltaName: fmt.Sprintf("__mvmerge_min_in_added_%d", i),
+				deltaName:           fmt.Sprintf("__mvmerge_min_in_added_%d", i),
+				addedCountDeltaName: fmt.Sprintf("__mvmerge_min_cnt_in_added_%d", i),
+				removedValueDelta:   fmt.Sprintf("__mvmerge_min_in_removed_%d", i),
+				removedCountDelta:   fmt.Sprintf("__mvmerge_min_cnt_in_removed_%d", i),
+				argExpr:             stripColumnQualifier(agg.Args[0]),
 			})
 		default:
 			return nil, false, errors.Errorf("unsupported aggregate function %s in mvmerge stage-1", agg.F)
@@ -751,6 +850,48 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 	return sumToCountIdx, nil
 }
 
+// mapMinMaxToCountExprDependencies finds, for every nullable MIN(expr)/MAX(expr), the unique matching
+// COUNT(expr) aggregate in the same MV SELECT list. The dependency is required to preserve NULL semantics
+// when fast-refresh applies MIN/MAX deltas and needs to distinguish "result is NULL" from "no non-NULL row remains".
+func mapMinMaxToCountExprDependencies(aggCols []aggColInfo, aggArgNotNullByOffset map[int]bool) (map[int]int, error) {
+	minMaxToCountIdx := make(map[int]int)
+	for i, ac := range aggCols {
+		if ac.info.Kind != AggMax && ac.info.Kind != AggMin {
+			continue
+		}
+		if aggArgNotNullByOffset[ac.info.MVOffset] {
+			continue
+		}
+		if ac.argExpr == nil {
+			return nil, errors.Errorf("%v aggregate argument is nil at mv offset %d", ac.info.Kind, ac.info.MVOffset)
+		}
+		matchIdx := -1
+		for j, cand := range aggCols {
+			if cand.info.Kind != AggCount || cand.argExpr == nil {
+				continue
+			}
+			if !exprStructuralEqual(ac.argExpr, cand.argExpr) {
+				continue
+			}
+			if matchIdx >= 0 {
+				return nil, errors.Errorf(
+					"%v expression %s at mv offset %d has multiple matching COUNT(expr) dependencies (offsets %d and %d)",
+					ac.info.Kind, restoreExpr(ac.argExpr), ac.info.MVOffset, aggCols[matchIdx].info.MVOffset, cand.info.MVOffset,
+				)
+			}
+			matchIdx = j
+		}
+		if matchIdx < 0 {
+			return nil, errors.Errorf(
+				"%v expression %s at mv offset %d requires matching COUNT(expr) in SELECT list",
+				ac.info.Kind, restoreExpr(ac.argExpr), ac.info.MVOffset,
+			)
+		}
+		minMaxToCountIdx[i] = matchIdx
+	}
+	return minMaxToCountIdx, nil
+}
+
 // validateAggDependencies checks that each aggregate exposes the expected dependency layout and
 // that every dependency offset points to a valid position in the final merge-source schema.
 func validateAggDependencies(
@@ -758,7 +899,6 @@ func validateAggDependencies(
 	mvColumnOffsetBase int,
 	mvColumnCount int,
 	schemaLen int,
-	removedRowsDeltaOff int,
 ) error {
 	mvColumnEnd := mvColumnOffsetBase + mvColumnCount
 	for _, ai := range aggInfos {
@@ -810,33 +950,35 @@ func validateAggDependencies(
 				}
 			}
 		case AggMax, AggMin:
-			// [self_delta, removed_rows_delta]
-			if len(ai.Dependencies) != 2 {
+			// [added_val, added_cnt, removed_val, removed_cnt] + optional [matched_count_expr_mv] for nullable arg.
+			if len(ai.Dependencies) != 4 && len(ai.Dependencies) != 5 {
 				return errors.Errorf(
-					"%v at mv offset %d expects dependencies [self_delta, removed_rows_delta], got %v",
+					"%v at mv offset %d expects dependencies "+
+						"[added_val, added_cnt, removed_val, removed_cnt] or "+
+						"[added_val, added_cnt, removed_val, removed_cnt, matched_count_expr_mv], got %v",
 					ai.Kind,
 					ai.MVOffset,
 					ai.Dependencies,
 				)
 			}
-			if ai.Dependencies[0] >= mvColumnOffsetBase {
+			for depPos := 0; depPos < 4; depPos++ {
+				if ai.Dependencies[depPos] >= mvColumnOffsetBase {
+					return errors.Errorf(
+						"%v at mv offset %d has invalid delta dependency[%d] offset %d",
+						ai.Kind,
+						ai.MVOffset,
+						depPos,
+						ai.Dependencies[depPos],
+					)
+				}
+			}
+			if len(ai.Dependencies) == 5 &&
+				(ai.Dependencies[4] < mvColumnOffsetBase || ai.Dependencies[4] >= mvColumnEnd) {
 				return errors.Errorf(
-					"%v at mv offset %d has invalid self_delta offset %d",
+					"%v at mv offset %d has invalid matched_count_expr_mv offset %d",
 					ai.Kind,
 					ai.MVOffset,
-					ai.Dependencies[0],
-				)
-			}
-			if removedRowsDeltaOff < 0 {
-				return errors.Errorf("internal error: %v at mv offset %d requires removed_rows delta", ai.Kind, ai.MVOffset)
-			}
-			if ai.Dependencies[1] != removedRowsDeltaOff {
-				return errors.Errorf(
-					"%v at mv offset %d has invalid removed_rows_delta offset %d, expected %d",
-					ai.Kind,
-					ai.MVOffset,
-					ai.Dependencies[1],
-					removedRowsDeltaOff,
+					ai.Dependencies[4],
 				)
 			}
 		default:
@@ -857,16 +999,12 @@ func isCountStarOrOneArg(arg ast.ExprNode) bool {
 	if !ok {
 		return false
 	}
-	return isIntegerLiteralOne(v.GetValue())
-}
-
-func isIntegerLiteralOne(v any) bool {
-	switch x := v.(type) {
-	case int:
-		return x == 1
+	switch x := v.GetValue().(type) {
 	case int64:
 		return x == 1
 	case uint64:
+		return x == 1
+	case int:
 		return x == 1
 	default:
 		return false
@@ -996,54 +1134,71 @@ func stripAllParentheses(expr ast.ExprNode) ast.ExprNode {
 // old_new uses +1 for inserted/new rows and -1 for deleted/old rows.
 // For COUNT/SUM, this sign directly encodes add/remove contribution.
 func buildMLogDeltaSelect(
+	sctx planctx.PlanContext,
 	dbName pmodel.CIStr,
 	mlogTable *model.TableInfo,
 	mvSel *ast.SelectStmt,
 	mvCols []*model.ColumnInfo,
 	groupKeyOffsets []int,
 	aggCols []aggColInfo,
-	hasMinMax bool,
 	opt BuildOptions,
 ) (*ast.SelectStmt, error) {
-	// Strip qualifiers in WHERE so it can be evaluated against mv-log rows (single table).
-	if mvSel.Where != nil {
-		mvSel.Where.Accept(&columnQualifierStripper{})
+	buildMLogWhere := func() (ast.ExprNode, error) {
+		tsCol := colExpr(model.ExtraCommitTSName.L)
+		var where ast.ExprNode = andExpr(
+			binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", "")),
+			binary(opcode.LE, tsCol, ast.NewValueExpr(opt.ToTS, "", "")),
+		)
+		if mvSel.Where != nil {
+			mvWhere, err := cloneExprByRestore(sctx, mvSel.Where)
+			if err != nil {
+				return nil, err
+			}
+			mvWhere.Accept(&columnQualifierStripper{})
+			where = andExpr(where, stripAllParentheses(mvWhere))
+		}
+		return where, nil
 	}
 
-	fields := make([]*ast.SelectField, 0, len(groupKeyOffsets)+1+len(aggCols)+1)
-
-	// Group keys: keep base-table column expression, alias to MV column name.
+	groupKeyBaseColByMVOffset := make(map[int]string, len(groupKeyOffsets))
+	groupBy := &ast.GroupByClause{Items: make([]*ast.ByItem, 0, len(groupKeyOffsets))}
 	for _, mvOffset := range groupKeyOffsets {
-		mvColName := mvCols[mvOffset].Name
 		baseColExpr, err := groupKeyBaseColExprAtOffset(mvSel, mvOffset)
 		if err != nil {
 			return nil, err
 		}
-		fields = append(fields, &ast.SelectField{Expr: baseColExpr, AsName: mvColName})
+		groupKeyBaseColByMVOffset[mvOffset] = baseColExpr.Name.Name.O
+		groupBy.Items = append(groupBy.Items, &ast.ByItem{Expr: baseColExpr, NullOrder: true})
 	}
 
-	// old_new is signed delta marker in mlog rows: +1 for added/new row, -1 for removed/old row.
+	phase1Fields := make([]*ast.SelectField, 0, len(groupKeyOffsets)+1+len(aggCols)+1)
+	for _, mvOffset := range groupKeyOffsets {
+		mvColName := mvCols[mvOffset].Name
+		phase1Fields = append(phase1Fields, &ast.SelectField{
+			Expr:   colExpr(groupKeyBaseColByMVOffset[mvOffset]),
+			AsName: mvColName,
+		})
+	}
 	oldNewCol := colExpr(model.MaterializedViewLogOldNewColumnName)
-
-	// Always compute delta count(*) for stage-1.
-	fields = append(fields, &ast.SelectField{
+	phase1Fields = append(phase1Fields, &ast.SelectField{
 		Expr:   aggSumInt(oldNewCol),
 		AsName: pmodel.NewCIStr(deltaCntStarName),
 	})
 
-	// Per aggregate column deltas.
-	// For normal aggs (COUNT/SUM), old_new sign naturally encodes add/remove contribution.
 	for _, ac := range aggCols {
 		switch ac.info.Kind {
 		case AggCountStar:
-			// already handled above.
 			continue
 		case AggCount:
 			if ac.argExpr == nil {
 				return nil, errors.New("COUNT aggregate argument is nil for mvmerge")
 			}
-			cond := &ast.IsNullExpr{Expr: ac.argExpr, Not: true} // expr IS NOT NULL
-			fields = append(fields, &ast.SelectField{
+			argExpr, err := cloneExprByRestore(sctx, ac.argExpr)
+			if err != nil {
+				return nil, err
+			}
+			cond := &ast.IsNullExpr{Expr: argExpr, Not: true}
+			phase1Fields = append(phase1Fields, &ast.SelectField{
 				Expr:   aggSumInt(ifExpr(cond, oldNewCol, ast.NewValueExpr(int64(0), "", ""))),
 				AsName: pmodel.NewCIStr(ac.deltaName),
 			})
@@ -1051,76 +1206,99 @@ func buildMLogDeltaSelect(
 			if ac.argExpr == nil {
 				return nil, errors.New("SUM aggregate argument is nil for mvmerge")
 			}
+			argExpr, err := cloneExprByRestore(sctx, ac.argExpr)
+			if err != nil {
+				return nil, err
+			}
 			addedCond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", ""))
-			fields = append(fields, &ast.SelectField{
-				Expr:   aggSum(ifExpr(addedCond, ac.argExpr, &ast.UnaryOperationExpr{Op: opcode.Minus, V: ac.argExpr})),
+			phase1Fields = append(phase1Fields, &ast.SelectField{
+				Expr:   aggSum(ifExpr(addedCond, argExpr, &ast.UnaryOperationExpr{Op: opcode.Minus, V: argExpr})),
 				AsName: pmodel.NewCIStr(ac.deltaName),
 			})
 		case AggMax:
-			// Track only candidates from added rows; removed rows are handled by detail update path.
+			if ac.info.ArgColName == "" {
+				return nil, errors.New("MAX aggregate argument column is empty for mvmerge")
+			}
 			argCol := colExpr(ac.info.ArgColName)
-			fields = append(fields, &ast.SelectField{
-				Expr: aggMax(ifExpr(
-					binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", "")),
-					argCol,
-					ast.NewValueExpr(nil, "", ""),
-				)),
-				AsName: pmodel.NewCIStr(ac.deltaName),
-			})
+			addedCond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", ""))
+			removedCond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(-1), "", ""))
+			addedArg := ifExpr(addedCond, argCol, ast.NewValueExpr(nil, "", ""))
+			removedArg := ifExpr(removedCond, argCol, ast.NewValueExpr(nil, "", ""))
+			phase1Fields = append(phase1Fields,
+				&ast.SelectField{
+					Expr:   aggMax(addedArg),
+					AsName: pmodel.NewCIStr(ac.deltaName),
+				},
+				&ast.SelectField{
+					Expr:   aggMaxCount(addedArg),
+					AsName: pmodel.NewCIStr(ac.addedCountDeltaName),
+				},
+				&ast.SelectField{
+					Expr:   aggMax(removedArg),
+					AsName: pmodel.NewCIStr(ac.removedValueDelta),
+				},
+				&ast.SelectField{
+					Expr:   aggMaxCount(removedArg),
+					AsName: pmodel.NewCIStr(ac.removedCountDelta),
+				},
+			)
 		case AggMin:
-			// Same as MAX: only additions contribute to quick-update candidate.
+			if ac.info.ArgColName == "" {
+				return nil, errors.New("MIN aggregate argument column is empty for mvmerge")
+			}
 			argCol := colExpr(ac.info.ArgColName)
-			fields = append(fields, &ast.SelectField{
-				Expr: aggMin(ifExpr(
-					binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", "")),
-					argCol,
-					ast.NewValueExpr(nil, "", ""),
-				)),
-				AsName: pmodel.NewCIStr(ac.deltaName),
-			})
+			addedCond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(1), "", ""))
+			removedCond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(-1), "", ""))
+			addedArg := ifExpr(addedCond, argCol, ast.NewValueExpr(nil, "", ""))
+			removedArg := ifExpr(removedCond, argCol, ast.NewValueExpr(nil, "", ""))
+			phase1Fields = append(phase1Fields,
+				&ast.SelectField{
+					Expr:   aggMin(addedArg),
+					AsName: pmodel.NewCIStr(ac.deltaName),
+				},
+				&ast.SelectField{
+					Expr:   aggMinCount(addedArg),
+					AsName: pmodel.NewCIStr(ac.addedCountDeltaName),
+				},
+				&ast.SelectField{
+					Expr:   aggMin(removedArg),
+					AsName: pmodel.NewCIStr(ac.removedValueDelta),
+				},
+				&ast.SelectField{
+					Expr:   aggMinCount(removedArg),
+					AsName: pmodel.NewCIStr(ac.removedCountDelta),
+				},
+			)
 		default:
 			return nil, errors.Errorf("unsupported agg kind %v", ac.info.Kind)
 		}
 	}
 
-	if hasMinMax {
-		// removed_rows := SUM(IF old_new = -1 THEN 1 ELSE 0)
-		cond := binary(opcode.EQ, oldNewCol, ast.NewValueExpr(int64(-1), "", ""))
-		fields = append(fields, &ast.SelectField{
-			Expr:   aggSum(ifExpr(cond, ast.NewValueExpr(int64(1), "", ""), ast.NewValueExpr(int64(0), "", ""))),
-			AsName: pmodel.NewCIStr(removedRowsName),
-		})
-	}
-
 	mlogFrom := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{
 		Source: &ast.TableName{Schema: dbName, Name: mlogTable.Name},
 	}}}
-
-	// Restrict mlog scan to the incremental window (FromTS, ToTS], then apply MV predicate.
-	tsCol := colExpr(model.ExtraCommitTSName.L)
-	tsRange := andExpr(
-		binary(opcode.GT, tsCol, ast.NewValueExpr(opt.FromTS, "", "")),
-		binary(opcode.LE, tsCol, ast.NewValueExpr(opt.ToTS, "", "")),
-	)
-	where := tsRange
-	if mvSel.Where != nil {
-		where = andExpr(where, mvSel.Where)
+	phase1Where, err := buildMLogWhere()
+	if err != nil {
+		return nil, err
 	}
-
-	groupBy := &ast.GroupByClause{Items: make([]*ast.ByItem, 0, len(groupKeyOffsets))}
-	for _, mvOffset := range groupKeyOffsets {
-		baseColExpr, err := groupKeyBaseColExprAtOffset(mvSel, mvOffset)
-		if err != nil {
-			return nil, err
-		}
-		groupBy.Items = append(groupBy.Items, &ast.ByItem{Expr: baseColExpr, NullOrder: true})
+	tableHints := []*ast.TableOptimizerHint{
+		{
+			HintName: pmodel.NewCIStr(utilhint.HintReadFromStorage),
+			HintData: pmodel.NewCIStr(utilhint.HintTiFlash),
+			Tables: []ast.HintTable{
+				{
+					DBName:    dbName,
+					TableName: mlogTable.Name,
+				},
+			},
+		},
 	}
-
 	return &ast.SelectStmt{
-		Fields:  &ast.FieldList{Fields: fields},
-		From:    mlogFrom,
-		Where:   where,
-		GroupBy: groupBy,
+		Fields:     &ast.FieldList{Fields: phase1Fields},
+		From:       mlogFrom,
+		Where:      phase1Where,
+		GroupBy:    groupBy,
+		TableHints: tableHints,
 	}, nil
 }
 
@@ -1135,10 +1313,11 @@ func buildMLogDeltaSelect(
 //	  mv._tidb_rowid AS __mvmerge_mv_rowid  -- only for extra row-id handle tables
 //	FROM (<stage-1 delta select>) AS delta
 //	LEFT JOIN <db>.<mv> AS mv
-//	  ON delta.<group_key_1> <=> mv.<group_key_1>
+//	  ON delta.<group_key_1> [= | <=>] mv.<group_key_1>
 //	 AND ...
 //
-// Null-safe equality (<=>) keeps SQL NULL-group semantics consistent with GROUP BY keys.
+// Nullable MV group keys keep null-safe equality (<=>) so NULL-group semantics stay consistent
+// with GROUP BY. When the MV-side group key is NOT NULL, regular equality (=) is equivalent.
 // Delta is placed on the left side so every changed group survives even when MV row does not exist yet.
 func buildMergeSourceSelect(
 	dbName pmodel.CIStr,
@@ -1148,21 +1327,26 @@ func buildMergeSourceSelect(
 	groupKeyOffsets []int,
 	deltaSel *ast.SelectStmt,
 	aggCols []aggColInfo,
-	hasMinMax bool,
-) (*ast.SelectStmt, []DeltaColumn, *DeltaColumn, int, error) {
+) (*ast.SelectStmt, []DeltaColumn, int, error) {
 	deltaSrc := &ast.TableSource{Source: deltaSel, AsName: pmodel.NewCIStr(deltaTableAlias)}
 	mvSrc := &ast.TableSource{
 		Source: &ast.TableName{Schema: dbName, Name: mv.Name},
 		AsName: pmodel.NewCIStr(mvTableAlias),
 	}
 
-	// Build null-safe join conditions on group keys.
+	// Build join conditions on group keys. Nullable MV keys need <=> to preserve NULL-group
+	// semantics; NOT NULL MV keys can use regular equality.
 	var onExpr ast.ExprNode
 	for _, mvOffset := range groupKeyOffsets {
-		colName := mvCols[mvOffset].Name
+		mvColInfo := mvCols[mvOffset]
+		colName := mvColInfo.Name
 		deltaCol := qualColExpr(deltaTableAlias, colName.O)
 		mvCol := qualColExpr(mvTableAlias, colName.O)
-		cmp := binary(opcode.NullEQ, deltaCol, mvCol)
+		op := opcode.NullEQ
+		if mysql.HasNotNullFlag(mvColInfo.GetFlag()) {
+			op = opcode.EQ
+		}
+		cmp := binary(op, deltaCol, mvCol)
 		if onExpr == nil {
 			onExpr = cmp
 		} else {
@@ -1170,7 +1354,7 @@ func buildMergeSourceSelect(
 		}
 	}
 	if onExpr == nil {
-		return nil, nil, nil, -1, errors.New("empty join key for mvmerge")
+		return nil, nil, -1, errors.New("empty join key for mvmerge")
 	}
 
 	// Use delta as left side so every changed group survives even when MV row doesn't exist yet.
@@ -1186,8 +1370,7 @@ func buildMergeSourceSelect(
 	// delta is the LEFT side and always exists for changed groups.
 	fields := make([]*ast.SelectField, 0, len(mvCols)+1+len(aggCols)+1)
 
-	deltaColumns := make([]DeltaColumn, 0, 1+len(aggCols)+1)
-	var removedDelta *DeltaColumn
+	deltaColumns := make([]DeltaColumn, 0, 1+len(aggCols))
 	nextOffset := 0
 	// Keep all delta columns contiguous before MV columns, and track their absolute output offsets.
 	rowIDHandleOffset := -1
@@ -1205,22 +1388,25 @@ func buildMergeSourceSelect(
 		AsName: pmodel.NewCIStr(deltaCntStarName),
 	})
 	for _, ac := range aggCols {
-		if ac.info.Kind == AggCountStar {
+		switch ac.info.Kind {
+		case AggCountStar:
 			continue
+		case AggMax, AggMin:
+			names := []string{ac.deltaName, ac.addedCountDeltaName, ac.removedValueDelta, ac.removedCountDelta}
+			for _, name := range names {
+				addDeltaCol(name)
+				fields = append(fields, &ast.SelectField{
+					Expr:   qualColExpr(deltaTableAlias, name),
+					AsName: pmodel.NewCIStr(name),
+				})
+			}
+		default:
+			addDeltaCol(ac.deltaName)
+			fields = append(fields, &ast.SelectField{
+				Expr:   qualColExpr(deltaTableAlias, ac.deltaName),
+				AsName: pmodel.NewCIStr(ac.deltaName),
+			})
 		}
-		addDeltaCol(ac.deltaName)
-		fields = append(fields, &ast.SelectField{
-			Expr:   qualColExpr(deltaTableAlias, ac.deltaName),
-			AsName: pmodel.NewCIStr(ac.deltaName),
-		})
-	}
-	if hasMinMax {
-		off := addDeltaCol(removedRowsName)
-		fields = append(fields, &ast.SelectField{
-			Expr:   qualColExpr(deltaTableAlias, removedRowsName),
-			AsName: pmodel.NewCIStr(removedRowsName),
-		})
-		removedDelta = &DeltaColumn{Name: removedRowsName, Offset: off}
 	}
 
 	for i, col := range mvCols {
@@ -1248,7 +1434,333 @@ func buildMergeSourceSelect(
 	return &ast.SelectStmt{
 		Fields: &ast.FieldList{Fields: fields},
 		From:   &ast.TableRefsClause{TableRefs: join},
-	}, deltaColumns, removedDelta, rowIDHandleOffset, nil
+	}, deltaColumns, rowIDHandleOffset, nil
+}
+
+// buildFullUpdateLookupTemplateSelect builds the full-update lookup SELECT template for MIN/MAX fallback.
+//
+// SQL shape (simplified):
+//
+//	SELECT <group keys and MIN/MAX aggregate columns in MV layout>
+//	FROM (
+//	  <buildFullUpdateLookupOuterSelect result>
+//	) AS full_outer
+//	JOIN (
+//	  <buildFullUpdateLookupInnerSelect result>
+//	) AS full_inner
+//	  ON full_outer.__mvmerge_full_outer_gk_<mv_offset_i> <=> full_inner.<base_group_key_i>
+//
+// This function is only used for MIN/MAX fallback.
+// It builds a stable outer+inner IndexJoin template:
+//   - outer side carries probe keys only
+//   - inner side carries the recomputed group keys + MIN/MAX columns
+//
+// We do not build a standalone full_inner_scan here. MIN/MAX fallback must recompute one changed
+// group at a time, so executor needs the optimizer to derive the lookup key positions and index-range
+// template for those runtime group-key values. Reusing IndexJoin gives us that binding mechanism.
+//
+// The returned SELECT is only an intermediate shape. After optimization, the outer side is discarded;
+// only the inner lookup child, lookup metadata, and output-column to MV-offset mapping are kept for
+// fallback full recomputation. Executor refills the probe group-key tuple directly instead of running
+// the outer child.
+func buildFullUpdateLookupTemplateSelect(
+	sctx planctx.PlanContext,
+	dbName pmodel.CIStr,
+	baseTable *model.TableInfo,
+	mvSel *ast.SelectStmt,
+	mvCols []*model.ColumnInfo,
+	groupKeySet map[int]struct{},
+	groupKeyOffsets []int,
+	aggCols []aggColInfo,
+) (*ast.SelectStmt, []int, error) {
+	outerSel, outerGKAliasByMVOffset, err := buildFullUpdateLookupOuterSelect(
+		sctx,
+		dbName,
+		baseTable,
+		mvSel,
+		groupKeyOffsets,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	groupKeyBaseColByMVOffset := make(map[int]string, len(groupKeyOffsets))
+	for _, mvOffset := range groupKeyOffsets {
+		baseColExpr, err := groupKeyBaseColExprAtOffset(mvSel, mvOffset)
+		if err != nil {
+			return nil, nil, err
+		}
+		groupKeyBaseColByMVOffset[mvOffset] = baseColExpr.Name.Name.O
+	}
+	aggKindByMVOffset := make(map[int]AggKind, len(aggCols))
+	for _, ac := range aggCols {
+		aggKindByMVOffset[ac.info.MVOffset] = ac.info.Kind
+	}
+	innerSel, err := buildFullUpdateLookupInnerSelect(
+		sctx,
+		dbName,
+		baseTable,
+		mvSel,
+		mvCols,
+		groupKeySet,
+		groupKeyOffsets,
+		groupKeyBaseColByMVOffset,
+		aggCols,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	outerSrc := &ast.TableSource{Source: outerSel, AsName: pmodel.NewCIStr(fullUpdateOuterAlias)}
+	innerSrc := &ast.TableSource{Source: innerSel, AsName: pmodel.NewCIStr(fullUpdateInnerAlias)}
+
+	var onExpr ast.ExprNode
+	for _, mvOffset := range groupKeyOffsets {
+		outerGK := qualColExpr(fullUpdateOuterAlias, outerGKAliasByMVOffset[mvOffset])
+		innerGK := qualColExpr(fullUpdateInnerAlias, groupKeyBaseColByMVOffset[mvOffset])
+		// Group keys can be NULL, so full-update lookup must use null-safe equality.
+		onExpr = andExpr(onExpr, binary(opcode.NullEQ, outerGK, innerGK))
+	}
+	if onExpr == nil {
+		return nil, nil, errors.New("mvmerge: empty group key offsets for full-update lookup template")
+	}
+
+	fields := make([]*ast.SelectField, 0, len(mvCols))
+	mvOffsets := make([]int, 0, len(mvCols))
+	for mvOffset, mvCol := range mvCols {
+		// Full-update fallback only returns group keys and MIN/MAX aggregate columns.
+		if kind, ok := aggKindByMVOffset[mvOffset]; ok && kind != AggMin && kind != AggMax {
+			continue
+		}
+		outColName := mvCol.Name.O
+		if baseColName, ok := groupKeyBaseColByMVOffset[mvOffset]; ok {
+			outColName = baseColName
+		}
+		fields = append(fields, &ast.SelectField{
+			Expr:   qualColExpr(fullUpdateInnerAlias, outColName),
+			AsName: mvCol.Name,
+		})
+		mvOffsets = append(mvOffsets, mvOffset)
+	}
+
+	return &ast.SelectStmt{
+		Fields: &ast.FieldList{Fields: fields},
+		From: &ast.TableRefsClause{TableRefs: &ast.Join{
+			Left:  outerSrc,
+			Right: innerSrc,
+			Tp:    ast.CrossJoin,
+			On:    &ast.OnCondition{Expr: onExpr},
+		}},
+		TableHints: []*ast.TableOptimizerHint{
+			{
+				// Keep the template stable on index-join path so planbuilder can extract
+				// inner child + range/key mapping as executor rebuild metadata.
+				// Internal MV refresh planning may run on a system session with empty
+				// CurrentDB, so attach DBName explicitly to keep this join hint matchable.
+				HintName: pmodel.NewCIStr("inl_join"),
+				Tables: []ast.HintTable{
+					{DBName: dbName, TableName: pmodel.NewCIStr(fullUpdateOuterAlias)},
+					{DBName: dbName, TableName: pmodel.NewCIStr(fullUpdateInnerAlias)},
+				},
+			},
+		},
+	}, mvOffsets, nil
+}
+
+// buildFullUpdateLookupOuterSelect builds the probe-side SELECT of the full-update lookup template.
+//
+// SQL shape (simplified):
+//
+//	SELECT
+//	  <group_key_i> AS __mvmerge_full_outer_gk_<mv_offset_i>
+//	FROM <db>.<base_table>
+//	WHERE <MV WHERE predicate>
+//	LIMIT 1
+//
+// The outer side only carries one probe-key tuple; executor refills real group-key values per changed
+// group at runtime. The returned alias mapping is used to align outer-side join keys with MV offsets.
+func buildFullUpdateLookupOuterSelect(
+	sctx planctx.PlanContext,
+	dbName pmodel.CIStr,
+	baseTable *model.TableInfo,
+	mvSel *ast.SelectStmt,
+	groupKeyOffsets []int,
+) (*ast.SelectStmt, map[int]string, error) {
+	if baseTable == nil {
+		return nil, nil, errors.New("mvmerge: base table is nil")
+	}
+	if len(groupKeyOffsets) == 0 {
+		return nil, nil, errors.New("mvmerge: empty group key offsets for full-update lookup template")
+	}
+
+	fields := make([]*ast.SelectField, 0, len(groupKeyOffsets))
+	groupKeyAliasByMVOffset := make(map[int]string, len(groupKeyOffsets))
+	for _, mvOffset := range groupKeyOffsets {
+		baseColExpr, err := groupKeyBaseColExprAtOffset(mvSel, mvOffset)
+		if err != nil {
+			return nil, nil, err
+		}
+		alias := fmt.Sprintf("__mvmerge_full_outer_gk_%d", mvOffset)
+		groupKeyAliasByMVOffset[mvOffset] = alias
+		fields = append(fields, &ast.SelectField{
+			Expr:   baseColExpr,
+			AsName: pmodel.NewCIStr(alias),
+		})
+	}
+
+	var where ast.ExprNode
+	if mvSel.Where != nil {
+		mvWhere, err := cloneExprByRestore(sctx, mvSel.Where)
+		if err != nil {
+			return nil, nil, err
+		}
+		mvWhere.Accept(&columnQualifierStripper{})
+		where = stripAllParentheses(mvWhere)
+	}
+
+	return &ast.SelectStmt{
+		Fields: &ast.FieldList{Fields: fields},
+		From: &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{
+			Source: &ast.TableName{Schema: dbName, Name: baseTable.Name},
+		}}},
+		Where: where,
+		// Outer side only provides one probe key tuple; runtime will refill real keys per changed group.
+		Limit: &ast.Limit{Count: ast.NewValueExpr(int64(1), "", "")},
+	}, groupKeyAliasByMVOffset, nil
+}
+
+// buildFullUpdateLookupInnerSelect builds the recomputation side of the full-update lookup template.
+//
+// SQL shape (simplified):
+//
+//	SELECT
+//	  <group_key_i> AS <base_group_key_i>,
+//	  MIN/MAX(<arg>) AS <mv_agg_col>
+//	FROM <db>.<base_table>
+//	WHERE <MV WHERE predicate>
+//	GROUP BY <group keys from MV definition>
+//
+// This is the part that is kept after the outer+inner lookup template is optimized and extracted.
+// It recomputes one group's group keys and MIN/MAX columns from base-table rows.
+func buildFullUpdateLookupInnerSelect(
+	sctx planctx.PlanContext,
+	dbName pmodel.CIStr,
+	baseTable *model.TableInfo,
+	mvSel *ast.SelectStmt,
+	mvCols []*model.ColumnInfo,
+	groupKeySet map[int]struct{},
+	groupKeyOffsets []int,
+	groupKeyBaseColByMVOffset map[int]string,
+	aggCols []aggColInfo,
+) (*ast.SelectStmt, error) {
+	if baseTable == nil {
+		return nil, errors.New("mvmerge: base table is nil")
+	}
+	if len(groupKeyOffsets) == 0 {
+		return nil, errors.New("mvmerge: empty group key offsets for full-update lookup template")
+	}
+
+	aggByMVOffset := make(map[int]aggColInfo, len(aggCols))
+	for _, ac := range aggCols {
+		aggByMVOffset[ac.info.MVOffset] = ac
+	}
+
+	fields := make([]*ast.SelectField, 0, len(mvCols))
+	for i, mvCol := range mvCols {
+		if _, ok := groupKeySet[i]; ok {
+			baseColExpr, err := groupKeyBaseColExprAtOffset(mvSel, i)
+			if err != nil {
+				return nil, err
+			}
+			fields = append(fields, &ast.SelectField{
+				Expr:   baseColExpr,
+				AsName: pmodel.NewCIStr(groupKeyBaseColByMVOffset[i]),
+			})
+			continue
+		}
+		ac, ok := aggByMVOffset[i]
+		if !ok {
+			return nil, errors.Errorf("mv offset %d is neither group key nor aggregate", i)
+		}
+		// Full-update fallback only recomputes MIN/MAX aggregates.
+		if ac.info.Kind != AggMin && ac.info.Kind != AggMax {
+			continue
+		}
+		fullAggExpr, err := buildFullUpdateAggExpr(sctx, ac)
+		if err != nil {
+			return nil, err
+		}
+		fields = append(fields, &ast.SelectField{Expr: fullAggExpr, AsName: mvCol.Name})
+	}
+
+	var where ast.ExprNode
+	if mvSel.Where != nil {
+		mvWhere, err := cloneExprByRestore(sctx, mvSel.Where)
+		if err != nil {
+			return nil, err
+		}
+		mvWhere.Accept(&columnQualifierStripper{})
+		where = stripAllParentheses(mvWhere)
+	}
+
+	groupBy := &ast.GroupByClause{Items: make([]*ast.ByItem, 0, len(groupKeyOffsets))}
+	for _, mvOffset := range groupKeyOffsets {
+		baseColExpr, err := groupKeyBaseColExprAtOffset(mvSel, mvOffset)
+		if err != nil {
+			return nil, err
+		}
+		groupBy.Items = append(groupBy.Items, &ast.ByItem{
+			Expr:      baseColExpr,
+			NullOrder: true,
+		})
+	}
+
+	return &ast.SelectStmt{
+		Fields: &ast.FieldList{Fields: fields},
+		From: &ast.TableRefsClause{TableRefs: &ast.Join{
+			Left: &ast.TableSource{
+				Source: &ast.TableName{Schema: dbName, Name: baseTable.Name},
+			},
+		}},
+		Where:   where,
+		GroupBy: groupBy,
+	}, nil
+}
+
+func buildFullUpdateAggExpr(sctx planctx.PlanContext, ac aggColInfo) (ast.ExprNode, error) {
+	switch ac.info.Kind {
+	case AggCountStar:
+		return aggCount(ast.NewValueExpr(int64(1), "", "")), nil
+	case AggCount:
+		if ac.argExpr == nil {
+			return nil, errors.New("COUNT aggregate argument is nil for full-update")
+		}
+		argExpr, err := cloneExprByRestore(sctx, ac.argExpr)
+		if err != nil {
+			return nil, err
+		}
+		return aggCount(argExpr), nil
+	case AggSum:
+		if ac.argExpr == nil {
+			return nil, errors.New("SUM aggregate argument is nil for full-update")
+		}
+		argExpr, err := cloneExprByRestore(sctx, ac.argExpr)
+		if err != nil {
+			return nil, err
+		}
+		return aggSum(argExpr), nil
+	case AggMax:
+		if ac.info.ArgColName == "" {
+			return nil, errors.New("MAX aggregate argument column is empty for full-update")
+		}
+		return aggMax(colExpr(ac.info.ArgColName)), nil
+	case AggMin:
+		if ac.info.ArgColName == "" {
+			return nil, errors.New("MIN aggregate argument column is empty for full-update")
+		}
+		return aggMin(colExpr(ac.info.ArgColName)), nil
+	default:
+		return nil, errors.Errorf("unsupported agg kind %v for full-update", ac.info.Kind)
+	}
 }
 
 // groupKeyBaseColExprAtOffset returns the underlying base-table column expression for one MV
@@ -1345,6 +1857,10 @@ func aggSum(arg ast.ExprNode) *ast.AggregateFuncExpr {
 	return &ast.AggregateFuncExpr{F: ast.AggFuncSum, Args: []ast.ExprNode{arg}}
 }
 
+func aggCount(arg ast.ExprNode) *ast.AggregateFuncExpr {
+	return &ast.AggregateFuncExpr{F: ast.AggFuncCount, Args: []ast.ExprNode{arg}}
+}
+
 func aggSumInt(arg ast.ExprNode) *ast.AggregateFuncExpr {
 	return &ast.AggregateFuncExpr{F: ast.AggFuncSumInt, Args: []ast.ExprNode{arg}}
 }
@@ -1355,6 +1871,14 @@ func aggMax(arg ast.ExprNode) *ast.AggregateFuncExpr {
 
 func aggMin(arg ast.ExprNode) *ast.AggregateFuncExpr {
 	return &ast.AggregateFuncExpr{F: ast.AggFuncMin, Args: []ast.ExprNode{arg}}
+}
+
+func aggMaxCount(arg ast.ExprNode) *ast.AggregateFuncExpr {
+	return &ast.AggregateFuncExpr{F: ast.AggFuncMaxCount, Args: []ast.ExprNode{arg}}
+}
+
+func aggMinCount(arg ast.ExprNode) *ast.AggregateFuncExpr {
+	return &ast.AggregateFuncExpr{F: ast.AggFuncMinCount, Args: []ast.ExprNode{arg}}
 }
 
 func ifExpr(cond, trueExpr, falseExpr ast.ExprNode) *ast.FuncCallExpr {
