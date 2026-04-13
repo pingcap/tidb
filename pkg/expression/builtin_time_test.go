@@ -3069,6 +3069,14 @@ func TestTimeFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, true, v.IsNull())
 
+	// issue:59445
+	args = []types.Datum{types.NewStringDatum("12:34:56"), types.NewStringDatum("")}
+	f, err = fc.getFunction(ctx, datumsToConstants(args))
+	require.NoError(t, err)
+	v, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, v.IsNull())
+
 	tblDate := []struct {
 		Input  []string
 		Expect any

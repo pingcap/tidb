@@ -675,6 +675,7 @@ var Keywords = []KeywordsType{
 	{"JOB", false, "tidb"},
 	{"JOBS", false, "tidb"},
 	{"LITE", false, "tidb"},
+	{"NDVRATE", false, "tidb"},
 	{"NODE_ID", false, "tidb"},
 	{"NODE_STATE", false, "tidb"},
 	{"OPTIMISTIC", false, "tidb"},

@@ -1225,6 +1225,22 @@ func TestFillMissingStatsMeta(t *testing.T) {
 	checkStatsMeta(p1ID, "1", "1")
 	globalVer2 := checkStatsMeta(tbl2ID, "3", "3")
 	require.Greater(t, globalVer2, globalVer1)
+
+	tk.MustExec("insert into t1 values (5, 6)")
+	tk.MustExec("insert into t2 values (5, 6), (15, 16)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true, []int64{tbl1ID, p1ID}...))
+	require.NoError(t, h.Update(context.Background(), is))
+	checkStatsMeta(tbl1ID, "4", "2")
+	checkStatsMeta(p0ID, "2", "2")
+	checkStatsMeta(p1ID, "2", "2")
+	globalVer3 := checkStatsMeta(tbl2ID, "4", "4")
+	require.Greater(t, globalVer3, globalVer2)
+
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), is))
+	checkStatsMeta(p0ID, "3", "3")
+	globalVer4 := checkStatsMeta(tbl2ID, "5", "5")
+	require.Greater(t, globalVer4, globalVer3)
 }
 
 func TestNotDumpSysTable(t *testing.T) {
