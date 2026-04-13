@@ -248,7 +248,6 @@ func TestCheckNewCollationEnable(t *testing.T) {
 		}
 		require.Equal(t, ca.newCollationEnableInCluster == "True", enabled)
 	}
-
 }
 
 func TestFilterDDLJobs(t *testing.T) {
