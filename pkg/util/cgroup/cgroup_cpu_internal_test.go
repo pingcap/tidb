@@ -14,7 +14,7 @@
 
 //go:build linux
 
-package cgroup_test
+package cgroup
 
 import (
 	"fmt"

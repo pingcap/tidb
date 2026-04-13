@@ -19,10 +19,10 @@ package workloadrepo
 
 // ExportrepositoryTable exports repositoryTable for testing
 func GetRepositorytable() any {
-	return repositoryTable
+	return (*repositoryTable)(nil)
 }
 
 // Exportworker exports worker for testing
 func GetWorker() any {
-	return worker
+	return (*worker)(nil)
 }

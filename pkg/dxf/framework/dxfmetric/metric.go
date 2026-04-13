@@ -93,10 +93,10 @@ func InitDistTaskMetrics() {
 		}, []string{LblTaskID, lblEvent})
 }
 
-// Register registers DXF metrics.
-// It is safe to call multiple times with the same registerer.
 var dxfRegisterOnce sync.Once
 
+// Register registers DXF metrics.
+// It is safe to call multiple times with the same registerer.
 func Register(register prometheus.Registerer) {
 	dxfRegisterOnce.Do(func() {
 		register.MustRegister(UsedSlotsGauge)
