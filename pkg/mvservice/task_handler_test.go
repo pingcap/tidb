@@ -58,6 +58,34 @@ const (
 )
 
 var (
+	testSQLMarkStaleMVRefreshHistOrphaned = fmt.Sprintf(
+		`UPDATE mysql.tidb_mview_refresh_hist
+SET REFRESH_STATUS = '%s',
+	REFRESH_ENDTIME = IFNULL(REFRESH_ENDTIME, NOW(6)),
+	REFRESH_DURATION_SEC = IFNULL(REFRESH_DURATION_SEC, CASE WHEN REFRESH_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, REFRESH_TIME, NOW(6)) / 1000000.0 END),
+	REFRESH_FAILED_REASON = IFNULL(REFRESH_FAILED_REASON, '%s')
+WHERE REFRESH_STATUS = 'running'
+  AND COALESCE(LAST_HEARTBEAT_AT, REFRESH_TIME) < %%?
+ORDER BY REFRESH_JOB_ID
+LIMIT %d`,
+		mvHistoryOrphanedStatus,
+		mvRefreshHistoryOrphanedReason,
+		historyGCDeleteBatchSize,
+	)
+	testSQLMarkStaleMVLogPurgeHistOrphaned = fmt.Sprintf(
+		`UPDATE mysql.tidb_mlog_purge_hist
+SET PURGE_STATUS = '%s',
+	PURGE_ENDTIME = IFNULL(PURGE_ENDTIME, NOW(6)),
+	PURGE_DURATION_SEC = IFNULL(PURGE_DURATION_SEC, CASE WHEN PURGE_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, PURGE_TIME, NOW(6)) / 1000000.0 END),
+	PURGE_FAILED_REASON = IFNULL(PURGE_FAILED_REASON, '%s')
+WHERE PURGE_STATUS = 'running'
+  AND COALESCE(LAST_HEARTBEAT_AT, PURGE_TIME) < %%?
+ORDER BY PURGE_JOB_ID
+LIMIT %d`,
+		mvHistoryOrphanedStatus,
+		mvLogPurgeHistoryOrphanedReason,
+		historyGCDeleteBatchSize,
+	)
 	testSQLDeleteMVRefreshHistBeforeTSO = fmt.Sprintf(
 		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
 		historyGCDeleteBatchSize,
@@ -1620,7 +1648,8 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 		refreshExec, purgeExec int,
 		refreshCountCapLimits, purgeCountCapLimits []uint64,
 	) []string {
-		sqls := make([]string, 0, refreshExec+purgeExec+len(refreshCountCapLimits)+len(purgeCountCapLimits)+2)
+		sqls := make([]string, 0, refreshExec+purgeExec+len(refreshCountCapLimits)+len(purgeCountCapLimits)+4)
+		sqls = append(sqls, testSQLMarkStaleMVRefreshHistOrphaned)
 		for i := 0; i < refreshExec; i++ {
 			sqls = append(sqls, testSQLDeleteMVRefreshHistBeforeTSO)
 		}
@@ -1628,6 +1657,7 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 		for _, limit := range refreshCountCapLimits {
 			sqls = append(sqls, testSQLDeleteMVRefreshHistByCount(limit))
 		}
+		sqls = append(sqls, testSQLMarkStaleMVLogPurgeHistOrphaned)
 		for i := 0; i < purgeExec; i++ {
 			sqls = append(sqls, testSQLDeleteMVLogPurgeHistBeforeTSO)
 		}
@@ -1765,6 +1795,8 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			se := newRecordingSessionContext()
+			se.restrictedAffectedRows[testSQLMarkStaleMVRefreshHistOrphaned] = []uint64{0}
+			se.restrictedAffectedRows[testSQLMarkStaleMVLogPurgeHistOrphaned] = []uint64{0}
 			if tc.name == "batch_delete_no_max_batches" {
 				const extraBatches = 25
 				refreshAffected := make([]uint64, extraBatches)
@@ -1830,16 +1862,21 @@ func TestServerHelperPurgeMVHistoryBeforeTSO(t *testing.T) {
 			), se.executedRestrictedSQL)
 			require.Len(t, se.executedRestrictedArg, len(se.executedRestrictedSQL))
 
-			purgeTimeArgPos := tc.expectRefreshExec + len(tc.expectRefreshCountCap) + 1
+			refreshRetentionArgPos := 1
+			purgeOrphanArgPos := tc.expectRefreshExec + len(tc.expectRefreshCountCap) + 2
+			purgeTimeArgPos := purgeOrphanArgPos + 1
 			if tc.assertArgsAreEqualTSO {
-				require.Equal(t, []any{tc.currentTSO}, se.executedRestrictedArg[0])
+				require.Len(t, se.executedRestrictedArg[0], 1)
+				require.Len(t, se.executedRestrictedArg[purgeOrphanArgPos], 1)
+				require.Equal(t, se.executedRestrictedArg[0][0], se.executedRestrictedArg[purgeOrphanArgPos][0])
+				require.Equal(t, []any{tc.currentTSO}, se.executedRestrictedArg[refreshRetentionArgPos])
 				require.Equal(t, []any{tc.currentTSO}, se.executedRestrictedArg[purgeTimeArgPos])
 			}
 			if tc.assertArgsNotEqual {
-				require.NotEqual(t, se.executedRestrictedArg[0][0], se.executedRestrictedArg[purgeTimeArgPos][0])
+				require.NotEqual(t, se.executedRestrictedArg[refreshRetentionArgPos][0], se.executedRestrictedArg[purgeTimeArgPos][0])
 			}
-			require.Empty(t, se.executedRestrictedArg[tc.expectRefreshExec])
-			argBase := tc.expectRefreshExec + 1
+			require.Empty(t, se.executedRestrictedArg[tc.expectRefreshExec+1])
+			argBase := tc.expectRefreshExec + 2
 			if len(tc.refreshCountRows) > 0 {
 				minJobID := tc.refreshCountRows[0].GetUint64(1)
 				for i := range tc.expectRefreshCountCap {
@@ -1891,6 +1928,52 @@ func TestServerHelperPurgeMVHistoryBeforeTSOTreatsNullStatusAsDeletable(t *testi
 	require.Contains(t, testSQLDeleteMVLogPurgeHistBeforeTSO, "PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running'")
 	require.Contains(t, testSQLDeleteMVRefreshHistByCount(1), "REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running'")
 	require.Contains(t, testSQLDeleteMVLogPurgeHistByCount(1), "PURGE_STATUS IS NULL OR PURGE_STATUS <> 'running'")
+}
+
+func TestServerHelperPurgeMVHistoryBeforeTSOReconcilesStaleRunningHistRows(t *testing.T) {
+	installMockTimeForTest(t)
+
+	currentTSO := oracle.ComposeTS(int64(36*time.Hour/time.Millisecond), 0)
+	expectedCutoffTime := oracle.GetTimeFromTS(oracle.ComposeTS(int64(12*time.Hour/time.Millisecond), 0))
+
+	se := newRecordingSessionContext()
+	se.restrictedAffectedRows[testSQLMarkStaleMVRefreshHistOrphaned] = []uint64{2}
+	se.restrictedAffectedRows[testSQLMarkStaleMVLogPurgeHistOrphaned] = []uint64{1}
+	se.restrictedAffectedRows[testSQLDeleteMVRefreshHistBeforeTSO] = []uint64{0}
+	se.restrictedAffectedRows[testSQLDeleteMVLogPurgeHistBeforeTSO] = []uint64{0}
+	se.restrictedRows[testSQLCountMVRefreshHist] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords)),
+			types.NewUintDatum(500),
+		}).ToRow(),
+	}
+	se.restrictedRows[testSQLCountMVLogPurgeHist] = []chunk.Row{
+		chunk.MutRowFromDatums([]types.Datum{
+			types.NewIntDatum(int64(defaultMVHistoryGCMaxRecords)),
+			types.NewUintDatum(900),
+		}).ToRow(),
+	}
+
+	err := (&serviceHelper{}).PurgeMVHistoryBeforeTSO(
+		context.Background(),
+		recordingSessionPool{se: se},
+		currentTSO,
+		0,
+		0,
+	)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		testSQLMarkStaleMVRefreshHistOrphaned,
+		testSQLDeleteMVRefreshHistBeforeTSO,
+		testSQLCountMVRefreshHist,
+		testSQLMarkStaleMVLogPurgeHistOrphaned,
+		testSQLDeleteMVLogPurgeHistBeforeTSO,
+		testSQLCountMVLogPurgeHist,
+	}, se.executedRestrictedSQL)
+	require.Equal(t, []any{expectedCutoffTime}, se.executedRestrictedArg[0])
+	require.Equal(t, []any{currentTSO}, se.executedRestrictedArg[1])
+	require.Equal(t, []any{expectedCutoffTime}, se.executedRestrictedArg[3])
+	require.Equal(t, []any{currentTSO}, se.executedRestrictedArg[4])
 }
 
 func TestServerHelperRefreshMVDeletedWhenMetaNotFound(t *testing.T) {
