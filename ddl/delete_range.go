@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
@@ -184,8 +185,9 @@ func (dr *delRange) doDelRangeWork() error {
 		return errors.Trace(err)
 	}
 
+	gcForceMergeTableCache := make(map[int64]struct{}, len(ranges))
 	for _, r := range ranges {
-		if err := dr.doTask(sctx, r); err != nil {
+		if err := dr.doTask(sctx, r, gcForceMergeTableCache); err != nil {
 			logutil.BgLogger().Error("[ddl] delRange emulator do task failed", zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -193,7 +195,7 @@ func (dr *delRange) doDelRangeWork() error {
 	return nil
 }
 
-func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
+func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask, gcForceMergeTableCache map[int64]struct{}) error {
 	var oldStartKey, newStartKey kv.Key
 	oldStartKey = r.StartKey
 	for {
@@ -241,6 +243,9 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 				logutil.BgLogger().Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
+			if err := dr.reportForceMergeRanges(sctx, r, gcForceMergeTableCache); err != nil {
+				logutil.BgLogger().Error("[ddl] delRange emulator report force merge failed", zap.Error(err))
+			}
 			startKey, endKey := r.Range()
 			logutil.BgLogger().Info("[ddl] delRange emulator complete task",
 				zap.Int64("jobID", r.JobID),
@@ -255,6 +260,22 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 		oldStartKey = newStartKey
 	}
 	return nil
+}
+
+func (dr *delRange) reportForceMergeRanges(sctx sessionctx.Context, r util.DelRangeTask, gcForceMergeTableCache map[int64]struct{}) error {
+	historyJob, err := GetHistoryJobByID(sctx, r.JobID)
+	if err != nil {
+		return err
+	}
+	if historyJob == nil {
+		return errors.Errorf("ddl job %d not found", r.JobID)
+	}
+
+	forceMergeRanges := GetForceMergeRangesForGCDeleteRange(historyJob, r, gcForceMergeTableCache)
+	if len(forceMergeRanges) == 0 {
+		return nil
+	}
+	return infosync.AddForceMergeRanges(context.Background(), forceMergeRanges)
 }
 
 // insertJobIntoDeleteRangeTable parses the job into delete-range arguments,

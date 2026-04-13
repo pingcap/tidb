@@ -1089,10 +1089,11 @@ func (do *Domain) Init(
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
 	do.wg.Run(do.mdlCheckLoop)
-	do.wg.Add(3)
+	do.wg.Add(4)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
 	go do.globalConfigSyncerKeeper()
+	go do.mergeEmptyRegionsLoop()
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
