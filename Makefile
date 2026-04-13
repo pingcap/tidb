@@ -210,7 +210,12 @@ bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run all tests (Phas
 	@echo "=== Enabling failpoints ==="
 	@tools/bin/failpoint-ctl enable
 	@echo "=== Updating BUILD.bazel files (gazelle) ==="
-	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	@if [ "$(SKIP_GAZELLE)" != "1" ]; then \
+		bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle; \
+		git restore --worktree pkg/expression/BUILD.bazel; \
+	else \
+		echo "=== Skip gazelle because SKIP_GAZELLE=1 ==="; \
+	fi
 	@echo "=== Phase 1: Running unit tests with bazel ==="
 	@bash scripts/bazel_unit_test_targets.sh | xargs bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
 		--define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false \
