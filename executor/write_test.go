@@ -2292,6 +2292,32 @@ func TestLoadDataReplace(t *testing.T) {
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
 }
 
+func TestFix56408(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test; DROP TABLE IF EXISTS a;")
+	tk.MustExec("CREATE TABLE a (id INT, name VARCHAR(20), addr VARCHAR(100), PRIMARY KEY (id) NONCLUSTERED);")
+	tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' REPLACE INTO TABLE a FIELDS TERMINATED BY '|';")
+	ctx := tk.Session().(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	require.True(t, ok)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	require.NotNil(t, ld)
+	tests := []testCase{
+		{
+			nil,
+			[]byte("1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n1|aa|beijing\n2|bb|shanghai\n2|bb|shanghai\n2|bb|shanghai\n3|cc|guangzhou\n"),
+			[]string{"1|aa|beijing", "2|bb|shanghai", "3|cc|guangzhou"},
+			nil,
+			"Records: 8  Deleted: 0  Skipped: 5  Warnings: 0",
+		},
+	}
+	deleteSQL := "DO 1"
+	selectSQL := "TABLE a;"
+	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
+	tk.MustExec("ADMIN CHECK TABLE a")
+}
+
 // TestLoadDataOverflowBigintUnsigned related to issue 6360
 func TestLoadDataOverflowBigintUnsigned(t *testing.T) {
 	store := testkit.CreateMockStore(t)
