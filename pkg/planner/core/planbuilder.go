@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -3979,6 +3980,13 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			}
 			fullUpdateLookupIS := b.is
 			if toTS > 0 {
+				gcSafePoint, err := gcutil.GetGCSafePoint(sctx)
+				if err != nil {
+					return nil, err
+				}
+				if err := gcutil.ValidateSnapshotWithGCSafePoint(toTS, gcSafePoint); err != nil {
+					return nil, err
+				}
 				fullUpdateLookupIS, err = staleread.GetSessionSnapshotInfoSchema(sctx, toTS)
 				if err != nil {
 					return nil, err

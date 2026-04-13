@@ -357,11 +357,6 @@ func (e *RefreshMaterializedViewDryRunExec) buildFastMergePlanRows(ctx context.C
 				lastSuccessfulRefreshReadTSO,
 			)
 		}
-		if targetRefreshReadTSO > lastSuccessfulRefreshReadTSO {
-			if err := validateMVRefreshTargetTSOForBoundedFastRefresh(ctx, validationSctx, targetRefreshReadTSO); err != nil {
-				return nil, err
-			}
-		}
 	}
 	return e.buildImplementRefreshPlanRows(ctx, refreshStmt, lastSuccessfulRefreshReadTSO, targetRefreshReadTSO)
 }

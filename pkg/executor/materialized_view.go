@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -317,24 +316,6 @@ func getMVTaskMonitorSQLTimeout() time.Duration {
 		}
 	})
 	return timeout
-}
-
-func validateMVRefreshTargetTSOForBoundedFastRefresh(
-	kctx context.Context,
-	refreshSctx sessionctx.Context,
-	targetTSO uint64,
-) error {
-	if err := sessionctx.ValidateSnapshotReadTS(kctx, refreshSctx.GetStore(), targetTSO, true); err != nil {
-		return errors.Trace(err)
-	}
-	gcSafePoint, err := gcutil.GetGCSafePoint(refreshSctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := gcutil.ValidateSnapshotWithGCSafePoint(targetTSO, gcSafePoint); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
 }
 
 func readRefreshHistCancelRequest(
@@ -2839,6 +2820,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
 		return nil
 	}
+	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
+		!lockedReadTSONull &&
+		targetRefreshReadTSO > 0 &&
+		targetRefreshReadTSO > lockedReadTSO
 
 	txn, err := refreshSctx.Txn(true)
 	if err != nil {
@@ -2849,15 +2834,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return errors.New("refresh materialized view: invalid transaction start tso")
 	}
 	refreshJobID = startTS
-	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
-		!lockedReadTSONull &&
-		targetRefreshReadTSO > 0 &&
-		targetRefreshReadTSO > lockedReadTSO
-	if boundedFastRefresh {
-		if err := validateMVRefreshTargetTSOForBoundedFastRefresh(kctx, refreshSctx, targetRefreshReadTSO); err != nil {
-			return err
-		}
-	}
 
 	histSctx, err := e.GetSysSession()
 	if err != nil {
@@ -3574,7 +3550,14 @@ func evaluateRefreshMaterializedViewTargetTSO(
 	if s == nil || s.AsOf == nil {
 		return 0, nil
 	}
-	return staleread.CalculateAsOfTsExpr(kctx, sctx.GetPlanCtx(), s.AsOf.TsExpr)
+	targetTSO, err := staleread.CalculateAsOfTsExpr(kctx, sctx.GetPlanCtx(), s.AsOf.TsExpr)
+	if err != nil {
+		return 0, err
+	}
+	if err := sessionctx.ValidateSnapshotReadTS(kctx, sctx.GetStore(), targetTSO, true); err != nil {
+		return 0, err
+	}
+	return targetTSO, nil
 }
 
 func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
@@ -4162,9 +4145,9 @@ WHERE MVIEW_ID = %%? AND LAST_SUCCESS_READ_TSO <=> %%?`,
 }
 
 const (
-	refreshHistStatusRunning  = "running"
-	refreshHistStatusSuccess  = "success"
-	refreshHistStatusFailed   = "failed"
+	refreshHistStatusRunning = "running"
+	refreshHistStatusSuccess = "success"
+	refreshHistStatusFailed  = "failed"
 )
 
 func insertRefreshHistRunning(
