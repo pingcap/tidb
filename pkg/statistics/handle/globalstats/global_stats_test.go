@@ -288,15 +288,15 @@ partition by range (a) (
 
 	tk.MustQuery("show stats_buckets where is_index=0").Check(
 		// db table partition col is_idx bucket_id count repeats lower upper ndv
-		testkit.Rows("test t global a 0 0 13 1 1 16 0",
-			"test t global a 0 1 17 2 16 19 0",
+		testkit.Rows("test t global a 0 0 7 2 1 6 0",
+			"test t global a 0 1 17 2 6 19 0",
 			"test t p0 a 0 0 4 1 1 4 0",
 			"test t p0 a 0 1 7 2 5 6 0",
 			"test t p1 a 0 0 6 1 11 16 0",
 			"test t p1 a 0 1 10 2 17 19 0"))
 	tk.MustQuery("show stats_buckets where is_index=1").Check(
-		testkit.Rows("test t global a 1 0 13 1 1 16 0",
-			"test t global a 1 1 17 2 16 19 0",
+		testkit.Rows("test t global a 1 0 7 2 1 6 0",
+			"test t global a 1 1 17 2 6 19 0",
 			"test t p0 a 1 0 4 1 1 4 0",
 			"test t p0 a 1 1 7 2 5 6 0",
 			"test t p1 a 1 0 6 1 11 16 0",

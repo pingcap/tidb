@@ -1708,12 +1708,15 @@ func mergeByUpperBound(
 
 	globalHist := NewHistogram(histID, 0, totNull, lastUpdateVersion, tp, int(expBucketNumber), totColSize)
 	var (
-		cumCount    int64
-		bucketIdx   int64        = 1
-		firstBucket              = true // true until the first global bucket is emitted
-		bucketLower *types.Datum        // lower bound of current global bucket
-		lastUpper   *types.Datum        // upper bound of the last processed group
-		lastRepeat  int64               // repeat of the last processed group
+		cumCount      int64
+		prevCumCount  int64        // cumulative count before the current group
+		bucketIdx     int64        = 1
+		firstBucket                = true // true until the first global bucket is emitted
+		bucketLower   *types.Datum        // lower bound of current global bucket
+		lastUpper     *types.Datum        // upper bound of the current group
+		lastRepeat    int64               // repeat of the current group
+		prevUpper     *types.Datum        // upper bound of the previous group
+		prevRepeat    int64               // repeat of the previous group
 	)
 
 	i := 0
@@ -1730,6 +1733,11 @@ func mergeByUpperBound(
 			}
 			j++
 		}
+
+		// Save previous state before processing this group.
+		prevCumCount = cumCount
+		prevUpper = lastUpper
+		prevRepeat = lastRepeat
 
 		// Accumulate counts and Repeat for all buckets at this upper bound.
 		lastRepeat = 0
@@ -1758,12 +1766,22 @@ func mergeByUpperBound(
 		// Check if cumulative count crosses the equi-depth threshold.
 		threshold := totCount * bucketIdx / expBucketNumber
 		if cumCount >= threshold && bucketIdx < expBucketNumber {
-			globalHist.AppendBucketWithNDV(bucketLower, lastUpper, cumCount, lastRepeat, 0)
+			// Pick the cut point (previous or current group) that is closest
+			// to the equi-depth threshold.
+			cutUpper := lastUpper
+			cutCount := cumCount
+			cutRepeat := lastRepeat
+			if prevUpper != nil && (threshold-prevCumCount) < (cumCount-threshold) {
+				cutUpper = prevUpper
+				cutCount = prevCumCount
+				cutRepeat = prevRepeat
+			}
+			globalHist.AppendBucketWithNDV(bucketLower, cutUpper, cutCount, cutRepeat, 0)
 			bucketIdx++
 			firstBucket = false
-			// Next bucket's lower = current upper to prevent overlapping ranges
+			// Next bucket's lower = cut upper to prevent overlapping ranges
 			// that would break interpolation in calcFraction.
-			bucketLower = lastUpper.Clone()
+			bucketLower = cutUpper.Clone()
 		}
 
 		i = j

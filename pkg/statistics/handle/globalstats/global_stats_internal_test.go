@@ -62,8 +62,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where is_index=0").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tint global c 0 0 8 1 1 13 0", // bucket.ndv is not maintained for column histograms
-		"test tint global c 0 1 12 2 13 17 0",
+		"test tint global c 0 0 5 2 1 4 0", // bucket.ndv is not maintained for column histograms
+		"test tint global c 0 1 12 2 4 17 0",
 		"test tint p0 c 0 0 2 1 1 2 0",
 		"test tint p0 c 0 1 3 1 3 3 0",
 		"test tint p1 c 0 0 3 1 11 13 0",
@@ -76,8 +76,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where is_index=1").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tint global c 1 0 8 1 1 13 0",
-		"test tint global c 1 1 12 2 13 17 0",
+		"test tint global c 1 0 5 2 1 4 0",
+		"test tint global c 1 1 12 2 4 17 0",
 		"test tint p0 c 1 0 2 1 1 2 0",
 		"test tint p0 c 1 1 3 1 3 3 0",
 		"test tint p1 c 1 0 3 1 11 13 0",
@@ -121,8 +121,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdouble' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tdouble global c 0 0 8 1 1 13 0", // bucket.ndv is not maintained for column histograms
-		"test tdouble global c 0 1 12 2 13 17 0",
+		"test tdouble global c 0 0 5 2 1 4 0", // bucket.ndv is not maintained for column histograms
+		"test tdouble global c 0 1 12 2 4 17 0",
 		"test tdouble p0 c 0 0 2 1 1 2 0",
 		"test tdouble p0 c 0 1 3 1 3 3 0",
 		"test tdouble p1 c 0 0 3 1 11 13 0",
@@ -138,8 +138,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdouble' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tdouble global c 1 0 8 1 1 13 0",
-		"test tdouble global c 1 1 12 2 13 17 0",
+		"test tdouble global c 1 0 5 2 1 4 0",
+		"test tdouble global c 1 1 12 2 4 17 0",
 		"test tdouble p0 c 1 0 2 1 1 2 0",
 		"test tdouble p0 c 1 1 3 1 3 3 0",
 		"test tdouble p1 c 1 0 3 1 11 13 0",
@@ -186,8 +186,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdecimal' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tdecimal global c 0 0 8 1 1.00 13.00 0", // bucket.ndv is not maintained for column histograms
-		"test tdecimal global c 0 1 12 2 13.00 17.00 0",
+		"test tdecimal global c 0 0 5 2 1.00 4.00 0", // bucket.ndv is not maintained for column histograms
+		"test tdecimal global c 0 1 12 2 4.00 17.00 0",
 		"test tdecimal p0 c 0 0 2 1 1.00 2.00 0",
 		"test tdecimal p0 c 0 1 3 1 3.00 3.00 0",
 		"test tdecimal p1 c 0 0 3 1 11.00 13.00 0",
@@ -203,8 +203,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdecimal' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tdecimal global c 1 0 8 1 1.00 13.00 0",
-		"test tdecimal global c 1 1 12 2 13.00 17.00 0",
+		"test tdecimal global c 1 0 5 2 1.00 4.00 0",
+		"test tdecimal global c 1 1 12 2 4.00 17.00 0",
 		"test tdecimal p0 c 1 0 2 1 1.00 2.00 0",
 		"test tdecimal p0 c 1 1 3 1 3.00 3.00 0",
 		"test tdecimal p1 c 1 0 3 1 11.00 13.00 0",
@@ -251,8 +251,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdatetime' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tdatetime global c 0 0 8 1 2000-01-01 00:00:00 2000-01-13 00:00:00 0", // bucket.ndv is not maintained for column histograms
-		"test tdatetime global c 0 1 12 2 2000-01-13 00:00:00 2000-01-17 00:00:00 0",
+		"test tdatetime global c 0 0 5 2 2000-01-01 00:00:00 2000-01-04 00:00:00 0", // bucket.ndv is not maintained for column histograms
+		"test tdatetime global c 0 1 12 2 2000-01-04 00:00:00 2000-01-17 00:00:00 0",
 		"test tdatetime p0 c 0 0 2 1 2000-01-01 00:00:00 2000-01-02 00:00:00 0",
 		"test tdatetime p0 c 0 1 3 1 2000-01-03 00:00:00 2000-01-03 00:00:00 0",
 		"test tdatetime p1 c 0 0 3 1 2000-01-11 00:00:00 2000-01-13 00:00:00 0",
@@ -268,8 +268,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdatetime' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tdatetime global c 1 0 8 1 2000-01-01 00:00:00 2000-01-13 00:00:00 0",
-		"test tdatetime global c 1 1 12 2 2000-01-13 00:00:00 2000-01-17 00:00:00 0",
+		"test tdatetime global c 1 0 5 2 2000-01-01 00:00:00 2000-01-04 00:00:00 0",
+		"test tdatetime global c 1 1 12 2 2000-01-04 00:00:00 2000-01-17 00:00:00 0",
 		"test tdatetime p0 c 1 0 2 1 2000-01-01 00:00:00 2000-01-02 00:00:00 0",
 		"test tdatetime p0 c 1 1 3 1 2000-01-03 00:00:00 2000-01-03 00:00:00 0",
 		"test tdatetime p1 c 1 0 3 1 2000-01-11 00:00:00 2000-01-13 00:00:00 0",
@@ -316,8 +316,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where table_name='tstring' and is_index=0 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tstring global c 0 0 8 1 a1 b13 0", // bucket.ndv is not maintained for column histograms
-		"test tstring global c 0 1 12 2 b13 b17 0",
+		"test tstring global c 0 0 5 2 a1 a4 0", // bucket.ndv is not maintained for column histograms
+		"test tstring global c 0 1 12 2 a4 b17 0",
 		"test tstring p0 c 0 0 2 1 a1 a2 0",
 		"test tstring p0 c 0 1 3 1 a3 a3 0",
 		"test tstring p1 c 0 0 3 1 b11 b13 0",
@@ -333,8 +333,8 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 
 	tk.MustQuery("show stats_buckets where table_name='tstring' and is_index=1 and column_name='c'").Check(testkit.Rows(
 		// db, tbl, part, col, isIdx, bucketID, count, repeat, lower, upper, ndv
-		"test tstring global c 1 0 8 1 a1 b13 0",
-		"test tstring global c 1 1 12 2 b13 b17 0",
+		"test tstring global c 1 0 5 2 a1 a4 0",
+		"test tstring global c 1 1 12 2 a4 b17 0",
 		"test tstring p0 c 1 0 2 1 a1 a2 0",
 		"test tstring p0 c 1 1 3 1 a3 a3 0",
 		"test tstring p1 c 1 0 3 1 b11 b13 0",
