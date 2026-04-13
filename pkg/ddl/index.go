@@ -1941,9 +1941,6 @@ func isRetryableError(err error, retryUnknown bool) bool {
 			return true
 		}
 	}
-	if strings.Contains(errMsg, "All returned regions have no leaders") {
-		return true
-	}
 	originErr := errors.Cause(err)
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
