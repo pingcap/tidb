@@ -29,6 +29,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestNullRejectBuiltinRegistrySnapshot guards against silent builtin registry
+// drift. When this hash breaks, the builtin set has changed — review whether
+// new functions should be added to nullRejectNullPreservingFunctions or
+// nullRejectRejectNullTests in null_misc_builtins.go.
+func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
+	names := expression.RegisteredBuiltinFunctionNames()
+	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
+
+	require.NotEmpty(t, names)
+	require.Equal(t, "a5ce0716b778fb8e0b488d3a11c402d8a8224191757a9e02ece80895d5d67e05", hex.EncodeToString(sum[:]))
+
+	for name := range nullRejectRejectNullTests {
+		require.Contains(t, names, name)
+	}
+}
+
 func TestIsNullRejectedProofModes(t *testing.T) {
 	sctx := mock.NewContext()
 	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb"))
@@ -327,22 +343,6 @@ func TestIsNullRejectedProofModes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.expected, IsNullRejected(sctx, innerSchema, tt.expr, true))
 		})
-	}
-}
-
-// TestNullRejectBuiltinRegistrySnapshot guards against silent builtin registry
-// drift. When this hash breaks, the builtin set has changed — review whether
-// new functions should be added to nullRejectNullPreservingFunctions or
-// nullRejectRejectNullTests in null_misc_builtins.go.
-func TestNullRejectBuiltinRegistrySnapshot(t *testing.T) {
-	names := expression.RegisteredBuiltinFunctionNames()
-	sum := sha256.Sum256([]byte(strings.Join(names, "\n")))
-
-	require.NotEmpty(t, names)
-	require.Equal(t, "a5ce0716b778fb8e0b488d3a11c402d8a8224191757a9e02ece80895d5d67e05", hex.EncodeToString(sum[:]))
-
-	for name := range nullRejectRejectNullTests {
-		require.Contains(t, names, name)
 	}
 }
 
