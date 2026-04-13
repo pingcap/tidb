@@ -512,7 +512,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// Combined TopN + histogram merge.
 			killer := &sctx.GetSessionVars().SQLKiller
 			wrapper := item.item
-			a.globalStats.TopN[item.idx], a.globalStats.Hg[item.idx], err = statistics.MergePartTopNAndHistToGlobal(
+			globalHg := &(a.globalStats.Hg[item.idx])
+			a.globalStats.TopN[item.idx], *globalHg, err = statistics.MergePartTopNAndHistToGlobal(
 				wrapper.AllTopN, wrapper.AllHg,
 				uint32(opts[ast.AnalyzeOptNumTopN]),
 				int64(opts[ast.AnalyzeOptNumBuckets]),
@@ -524,11 +525,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			}
 
 			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-			if a.globalStats.Hg[item.idx] != nil {
-				for j := range a.globalStats.Hg[item.idx].Buckets {
-					a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
+			if *globalHg != nil {
+				for j := range (*globalHg).Buckets {
+					(*globalHg).Buckets[j].NDV = 0
 				}
-				a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
+				(*globalHg).NDV = a.globalStatsNDV[item.idx]
 			}
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
