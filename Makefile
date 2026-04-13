@@ -206,7 +206,7 @@ ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(CLEAN_UT_BINARY)
 
 .PHONY: bazel_coverage_test
-bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run CI coverage flow (Phase 1: bazel unit tests, Phase 2: mega build; set RUN_MEGA_TESTS=1 to execute mega tests)
+bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run CI coverage flow (Phase 1: bazel unit tests, Phase 2: mega build + mega tests; set SKIP_MEGA_RUN=1 to skip, set MEGA_RUN_STRICT=1 to fail on mega run errors
 	@echo "=== Enabling failpoints ==="
 	@tools/bin/failpoint-ctl enable
 	@echo "=== Updating BUILD.bazel files (gazelle) ==="
@@ -223,10 +223,19 @@ bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run CI coverage flo
 	@echo "=== Phase 2: Building mega binary ==="
 	@$(MAKE) bazel-mega-binary
 	@echo "=== Phase 2: Running mega tests ==="
-	@if [ "$(RUN_MEGA_TESTS)" = "1" ]; then \
-		tools/bin/ut --mega run || { $(MAKE) ut-mega-cleanup; exit 1; }; \
+	@if [ "$(SKIP_MEGA_RUN)" = "1" ]; then \
+		echo "=== Skip mega tests because SKIP_MEGA_RUN=1 ==="; \
 	else \
-		echo "=== Skip mega tests because RUN_MEGA_TESTS!=1 (compile-only mode) ==="; \
+		tools/bin/ut --mega run; \
+		MEGA_RUN_RET=$$?; \
+		if [ "$$MEGA_RUN_RET" -ne 0 ]; then \
+			if [ "$(MEGA_RUN_STRICT)" = "1" ]; then \
+				echo "=== Mega tests failed (strict mode), exiting with $$MEGA_RUN_RET ==="; \
+				$(MAKE) ut-mega-cleanup; \
+				exit $$MEGA_RUN_RET; \
+			fi; \
+			echo "=== Mega tests failed with $$MEGA_RUN_RET, but continue because MEGA_RUN_STRICT!=1 ==="; \
+		fi; \
 	fi
 	@$(MAKE) ut-mega-cleanup
 
