@@ -91,8 +91,8 @@ func TestDDLTable(t *testing.T) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
+	handleNextDDLEvent(t, h, model.ActionTruncateTable)
+	handleNextDDLEvent(t, h, model.ActionDropTable)
 	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
@@ -330,4 +330,128 @@ func TestDropSchemaUpdatesStatsVersionForGC(t *testing.T) {
 	rows = testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", tableInfo.ID).Rows()
 	require.Len(t, rows, 1)
 	require.NotEqual(t, version, rows[0][0].(string))
+}
+
+func TestTruncateTableUpdatesStatsVersionForGC(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+
+	testKit.MustExec("insert into t values (1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	oldTableInfo := tbl.Meta()
+
+	rows := testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", oldTableInfo.ID).Rows()
+	require.Len(t, rows, 1)
+	version := rows[0][0].(string)
+
+	testKit.MustExec("truncate table t")
+	handleNextDDLEvent(t, h, model.ActionTruncateTable)
+	droppedTableInfo := handleNextDDLEvent(t, h, model.ActionDropTable)
+	require.Equal(t, oldTableInfo.ID, droppedTableInfo.ID)
+
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	newTableInfo := tbl.Meta()
+
+	rows = testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", newTableInfo.ID).Rows()
+	require.Len(t, rows, 1)
+
+	rows = testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", oldTableInfo.ID).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, version, rows[0][0].(string))
+}
+
+func TestTruncatePartitionedTableUpdatesStatsVersionForGC(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+
+	testKit.MustExec("set @@tidb_partition_prune_mode='static'")
+	testKit.MustExec("set global tidb_partition_prune_mode='static'")
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11)
+		)
+	`)
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2)")
+	testKit.MustExec("analyze table t")
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	oldTableInfo := tbl.Meta()
+	oldPartitionIDs := []int64{
+		oldTableInfo.Partition.Definitions[0].ID,
+		oldTableInfo.Partition.Definitions[1].ID,
+	}
+
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id",
+		oldPartitionIDs[0], oldPartitionIDs[1],
+	).Rows()
+	require.Len(t, rows, 2)
+	oldVersions := []string{rows[0][0].(string), rows[1][0].(string)}
+
+	testKit.MustExec("truncate table t")
+	handleNextDDLEvent(t, h, model.ActionTruncateTable)
+	droppedTableInfo := handleNextDDLEvent(t, h, model.ActionDropTable)
+	require.Equal(t, oldPartitionIDs[0], droppedTableInfo.Partition.Definitions[0].ID)
+	require.Equal(t, oldPartitionIDs[1], droppedTableInfo.Partition.Definitions[1].ID)
+
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	newTableInfo := tbl.Meta()
+	newPartitionIDs := []int64{
+		newTableInfo.Partition.Definitions[0].ID,
+		newTableInfo.Partition.Definitions[1].ID,
+	}
+
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id",
+		newPartitionIDs[0], newPartitionIDs[1],
+	).Rows()
+	require.Len(t, rows, 2)
+
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id",
+		oldPartitionIDs[0], oldPartitionIDs[1],
+	).Rows()
+	require.Len(t, rows, 2)
+	require.NotEqual(t, oldVersions[0], rows[0][0].(string))
+	require.NotEqual(t, oldVersions[1], rows[1][0].(string))
+}
+
+func handleNextDDLEvent(t *testing.T, h *handle.Handle, expectedType model.ActionType) *model.TableInfo {
+	t.Helper()
+	select {
+	case event := <-h.DDLEventCh():
+		require.Equal(t, expectedType, event.Tp)
+		require.NoError(t, h.HandleDDLEvent(event))
+		return event.TableInfo
+	case <-time.After(time.Second):
+		t.Fatalf("expected ddl event %s", expectedType)
+	}
+	return nil
 }
