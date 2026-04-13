@@ -262,10 +262,7 @@ func (h subscriber) handle(
 				)
 			}
 		}
-	case model.ActionAlterMaterializedViewRefresh,
-		model.ActionAlterMaterializedViewAttributes,
-		model.ActionAlterMaterializedViewLogPurge,
-		model.ActionCreateMaterializedViewLog,
+	case model.ActionCreateMaterializedViewLog,
 		model.ActionCreateMaterializedView:
 		// MV refresh/attributes/mvlog purge DDL updates only MV runtime metadata.
 		// They don't change table data/partition topology, so stats meta should stay unchanged.

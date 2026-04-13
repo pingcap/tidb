@@ -143,16 +143,19 @@ func NewMockDomain() *Domain {
 // Domain represents a storage space. Different domains can use the same database name.
 // Multiple domains can be used in parallel without synchronization.
 type Domain struct {
-	store           kv.Storage
-	infoCache       *infoschema.InfoCache
-	privHandle      *privileges.Handle
-	bindHandle      atomic.Value
-	statsHandle     atomic.Pointer[handle.Handle]
-	statsLease      time.Duration
-	ddl             ddl.DDL
-	ddlExecutor     ddl.Executor
-	ddlNotifier     *notifier.DDLNotifier
-	mvService       *mvservice.MVService
+	store       kv.Storage
+	infoCache   *infoschema.InfoCache
+	privHandle  *privileges.Handle
+	bindHandle  atomic.Value
+	statsHandle atomic.Pointer[handle.Handle]
+	statsLease  time.Duration
+	ddl         ddl.DDL
+	ddlExecutor ddl.Executor
+	ddlNotifier *notifier.DDLNotifier
+	mvService   struct {
+		*mvservice.MVService
+		ddlNotify chan struct{}
+	}
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
@@ -1391,7 +1394,13 @@ func (do *Domain) Init(
 	// TODO(lance6716): find a more representative place for subscriber
 	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
 	// Register MVS DDL handler before DDLNotifier may start.
-	do.mvService = mvservice.RegisterMVService(do.ctx, do.ddlNotifier.RegisterHandler, do.sysSessionPool, do.notifyMVSMetadataChange)
+	do.mvService.ddlNotify = make(chan struct{}, 1)
+	do.mvService.MVService = mvservice.RegisterMVService(do.ctx, do.ddlNotifier.RegisterHandler, do.sysSessionPool, func() {
+		select {
+		case do.mvService.ddlNotify <- struct{}{}:
+		default:
+		}
+	})
 	d := do.ddl
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(
@@ -1772,17 +1781,18 @@ func (do *Domain) InitDistTaskLoop() error {
 
 // StartMVService starts the MV service.
 func (do *Domain) StartMVService() error {
-	if do.mvService == nil {
+	if do.GetMVService() == nil {
 		return errors.New("failed to register MV service")
 	}
 	do.wg.Run(do.mvService.Run, "mvService")
+	do.wg.Run(do.notifyMVSMetadataChange, "mvServiceNotify")
 	do.wg.Run(do.watchMVSMetaChange, "watchMVSMetaChange")
 	return nil
 }
 
 // GetMVService returns the MV service instance.
 func (do *Domain) GetMVService() *mvservice.MVService {
-	return do.mvService
+	return do.mvService.MVService
 }
 
 func (do *Domain) watchMVSMetaChange() {
@@ -2983,10 +2993,17 @@ func (do *Domain) notifyMVSMetadataChange() {
 	if do.etcdClient == nil {
 		return
 	}
-	row := do.etcdClient.KV
-	_, err := row.Put(context.Background(), mvsDDLNotifyKey, "")
-	if err != nil {
-		logutil.BgLogger().Warn("notify mvservice metadata change failed", zap.Error(err))
+	client := do.etcdClient.KV
+	for {
+		select {
+		case <-do.exit:
+			return
+		case <-do.mvService.ddlNotify:
+			_, err := client.Put(do.ctx, mvsDDLNotifyKey, "")
+			if err != nil && !errors.ErrorEqual(err, context.Canceled) {
+				logutil.BgLogger().Warn("notify mvservice metadata change failed", zap.Error(err))
+			}
+		}
 	}
 }
 
