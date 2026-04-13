@@ -231,8 +231,21 @@ go_library(
 go_test(
     name = "ddl_test",
     timeout = "moderate",
-    srcs = ["export_test.go"],
+    srcs = [
+        "export_test.go",
+        "reorg_util_test.go",
+    ],
     embed = [":ddl"],
     flaky = True,
-    shard_count = 42,
+    shard_count = 43,
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/store/helper",
+        "//pkg/table/tables",
+        "//pkg/tablecodec",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_pd_client//http",
+    ],
 )

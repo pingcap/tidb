@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "sortexec",
@@ -20,6 +20,7 @@ go_library(
     deps = [
         "//pkg/executor/internal/exec",
         "//pkg/expression",
+        "//pkg/parser/mysql",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/util",
         "//pkg/sessionctx/vardef",
@@ -27,14 +28,40 @@ go_library(
         "//pkg/util",
         "//pkg/util/channel",
         "//pkg/util/chunk",
+        "//pkg/util/codec",
+        "//pkg/util/collate",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/disk",
+        "//pkg/util/hack",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/ranger",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "sortexec_test",
+    timeout = "short",
+    srcs = ["rank_topn_test.go"],
+    flaky = True,
+    deps = [
+        ":sortexec",
+        "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/testutil",
+        "//pkg/expression",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/planner/util",
+        "//pkg/sessionctx",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/memory",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
     ],
 )

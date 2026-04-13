@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "mydump",
@@ -66,5 +66,27 @@ go_library(
         "@org_golang_x_text//encoding/simplifiedchinese",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "mydump_test",
+    timeout = "short",
+    srcs = ["schema_import_test.go"],
+    embed = [":mydump"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/errno",
+        "//pkg/lightning/common",
+        "//pkg/lightning/log",
+        "//pkg/objstore",
+        "//pkg/parser",
+        "//pkg/parser/mysql",
+        "@com_github_data_dog_go_sqlmock//:go-sqlmock",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
     ],
 )

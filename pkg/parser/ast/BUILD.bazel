@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "ast",
@@ -31,5 +31,18 @@ go_library(
         "//pkg/parser/util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)
+
+go_test(
+    name = "ast_test",
+    timeout = "short",
+    srcs = ["base_test.go"],
+    embed = [":ast"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/parser/charset",
+        "@com_github_stretchr_testify//require",
     ],
 )
