@@ -29,6 +29,7 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -122,7 +123,7 @@ func TestFileScanner(t *testing.T) {
 	t.Run("NewFileScannerRedactsSensitiveSourcePathInInitErrors", func(t *testing.T) {
 		_, err := NewFileScanner(
 			ctx,
-			"foo://bucket/path?access-key=ak&secret-access-key=sk&session-token=token",
+			"s3://?access-key=ak&secret-access-key=sk&session-token=token",
 			db,
 			cfg,
 		)
@@ -155,7 +156,7 @@ func TestFileScanner(t *testing.T) {
 		fs := invalidScanner.(*fileScanner)
 		sourcePath := "s3://bucket/path?access-key=ak&secret-access-key=sk&session-token=token"
 		fs.sourcePath = sourcePath
-		fs.redactedSourcePath = redactSourcePath(sourcePath)
+		fs.redactedSourcePath = ast.RedactURL(sourcePath)
 
 		invalidMock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA.*").WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
 		invalidMock.ExpectExec(regexp.QuoteMeta("CREATE DATABASE IF NOT EXISTS `db1`")).WillReturnResult(sqlmock.NewResult(0, 0))

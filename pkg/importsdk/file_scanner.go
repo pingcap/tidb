@@ -17,7 +17,6 @@ package importsdk
 import (
 	"context"
 	"database/sql"
-	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -60,10 +59,10 @@ type fileScanner struct {
 
 // NewFileScanner creates a new FileScanner
 func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDKConfig) (FileScanner, error) {
-	redactedSourcePath := redactSourcePath(sourcePath)
+	redactedSourcePath := ast.RedactURL(sourcePath)
 	u, err := objstore.ParseBackend(sourcePath, nil)
 	if err != nil {
-		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s, err=%v", redactedSourcePath, err)
+		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s", redactedSourcePath)
 	}
 	store, err := objstore.New(ctx, u, &storeapi.Options{})
 	if err != nil {
@@ -234,14 +233,6 @@ func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSi
 		}
 	}
 	return result, nil
-}
-
-var sensitiveSourcePathPattern = regexp.MustCompile(`(?i)(access[-_]key|secret[-_]access[-_]key|session[-_]token|sas[-_]token)=([^&#]*)`)
-
-// redactSourcePath redacts known secret parameters even when the storage URL is
-// malformed or uses a scheme not covered by ast.RedactURL.
-func redactSourcePath(sourcePath string) string {
-	return sensitiveSourcePathPattern.ReplaceAllString(ast.RedactURL(sourcePath), `${1}=xxxxxx`)
 }
 
 func (s *fileScanner) Close() error {
