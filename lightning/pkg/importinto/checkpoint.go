@@ -62,13 +62,6 @@ func (s CheckpointStatus) String() string {
 	}
 }
 
-func checkpointTableNotFoundError(tableName string) error {
-	return errors.Annotatef(
-		errors.NotFoundf("checkpoint for table %s", tableName),
-		"table checkpoint does not exist; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
-	)
-}
-
 // TableCheckpoint represents the checkpoint state for a single table.
 type TableCheckpoint struct {
 	TableName string           `json:"table_name"`
@@ -270,7 +263,7 @@ func (m *FileCheckpointManager) IgnoreError(ctx context.Context, tableName strin
 	} else {
 		cp, ok := m.checkpoints[tableName]
 		if !ok {
-			return checkpointTableNotFoundError(tableName)
+			return common.CheckpointTableNotFoundError(tableName)
 		}
 		if cp.Status == CheckpointStatusFailed {
 			cp.Status = CheckpointStatusPending
@@ -297,7 +290,7 @@ func (m *FileCheckpointManager) DestroyError(ctx context.Context, tableName stri
 	} else {
 		cp, ok := m.checkpoints[tableName]
 		if !ok {
-			return nil, checkpointTableNotFoundError(tableName)
+			return nil, common.CheckpointTableNotFoundError(tableName)
 		}
 		if cp.Status == CheckpointStatusFailed {
 			destroyed = append(destroyed, cp)
@@ -493,7 +486,7 @@ func (m *MySQLCheckpointManager) IgnoreError(ctx context.Context, tableName stri
 			return errors.Trace(err)
 		}
 		if cp == nil {
-			return checkpointTableNotFoundError(tableName)
+			return common.CheckpointTableNotFoundError(tableName)
 		}
 	}
 	return nil
@@ -560,7 +553,7 @@ func (m *MySQLCheckpointManager) DestroyError(ctx context.Context, tableName str
 			return nil, errors.Trace(err)
 		}
 		if cp == nil {
-			return nil, checkpointTableNotFoundError(tableName)
+			return nil, common.CheckpointTableNotFoundError(tableName)
 		}
 	}
 	return destroyed, nil

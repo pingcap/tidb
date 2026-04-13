@@ -85,13 +85,6 @@ const (
 	columnTableName = "table_name"
 )
 
-func checkpointTableNotFoundError(tableName string) error {
-	return errors.Annotatef(
-		errors.NotFoundf("checkpoint for table %s", tableName),
-		"table checkpoint does not exist; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
-	)
-}
-
 // some frequently used SQL statement templates.
 // shared by MySQLCheckpointsDB and GlueCheckpointsDB
 const (
@@ -1698,7 +1691,7 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 					return errors.Trace(e)
 				}
 				if !found {
-					return checkpointTableNotFoundError(tableName)
+					return common.CheckpointTableNotFoundError(tableName)
 				}
 			}
 		}
@@ -1788,7 +1781,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 				return errors.Trace(e)
 			}
 			if !found {
-				return checkpointTableNotFoundError(tableName)
+				return common.CheckpointTableNotFoundError(tableName)
 			}
 		}
 
@@ -1989,7 +1982,7 @@ func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTa
 
 	tableModel, ok := cpdb.checkpoints.Checkpoints[targetTableName]
 	if !ok {
-		return checkpointTableNotFoundError(targetTableName)
+		return common.CheckpointTableNotFoundError(targetTableName)
 	}
 	if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
 		tableModel.Status = uint32(CheckpointStatusLoaded)
@@ -2033,7 +2026,7 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 	} else {
 		tableModel, ok := cpdb.checkpoints.Checkpoints[targetTableName]
 		if !ok {
-			return nil, checkpointTableNotFoundError(targetTableName)
+			return nil, common.CheckpointTableNotFoundError(targetTableName)
 		}
 		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
 			var minEngineID, maxEngineID int32 = math.MaxInt32, math.MinInt32
