@@ -580,19 +580,23 @@ introducing MV-specific GC blocking.
 
 Semantics:
 
-1. if current GC safe point is already newer than `targetTSO`, refresh must fail
-2. refresh must not acquire a temporary service safe point or otherwise block GC advancement
-3. if GC advances beyond `targetTSO` during execution, refresh may fail and roll back
-4. users can retry with a newer `targetTSO`
+1. every bounded fast refresh must still validate that `targetTSO` itself is a legal stale-read
+   timestamp
+2. if this refresh path needs `targetTSO` to read base-table snapshot schema/data, and current GC
+   safe point is already newer than `targetTSO`, refresh must fail
+3. refresh must not acquire a temporary service safe point or otherwise block GC advancement
+4. if GC advances beyond `targetTSO` during execution, refresh may fail and roll back
+5. users can retry with a newer `targetTSO`
 
 Recommended ordering:
 
 1. parse/evaluate `AS OF TIMESTAMP` into `targetTSO`
 2. if `targetTSO < fromTS`, return an error directly
 3. if `targetTSO == fromTS`, return no-op success directly
-4. run normal stale-read style snapshot / GC-safe-point validation before execution
-5. execute bounded fast refresh without blocking GC
-6. rely on the normal snapshot read path to fail if `targetTSO` becomes invalid during execution
+4. run normal stale-read timestamp legality validation before execution
+5. only paths that need `targetTSO` base-table snapshot reads perform GC-safe-point validation
+6. execute bounded fast refresh without blocking GC
+7. rely on the normal snapshot read path to fail if `targetTSO` becomes invalid during execution
 
 Rationale:
 
@@ -608,8 +612,9 @@ Rationale:
 2. Parse/evaluate that expression into `targetTSO` during refresh preparation.
 3. If `targetTSO == fromTS`, return no-op success without entering `mvmerge`.
 4. Keep current outer refresh transaction framework unchanged.
-5. For every bounded fast refresh execution, run the same kind of snapshot / GC-safe-point
-   legality checks that ordinary stale reads rely on, but do not block GC.
+5. For every bounded fast refresh execution, validate `targetTSO` as a legal stale-read
+   timestamp, but only paths that need `targetTSO` base-table snapshot reads should enforce the
+   GC-safe-point check.
 6. Carry both `fromTS` and `targetTSO` into `mvmerge` build/execution.
 7. Read MV at `writeTxnTSO`.
 8. Read MV log at `writeTxnTSO`, but explicitly filter `_tidb_commit_ts` into `(fromTS, targetTSO]`.
@@ -659,17 +664,21 @@ bounded merge window.
 
 Scope:
 
-1. reuse normal stale-read style snapshot / GC-safe-point validation for `targetTSO`
+1. reuse normal stale-read style timestamp legality validation for `targetTSO`
 2. keep no-op path (`targetTSO == fromTS`) outside this validation flow
-3. do not acquire a temporary service safe point or otherwise block GC
-4. document that bounded refresh may fail and roll back if GC advances beyond `targetTSO` during
+3. only bounded paths that need `targetTSO` base-table snapshot reads should enforce the
+   GC-safe-point check
+4. do not acquire a temporary service safe point or otherwise block GC
+5. document that bounded refresh may fail and roll back if GC advances beyond `targetTSO` during
    execution
 
 Completion criteria:
 
-1. `gcSafePoint > targetTSO` fails refresh
-2. no temporary or persistent MV-level GC blocking behavior is introduced
-3. bounded execution semantics are explicitly documented as best-effort with rollback on stale-read
+1. `gcSafePoint > targetTSO` fails refresh only for bounded paths that need `targetTSO`
+   base-table snapshot reads
+2. bounded paths that only need MV log windowing remain executable without GC-safe-point gating
+3. no temporary or persistent MV-level GC blocking behavior is introduced
+4. bounded execution semantics are explicitly documented as best-effort with rollback on stale-read
    failure
 
 ##### Stage 3: bounded FAST merge window
