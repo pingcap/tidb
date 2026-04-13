@@ -153,8 +153,9 @@ func TestFileScanner(t *testing.T) {
 		defer invalidScanner.Close()
 
 		fs := invalidScanner.(*fileScanner)
-		fs.sourcePath = "s3://bucket/path?access-key=ak&secret-access-key=sk&session-token=token"
-		fs.redactedSourcePath = "s3://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx&session-token=xxxxxx"
+		sourcePath := "s3://bucket/path?access-key=ak&secret-access-key=sk&session-token=token"
+		fs.sourcePath = sourcePath
+		fs.redactedSourcePath = redactSourcePath(sourcePath)
 
 		invalidMock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA.*").WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
 		invalidMock.ExpectExec(regexp.QuoteMeta("CREATE DATABASE IF NOT EXISTS `db1`")).WillReturnResult(sqlmock.NewResult(0, 0))
