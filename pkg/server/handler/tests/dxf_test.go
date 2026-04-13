@@ -188,6 +188,7 @@ func TestDXFAPI(t *testing.T) {
 				StateUpdateTime string
 				EndTime         string
 			}
+			HasMore          bool
 			NextPageToken    int64
 			ApproxTotalCount int64
 		} {
@@ -202,6 +203,7 @@ func TestDXFAPI(t *testing.T) {
 					StateUpdateTime string
 					EndTime         string
 				}
+				HasMore          bool
 				NextPageToken    int64
 				ApproxTotalCount int64
 			}{}
@@ -242,6 +244,7 @@ func TestDXFAPI(t *testing.T) {
 			firstPage := parseTaskHistoryResp(t, body)
 			require.Len(t, firstPage.Items, 2)
 			require.EqualValues(t, 5, firstPage.ApproxTotalCount)
+			require.True(t, firstPage.HasMore)
 			require.Greater(t, firstPage.NextPageToken, int64(0))
 			require.Equal(t, ids[4], firstPage.Items[0].ID)
 			require.Equal(t, ids[3], firstPage.Items[1].ID)
@@ -257,6 +260,7 @@ func TestDXFAPI(t *testing.T) {
 			secondPage := parseTaskHistoryResp(t, body)
 			require.Len(t, secondPage.Items, 2)
 			require.EqualValues(t, 5, secondPage.ApproxTotalCount)
+			require.True(t, secondPage.HasMore)
 			require.Greater(t, secondPage.NextPageToken, int64(0))
 			require.Equal(t, ids[2], secondPage.Items[0].ID)
 			require.Equal(t, ids[1], secondPage.Items[1].ID)
@@ -267,6 +271,7 @@ func TestDXFAPI(t *testing.T) {
 			lastPage := parseTaskHistoryResp(t, body)
 			require.Len(t, lastPage.Items, 1)
 			require.EqualValues(t, 5, lastPage.ApproxTotalCount)
+			require.False(t, lastPage.HasMore)
 			require.Zero(t, lastPage.NextPageToken)
 			require.Equal(t, ids[0], lastPage.Items[0].ID)
 
@@ -276,6 +281,7 @@ func TestDXFAPI(t *testing.T) {
 			filteredPage := parseTaskHistoryResp(t, body)
 			require.Len(t, filteredPage.Items, 2)
 			require.EqualValues(t, 3, filteredPage.ApproxTotalCount)
+			require.True(t, filteredPage.HasMore)
 			require.Greater(t, filteredPage.NextPageToken, int64(0))
 			for _, item := range filteredPage.Items {
 				require.Equal(t, "ks1", item.Keyspace)
@@ -287,6 +293,7 @@ func TestDXFAPI(t *testing.T) {
 			filteredLastPage := parseTaskHistoryResp(t, body)
 			require.Len(t, filteredLastPage.Items, 1)
 			require.EqualValues(t, 3, filteredLastPage.ApproxTotalCount)
+			require.False(t, filteredLastPage.HasMore)
 			require.Zero(t, filteredLastPage.NextPageToken)
 			require.Equal(t, "ks1", filteredLastPage.Items[0].Keyspace)
 		})
