@@ -47,3 +47,194 @@ select * from information_schema.tidb_mviews where TABLE_SCHEMA = "test" and MVI
 select * from information_schema.tidb_mviews where REFRESH_METHOD = "FAST";
 select * from information_schema.tidb_mviews where REFRESH_METHOD != "FAST";
 select TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") and REFRESH_METHOD = "FAST";
+
+use test;
+
+drop table if exists tmlogbra, tmlogbrb, tmlog_like_a, tmlog_like_b, tmlog_misc_c;
+create table tmlogbra (id int primary key, a int, b int);
+create table tmlogbrb (id int primary key, a int, b int);
+create table tmlog_like_a (id int primary key, a int, b int);
+create table tmlog_like_b (id int primary key, a int, b int);
+create table tmlog_misc_c (id int primary key, a int, b int);
+
+create materialized view log on tmlogbra (id, a) purge next date_add(now(), interval 1 hour);
+create materialized view log on tmlogbrb (id, a) purge next date_add(now(), interval 1 hour);
+create materialized view log on tmlog_like_a (id, a)
+  purge start with now() next date_add(now(), interval 1 hour);
+create materialized view log on tmlog_like_b (id, a)
+  purge next date_add(now(), interval 2 hour);
+create materialized view log on tmlog_misc_c (id, a)
+  purge start with now() next date_add(now(), interval 3 hour);
+
+select count(*) >= 2 from information_schema.tidb_mlogs;
+
+select table_schema, mlog_name
+from information_schema.tidb_mlogs
+where table_schema = 'test' and mlog_name = '$mlog$tmlogbra';
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where base_table_name = 'tmlogbra';
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlogbr%' and base_table_name = 'tmlogbrb';
+
+select mlog_name, purge_method
+from information_schema.tidb_mlogs
+where table_catalog like 'de%'
+  and base_table_catalog like 'de%'
+  and mlog_columns like '%id%'
+  and purge_next like 'DATE_ADD%';
+
+select mlog_name, purge_start, purge_next
+from information_schema.tidb_mlogs
+where mlog_columns like '%a%'
+  and purge_method = 'DEFERRED'
+  and purge_start like 'NOW%';
+
+select table_schema, mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where table_schema like 'te%'
+  and mlog_name like '%tmlog_like_%'
+  and purge_method = 'DEFERRED';
+
+select mlog_name, mlog_columns, purge_start
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlog_misc_%'
+  and table_catalog = 'def'
+  and mlog_columns like '%id%'
+  and purge_start like 'NOW%';
+
+
+select mlog_name, purge_next
+from information_schema.tidb_mlogs
+where table_schema like 'te%'
+  and mlog_name like '%tmlog_%'
+  and purge_next like 'DATE_ADD(NOW(), INTERVAL 2 HOUR)%';
+
+select mlog_name, base_table_schema, base_table_name
+from information_schema.tidb_mlogs
+where base_table_schema like 'te%'
+  and base_table_name like 'tmlog_like_%'
+  and purge_next like 'DATE_ADD%';
+
+select mlog_name, base_table_name, purge_start
+from information_schema.tidb_mlogs
+where base_table_name like 'tmlog_misc_%'
+  and base_table_catalog like 'de%'
+  and purge_start like 'NOW%';
+
+select mlog_name, base_table_name, purge_method
+from information_schema.tidb_mlogs
+where base_table_schema like 'te%'
+  and base_table_name like 'tmlog_like_b%'
+  and mlog_columns like '%a%'
+  and purge_method = 'DEFERRED';
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlog_like_%'
+  and base_table_name like 'tmlog_like_b%'
+  and mlog_columns like '%a%';
+
+select table_schema, mlog_name, base_table_schema, base_table_name
+from information_schema.tidb_mlogs
+where table_schema like 'te%'
+  and base_table_schema like 'te%'
+  and mlog_name like '%tmlog_misc_%'
+  and purge_next like 'DATE_ADD(NOW(), INTERVAL 3 HOUR)%';
+
+select mlog_name, base_table_name, purge_method, purge_start
+from information_schema.tidb_mlogs
+where table_schema = 'test'
+  and base_table_name like 'tmlog_like_a%'
+  and purge_method = 'DEFERRED'
+  and purge_start like 'NOW%';
+
+select mlog_name, base_table_name, table_catalog, base_table_catalog
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlog_%'
+  and base_table_schema like 'te%'
+  and table_catalog like 'de%'
+  and base_table_catalog like 'de%';
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where table_schema in ('test')
+  and mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_like_b')
+  and purge_method in ('DEFERRED');
+
+select mlog_name, purge_next
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_misc_c')
+  and table_catalog in ('def')
+  and purge_method in ('DEFERRED');
+
+select mlog_name, mlog_columns
+from information_schema.tidb_mlogs
+where table_schema in ('test', 'mysql')
+  and mlog_name in ('$mlog$tmlog_like_a', '$mlog$not_exist')
+  and mlog_columns in ('id,a');
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where base_table_schema in ('test')
+  and base_table_name in ('tmlog_like_a', 'tmlog_like_b')
+  and purge_method in ('DEFERRED');
+
+select mlog_name, base_table_name, purge_next
+from information_schema.tidb_mlogs
+where base_table_name in ('tmlog_misc_c')
+  and base_table_catalog in ('def')
+  and purge_method in ('DEFERRED');
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where base_table_schema in ('test', 'mysql')
+  and base_table_name in ('tmlog_like_b', 'not_exist')
+  and mlog_columns in ('id,a');
+
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_like_b')
+  and base_table_name in ('tmlog_like_b')
+  and purge_method in ('DEFERRED');
+
+select table_schema, mlog_name, base_table_schema, base_table_name
+from information_schema.tidb_mlogs
+where table_schema in ('test')
+  and mlog_name in ('$mlog$tmlog_misc_c')
+  and base_table_schema in ('test')
+  and base_table_name in ('tmlog_misc_c')
+  and table_catalog in ('def');
+
+select mlog_name, base_table_name, purge_next
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_misc_c')
+  and base_table_name in ('tmlog_like_a', 'tmlog_misc_c')
+  and purge_method in ('DEFERRED');
+
+select mlog_name, purge_method
+from information_schema.tidb_mlogs
+where table_catalog in ('def')
+  and base_table_catalog in ('def')
+  and purge_method in ('DEFERRED')
+  and mlog_columns in ('id,a');
+
+select mlog_name, purge_start, purge_next
+from information_schema.tidb_mlogs
+where purge_method in ('DEFERRED')
+  and mlog_columns in ('id,a')
+  and table_catalog in ('def');
+
+select mlog_name
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_like_a')
+  and mlog_name in ('$mlog$tmlog_like_b');
+
+drop materialized view log on tmlogbra;
+drop materialized view log on tmlogbrb;
+drop materialized view log on tmlog_like_a;
+drop materialized view log on tmlog_like_b;
+drop materialized view log on tmlog_misc_c;

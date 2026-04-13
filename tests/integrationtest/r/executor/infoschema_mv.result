@@ -36,46 +36,281 @@ count(*)
 3
 select * from information_schema.tidb_mviews;
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
-def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
-def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
-def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
 select * from information_schema.tidb_mviews where TABLE_SCHEMA = "test";
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
-def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
-def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
-def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
 select * from information_schema.tidb_mviews where TABLE_SCHEMA != "test";
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
 select * from information_schema.tidb_mviews where MVIEW_NAME = "mv_t";
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
-def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
 select * from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME = "mv_t1";
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
-def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
-def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
 select TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME like "%mvv%";
 TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_MODIFY_TIME	REFRESH_METHOD
-test	124	mv_t	2026-04-08 22:00:32	FAST
-test	128	mvv_t1	2026-04-08 22:00:32	FAST
+test	124	mv_t	2026-04-13 17:27:24	FAST
+test	128	mvv_t1	2026-04-13 17:27:24	FAST
 select * from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1");
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
-def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
-def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
 select * from information_schema.tidb_mviews where MVIEW_NAME not in ("mv", "mv_t1");
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
-def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
-def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
 select * from information_schema.tidb_mviews where TABLE_SCHEMA = "test" and MVIEW_NAME like "%mvv%";
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
-def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
 select * from information_schema.tidb_mviews where REFRESH_METHOD = "FAST";
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
-def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
-def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
-def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-08 22:00:32	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	124	mv_t	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	126	mv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+def	test	128	mvv_t1	SELECT `kcol`,SUM(`c0`),SUM(`c1`),SUM(`c2`),SUM(`c3`),COUNT(1) FROM `test`.`t` GROUP BY `kcol`		2026-04-13 17:27:24	FAST		DATE_ADD(NOW(), INTERVAL 1 HOUR)
 select * from information_schema.tidb_mviews where REFRESH_METHOD != "FAST";
 TABLE_CATALOG	TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_SQL_CONTENT	MVIEW_COMMENT	MVIEW_MODIFY_TIME	REFRESH_METHOD	REFRESH_START	REFRESH_NEXT
 select TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") and REFRESH_METHOD = "FAST";
 TABLE_SCHEMA	MVIEW_ID	MVIEW_NAME	MVIEW_MODIFY_TIME	REFRESH_METHOD
-test	124	mv_t	2026-04-08 22:00:32	FAST
-test	126	mv_t1	2026-04-08 22:00:32	FAST
+test	124	mv_t	2026-04-13 17:27:24	FAST
+test	126	mv_t1	2026-04-13 17:27:24	FAST
+use test;
+drop table if exists tmlogbra, tmlogbrb, tmlog_like_a, tmlog_like_b, tmlog_misc_c;
+create table tmlogbra (id int primary key, a int, b int);
+create table tmlogbrb (id int primary key, a int, b int);
+create table tmlog_like_a (id int primary key, a int, b int);
+create table tmlog_like_b (id int primary key, a int, b int);
+create table tmlog_misc_c (id int primary key, a int, b int);
+create materialized view log on tmlogbra (id, a) purge next date_add(now(), interval 1 hour);
+create materialized view log on tmlogbrb (id, a) purge next date_add(now(), interval 1 hour);
+create materialized view log on tmlog_like_a (id, a)
+purge start with now() next date_add(now(), interval 1 hour);
+create materialized view log on tmlog_like_b (id, a)
+purge next date_add(now(), interval 2 hour);
+create materialized view log on tmlog_misc_c (id, a)
+purge start with now() next date_add(now(), interval 3 hour);
+select count(*) >= 2 from information_schema.tidb_mlogs;
+count(*) >= 2
+1
+select table_schema, mlog_name
+from information_schema.tidb_mlogs
+where table_schema = 'test' and mlog_name = '$mlog$tmlogbra';
+table_schema	mlog_name
+test	$mlog$tmlogbra
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where base_table_name = 'tmlogbra';
+mlog_name	base_table_name
+$mlog$tmlogbra	tmlogbra
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlogbr%' and base_table_name = 'tmlogbrb';
+mlog_name	base_table_name
+$mlog$tmlogbrb	tmlogbrb
+select mlog_name, purge_method
+from information_schema.tidb_mlogs
+where table_catalog like 'de%'
+and base_table_catalog like 'de%'
+and mlog_columns like '%id%'
+and purge_next like 'DATE_ADD%';
+mlog_name	purge_method
+$mlog$tmlogbra	DEFERRED
+$mlog$tmlogbrb	DEFERRED
+$mlog$tmlog_like_a	DEFERRED
+$mlog$tmlog_like_b	DEFERRED
+$mlog$tmlog_misc_c	DEFERRED
+select mlog_name, purge_start, purge_next
+from information_schema.tidb_mlogs
+where mlog_columns like '%a%'
+and purge_method = 'DEFERRED'
+and purge_start like 'NOW%';
+mlog_name	purge_start	purge_next
+$mlog$tmlog_like_a	NOW()	DATE_ADD(NOW(), INTERVAL 1 HOUR)
+$mlog$tmlog_misc_c	NOW()	DATE_ADD(NOW(), INTERVAL 3 HOUR)
+select table_schema, mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where table_schema like 'te%'
+and mlog_name like '%tmlog_like_%'
+and purge_method = 'DEFERRED';
+table_schema	mlog_name	base_table_name
+test	$mlog$tmlog_like_a	tmlog_like_a
+test	$mlog$tmlog_like_b	tmlog_like_b
+select mlog_name, mlog_columns, purge_start
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlog_misc_%'
+and table_catalog = 'def'
+and mlog_columns like '%id%'
+and purge_start like 'NOW%';
+mlog_name	mlog_columns	purge_start
+$mlog$tmlog_misc_c	id,a	NOW()
+select mlog_name, purge_next
+from information_schema.tidb_mlogs
+where table_schema like 'te%'
+and mlog_name like '%tmlog_%'
+and purge_next like 'DATE_ADD(NOW(), INTERVAL 2 HOUR)%';
+mlog_name	purge_next
+$mlog$tmlog_like_b	DATE_ADD(NOW(), INTERVAL 2 HOUR)
+select mlog_name, base_table_schema, base_table_name
+from information_schema.tidb_mlogs
+where base_table_schema like 'te%'
+and base_table_name like 'tmlog_like_%'
+and purge_next like 'DATE_ADD%';
+mlog_name	base_table_schema	base_table_name
+$mlog$tmlog_like_a	test	tmlog_like_a
+$mlog$tmlog_like_b	test	tmlog_like_b
+select mlog_name, base_table_name, purge_start
+from information_schema.tidb_mlogs
+where base_table_name like 'tmlog_misc_%'
+and base_table_catalog like 'de%'
+and purge_start like 'NOW%';
+mlog_name	base_table_name	purge_start
+$mlog$tmlog_misc_c	tmlog_misc_c	NOW()
+select mlog_name, base_table_name, purge_method
+from information_schema.tidb_mlogs
+where base_table_schema like 'te%'
+and base_table_name like 'tmlog_like_b%'
+and mlog_columns like '%a%'
+and purge_method = 'DEFERRED';
+mlog_name	base_table_name	purge_method
+$mlog$tmlog_like_b	tmlog_like_b	DEFERRED
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlog_like_%'
+and base_table_name like 'tmlog_like_b%'
+and mlog_columns like '%a%';
+mlog_name	base_table_name
+$mlog$tmlog_like_b	tmlog_like_b
+select table_schema, mlog_name, base_table_schema, base_table_name
+from information_schema.tidb_mlogs
+where table_schema like 'te%'
+and base_table_schema like 'te%'
+and mlog_name like '%tmlog_misc_%'
+and purge_next like 'DATE_ADD(NOW(), INTERVAL 3 HOUR)%';
+table_schema	mlog_name	base_table_schema	base_table_name
+test	$mlog$tmlog_misc_c	test	tmlog_misc_c
+select mlog_name, base_table_name, purge_method, purge_start
+from information_schema.tidb_mlogs
+where table_schema = 'test'
+and base_table_name like 'tmlog_like_a%'
+and purge_method = 'DEFERRED'
+and purge_start like 'NOW%';
+mlog_name	base_table_name	purge_method	purge_start
+$mlog$tmlog_like_a	tmlog_like_a	DEFERRED	NOW()
+select mlog_name, base_table_name, table_catalog, base_table_catalog
+from information_schema.tidb_mlogs
+where mlog_name like '%tmlog_%'
+and base_table_schema like 'te%'
+and table_catalog like 'de%'
+and base_table_catalog like 'de%';
+mlog_name	base_table_name	table_catalog	base_table_catalog
+$mlog$tmlogbra	tmlogbra	def	def
+$mlog$tmlogbrb	tmlogbrb	def	def
+$mlog$tmlog_like_a	tmlog_like_a	def	def
+$mlog$tmlog_like_b	tmlog_like_b	def	def
+$mlog$tmlog_misc_c	tmlog_misc_c	def	def
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where table_schema in ('test')
+and mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_like_b')
+and purge_method in ('DEFERRED');
+mlog_name	base_table_name
+$mlog$tmlog_like_a	tmlog_like_a
+$mlog$tmlog_like_b	tmlog_like_b
+select mlog_name, purge_next
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_misc_c')
+and table_catalog in ('def')
+and purge_method in ('DEFERRED');
+mlog_name	purge_next
+$mlog$tmlog_misc_c	DATE_ADD(NOW(), INTERVAL 3 HOUR)
+select mlog_name, mlog_columns
+from information_schema.tidb_mlogs
+where table_schema in ('test', 'mysql')
+and mlog_name in ('$mlog$tmlog_like_a', '$mlog$not_exist')
+and mlog_columns in ('id,a');
+mlog_name	mlog_columns
+$mlog$tmlog_like_a	id,a
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where base_table_schema in ('test')
+and base_table_name in ('tmlog_like_a', 'tmlog_like_b')
+and purge_method in ('DEFERRED');
+mlog_name	base_table_name
+$mlog$tmlog_like_a	tmlog_like_a
+$mlog$tmlog_like_b	tmlog_like_b
+select mlog_name, base_table_name, purge_next
+from information_schema.tidb_mlogs
+where base_table_name in ('tmlog_misc_c')
+and base_table_catalog in ('def')
+and purge_method in ('DEFERRED');
+mlog_name	base_table_name	purge_next
+$mlog$tmlog_misc_c	tmlog_misc_c	DATE_ADD(NOW(), INTERVAL 3 HOUR)
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where base_table_schema in ('test', 'mysql')
+and base_table_name in ('tmlog_like_b', 'not_exist')
+and mlog_columns in ('id,a');
+mlog_name	base_table_name
+$mlog$tmlog_like_b	tmlog_like_b
+select mlog_name, base_table_name
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_like_b')
+and base_table_name in ('tmlog_like_b')
+and purge_method in ('DEFERRED');
+mlog_name	base_table_name
+$mlog$tmlog_like_b	tmlog_like_b
+select table_schema, mlog_name, base_table_schema, base_table_name
+from information_schema.tidb_mlogs
+where table_schema in ('test')
+and mlog_name in ('$mlog$tmlog_misc_c')
+and base_table_schema in ('test')
+and base_table_name in ('tmlog_misc_c')
+and table_catalog in ('def');
+table_schema	mlog_name	base_table_schema	base_table_name
+test	$mlog$tmlog_misc_c	test	tmlog_misc_c
+select mlog_name, base_table_name, purge_next
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_misc_c')
+and base_table_name in ('tmlog_like_a', 'tmlog_misc_c')
+and purge_method in ('DEFERRED');
+mlog_name	base_table_name	purge_next
+$mlog$tmlog_like_a	tmlog_like_a	DATE_ADD(NOW(), INTERVAL 1 HOUR)
+$mlog$tmlog_misc_c	tmlog_misc_c	DATE_ADD(NOW(), INTERVAL 3 HOUR)
+select mlog_name, purge_method
+from information_schema.tidb_mlogs
+where table_catalog in ('def')
+and base_table_catalog in ('def')
+and purge_method in ('DEFERRED')
+and mlog_columns in ('id,a');
+mlog_name	purge_method
+$mlog$tmlogbra	DEFERRED
+$mlog$tmlogbrb	DEFERRED
+$mlog$tmlog_like_a	DEFERRED
+$mlog$tmlog_like_b	DEFERRED
+$mlog$tmlog_misc_c	DEFERRED
+select mlog_name, purge_start, purge_next
+from information_schema.tidb_mlogs
+where purge_method in ('DEFERRED')
+and mlog_columns in ('id,a')
+and table_catalog in ('def');
+mlog_name	purge_start	purge_next
+$mlog$tmlogbra		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+$mlog$tmlogbrb		DATE_ADD(NOW(), INTERVAL 1 HOUR)
+$mlog$tmlog_like_a	NOW()	DATE_ADD(NOW(), INTERVAL 1 HOUR)
+$mlog$tmlog_like_b		DATE_ADD(NOW(), INTERVAL 2 HOUR)
+$mlog$tmlog_misc_c	NOW()	DATE_ADD(NOW(), INTERVAL 3 HOUR)
+select mlog_name
+from information_schema.tidb_mlogs
+where mlog_name in ('$mlog$tmlog_like_a')
+and mlog_name in ('$mlog$tmlog_like_b');
+mlog_name
+drop materialized view log on tmlogbra;
+drop materialized view log on tmlogbrb;
+drop materialized view log on tmlog_like_a;
+drop materialized view log on tmlog_like_b;
+drop materialized view log on tmlog_misc_c;
