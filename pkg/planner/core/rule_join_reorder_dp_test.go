@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
@@ -237,4 +238,76 @@ func TestDPReorderAllCartesian(t *testing.T) {
 
 	expected := "MockJoin{MockJoin{a, b}, MockJoin{c, d}}"
 	require.Equal(t, expected, planToString(result))
+}
+
+func TestInjectedJoinExprReuseSkipsMutableExpressions(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	ctx.GetSessionVars().PlanID.Store(-1)
+
+	makeRandPlusCol := func(col *expression.Column) expression.Expression {
+		randExpr := expression.NewFunctionInternal(ctx, ast.Rand, types.NewFieldType(mysql.TypeDouble))
+		return expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeDouble), randExpr, col)
+	}
+
+	t.Run("injectExpr keeps repeated rand expressions independent", func(t *testing.T) {
+		solver := &baseSingleGroupJoinOrderSolver{
+			ctx:                ctx,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+		plan := newDataSource(ctx, "t", 1)
+		baseCol := plan.Schema().Columns[0]
+
+		expr1 := makeRandPlusCol(baseCol)
+		expr2 := makeRandPlusCol(baseCol)
+		require.True(t, expression.ExpressionsSemanticEqual(expr1, expr2))
+
+		plan, injected1 := solver.injectExpr(plan, expr1)
+		plan, injected2 := solver.injectExpr(plan, expr2)
+
+		proj, ok := plan.(*logicalop.LogicalProjection)
+		require.True(t, ok)
+		require.Len(t, proj.Exprs, 3)
+		require.NotEqual(t, injected1.UniqueID, injected2.UniqueID)
+	})
+
+	t.Run("buildJoinEdge does not expose rand expressions for otherConds reuse", func(t *testing.T) {
+		solver := &baseSingleGroupJoinOrderSolver{
+			ctx:                ctx,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+		leftPlan := newDataSource(ctx, "l", 1)
+		rightPlan := newDataSource(ctx, "r", 1)
+		leftCol := leftPlan.Schema().Columns[0]
+		rightExpr := makeRandPlusCol(rightPlan.Schema().Columns[0])
+
+		originalEdge := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightExpr).(*expression.ScalarFunction)
+		newEdge, expr2Col := solver.buildJoinEdge(originalEdge, leftCol, rightExpr, &leftPlan, &rightPlan)
+
+		require.NotNil(t, newEdge)
+		require.Empty(t, expr2Col)
+
+		proj, ok := rightPlan.(*logicalop.LogicalProjection)
+		require.True(t, ok)
+		require.Len(t, proj.Exprs, 2)
+	})
+
+	t.Run("SubstituteExprsWithColsInExprs skips mutable expressions defensively", func(t *testing.T) {
+		plan := newDataSource(ctx, "s", 1)
+		baseCol := plan.Schema().Columns[0]
+		volatileExpr := makeRandPlusCol(baseCol)
+		replacementCol := &expression.Column{
+			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  volatileExpr.GetType(ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+
+		got := joinorder.SubstituteExprsWithColsInExprs(
+			[]expression.Expression{volatileExpr},
+			map[string]*expression.Column{string(volatileExpr.CanonicalHashCode()): replacementCol},
+		)
+		require.Len(t, got, 1)
+		require.Same(t, volatileExpr, got[0])
+	})
 }

@@ -263,6 +263,9 @@ func substituteExprsWithColsInExpr(expr expression.Expression, expr2Col map[stri
 		return expr
 	}
 	return rewriteExprTree(expr, func(e expression.Expression) (expression.Expression, bool) {
+		if expression.IsMutableEffectsExpr(e) || expression.CheckNonDeterministic(e) {
+			return e, false
+		}
 		if col, ok := expr2Col[string(e.CanonicalHashCode())]; ok {
 			return col, true
 		}

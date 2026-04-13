@@ -763,16 +763,24 @@ func (s *baseSingleGroupJoinOrderSolver) buildJoinEdge(
 	expr2Col := make(map[string]*expression.Column, 2)
 	if !lIsCol {
 		*leftPlan, lCol = s.injectExpr(*leftPlan, lExpr)
-		expr2Col[string(lExpr.CanonicalHashCode())] = lCol
+		if canReuseInjectedJoinExpr(lExpr) {
+			expr2Col[string(lExpr.CanonicalHashCode())] = lCol
+		}
 	}
 	if !rIsCol {
 		*rightPlan, rCol = s.injectExpr(*rightPlan, rExpr)
-		expr2Col[string(rExpr.CanonicalHashCode())] = rCol
+		if canReuseInjectedJoinExpr(rExpr) {
+			expr2Col[string(rExpr.CanonicalHashCode())] = rCol
+		}
 	}
 
 	// Create the final edge with column arguments
 	newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, originalEdge.GetStaticType(), lCol, rCol)
 	return newSf.(*expression.ScalarFunction), expr2Col
+}
+
+func canReuseInjectedJoinExpr(expr expression.Expression) bool {
+	return !expression.IsMutableEffectsExpr(expr) && !expression.CheckNonDeterministic(expr)
 }
 
 func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
@@ -787,9 +795,11 @@ func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr exp
 	// Avoid injecting duplicate expressions into the same projection.
 	// This keeps plans smaller and allows later predicates to reuse computed columns.
 	substituted := expression.ColumnSubstitute(proj.SCtx().GetExprCtx(), expr, proj.Schema(), proj.Exprs)
-	for i, e := range proj.Exprs {
-		if expression.ExpressionsSemanticEqual(e, substituted) {
-			return proj, proj.Schema().Columns[i]
+	if canReuseInjectedJoinExpr(substituted) {
+		for i, e := range proj.Exprs {
+			if expression.ExpressionsSemanticEqual(e, substituted) {
+				return proj, proj.Schema().Columns[i]
+			}
 		}
 	}
 	return proj, proj.AppendExpr(expr)
