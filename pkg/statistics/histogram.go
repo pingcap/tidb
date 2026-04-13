@@ -1669,7 +1669,7 @@ func MergePartTopNAndHistToGlobal(
 		buckets = append(buckets, meta.buildBucket4Merging(&d, analyzeVer))
 	}
 
-	// Phase 5+6: Build equi-depth global histogram by sorting bucket4Merging
+	// Phase 5: Build equi-depth global histogram by sorting bucket4Merging
 	// entries by upper bound and cutting at equi-depth thresholds.
 	globalHist, err := mergeByUpperBound(sc, buckets, totCount, totNull, totColSize,
 		expBucketNumber, isIndex, hists[0].ID, hists[0].LastUpdateVersion, hists[0].Tp)
@@ -1709,8 +1709,11 @@ func mergeByUpperBound(
 	globalHist := NewHistogram(histID, 0, totNull, lastUpdateVersion, tp, int(expBucketNumber), totColSize)
 	var (
 		cumCount    int64
-		bucketIdx   int64 = 1
-		bucketLower *types.Datum // lower bound of current global bucket
+		bucketIdx   int64        = 1
+		firstBucket              = true // true until the first global bucket is emitted
+		bucketLower *types.Datum        // lower bound of current global bucket
+		lastUpper   *types.Datum        // upper bound of the last processed group
+		lastRepeat  int64               // repeat of the last processed group
 	)
 
 	i := 0
@@ -1729,54 +1732,46 @@ func mergeByUpperBound(
 		}
 
 		// Accumulate counts and Repeat for all buckets at this upper bound.
-		var groupRepeat int64
+		lastRepeat = 0
+		lastUpper = buckets[i].upper.Clone()
 		for k := i; k < j; k++ {
 			cumCount += buckets[k].Count
-			groupRepeat += buckets[k].Repeat
+			lastRepeat += buckets[k].Repeat
 
-			// Track the minimum lower bound for the current global bucket.
+			// Set lower bound for the first global bucket from the minimum
+			// input lower. After the first cut, bucketLower is set to the
+			// previous cut's upper to prevent overlapping ranges.
 			if bucketLower == nil {
-				bucketLower = buckets[k].lower
-			} else {
+				bucketLower = buckets[k].lower.Clone()
+			} else if firstBucket {
 				cmp, err := buckets[k].lower.Compare(sc.TypeCtx(), bucketLower, collate.GetBinaryCollator())
 				if err != nil {
 					return nil, err
 				}
 				if cmp < 0 {
-					bucketLower = buckets[k].lower
+					bucketLower = buckets[k].lower.Clone()
 				}
 			}
+			releasebucket4MergingForRecycle(buckets[k])
 		}
 
 		// Check if cumulative count crosses the equi-depth threshold.
 		threshold := totCount * bucketIdx / expBucketNumber
 		if cumCount >= threshold && bucketIdx < expBucketNumber {
-			globalHist.AppendBucketWithNDV(bucketLower.Clone(), buckets[i].upper.Clone(),
-				cumCount, groupRepeat, 0)
+			globalHist.AppendBucketWithNDV(bucketLower, lastUpper, cumCount, lastRepeat, 0)
 			bucketIdx++
-			bucketLower = nil
+			firstBucket = false
+			// Next bucket's lower = current upper to prevent overlapping ranges
+			// that would break interpolation in calcFraction.
+			bucketLower = lastUpper.Clone()
 		}
 
 		i = j
 	}
 
 	// Final bucket: collect everything remaining.
-	if bucketLower != nil {
-		last := buckets[len(buckets)-1]
-		// Compute repeat at the last upper bound value.
-		var lastRepeat int64
-		for k := len(buckets) - 1; k >= 0; k-- {
-			cmp, err := buckets[k].upper.Compare(sc.TypeCtx(), last.upper, collate.GetBinaryCollator())
-			if err != nil {
-				return nil, err
-			}
-			if cmp != 0 {
-				break
-			}
-			lastRepeat += buckets[k].Repeat
-		}
-		globalHist.AppendBucketWithNDV(bucketLower.Clone(), last.upper.Clone(),
-			cumCount, lastRepeat, 0)
+	if bucketLower != nil && lastUpper != nil {
+		globalHist.AppendBucketWithNDV(bucketLower, lastUpper, cumCount, lastRepeat, 0)
 	}
 
 	// NDV for column histograms is not maintained per-bucket.
@@ -1784,11 +1779,6 @@ func mergeByUpperBound(
 		for i := range globalHist.Buckets {
 			globalHist.Buckets[i].NDV = 0
 		}
-	}
-
-	// Release bucket4Merging entries.
-	for _, b := range buckets {
-		releasebucket4MergingForRecycle(b)
 	}
 
 	return globalHist, nil
