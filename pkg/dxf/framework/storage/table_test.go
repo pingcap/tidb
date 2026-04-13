@@ -1055,6 +1055,7 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.NoError(t, err2)
 		require.Len(t, firstPage.Items, 2)
 		require.EqualValues(t, 5, firstPage.ApproxTotalCount)
+		require.True(t, firstPage.HasMore)
 		require.Equal(t, allIDs[0], firstPage.Items[0].ID)
 		require.Equal(t, allIDs[1], firstPage.Items[1].ID)
 		require.Equal(t, allIDs[1], firstPage.NextPageToken)
@@ -1069,6 +1070,7 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.NoError(t, err2)
 		require.Len(t, secondPage.Items, 2)
 		require.EqualValues(t, 5, secondPage.ApproxTotalCount)
+		require.True(t, secondPage.HasMore)
 		require.Equal(t, allIDs[2], secondPage.Items[0].ID)
 		require.Equal(t, allIDs[3], secondPage.Items[1].ID)
 		require.Equal(t, allIDs[3], secondPage.NextPageToken)
@@ -1077,6 +1079,7 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.NoError(t, err2)
 		require.Len(t, lastPage.Items, 1)
 		require.EqualValues(t, 5, lastPage.ApproxTotalCount)
+		require.False(t, lastPage.HasMore)
 		require.Equal(t, allIDs[4], lastPage.Items[0].ID)
 		require.Zero(t, lastPage.NextPageToken)
 
@@ -1084,6 +1087,7 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.NoError(t, err2)
 		require.Len(t, filteredPage.Items, 1)
 		require.EqualValues(t, 3, filteredPage.ApproxTotalCount)
+		require.True(t, filteredPage.HasMore)
 		require.Equal(t, "ks1", filteredPage.Items[0].Keyspace)
 		require.Greater(t, filteredPage.NextPageToken, int64(0))
 
@@ -1091,6 +1095,7 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.NoError(t, err2)
 		require.Len(t, filteredPageWithToken.Items, 1)
 		require.EqualValues(t, 3, filteredPageWithToken.ApproxTotalCount)
+		require.True(t, filteredPageWithToken.HasMore)
 		require.Equal(t, "ks1", filteredPageWithToken.Items[0].Keyspace)
 
 		_, err2 = gm.ListHistoryTasks(ctx, 0, 0, "")

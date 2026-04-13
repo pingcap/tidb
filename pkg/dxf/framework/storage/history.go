@@ -107,6 +107,7 @@ type HistoryTaskSummary struct {
 // HistoryTaskPage is the paged result for history task listing.
 type HistoryTaskPage struct {
 	Items            []*HistoryTaskSummary
+	HasMore          bool
 	NextPageToken    int64
 	ApproxTotalCount int64
 }
@@ -154,7 +155,7 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 	// Intentionally keep this as a separate best-effort read.
 	// Under concurrent task transfers, Items and ApproxTotalCount may observe slightly
 	// different snapshots, which is acceptable for this observability API.
-	// Pagination correctness relies on page rows + NextPageToken from the page query.
+	// Pagination correctness relies on page rows + HasMore/NextPageToken from the page query.
 	countRows, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select count(1) from mysql.tidb_global_task_history`+func() string {
 			if keyspace == "" {
@@ -172,6 +173,7 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 		ApproxTotalCount: countRows[0].GetInt64(0),
 	}
 	hasMore := len(rows) > pageSize
+	page.HasMore = hasMore
 	if hasMore {
 		rows = rows[:pageSize]
 	}
