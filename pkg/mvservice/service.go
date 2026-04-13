@@ -243,7 +243,7 @@ type refreshAlertTask struct {
 }
 
 // maybeLogRefreshAlertTasks scans pending refresh tasks and logs warning/overdue alerts.
-// The scan runs on maintenanceTick and is rate-limited to once per minute.
+// The scan runs on maintenance ticks and is rate-limited by mvRefreshAlertScanInterval.
 func (t *MVService) maybeLogRefreshAlertTasks(now time.Time) {
 	nowMillis := now.UnixMilli()
 	if next := t.nextRefreshAlertScanMillis.Load(); next > nowMillis {

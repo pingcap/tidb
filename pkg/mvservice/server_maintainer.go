@@ -41,13 +41,13 @@ type ServerDiscovery interface {
 	getAllServerInfo(ctx context.Context) (map[string]serverInfo, error)
 }
 
-// ServerConsistentHash maintains TiDB server membership and ownership mapping.
+// ServerConsistentHash maintains TiDB membership and ownership mapping by exec ID.
 type ServerConsistentHash struct {
 	ctx     context.Context
 	servers map[string]serverInfo
 	chash   ConsistentHash // use consistent hash to reduce task movements after nodes changed
 	mu      sync.RWMutex
-	ID      string // current server ID
+	ID      string // current server exec ID
 	helper  ServerDiscovery
 }
 
@@ -64,7 +64,7 @@ func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerDis
 	}
 }
 
-// init loads local server info with retry and initializes local server ID.
+// init loads local server info with retry and initializes local exec ID.
 func (sch *ServerConsistentHash) init() bool {
 	backoff := time.Second
 	attempt := 0

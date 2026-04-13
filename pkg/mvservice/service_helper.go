@@ -496,9 +496,10 @@ func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context
 	return r, err
 }
 
-// RegisterMVService registers a DDL event handler for MV-related events.
-// onDDLHandled is invoked after the local MV service is notified, and can be
-// used by callers to fan out this event to other nodes.
+// RegisterMVService constructs MVService and registers a local DDL handler for
+// MV-related create/drop events.
+// onDDLHandled is invoked on the DDL owner when such an event is observed, and
+// callers may use it to fan out the metadata change to other TiDB nodes.
 func RegisterMVService(
 	ctx context.Context,
 	registerHandler func(notifier.HandlerID, notifier.SchemaChangeHandler),
@@ -516,10 +517,10 @@ func RegisterMVService(
 		Delay:        defaultTaskBackpressureDelay,
 	}
 	mvService := NewMVService(ctx, se, newServiceHelper(), cfg)
-	mvService.NotifyDDLChange() // always trigger a refresh after startup to make sure the in-memory state is up-to-date
+	mvService.NotifyDDLChange() // Trigger one startup refresh so in-memory state catches up with metadata.
 
-	// callback for DDL events only will be triggered on the DDL owner
-	// other nodes will get notified through the NotifyDDLChange method from the domain service registry
+	// The notifier callback runs on the DDL owner only.
+	// Other nodes should be notified through the domain-side registry path.
 	registerHandler(notifier.MVServiceHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 		if shouldHandleMVCreateEvent(event) {
 			onDDLHandled()
@@ -543,7 +544,7 @@ func shouldHandleMVCreateEvent(event *notifier.SchemaChangeEvent) bool {
 		dropped := event.GetDropTableInfo()
 		return hasMVRelatedTableInfo(dropped)
 	default:
-		// For other DDL types, rely on periodic refresh.
+		// For other DDL types, rely on the periodic metadata refresh.
 		return false
 	}
 }
