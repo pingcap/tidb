@@ -38,7 +38,7 @@ const (
 
 var mergeEmptyRegionsInterval = 10 * time.Minute
 
-func (do *Domain) mergeEmptyRegionsLoop() {
+func (do *Domain) mergeEmptyRegionsLoop(ctx context.Context) {
 	defer func() {
 		do.wg.Done()
 		logutil.BgLogger().Info("mergeEmptyRegionsLoop exited.")
@@ -54,7 +54,7 @@ func (do *Domain) mergeEmptyRegionsLoop() {
 
 	for {
 		if variable.EnableDropTableForceMerge.Load() && owner.IsOwner() {
-			if err := do.doMergeEmptyRegions(); err != nil {
+			if err := do.doMergeEmptyRegions(ctx); err != nil {
 				logutil.BgLogger().Error("merge-empty-regions scan failed", zap.Error(err))
 			}
 		}
@@ -67,7 +67,7 @@ func (do *Domain) mergeEmptyRegionsLoop() {
 	}
 }
 
-func (do *Domain) doMergeEmptyRegions() error {
+func (do *Domain) doMergeEmptyRegions(ctx context.Context) error {
 	minTableID, err := do.loadOrInitMergeEmptyRegionsMinTableID()
 	if err != nil {
 		return errors.Trace(err)
@@ -79,7 +79,7 @@ func (do *Domain) doMergeEmptyRegions() error {
 	}
 
 	if len(ranges) > 0 {
-		if err := infosync.AddForceMergeRanges(context.Background(), ranges); err != nil {
+		if err := infosync.AddForceMergeRanges(ctx, ranges); err != nil {
 			return errors.Trace(err)
 		}
 	}

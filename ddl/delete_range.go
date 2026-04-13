@@ -157,6 +157,15 @@ func (dr *delRange) clear() {
 func (dr *delRange) startEmulator() {
 	defer dr.wait.Done()
 	logutil.BgLogger().Info("[ddl] start delRange emulator")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-dr.quitCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	for {
 		select {
 		case <-dr.emulatorCh:
@@ -164,13 +173,13 @@ func (dr *delRange) startEmulator() {
 			return
 		}
 		if util.IsEmulatorGCEnable() {
-			err := dr.doDelRangeWork()
+			err := dr.doDelRangeWork(ctx)
 			terror.Log(errors.Trace(err))
 		}
 	}
 }
 
-func (dr *delRange) doDelRangeWork() error {
+func (dr *delRange) doDelRangeWork(ctx context.Context) error {
 	sctx, err := dr.sessPool.get()
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] delRange emulator get session failed", zap.Error(err))
@@ -178,8 +187,8 @@ func (dr *delRange) doDelRangeWork() error {
 	}
 	defer dr.sessPool.put(sctx)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	ranges, err := util.LoadDeleteRanges(ctx, sctx, math.MaxInt64)
+	txnCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	ranges, err := util.LoadDeleteRanges(txnCtx, sctx, math.MaxInt64)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] delRange emulator load tasks failed", zap.Error(err))
 		return errors.Trace(err)
@@ -187,7 +196,7 @@ func (dr *delRange) doDelRangeWork() error {
 
 	gcForceMergeTableCache := make(map[int64]struct{}, len(ranges))
 	for _, r := range ranges {
-		if err := dr.doTask(sctx, r, gcForceMergeTableCache); err != nil {
+		if err := dr.doTask(ctx, sctx, r, gcForceMergeTableCache); err != nil {
 			logutil.BgLogger().Error("[ddl] delRange emulator do task failed", zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -195,14 +204,14 @@ func (dr *delRange) doDelRangeWork() error {
 	return nil
 }
 
-func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask, gcForceMergeTableCache map[int64]struct{}) error {
+func (dr *delRange) doTask(ctx context.Context, sctx sessionctx.Context, r util.DelRangeTask, gcForceMergeTableCache map[int64]struct{}) error {
 	var oldStartKey, newStartKey kv.Key
 	oldStartKey = r.StartKey
 	for {
 		finish := true
 		dr.keys = dr.keys[:0]
-		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-		err := kv.RunInNewTxn(ctx, dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		txnCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+		err := kv.RunInNewTxn(txnCtx, dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			if topsqlstate.TopSQLEnabled() {
 				// Only when TiDB run without PD(use unistore as storage for test) will run into here, so just set a mock internal resource tagger.
 				txn.SetOption(kv.ResourceGroupTagger, util.GetInternalResourceGroupTaggerForTopSQL())
@@ -243,7 +252,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask, gcForce
 				logutil.BgLogger().Error("[ddl] delRange emulator complete task failed", zap.Error(err))
 				return errors.Trace(err)
 			}
-			if err := dr.reportForceMergeRanges(sctx, r, gcForceMergeTableCache); err != nil {
+			if err := dr.reportForceMergeRanges(ctx, sctx, r, gcForceMergeTableCache); err != nil {
 				logutil.BgLogger().Error("[ddl] delRange emulator report force merge failed", zap.Error(err))
 			}
 			startKey, endKey := r.Range()
@@ -262,7 +271,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask, gcForce
 	return nil
 }
 
-func (dr *delRange) reportForceMergeRanges(sctx sessionctx.Context, r util.DelRangeTask, gcForceMergeTableCache map[int64]struct{}) error {
+func (dr *delRange) reportForceMergeRanges(ctx context.Context, sctx sessionctx.Context, r util.DelRangeTask, gcForceMergeTableCache map[int64]struct{}) error {
 	historyJob, err := GetHistoryJobByID(sctx, r.JobID)
 	if err != nil {
 		return err
@@ -275,7 +284,7 @@ func (dr *delRange) reportForceMergeRanges(sctx sessionctx.Context, r util.DelRa
 	if len(forceMergeRanges) == 0 {
 		return nil
 	}
-	return infosync.AddForceMergeRanges(context.Background(), forceMergeRanges)
+	return infosync.AddForceMergeRanges(ctx, forceMergeRanges)
 }
 
 // insertJobIntoDeleteRangeTable parses the job into delete-range arguments,

@@ -1093,7 +1093,7 @@ func (do *Domain) Init(
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
 	go do.globalConfigSyncerKeeper()
-	go do.mergeEmptyRegionsLoop()
+	go do.mergeEmptyRegionsLoop(ctx)
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
 		go do.topologySyncerKeeper()
