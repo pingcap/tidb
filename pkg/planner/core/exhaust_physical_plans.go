@@ -1146,7 +1146,7 @@ const (
 
 	// A fixed guardrail for step-1: do not push down probe-side residual predicates
 	// that contain IN-lists whose size is greater than this threshold.
-	indexJoinProbeSideLargeInNotInThreshold = 100000
+	indexJoinProbeSideLargeInNotInThreshold = 10000
 )
 
 func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod int, ok bool) {

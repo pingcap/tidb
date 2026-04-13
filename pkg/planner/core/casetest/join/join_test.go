@@ -159,7 +159,7 @@ func TestJoinSimplifyCondition(t *testing.T) {
 				"  │ └─IndexRangeScan cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
 				"  └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"))
 
-		const largeInListThreshold = 100000
+		const largeInListThreshold = 10000
 		const largeInListLength = largeInListThreshold + 1
 		var inListBuilder strings.Builder
 		for i := 1; i <= largeInListLength; i++ {
