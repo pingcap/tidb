@@ -399,8 +399,9 @@ func cleanDataSequences(tk *testkit.TestKit) {
 }
 
 func testMemtableInfoschemaExtractor(t *testing.T, tcs []testCase) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
+	tk.MustExec("select 3")
 
 	tk.MustExec("set global tidb_enable_check_constraint = true")
 	countSQL := 0
@@ -450,16 +451,19 @@ func TestMemtableInfoschemaExtractorPart2(t *testing.T) {
 			memTableName: infoschema.TableKeyColumn,
 			prepareData:  prepareDataKeyColumnUsage,
 			cleanData:    cleanDataKeyColumnUsage,
+			buildConds:   buildRepresentativeConditions,
 		},
 		{
 			memTableName: infoschema.TableConstraints,
 			prepareData:  prepareDataKeyColumnUsage,
 			cleanData:    cleanDataKeyColumnUsage,
+			buildConds:   buildRepresentativeConditions,
 		},
 		{
 			memTableName: infoschema.TablePartitions,
 			prepareData:  prepareDataPartitions,
 			cleanData:    cleanDataPartitions,
+			buildConds:   buildRepresentativeConditions,
 		},
 	}
 	testMemtableInfoschemaExtractor(t, tcs)
