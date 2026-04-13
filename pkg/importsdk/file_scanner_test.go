@@ -71,6 +71,16 @@ func TestProcessDataFiles(t *testing.T) {
 func TestFileScanner(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
+	assertSecretsRedacted := func(t *testing.T, err error) {
+		t.Helper()
+		require.Error(t, err)
+		require.ErrorContains(t, err, "access-key=xxxxxx")
+		require.ErrorContains(t, err, "secret-access-key=xxxxxx")
+		require.ErrorContains(t, err, "session-token=xxxxxx")
+		require.NotContains(t, err.Error(), "access-key=ak")
+		require.NotContains(t, err.Error(), "secret-access-key=sk")
+		require.NotContains(t, err.Error(), "session-token=token")
+	}
 
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0644))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "db1.t1-schema.sql"), []byte("CREATE TABLE t1 (id INT);"), 0644))
@@ -127,13 +137,7 @@ func TestFileScanner(t *testing.T) {
 			db,
 			cfg,
 		)
-		require.Error(t, err)
-		require.ErrorContains(t, err, "access-key=xxxxxx")
-		require.ErrorContains(t, err, "secret-access-key=xxxxxx")
-		require.ErrorContains(t, err, "session-token=xxxxxx")
-		require.NotContains(t, err.Error(), "access-key=ak")
-		require.NotContains(t, err.Error(), "secret-access-key=sk")
-		require.NotContains(t, err.Error(), "session-token=token")
+		assertSecretsRedacted(t, err)
 	})
 
 	t.Run("CreateSchemasAndTablesRedactsSensitiveSourcePathOnError", func(t *testing.T) {
@@ -163,13 +167,7 @@ func TestFileScanner(t *testing.T) {
 		invalidMock.ExpectQuery("SHOW CREATE TABLE `db1`.`t1`").WillReturnError(&dmysql.MySQLError{Number: tmysql.ErrNoSuchTable})
 
 		err = invalidScanner.CreateSchemasAndTables(ctx)
-		require.Error(t, err)
-		require.ErrorContains(t, err, "access-key=xxxxxx")
-		require.ErrorContains(t, err, "secret-access-key=xxxxxx")
-		require.ErrorContains(t, err, "session-token=xxxxxx")
-		require.NotContains(t, err.Error(), "access-key=ak")
-		require.NotContains(t, err.Error(), "secret-access-key=sk")
-		require.NotContains(t, err.Error(), "session-token=token")
+		assertSecretsRedacted(t, err)
 		require.ErrorContains(t, err, "invalid schema statement")
 		require.NoError(t, invalidMock.ExpectationsWereMet())
 	})
