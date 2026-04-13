@@ -1711,8 +1711,8 @@ func mergeByUpperBound(
 		cumCount     int64
 		prevCumCount int64        // cumulative count before the current group
 		bucketIdx    int64        = 1
-		firstBucket               = true // true until the first global bucket is emitted
 		bucketLower  *types.Datum        // lower bound of current global bucket
+		lowerFloor   *types.Datum        // floor for lower bound (previous cut's upper)
 		lastUpper    *types.Datum        // upper bound of the current group
 		lastRepeat   int64               // repeat of the current group
 		prevUpper    *types.Datum        // upper bound of the previous group
@@ -1746,18 +1746,27 @@ func mergeByUpperBound(
 			cumCount += buckets[k].Count
 			lastRepeat += buckets[k].Repeat
 
-			// Set lower bound for the first global bucket from the minimum
-			// input lower. After the first cut, bucketLower is set to the
-			// previous cut's upper to prevent overlapping ranges.
-			if bucketLower == nil {
-				bucketLower = buckets[k].lower.Clone()
-			} else if firstBucket {
-				cmp, err := buckets[k].lower.Compare(sc.TypeCtx(), bucketLower, collate.GetBinaryCollator())
+			// Track the minimum lower bound for the current global bucket,
+			// clamped to not go below the previous cut's upper (lowerFloor).
+			lower := buckets[k].lower.Clone()
+			if lowerFloor != nil {
+				cmp, err := lower.Compare(sc.TypeCtx(), lowerFloor, collate.GetBinaryCollator())
 				if err != nil {
 					return nil, err
 				}
 				if cmp < 0 {
-					bucketLower = buckets[k].lower.Clone()
+					lower = lowerFloor.Clone()
+				}
+			}
+			if bucketLower == nil {
+				bucketLower = lower
+			} else {
+				cmp, err := lower.Compare(sc.TypeCtx(), bucketLower, collate.GetBinaryCollator())
+				if err != nil {
+					return nil, err
+				}
+				if cmp < 0 {
+					bucketLower = lower
 				}
 			}
 			releasebucket4MergingForRecycle(buckets[k])
@@ -1778,10 +1787,8 @@ func mergeByUpperBound(
 			}
 			globalHist.AppendBucketWithNDV(bucketLower, cutUpper, cutCount, cutRepeat, 0)
 			bucketIdx++
-			firstBucket = false
-			// Next bucket's lower = cut upper to prevent overlapping ranges
-			// that would break interpolation in calcFraction.
-			bucketLower = cutUpper.Clone()
+			lowerFloor = cutUpper
+			bucketLower = nil
 		}
 
 		i = j
