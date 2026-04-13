@@ -22,8 +22,8 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 )
@@ -214,10 +214,6 @@ func GetFromHistory(
 			info.Duration.MergeSort = duration
 		case proto.ImportStepWriteAndIngest:
 			info.Duration.Ingest = duration
-		case proto.ImportStepCollectConflicts:
-			info.Duration.CollectConflicts = duration
-		case proto.ImportStepConflictResolution:
-			info.Duration.ResolveConflicts = duration
 		case proto.ImportStepPostProcess:
 			info.Duration.PostProcess = duration
 		}

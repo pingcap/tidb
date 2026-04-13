@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config/kerneltype",
-        "//pkg/dxf/framework/proto",
+        "//pkg/disttask/framework/proto",
         "//pkg/keyspace",
     ],
 )

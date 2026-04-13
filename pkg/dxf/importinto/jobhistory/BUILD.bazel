@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/dxf/framework/proto",
-        "//pkg/dxf/framework/storage",
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/storage",
         "//pkg/dxf/importinto/taskkey",
         "//pkg/util/injectfailpoint",
         "@com_github_docker_go_units//:go-units",
@@ -22,8 +22,8 @@ go_test(
     flaky = True,
     deps = [
         ":jobhistory",
-        "//pkg/dxf/framework/proto",
-        "//pkg/dxf/framework/testutil",
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/testutil",
         "//pkg/dxf/importinto/taskkey",
         "@com_github_stretchr_testify//require",
     ],

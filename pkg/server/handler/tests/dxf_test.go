@@ -25,21 +25,27 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-=======
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
-	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
->>>>>>> 5766c79bbff (dxf/importinto: add import-into history job info API (#66813))
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
+
+func runAndCheckReqFn(t *testing.T, code int, resMsg string, doReqFn func() (*http.Response, error)) []byte {
+	t.Helper()
+	resp, err := doReqFn()
+	require.NoError(t, err)
+	require.Equal(t, code, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Contains(t, string(body), resMsg)
+	require.NoError(t, resp.Body.Close())
+	return body
+}
 
 func TestDXFScheduleAPI(t *testing.T) {
 	if kerneltype.IsClassic() {
@@ -139,8 +145,6 @@ func TestDXFScheduleAPI(t *testing.T) {
 		require.EqualValues(t, 1, out.PerKeyspace["SYSTEM"])
 		require.EqualValues(t, 2, out.PerKeyspace["ks1"])
 	})
-<<<<<<< HEAD
-=======
 
 	t.Run("import-into history job info api", func(t *testing.T) {
 		setupTaskManager := func(t *testing.T) (*storage.TaskManager, context.Context) {
@@ -236,50 +240,6 @@ func TestDXFScheduleAPI(t *testing.T) {
 			require.Empty(t, out.Duration.PostProcess)
 		})
 	})
-
-	t.Run("task max_runtime_slots api", func(t *testing.T) {
-		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support POST method", func() (*http.Response, error) {
-			return ts.FetchStatus("/dxf/task/1/max_runtime_slots")
-		})
-		tm, err := storage.GetTaskManager()
-		require.NoError(t, err)
-		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-		require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
-		id, err := tm.CreateTask(ctx, "key1", proto.ImportInto, "", 8, "", 0, proto.ExtraParams{}, []byte("test"))
-		require.NoError(t, err)
-
-		for _, c := range [][2]string{
-			{"/dxf/task/0/max_runtime_slots", "invalid task ID"},
-			{"/dxf/task/aa/max_runtime_slots", "invalid task ID"},
-			{"/dxf/task/1/max_runtime_slots", "invalid value "},
-			{"/dxf/task/1/max_runtime_slots?value=aa", "invalid value "},
-			{"/dxf/task/1/max_runtime_slots?value=0", "invalid value "},
-			{"/dxf/task/1/max_runtime_slots?value=1&target_step=a", "invalid target step"},
-			{"/dxf/task/1/max_runtime_slots?value=1&target_step=1&target_step=aa", "invalid target step"},
-			{"/dxf/task/1123123/max_runtime_slots?value=1&target_step=1", "task not found"},
-			{fmt.Sprintf("/dxf/task/%d/max_runtime_slots?value=10", id), "max runtime slots should be less than required slots(8)"},
-			{fmt.Sprintf("/dxf/task/%d/max_runtime_slots?value=6&target_step=100", id), "invalid target step 100 for task type ImportInto"},
-		} {
-			path, errMsg := c[0], c[1]
-			runAndCheckReqFn(t, http.StatusBadRequest, errMsg, func() (*http.Response, error) {
-				return ts.PostStatus(path, "", bytes.NewBuffer([]byte("")))
-			})
-		}
-
-		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
-			return ts.PostStatus(fmt.Sprintf("/dxf/task/%d/max_runtime_slots?value=6&target_step=3", id), "", bytes.NewBuffer([]byte("")))
-		})
-		out := struct {
-			RequiredSlots   int      `json:"required_slots"`
-			MaxRuntimeSlots int      `json:"max_runtime_slots"`
-			TargetSteps     []string `json:"target_steps"`
-		}{}
-		require.NoError(t, json.Unmarshal(body, &out))
-		require.Equal(t, 8, out.RequiredSlots)
-		require.Equal(t, 6, out.MaxRuntimeSlots)
-		require.Equal(t, []string{"encode"}, out.TargetSteps)
-	})
->>>>>>> 5766c79bbff (dxf/importinto: add import-into history job info API (#66813))
 }
 
 func TestDXFScheduleTuneAPI(t *testing.T) {

@@ -34,15 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-<<<<<<< HEAD:pkg/disttask/importinto/job.go
-=======
-	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
-	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
->>>>>>> 5766c79bbff (dxf/importinto: add import-into history job info API (#66813)):pkg/dxf/importinto/job.go
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"

@@ -21,18 +21,13 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
-	"github.com/pingcap/tidb/pkg/keyspace"
-=======
-	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
-	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
->>>>>>> 5766c79bbff (dxf/importinto: add import-into history job info API (#66813))
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/server/handler"

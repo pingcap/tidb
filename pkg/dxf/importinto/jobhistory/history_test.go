@@ -17,8 +17,8 @@ package jobhistory_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
 	"github.com/stretchr/testify/require"
