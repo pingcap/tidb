@@ -453,6 +453,40 @@ select * from cte';
 execute stmt_cte_trunc;
 Error 1406 (22001): Data Too Long, field len 3, data len 8
 deallocate prepare stmt_cte_trunc;
+explain format='brief' with recursive cte as (
+select cast('abc' as char(3)) as s, 1 as n
+union all
+select 'abcdefgh', n + 1
+from cte
+where n < 2
+)
+select * from cte;
+id	estRows	task	access object	operator info
+CTEFullScan	1.80	root	CTE:cte	data:CTE_0
+CTE_0	1.80	root		Recursive CTE
+├─Projection(Seed Part)	1.00	root		abc->Column#3, 1->Column#4
+│ └─TableDual	1.00	root		rows:1
+└─Projection(Recursive Part)	0.80	root		cast(abcdefgh, var_string(3))->Column#9, cast(plus(Column#6, 1), bigint BINARY)->Column#10
+  └─Selection	0.80	root		lt(Column#6, 2)
+    └─CTETable	1.00	root		Scan on CTE_0
+select @@warning_count;
+@@warning_count
+0
+prepare stmt_cte_trunc_prepare from '
+with recursive cte as (
+select cast(''abc'' as char(3)) as s, 1 as n
+union all
+select ''abcdefgh'', n + 1
+from cte
+where n < 2
+)
+select * from cte';
+select @@warning_count;
+@@warning_count
+0
+execute stmt_cte_trunc_prepare;
+Error 1406 (22001): Data Too Long, field len 3, data len 8
+deallocate prepare stmt_cte_trunc_prepare;
 with cte as (
 select cast('abcdefgh' as char(3)) as short_str, 1 as n
 )
