@@ -17,6 +17,7 @@ package planstats_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -37,17 +38,45 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
+func runPlanStatsUnderCascadesWithDomain(
+	t *testing.T,
+	testFunc func(t *testing.T, tk *testkit.TestKit, domain *domain.Domain, cascades, caller string),
+) {
+	options := []struct {
+		name string
+		opt  testkit.TestOption
+	}{
+		{"off", testkit.WithCascades(false)},
+		{"on", testkit.WithCascades(true)},
+	}
+
+	pc, _, _, ok := runtime.Caller(1)
+	require.True(t, ok)
+	details := runtime.FuncForPC(pc)
+	funcNameIdx := strings.LastIndex(details.Name(), ".")
+	funcName := details.Name()[funcNameIdx+1:]
+
+	for _, val := range options {
+		t.Run(val.name, func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKitForCommonTest(t, store)
+			val.opt(tk)
+			testFunc(t, tk, dom, val.name, funcName)
+		})
+	}
+}
+
 func TestPlanStatsLoad(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+	runPlanStatsUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		p := parser.New()
 		testKit.MustExec("use test")
 		ctx := testKit.Session().(sessionctx.Context)
@@ -243,7 +272,9 @@ func TestPlanStatsLoad(t *testing.T) {
 		}()
 
 		testKit.MustExec("create table t_issue48257(a int)")
-		testutil.HandleNextDDLEventWithTxn(h)
+		if intest.InTest {
+			require.NoError(t, testutil.HandleNextDDLEventWithTxn(h))
+		}
 		testKit.MustExec("insert into t_issue48257 value(1)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -258,19 +289,24 @@ func TestPlanStatsLoad(t *testing.T) {
 		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t_issue48257").Rows(), "t_issue48257", false)
 		testKit.MustExec("set tidb_opt_objective='moderate'")
 
-		// async load
+		// Outside intest, DDL notifications are handled directly instead of through the
+		// legacy test channel, so the first two explains can observe non-pseudo stats
+		// before the determinate-objective path forces pseudo fallback again.
+		expectPseudoBeforeAsyncHistogramLoad := intest.InTest
 		testKit.MustExec("set tidb_stats_load_sync_wait = 0")
 		testKit.MustExec("create table t1_issue48257(a int)")
-		testutil.HandleNextDDLEventWithTxn(h)
+		if intest.InTest {
+			require.NoError(t, testutil.HandleNextDDLEventWithTxn(h))
+		}
 		testKit.MustExec("insert into t1_issue48257 value(1)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		testKit.MustExec("analyze table t1_issue48257 all columns")
-		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", expectPseudoBeforeAsyncHistogramLoad)
 		testKit.MustExec("insert into t1_issue48257 value(1)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
-		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", expectPseudoBeforeAsyncHistogramLoad)
 		testKit.MustExec("set tidb_opt_objective='determinate'")
 		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
 		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
@@ -279,7 +315,7 @@ func TestPlanStatsLoad(t *testing.T) {
 }
 
 func TestPlanStatsLoadForCTE(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+	runPlanStatsUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("set @@session.tidb_analyze_version=2")
@@ -339,7 +375,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)
 
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+	runPlanStatsUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		originalVal1 := testKit.MustQuery("select @@tidb_stats_load_pseudo_timeout").Rows()[0][0].(string)
 		defer func() {
@@ -416,7 +452,7 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 	})
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitForCommonTest(t, store)
 	tk.MustExec("use test")
 	originalPseudoTimeout := tk.MustQuery("select @@tidb_stats_load_pseudo_timeout").Rows()[0][0].(string)
 	defer func() {
@@ -452,21 +488,14 @@ func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) 
 	tk.MustExec("prepare st from 'select * from t where b > ?'")
 	tk.MustExec("set @p = 2")
 	tk.MustExec("execute st using @p")
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.IsSyncStatsFailed)
+	require.True(t, slices.ContainsFunc(tk.Session().GetSessionVars().StmtCtx.GetWarnings(), func(w stmtctx.SQLWarn) bool {
+		return strings.Contains(w.Err.Error(), "sync load")
+	}))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	// Wait for the async histogram load item corresponding to column b to be marked
-	// as sync-load failed, which confirms the sync-load path timed out and fell back
-	// to async loading for this full-load stats item.
-	require.Eventually(t, func() bool {
-		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
-			if item.TableID == tblInfo.ID && item.ID == colBID && !item.IsIndex && item.FullLoad && item.IsSyncLoadFailed {
-				return true
-			}
-		}
-		return false
-	}, 5*time.Second, 100*time.Millisecond)
-
 	tk.MustExec("execute st using @p")
+	require.True(t, tk.Session().GetSessionVars().StmtCtx.IsSyncStatsFailed)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
 
@@ -489,7 +518,7 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+	runPlanStatsUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`) // affect this ut
 		testKit.MustExec(`create table t (b int,key b(b))`)
@@ -515,7 +544,7 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 }
 
 func TestCollectDependingVirtualCols(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+	runPlanStatsUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t(a int, b int, c json," +
 			"index ic_char((cast(c->'$' as char(32) array)))," +
@@ -588,7 +617,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 }
 
 func TestStatsAnalyzedInDDL(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+	runPlanStatsUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("set session tidb_stats_update_during_ddl = 1")
 		// test normal table
@@ -671,7 +700,7 @@ func TestStatsAnalyzedInDDL(t *testing.T) {
 }
 
 func TestPartialStatsInExplain(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, _, _ string) {
+	runPlanStatsUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, _, _ string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 		testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
