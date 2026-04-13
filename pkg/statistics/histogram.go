@@ -1601,43 +1601,48 @@ func MergePartTopNAndHistToGlobal(
 	// into the TopN counter. This catches values that are in some partitions'
 	// TopN but at histogram upper bounds in other partitions.
 	var totCount, totNull, totColSize int64
-	var bucketNumber int
+	buckets := make([]*bucket4Merging, 0, len(hists)*hists[0].Len()/2)
+	tz := sc.TimeZone()
+	tp := hists[0].Tp.GetType()
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
 		histLen := hist.Len()
 		if histLen > 0 {
-			bucketNumber += histLen
-			totCount += hist.Buckets[hist.Len()-1].Count
+			totCount += hist.Buckets[histLen-1].Count
 		}
-	}
-
-	buckets := make([]*bucket4Merging, 0, bucketNumber)
-	tz := sc.TimeZone()
-	tp := hists[0].Tp.GetType()
-	for _, hist := range hists {
-		for _, b := range hist.buildBucket4Merging() {
-			if b.Repeat > 0 {
+		for i := range histLen {
+			repeat := hist.Buckets[i].Repeat
+			if repeat > 0 {
 				// Encode the upper bound to match the TopN counter key format.
 				var encoded []byte
 				if isIndex {
-					encoded = b.upper.GetBytes()
+					encoded = hist.Bounds.GetRow(i*2 + 1).GetBytes(0)
 				} else {
 					var err error
-					encoded, err = codec.EncodeKey(tz, nil, *b.upper)
+					encoded, err = codec.EncodeKey(tz, nil, *hist.GetUpper(i))
 					if err != nil {
 						return nil, nil, err
 					}
 				}
-				counter[hack.String(encoded)] += uint64(b.Repeat)
-				totCount -= b.Repeat
-				b.Count -= b.Repeat
-				b.Repeat = 0
+				counter[hack.String(encoded)] += uint64(repeat)
+				totCount -= repeat
 			}
-			if b.Count == 0 {
-				releasebucket4MergingForRecycle(b)
+			// Compute non-prefix-sum count for this bucket, excluding the Repeat
+			// that was already moved into the TopN counter.
+			count := hist.Buckets[i].Count
+			if i != 0 {
+				count -= hist.Buckets[i-1].Count
+			}
+			count -= repeat
+			if count <= 0 {
 				continue
 			}
+			b := newbucket4MergingForRecycle()
+			hist.LowerToDatum(i, b.lower)
+			hist.UpperToDatum(i, b.upper)
+			b.NDV = hist.Buckets[i].NDV
+			b.Count = count
 			buckets = append(buckets, b)
 		}
 	}
