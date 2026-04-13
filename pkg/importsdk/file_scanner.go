@@ -48,7 +48,6 @@ type FileScanner interface {
 }
 
 type fileScanner struct {
-	sourcePath         string
 	redactedSourcePath string
 	db                 *sql.DB
 	store              storeapi.Storage
@@ -57,12 +56,20 @@ type fileScanner struct {
 	config             *SDKConfig
 }
 
+const redactedInvalidSourcePath = "<redacted-invalid-source>"
+
 // NewFileScanner creates a new FileScanner
 func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDKConfig) (FileScanner, error) {
 	redactedSourcePath := ast.RedactURL(sourcePath)
+	parseErrorSourcePath := redactedSourcePath
+	if parseErrorSourcePath == sourcePath {
+		// ast.RedactURL leaves malformed or unsupported URLs unchanged.
+		// Avoid exposing the original source in outward-facing parse errors.
+		parseErrorSourcePath = redactedInvalidSourcePath
+	}
 	u, err := objstore.ParseBackend(sourcePath, nil)
 	if err != nil {
-		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s", redactedSourcePath)
+		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s", parseErrorSourcePath)
 	}
 	store, err := objstore.New(ctx, u, &storeapi.Options{})
 	if err != nil {
@@ -97,7 +104,6 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	}
 
 	return &fileScanner{
-		sourcePath:         sourcePath,
 		redactedSourcePath: redactedSourcePath,
 		db:                 db,
 		store:              store,

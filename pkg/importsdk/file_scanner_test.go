@@ -130,7 +130,7 @@ func TestFileScanner(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("NewFileScannerRedactsSensitiveSourcePathInInitErrors", func(t *testing.T) {
+	t.Run("NewFileScannerRedactsSensitiveSourcePathInParseErrors", func(t *testing.T) {
 		_, err := NewFileScanner(
 			ctx,
 			"s3://?access-key=ak&secret-access-key=sk&session-token=token",
@@ -138,6 +138,18 @@ func TestFileScanner(t *testing.T) {
 			cfg,
 		)
 		assertSecretsRedacted(t, err)
+	})
+
+	t.Run("NewFileScannerHidesMalformedSensitiveSourcePathInParseErrors", func(t *testing.T) {
+		_, err := NewFileScanner(
+			ctx,
+			"1invalid:?secret-access-key=sk",
+			db,
+			cfg,
+		)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "source="+redactedInvalidSourcePath)
+		require.NotContains(t, err.Error(), "secret-access-key=sk")
 	})
 
 	t.Run("CreateSchemasAndTablesRedactsSensitiveSourcePathOnError", func(t *testing.T) {
@@ -159,7 +171,6 @@ func TestFileScanner(t *testing.T) {
 
 		fs := invalidScanner.(*fileScanner)
 		sourcePath := "s3://bucket/path?access-key=ak&secret-access-key=sk&session-token=token"
-		fs.sourcePath = sourcePath
 		fs.redactedSourcePath = ast.RedactURL(sourcePath)
 
 		invalidMock.ExpectQuery("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA.*").WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
