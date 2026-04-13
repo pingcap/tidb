@@ -203,7 +203,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	}
 
 	require.EqualValues(t, kvCnt, collector.Rows.Load())
-	require.EqualValues(t, kvSize, collector.Bytes.Load())
+	require.EqualValues(t, kvSize, collector.ProcessedCnt.Load())
 
 	// 3. read and sort step
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)

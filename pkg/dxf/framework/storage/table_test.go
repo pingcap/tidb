@@ -333,8 +333,8 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasks))
 
 	summary := &execute.SubtaskSummary{
-		RowCnt: *atomic.NewInt64(100),
-		Bytes:  *atomic.NewInt64(200),
+		RowCnt:    *atomic.NewInt64(100),
+		Processed: *atomic.NewInt64(200),
 	}
 	bytes, err := json.Marshal(summary)
 	require.NoError(t, err)
@@ -345,7 +345,7 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	require.Len(t, summaries, len(subtasks))
 	for _, summary := range summaries {
 		require.EqualValues(t, 100, summary.RowCnt.Load())
-		require.EqualValues(t, 200, summary.Bytes.Load())
+		require.EqualValues(t, 200, summary.Processed.Load())
 	}
 
 	// If the JSON value is wrong, we still get an empty summary.
@@ -356,7 +356,7 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	require.NoError(t, err)
 	for _, summary := range summaries {
 		require.EqualValues(t, 0, summary.RowCnt.Load())
-		require.EqualValues(t, 0, summary.Bytes.Load())
+		require.EqualValues(t, 0, summary.Processed.Load())
 	}
 }
 

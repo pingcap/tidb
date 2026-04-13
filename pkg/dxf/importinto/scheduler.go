@@ -614,6 +614,10 @@ func updateTaskSummary(
 		taskMeta.Summary.MergeSummary = p.summary
 	case proto.ImportStepWriteAndIngest:
 		taskMeta.Summary.IngestSummary = p.summary
+	case proto.ImportStepCollectConflicts:
+		taskMeta.Summary.CollectConflictsSummary = p.summary
+	case proto.ImportStepConflictResolution:
+		taskMeta.Summary.ResolveConflictsSummary = p.summary
 	case proto.ImportStepPostProcess:
 		subtaskSummaries, err := handle.GetPreviousSubtaskSummary(task.ID, getStepOfEncode(taskMeta.Plan.IsGlobalSort()))
 		if err != nil {
