@@ -32,14 +32,14 @@ func (c *maskFullFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	}
 	argType := args[0].GetType(ctx.GetEvalCtx())
 	evalTp := argType.EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTp, evalTp, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTp, evalTp)
 	if err != nil {
 		return nil, err
 	}
 	bf.tp = argType.Clone()
 	switch evalTp {
 	case types.ETString:
-		if types.IsBinaryStr(argType) || types.IsBinaryStr(args[1].GetType(ctx.GetEvalCtx())) {
+		if types.IsBinaryStr(argType) {
 			return &builtinMaskFullBinarySig{bf}, nil
 		}
 		return &builtinMaskFullStringSig{bf}, nil
@@ -81,15 +81,7 @@ func (b *builtinMaskFullStringSig) evalString(ctx EvalContext, row chunk.Row) (s
 	if isNull || err != nil {
 		return "", true, err
 	}
-	mask, isNull, err := b.args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", true, err
-	}
-	maskRunes := []rune(mask)
-	if len(maskRunes) != 1 {
-		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
-	}
-	return strings.Repeat(string(maskRunes[0]), len([]rune(str))), false, nil
+	return strings.Repeat("X", len([]rune(str))), false, nil
 }
 
 type builtinMaskFullBinarySig struct {
@@ -110,14 +102,7 @@ func (b *builtinMaskFullBinarySig) evalString(ctx EvalContext, row chunk.Row) (s
 	if isNull || err != nil {
 		return "", true, err
 	}
-	mask, isNull, err := b.args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", true, err
-	}
-	if len(mask) != 1 {
-		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
-	}
-	return strings.Repeat(mask, len(str)), false, nil
+	return strings.Repeat("X", len(str)), false, nil
 }
 
 type builtinMaskFullTimeSig struct {
@@ -189,7 +174,7 @@ func (b *builtinMaskFullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	if isNull || err != nil {
 		return 0, true, err
 	}
-	return 1970, false, nil
+	return 0, false, nil
 }
 
 type maskNullFunctionClass struct {

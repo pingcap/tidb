@@ -276,8 +276,6 @@ Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET RESTRICT ON (INSERT_INTO_SELECT);
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 CREATE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS c;
-CREATE OR REPLACE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS MASK_FULL(c);
-Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv DISABLE MASKING POLICY p_auth_priv;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c);
@@ -291,6 +289,24 @@ ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET RESTRICT ON (INSER
 ALTER TABLE t_auth_priv DROP MASKING POLICY p_auth_priv;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or DROP MASKING POLICY privilege(s) for this operation
 ALTER TABLE t_auth_priv DROP MASKING POLICY p_auth_priv;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_name_uniq_a;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_name_uniq_b;
+CREATE TABLE privilege__column_masking_policy.t_name_uniq_a(id INT PRIMARY KEY, c1 VARCHAR(20), c2 VARCHAR(20));
+CREATE TABLE privilege__column_masking_policy.t_name_uniq_b(id INT PRIMARY KEY, c1 VARCHAR(20));
+CREATE MASKING POLICY p_name_uniq ON privilege__column_masking_policy.t_name_uniq_a(c1) AS MASK_FULL(c1) ENABLE;
+CREATE MASKING POLICY p_name_uniq ON privilege__column_masking_policy.t_name_uniq_a(c2) AS c2 ENABLE;
+Error 8268 (HY000): Masking policy 'p_name_uniq' already exists
+CREATE MASKING POLICY p_name_uniq ON privilege__column_masking_policy.t_name_uniq_b(c1) AS MASK_FULL(c1) ENABLE;
+SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_name_uniq_a;
+Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
+p_name_uniq	c1	MASK_FULL(`c1`)	ENABLED	MASK_FULL	NONE
+SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_name_uniq_b;
+Policy_name	Column_name	Expression	Status	Masking_type	Restrict_on
+p_name_uniq	c1	MASK_FULL(`c1`)	ENABLED	MASK_FULL	NONE
+ALTER TABLE privilege__column_masking_policy.t_name_uniq_a DROP MASKING POLICY p_name_uniq;
+ALTER TABLE privilege__column_masking_policy.t_name_uniq_b DROP MASKING POLICY p_name_uniq;
+DROP TABLE privilege__column_masking_policy.t_name_uniq_a;
+DROP TABLE privilege__column_masking_policy.t_name_uniq_b;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_prepare_invalidate;
 DROP USER IF EXISTS cmp_prepare;
 CREATE TABLE privilege__column_masking_policy.t_prepare_invalidate(id INT PRIMARY KEY, c VARCHAR(20));

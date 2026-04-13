@@ -8,13 +8,13 @@ CREATE TABLE privilege__column_masking_cte.t_dst(c VARCHAR(20));
 INSERT INTO privilege__column_masking_cte.t_src VALUES (1, 'secret'), (2, 'public');
 INSERT INTO privilege__column_masking_cte.t_join VALUES (1, 'alice'), (2, 'bob');
 CREATE MASKING POLICY p_cte ON privilege__column_masking_cte.t_src(c)
-AS MASK_FULL(c, '*') ENABLE;
+AS MASK_FULL(c) ENABLE;
 # Test 1: Basic CTE SELECT - should show masked values
 WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src)
 SELECT c FROM cte ORDER BY c;
 c
-******
-******
+XXXXXX
+XXXXXX
 # Test 2: CTE with COUNT(*) - WHERE clause uses original values
 # CTE definitions preserve original values, WHERE uses original 'secret'
 WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src)
@@ -25,8 +25,8 @@ COUNT(*)
 WITH cte AS (SELECT id, c FROM privilege__column_masking_cte.t_src)
 SELECT j.name, cte.c FROM privilege__column_masking_cte.t_join j JOIN cte ON j.id = cte.id ORDER BY j.id;
 name	c
-alice	******
-bob	******
+alice	XXXXXX
+bob	XXXXXX
 # Test 4: Nested CTE - WHERE uses original values
 WITH cte1 AS (SELECT c FROM privilege__column_masking_cte.t_src),
 cte2 AS (SELECT c FROM cte1)
@@ -41,12 +41,12 @@ COUNT(*)
 # Test CTE with RESTRICT ON (INSERT_INTO_SELECT)
 ALTER TABLE privilege__column_masking_cte.t_src DROP MASKING POLICY p_cte;
 CREATE MASKING POLICY p_cte_restrict ON privilege__column_masking_cte.t_src(c)
-AS MASK_FULL(c, '*') RESTRICT ON (INSERT_INTO_SELECT) ENABLE;
+AS MASK_FULL(c) RESTRICT ON (INSERT_INTO_SELECT) ENABLE;
 WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src)
 SELECT c FROM cte ORDER BY c;
 c
-******
-******
+XXXXXX
+XXXXXX
 INSERT INTO privilege__column_masking_cte.t_dst WITH cte AS (SELECT c FROM privilege__column_masking_cte.t_src) SELECT c FROM cte;
 Error 8274 (HY000): Access denied to masked column 'c'. Obtain the required privileges and retry.
 # Test that HAVING, ORDER BY use original values while output is masked
@@ -54,19 +54,19 @@ DROP TABLE IF EXISTS privilege__column_masking_cte.t_having;
 CREATE TABLE privilege__column_masking_cte.t_having(category VARCHAR(50), amount INT);
 INSERT INTO privilege__column_masking_cte.t_having VALUES ('A', 100), ('B', 200), ('C', 300);
 CREATE MASKING POLICY p_having ON privilege__column_masking_cte.t_having(category)
-AS MASK_FULL(category, '*') ENABLE;
+AS MASK_FULL(category) ENABLE;
 # Test: HAVING clause should use original values for comparison
 WITH cte AS (SELECT category, amount FROM privilege__column_masking_cte.t_having)
 SELECT category, SUM(amount) FROM cte GROUP BY category HAVING category > 'A' ORDER BY category;
 category	SUM(amount)
-*	200
-*	300
+X	200
+X	300
 # Test: ORDER BY should use original values for sorting
 DROP TABLE IF EXISTS privilege__column_masking_cte.t_orderby;
 CREATE TABLE privilege__column_masking_cte.t_orderby(id INT, val VARCHAR(20));
 INSERT INTO privilege__column_masking_cte.t_orderby VALUES (1, 'apple'), (2, 'banana'), (3, 'cherry');
 CREATE MASKING POLICY p_orderby ON privilege__column_masking_cte.t_orderby(val)
-AS MASK_FULL(val, '*') ENABLE;
+AS MASK_FULL(val) ENABLE;
 WITH cte AS (SELECT id, val FROM privilege__column_masking_cte.t_orderby)
 SELECT id FROM cte ORDER BY val;
 id
@@ -78,13 +78,13 @@ DROP TABLE IF EXISTS privilege__column_masking_cte.t_multi;
 CREATE TABLE privilege__column_masking_cte.t_multi(id INT, value VARCHAR(20));
 INSERT INTO privilege__column_masking_cte.t_multi VALUES (1, 'data1'), (2, 'data2');
 CREATE MASKING POLICY p_multi ON privilege__column_masking_cte.t_multi(value)
-AS MASK_FULL(value, '*') ENABLE;
+AS MASK_FULL(value) ENABLE;
 # Reference CTE twice in same query
 WITH cte AS (SELECT value FROM privilege__column_masking_cte.t_multi)
 SELECT a.value, b.value FROM cte a JOIN cte b ON a.value = b.value ORDER BY a.value;
 value	value
-*****	*****
-*****	*****
+XXXXX	XXXXX
+XXXXX	XXXXX
 # Test CTE with current_role() in masking expression
 DROP TABLE IF EXISTS privilege__column_masking_cte.t_role;
 DROP USER IF EXISTS cte_role_user;
@@ -96,13 +96,13 @@ CREATE ROLE cte_unmask_role;
 GRANT CREATE, DROP, SELECT, UPDATE, DELETE, INSERT ON privilege__column_masking_cte.* TO cte_role_user;
 GRANT cte_unmask_role TO cte_role_user;
 CREATE MASKING POLICY p_role_cte ON privilege__column_masking_cte.t_role(data)
-AS CASE WHEN current_role() != 'NONE' THEN data ELSE MASK_FULL(data, '*') END ENABLE;
+AS CASE WHEN current_role() != 'NONE' THEN data ELSE MASK_FULL(data) END ENABLE;
 # Test 1: Default role (NONE) - should show masked
 WITH cte AS (SELECT id, data FROM privilege__column_masking_cte.t_role)
 SELECT data FROM cte ORDER BY id;
 data
-*********
-******
+XXXXXXXXX
+XXXXXX
 # Test 2: After SET ROLE - should show unmasked
 SET ROLE cte_unmask_role;
 WITH cte AS (SELECT id, data FROM privilege__column_masking_cte.t_role)
@@ -115,8 +115,8 @@ SET ROLE NONE;
 WITH cte AS (SELECT id, data FROM privilege__column_masking_cte.t_role)
 SELECT data FROM cte ORDER BY id;
 data
-*********
-******
+XXXXXXXXX
+XXXXXX
 # Test CTE with MASK_PARTIAL function
 DROP TABLE IF EXISTS privilege__column_masking_cte.t_partial;
 CREATE TABLE privilege__column_masking_cte.t_partial(id INT, email VARCHAR(100));
