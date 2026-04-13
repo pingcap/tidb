@@ -365,6 +365,54 @@ func TestInstanceScopedVars(t *testing.T) {
 	require.Equal(t, BoolToOnOff(EnableRCReadCheckTS.Load()), val)
 }
 
+func TestTiDBEnableStatsOwner(t *testing.T) {
+	vars := NewSessionVars(nil)
+	originalGlobalConfig := config.GetGlobalConfig()
+	newConf := *originalGlobalConfig
+	newConf.Instance.TiDBEnableStatsOwner = *config.NewAtomicBool(true)
+	config.StoreGlobalConfig(&newConf)
+	defer config.StoreGlobalConfig(originalGlobalConfig)
+
+	originalEnableStatsOwner := EnableStatsOwner
+	originalDisableStatsOwner := DisableStatsOwner
+	defer func() {
+		EnableStatsOwner = originalEnableStatsOwner
+		DisableStatsOwner = originalDisableStatsOwner
+	}()
+
+	enableCalls := 0
+	disableCalls := 0
+	EnableStatsOwner = func() error {
+		enableCalls++
+		return nil
+	}
+	DisableStatsOwner = func() error {
+		disableCalls++
+		return nil
+	}
+
+	sv := GetSysVar(TiDBEnableStatsOwner)
+	require.NotNil(t, sv)
+
+	val, err := vars.GetSessionOrGlobalSystemVar(context.Background(), TiDBEnableStatsOwner)
+	require.NoError(t, err)
+	require.Equal(t, On, val)
+
+	require.NoError(t, sv.SetGlobalFromHook(context.Background(), vars, Off, true))
+	require.Equal(t, 0, enableCalls)
+	require.Equal(t, 1, disableCalls)
+	require.False(t, config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load())
+
+	require.NoError(t, sv.SetGlobalFromHook(context.Background(), vars, Off, true))
+	require.Equal(t, 0, enableCalls)
+	require.Equal(t, 1, disableCalls)
+
+	require.NoError(t, sv.SetGlobalFromHook(context.Background(), vars, On, true))
+	require.Equal(t, 1, enableCalls)
+	require.Equal(t, 1, disableCalls)
+	require.True(t, config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load())
+}
+
 func TestSecureAuth(t *testing.T) {
 	sv := GetSysVar(SecureAuth)
 	vars := NewSessionVars(nil)

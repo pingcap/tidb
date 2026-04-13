@@ -1271,6 +1271,10 @@ var (
 	EnableDDL func() error = nil
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
+	// EnableStatsOwner is the func registered by stats to enable running stats in this instance.
+	EnableStatsOwner func() error = nil
+	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
+	DisableStatsOwner func() error = nil
 	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd
