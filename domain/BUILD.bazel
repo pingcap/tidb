@@ -97,6 +97,7 @@ go_test(
         "domain_utils_test.go",
         "domainctx_test.go",
         "main_test.go",
+        "pkdb_force_merge_test.go",
         "plan_replayer_handle_test.go",
         "plan_replayer_test.go",
         "schema_checker_test.go",

@@ -83,8 +83,15 @@ func (do *Domain) doMergeEmptyRegions(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	if err := do.storeMergeEmptyRegionsMinTableID(maxTableID); err != nil {
+	updated, err := do.storeMergeEmptyRegionsMinTableIDIfUnchanged(minTableID, maxTableID)
+	if err != nil {
 		return errors.Trace(err)
+	}
+	if !updated {
+		logutil.BgLogger().Info("skip storing merge-empty-regions checkpoint because it changed concurrently",
+			zap.Int64("expectedTableID", minTableID),
+			zap.Int64("nextTableID", maxTableID))
+		return nil
 	}
 
 	logutil.BgLogger().Info("finished merge-empty-regions scan",
@@ -121,6 +128,33 @@ func (do *Domain) storeMergeEmptyRegionsMinTableID(tableID int64) error {
 	return errors.Trace(kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), do.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		return errors.Trace(meta.NewMeta(txn).SetMergeEmptyRegionsMinTableID(tableID))
 	}))
+}
+
+func (do *Domain) storeMergeEmptyRegionsMinTableIDIfUnchanged(expectedTableID, nextTableID int64) (bool, error) {
+	if expectedTableID < mergeEmptyRegionsInitMinTableID {
+		expectedTableID = mergeEmptyRegionsInitMinTableID
+	}
+	if nextTableID < mergeEmptyRegionsInitMinTableID {
+		nextTableID = mergeEmptyRegionsInitMinTableID
+	}
+
+	updated := false
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), do.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		tableID, ok, err := t.GetMergeEmptyRegionsMinTableID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !ok || tableID < mergeEmptyRegionsInitMinTableID {
+			tableID = mergeEmptyRegionsInitMinTableID
+		}
+		if tableID != expectedTableID {
+			return nil
+		}
+		updated = true
+		return errors.Trace(t.SetMergeEmptyRegionsMinTableID(nextTableID))
+	})
+	return updated, errors.Trace(err)
 }
 
 // ResetMergeEmptyRegionsMinTableID resets the background merge-empty-regions
