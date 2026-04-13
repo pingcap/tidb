@@ -58,6 +58,7 @@ const (
 	AnalyzeOptCMSketchWidth
 	AnalyzeOptNumSamples
 	AnalyzeOptSampleRate
+	AnalyzeOptNDVRate
 )
 
 // AnalyzeOptionString stores the string form of analyze options.
@@ -68,6 +69,7 @@ var AnalyzeOptionString = map[AnalyzeOptionType]string{
 	AnalyzeOptCMSketchDepth: "CMSKETCH DEPTH",
 	AnalyzeOptNumSamples:    "SAMPLES",
 	AnalyzeOptSampleRate:    "SAMPLERATE",
+	AnalyzeOptNDVRate:       "NDVRATE",
 }
 
 // HistogramOperationType is the type for histogram operation.
