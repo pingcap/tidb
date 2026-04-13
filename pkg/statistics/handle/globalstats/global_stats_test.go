@@ -1021,4 +1021,46 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 		"test t p0 idx_ab 1 0 4763 1 (14, 1) (33348, 1) 0",
 		"test t p0 idx_ab 1 1 9526 1 (33355, 1) (66689, 1) 0",
 		"test t p0 idx_ab 1 2 14286 1 (66696, 1) (100009, 1) 0"))
+	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p1'`).Sort().Check(testkit.Rows(""+
+		"test t p1 a 0 0 4763 1 8 33342 0",
+		"test t p1 a 0 1 9526 1 33349 66683 0",
+		"test t p1 a 0 2 14287 1 66690 100010 0",
+		"test t p1 idx_ab 1 0 4763 1 (8, 1) (33342, 1) 0",
+		"test t p1 idx_ab 1 1 9526 1 (33349, 1) (66683, 1) 0",
+		"test t p1 idx_ab 1 2 14287 1 (66690, 1) (100010, 1) 0"))
+	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p2'`).Sort().Check(testkit.Rows(""+
+		"test t p2 a 0 0 4763 1 9 33343 0",
+		"test t p2 a 0 1 9526 1 33350 66684 0",
+		"test t p2 a 0 2 14286 1 66691 100004 0",
+		"test t p2 idx_ab 1 0 4763 1 (9, 1) (33343, 1) 0",
+		"test t p2 idx_ab 1 1 9526 1 (33350, 1) (66684, 1) 0",
+		"test t p2 idx_ab 1 2 14286 1 (66691, 1) (100004, 1) 0"))
+	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p3'`).Sort().Check(testkit.Rows(""+
+		"test t p3 a 0 0 4763 1 10 33344 0",
+		"test t p3 a 0 1 9526 1 33351 66685 0",
+		"test t p3 a 0 2 14286 1 66692 100005 0",
+		"test t p3 idx_ab 1 0 4763 1 (10, 1) (33344, 1) 0",
+		"test t p3 idx_ab 1 1 9526 1 (33351, 1) (66685, 1) 0",
+		"test t p3 idx_ab 1 2 14286 1 (66692, 1) (100005, 1) 0"))
+	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p4'`).Sort().Check(testkit.Rows(""+
+		"test t p4 a 0 0 4763 1 11 33345 0",
+		"test t p4 a 0 1 9526 1 33352 66686 0",
+		"test t p4 a 0 2 14286 1 66693 100006 0",
+		"test t p4 idx_ab 1 0 4763 1 (11, 1) (33345, 1) 0",
+		"test t p4 idx_ab 1 1 9526 1 (33352, 1) (66686, 1) 0",
+		"test t p4 idx_ab 1 2 14286 1 (66693, 1) (100006, 1) 0"))
+	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p5'`).Sort().Check(testkit.Rows(""+
+		"test t p5 a 0 0 4763 1 12 33346 0",
+		"test t p5 a 0 1 9526 1 33353 66687 0",
+		"test t p5 a 0 2 14286 1 66694 100007 0",
+		"test t p5 idx_ab 1 0 4763 1 (12, 1) (33346, 1) 0",
+		"test t p5 idx_ab 1 1 9526 1 (33353, 1) (66687, 1) 0",
+		"test t p5 idx_ab 1 2 14286 1 (66694, 1) (100007, 1) 0"))
+	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p6'`).Sort().Check(testkit.Rows(""+
+		"test t p6 a 0 0 4763 1 13 33347 0",
+		"test t p6 a 0 1 9526 1 33354 66688 0",
+		"test t p6 a 0 2 14286 1 66695 100008 0",
+		"test t p6 idx_ab 1 0 4763 1 (13, 1) (33347, 1) 0",
+		"test t p6 idx_ab 1 1 9526 1 (33354, 1) (66688, 1) 0",
+		"test t p6 idx_ab 1 2 14286 1 (66695, 1) (100008, 1) 0"))
 }
