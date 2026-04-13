@@ -41,9 +41,6 @@ const (
 	pauseScaleInAction     = "pause_scale_in"
 	resumeScaleInAction    = "resume_scale_in"
 	dxfOperationDefaultTTL = time.Hour
-	defaultPageSize        = 20
-	minPageSize            = 1
-	maxPageSize            = 200
 )
 
 // DXFScheduleStatusHandler handles the status of DXF schedule.
@@ -119,7 +116,7 @@ func (*DXFTaskHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), requestDefaultTimeout)
+	ctx, cancel := context.WithTimeout(req.Context(), requestDefaultTimeout)
 	defer cancel()
 	page, err := handle.ListHistoryTasks(ctx, pageSize, pageToken, keyspace)
 	if err != nil {
@@ -131,13 +128,17 @@ func (*DXFTaskHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 }
 
 func parseTaskHistoryQuery(req *http.Request) (pageSize int, pageToken int64, keyspace string, err error) {
-	pageSize = defaultPageSize
+	pageSize = storage.DefaultHistoryTaskPageSize
 	pageSizeStr := req.URL.Query().Get("page_size")
 	if pageSizeStr != "" {
 		pageSize, err = strconv.Atoi(pageSizeStr)
-		if err != nil || pageSize < minPageSize || pageSize > maxPageSize {
+		if err != nil {
 			return 0, 0, "", errors.Errorf("invalid page_size %s", pageSizeStr)
 		}
+	}
+	if err := storage.ValidateHistoryTaskPageSize(pageSize); err != nil {
+		pageSizeStr = strconv.Itoa(pageSize)
+		return 0, 0, "", errors.Errorf("invalid page_size %s", pageSizeStr)
 	}
 
 	pageTokenStr := req.URL.Query().Get("page_token")
