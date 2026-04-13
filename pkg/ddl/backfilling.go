@@ -213,6 +213,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 	}
 
 	batchCnt := rInfo.ReorgMeta.GetBatchSize()
+	metricTableID := backfillMetricsTableID(rInfo, label)
 	return &backfillCtx{
 		id:         id,
 		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
@@ -225,9 +226,9 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 		batchCnt:   batchCnt,
 		jobContext: jobCtx,
 		metricCounter: getBackfillTotalByTableID(
-			rInfo.PhysicalTableID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+			metricTableID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 		conflictCounter: getBackfillTotalByTableID(
-			rInfo.PhysicalTableID, fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
+			metricTableID, fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
 }
 

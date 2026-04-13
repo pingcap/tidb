@@ -15,6 +15,8 @@
 package ddl
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
@@ -46,4 +48,28 @@ func backfillProgressLabel(jobType model.ActionType, mergingTmpIdx bool) string 
 	default:
 		return ""
 	}
+}
+
+func backfillMetricsTableID(rInfo *reorgInfo, label string) int64 {
+	if rInfo == nil {
+		return 0
+	}
+	if !isPartitionReorgDDL(rInfo.Type) {
+		return rInfo.PhysicalTableID
+	}
+	if rInfo.Job == nil {
+		return rInfo.PhysicalTableID
+	}
+	if isPartitionReorgBackfillMetricLabel(label) {
+		return rInfo.Job.TableID
+	}
+	return rInfo.PhysicalTableID
+}
+
+func isPartitionReorgDDL(tp model.ActionType) bool {
+	return tp == model.ActionReorganizePartition || tp == model.ActionAlterTablePartitioning || tp == model.ActionRemovePartitioning
+}
+
+func isPartitionReorgBackfillMetricLabel(label string) bool {
+	return label == metrics.LblReorgPartition || strings.HasPrefix(label, metrics.LblReorgPartitionRate)
 }

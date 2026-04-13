@@ -865,7 +865,7 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		func(idx *model.IndexInfo) bool {
 			return idx.State != model.StatePublic
 		})
-	if allColumnPublic && allIndexPublic {
+	if allColumnPublic && allIndexPublic && metrics.DDLHasBackfillMetrics() {
 		metrics.DDLClearBackfillMetrics(tblInfo.ID)
 		if tblInfo.Partition != nil {
 			for _, def := range tblInfo.Partition.Definitions {

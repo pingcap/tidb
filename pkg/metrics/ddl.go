@@ -333,13 +333,20 @@ func GetBackfillProgressByTableID(tableID int64, label, schemaName, tableName, o
 }
 
 // DDLClearBackfillMetrics deletes all backfill-related metric series registered
-// for the given physical table.
+// for the given table ID key.
 func DDLClearBackfillMetrics(tableID int64) {
 	labels := backfillMetricsRegistry.clear(tableID)
 	for _, typeLabel := range labels {
 		BackfillProgressGauge.DeleteLabelValues(typeLabel)
 		BackfillTotalCounter.DeleteLabelValues(typeLabel)
 	}
+}
+
+// DDLHasBackfillMetrics reports whether there are any registered backfill metrics.
+func DDLHasBackfillMetrics() bool {
+	backfillMetricsRegistry.mu.Lock()
+	defer backfillMetricsRegistry.mu.Unlock()
+	return len(backfillMetricsRegistry.byTblID) > 0
 }
 
 // GetBackfillLabelsForTest returns the registered label set for the given table ID.

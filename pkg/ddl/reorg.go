@@ -565,13 +565,9 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		}
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 	}
-	// For partition DDLs, use the stable logical table ID instead of PhysicalTableID
-	// which changes as the job walks partitions. This ensures the progress metric
-	// is consistently keyed to the logical table and matches the seeding/cleanup in partition.go.
-	metricTableID := reorgInfo.PhysicalTableID
-	if reorgInfo.Type == model.ActionReorganizePartition || reorgInfo.Type == model.ActionRemovePartitioning || reorgInfo.Type == model.ActionAlterTablePartitioning {
-		metricTableID = tblInfo.ID
-	}
+	// Partition reorg progress/rate metrics are keyed by logical table ID so cleanup
+	// can always reach them after DroppingDefinitions is cleared.
+	metricTableID := backfillMetricsTableID(reorgInfo, label)
 	getBackfillProgressByTableID(metricTableID, label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
 }
 
