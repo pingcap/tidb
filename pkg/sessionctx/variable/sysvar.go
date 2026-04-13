@@ -3081,6 +3081,19 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: "1", Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
+		SetSession: func(_ *SessionVars, _ string) error {
+			// Deprecated: do nothing.
+			return nil
+		},
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+			if normalizedValue != "1" {
+				vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_merge_partition_stats_concurrency is deprecated and will be removed in a future release. It no longer affects behavior."))
+			}
+			return "1", nil
+		},
+	},
+	{
 		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:  vardef.TiDBEnableAsyncMergeGlobalStats,
 		Value: BoolToOnOff(vardef.DefTiDBEnableAsyncMergeGlobalStats),
