@@ -1669,21 +1669,129 @@ func MergePartTopNAndHistToGlobal(
 		buckets = append(buckets, meta.buildBucket4Merging(&d, analyzeVer))
 	}
 
-	// Phase 5: Sort buckets.
-	if err := sortBucketsByUpperBound(sc.TypeCtx(), buckets); err != nil {
-		return nil, nil, err
-	}
-
-	// Phase 6: Merge buckets into global histogram via the shared helper.
-	globalHist, err := mergeHistBucketsToGlobalHist(
-		sc, buckets, totCount, totNull, totColSize, expBucketNumber,
-		isIndex, hists[0].ID, hists[0].LastUpdateVersion, hists[0].Tp,
-	)
+	// Phase 5+6: Build equi-depth global histogram by sorting bucket4Merging
+	// entries by upper bound and cutting at equi-depth thresholds.
+	globalHist, err := mergeByUpperBound(sc, buckets, totCount, totNull, totColSize,
+		expBucketNumber, isIndex, hists[0].ID, hists[0].LastUpdateVersion, hists[0].Tp)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	return globalTopN, globalHist, nil
+}
+
+// mergeByUpperBound builds an equi-depth global histogram by sorting all
+// bucket4Merging entries by upper bound and accumulating counts. Global bucket
+// boundaries are placed at existing partition histogram upper bounds (or
+// leftover TopN values), ensuring the cut points are always at real data
+// boundaries rather than interpolated positions.
+//
+// Cost: O(N log N) for the sort where N = total bucket4Merging entries,
+// plus O(N) for the single-pass accumulation.
+func mergeByUpperBound(
+	sc *stmtctx.StatementContext,
+	buckets []*bucket4Merging,
+	totCount, totNull, totColSize, expBucketNumber int64,
+	isIndex bool,
+	histID int64,
+	lastUpdateVersion uint64,
+	tp *types.FieldType,
+) (*Histogram, error) {
+	if len(buckets) == 0 || totCount == 0 {
+		return NewHistogram(histID, 0, totNull, lastUpdateVersion, tp, 0, totColSize), nil
+	}
+
+	// Sort by upper bound (ties broken by lower bound).
+	if err := sortBucketsByUpperBound(sc.TypeCtx(), buckets); err != nil {
+		return nil, err
+	}
+
+	globalHist := NewHistogram(histID, 0, totNull, lastUpdateVersion, tp, int(expBucketNumber), totColSize)
+	var (
+		cumCount    int64
+		bucketIdx   int64 = 1
+		bucketLower *types.Datum // lower bound of current global bucket
+	)
+
+	i := 0
+	for i < len(buckets) {
+		// Find the range [i, j) of buckets with the same upper bound.
+		j := i + 1
+		for j < len(buckets) {
+			cmp, err := buckets[j].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if cmp != 0 {
+				break
+			}
+			j++
+		}
+
+		// Accumulate counts and Repeat for all buckets at this upper bound.
+		var groupRepeat int64
+		for k := i; k < j; k++ {
+			cumCount += buckets[k].Count
+			groupRepeat += buckets[k].Repeat
+
+			// Track the minimum lower bound for the current global bucket.
+			if bucketLower == nil {
+				bucketLower = buckets[k].lower
+			} else {
+				cmp, err := buckets[k].lower.Compare(sc.TypeCtx(), bucketLower, collate.GetBinaryCollator())
+				if err != nil {
+					return nil, err
+				}
+				if cmp < 0 {
+					bucketLower = buckets[k].lower
+				}
+			}
+		}
+
+		// Check if cumulative count crosses the equi-depth threshold.
+		threshold := totCount * bucketIdx / expBucketNumber
+		if cumCount >= threshold && bucketIdx < expBucketNumber {
+			globalHist.AppendBucketWithNDV(bucketLower.Clone(), buckets[i].upper.Clone(),
+				cumCount, groupRepeat, 0)
+			bucketIdx++
+			bucketLower = nil
+		}
+
+		i = j
+	}
+
+	// Final bucket: collect everything remaining.
+	if bucketLower != nil {
+		last := buckets[len(buckets)-1]
+		// Compute repeat at the last upper bound value.
+		var lastRepeat int64
+		for k := len(buckets) - 1; k >= 0; k-- {
+			cmp, err := buckets[k].upper.Compare(sc.TypeCtx(), last.upper, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if cmp != 0 {
+				break
+			}
+			lastRepeat += buckets[k].Repeat
+		}
+		globalHist.AppendBucketWithNDV(bucketLower.Clone(), last.upper.Clone(),
+			cumCount, lastRepeat, 0)
+	}
+
+	// NDV for column histograms is not maintained per-bucket.
+	if !isIndex {
+		for i := range globalHist.Buckets {
+			globalHist.Buckets[i].NDV = 0
+		}
+	}
+
+	// Release bucket4Merging entries.
+	for _, b := range buckets {
+		releasebucket4MergingForRecycle(b)
+	}
+
+	return globalHist, nil
 }
 
 // mergeHistBucketsToGlobalHist merges sorted buckets into a single global histogram.

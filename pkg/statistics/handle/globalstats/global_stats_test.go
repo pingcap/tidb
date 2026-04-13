@@ -288,15 +288,15 @@ partition by range (a) (
 
 	tk.MustQuery("show stats_buckets where is_index=0").Check(
 		// db table partition col is_idx bucket_id count repeats lower upper ndv
-		testkit.Rows("test t global a 0 0 7 2 1 6 0",
-			"test t global a 0 1 17 2 11 19 0",
+		testkit.Rows("test t global a 0 0 13 1 1 16 0",
+			"test t global a 0 1 17 2 17 19 0",
 			"test t p0 a 0 0 4 1 1 4 0",
 			"test t p0 a 0 1 7 2 5 6 0",
 			"test t p1 a 0 0 6 1 11 16 0",
 			"test t p1 a 0 1 10 2 17 19 0"))
 	tk.MustQuery("show stats_buckets where is_index=1").Check(
-		testkit.Rows("test t global a 1 0 7 2 1 6 0",
-			"test t global a 1 1 17 2 11 19 0",
+		testkit.Rows("test t global a 1 0 13 1 1 16 0",
+			"test t global a 1 1 17 2 17 19 0",
 			"test t p0 a 1 0 4 1 1 4 0",
 			"test t p0 a 1 1 7 2 5 6 0",
 			"test t p1 a 1 0 6 1 11 16 0",
@@ -1008,12 +1008,12 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 		"test t p0 idx_ec 1 (NULL, NULL) 14287",
 		"test t p0 uidx_cd 1 (NULL, ) 14287"))
 	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'global'`).Sort().Check(testkit.Rows(""+
-		"test t global a 0 0 7 0 2 9 0", // TODO: Should it not be 7 1 2 9 0 ? Or even 8 1 1 9 0 and no TopN? (Repeats should be 1)
-		"test t global a 0 1 33353 0 9 33355 0",       // TODO: Repeats should be 1 here too?!?
-		"test t global a 0 2 100009 1 33355 100010 0", // Repeats is correct here!
-		"test t global idx_ab 1 0 7 0 (2, 1) (9, 1) 0", // TODO: Repeats should be 1 here too?!?
-		"test t global idx_ab 1 1 33353 0 (9, 1) (33355, 1) 0", // TODO: Repeats should be 1 here too?!?
-		"test t global idx_ab 1 2 100009 1 (33355, 1) (100010, 1) 0"))
+		"test t global a 0 0 33347 1 2 33348 0",
+		"test t global a 0 1 66688 1 33349 66689 0",
+		"test t global a 0 2 100009 1 66690 100010 0",
+		"test t global idx_ab 1 0 33347 1 (2, 1) (33348, 1) 0",
+		"test t global idx_ab 1 1 66688 1 (33349, 1) (66689, 1) 0",
+		"test t global idx_ab 1 2 100009 1 (66690, 1) (100010, 1) 0"))
 	tk.MustQuery(`show stats_buckets where table_name = 't' and partition_name = 'p0'`).Sort().Check(testkit.Rows(""+
 		"test t p0 a 0 0 4763 1 14 33348 0",
 		"test t p0 a 0 1 9526 1 33355 66689 0",
