@@ -495,8 +495,10 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		// Clone output names before modifying to avoid mutating shared structs
 		if x.AsName.L != "" {
+			// Clone output names before modifying to avoid mutating shared structs.
+			// This is critical for CTEs whose output names are shared across multiple
+			// references — in-place mutation would corrupt other consumers.
 			clonedNames := make([]*types.FieldName, len(p.OutputNames()))
 			for i, name := range p.OutputNames() {
 				if name.Hidden {
@@ -674,7 +676,12 @@ func findJoinFullSchema(p base.LogicalPlan) (*expression.Schema, types.NameSlice
 func containsLateralTableSource(node ast.ResultSetNode) bool {
 	switch n := node.(type) {
 	case *ast.TableSource:
-		return n.Lateral
+		if n.Lateral {
+			return true
+		}
+		// Descend into the inner source (derived table / set-op) so nested
+		// LATERAL inside a subquery or set-op used as a table source is detected.
+		return containsLateralTableSource(n.Source)
 	case *ast.Join:
 		// For parenthesized single table refs, the parser creates Join{Left: TableSource, Right: nil}
 		if n.Right == nil {
@@ -682,6 +689,22 @@ func containsLateralTableSource(node ast.ResultSetNode) bool {
 		}
 		// Check both sides for nested LATERAL
 		return containsLateralTableSource(n.Left) || containsLateralTableSource(n.Right)
+	case *ast.SelectStmt:
+		// Descend into the FROM clause of a derived subquery.
+		if n.From != nil {
+			return containsLateralTableSource(n.From.TableRefs)
+		}
+		return false
+	case *ast.SetOprStmt:
+		// Check each operand in the UNION/INTERSECT/EXCEPT list.
+		if n.SelectList != nil {
+			for _, sel := range n.SelectList.Selects {
+				if rs, ok := sel.(ast.ResultSetNode); ok && containsLateralTableSource(rs) {
+					return true
+				}
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -725,7 +748,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// built (see below), where a tighter check is applied.
 	isLateral := containsLateralTableSource(joinNode.Right)
 
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagJoinKeyTypeCast
 	// Don't enable join reorder for LATERAL (similar to StraightJoin)
 	// LATERAL has order dependencies: right side can reference left side
 	if !isLateral {
@@ -982,7 +1005,6 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 
 	ap.SetChildren(leftPlan, rightPlan)
 	ap.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
-	setIsInApplyForCTE(rightPlan, ap.Schema())
 
 	// Note: nullability adjustment is not needed for InnerJoin (the only type supported currently).
 	// When LEFT/RIGHT JOIN support is added, ResetNotNullFlag must be called here.
@@ -1039,6 +1061,10 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 		name := *rName
 		ap.FullNames = append(ap.FullNames, &name)
 	}
+
+	// Mark inner CTEs against FullSchema so correlations via USING/NATURAL
+	// merged columns are detected and the CTE storage is reset per outer row.
+	setIsInApplyForCTE(rightPlan, ap.FullSchema)
 
 	// Handle ON conditions if present
 	if joinNode.On != nil {
@@ -4429,6 +4455,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if isExplicitSetTablesNames {
 				// If `LockTableIDs` map is empty, it will lock all records from all tables.
 				// Besides, it will only lock the metioned in `of` part.
+				if b.ctx.GetSessionVars().StmtCtx.LockTableIDs == nil {
+					b.ctx.GetSessionVars().StmtCtx.LockTableIDs = make(map[int64]struct{})
+				}
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
 			// Use the already-resolved DBInfo to derive the privilege-check DB name.
