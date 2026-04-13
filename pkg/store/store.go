@@ -147,6 +147,11 @@ func IsKeyspaceNotExistError(err error) bool {
 func MustInitStorage(keyspaceName string) kv.Storage {
 	defaultStore := mustInitStorage(keyspaceName)
 	if kerneltype.IsNextGen() {
+		if config.GetGlobalConfig().IsEssentialDeploymentMode() && kv.IsUserKS(defaultStore) {
+			// Essential local-mode tenant masters bootstrap directly on the tenant keyspace.
+			systemStore = nil
+			return defaultStore
+		}
 		if kv.IsUserKS(defaultStore) {
 			systemStore = mustInitStorage(keyspace.System)
 		} else {

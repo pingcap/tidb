@@ -499,9 +499,15 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 				return nil, nil, err
 			}
 			if !kerneltype.IsMatch(pdStatus.KernelType) {
-				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
-					zap.String("tidb", kerneltype.Name()))
-				return nil, nil, errors.New("kernel type mismatch")
+				if config.GetGlobalConfig().IsEssentialDeploymentMode() {
+					log.Info("skip kernel type check for essential local-mode deployment",
+						zap.String("pd", pdStatus.KernelType),
+						zap.String("tidb", kerneltype.Name()))
+				} else {
+					log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
+						zap.String("tidb", kerneltype.Name()))
+					return nil, nil, errors.New("kernel type mismatch")
+				}
 			}
 		}
 	}

@@ -262,7 +262,11 @@ func (m *Manager) Close() {
 
 func getOrCreateStore(targetKS string) (kv.Storage, error) {
 	if targetKS == keyspace.System {
-		return kvstore.GetSystemStorage(), nil
+		store := kvstore.GetSystemStorage()
+		if store == nil {
+			return nil, errors.New("SYSTEM keyspace storage is not initialized")
+		}
+		return store, nil
 	}
 	return kvstore.InitStorage(targetKS)
 }

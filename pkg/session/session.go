@@ -4170,7 +4170,7 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
-	if kv.IsUserKS(store) {
+	if kv.IsUserKS(store) && !config.GetGlobalConfig().IsEssentialDeploymentMode() {
 		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
 		if systemKSVer == notBootstrapped {
 			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")

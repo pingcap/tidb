@@ -288,6 +288,9 @@ type Config struct {
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 	// Standby is the config for standby mode.
 	Standby Standby `toml:"standby" json:"standby"`
+	// TiDBWorker keeps compatibility with tidb-cse worker-related configuration.
+	// In nextgen, local master mode also enables the essential compatibility path.
+	TiDBWorker TiDBWorker `toml:"tidb-worker" json:"tidb-worker"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -1000,6 +1003,52 @@ type Standby struct {
 	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
 }
 
+const (
+	// TiDBWorkerRoleMaster is the tenant-facing TiDB role used by the essential deployment.
+	TiDBWorkerRoleMaster = "master"
+)
+
+// TiDBWorker is the config for the minimal TiDB worker compatibility used by essential deployment.
+type TiDBWorker struct {
+	Enable bool   `toml:"enable" json:"enable"`
+	Role   string `toml:"role" json:"role"`
+
+	LocalMode TiDBWorkerLocalMode `toml:"local-mode" json:"local-mode"`
+}
+
+// TiDBWorkerLocalMode is the config for local-mode worker execution.
+type TiDBWorkerLocalMode struct {
+	Enable       bool `toml:"enable" json:"enable"`
+	StaticExecID bool `toml:"static-exec-id" json:"static-exec-id"`
+}
+
+func defaultTiDBWorker() TiDBWorker {
+	return TiDBWorker{Role: TiDBWorkerRoleMaster}
+}
+
+func (w TiDBWorker) normalizedRole() string {
+	role := strings.TrimSpace(w.Role)
+	if role == "" {
+		return TiDBWorkerRoleMaster
+	}
+	return strings.ToLower(role)
+}
+
+// Valid normalizes and validates the minimal worker compatibility config.
+func (w *TiDBWorker) Valid() error {
+	role := w.normalizedRole()
+	if w.Enable && role != TiDBWorkerRoleMaster {
+		return fmt.Errorf("invalid tidb worker role %s", w.Role)
+	}
+	w.Role = role
+	return nil
+}
+
+// IsLocalMaster returns whether the current process is configured like an essential tenant master.
+func (w TiDBWorker) IsLocalMaster() bool {
+	return w.Enable && w.LocalMode.Enable && w.normalizedRole() == TiDBWorkerRoleMaster
+}
+
 var defTiKVCfg = tikvcfg.DefaultConfig()
 var defaultConf = Config{
 	Host:                         DefHost,
@@ -1192,6 +1241,7 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
+	TiDBWorker:                           defaultTiDBWorker(),
 }
 
 var (
@@ -1202,6 +1252,12 @@ var (
 func NewConfig() *Config {
 	conf := defaultConf
 	return &conf
+}
+
+// IsEssentialDeploymentMode returns whether the current nextgen TiDB is running in the
+// explicit essential compatibility mode.
+func (c *Config) IsEssentialDeploymentMode() bool {
+	return kerneltype.IsNextGen() && c.TiDBWorker.IsLocalMaster()
 }
 
 // GetGlobalConfig returns the global configuration for this server.
@@ -1427,6 +1483,9 @@ func (c *Config) Load(confFile string) error {
 func (c *Config) Valid() error {
 	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
+	}
+	if err := c.TiDBWorker.Valid(); err != nil {
+		return err
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
 		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))

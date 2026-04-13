@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	crosskspkg "github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -101,6 +102,27 @@ func TestManager(t *testing.T) {
 	t.Run("same keyspace access", func(t *testing.T) {
 		_, err := sysKSDom.GetKSSessPool(keyspace.System)
 		require.ErrorContains(t, err, "cross keyspace session manager is not available in classic kernel or current keyspace")
+	})
+
+	t.Run("missing system storage returns explicit error", func(t *testing.T) {
+		bakStore := kvstore.GetSystemStorage()
+		kvstore.SetSystemStorage(nil)
+		t.Cleanup(func() {
+			kvstore.SetSystemStorage(bakStore)
+		})
+
+		store, err := mockstore.NewMockStore(mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+			Id:   100,
+			Name: "ks_missing_system",
+		}))
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, store.Close())
+		})
+
+		mgr := crosskspkg.NewManager(store)
+		_, err = mgr.GetOrCreate(keyspace.System, nil)
+		require.ErrorContains(t, err, "SYSTEM keyspace storage is not initialized")
 	})
 
 	t.Run("failed to get store in cross keyspace manager", func(t *testing.T) {

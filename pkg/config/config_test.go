@@ -768,14 +768,21 @@ grpc-keepalive-timeout = 10
 grpc-concurrent-streams = 2048
 grpc-initial-window-size = 10240
 grpc-max-send-msg-size = 40960
+[tidb-worker]
+enable = true
+role = "MASTER"
+[tidb-worker.local-mode]
+enable = true
+static-exec-id = true
 [instance]
 max_connections = 200
-`)
+	`)
 
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 
 	require.NoError(t, conf.Load(configFile))
+	require.NoError(t, conf.TiDBWorker.Valid())
 
 	// Test that the value will be overwritten by the config file.
 	require.Equal(t, uint64(2000), conf.Performance.TxnTotalSizeLimit)
@@ -824,10 +831,32 @@ max_connections = 200
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
+	require.True(t, conf.TiDBWorker.Enable)
+	require.Equal(t, TiDBWorkerRoleMaster, conf.TiDBWorker.Role)
+	require.True(t, conf.TiDBWorker.LocalMode.Enable)
+	require.True(t, conf.TiDBWorker.LocalMode.StaticExecID)
+	require.Equal(t, kerneltype.IsNextGen(), conf.IsEssentialDeploymentMode())
 	require.True(t, conf.Performance.EnableLoadFMSketch)
 	require.False(t, conf.Performance.SkipInitStats)
 	require.True(t, conf.Performance.LiteInitStats)
 	require.False(t, conf.Performance.ForceInitStats)
+
+	nonEssentialConf := NewConfig()
+	nonEssentialFile, err := os.CreateTemp("", "non-essential-mode-config.toml")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, nonEssentialFile.Close())
+	}()
+	_, err = nonEssentialFile.WriteString(`
+[tidb-worker]
+enable = true
+role = "MASTER"
+`)
+	require.NoError(t, err)
+	require.NoError(t, nonEssentialFile.Sync())
+	require.NoError(t, nonEssentialConf.Load(nonEssentialFile.Name()))
+	require.NoError(t, nonEssentialConf.TiDBWorker.Valid())
+	require.False(t, nonEssentialConf.IsEssentialDeploymentMode())
 
 	err = f.Truncate(0)
 	require.NoError(t, err)

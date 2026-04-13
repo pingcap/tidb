@@ -849,6 +849,10 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 // it's not right, but it's enough to push subtasks which depends on it forward,
 // we will fix it in the future.
 func (do *Domain) loadSysKSInfoSchema() error {
+	if config.GetGlobalConfig().IsEssentialDeploymentMode() && kvstore.GetSystemStorage() == nil {
+		logutil.BgLogger().Info("skip loading system keyspace info schema for essential local-mode deployment")
+		return nil
+	}
 	logutil.BgLogger().Info("loading system keyspace info schema")
 	_, err := do.GetKSStore(keyspace.System)
 	return err
@@ -1073,6 +1077,10 @@ func (do *Domain) InitDistTaskLoop() error {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	if kv.IsUserKS(do.store) {
+		if config.GetGlobalConfig().IsEssentialDeploymentMode() && kvstore.GetSystemStorage() == nil {
+			logutil.BgLogger().Info("skip initializing shared DXF task manager for essential local-mode deployment")
+			return nil
+		}
 		sp, err := do.GetKSSessPool(keyspace.System)
 		if err != nil {
 			return err
