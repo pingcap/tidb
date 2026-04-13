@@ -34,6 +34,7 @@ go_test(
         "//tests/realtikvtest",
         "//tests/realtikvtest/testutils",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",

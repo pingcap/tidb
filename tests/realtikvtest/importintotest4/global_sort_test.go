@@ -19,12 +19,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -45,6 +47,8 @@ import (
 	"go.uber.org/atomic"
 )
 
+var clusterWriteBytesPattern = regexp.MustCompile(`cluster\{r:\s*[^,]+,\s*w:\s*([^}]+)\}`)
+
 func urlEqual(t *testing.T, expected, actual string) {
 	urlExpected, err := url.Parse(expected)
 	require.NoError(t, err)
@@ -54,6 +58,15 @@ func urlEqual(t *testing.T, expected, actual string) {
 	require.Equal(t, urlExpected.Query(), urlGot.Query())
 	urlExpected.RawQuery, urlGot.RawQuery = "", ""
 	require.Equal(t, urlExpected.String(), urlGot.String())
+}
+
+func parseClusterWriteBytes(t *testing.T, meterData string) int64 {
+	t.Helper()
+	match := clusterWriteBytesPattern.FindStringSubmatch(meterData)
+	require.Len(t, match, 2, "invalid metering data format: %s", meterData)
+	bytes, err := units.RAMInBytes(strings.TrimSpace(match[1]))
+	require.NoError(t, err)
+	return bytes
 }
 
 func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
@@ -422,13 +435,14 @@ func TestNextGenMetering(t *testing.T) {
 	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort")
 	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), index(b));")
 
-	baseTime := time.Now().Truncate(time.Minute).Unix()
+	baseTime := atomic.NewInt64(time.Now().Truncate(time.Minute).Unix() - 60)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
 		// the metering library requires the timestamp to be at minute boundary, but
 		// during test, we want to reduce the flush interval.
-		*ts = baseTime
-		baseTime += 60
+		*ts = baseTime.Add(60)
 	})
+	// this failpoint can make sure we only get one gotMeterData
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask", "return(true)")
 	var gotMeterData atomic.String
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
 		gotMeterData.Store(s.String())
@@ -463,6 +477,7 @@ func TestNextGenMetering(t *testing.T) {
 	s.Regexp(`obj_store{r: 2.7\d*KiB, w: 3.\d*KiB}`, gotMeterData.Load())
 	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
 	s.Regexp(`cluster{r: 0B, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
+	clusterWriteBytes := parseClusterWriteBytes(s.T(), gotMeterData.Load())
 
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(3, sum.RowCnt.Load())
@@ -476,7 +491,7 @@ func TestNextGenMetering(t *testing.T) {
 	s.EqualValues(6, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
-	s.EqualValues(288, sum.Bytes.Load())
+	s.EqualValues(clusterWriteBytes, sum.Bytes.Load())
 	s.EqualValues(6, sum.GetReqCnt.Load())
 	s.EqualValues(0, sum.PutReqCnt.Load())
 
