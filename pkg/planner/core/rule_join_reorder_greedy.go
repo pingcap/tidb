@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -180,7 +181,7 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 	otherConds := s.otherConds
 	if len(expr2Col) > 0 && len(otherConds) > 0 {
 		// Reuse the injected expression columns in non-eq conditions to avoid recomputation.
-		otherConds = substituteExprsWithColsInExprs(otherConds, expr2Col)
+		otherConds = joinorder.SubstituteExprsWithColsInExprs(otherConds, expr2Col)
 	}
 	join, remainOtherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, otherConds)
 	return join, remainOtherConds, isCartesian

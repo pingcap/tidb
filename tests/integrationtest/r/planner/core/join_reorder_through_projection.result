@@ -709,6 +709,65 @@ key_a	t5_b
 9	-1
 10	-1
 drop table oj_t2, oj_t3, oj_t5;
+drop table if exists ne_t1, ne_t2, ne_t3;
+create table ne_t1(a int, b int, primary key (a));
+create table ne_t2(a int, b int, primary key (a));
+create table ne_t3(a int, b int, primary key (a));
+insert into ne_t1 values (1, 0), (2, 200), (3, 300);
+insert into ne_t2 values (1, 10), (2, 20), (3, 30);
+insert into ne_t3 values (2, 200), (3, 300);
+analyze table ne_t1, ne_t2, ne_t3;
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select ne_t1.a, dt.key_a, dt.coalesced_b from ne_t1 join
+(select ne_t2.a as key_a, coalesce(ne_t3.b, 0) as coalesced_b
+from ne_t2 left join ne_t3 on ne_t2.a = ne_t3.a) dt
+on ne_t1.b = dt.coalesced_b;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.ne_t1.b, Column)]
+├─Projection(Build)	root		planner__core__join_reorder_through_projection.ne_t2.a, coalesce(planner__core__join_reorder_through_projection.ne_t3.b, 0)->Column
+│ └─MergeJoin	root		left outer join, left side:TableReader, left key:planner__core__join_reorder_through_projection.ne_t2.a, right key:planner__core__join_reorder_through_projection.ne_t3.a
+│   ├─TableReader(Build)	root		data:TableFullScan
+│   │ └─TableFullScan	cop[tikv]	table:ne_t3	keep order:true
+│   └─TableReader(Probe)	root		data:TableFullScan
+│     └─TableFullScan	cop[tikv]	table:ne_t2	keep order:true
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.ne_t1.b))
+    └─TableFullScan	cop[tikv]	table:ne_t1	keep order:false
+select ne_t1.a, dt.key_a, dt.coalesced_b from ne_t1 join
+(select ne_t2.a as key_a, coalesce(ne_t3.b, 0) as coalesced_b
+from ne_t2 left join ne_t3 on ne_t2.a = ne_t3.a) dt
+on ne_t1.b = dt.coalesced_b
+order by 1;
+a	key_a	coalesced_b
+1	1	0
+2	2	200
+3	3	300
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select ne_t1.a, dt.key_a, dt.coalesced_b from ne_t1 join
+(select ne_t2.a as key_a, coalesce(ne_t3.b, 0) as coalesced_b
+from ne_t2 left join ne_t3 on ne_t2.a = ne_t3.a) dt
+on ne_t1.b = dt.coalesced_b;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.ne_t1.b, Column)]
+├─Projection(Build)	root		planner__core__join_reorder_through_projection.ne_t2.a, coalesce(planner__core__join_reorder_through_projection.ne_t3.b, 0)->Column
+│ └─MergeJoin	root		left outer join, left side:TableReader, left key:planner__core__join_reorder_through_projection.ne_t2.a, right key:planner__core__join_reorder_through_projection.ne_t3.a
+│   ├─TableReader(Build)	root		data:TableFullScan
+│   │ └─TableFullScan	cop[tikv]	table:ne_t3	keep order:true
+│   └─TableReader(Probe)	root		data:TableFullScan
+│     └─TableFullScan	cop[tikv]	table:ne_t2	keep order:true
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.ne_t1.b))
+    └─TableFullScan	cop[tikv]	table:ne_t1	keep order:false
+select ne_t1.a, dt.key_a, dt.coalesced_b from ne_t1 join
+(select ne_t2.a as key_a, coalesce(ne_t3.b, 0) as coalesced_b
+from ne_t2 left join ne_t3 on ne_t2.a = ne_t3.a) dt
+on ne_t1.b = dt.coalesced_b
+order by 1;
+a	key_a	coalesced_b
+1	1	0
+2	2	200
+3	3	300
+drop table ne_t1, ne_t2, ne_t3;
 set tidb_opt_join_reorder_through_proj = off;
 explain format = 'plan_tree' select dt1.*, dt2.* from
 (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
@@ -1417,6 +1476,32 @@ a	key_a	doubled_b
 1	1	200
 2	2	400
 3	3	600
+set tidb_opt_join_reorder_through_sel = on;
+set tidb_opt_join_reorder_threshold = 63;
+explain format = 'plan_tree' select t1.a, dt.key_a, dt.doubled_b from t1,
+(select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 100;
+id	task	access object	operator info
+Projection	root		planner__core__join_reorder_through_projection.t1.a, planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column
+└─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+  └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder_through_projection.t1.a, right key:planner__core__join_reorder_through_projection.t2.a
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		gt(mul(planner__core__join_reorder_through_projection.t2.b, 2), 100)
+    │   └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+select t1.a, dt.key_a, dt.doubled_b from t1,
+(select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 100
+order by 1;
+a	key_a	doubled_b
+1	1	200
+2	2	400
+3	3	600
+set tidb_opt_join_reorder_threshold = 0;
+set tidb_opt_join_reorder_through_sel = off;
 set tidb_opt_join_reorder_through_proj = off;
 explain format = 'plan_tree' select t1.*, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt

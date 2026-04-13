@@ -507,6 +507,48 @@ order by dt.key_a;
 
 drop table oj_t2, oj_t3, oj_t5;
 
+# LEFT JOIN with single-leaf expression on the NULL-extended side (Should NOT Inline)
+# Query: ne_t1 JOIN (Projection(ne_t2 LEFT JOIN ne_t3))
+# The expression COALESCE(ne_t3.b, 0) only references ne_t3, but ne_t3 is the
+# NULL-extended side of the LEFT JOIN. Inlining this projection would let later
+# join reorder treat the derived column as a normal connector and can change
+# outer-join semantics.
+drop table if exists ne_t1, ne_t2, ne_t3;
+create table ne_t1(a int, b int, primary key (a));
+create table ne_t2(a int, b int, primary key (a));
+create table ne_t3(a int, b int, primary key (a));
+
+insert into ne_t1 values (1, 0), (2, 200), (3, 300);
+insert into ne_t2 values (1, 10), (2, 20), (3, 30);
+insert into ne_t3 values (2, 200), (3, 300);
+analyze table ne_t1, ne_t2, ne_t3;
+
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select ne_t1.a, dt.key_a, dt.coalesced_b from ne_t1 join
+  (select ne_t2.a as key_a, coalesce(ne_t3.b, 0) as coalesced_b
+   from ne_t2 left join ne_t3 on ne_t2.a = ne_t3.a) dt
+on ne_t1.b = dt.coalesced_b;
+
+select ne_t1.a, dt.key_a, dt.coalesced_b from ne_t1 join
+  (select ne_t2.a as key_a, coalesce(ne_t3.b, 0) as coalesced_b
+   from ne_t2 left join ne_t3 on ne_t2.a = ne_t3.a) dt
+on ne_t1.b = dt.coalesced_b
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select ne_t1.a, dt.key_a, dt.coalesced_b from ne_t1 join
+  (select ne_t2.a as key_a, coalesce(ne_t3.b, 0) as coalesced_b
+   from ne_t2 left join ne_t3 on ne_t2.a = ne_t3.a) dt
+on ne_t1.b = dt.coalesced_b;
+
+select ne_t1.a, dt.key_a, dt.coalesced_b from ne_t1 join
+  (select ne_t2.a as key_a, coalesce(ne_t3.b, 0) as coalesced_b
+   from ne_t2 left join ne_t3 on ne_t2.a = ne_t3.a) dt
+on ne_t1.b = dt.coalesced_b
+order by 1;
+
+drop table ne_t1, ne_t2, ne_t3;
+
 # Note: RIGHT JOIN tests are omitted as they mirror LEFT JOIN behavior.
 # The key difference is which side is OUTER vs INNER, but the projection
 # inlining logic is symmetric.
@@ -968,6 +1010,23 @@ select t1.a, dt.key_a, dt.doubled_b from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 100
 order by 1;
+
+# The same derived-column filter should also work when Selection is extracted
+# into the join group first. This specifically exercises:
+# Selection -> JoinGroup extraction + colExprMap substitution for otherConds.
+set tidb_opt_join_reorder_through_sel = on;
+set tidb_opt_join_reorder_threshold = 63;
+explain format = 'plan_tree' select t1.a, dt.key_a, dt.doubled_b from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 100;
+
+select t1.a, dt.key_a, dt.doubled_b from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 100
+order by 1;
+
+set tidb_opt_join_reorder_threshold = 0;
+set tidb_opt_join_reorder_through_sel = off;
 
 # =============================================================================
 # Computed Expressions in JOIN Conditions (colExprMap Substitution Test)

@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -285,7 +286,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 		// After extractJoinGroup substitution, arguments may be ScalarFunctions instead of simple Columns.
 		// We align the arguments to (leftPlan, rightPlan) and let buildJoinEdge materialize expressions
 		// into columns when needed.
-		lExpr, rExpr, _, ok := alignJoinEdgeArgs(lArg, rArg, leftPlan.Schema(), rightPlan.Schema())
+		lExpr, rExpr, _, ok := joinorder.AlignJoinEdgeArgs(lArg, rArg, leftPlan.Schema(), rightPlan.Schema())
 		if !ok {
 			// Best-effort optimization: if projection inlining produced an edge we can't attribute to
 			// left/right here, return an error so the caller can fallback safely.
@@ -297,7 +298,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 		eqConds = append(eqConds, newEdge)
 	}
 	if len(expr2Col) > 0 && len(otherConds) > 0 {
-		otherConds = substituteExprsWithColsInExprs(otherConds, expr2Col)
+		otherConds = joinorder.SubstituteExprsWithColsInExprs(otherConds, expr2Col)
 	}
 	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, base.InnerJoin)
 	_, _, err := join.RecursiveDeriveStats(nil)
