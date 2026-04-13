@@ -452,8 +452,9 @@ skipHandleCred:
 	httpClient := opts.HTTPClient
 	if opts.AccessRecording != nil {
 		if httpClient == nil {
-			transport, _ := http.DefaultTransport.(*http.Transport)
-			httpClient = &http.Client{Transport: transport.Clone()}
+			httpClient = &http.Client{Transport: cloneDefaultTransport()}
+		} else if httpClient.Transport == nil {
+			httpClient.Transport = cloneDefaultTransport()
 		}
 		httpClient.Transport = &roundTripperWrapper{
 			RoundTripper: httpClient.Transport,
@@ -732,9 +733,20 @@ type roundTripperWrapper struct {
 	accessRec *recording.AccessStats
 }
 
+func cloneDefaultTransport() http.RoundTripper {
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		return transport.Clone()
+	}
+	return http.DefaultTransport
+}
+
 func (rt *roundTripperWrapper) RoundTrip(req *http.Request) (*http.Response, error) {
 	rt.accessRec.RecRequest(req)
-	return rt.RoundTripper.RoundTrip(req)
+	base := rt.RoundTripper
+	if base == nil {
+		base = cloneDefaultTransport()
+	}
+	return base.RoundTrip(req)
 }
 
 func isGCSObjectNotExist(err error) bool {

@@ -669,6 +669,39 @@ func TestCtxUsage(t *testing.T) {
 	require.ErrorContains(t, err, "invalid_request")
 }
 
+func TestGCSAccessRecordingWithNilTransport(t *testing.T) {
+	require.True(t, intest.InTest)
+
+	ctx := context.Background()
+	bucketName := "testbucket"
+	accessRec := &recording.AccessStats{}
+	server, err := fakestorage.NewServerWithOptions(fakestorage.Options{Scheme: "http"})
+	require.NoError(t, err)
+	defer server.Stop()
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
+
+	httpClient := &http.Client{}
+	gcs := &backuppb.GCS{
+		Endpoint:      server.URL(),
+		Bucket:        bucketName,
+		Prefix:        "a/b/",
+		StorageClass:  "NEARLINE",
+		PredefinedAcl: "private",
+	}
+	stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
+		NoCredentials:    true,
+		CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
+		HTTPClient:       httpClient,
+		AccessRecording:  accessRec,
+	})
+	require.NoError(t, err)
+	defer stg.Close()
+	require.NotNil(t, httpClient.Transport)
+
+	require.NoError(t, stg.WriteFile(ctx, "a.txt", []byte("hello")))
+	CheckAccessStats(t, accessRec, 0, 1, 0, 5)
+}
+
 func TestDeleteFiles(t *testing.T) {
 	ctx := context.Background()
 
