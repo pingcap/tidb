@@ -17,6 +17,9 @@ package globalstats_test
 import (
 	"context"
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -1063,4 +1066,164 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 		"test t p6 idx_ab 1 0 4763 1 (13, 1) (33347, 1) 0",
 		"test t p6 idx_ab 1 1 9526 1 (33354, 1) (66688, 1) 0",
 		"test t p6 idx_ab 1 2 14286 1 (66695, 1) (100008, 1) 0"))
+}
+
+// TestGlobalStatsMergePathConsistency verifies that:
+// 1. Async and blocking merge paths produce identical global stats.
+// 2. After removing partitioning, non-partitioned stats are similar to the partition global stats.
+func TestGlobalStatsMergePathConsistency(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+
+	// 53 hash partitions, 5 data columns with diverse distributions.
+	tk.MustExec(`CREATE TABLE t (
+		id INT PRIMARY KEY AUTO_INCREMENT,
+		uniform_col INT NOT NULL,
+		skewed_col INT NOT NULL,
+		sparse_col INT,
+		bimodal_col INT NOT NULL,
+		str_col VARCHAR(64) NOT NULL,
+		KEY idx_uniform(uniform_col),
+		KEY idx_skewed(skewed_col),
+		KEY idx_bimodal(bimodal_col),
+		KEY idx_str(str_col)
+	) PARTITION BY HASH(id) PARTITIONS 53`)
+
+	// Seed 100 rows with varied distributions.
+	vals := make([]string, 0, 100)
+	for i := 1; i <= 100; i++ {
+		uniformCol := i % 97 // prime, avoids alignment with partition count
+		skewedCol := 0
+		if i%10 == 0 {
+			skewedCol = i%5 + 1
+		}
+		sparseCol := "NULL"
+		if i%3 != 0 {
+			sparseCol = strconv.Itoa(i % 50)
+		}
+		bimodalCol := i % 20
+		if i > 50 {
+			bimodalCol = 500 + i%20
+		}
+		strCol := fmt.Sprintf("v%04d_%s", i%80, strings.Repeat("x", i%17))
+		vals = append(vals, fmt.Sprintf("(%d,%d,%s,%d,'%s')",
+			uniformCol, skewedCol, sparseCol, bimodalCol, strCol))
+	}
+	tk.MustExec("INSERT INTO t (uniform_col, skewed_col, sparse_col, bimodal_col, str_col) VALUES " +
+		strings.Join(vals, ","))
+	// Double 7 times: 100 → 12800 rows (~241 per partition).
+	for range 7 {
+		tk.MustExec("INSERT INTO t (uniform_col, skewed_col, sparse_col, bimodal_col, str_col) " +
+			"SELECT uniform_col, skewed_col, sparse_col, bimodal_col, str_col FROM t")
+	}
+
+	analyzeOpts := "WITH 10 TOPN, 20 BUCKETS"
+
+	// --- Phase 1: Analyze with blocking merge ---
+	tk.MustExec("SET @@tidb_enable_async_merge_global_stats = OFF")
+	tk.MustExec("ANALYZE TABLE t " + analyzeOpts)
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	blockingTopN := tk.MustQuery("SHOW STATS_TOPN WHERE table_name = 't' AND partition_name = 'global'").Sort().Rows()
+	blockingBuckets := tk.MustQuery("SHOW STATS_BUCKETS WHERE table_name = 't' AND partition_name = 'global'").Sort().Rows()
+
+	// --- Phase 2: Analyze with async merge ---
+	tk.MustExec("SET @@tidb_enable_async_merge_global_stats = ON")
+	tk.MustExec("ANALYZE TABLE t " + analyzeOpts)
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	asyncTopN := tk.MustQuery("SHOW STATS_TOPN WHERE table_name = 't' AND partition_name = 'global'").Sort().Rows()
+	asyncBuckets := tk.MustQuery("SHOW STATS_BUCKETS WHERE table_name = 't' AND partition_name = 'global'").Sort().Rows()
+
+	// Async and blocking must produce identical results.
+	require.NotEmpty(t, asyncTopN, "global TopN should not be empty")
+	require.NotEmpty(t, asyncBuckets, "global buckets should not be empty")
+	require.Equal(t, blockingTopN, asyncTopN,
+		"global TopN should be identical between async and blocking merge")
+	require.Equal(t, blockingBuckets, asyncBuckets,
+		"global buckets should be identical between async and blocking merge")
+
+	// --- Phase 3: Compare with non-partitioned table ---
+	// Save partition global stats for comparison.
+	// show stats_topn columns: db, table, partition, col_name, is_index, value, count
+	type topnKey struct {
+		col     string
+		isIndex string
+		value   string
+	}
+	partTopNMap := make(map[topnKey]float64)
+	for _, row := range asyncTopN {
+		key := topnKey{col: row[3].(string), isIndex: row[4].(string), value: row[5].(string)}
+		cnt, _ := strconv.ParseFloat(row[6].(string), 64)
+		partTopNMap[key] = cnt
+	}
+	partRowCount := tk.MustQuery(
+		"SELECT SUM(count) FROM mysql.stats_meta WHERE table_id IN " +
+			"(SELECT tidb_table_id FROM information_schema.tables WHERE table_name = 't' AND table_schema = 'test')").
+		Rows()[0][0].(string)
+
+	// Remove partitioning and re-analyze.
+	tk.MustExec("ALTER TABLE t REMOVE PARTITIONING")
+	tk.MustExec("ANALYZE TABLE t " + analyzeOpts)
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	nonPartTopN := tk.MustQuery("SHOW STATS_TOPN WHERE table_name = 't'").Sort().Rows()
+	nonPartRowCount := tk.MustQuery(
+		"SELECT count FROM mysql.stats_meta WHERE table_id IN " +
+			"(SELECT tidb_table_id FROM information_schema.tables WHERE table_name = 't' AND table_schema = 'test')").
+		Rows()[0][0].(string)
+
+	// Row count must match exactly (same data).
+	require.Equal(t, partRowCount, nonPartRowCount,
+		"total row count should match after remove partitioning")
+
+	// TopN: values present in the non-partitioned stats should largely overlap
+	// with the partition global stats. Counts may differ due to merge approximation.
+	nonPartTopNMap := make(map[topnKey]float64)
+	for _, row := range nonPartTopN {
+		key := topnKey{col: row[3].(string), isIndex: row[4].(string), value: row[5].(string)}
+		cnt, _ := strconv.ParseFloat(row[6].(string), 64)
+		nonPartTopNMap[key] = cnt
+	}
+
+	// Check that column (non-index) TopN values match with count tolerance.
+	// Index TopN counts can differ more due to how composite key counts are
+	// aggregated per-partition vs globally, so we only compare column stats.
+	const countTolerance = 0.50 // 50% — merge approximation can be significant
+	colPartTopN := make(map[topnKey]float64)
+	for key, cnt := range partTopNMap {
+		if key.isIndex == "0" {
+			colPartTopN[key] = cnt
+		}
+	}
+	colNonPartTopN := make(map[topnKey]float64)
+	for key, cnt := range nonPartTopNMap {
+		if key.isIndex == "0" {
+			colNonPartTopN[key] = cnt
+		}
+	}
+	matched := 0
+	for key, partCnt := range colPartTopN {
+		npCnt, ok := colNonPartTopN[key]
+		if !ok {
+			continue
+		}
+		matched++
+		maxCnt := math.Max(partCnt, npCnt)
+		if maxCnt > 0 {
+			diff := math.Abs(partCnt-npCnt) / maxCnt
+			require.LessOrEqualf(t, diff, countTolerance,
+				"TopN count mismatch for col=%s value=%s: partition-global=%.0f non-partitioned=%.0f",
+				key.col, key.value, partCnt, npCnt)
+		}
+	}
+	// At least 50% of column TopN entries should be present in both.
+	// The merge may promote/demote borderline entries differently than
+	// a single-table analyze, especially for uniform distributions.
+	minOverlap := int(float64(len(colPartTopN)) * 0.5)
+	require.GreaterOrEqualf(t, matched, minOverlap,
+		"expected at least %d column TopN entries to match, got %d out of %d",
+		minOverlap, matched, len(colPartTopN))
 }
