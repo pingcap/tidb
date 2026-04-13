@@ -1708,15 +1708,15 @@ func mergeByUpperBound(
 
 	globalHist := NewHistogram(histID, 0, totNull, lastUpdateVersion, tp, int(expBucketNumber), totColSize)
 	var (
-		cumCount      int64
-		prevCumCount  int64        // cumulative count before the current group
-		bucketIdx     int64        = 1
-		firstBucket                = true // true until the first global bucket is emitted
-		bucketLower   *types.Datum        // lower bound of current global bucket
-		lastUpper     *types.Datum        // upper bound of the current group
-		lastRepeat    int64               // repeat of the current group
-		prevUpper     *types.Datum        // upper bound of the previous group
-		prevRepeat    int64               // repeat of the previous group
+		cumCount     int64
+		prevCumCount int64        // cumulative count before the current group
+		bucketIdx    int64        = 1
+		firstBucket               = true // true until the first global bucket is emitted
+		bucketLower  *types.Datum        // lower bound of current global bucket
+		lastUpper    *types.Datum        // upper bound of the current group
+		lastRepeat   int64               // repeat of the current group
+		prevUpper    *types.Datum        // upper bound of the previous group
+		prevRepeat   int64               // repeat of the previous group
 	)
 
 	i := 0

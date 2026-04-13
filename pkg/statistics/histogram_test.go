@@ -49,7 +49,6 @@ func TestValueToString4InvalidKey(t *testing.T) {
 	require.Equal(t, "(1, 0.5, \x14)", res)
 }
 
-
 func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {
 	l := types.NewIntDatum(lower)
 	r := types.NewIntDatum(upper)
