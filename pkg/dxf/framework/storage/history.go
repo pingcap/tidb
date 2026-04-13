@@ -17,7 +17,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +26,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+)
+
+const (
+	// DefaultHistoryTaskPageSize is the default page size for history task listing.
+	DefaultHistoryTaskPageSize = 20
+	// MinHistoryTaskPageSize is the minimum page size for history task listing.
+	MinHistoryTaskPageSize = 1
+	// MaxHistoryTaskPageSize is the maximum page size for history task listing.
+	MaxHistoryTaskPageSize = 200
 )
 
 // TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
@@ -97,9 +105,17 @@ type HistoryTaskSummary struct {
 
 // HistoryTaskPage is the paged result for history task listing.
 type HistoryTaskPage struct {
-	Items         []*HistoryTaskSummary
-	NextPageToken string
-	TotalCount    int64
+	Items            []*HistoryTaskSummary
+	NextPageToken    int64
+	ApproxTotalCount int64
+}
+
+// ValidateHistoryTaskPageSize validates page size for history task listing.
+func ValidateHistoryTaskPageSize(pageSize int) error {
+	if pageSize < MinHistoryTaskPageSize || pageSize > MaxHistoryTaskPageSize {
+		return fmt.Errorf("page size should be within [%d, %d]", MinHistoryTaskPageSize, MaxHistoryTaskPageSize)
+	}
+	return nil
 }
 
 // ListHistoryTasks lists history tasks with keyset pagination and optional keyspace filter.
@@ -107,8 +123,8 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
-	if pageSize <= 0 {
-		return nil, fmt.Errorf("page size should be greater than 0")
+	if err := ValidateHistoryTaskPageSize(pageSize); err != nil {
+		return nil, err
 	}
 
 	whereParts := make([]string, 0, 2)
@@ -136,7 +152,7 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 		return nil, err
 	}
 	// Intentionally keep this as a separate best-effort read.
-	// Under concurrent task transfers, Items and TotalCount may observe slightly
+	// Under concurrent task transfers, Items and ApproxTotalCount may observe slightly
 	// different snapshots, which is acceptable for this observability API.
 	// Pagination correctness relies on page rows + NextPageToken from the page query.
 	countRows, err := mgr.ExecuteSQLWithNewSession(ctx,
@@ -152,8 +168,8 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 	}
 
 	page := &HistoryTaskPage{
-		Items:      make([]*HistoryTaskSummary, 0, min(len(rows), pageSize)),
-		TotalCount: countRows[0].GetInt64(0),
+		Items:            make([]*HistoryTaskSummary, 0, min(len(rows), pageSize)),
+		ApproxTotalCount: countRows[0].GetInt64(0),
 	}
 	hasMore := len(rows) > pageSize
 	if hasMore {
@@ -163,7 +179,7 @@ func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, page
 		page.Items = append(page.Items, row2HistoryTaskSummary(row))
 	}
 	if hasMore {
-		page.NextPageToken = strconv.FormatInt(page.Items[len(page.Items)-1].ID, 10)
+		page.NextPageToken = page.Items[len(page.Items)-1].ID
 	}
 	return page, nil
 }
