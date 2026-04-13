@@ -89,7 +89,9 @@ const (
 	mvRefreshAdvisoryLockTimeoutSec = int64(1)
 	mvRefreshShadowTablePrefix      = "__mv_shadow_"
 	mvRefreshImportIntoStoreName    = "TiKV"
-	mvTaskCancelWatchPollInterval   = 5 * time.Second
+	mvTaskMonitorPollInterval       = 5 * time.Second
+	mvTaskHistHeartbeatInterval     = 10 * time.Minute
+	mvTaskMonitorSQLTimeout         = 5 * time.Second
 )
 
 // PurgeMaterializedViewLogExec executes "PURGE MATERIALIZED VIEW LOG" as a utility-style statement.
@@ -199,43 +201,64 @@ func formatMVManualCancelRequester(user *auth.UserIdentity) string {
 }
 
 type mvTaskCancelPoller func(context.Context, sqlexec.SQLExecutor) (requested bool, requester string, err error)
+type mvTaskHeartbeatWriter func(context.Context, sqlexec.SQLExecutor) error
 
-func startMVTaskCancelWatcher(
+func startMVTaskMonitor(
 	taskCtx context.Context,
 	getSysSession func() (sessionctx.Context, error),
 	releaseWatchSession func(sessionctx.Context),
 	taskCancelController *mvTaskCancelController,
-	watchName string,
+	monitorName string,
 	poller mvTaskCancelPoller,
+	heartbeatWriter mvTaskHeartbeatWriter,
 ) (func(), error) {
 	if taskCancelController == nil {
-		return func() {}, errors.New("mv task cancel watcher: task cancel controller is nil")
+		return func() {}, errors.New("mv task monitor: task cancel controller is nil")
 	}
 
-	watchSctx, err := getSysSession()
+	monitorSctx, err := getSysSession()
 	if err != nil {
 		return func() {}, err
 	}
 
-	watcherCtx, stopWatcher := context.WithCancel(taskCtx)
-	watcherDone := make(chan struct{})
+	monitorCtx, stopMonitor := context.WithCancel(taskCtx)
+	monitorDone := make(chan struct{})
 	go func() {
-		defer close(watcherDone)
-		defer releaseWatchSession(watchSctx)
+		defer close(monitorDone)
+		defer releaseWatchSession(monitorSctx)
 
-		sqlExec := watchSctx.GetSQLExecutor()
-		ticker := time.NewTicker(getMVTaskCancelWatchPollInterval())
+		sqlExec := monitorSctx.GetSQLExecutor()
+		ticker := time.NewTicker(getMVTaskMonitorPollInterval())
 		defer ticker.Stop()
+		nextHeartbeatAt := time.Now().Add(getMVTaskHistHeartbeatInterval())
 
 		for {
-			requested, requester, err := poller(watcherCtx, sqlExec)
-			failpoint.InjectCall("mvTaskCancelWatcherPolled", watchName)
+			if heartbeatWriter != nil && !time.Now().Before(nextHeartbeatAt) {
+				heartbeatCtx, cancelHeartbeat := context.WithTimeout(monitorCtx, getMVTaskMonitorSQLTimeout())
+				err := heartbeatWriter(heartbeatCtx, sqlExec)
+				cancelHeartbeat()
+				nextHeartbeatAt = time.Now().Add(getMVTaskHistHeartbeatInterval())
+				if err != nil {
+					if monitorCtx.Err() != nil {
+						return
+					}
+					logutil.BgLogger().Warn("materialized view task heartbeat failed",
+						zap.String("monitor", monitorName),
+						zap.Error(err),
+					)
+				}
+			}
+
+			pollCtx, cancelPoll := context.WithTimeout(monitorCtx, getMVTaskMonitorSQLTimeout())
+			requested, requester, err := poller(pollCtx, sqlExec)
+			cancelPoll()
+			failpoint.InjectCall("mvTaskMonitorPolled", monitorName)
 			if err != nil {
-				if watcherCtx.Err() != nil {
+				if monitorCtx.Err() != nil {
 					return
 				}
-				logutil.BgLogger().Warn("materialized view task cancel watcher poll failed",
-					zap.String("watch", watchName),
+				logutil.BgLogger().Warn("materialized view task monitor cancel poll failed",
+					zap.String("monitor", monitorName),
 					zap.Error(err),
 				)
 			} else if requested {
@@ -244,7 +267,7 @@ func startMVTaskCancelWatcher(
 			}
 
 			select {
-			case <-watcherCtx.Done():
+			case <-monitorCtx.Done():
 				return
 			case <-ticker.C:
 			}
@@ -252,14 +275,14 @@ func startMVTaskCancelWatcher(
 	}()
 
 	return func() {
-		stopWatcher()
-		<-watcherDone
+		stopMonitor()
+		<-monitorDone
 	}, nil
 }
 
-func getMVTaskCancelWatchPollInterval() time.Duration {
-	interval := mvTaskCancelWatchPollInterval
-	failpoint.Inject("mockMVTaskCancelWatchPollInterval", func(val failpoint.Value) {
+func getMVTaskMonitorPollInterval() time.Duration {
+	interval := mvTaskMonitorPollInterval
+	failpoint.Inject("mockMVTaskMonitorPollInterval", func(val failpoint.Value) {
 		switch v := val.(type) {
 		case int:
 			interval = time.Duration(v) * time.Millisecond
@@ -268,6 +291,32 @@ func getMVTaskCancelWatchPollInterval() time.Duration {
 		}
 	})
 	return interval
+}
+
+func getMVTaskHistHeartbeatInterval() time.Duration {
+	interval := mvTaskHistHeartbeatInterval
+	failpoint.Inject("mockMVTaskHistHeartbeatInterval", func(val failpoint.Value) {
+		switch v := val.(type) {
+		case int:
+			interval = time.Duration(v) * time.Millisecond
+		case int64:
+			interval = time.Duration(v) * time.Millisecond
+		}
+	})
+	return interval
+}
+
+func getMVTaskMonitorSQLTimeout() time.Duration {
+	timeout := mvTaskMonitorSQLTimeout
+	failpoint.Inject("mockMVTaskMonitorSQLTimeout", func(val failpoint.Value) {
+		switch v := val.(type) {
+		case int:
+			timeout = time.Duration(v) * time.Millisecond
+		case int64:
+			timeout = time.Duration(v) * time.Millisecond
+		}
+	})
+	return timeout
 }
 
 func validateMVRefreshTargetTSOForBoundedFastRefresh(
@@ -394,6 +443,56 @@ WHERE PURGE_JOB_ID = %?
 		return false, errors.Trace(err)
 	}
 	return sctx.GetSessionVars().StmtCtx.AffectedRows() > 0, nil
+}
+
+func updateRefreshHistHeartbeat(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	refreshJobID uint64,
+	mviewID int64,
+) error {
+	_, err := sqlExec.ExecuteInternal(
+		kctx,
+		`UPDATE mysql.tidb_mview_refresh_hist
+SET LAST_HEARTBEAT_AT = NOW(6)
+WHERE REFRESH_JOB_ID = %?
+  AND MVIEW_ID = %?
+  AND REFRESH_STATUS = 'running'`,
+		refreshJobID,
+		mviewID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_hist does not exist")
+		}
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func updatePurgeHistHeartbeat(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	purgeJobID uint64,
+	mlogID int64,
+) error {
+	_, err := sqlExec.ExecuteInternal(
+		kctx,
+		`UPDATE mysql.tidb_mlog_purge_hist
+SET LAST_HEARTBEAT_AT = NOW(6)
+WHERE PURGE_JOB_ID = %?
+  AND MLOG_ID = %?
+  AND PURGE_STATUS = 'running'`,
+		purgeJobID,
+		mlogID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("required system table mysql.tidb_mlog_purge_hist does not exist")
+		}
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func checkCancelMaterializedViewJobPrivilege(
@@ -1522,9 +1621,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		}
 		defer e.ReleaseSysSession(releaseCtx, scheduleEvalSctx)
 	}
-	stopCancelWatcher := func() {}
+	stopTaskMonitor := func() {}
 	defer func() {
-		stopCancelWatcher()
+		stopTaskMonitor()
 	}()
 
 	finalizeFailure := func(purgeErr error) error {
@@ -1641,7 +1740,7 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 					return errors.Trace(err)
 				}
 				purgeHistRunningInserted = true
-				stopCancelWatcher, err = startMVTaskCancelWatcher(
+				stopTaskMonitor, err = startMVTaskMonitor(
 					kctx,
 					e.GetSysSession,
 					func(sctx sessionctx.Context) {
@@ -1651,6 +1750,9 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 					fmt.Sprintf("mlog-purge-%d", purgeJobID),
 					func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
 						return readPurgeHistCancelRequest(watchCtx, watchSQLExec, purgeJobID, mlogID)
+					},
+					func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) error {
+						return updatePurgeHistHeartbeat(watchCtx, watchSQLExec, purgeJobID, mlogID)
 					},
 				)
 				if err != nil {
@@ -2118,8 +2220,10 @@ func insertMLogPurgeHistRunning(
 		PURGE_METHOD,
 		PURGE_TIME,
 		PURGE_ROWS,
-		PURGE_STATUS
+		PURGE_STATUS,
+		LAST_HEARTBEAT_AT
 	) VALUES (
+		%?,
 		%?,
 		%?,
 		%?,
@@ -2140,6 +2244,7 @@ func insertMLogPurgeHistRunning(
 		purgeStartAt,
 		int64(0),
 		purgeHistStatusRunning,
+		purgeStartAt,
 	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
@@ -2617,7 +2722,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			}
 			return errors.Trace(finalErr)
 		}
-		stopCancelWatcher, err := startMVTaskCancelWatcher(
+		stopTaskMonitor, err := startMVTaskMonitor(
 			kctx,
 			e.GetSysSession,
 			func(sctx sessionctx.Context) {
@@ -2628,11 +2733,14 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
 				return readRefreshHistCancelRequest(watchCtx, watchSQLExec, refreshJobID, mviewID)
 			},
+			func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) error {
+				return updateRefreshHistHeartbeat(watchCtx, watchSQLExec, refreshJobID, mviewID)
+			},
 		)
 		if err != nil {
 			return finalizeFailure(err)
 		}
-		defer stopCancelWatcher()
+		defer stopTaskMonitor()
 		failpoint.InjectCall("refreshMaterializedViewAfterInsertRefreshHistRunning")
 		failpoint.Inject("pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", func() {})
 
@@ -2817,7 +2925,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		return errors.Trace(finalErr)
 	}
-	stopCancelWatcher, err := startMVTaskCancelWatcher(
+	stopTaskMonitor, err := startMVTaskMonitor(
 		kctx,
 		e.GetSysSession,
 		func(sctx sessionctx.Context) {
@@ -2828,11 +2936,14 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) (bool, string, error) {
 			return readRefreshHistCancelRequest(watchCtx, watchSQLExec, refreshJobID, mviewID)
 		},
+		func(watchCtx context.Context, watchSQLExec sqlexec.SQLExecutor) error {
+			return updateRefreshHistHeartbeat(watchCtx, watchSQLExec, refreshJobID, mviewID)
+		},
 	)
 	if err != nil {
 		return finalizeFailure(err)
 	}
-	defer stopCancelWatcher()
+	defer stopTaskMonitor()
 
 	failpoint.InjectCall("refreshMaterializedViewAfterInsertRefreshHistRunning")
 	failpoint.Inject("pauseRefreshMaterializedViewAfterInsertRefreshHistRunning", func() {})
@@ -4051,9 +4162,9 @@ WHERE MVIEW_ID = %%? AND LAST_SUCCESS_READ_TSO <=> %%?`,
 }
 
 const (
-	refreshHistStatusRunning = "running"
-	refreshHistStatusSuccess = "success"
-	refreshHistStatusFailed  = "failed"
+	refreshHistStatusRunning  = "running"
+	refreshHistStatusSuccess  = "success"
+	refreshHistStatusFailed   = "failed"
 )
 
 func insertRefreshHistRunning(
@@ -4073,8 +4184,10 @@ func insertRefreshHistRunning(
 	MV_NAME,
 	REFRESH_METHOD,
 	REFRESH_TIME,
-	REFRESH_STATUS
+	REFRESH_STATUS,
+	LAST_HEARTBEAT_AT
 ) VALUES (
+	%?,
 	%?,
 	%?,
 	%?,
@@ -4093,6 +4206,7 @@ func insertRefreshHistRunning(
 		refreshMethod,
 		refreshStartAt,
 		refreshHistStatusRunning,
+		refreshStartAt,
 	); err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_hist does not exist")

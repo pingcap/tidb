@@ -792,6 +792,7 @@ const (
 		REFRESH_FAILED_REASON text DEFAULT NULL,
 		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
 		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_AT datetime(6) DEFAULT NULL,
 		PRIMARY KEY(REFRESH_JOB_ID),
 		KEY idx_mview_time (MVIEW_ID, REFRESH_TIME),
 		KEY idx_mv_name_time (MV_SCHEMA, MV_NAME, REFRESH_TIME),
@@ -825,6 +826,7 @@ const (
 		PURGE_FAILED_REASON text DEFAULT NULL,
 		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
 		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
+		LAST_HEARTBEAT_AT datetime(6) DEFAULT NULL,
 		PRIMARY KEY(PURGE_JOB_ID),
 		KEY idx_mlog_time (MLOG_ID, PURGE_TIME),
 		KEY idx_table_name_time (BASE_TABLE_SCHEMA, BASE_TABLE_NAME, PURGE_TIME),
@@ -1293,12 +1295,16 @@ const (
 	// Add MV refresh alert table and duration indexes to MV refresh/purge history tables.
 	version224 = 224
 
-	// next version should start with 225
+	// version 225
+	// Add LAST_HEARTBEAT_AT to MV refresh/purge history tables.
+	version225 = 225
+
+	// next version should start with 226
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version224
+var currentBootstrapVersion int64 = version225
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1478,6 +1484,7 @@ var (
 		upgradeToVer222,
 		upgradeToVer223,
 		upgradeToVer224,
+		upgradeToVer225,
 	}
 )
 
@@ -3399,6 +3406,14 @@ func upgradeToVer224(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, CreateTiDBMViewRefreshAlertTable)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_refresh_duration_sec (REFRESH_DURATION_SEC)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD INDEX idx_purge_duration_sec (PURGE_DURATION_SEC)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer225(s sessiontypes.Session, ver int64) {
+	if ver >= version225 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `LAST_HEARTBEAT_AT` datetime(6) DEFAULT NULL AFTER `CANCEL_REQUESTED_BY`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `LAST_HEARTBEAT_AT` datetime(6) DEFAULT NULL AFTER `CANCEL_REQUESTED_BY`", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

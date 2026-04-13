@@ -45,8 +45,12 @@ import (
 )
 
 const (
-	historyGCDeleteBatchSize   = 10000
-	refreshAlertWriteBatchSize = 128
+	historyGCDeleteBatchSize        = 10000
+	refreshAlertWriteBatchSize      = 128
+	mvHistoryHeartbeatTimeout       = 24 * time.Hour
+	mvHistoryOrphanedStatus         = "orphaned"
+	mvRefreshHistoryOrphanedReason  = "task heartbeat expired before refresh history finalize"
+	mvLogPurgeHistoryOrphanedReason = "task heartbeat expired before purge history finalize"
 )
 
 type serviceHelper struct {
@@ -879,6 +883,34 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 	mviewRefreshRetention time.Duration,
 	mlogPurgeRetention time.Duration,
 ) error {
+	markStaleMVRefreshHistOrphanedSQL := fmt.Sprintf(
+		`UPDATE mysql.tidb_mview_refresh_hist
+SET REFRESH_STATUS = '%s',
+	REFRESH_ENDTIME = IFNULL(REFRESH_ENDTIME, NOW(6)),
+	REFRESH_DURATION_SEC = IFNULL(REFRESH_DURATION_SEC, CASE WHEN REFRESH_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, REFRESH_TIME, NOW(6)) / 1000000.0 END),
+	REFRESH_FAILED_REASON = IFNULL(REFRESH_FAILED_REASON, '%s')
+WHERE REFRESH_STATUS = 'running'
+  AND COALESCE(LAST_HEARTBEAT_AT, REFRESH_TIME) < %%?
+ORDER BY REFRESH_JOB_ID
+LIMIT %d`,
+		mvHistoryOrphanedStatus,
+		mvRefreshHistoryOrphanedReason,
+		historyGCDeleteBatchSize,
+	)
+	markStaleMVLogPurgeHistOrphanedSQL := fmt.Sprintf(
+		`UPDATE mysql.tidb_mlog_purge_hist
+SET PURGE_STATUS = '%s',
+	PURGE_ENDTIME = IFNULL(PURGE_ENDTIME, NOW(6)),
+	PURGE_DURATION_SEC = IFNULL(PURGE_DURATION_SEC, CASE WHEN PURGE_TIME IS NULL THEN NULL ELSE TIMESTAMPDIFF(MICROSECOND, PURGE_TIME, NOW(6)) / 1000000.0 END),
+	PURGE_FAILED_REASON = IFNULL(PURGE_FAILED_REASON, '%s')
+WHERE PURGE_STATUS = 'running'
+  AND COALESCE(LAST_HEARTBEAT_AT, PURGE_TIME) < %%?
+ORDER BY PURGE_JOB_ID
+LIMIT %d`,
+		mvHistoryOrphanedStatus,
+		mvLogPurgeHistoryOrphanedReason,
+		historyGCDeleteBatchSize,
+	)
 	deleteMVRefreshHistSQL := fmt.Sprintf(
 		`DELETE FROM mysql.tidb_mview_refresh_hist WHERE (REFRESH_STATUS IS NULL OR REFRESH_STATUS <> 'running') AND REFRESH_JOB_ID < %%? ORDER BY REFRESH_JOB_ID LIMIT %d`,
 		historyGCDeleteBatchSize,
@@ -910,6 +942,10 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 		}
 		return cutoffTSO
 	}
+	calcHeartbeatCutoffTime := func(timeout time.Duration) time.Time {
+		cutoffPhysical := max(oracle.ExtractPhysical(currentTSO)-int64(timeout/time.Millisecond), 0)
+		return oracle.GetTimeFromTS(oracle.ComposeTS(cutoffPhysical, 0))
+	}
 
 	se, err := sysSessionPool.Get()
 	if err != nil {
@@ -921,11 +957,17 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 	sctx := se.(sessionctx.Context)
 
 	var purgeErrs []error
+	if err := reconcileMVHistoryRunningRowsInBatches(ctx, sctx, markStaleMVRefreshHistOrphanedSQL, calcHeartbeatCutoffTime(mvHistoryHeartbeatTimeout)); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("reconcile stale mview refresh history running rows failed: %w", err))
+	}
 	if err := purgeMVHistoryInBatches(ctx, sctx, deleteMVRefreshHistSQL, calcCutoffTSO(mviewRefreshRetention)); err != nil {
 		purgeErrs = append(purgeErrs, fmt.Errorf("purge mview refresh history by retention failed: %w", err))
 	}
 	if err := purgeMVHistoryByCountLimit(ctx, sctx, countMVRefreshHistSQL, deleteMVRefreshHistByCountSQL, defaultMVHistoryGCMaxRecords); err != nil {
 		purgeErrs = append(purgeErrs, fmt.Errorf("purge mview refresh history by count limit failed: %w", err))
+	}
+	if err := reconcileMVHistoryRunningRowsInBatches(ctx, sctx, markStaleMVLogPurgeHistOrphanedSQL, calcHeartbeatCutoffTime(mvHistoryHeartbeatTimeout)); err != nil {
+		purgeErrs = append(purgeErrs, fmt.Errorf("reconcile stale mlog purge history running rows failed: %w", err))
 	}
 	if err := purgeMVHistoryInBatches(ctx, sctx, deleteMVLogPurgeHistSQL, calcCutoffTSO(mlogPurgeRetention)); err != nil {
 		purgeErrs = append(purgeErrs, fmt.Errorf("purge mlog purge history by retention failed: %w", err))
@@ -937,6 +979,18 @@ func (*serviceHelper) PurgeMVHistoryBeforeTSO(
 		return errors.Join(purgeErrs...)
 	}
 	return nil
+}
+
+func reconcileMVHistoryRunningRowsInBatches(ctx context.Context, sctx sessionctx.Context, sql string, cutoffTime time.Time) error {
+	for {
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, sql, []any{cutoffTime}); err != nil {
+			return err
+		}
+		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
+		if affectedRows < uint64(historyGCDeleteBatchSize) {
+			return nil
+		}
+	}
 }
 
 func purgeMVHistoryInBatches(ctx context.Context, sctx sessionctx.Context, sql string, cutoffTSO uint64) error {

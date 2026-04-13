@@ -1868,8 +1868,8 @@ func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 		t.Fatal("timeout waiting for refresh to persist running history row")
 	}
 
-	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
-		Check(testkit.Rows("running complete delta apply manual 1 1 1"))
+	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is null, REFRESH_READ_TSO is null, REFRESH_FAILED_REASON is null, LAST_HEARTBEAT_AT is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
+		Check(testkit.Rows("running complete delta apply manual 1 1 1 1"))
 
 	close(pauseCh)
 
@@ -1882,6 +1882,89 @@ func TestMaterializedViewRefreshCompleteRunningHistLifecycle(t *testing.T) {
 
 	tk.MustQuery(fmt.Sprintf("select REFRESH_STATUS, REFRESH_METHOD, REFRESH_ENDTIME is not null, REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1", mviewID)).
 		Check(testkit.Rows("success complete delta apply manual 1 1 1"))
+}
+
+func TestMaterializedViewRefreshRunningHistHeartbeat(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int not null)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	tk.MustExec("insert into t values (2, 3), (3, 4)")
+
+	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval"
+	require.NoError(t, failpoint.Enable(pollIntervalFailpoint, "return(50)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(pollIntervalFailpoint))
+	}()
+	heartbeatIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskHistHeartbeatInterval"
+	require.NoError(t, failpoint.Enable(heartbeatIntervalFailpoint, "return(50)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(heartbeatIntervalFailpoint))
+	}()
+
+	pauseFailpoint := "github.com/pingcap/tidb/pkg/executor/pauseRefreshMaterializedViewAfterInsertRefreshHistRunning"
+	require.NoError(t, failpoint.Enable(pauseFailpoint, "pause"))
+	paused := true
+	defer func() {
+		if paused {
+			require.NoError(t, failpoint.Disable(pauseFailpoint))
+		}
+	}()
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		tkRefresh := testkit.NewTestKit(t, store)
+		tkRefresh.MustExec("use test")
+		refreshDone <- tkRefresh.ExecToErr("refresh materialized view mv complete")
+	}()
+
+	var firstHeartbeat string
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery(fmt.Sprintf(
+			"select cast(LAST_HEARTBEAT_AT as char) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running' order by REFRESH_JOB_ID desc limit 1",
+			mviewID,
+		)).Rows()
+		if len(rows) == 0 || rows[0][0] == nil {
+			return false
+		}
+		firstHeartbeat = fmt.Sprint(rows[0][0])
+		return firstHeartbeat != ""
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery(fmt.Sprintf(
+			"select cast(LAST_HEARTBEAT_AT as char) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d and REFRESH_STATUS = 'running' order by REFRESH_JOB_ID desc limit 1",
+			mviewID,
+		)).Rows()
+		if len(rows) == 0 || rows[0][0] == nil {
+			return false
+		}
+		return fmt.Sprint(rows[0][0]) != firstHeartbeat
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, failpoint.Disable(pauseFailpoint))
+	paused = false
+
+	select {
+	case err := <-refreshDone:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for refresh to finish")
+	}
+
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_STATUS, LAST_HEARTBEAT_AT is not null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("success 1"))
 }
 
 func TestMaterializedViewRefreshCompleteReadTSOSnapshotMatchesMV(t *testing.T) {
@@ -2689,7 +2772,7 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCancelWatcherStopsBeforeCreate
 	require.NoError(t, err)
 	mviewID := mvTable.Meta().ID
 
-	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskCancelWatchPollInterval"
+	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval"
 	require.NoError(t, failpoint.Enable(pollIntervalFailpoint, "return(50)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(pollIntervalFailpoint))
@@ -2915,7 +2998,7 @@ func TestMaterializedViewRefreshCancelWatcherUsesHistRequest(t *testing.T) {
 	require.NoError(t, err)
 	mviewID := mvTable.Meta().ID
 
-	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskCancelWatchPollInterval"
+	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval"
 	require.NoError(t, failpoint.Enable(pollIntervalFailpoint, "return(50)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(pollIntervalFailpoint))
@@ -2999,7 +3082,7 @@ func TestCancelMaterializedViewRefreshJob(t *testing.T) {
 	require.NoError(t, err)
 	mviewID := mvTable.Meta().ID
 
-	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskCancelWatchPollInterval"
+	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval"
 	require.NoError(t, failpoint.Enable(pollIntervalFailpoint, "return(50)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(pollIntervalFailpoint))
@@ -3086,15 +3169,15 @@ func TestMaterializedViewRefreshCancelWatcherStopsAfterTaskFinish(t *testing.T) 
 	tk.MustExec("create materialized view log on t_refresh_cancel_watch_stop (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv_refresh_cancel_watch_stop (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_refresh_cancel_watch_stop group by a")
 
-	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskCancelWatchPollInterval"
+	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval"
 	require.NoError(t, failpoint.Enable(pollIntervalFailpoint, "return(50)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(pollIntervalFailpoint))
 	}()
 
 	var pollCount atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvTaskCancelWatcherPolled", func(watchName string) {
-		if strings.HasPrefix(watchName, "refresh-") {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvTaskMonitorPolled", func(monitorName string) {
+		if strings.HasPrefix(monitorName, "refresh-") {
 			pollCount.Add(1)
 		}
 	})

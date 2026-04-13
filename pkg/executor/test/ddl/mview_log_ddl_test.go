@@ -679,7 +679,7 @@ func TestPurgeMaterializedViewLogCancelWatcherUsesHistRequest(t *testing.T) {
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
 
-	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskCancelWatchPollInterval"
+	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval"
 	require.NoError(t, failpoint.Enable(pollIntervalFailpoint, "return(50)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(pollIntervalFailpoint))
@@ -762,7 +762,7 @@ func TestCancelMaterializedViewLogPurgeJob(t *testing.T) {
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
 
-	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskCancelWatchPollInterval"
+	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval"
 	require.NoError(t, failpoint.Enable(pollIntervalFailpoint, "return(50)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable(pollIntervalFailpoint))
@@ -830,6 +830,86 @@ func TestCancelMaterializedViewLogPurgeJob(t *testing.T) {
 	)).Rows()
 	require.Len(t, reasonRows, 1)
 	require.Equal(t, "cancelled manually by 'mv_purge_cancel_u'@'%'", fmt.Sprint(reasonRows[0][0]))
+}
+
+func TestPurgeMaterializedViewLogRunningHistHeartbeat(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_heartbeat (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_heartbeat (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_heartbeat values (1, 10), (2, 20)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_purge_heartbeat"))
+	require.NoError(t, err)
+	mlogID := mlogTable.Meta().ID
+
+	pollIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskMonitorPollInterval"
+	require.NoError(t, failpoint.Enable(pollIntervalFailpoint, "return(50)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(pollIntervalFailpoint))
+	}()
+	heartbeatIntervalFailpoint := "github.com/pingcap/tidb/pkg/executor/mockMVTaskHistHeartbeatInterval"
+	require.NoError(t, failpoint.Enable(heartbeatIntervalFailpoint, "return(50)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(heartbeatIntervalFailpoint))
+	}()
+
+	pauseFailpoint := "github.com/pingcap/tidb/pkg/executor/pausePurgeMaterializedViewLogAfterInsertPurgeHistRunning"
+	require.NoError(t, failpoint.Enable(pauseFailpoint, "pause"))
+	paused := true
+	defer func() {
+		if paused {
+			require.NoError(t, failpoint.Disable(pauseFailpoint))
+		}
+	}()
+
+	errCh := make(chan error, 1)
+	go func() {
+		tkPurge := testkit.NewTestKit(t, store)
+		tkPurge.MustExec("use test")
+		errCh <- tkPurge.ExecToErr("purge materialized view log on t_purge_heartbeat")
+	}()
+
+	var firstHeartbeat string
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery(fmt.Sprintf(
+			"select cast(LAST_HEARTBEAT_AT as char) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running' order by PURGE_JOB_ID desc limit 1",
+			mlogID,
+		)).Rows()
+		if len(rows) == 0 || rows[0][0] == nil {
+			return false
+		}
+		firstHeartbeat = fmt.Sprint(rows[0][0])
+		return firstHeartbeat != ""
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery(fmt.Sprintf(
+			"select cast(LAST_HEARTBEAT_AT as char) from mysql.tidb_mlog_purge_hist where MLOG_ID = %d and PURGE_STATUS = 'running' order by PURGE_JOB_ID desc limit 1",
+			mlogID,
+		)).Rows()
+		if len(rows) == 0 || rows[0][0] == nil {
+			return false
+		}
+		return fmt.Sprint(rows[0][0]) != firstHeartbeat
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, failpoint.Disable(pauseFailpoint))
+	paused = false
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for purge to finish")
+	}
+
+	tk.MustQuery(fmt.Sprintf(
+		"select PURGE_STATUS, LAST_HEARTBEAT_AT is not null from mysql.tidb_mlog_purge_hist where MLOG_ID = %d order by PURGE_JOB_ID desc limit 1",
+		mlogID,
+	)).Check(testkit.Rows("success 1"))
 }
 
 func TestPurgeMaterializedViewLogLockRowMissing(t *testing.T) {
