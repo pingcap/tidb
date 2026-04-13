@@ -1058,10 +1058,13 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 			if component.IndexInfo == nil {
 				component.IndexInfo = &model.HybridVectorIndexInfo{}
 			}
-			// Require distance metric: only L2 and COSINE are supported.
-			if component.IndexInfo.DistanceMetric == "" {
+			if colInfo.FieldType.GetFlen() <= 0 {
 				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
-					fmt.Sprintf("HYBRID index vector component %d must specify a distance_metric (L2 or COSINE)", i+1))
+					fmt.Sprintf("HYBRID index vector component %d can only be defined on fixed-dimension vector columns", i+1))
+			}
+			// Default the distance metric to COSINE for backward compatibility.
+			if component.IndexInfo.DistanceMetric == "" {
+				component.IndexInfo.DistanceMetric = string(model.DistanceMetricCosine)
 			}
 			dm := model.DistanceMetric(component.IndexInfo.DistanceMetric)
 			if _, ok := model.IndexableDistanceMetricToFnName[dm]; !ok {
@@ -1070,10 +1073,6 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 			}
 			// Materialize dimension from column definition if not specified.
 			if component.IndexInfo.Dimension == nil {
-				if colInfo.FieldType.GetFlen() <= 0 {
-					return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
-						fmt.Sprintf("HYBRID index vector component %d must specify dimension for variable-length vector column '%s'", i+1, colInfo.Name.O))
-				}
 				dim := uint64(colInfo.FieldType.GetFlen())
 				component.IndexInfo.Dimension = &dim
 			} else {
