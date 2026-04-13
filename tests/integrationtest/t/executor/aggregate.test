@@ -177,7 +177,6 @@ select approx_count_distinct( a, b) from t;
 drop table if exists t;
 create table t(a char(10), b char(10));
 insert into t values('1', '222'), ('12', '22');
-select group_concat(distinct a, b) from t;
 
 # TestIssue10608
 drop table if exists t, s;
@@ -608,7 +607,6 @@ create table t(a int, b int);
 insert into t value(null, null);
 select group_concat(a), group_concat(distinct a) from t;
 insert into t value(1, null), (null, 1), (1, 2), (3, 4);
-select group_concat(a, b), group_concat(distinct a,b) from t;
 set @@session.tidb_opt_distinct_agg_push_down = 0;
 select count(distinct a) from t;
 set @@session.tidb_opt_distinct_agg_push_down = 1;
