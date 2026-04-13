@@ -16,8 +16,10 @@ package handle_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/parser/model"
+	handle "github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -291,4 +293,41 @@ PARTITION BY RANGE ( a ) (
 			require.False(t, statsTbl.Pseudo)
 		}
 	}
+}
+
+func TestDropSchemaUpdatesStatsVersionForGC(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+
+	testKit.MustExec("insert into t values (1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+
+	rows := testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", tableInfo.ID).Rows()
+	require.Len(t, rows, 1)
+	version := rows[0][0].(string)
+
+	testKit.MustExec("drop database test")
+
+	select {
+	case event := <-h.DDLEventCh():
+		require.Equal(t, model.ActionDropTable, event.Tp)
+		require.Equal(t, tableInfo.ID, event.TableInfo.ID)
+		require.NoError(t, h.HandleDDLEvent(event))
+	case <-time.After(time.Second):
+		t.Fatal("expected a stats GC event when dropping schema")
+	}
+
+	rows = testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", tableInfo.ID).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, version, rows[0][0].(string))
 }
