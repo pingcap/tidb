@@ -514,7 +514,7 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 			if r != nil {
 				logutil.DDLLogger().Error("panic in deliveryJob", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			failpoint.InjectCall("afterDeliveryJob", jobW)
+			failpoint.Call("github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", jobW)
 			// Because there is a gap between `allIDs()` and `checkRunnable()`,
 			// we append unfinished job to pending atomically to prevent `getJob()`
 			// choosing another runnable job that involves the same schema object.

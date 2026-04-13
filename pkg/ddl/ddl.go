@@ -1148,7 +1148,7 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	d.cancel()
-	failpoint.InjectCall("afterDDLCloseCancel")
+	failpoint.Call("github.com/pingcap/tidb/pkg/ddl/afterDDLCloseCancel")
 	d.wg.Wait()
 	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
 	// when run with uni-store BreakCampaignLoop is same as Close.

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -46,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -350,12 +352,46 @@ func TestDoDDLJobQuit(t *testing.T) {
 	require.NoError(t, err)
 	defer se.Close()
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", func() {
-		_ = dom.DDL().Stop()
+	waitJobSubmittedCh := make(chan struct{})
+	releaseJobSubmitCh := make(chan struct{})
+	jobFinishedCh := make(chan struct{})
+	ddlCanceledCh := make(chan struct{})
+	releaseDDLStopCh := make(chan struct{})
+	stopDoneCh := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
+		close(waitJobSubmittedCh)
+		<-releaseJobSubmitCh
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.JobW) {
+		if job.Type == model.ActionCreateSchema {
+			close(jobFinishedCh)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDDLCloseCancel", func() {
+		close(ddlCanceledCh)
+		<-releaseDDLStopCh
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitDDLJobDone", func() {
+		go func() {
+			_ = dom.DDL().Stop()
+			close(stopDoneCh)
+		}()
+		<-ddlCanceledCh
 	})
 
-	// this DDL call will enter deadloop before this fix
-	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: ast.NewCIStr("testschema")})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: ast.NewCIStr("testschema")})
+	}()
+
+	<-waitJobSubmittedCh
+	<-jobFinishedCh
+	close(releaseJobSubmitCh)
+
+	// this DDL call can miss the context cancellation after observing the job-done notification.
+	err = <-errCh
+	close(releaseDDLStopCh)
+	<-stopDoneCh
 	require.Equal(t, "context canceled", err.Error())
 }
 
@@ -734,6 +770,7 @@ func TestRequestSource(t *testing.T) {
 }
 
 func TestEmptyInitSQLFile(t *testing.T) {
+	enableBootstrapSQLFileInternalCheck(t)
 	// A non-existent sql file would stop the bootstrap of the tidb cluster
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
@@ -911,6 +948,9 @@ DROP USER root;
 }
 
 func TestBootstrapSQLWithExtension(t *testing.T) {
+	extension.Reset()
+	defer extension.Reset()
+
 	authChecks := []*extension.AuthPlugin{{
 		Name: "my_auth_plugin",
 		AuthenticateUser: func(request extension.AuthenticateRequest) error {
@@ -983,6 +1023,7 @@ func TestBootstrapSQLWithExtension(t *testing.T) {
 }
 
 func TestErrorHappenWhileInit(t *testing.T) {
+	enableBootstrapSQLFileInternalCheck(t)
 	// 1. parser error in sql file (1.sql) makes the bootstrap panic
 	// 2. other errors in sql file (2.sql) will be ignored
 	var err error
@@ -1055,6 +1096,19 @@ insert into test.t values ("abc"); -- invalid statement
 	require.Equal(t, 0, req.NumRows())
 	require.NoError(t, r.Close())
 	dom.Close()
+}
+
+func enableBootstrapSQLFileInternalCheck(t *testing.T) {
+	t.Helper()
+
+	originInTest := intest.InTest
+	originEnableInternalCheck := intest.EnableInternalCheck
+	intest.InTest = true
+	intest.EnableInternalCheck = true
+	t.Cleanup(func() {
+		intest.InTest = originInTest
+		intest.EnableInternalCheck = originEnableInternalCheck
+	})
 }
 
 func TestIssue60266(t *testing.T) {

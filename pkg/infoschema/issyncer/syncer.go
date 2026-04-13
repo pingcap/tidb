@@ -407,11 +407,9 @@ func (s *Syncer) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 // Reload reloads InfoSchema.
 // It's public in order to do the test.
 func (s *Syncer) Reload() error {
-	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(errors.New("mock reload failed"))
-		}
-	})
+	if val, err := failpoint.Eval("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed"); err == nil && val.(bool) {
+		return errors.New("mock reload failed")
+	}
 
 	// Lock here for only once at the same time.
 	s.m.Lock()

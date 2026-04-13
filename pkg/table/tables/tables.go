@@ -929,17 +929,17 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		return nil, err
 	}
 
-	failpoint.Inject("addRecordForceAssertExist", func() {
+	if _, err := failpoint.Eval("github.com/pingcap/tidb/pkg/table/tables/addRecordForceAssertExist"); err == nil {
 		// Assert the key exists while it actually doesn't. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = setAssertion(txn, key, kv.AssertExist); err != nil {
-				failpoint.Return(nil, err)
+				return nil, err
 			}
 		}
-	})
+	}
 	if setPresume && !txn.IsPessimistic() {
 		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {

@@ -6848,7 +6848,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
 	}
-	failpoint.InjectCall("waitJobSubmitted")
+	failpoint.Call("github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted")
 
 	sessVars := ctx.GetSessionVars()
 	sessVars.StmtCtx.IsDDLJobInQueue.Store(true)
@@ -6896,9 +6896,11 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	i := 0
 	notifyCh, _ := e.getJobDoneCh(jobID)
 	for {
+		selectedByNotify := false
 		failpoint.InjectCall("storeCloseInLoop")
 		select {
 		case _, ok := <-notifyCh:
+			selectedByNotify = true
 			if !ok {
 				// when fast create enabled, jobs might be merged, and we broadcast
 				// the result by closing the channel, to avoid this loop keeps running
@@ -6911,6 +6913,13 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		case <-e.ctx.Done():
 			logutil.DDLLogger().Info("DoDDLJob will quit because context done")
 			return e.ctx.Err()
+		}
+		if selectedByNotify {
+			failpoint.Call("github.com/pingcap/tidb/pkg/ddl/afterWaitDDLJobDone")
+		}
+		if err := e.ctx.Err(); err != nil {
+			logutil.DDLLogger().Info("DoDDLJob will quit because context done")
+			return err
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.
