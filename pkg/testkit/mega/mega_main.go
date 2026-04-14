@@ -37,6 +37,70 @@ var (
 	flagMegaTimeout  = flag.Duration("mega.timeout", 3*time.Minute, "Per-test timeout in orchestrator mode")
 )
 
+var helpCalled = false
+
+// init sets custom flag.Usage to print our help instead of go test's default.
+func init() {
+	originalUsage := flag.Usage
+	flag.Usage = func() {
+		// Print mega help first
+		printHelpCLI()
+		helpCalled = true
+		// Print go test's standard help for other flags
+		originalUsage()
+	}
+}
+
+// printHelpCLI prints help without calling os.Exit (used by flag.Usage).
+func printHelpCLI() {
+	fmt.Printf(`Mega test framework - self-contained monolithic test binary
+
+USAGE:
+    mega.test [SUBCOMMAND] [OPTIONS]
+    mega.test help
+    mega.test list
+    mega.test run [PATTERN] [OPTIONS]
+    mega.test run [OPTIONS]
+
+SUBCOMMANDS:
+    help        Print this help message
+    list        List all registered tests
+    run         Run tests (with optional pattern filter)
+
+    When 'run' is called without a pattern, it operates in orchestrator mode:
+    - Lists all registered tests
+    - Spawns subprocesses for each test with parallelism
+    - Each subprocess runs a single test in an isolated environment
+    - Useful for CI and full test suite execution
+
+    When 'run' is called with a pattern (e.g., 'ddl/*', '*/GetTimeZone'):
+    - Runs matching tests in current process
+    - Useful for debugging individual tests
+
+PATTERNS:
+    ddl/              All tests in ddl package
+    */GetTimeZone      All tests named GetTimeZone in any package
+    executor/Inspe*   Tests in executor package with names matching Inspe*
+
+OPTIONS (for orchestrator mode):
+    -mega.p N           Number of parallel workers (default: 8)
+    -mega.timeout D      Per-test timeout (default: 3m)
+
+EXAMPLES:
+    mega.test help
+    mega.test list
+    mega.test run
+    mega.test run ddl/*
+    mega.test run */GetTimeZone
+    mega.test run executor/InspectionResult -mega.p 16
+
+INTERNAL FLAGS (used by orchestrator subprocesses):
+    -test.run          Internal: go test filter
+    -mega.run          Internal: exact test pattern
+    -mega.list         Internal: list tests mode
+`)
+}
+
 // RunMega runs all registered tests from various packages.
 // This test serves as the entry point for monolithic testing,
 // where tests from multiple packages are compiled together
