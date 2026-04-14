@@ -310,6 +310,11 @@ type copTask struct {
 	pagingSize      uint64
 	pagingSizeBytes uint64
 	pagingTaskIdx   uint32
+	// ema is the per-logical-scan read-bytes EMA used to refine the RC
+	// paging pre-charge on each paging RPC. Nil for non-paging tasks and
+	// before the first successful paging response; lazily created on the
+	// first paging RPC. Propagated across region/lock-error retries.
+	ema *ruEMA
 
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 	requestSource  util.RequestSource
@@ -1677,6 +1682,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 
 	if task.paging {
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
+		if task.ema == nil {
+			task.ema = newRUEMA()
+		}
 	}
 
 	copReq := coprocessor.Request{
@@ -1716,6 +1724,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
+	// Supply a learned RC pre-charge hint when the per-logical-scan EMA has
+	// converged. Until it has, leave PredictedReadBytes at 0 so PD falls back
+	// to PagingSizeBytes (the worst-case cap) as the pre-charge basis.
+	if task.ema.IsReady() {
+		req.PredictedReadBytes = task.ema.Predict()
+	}
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
@@ -1873,9 +1887,13 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	}
 	if result != nil && len(result.remains) > 0 {
 		// If there is region error or lock error, keep the paging size and retry.
+		// Preserve the EMA state so the learned estimate survives the retry
+		// split - the remain tasks are a continuation of the same logical
+		// scan, just fanned back out to updated regions.
 		for _, remainedTask := range result.remains {
 			remainedTask.pagingSize = task.pagingSize
 			remainedTask.pagingSizeBytes = task.pagingSizeBytes
+			remainedTask.ema = task.ema
 		}
 		return result, nil
 	}
@@ -1887,6 +1905,14 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		return result, nil
 	}
 
+	// Observe the MVCC read bytes for this successful paging response so
+	// the next paging RPC on this scan can use a tighter pre-charge basis.
+	if task.ema != nil {
+		if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
+			task.ema.Observe(readBytes, time.Now())
+		}
+	}
+
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
 	if task.ranges.Len() == 0 {
@@ -1896,6 +1922,24 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	task.pagingSize = paging.GrowPagingSize(task.pagingSize, worker.req.Paging.MaxPagingSize)
 	result.remains = []*copTask{task}
 	return result, nil
+}
+
+// pagingResponseReadBytes returns the MVCC bytes read to serve a paging cop
+// response. It mirrors client-go's resourcecontrol.MakeResponseInfo so the
+// TiDB-side EMA observes the same quantity PD bills against. Falls back to
+// 0 when ScanDetailV2 is absent (e.g. TiFlash responses); the caller then
+// skips the observation.
+//
+// TODO: for NextGen, PD bills max(TotalVersionsSize, ProcessedVersionsSize).
+// Mirror that here once a TiDB-side NextGen gate is available in this pkg.
+func pagingResponseReadBytes(pbResp *coprocessor.Response) uint64 {
+	if pbResp == nil {
+		return 0
+	}
+	if scanDetail := pbResp.GetExecDetailsV2().GetScanDetailV2(); scanDetail != nil {
+		return scanDetail.GetProcessedVersionsSize()
+	}
+	return 0
 }
 
 // buildExceedsBoundDiagFields builds diagnostic log fields for "Request range exceeds bound" errors.
