@@ -262,10 +262,6 @@ func (h subscriber) handle(
 				)
 			}
 		}
-	case model.ActionCreateMaterializedViewLog,
-		model.ActionCreateMaterializedView:
-		// MV refresh/attributes/mvlog purge DDL updates only MV runtime metadata.
-		// They don't change table data/partition topology, so stats meta should stay unchanged.
 	default:
 		intest.Assert(false)
 		logutil.StatsLogger().Error("Unhandled schema change event",
