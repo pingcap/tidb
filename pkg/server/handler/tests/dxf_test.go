@@ -54,8 +54,6 @@ func TestDXFScheduleAPI(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
-<<<<<<< HEAD
-=======
 	setupTaskManager := func(t *testing.T) (*storage.TaskManager, context.Context) {
 		t.Helper()
 		tm, err := storage.GetTaskManager()
@@ -73,8 +71,6 @@ func TestDXFScheduleAPI(t *testing.T) {
 		}
 		return tm, ctx
 	}
-
->>>>>>> 5733f225546 (pkg/dxf, pkg/server: add DXF task history API (#67656))
 	t.Run("schedule status api", func(t *testing.T) {
 		// invalid method
 		resp, err := ts.PostStatus("/dxf/schedule/status", "", bytes.NewBuffer([]byte("")))
