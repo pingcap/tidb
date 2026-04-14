@@ -11,6 +11,8 @@
 
 - `backup-id` is allocated from a fresh PD TSO, exposed to users as decimal `uint64`, and encoded as fixed-width upper-case hex only in storage paths.
 - `br restore full|db|table --storage-layout=repo-v1 --backup-id <id>` resolves metadata from `_meta/snapshot/<backup-id>/backupmeta` while still using the repo root backend for data files.
+- `br restore point --full-backup-storage <repo> --storage-layout=repo-v1 --backup-id <id>` reuses the same snapshot reference flags for the full backup it restores before log replay.
+- `br operator checksum-as -s <repo> --storage-layout=repo-v1 --backup-id <id>` resolves rewrite-rule metadata from the same per-backup snapshot metadata view instead of the repo root.
 - Legacy snapshot backup and restore keep the old root-level `backupmeta` layout unchanged.
 
 ## Pending Marker Semantics
