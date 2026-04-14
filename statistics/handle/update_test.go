@@ -2730,3 +2730,45 @@ func TestNotDumpSysTable(t *testing.T) {
 	tblID := tbl.Meta().ID
 	tk.MustQuery(fmt.Sprintf("select * from mysql.stats_meta where table_id = %v", tblID)).Check(testkit.Rows())
 }
+
+func TestAutoAnalyzeForMissingPartition(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_skip_missing_partition_stats = 1")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	originalVal3 := handle.AutoAnalyzeMinCnt
+	defer func() {
+		handle.AutoAnalyzeMinCnt = originalVal3
+	}()
+	handle.AutoAnalyzeMinCnt = 0
+	h := dom.StatsHandle()
+
+	tk.MustExec("set @@tidb_skip_missing_partition_stats = 1")
+	tk.MustExec("create table t (a int, b int, c int, index idx_b(b)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t partition p1")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
+	originalVal2 := tk.MustQuery("select @@tidb_auto_analyze_ratio").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
+	}()
+	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
+	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	tk.MustQuery("select state from mysql.analyze_jobs").Check(testkit.Rows(
+		"finished",
+		"finished",
+		"finished",
+		"finished",
+		"finished",
+		"finished",
+		"finished",
+		"finished",
+		"finished",
+		"finished",
+		"finished",
+		"finished"))
+}

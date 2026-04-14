@@ -103,7 +103,7 @@ addr = "127.0.0.1:8287"
 # Current supports three resolution algorithms:
 #  - none: doesn't detect duplicate records, which has the best performance of the three algorithms, but probably leads to
 #    inconsistent data in the target TiDB.
-#  - record: only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB. Note that this
+#  - record: only records duplicate records to `lightning_task_info.conflict_error_v1_2` table on the target TiDB. Note that this
 #    required the version of target TiKV version is no less than v5.2.0, otherwise it will fallback to 'none'.
 #  - remove: records all duplicate records like the 'record' algorithm and remove all duplicate records to ensure a consistent
 #    state in the target TiDB.

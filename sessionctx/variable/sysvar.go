@@ -475,6 +475,22 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()), nil
 		},
 	},
+	{Scope: ScopeInstance, Name: TiDBEnableStatsOwner, Value: BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load()), Type: TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			oldVal, newVal := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load(), TiDBOptOn(val)
+			if oldVal != newVal {
+				err := switchStats(newVal)
+				if err != nil {
+					return err
+				}
+				config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(newVal)
+			}
+			return nil
+		},
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return BoolToOnOff(config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load()), nil
+		},
+	},
 	{Scope: ScopeInstance, Name: TiDBRCReadCheckTS, Value: BoolToOnOff(DefRCReadCheckTS), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableRCReadCheckTS.Store(TiDBOptOn(val))
 		return nil
@@ -701,7 +717,11 @@ var defaultSysVars = []*SysVar{
 		on := TiDBOptOn(val)
 		// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
 		if on && s.StmtCtx.StmtType == "Set" {
-			err := s.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), TiDBSuperReadOnly, "ON")
+			err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), TiDBSuperReadOnly, "ON", false)
+			if err != nil {
+				return err
+			}
+			err = GetSysVar(TiDBSuperReadOnly).SetGlobal(context.Background(), s, "ON")
 			if err != nil {
 				return err
 			}
@@ -1126,6 +1146,12 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableConcurrentDDL.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableDropTableForceMerge, Value: BoolToOnOff(DefTiDBEnableDropTableForceMerge), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		EnableDropTableForceMerge.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(EnableDropTableForceMerge.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableMDL, Value: BoolToOnOff(DefTiDBEnableMDL), Type: TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
 		if EnableMDL.Load() != TiDBOptOn(val) {
@@ -2069,6 +2095,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLRequirePrimaryKey, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PrimaryKeyRequired = TiDBOptOn(val)
 		return nil
+	}, RequireDynamicPrivileges: func(isGlobal bool, sem bool) []string {
+		return []string{"SYSTEM_VARIABLES_ADMIN"}
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAnalyzeSnapshot, Value: BoolToOnOff(DefTiDBEnableAnalyzeSnapshot), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAnalyzeSnapshot = TiDBOptOn(val)
@@ -2440,6 +2468,8 @@ const (
 	PluginLoad = "plugin_load"
 	// TiDBEnableDDL indicates whether the tidb-server runs DDL statements,
 	TiDBEnableDDL = "tidb_enable_ddl"
+	// TiDBEnableStatsOwner indicates whether the tidb-server campaigns the stats owner.
+	TiDBEnableStatsOwner = "tidb_enable_stats_owner"
 	// Port is the name for 'port' system variable.
 	Port = "port"
 	// DataDir is the name for 'datadir' system variable.

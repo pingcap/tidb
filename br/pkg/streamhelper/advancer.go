@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/mathutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -431,8 +431,8 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
 		globalCheckpointTs, err := c.env.GetGlobalCheckpointForTask(ctx, e.Name)
 		if err != nil {
-			log.Error("failed to get global checkpoint, skipping.", logutil.ShortError(err))
-			return err
+			// ignore the error, just log it
+			log.Warn("failed to get global checkpoint, skipping.", logutil.ShortError(err))
 		}
 		if globalCheckpointTs < c.task.StartTs {
 			globalCheckpointTs = c.task.StartTs
@@ -470,7 +470,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	return nil
 }
 
-func (c *CheckpointAdvancer) setCheckpoint(ctx context.Context, s spans.Valued) bool {
+func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
 	cp := NewCheckpointWithSpan(s)
 	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
@@ -496,7 +496,7 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
 		return err
 	}
 
-	if c.setCheckpoint(ctx, cp) {
+	if c.setCheckpoint(cp) {
 		log.Info("uploading checkpoint for task",
 			zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp.Value)),
 			zap.Uint64("checkpoint", cp.Value),
@@ -566,13 +566,21 @@ func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, erro
 	if c.cfg.CheckPointLagLimit <= 0 {
 		return false, nil
 	}
+	globalTs, err := c.env.GetGlobalCheckpointForTask(ctx, c.task.Name)
+	if err != nil {
+		return false, err
+	}
+	if globalTs < c.task.StartTs {
+		// unreachable.
+		return false, nil
+	}
 
 	now, err := c.env.FetchCurrentTS(ctx)
 	if err != nil {
 		return false, err
 	}
 
-	lagDuration := oracle.GetTimeFromTS(now).Sub(oracle.GetTimeFromTS(c.lastCheckpoint.TS))
+	lagDuration := oracle.GetTimeFromTS(now).Sub(oracle.GetTimeFromTS(globalTs))
 	if lagDuration > c.cfg.CheckPointLagLimit {
 		log.Warn("checkpoint lag is too large", zap.String("category", "log backup advancer"),
 			zap.Stringer("lag", lagDuration))
@@ -583,14 +591,15 @@ func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, erro
 
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Lock()
-	c.setCheckpoint(ctx, c.checkpoints.Min())
+	c.setCheckpoint(c.checkpoints.Min())
 	c.checkpointsMu.Unlock()
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
 	isLagged, err := c.isCheckpointLagged(ctx)
 	if err != nil {
-		return errors.Annotate(err, "failed to check timestamp")
+		// ignore the error, just log it
+		log.Warn("failed to check timestamp", logutil.ShortError(err))
 	}
 	if isLagged {
 		err := c.env.PauseTask(ctx, c.task.Name)
@@ -640,7 +649,7 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 	c.taskMu.Lock()
 	defer c.taskMu.Unlock()
 	if c.task == nil || c.isPaused.Load() {
-		log.Debug("No tasks yet, skipping advancing.")
+		log.Info("No tasks yet, skipping advancing.")
 		return nil
 	}
 
@@ -668,10 +677,14 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 	// do not block main tick here
 	go func() {
 		failpoint.Inject("AsyncResolveLocks", func() {})
+		maxTs := uint64(0)
+		for _, t := range targets {
+			maxTs = mathutil.Max(maxTs, t.Value)
+		}
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
 			return tikv.ResolveLocksForRange(
-				ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
+				ctx, c.env, maxTs+1, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
 		}
 		workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 		var wg sync.WaitGroup

@@ -81,6 +81,7 @@ go_test(
         "//kv",
         "//tablecodec",
         "//util/codec",
+        "//util/mathutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",

@@ -491,35 +491,35 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "10.csv", int64(0), nonRetryableError.Error(), "(4)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(5)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "11.csv", int64(0), nonRetryableError.Error(), "(5)").
 		WillReturnResult(driver.ResultNoRows)
 
@@ -557,21 +557,21 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
 		WillReturnResult(driver.ResultNoRows)
 	// the forth row will exceed the error threshold, won't record this error

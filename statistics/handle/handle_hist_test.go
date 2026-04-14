@@ -15,6 +15,7 @@
 package handle_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -330,4 +331,67 @@ func TestRetry(t *testing.T) {
 		require.Error(t, rs1.Val.(stmtctx.StatsLoadResult).Error)
 	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockReadStatsForOneFail"))
+}
+
+func TestMergeGlobalStatsIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE employees3 (
+  emp_id int(11) NOT NULL,
+  emp_name varchar(25) NOT NULL,
+  salary int(11) NOT NULL,
+  dept_id int(11) NOT NULL,
+  PRIMARY KEY (emp_id) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE (emp_id)
+(
+  PARTITION p0 VALUES LESS THAN (1000),
+  PARTITION p1 VALUES LESS THAN (4000),
+  PARTITION p2 VALUES LESS THAN (12000),
+  PARTITION p3 VALUES LESS THAN (16000),
+  PARTITION p4 VALUES LESS THAN (20000),
+  PARTITION p5 VALUES LESS THAN (25000),
+  PARTITION p6 VALUES LESS THAN (30000),
+  PARTITION p7 VALUES LESS THAN (35000),
+  PARTITION p8 VALUES LESS THAN (40000),
+  PARTITION p9 VALUES LESS THAN (45000),
+  PARTITION p10 VALUES LESS THAN (50000),
+  PARTITION p11 VALUES LESS THAN (55000),
+  PARTITION p12 VALUES LESS THAN (65000),
+  PARTITION p13 VALUES LESS THAN (75000),
+  PARTITION p14 VALUES LESS THAN (85000),
+  PARTITION p15 VALUES LESS THAN (95000),
+  PARTITION p16 VALUES LESS THAN (105000),
+  PARTITION p17 VALUES LESS THAN (115000),
+  PARTITION p18 VALUES LESS THAN (125000),
+  PARTITION pmax VALUES LESS THAN (MAXVALUE)
+);`)
+	tk.MustExec(`
+SET cte_max_recursion_depth = 1000000000;
+INSERT INTO employees3
+WITH RECURSIVE EmployeeGenerator AS (
+    SELECT
+        101 AS emp_id,
+        'Emp00001' AS emp_name,
+        FLOOR(RAND() * (150000 - 50000) + 50000) AS salary,
+        FLOOR(RAND() * 3 + 1) AS dept_id
+    UNION ALL
+    SELECT
+        emp_id + 1,
+        CONCAT('Emp', LPAD(CAST(emp_id - 100 AS CHAR), 5, '0')),
+        FLOOR(RAND() * (150000 - 50000) + 50000),
+        FLOOR(RAND() * 3 + 1)
+    FROM
+        EmployeeGenerator
+    WHERE
+        emp_id < 20100
+)
+SELECT * FROM EmployeeGenerator;
+`)
+	tk.MustExec("analyze table employees3")
+	for i := 0; i <= 12; i++ {
+		tk.MustExec(fmt.Sprintf("analyze table employees3 partition p%d", i))
+		tk.MustQuery("show stats_histograms where table_name='employees3' and Column_name='PRIMARY' and Partition_name='global'").CheckContain("19958")
+	}
 }
