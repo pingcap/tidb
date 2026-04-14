@@ -51,6 +51,7 @@ Execution policy:
 - `P0-AUTH`: dynamic privileges and identity-function semantics
 - `P0-CORE`: `AT RESULT` correctness in query pipeline
 - `P0-RES`: `RESTRICT ON` deny/allow behavior
+- `P0-SNAPSHOT`: snapshot and stale-read semantic consistency (`tidb_snapshot`, `AS OF TIMESTAMP`, stale txn)
 - `P0-FUNC`: masking builtin behavior and boundaries
 - `P0-OBS`: metadata and `SHOW` consistency
 
@@ -73,6 +74,7 @@ Execution policy:
 - `P1-CACHE`: prepared statement / schema cache invalidation after policy and column metadata changes
 - `P1-COMPAT`: partition tables and transaction mode intersections
 - `P1-RES`: `RESTRICT ON` behavior with prepared DML statements
+- `P1-SNAPSHOT`: `tidb_read_staleness`, prepared statement, and cross-session behavior in snapshot/stale-read paths
 
 ## 4. Compatibility and Intersections
 

@@ -124,5 +124,47 @@
       "type": "steps_pass",
       "steps": ["it_column_masking"]
     }
+  },
+  {
+    "id": "P1-SNAPSHOT-01",
+    "scenario": "tidb_read_staleness compatibility",
+    "coverage_cases": [
+      {
+        "name": "tidb_read_staleness follows stale timestamp policy state instead of latest policy rows (IT-MASK-P1-010)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P1-SNAPSHOT-02",
+    "scenario": "Prepared statement under snapshot mode",
+    "coverage_cases": [
+      {
+        "name": "Prepared statement execute remains timestamp-consistent under tidb_snapshot (IT-MASK-P1-010)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P1-SNAPSHOT-03",
+    "scenario": "Cross-session snapshot cache isolation",
+    "coverage_cases": [
+      {
+        "name": "Snapshot session keeps historical policy view while another session uses latest view (IT-MASK-P1-010)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
   }
 ]

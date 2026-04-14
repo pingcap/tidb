@@ -519,6 +519,164 @@ COUNT(*)
 0
 DEALLOCATE PREPARE stmt_prepare_ud_upd;
 DEALLOCATE PREPARE stmt_prepare_ud_del;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_snapshot_compat;
+DROP TABLE IF EXISTS privilege__column_masking_policy.t_snapshot_compat_ts;
+DROP USER IF EXISTS cmp_snapshot, cmp_snapshot_stale;
+CREATE TABLE privilege__column_masking_policy.t_snapshot_compat(id INT PRIMARY KEY, c VARCHAR(20));
+CREATE TABLE privilege__column_masking_policy.t_snapshot_compat_ts(name VARCHAR(16) PRIMARY KEY, ts DATETIME(6) NOT NULL);
+INSERT INTO privilege__column_masking_policy.t_snapshot_compat VALUES (1, 'secret');
+CREATE USER cmp_snapshot, cmp_snapshot_stale;
+GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot;
+GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat TO cmp_snapshot_stale;
+GRANT SELECT ON privilege__column_masking_policy.t_snapshot_compat_ts TO cmp_snapshot;
+REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
+('ts0', NOW(6));
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+CREATE MASKING POLICY p_snapshot_compat ON privilege__column_masking_policy.t_snapshot_compat(c) AS MASK_FULL(c) ENABLE;
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
+('ts1', NOW(6));
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+ALTER TABLE privilege__column_masking_policy.t_snapshot_compat
+MODIFY MASKING POLICY p_snapshot_compat SET EXPRESSION = MASK_PARTIAL(c, 1, 1, '*');
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
+('ts2', NOW(6));
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DISABLE MASKING POLICY p_snapshot_compat;
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
+('ts3', NOW(6));
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+ALTER TABLE privilege__column_masking_policy.t_snapshot_compat ENABLE MASKING POLICY p_snapshot_compat;
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
+('ts4', NOW(6));
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DROP MASKING POLICY p_snapshot_compat;
+SELECT SLEEP(0.2);
+SLEEP(0.2)
+0
+REPLACE INTO privilege__column_masking_policy.t_snapshot_compat_ts VALUES
+('ts5', NOW(6));
+INSERT IGNORE INTO mysql.tidb VALUES
+('tikv_gc_safe_point', '20240131-00:00:00.000 +0800', 'mock for masking snapshot compatibility test');
+SET @ts0 = CAST((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name = 'ts0') AS CHAR);
+SET @ts1 = CAST((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name = 'ts1') AS CHAR);
+SET @ts2 = CAST((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name = 'ts2') AS CHAR);
+SET @ts3 = CAST((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name = 'ts3') AS CHAR);
+SET @ts4 = CAST((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name = 'ts4') AS CHAR);
+SET @ts5 = CAST((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name = 'ts5') AS CHAR);
+SET @@tidb_snapshot=@ts0;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+secret
+SET @@tidb_snapshot=@ts1;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+XXXXXX
+SET @@tidb_snapshot=@ts2;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+s****t
+SET @@tidb_snapshot=@ts3;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+secret
+SET @@tidb_snapshot=@ts4;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+s****t
+SET @@tidb_snapshot=@ts5;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+secret
+SET @@tidb_snapshot='';
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat AS OF TIMESTAMP @ts1 WHERE id = 1;
+c
+XXXXXX
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat AS OF TIMESTAMP @ts2 WHERE id = 1;
+c
+s****t
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat AS OF TIMESTAMP @ts5 WHERE id = 1;
+c
+secret
+START TRANSACTION READ ONLY AS OF TIMESTAMP @ts2;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+s****t
+COMMIT;
+SET TRANSACTION READ ONLY AS OF TIMESTAMP @ts3;
+START TRANSACTION;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+secret
+COMMIT;
+PREPARE stmt_snapshot_policy FROM
+'SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1';
+SET @@tidb_snapshot=@ts4;
+EXECUTE stmt_snapshot_policy;
+c
+s****t
+SET @@tidb_snapshot=@ts5;
+EXECUTE stmt_snapshot_policy;
+c
+secret
+SET @@tidb_snapshot='';
+DEALLOCATE PREPARE stmt_snapshot_policy;
+SET @ts2 = CAST((SELECT ts FROM privilege__column_masking_policy.t_snapshot_compat_ts WHERE name = 'ts2') AS CHAR);
+SET @@tidb_snapshot=@ts2;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+s****t
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+secret
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+s****t
+SET @@tidb_snapshot='';
+CREATE MASKING POLICY p_snapshot_stale ON privilege__column_masking_policy.t_snapshot_compat(c) AS MASK_FULL(c) ENABLE;
+SELECT SLEEP(2.2);
+SLEEP(2.2)
+0
+ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DISABLE MASKING POLICY p_snapshot_stale;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+secret
+SET @@tidb_read_staleness='-1';
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+XXXXXX
+SET @@tidb_read_staleness=default;
+SELECT c FROM privilege__column_masking_policy.t_snapshot_compat WHERE id = 1;
+c
+secret
+ALTER TABLE privilege__column_masking_policy.t_snapshot_compat DROP MASKING POLICY p_snapshot_stale;
+DROP TABLE privilege__column_masking_policy.t_snapshot_compat;
+DROP TABLE privilege__column_masking_policy.t_snapshot_compat_ts;
+DROP USER IF EXISTS cmp_snapshot, cmp_snapshot_stale;
+DELETE FROM mysql.tidb
+WHERE VARIABLE_NAME = 'tikv_gc_safe_point'
+AND COMMENT = 'mock for masking snapshot compatibility test';
 ALTER TABLE privilege__column_masking_policy.t_lifecycle DROP MASKING POLICY p_lifecycle;
 ALTER TABLE privilege__column_masking_policy.t_role DROP MASKING POLICY p_role;
 ALTER TABLE privilege__column_masking_policy.src_restrict DROP MASKING POLICY p_restrict;

@@ -282,6 +282,48 @@
     }
   },
   {
+    "id": "P0-SNAPSHOT-01",
+    "scenario": "Policy history consistency with tidb_snapshot",
+    "coverage_cases": [
+      {
+        "name": "Policy timeline create/alter/disable/enable/drop with snapshot reads (IT-MASK-P1-010)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-SNAPSHOT-02",
+    "scenario": "Statement-level AS OF TIMESTAMP policy consistency",
+    "coverage_cases": [
+      {
+        "name": "AS OF TIMESTAMP follows policy state at read timestamp (IT-MASK-P1-010)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
+    "id": "P0-SNAPSHOT-03",
+    "scenario": "Stale transaction policy consistency",
+    "coverage_cases": [
+      {
+        "name": "START/SET TRANSACTION READ ONLY AS OF TIMESTAMP uses timestamp-consistent policy view (IT-MASK-P1-010)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      }
+    ],
+    "rule": {
+      "type": "steps_pass",
+      "steps": ["it_column_masking"]
+    }
+  },
+  {
     "id": "P0-RES-01",
     "scenario": "RESTRICT ON INSERT INTO ... SELECT",
     "coverage_cases": [
