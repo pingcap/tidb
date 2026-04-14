@@ -1780,7 +1780,8 @@ func mergeByUpperBound(
 			cutUpper := lastUpper
 			cutCount := cumCount
 			cutRepeat := lastRepeat
-			if prevUpper != nil && (threshold-prevCumCount) < (cumCount-threshold) {
+			if prevUpper != nil && prevCumCount < threshold &&
+				(threshold-prevCumCount) < (cumCount-threshold) {
 				cutUpper = prevUpper
 				cutCount = prevCumCount
 				cutRepeat = prevRepeat
