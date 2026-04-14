@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -2168,15 +2169,37 @@ type ticiAddPartitionGroup struct {
 	indexIDs   []int64
 }
 
+func canonicalizeTiCIParserInfo(parserInfo *tici.ParserInfo) *tici.ParserInfo {
+	if parserInfo == nil {
+		return nil
+	}
+
+	canonical := &tici.ParserInfo{
+		ParserType: parserInfo.ParserType,
+	}
+	if len(parserInfo.ParserParams) > 0 {
+		canonical.ParserParams = make(map[string]string, len(parserInfo.ParserParams))
+		for key, value := range parserInfo.ParserParams {
+			canonical.ParserParams[key] = value
+		}
+	}
+	if len(parserInfo.StopWords) > 0 {
+		canonical.StopWords = append([]string(nil), parserInfo.StopWords...)
+		slices.Sort(canonical.StopWords)
+	}
+	return canonical
+}
+
 func marshalTiCIParserInfoKey(parserInfo *tici.ParserInfo) (string, error) {
 	if parserInfo == nil {
 		return "nil", nil
 	}
-	data, err := json.Marshal(parserInfo)
+	data, err := json.Marshal(canonicalizeTiCIParserInfo(parserInfo))
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	return string(data), nil
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func (w *worker) buildTiCIAddPartitionGroups(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) ([]ticiAddPartitionGroup, error) {
