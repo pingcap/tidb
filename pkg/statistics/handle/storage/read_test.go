@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -145,4 +146,59 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	// Verify all items were removed from AsyncLoadHistogramNeededItems after loading.
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	require.Equal(t, len(items), 0, "AsyncLoadHistogramNeededItems should be empty after loading")
+}
+
+func TestColumnStatsIsInvalidSkipsInternalColumnID(t *testing.T) {
+	clearAsyncLoadHistogramNeededItems()
+	t.Cleanup(clearAsyncLoadHistogramNeededItems)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	histColl := &statistics.HistColl{
+		PhysicalID: 1,
+	}
+	statistics.ColumnStatsIsInvalid(nil, tk.Session().GetPlanCtx(), histColl, -1)
+
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+	require.Len(t, items, 0)
+}
+
+func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
+	clearAsyncLoadHistogramNeededItems()
+	t.Cleanup(clearAsyncLoadHistogramNeededItems)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	h := dom.StatsHandle()
+	// Make sure this table exists in stats cache so the old path would touch session context.
+	h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+
+	rowIDItem := model.TableItemID{
+		TableID: tableInfo.ID,
+		ID:      -1,
+	}
+	asyncload.AsyncLoadHistogramNeededItems.Insert(rowIDItem, true)
+
+	require.NotPanics(t, func() {
+		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h)
+		require.NoError(t, err)
+	})
+	require.NotContains(t, asyncload.AsyncLoadHistogramNeededItems.AllItems(), model.StatsLoadItem{
+		TableItemID: rowIDItem,
+		FullLoad:    true,
+	})
+}
+
+func clearAsyncLoadHistogramNeededItems() {
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+	}
 }
