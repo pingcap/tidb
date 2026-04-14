@@ -270,7 +270,7 @@ func TestMetaFileSize(t *testing.T) {
 
 func TestCheckBackupMetaCompatibility(t *testing.T) {
 	baseMeta := &backuppb.BackupMeta{
-		BackupSchemaVersion: CurrentBackupSchemaVersion,
+		BackupSchemaVersion: backuppb.BackupSchemaVersion,
 		ClusterVersion:      "8.5.6",
 		BrVersion:           "v8.5.6",
 	}
@@ -293,7 +293,7 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 		{
 			name: "reject newer schema version",
 			backupMeta: &backuppb.BackupMeta{
-				BackupSchemaVersion: CurrentBackupSchemaVersion + 1,
+				BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
 				ClusterVersion:      "8.5.6",
 				BrVersion:           "v8.5.6",
 			},
@@ -303,7 +303,7 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 		{
 			name: "warn for newer schema version when requirements disabled",
 			backupMeta: &backuppb.BackupMeta{
-				BackupSchemaVersion: CurrentBackupSchemaVersion + 1,
+				BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
 				ClusterVersion:      "8.5.6",
 				BrVersion:           "v8.5.6",
 			},
@@ -312,7 +312,7 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 		{
 			name: "reject unknown fields",
 			backupMeta: &backuppb.BackupMeta{
-				BackupSchemaVersion: CurrentBackupSchemaVersion,
+				BackupSchemaVersion: backuppb.BackupSchemaVersion,
 				ClusterVersion:      "8.5.6",
 				BrVersion:           "v8.5.6",
 				XXX_unrecognized:    []byte{0x08, 0x01},
@@ -323,7 +323,7 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 		{
 			name: "warn for unknown fields when requirements disabled",
 			backupMeta: &backuppb.BackupMeta{
-				BackupSchemaVersion: CurrentBackupSchemaVersion,
+				BackupSchemaVersion: backuppb.BackupSchemaVersion,
 				ClusterVersion:      "8.5.6",
 				BrVersion:           "v8.5.6",
 				XXX_unrecognized:    []byte{0x08, 0x01},
@@ -348,5 +348,5 @@ func TestNewMetaWriterInitializesBackupSchemaVersion(t *testing.T) {
 	// New backupmeta files should carry the current compatibility version by default
 	// so readers can distinguish new semantics from pre-versioned backups.
 	writer := NewMetaWriter(nil, MetaFileSize, false, "", nil)
-	require.Equal(t, CurrentBackupSchemaVersion, writer.backupMeta.BackupSchemaVersion)
+	require.Equal(t, backuppb.BackupSchemaVersion, writer.backupMeta.BackupSchemaVersion)
 }

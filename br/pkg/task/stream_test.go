@@ -205,7 +205,7 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 		const fullBackupTS uint64 = 223344
 		const fullClusterID uint64 = 556677
 		m := backuppb.BackupMeta{
-			BackupSchemaVersion: metautil.CurrentBackupSchemaVersion + 1,
+			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
 			ClusterVersion:      "8.5.6",
 			BrVersion:           "v8.5.6",
 			EndVersion:          fullBackupTS,
@@ -260,7 +260,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 		require.NoError(t, err)
 
 		m := backuppb.BackupMeta{
-			BackupSchemaVersion: metautil.CurrentBackupSchemaVersion + 1,
+			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
 			ClusterVersion:      "8.5.6",
 			BrVersion:           "v8.5.6",
 			StartVersion:        startLogBackupTS,
