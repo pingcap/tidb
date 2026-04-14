@@ -382,6 +382,12 @@ type ddlResignOwnerHandler struct {
 	store kv.Storage
 }
 
+// mergeEmptyRegionsResetHandler is the handler for resetting the background
+// merge-empty-regions scan checkpoint.
+type mergeEmptyRegionsResetHandler struct {
+	store kv.Storage
+}
+
 type serverInfoHandler struct {
 	*tikvHandlerTool
 }
@@ -1359,6 +1365,32 @@ func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	err := h.resignDDLOwner()
 	if err != nil {
 		log.Error("failed to resign DDL owner", zap.Error(err))
+		writeError(w, err)
+		return
+	}
+
+	writeData(w, "success!")
+}
+
+func (h mergeEmptyRegionsResetHandler) resetMergeEmptyRegionsMinTableID() error {
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(dom.ResetMergeEmptyRegionsMinTableID())
+}
+
+// ServeHTTP handles request of resetting the merge-empty-regions scan
+// checkpoint to table ID 1.
+func (h mergeEmptyRegionsResetHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method"))
+		return
+	}
+
+	err := h.resetMergeEmptyRegionsMinTableID()
+	if err != nil {
+		log.Error("failed to reset merge-empty-regions min table ID", zap.Error(err))
 		writeError(w, err)
 		return
 	}
