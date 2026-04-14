@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package task
+package taskrepo
 
 import (
 	"context"
@@ -20,18 +20,46 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"go.uber.org/zap"
+	gozap "go.uber.org/zap"
 )
 
-type snapshotStorageRef struct {
+const (
+	flagStorageLayout = "storage-layout"
+	flagUseCheckpoint = "use-checkpoint"
+	flagOnPending     = "on-pending"
+)
+
+type OnPendingAction string
+
+const (
+	OnPendingError  OnPendingAction = "error"
+	OnPendingResume OnPendingAction = "resume"
+	OnPendingNew    OnPendingAction = "new"
+)
+
+type Config struct {
+	objstore.BackendOptions
+
+	Storage    string
+	CipherInfo backuppb.CipherInfo
+	NoCreds    bool
+	SendCreds  bool
+}
+
+type SnapshotStorageRef struct {
 	Layout          repo.Layout
 	BackupID        repo.BackupID
 	RootBackend     *backuppb.StorageBackend
@@ -39,13 +67,13 @@ type snapshotStorageRef struct {
 	MetadataStorage storeapi.Storage
 }
 
-type preparedRepoV1SnapshotBackup struct {
-	snapshotStorageRef
-	pendingMarkerPath    string
-	resumeFromCheckpoint bool
+type PreparedRepoV1SnapshotBackup struct {
+	SnapshotStorageRef
+	PendingMarkerPath    string
+	ResumeFromCheckpoint bool
 }
 
-func (prepared *preparedRepoV1SnapshotBackup) RewriteStoreRequest(storeID uint64, request *backuppb.BackupRequest) error {
+func (prepared *PreparedRepoV1SnapshotBackup) RewriteStoreRequest(storeID uint64, request *backuppb.BackupRequest) error {
 	if prepared == nil {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "repo-v1 backup adapter is missing prepared storage")
 	}
@@ -61,47 +89,93 @@ func (prepared *preparedRepoV1SnapshotBackup) RewriteStoreRequest(storeID uint64
 	return nil
 }
 
-func (prepared *preparedRepoV1SnapshotBackup) RewriteStoreResponseFiles(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
+func (prepared *PreparedRepoV1SnapshotBackup) RewriteStoreResponseFiles(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
 	if prepared == nil {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "repo-v1 backup adapter is missing prepared storage")
 	}
 	return rewriteDataFilesForStore(files, storeID, prepared.BackupID)
 }
 
-type snapshotBackupStorageParams struct {
-	onPending        snapshotRepoOnPendingAction
-	cfgHash          []byte
-	createdBy        string
-	allocateBackupID func(context.Context) (repo.BackupID, error)
+type SnapshotBackupStorageParams struct {
+	OnPending        OnPendingAction
+	ConfigHash       []byte
+	CreatedBy        string
+	AllocateBackupID func(context.Context) (repo.BackupID, error)
 }
 
-func prepareRepoV1LocalBackendForStore(storeID uint64, request backuppb.BackupRequest) error {
-	backend := request.GetStorageBackend()
-	if backend == nil || backend.GetLocal() == nil {
-		return nil
+func GetStorage(
+	ctx context.Context,
+	storageName string,
+	cfg *Config,
+) (*backuppb.StorageBackend, storeapi.Storage, error) {
+	backendOptions := objstore.BackendOptions{}
+	if cfg != nil {
+		backendOptions = cfg.BackendOptions
 	}
-	if backend.GetLocal().Path == "" {
-		return errors.Annotatef(
-			berrors.ErrInvalidArgument,
-			"repo-v1 local backend for store %d is missing target path",
-			storeID,
-		)
+	u, err := objstore.ParseBackend(storageName, &backendOptions)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
 	}
-	if err := os.MkdirAll(backend.GetLocal().Path, 0o750); err != nil {
-		return errors.Annotatef(err, "prepare repo-v1 local backend path for store %d", storeID)
+	s, err := objstore.New(ctx, u, storageOpts(cfg))
+	if err != nil {
+		return nil, nil, errors.Annotate(err, "create storage failed")
 	}
-	return nil
+	return u, s, nil
 }
 
-func validateSnapshotBackupRepoConfig(cfg *BackupConfig) error {
-	if !cfg.SnapshotRepoBackupOptions.Layout.IsRepoV1() {
+func storageOpts(cfg *Config) *storeapi.Options {
+	opts := &storeapi.Options{}
+	if cfg != nil {
+		opts.NoCredentials = cfg.NoCreds
+		opts.SendCredentials = cfg.SendCreds
+	}
+	return opts
+}
+
+func decodeBackupMeta(metaData []byte, cipherInfo *backuppb.CipherInfo) (*backuppb.BackupMeta, error) {
+	ci := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+	if cipherInfo != nil {
+		ci = *cipherInfo
+	}
+	var iv []byte
+	if ci.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
+		iv = metaData[:metautil.CrypterIvLen]
+	}
+	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &ci, iv)
+	if err != nil {
+		return nil, errors.Annotate(err, "decrypt failed with wrong key")
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	if err = proto.Unmarshal(decryptBackupMeta, backupMeta); err != nil {
+		return nil, errors.Annotate(err, "parse backupmeta failed because of wrong aes cipher")
+	}
+	return backupMeta, nil
+}
+
+func ReadBackupMetaFromStorage(
+	ctx context.Context,
+	fileName string,
+	storage storeapi.Storage,
+	cipherInfo *backuppb.CipherInfo,
+) (*backuppb.BackupMeta, error) {
+	metaData, err := storage.ReadFile(ctx, fileName)
+	if err != nil {
+		return nil, errors.Annotate(err, "load backupmeta failed")
+	}
+	return decodeBackupMeta(metaData, cipherInfo)
+}
+
+func ValidateSnapshotBackupRepoConfig(layout repo.Layout, useCheckpoint bool) error {
+	if !layout.IsRepoV1() {
 		return nil
 	}
-	if !cfg.UseCheckpoint {
+	if !useCheckpoint {
 		return errors.Annotatef(
 			berrors.ErrInvalidArgument,
 			"--%s=%s requires --%s",
-			flagStorageLayout, repo.LayoutRepoV1, flagUseCheckpoint,
+			flagStorageLayout,
+			repo.LayoutRepoV1,
+			flagUseCheckpoint,
 		)
 	}
 	return nil
@@ -112,60 +186,87 @@ type repoV1BackupAttempt struct {
 	resumeFromCheckpoint bool
 }
 
-func prepareRepoV1SnapshotBackup(
+func PrepareRepoV1SnapshotBackup(
 	ctx context.Context,
 	rootBackend *backuppb.StorageBackend,
 	rootStorage storeapi.Storage,
-	params snapshotBackupStorageParams,
-) (*preparedRepoV1SnapshotBackup, error) {
+	params SnapshotBackupStorageParams,
+) (*PreparedRepoV1SnapshotBackup, error) {
 	if err := validateRepoV1Backend(rootBackend); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if _, err := repo.EnsureRepo(ctx, rootStorage, params.createdBy); err != nil {
+	if _, err := repo.EnsureRepo(ctx, rootStorage, params.CreatedBy); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	cfgHashDirName := repo.PendingConfigHashStorageName(params.cfgHash)
-	resumableBackups, err := collectResumablePendingBackups(ctx, rootStorage, params.cfgHash)
+	cfgHashDirName := repo.PendingConfigHashStorageName(params.ConfigHash)
+	resumableBackups, err := collectResumablePendingBackups(ctx, rootStorage, params.ConfigHash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	attempt, err := chooseRepoV1BackupAttempt(params.onPending, resumableBackups, cfgHashDirName)
+	attempt, err := chooseRepoV1BackupAttempt(params.OnPending, resumableBackups, cfgHashDirName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if attempt.backupID.IsZero() {
-		attempt.backupID, err = params.allocateBackupID(ctx)
+		attempt.backupID, err = params.AllocateBackupID(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
-	prepared := &preparedRepoV1SnapshotBackup{
-		snapshotStorageRef: snapshotStorageRef{
+	prepared := &PreparedRepoV1SnapshotBackup{
+		SnapshotStorageRef: SnapshotStorageRef{
 			Layout:          repo.LayoutRepoV1,
 			BackupID:        attempt.backupID,
 			RootBackend:     rootBackend,
 			RootStorage:     rootStorage,
 			MetadataStorage: snapshotMetadataStorage(rootStorage, attempt.backupID),
 		},
-		pendingMarkerPath:    repo.PendingFile(params.cfgHash, attempt.backupID),
-		resumeFromCheckpoint: attempt.resumeFromCheckpoint,
+		PendingMarkerPath:    repo.PendingFile(params.ConfigHash, attempt.backupID),
+		ResumeFromCheckpoint: attempt.resumeFromCheckpoint,
 	}
 	log.Info("created repo-v1 snapshot backup storage",
-		zap.String("backup-id", attempt.backupID.String()),
-		zap.String("metadata-uri", prepared.MetadataStorage.URI()),
-		zap.Bool("resumed?", attempt.resumeFromCheckpoint))
+		gozap.String("backup-id", attempt.backupID.String()),
+		gozap.String("metadata-uri", prepared.MetadataStorage.URI()),
+		gozap.Bool("resumed?", attempt.resumeFromCheckpoint))
 	return prepared, nil
 }
 
+func ActivateSnapshotBackupResume(
+	ctx context.Context,
+	client *backup.Client,
+	prepared *PreparedRepoV1SnapshotBackup,
+	cfgHash []byte,
+) error {
+	if prepared == nil || !prepared.ResumeFromCheckpoint {
+		return nil
+	}
+	if err := client.LoadCheckpointMetadataFromStorage(ctx, prepared.MetadataStorage); err != nil {
+		return errors.Annotatef(err, "load repo-v1 checkpoint metadata for backup %s", prepared.BackupID)
+	}
+	checkpointMeta := client.GetCheckpointMetadata()
+	if checkpointMeta != nil && checkpointMeta.BackupID != 0 && checkpointMeta.BackupID != uint64(prepared.BackupID) {
+		return errors.Annotatef(
+			berrors.ErrInvalidArgument,
+			"repo-v1 checkpoint metadata backup id %d doesn't match resumed backup %s",
+			checkpointMeta.BackupID,
+			prepared.BackupID,
+		)
+	}
+	if err := client.CheckCheckpoint(cfgHash); err != nil {
+		return errors.Annotatef(err, "validate repo-v1 checkpoint metadata for backup %s", prepared.BackupID)
+	}
+	return nil
+}
+
 func chooseRepoV1BackupAttempt(
-	onPending snapshotRepoOnPendingAction,
+	onPending OnPendingAction,
 	resumableBackups []repo.BackupID,
 	cfgHashDirName string,
 ) (repoV1BackupAttempt, error) {
 	switch onPending {
-	case "", snapshotRepoOnPendingError:
+	case "", OnPendingError:
 		if len(resumableBackups) == 0 {
 			return repoV1BackupAttempt{}, nil
 		}
@@ -173,7 +274,7 @@ func chooseRepoV1BackupAttempt(
 			return repoV1BackupAttempt{}, errors.Annotatef(
 				berrors.ErrInvalidArgument,
 				"found unfinished repo-v1 backup %s for config hash %s; use --%s=%s to resume it or --%s=%s to start a fresh attempt",
-				resumableBackups[0], cfgHashDirName, flagOnPending, snapshotRepoOnPendingResume, flagOnPending, snapshotRepoOnPendingNew,
+				resumableBackups[0], cfgHashDirName, flagOnPending, OnPendingResume, flagOnPending, OnPendingNew,
 			)
 		}
 		return repoV1BackupAttempt{}, errors.Annotatef(
@@ -181,7 +282,7 @@ func chooseRepoV1BackupAttempt(
 			"found multiple unfinished repo-v1 backups for config hash %s: %s",
 			cfgHashDirName, formatRepoV1BackupIDs(resumableBackups),
 		)
-	case snapshotRepoOnPendingResume:
+	case OnPendingResume:
 		switch len(resumableBackups) {
 		case 0:
 			return repoV1BackupAttempt{}, nil
@@ -197,7 +298,7 @@ func chooseRepoV1BackupAttempt(
 				cfgHashDirName, formatRepoV1BackupIDs(resumableBackups),
 			)
 		}
-	case snapshotRepoOnPendingNew:
+	case OnPendingNew:
 		return repoV1BackupAttempt{}, nil
 	default:
 		return repoV1BackupAttempt{}, errors.Annotatef(
@@ -225,18 +326,19 @@ func snapshotMetadataStorage(rootStorage storeapi.Storage, backupID repo.BackupI
 
 func openSnapshotStorageForRestore(
 	ctx context.Context,
-	cfg *RestoreConfig,
+	layout repo.Layout,
+	backupID repo.BackupID,
 	rootBackend *backuppb.StorageBackend,
 	rootStorage storeapi.Storage,
-) (*snapshotStorageRef, error) {
-	resolved := &snapshotStorageRef{
-		Layout:          cfg.Layout,
-		BackupID:        cfg.BackupID,
+) (*SnapshotStorageRef, error) {
+	resolved := &SnapshotStorageRef{
+		Layout:          layout,
+		BackupID:        backupID,
 		RootBackend:     rootBackend,
 		RootStorage:     rootStorage,
 		MetadataStorage: rootStorage,
 	}
-	if !cfg.Layout.IsRepoV1() {
+	if !layout.IsRepoV1() {
 		return resolved, nil
 	}
 	if err := validateRepoV1Backend(rootBackend); err != nil {
@@ -245,43 +347,39 @@ func openSnapshotStorageForRestore(
 	if _, err := repo.LoadRepoMeta(ctx, rootStorage); err != nil {
 		return nil, errors.Annotate(err, "load repo-v1 metadata")
 	}
-	resolved.MetadataStorage = snapshotMetadataStorage(rootStorage, cfg.BackupID)
+	resolved.MetadataStorage = snapshotMetadataStorage(rootStorage, backupID)
 	return resolved, nil
 }
 
-func loadSnapshotBackupMeta(
+func LoadSnapshotBackupMeta(
 	ctx context.Context,
-	cfg *RestoreConfig,
+	layout repo.Layout,
+	backupID repo.BackupID,
 	rootBackend *backuppb.StorageBackend,
 	rootStorage storeapi.Storage,
-) (*snapshotStorageRef, *backuppb.BackupMeta, error) {
-	resolved, err := openSnapshotStorageForRestore(ctx, cfg, rootBackend, rootStorage)
+	cipherInfo *backuppb.CipherInfo,
+) (*SnapshotStorageRef, *backuppb.BackupMeta, error) {
+	resolved, err := openSnapshotStorageForRestore(ctx, layout, backupID, rootBackend, rootStorage)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, resolved.MetadataStorage, &cfg.Config)
+	backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, resolved.MetadataStorage, cipherInfo)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	return resolved, backupMeta, nil
 }
 
-// ResolveSnapshotBackupMeta resolves one snapshot backup reference and reads its backupmeta.
 func ResolveSnapshotBackupMeta(
 	ctx context.Context,
-	storageName string,
-	cfg *Config,
+	cfg Config,
 	ref repo.SnapshotRef,
 ) (*backuppb.StorageBackend, storeapi.Storage, *backuppb.BackupMeta, error) {
-	rootBackend, rootStorage, err := GetStorage(ctx, storageName, cfg)
+	rootBackend, rootStorage, err := GetStorage(ctx, cfg.Storage, &cfg)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	resolved, backupMeta, err := loadSnapshotBackupMeta(ctx, &RestoreConfig{
-		Config:   *cfg,
-		Layout:   ref.Layout,
-		BackupID: ref.BackupID,
-	}, rootBackend, rootStorage)
+	resolved, backupMeta, err := LoadSnapshotBackupMeta(ctx, ref.Layout, ref.BackupID, rootBackend, rootStorage, &cfg.CipherInfo)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -418,7 +516,25 @@ func validateRepoV1Backend(backend *backuppb.StorageBackend) error {
 	}
 }
 
-func repoCreatedBy(version string) string {
+func prepareRepoV1LocalBackendForStore(storeID uint64, request backuppb.BackupRequest) error {
+	backend := request.GetStorageBackend()
+	if backend == nil || backend.GetLocal() == nil {
+		return nil
+	}
+	if backend.GetLocal().Path == "" {
+		return errors.Annotatef(
+			berrors.ErrInvalidArgument,
+			"repo-v1 local backend for store %d is missing target path",
+			storeID,
+		)
+	}
+	if err := os.MkdirAll(backend.GetLocal().Path, 0o750); err != nil {
+		return errors.Annotatef(err, "prepare repo-v1 local backend path for store %d", storeID)
+	}
+	return nil
+}
+
+func RepoCreatedBy(version string) string {
 	version = strings.TrimSpace(version)
 	if version == "" {
 		return "br"

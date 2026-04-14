@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package task
+package taskrepo
 
 import (
 	"cmp"
@@ -156,7 +156,7 @@ func RunRepoSnapshotGet(
 				return nil, errors.Trace(err)
 			}
 			metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(cfg.BackupID))
-			backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.Config)
+			backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -398,7 +398,7 @@ func collectRepoSnapshotDeletePreview(
 ) repoSnapshotDeletePreview {
 	preview := repoSnapshotDeletePreview{}
 	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
-	if backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, cfg); err == nil {
+	if backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo); err == nil {
 		preview.HasBasic = true
 		preview.Basic = convertRepoSnapshotBasicView(*backupMeta)
 	}

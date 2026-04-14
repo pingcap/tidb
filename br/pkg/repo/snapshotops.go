@@ -296,7 +296,6 @@ func (ops SnapshotOps) deleteFilesFromStream(
 			break
 		}
 		opts.discovered(1)
-		filePath := filePath
 		group.Go(func() error {
 			if err := ops.Storage.DeleteFile(groupCtx, filePath); err != nil {
 				return errors.Annotatef(err, "delete file %s", filePath)
@@ -307,9 +306,8 @@ func (ops SnapshotOps) deleteFilesFromStream(
 		})
 	}
 
-	deletedCount := int(deleted.Load())
 	groupErr := group.Wait()
-	deletedCount = int(deleted.Load())
+	deletedCount := int(deleted.Load())
 	if streamErr != nil {
 		if groupErr != nil && !errors.ErrorEqual(groupErr, context.Canceled) {
 			return deletedCount, errors.Annotatef(streamErr, "wait in-flight deletions: %v", groupErr)

@@ -1,0 +1,57 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "repo",
+    srcs = [
+        "repo_snapshot_admin.go",
+        "repo_snapshot_storage.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/task/repo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/backup",
+        "//br/pkg/checkpoint",
+        "//br/pkg/errors",
+        "//br/pkg/glue",
+        "//br/pkg/metautil",
+        "//br/pkg/repo",
+        "//br/pkg/utils",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_gogo_protobuf//proto",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "repo_test",
+    timeout = "short",
+    srcs = [
+        "repo_snapshot_admin_test.go",
+        "repo_snapshot_storage_test.go",
+    ],
+    embed = [":repo"],
+    flaky = True,
+    shard_count = 26,
+    deps = [
+        "//br/pkg/backup",
+        "//br/pkg/checkpoint",
+        "//br/pkg/errors",
+        "//br/pkg/glue",
+        "//br/pkg/metautil",
+        "//br/pkg/repo",
+        "//pkg/meta/model",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
+        "//pkg/parser/ast",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_stretchr_testify//require",
+    ],
+)

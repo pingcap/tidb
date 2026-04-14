@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
@@ -521,9 +522,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			if !removePendingMarkerOnExit {
 				return
 			}
-			if err := preparedStorage.RootStorage.DeleteFile(ctx, preparedStorage.pendingMarkerPath); err != nil {
+			if err := preparedStorage.RootStorage.DeleteFile(ctx, preparedStorage.PendingMarkerPath); err != nil {
 				log.Warn("failed to remove repo-v1 pending marker",
-					zap.String("path", preparedStorage.pendingMarkerPath),
+					zap.String("path", preparedStorage.PendingMarkerPath),
 					zap.Error(err))
 			}
 		}()
@@ -733,7 +734,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if cfg.UseCheckpoint {
 		checkpointBackupID := uint64(0)
 		if preparedStorage != nil {
-			if err = writePendingSnapshot(ctx, preparedStorage.RootStorage, preparedStorage.pendingMarkerPath); err != nil {
+			if err = writePendingSnapshot(ctx, preparedStorage.RootStorage, preparedStorage.PendingMarkerPath); err != nil {
 				return errors.Trace(err)
 			}
 			checkpointBackupID = uint64(preparedStorage.BackupID)
@@ -855,25 +856,7 @@ func activateSnapshotBackupResume(
 	prepared *preparedRepoV1SnapshotBackup,
 	cfgHash []byte,
 ) error {
-	if prepared == nil || !prepared.resumeFromCheckpoint {
-		return nil
-	}
-	if err := client.LoadCheckpointMetadataFromStorage(ctx, prepared.MetadataStorage); err != nil {
-		return errors.Annotatef(err, "load repo-v1 checkpoint metadata for backup %s", prepared.BackupID)
-	}
-	checkpointMeta := client.GetCheckpointMetadata()
-	if checkpointMeta != nil && checkpointMeta.BackupID != 0 && checkpointMeta.BackupID != uint64(prepared.BackupID) {
-		return errors.Annotatef(
-			berrors.ErrInvalidArgument,
-			"repo-v1 checkpoint metadata backup id %d doesn't match resumed backup %s",
-			checkpointMeta.BackupID,
-			prepared.BackupID,
-		)
-	}
-	if err := client.CheckCheckpoint(cfgHash); err != nil {
-		return errors.Annotatef(err, "validate repo-v1 checkpoint metadata for backup %s", prepared.BackupID)
-	}
-	return nil
+	return taskrepo.ActivateSnapshotBackupResume(ctx, client, prepared, cfgHash)
 }
 
 func getProgressCountOfRanges(
