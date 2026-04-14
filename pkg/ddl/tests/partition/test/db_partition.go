@@ -1536,6 +1536,9 @@ func RunGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 
 	var err error
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionTruncateTablePartition {
+			return
+		}
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)

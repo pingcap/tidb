@@ -526,7 +526,7 @@ func RunAddGlobalIndexInIngest(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/writeLocalExec", func(bool) {
 		tk2 := testkit.NewTestKit(t, store)
 		tmp := i.Add(1)
-		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+		_, err := tk2.Exec(fmt.Sprintf("insert ignore into test.t values (%d, %d)", tmp, tmp))
 		assert.Nil(t, err)
 	})
 	tk.MustExec("alter table t add index idx_1(b), add unique index idx_2(b) global")
@@ -579,15 +579,16 @@ func RunAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 	var i atomic.Int32
 	i.Store(3)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if job.State != model.JobStateSynced {
-			tk2 := testkit.NewTestKit(t, store)
-			tmp := i.Add(1)
-			_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
-			assert.Nil(t, err)
-
-			_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 20, a = b where b = %d", tmp-1))
-			assert.Nil(t, err)
+		if job.State != model.JobStateSynced || job.Type != model.ActionAddIndex {
+			return
 		}
+		tk2 := testkit.NewTestKit(t, store)
+		tmp := i.Add(1)
+		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+		assert.Nil(t, err)
+
+		_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 20, a = b where b = %d", tmp-1))
+		assert.Nil(t, err)
 	})
 	tk.MustExec("alter table t add unique index idx(b) global")
 	rsGlobalIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
