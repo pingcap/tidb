@@ -3479,7 +3479,6 @@ func TestModifyColumnPartitionedTableKeyPartitionWhitelist(t *testing.T) {
 		},
 	}
 	for _, tc := range successCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			runPartitionAlterSuccessCase(t, store, tc)
 		})
@@ -3554,7 +3553,6 @@ func TestModifyColumnPartitionedTableKeyPartitionWhitelist(t *testing.T) {
 		},
 	}
 	for _, tc := range rejectCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			runPartitionAlterRejectCase(t, store, tc)
 		})
@@ -3608,7 +3606,6 @@ func TestModifyColumnPartitionedTableRangeListColumnsWhitelist(t *testing.T) {
 		},
 	}
 	for _, tc := range successCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			runPartitionAlterSuccessCase(t, store, tc)
 		})
@@ -3652,7 +3649,6 @@ func TestModifyColumnPartitionedTableRangeListColumnsWhitelist(t *testing.T) {
 		},
 	}
 	for _, tc := range rejectCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			runPartitionAlterRejectCase(t, store, tc)
 		})
@@ -3728,7 +3724,6 @@ func TestModifyColumnPartitionedTablePartitionColumnNullability(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			runPartitionAlterVerifyCase(t, store, tc)
 		})
@@ -3863,7 +3858,6 @@ func TestModifyColumnPartitionedTablePartitionColumnDefaultComment(t *testing.T)
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			runPartitionAlterVerifyCase(t, store, tc)
 		})
@@ -3940,7 +3934,6 @@ func TestModifyColumnPartitionedTableExpressionWhitelist(t *testing.T) {
 		},
 	}
 	for _, tc := range successCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			runPartitionAlterVerifyCase(t, store, tc)
 		})
@@ -4001,7 +3994,6 @@ func TestModifyColumnPartitionedTableExpressionWhitelist(t *testing.T) {
 		},
 	}
 	for _, tc := range rejectCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			runPartitionAlterVerifyCase(t, store, tc)
 		})
