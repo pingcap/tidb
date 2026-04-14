@@ -2615,22 +2615,22 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t",
         "Plan": [
-          "HashJoin_19 3.00 162261.76 root  CARTESIAN left outer semi join",
+          "HashJoin_19 3.00 65182.86 root  CARTESIAN left outer semi join",
           "├─Selection_38(Build) 0.80 31045.01 root  eq(2, Column#18)",
-          "│ └─StreamAgg_56 1.00 30995.11 root  funcs:count(Column#32)->Column#18",
+          "│ └─StreamAgg_56 1.00 30995.11 root  funcs:count(Column#27)->Column#18",
           "│   └─TableReader_57 1.00 30945.21 root  data:StreamAgg_44",
-          "│     └─StreamAgg_44 1.00 464146.40 batchCop[tiflash]  funcs:count(test.t1._tidb_rowid)->Column#32",
+          "│     └─StreamAgg_44 1.00 464146.40 batchCop[tiflash]  funcs:count(test.t1._tidb_rowid)->Column#27",
           "│       └─TableFullScan_55 3.00 464139.20 batchCop[tiflash] table:t1 keep order:false",
-          "└─Projection_20(Probe) 3.00 129648.62 root  1->Column#28",
-          "  └─Apply_22 3.00 129648.32 root  CARTESIAN left outer join",
-          "    ├─IndexReader_26(Build) 3.00 53.37 root  index:IndexFullScan_25",
-          "    │ └─IndexFullScan_25 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false",
-          "    └─Projection_27(Probe) 3.00 43198.32 root  1->Column#26",
-          "      └─Limit_30 3.00 43198.22 root  offset:0, count:1",
-          "        └─TableReader_37 3.00 43198.22 root  data:ExchangeSender_36",
-          "          └─ExchangeSender_36 3.00 647920.44 mpp[tiflash]  ExchangeType: PassThrough",
-          "            └─Limit_35 3.00 647920.44 mpp[tiflash]  offset:0, count:1",
-          "              └─TableFullScan_34 3.00 647920.44 mpp[tiflash] table:t2 keep order:false"
+          "└─Projection_20(Probe) 3.00 32569.71 root  1->Column#23",
+          "  └─HashJoin_21 3.00 32569.41 root  CARTESIAN left outer join",
+          "    ├─MaxOneRow_27(Build) 1.00 30937.60 root  ",
+          "    │ └─Limit_30 1.00 30937.60 root  offset:0, count:1",
+          "    │   └─TableReader_37 1.00 30937.60 root  data:ExchangeSender_36",
+          "    │     └─ExchangeSender_36 1.00 464046.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "    │       └─Limit_35 1.00 464046.40 mpp[tiflash]  offset:0, count:1",
+          "    │         └─TableFullScan_34 1.00 464046.40 mpp[tiflash] table:t2 keep order:false",
+          "    └─IndexReader_26(Probe) 3.00 53.37 root  index:IndexFullScan_25",
+          "      └─IndexFullScan_25 3.00 610.50 cop[tikv] table:t, index:c(b) keep order:false"
         ]
       },
       {
