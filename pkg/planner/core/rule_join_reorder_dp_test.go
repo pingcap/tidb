@@ -294,6 +294,44 @@ func TestInjectedJoinExprReuseSkipsMutableExpressions(t *testing.T) {
 		require.Len(t, proj.Exprs, 2)
 	})
 
+	t.Run("injectExpr keeps appended expression in child space for existing projections", func(t *testing.T) {
+		solver := &baseSingleGroupJoinOrderSolver{
+			ctx:                ctx,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+		plan := newDataSource(ctx, "p", 1)
+		baseCol := plan.Schema().Columns[0]
+
+		proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(plan.Schema().Columns)}.Init(ctx, 0)
+		proj.SetSchema(plan.Schema().Clone())
+		proj.SetChildren(plan)
+
+		derivedExpr := expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeLonglong), baseCol, expression.NewOne())
+		derivedCol := proj.AppendExpr(derivedExpr)
+
+		exprUsingProjOutput := expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeLonglong), derivedCol, expression.NewOne())
+		newPlan, injectedCol := solver.injectExpr(proj, exprUsingProjOutput)
+
+		newProj, ok := newPlan.(*logicalop.LogicalProjection)
+		require.True(t, ok)
+		require.NotNil(t, injectedCol)
+		require.Len(t, newProj.Exprs, 3)
+
+		appendedExpr := newProj.Exprs[2]
+		expectedExpr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			derivedExpr,
+			expression.NewOne(),
+		)
+		require.True(t, expression.ExpressionsSemanticEqual(appendedExpr, expectedExpr))
+
+		appendedCols := expression.ExtractColumns(appendedExpr)
+		require.Len(t, appendedCols, 1)
+		require.Equal(t, baseCol.UniqueID, appendedCols[0].UniqueID)
+	})
+
 	t.Run("SubstituteExprsWithColsInExprs skips mutable expressions defensively", func(t *testing.T) {
 		plan := newDataSource(ctx, "s", 1)
 		baseCol := plan.Schema().Columns[0]
@@ -309,5 +347,41 @@ func TestInjectedJoinExprReuseSkipsMutableExpressions(t *testing.T) {
 		)
 		require.Len(t, got, 1)
 		require.Same(t, volatileExpr, got[0])
+	})
+
+	t.Run("SubstituteExprsWithColsInExprs skips conditionally evaluated descendants", func(t *testing.T) {
+		plan := newDataSource(ctx, "c", 1)
+		baseCol := plan.Schema().Columns[0]
+		repeatedExpr := expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeLonglong), baseCol, expression.NewOne())
+		replacementCol := &expression.Column{
+			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  repeatedExpr.GetType(ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+
+		plainPredicate := expression.NewFunctionInternal(ctx, ast.GT, types.NewFieldType(mysql.TypeTiny), repeatedExpr, expression.NewZero())
+		gotPlain := joinorder.SubstituteExprsWithColsInExprs(
+			[]expression.Expression{plainPredicate},
+			map[string]*expression.Column{string(repeatedExpr.CanonicalHashCode()): replacementCol},
+		)
+		require.Len(t, gotPlain, 1)
+		require.NotSame(t, plainPredicate, gotPlain[0])
+		plainCols := expression.ExtractColumns(gotPlain[0])
+		require.Len(t, plainCols, 1)
+		require.Equal(t, replacementCol.UniqueID, plainCols[0].UniqueID)
+
+		guardedPredicate := expression.NewFunctionInternal(
+			ctx,
+			ast.If,
+			types.NewFieldType(mysql.TypeLonglong),
+			expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), baseCol, expression.NewZero()),
+			expression.NewZero(),
+			repeatedExpr,
+		)
+		gotGuarded := joinorder.SubstituteExprsWithColsInExprs(
+			[]expression.Expression{guardedPredicate},
+			map[string]*expression.Column{string(repeatedExpr.CanonicalHashCode()): replacementCol},
+		)
+		require.Len(t, gotGuarded, 1)
+		require.Same(t, guardedPredicate, gotGuarded[0])
 	})
 }

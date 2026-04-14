@@ -802,6 +802,9 @@ func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr exp
 			}
 		}
 	}
+	// AppendExpr substitutes against the current projection schema again, so passing
+	// the original expr is intentional here. Using the pre-substituted child-space
+	// expression would incorrectly rematerialize non-reusable projection outputs.
 	return proj, proj.AppendExpr(expr)
 }
 

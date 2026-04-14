@@ -231,5 +231,26 @@ func TestOuterJoinReorderNullExtendedNonEqSafety(t *testing.T) {
 			"join t3_66213 on (t2_66213.b is null or t2_66213.b = t3_66213.b) " +
 			"order by t1_66213.a, t2_66213.b, t3_66213.b").Check(expectRows)
 		testKit.MustQuery("show warnings").CheckContain("leading hint is inapplicable")
+
+		t.Run("through projection nested join expr keeps projection child-space append", func(t *testing.T) {
+			testKit.MustExec("drop table if exists t1_tp_proj, t2_tp_proj, t3_tp_proj")
+			testKit.MustExec("create table t1_tp_proj(a int, b int)")
+			testKit.MustExec("create table t2_tp_proj(a int, b int)")
+			testKit.MustExec("create table t3_tp_proj(a int, b int)")
+			testKit.MustExec("insert into t1_tp_proj values (1, 202), (2, 402)")
+			testKit.MustExec("insert into t2_tp_proj values (1, 100), (2, 200)")
+			testKit.MustExec("insert into t3_tp_proj values (1, 10), (2, 20)")
+			testKit.MustExec("set @@tidb_opt_join_reorder_through_proj=on")
+
+			query := "select t1_tp_proj.a, dt.plus_one from t1_tp_proj join (" +
+				"select inner_dt.key_a, inner_dt.doubled_b + 1 as plus_one from (" +
+				"select t2_tp_proj.a as key_a, t2_tp_proj.b * 2 as doubled_b " +
+				"from t2_tp_proj join t3_tp_proj on t2_tp_proj.a = t3_tp_proj.a" +
+				") inner_dt" +
+				") dt on t1_tp_proj.a = dt.key_a and t1_tp_proj.b = dt.plus_one + 1 order by 1"
+
+			testKit.MustQuery(query).Check(testkit.Rows("1 201", "2 401"))
+			testKit.MustQuery("explain format = 'plan_tree' " + query).CheckContain("Projection")
+		})
 	})
 }

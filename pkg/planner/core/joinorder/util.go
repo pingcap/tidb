@@ -262,15 +262,62 @@ func substituteExprsWithColsInExpr(expr expression.Expression, expr2Col map[stri
 	if len(expr2Col) == 0 {
 		return expr
 	}
-	return rewriteExprTree(expr, func(e expression.Expression) (expression.Expression, bool) {
-		if expression.IsMutableEffectsExpr(e) || expression.CheckNonDeterministic(e) {
-			return e, false
+	return substituteExprsWithColsInExprUnderCtx(expr, expr2Col, false)
+}
+
+func substituteExprsWithColsInExprUnderCtx(
+	expr expression.Expression,
+	expr2Col map[string]*expression.Column,
+	underConditionalEval bool,
+) expression.Expression {
+	if expr == nil {
+		return nil
+	}
+	if !underConditionalEval && !expression.IsMutableEffectsExpr(expr) && !expression.CheckNonDeterministic(expr) {
+		if col, ok := expr2Col[string(expr.CanonicalHashCode())]; ok {
+			return col
 		}
-		if col, ok := expr2Col[string(e.CanonicalHashCode())]; ok {
-			return col, true
+	}
+
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return expr
+	}
+
+	nextUnderConditionalEval := underConditionalEval || hasConditionalEvalDescendants(sf)
+	oldArgs := sf.GetArgs()
+	var newArgs []expression.Expression
+	for i, arg := range oldArgs {
+		rewrittenArg := substituteExprsWithColsInExprUnderCtx(arg, expr2Col, nextUnderConditionalEval)
+		if newArgs == nil {
+			if rewrittenArg == arg {
+				continue
+			}
+			newArgs = make([]expression.Expression, len(oldArgs))
+			copy(newArgs, oldArgs[:i])
 		}
-		return e, false
-	})
+		newArgs[i] = rewrittenArg
+	}
+	if newArgs == nil {
+		return sf
+	}
+
+	newSf := sf.Clone().(*expression.ScalarFunction)
+	args := newSf.GetArgs()
+	for i := range args {
+		args[i] = newArgs[i]
+	}
+	newSf.CleanHashCode()
+	return newSf
+}
+
+func hasConditionalEvalDescendants(sf *expression.ScalarFunction) bool {
+	switch sf.FuncName.L {
+	case ast.If, ast.Ifnull, ast.Nullif, ast.Case, ast.Coalesce, ast.LogicAnd, ast.LogicOr:
+		return true
+	default:
+		return false
+	}
 }
 
 // SubstituteColsInExpr recursively substitutes derived columns in an expression using colExprMap.
