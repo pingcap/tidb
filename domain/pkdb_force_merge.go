@@ -53,6 +53,12 @@ func (do *Domain) mergeEmptyRegionsLoop(ctx context.Context) {
 	}()
 
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		if variable.EnableDropTableForceMerge.Load() && owner.IsOwner() {
 			if err := do.doMergeEmptyRegions(ctx); err != nil {
 				logutil.BgLogger().Error("merge-empty-regions scan failed", zap.Error(err))
@@ -61,6 +67,8 @@ func (do *Domain) mergeEmptyRegionsLoop(ctx context.Context) {
 
 		select {
 		case <-ticker.C:
+		case <-ctx.Done():
+			return
 		case <-do.exit:
 			return
 		}
@@ -140,6 +148,7 @@ func (do *Domain) storeMergeEmptyRegionsMinTableIDIfUnchanged(expectedTableID, n
 
 	updated := false
 	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), do.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		updated = false
 		t := meta.NewMeta(txn)
 		tableID, ok, err := t.GetMergeEmptyRegionsMinTableID()
 		if err != nil {
