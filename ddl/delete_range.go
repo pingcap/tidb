@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -272,6 +273,10 @@ func (dr *delRange) doTask(ctx context.Context, sctx sessionctx.Context, r util.
 }
 
 func (dr *delRange) reportForceMergeRanges(ctx context.Context, sctx sessionctx.Context, r util.DelRangeTask, gcForceMergeTableCache map[int64]struct{}) error {
+	if !variable.EnableDropTableForceMerge.Load() {
+		return nil
+	}
+
 	historyJob, err := GetHistoryJobByID(sctx, r.JobID)
 	if err != nil {
 		return err
