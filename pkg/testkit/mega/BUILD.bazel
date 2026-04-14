@@ -4,6 +4,7 @@ go_library(
     name = "mega",
     srcs = [
         "mega_main.go",
+        "cli.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/testkit/mega",
     visibility = ["//visibility:public"],

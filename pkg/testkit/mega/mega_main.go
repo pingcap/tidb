@@ -131,9 +131,25 @@ func workDir() string {
 func utFilterArgs() []string {
 	args := make([]string, 0, len(os.Args))
 	// Collect non-flag arguments from os.Args
-	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "-") {
+	// Skip known subcommands (run, test, list, help)
+	skipNext := false
+	for i, arg := range os.Args {
+		if skipNext {
+			skipNext = false
 			continue
+		}
+		if i == 0 {
+			continue // skip program name
+		}
+		if arg == "-ut" {
+			continue // legacy -ut flag itself
+		}
+		// Skip subcommands
+		if arg == "run" || arg == "test" || arg == "list" || arg == "help" {
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue // skip flags
 		}
 		args = append(args, arg)
 	}

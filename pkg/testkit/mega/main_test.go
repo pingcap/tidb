@@ -7,29 +7,23 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS, ANY KIND, either express or implied.
+// distributed under the License is distributed on an "AS IS" ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package mega
 
 import (
-	"flag"
 	"os"
 	"testing"
 )
 
 func TestMain(m *testing.M) {
-	// Ensure flags are parsed so we can check -ut before m.Run().
-	// m.Run() calls flag.Parse() internally, but flag.Parse() is idempotent
-	// after the first call, so calling it here is safe.
-	flag.Parse()
-
-	// When -ut is set, run as orchestrator: list tests and spawn subprocesses.
-	// This happens before m.Run() so no test functions execute in this process.
-	if *flagUT {
-		RunUT()
-		// RunUT calls os.Exit, never reaches here
+	// Handle CLI subcommands (help, list, run) before running tests.
+	// This allows mega.test to act as a self-contained test runner.
+	shouldRunTests, exitCode := HandleCLI()
+	if !shouldRunTests {
+		os.Exit(exitCode)
 	}
 	os.Exit(m.Run())
 }
