@@ -78,25 +78,25 @@ func TestMaskNull(t *testing.T) {
 
 func TestMaskPartial(t *testing.T) {
 	ctx := createContext(t)
-	f, err := newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", "*", 1, 3})...)
+	f, err := newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", 1, 2, "*"})...)
 	require.NoError(t, err)
 	d, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "a***ef", d.GetString())
 
-	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", "*", 6, 3})...)
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", 6, 0, "*"})...)
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "abcdef", d.GetString())
 
-	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", "*", 2, 0})...)
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", 2, 4, "*"})...)
 	require.NoError(t, err)
 	d, err = f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, "abcdef", d.GetString())
 
-	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", "**", 1, 2})...)
+	f, err = newFunctionForTest(ctx, ast.MaskPartial, primitiveValsToConstants(ctx, []any{"abcdef", 1, 2, "**"})...)
 	require.NoError(t, err)
 	_, err = f.Eval(ctx, chunk.Row{})
 	require.Error(t, err)
