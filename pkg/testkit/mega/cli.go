@@ -74,12 +74,6 @@ func HandleCLI() (shouldRunTests bool, exitCode int) {
 	// Parse flags first to access -mega.list and -mega.run (used internally by subprocess)
 	flag.Parse()
 
-	// Handle legacy -ut flag
-	if *flagUT {
-		RunUT()
-		return false, 1 // RunUT calls os.Exit, never reaches here
-	}
-
 	// Check for subcommand (first positional arg after flags)
 	args := flag.Args()
 	if len(args) == 0 {
@@ -119,8 +113,8 @@ func HandleCLI() (shouldRunTests bool, exitCode int) {
 			return true, 0
 		} else {
 			// Orchestrator mode - spawn subprocesses
-			RunUT()
-			return false, 1 // RunUT calls os.Exit
+			RunOrchestrator()
+			return false, 1 // RunOrchestrator calls os.Exit
 		}
 		return false, 0
 
@@ -172,7 +166,7 @@ SUBCOMMANDS:
     - Useful for CI and full test suite execution
 
     When 'run' is called with a pattern (e.g., 'ddl/*', '*/GetTimeZone'):
-    - Runs matching tests in the current process
+    - Runs matching tests in current process
     - Useful for debugging individual tests
 
 PATTERNS:
@@ -181,23 +175,19 @@ PATTERNS:
     executor/Inspe*   Tests in executor package with names matching Inspe*
 
 OPTIONS (for orchestrator mode):
-    -ut.p N            Number of parallel workers (default: 8)
-    -ut.timeout D      Per-test timeout (default: 3m)
+    -mega.p N           Number of parallel workers (default: 8)
+    -mega.timeout D      Per-test timeout (default: 3m)
 
 EXAMPLES:
     mega.test list
     mega.test run
     mega.test run ddl/*
     mega.test run */GetTimeZone
-    mega.test run executor/InspectionResult -ut.p 16
+    mega.test run executor/InspectionResult -mega.p 16
 
 INTERNAL FLAGS (used by orchestrator subprocesses):
     -test.run          Internal: go test filter
     -mega.run          Internal: exact test pattern
     -mega.list         Internal: list tests mode
-
-LEGACY MODE:
-    mega.test -ut                    Alias for orchestrator mode (no filter)
-    mega.test -ut ddl/*              Orchestrator mode with pattern filter
 `)
 }

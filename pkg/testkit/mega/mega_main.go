@@ -32,9 +32,9 @@ import (
 var (
 	flagMegaRun  = flag.String("mega.run", "", "Run tests matching pattern (e.g., 'ddl/*', '*/GetTimeZone')")
 	flagMegaList = flag.Bool("mega.list", false, "List all registered tests and exit")
-	flagUT       = flag.Bool("ut", false, "Run as ut orchestrator: spawn parallel test processes")
-	flagUTP      = flag.Int("ut.p", 8, "Number of parallel workers when -ut is set")
-	flagTimeout  = flag.Duration("ut.timeout", 3*time.Minute, "Per-test timeout when -ut is set")
+	// Legacy -ut flag removed, use "mega.test run" instead
+	flagMegaP      = flag.Int("mega.p", 8, "Number of parallel workers in orchestrator mode")
+	flagMegaTimeout  = flag.Duration("mega.timeout", 3*time.Minute, "Per-test timeout in orchestrator mode")
 )
 
 // RunMega runs all registered tests from various packages.
@@ -59,9 +59,9 @@ func RunMega(t *testing.T) {
 	}
 }
 
-// RunUT is the orchestrator mode: lists tests, then spawns itself as
+// RunOrchestrator is the orchestrator mode: lists tests, then spawns itself as
 // subprocesses for each test with parallelism.
-func RunUT() {
+func RunOrchestrator() {
 	self, err := os.Executable()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cannot find self executable:", err)
@@ -69,16 +69,16 @@ func RunUT() {
 	}
 
 	// Build test list by listing ourselves with -mega.list
-	tests, err := utListTests(self)
+	tests, err := listTestsInternal(self)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "list tests error:", err)
 		os.Exit(1)
 	}
 
 	// Filter tests by CLI args (everything after -ut)
-	args := utFilterArgs()
+	args := parseFilterArgs()
 	if len(args) > 0 {
-		tests = utFilterTests(tests, args)
+		tests = filterTests(tests, args)
 	}
 
 	if len(tests) == 0 {
@@ -86,17 +86,17 @@ func RunUT() {
 		os.Exit(0)
 	}
 
-	fmt.Printf("=== Running %d mega tests (%d parallel, %s timeout) ===\n", len(tests), *flagUTP, *flagTimeout)
+	fmt.Printf("=== Running %d mega tests (%d parallel, %s timeout) ===\n", len(tests), *flagMegaP, *flagMegaTimeout)
 
-	ok := utRunTests(self, tests)
+	ok := runTests(self, tests)
 	if !ok {
 		os.Exit(1)
 	}
 	os.Exit(0)
 }
 
-// utListTests runs the binary with -test.run TestMega -mega.list to get test list.
-func utListTests(binary string) ([]utTask, error) {
+// listTestsInternal runs the binary with -test.run TestMega -mega.list to get test list.
+func listTestsInternal(binary string) ([]task, error) {
 	//nolint:gosec
 	cmd := exec.Command(binary, "-test.run", "^TestMega$", "-mega.list")
 	cmd.Dir = workDir()
@@ -104,7 +104,7 @@ func utListTests(binary string) ([]utTask, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list tests: %w\noutput: %s", err, string(output))
 	}
-	return utParseTestList(string(output))
+	return parseTestList(string(output))
 }
 
 // workDir returns the repository root directory.
@@ -126,9 +126,9 @@ func workDir() string {
 	return wd
 }
 
-// utFilterArgs extracts filter arguments from os.Args.
+// parseFilterArgs extracts filter arguments from os.Args.
 // These are positional args after the flags, or explicitly passed args.
-func utFilterArgs() []string {
+func parseFilterArgs() []string {
 	args := make([]string, 0, len(os.Args))
 	// Collect non-flag arguments from os.Args
 	// Skip known subcommands (run, test, list, help)
@@ -140,9 +140,6 @@ func utFilterArgs() []string {
 		}
 		if i == 0 {
 			continue // skip program name
-		}
-		if arg == "-ut" {
-			continue // legacy -ut flag itself
 		}
 		// Skip subcommands
 		if arg == "run" || arg == "test" || arg == "list" || arg == "help" {
@@ -156,19 +153,19 @@ func utFilterArgs() []string {
 	return args
 }
 
-// utTask represents a single test to run.
-type utTask struct {
+// task represents a single test to run.
+type task struct {
 	pkg  string
 	name string
 }
 
-func (t utTask) String() string {
+func (t task) String() string {
 	return t.pkg + "/" + t.name
 }
 
-// utParseTestList parses the output of -mega.list.
-func utParseTestList(output string) ([]utTask, error) {
-	var tasks []utTask
+// parseTestList parses the output of -mega.list.
+func parseTestList(output string) ([]task, error) {
+	var tasks []task
 	for _, line := range strings.Split(output, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "===") || strings.HasPrefix(trimmed, "Total") {
@@ -182,7 +179,7 @@ func utParseTestList(output string) ([]utTask, error) {
 			testPath := strings.TrimPrefix(line, "  - ")
 			lastSlash := strings.LastIndex(testPath, "/")
 			if lastSlash > 0 {
-				tasks = append(tasks, utTask{
+				tasks = append(tasks, task{
 					pkg:  testPath[:lastSlash],
 					name: testPath[lastSlash+1:],
 				})
@@ -192,9 +189,9 @@ func utParseTestList(output string) ([]utTask, error) {
 	return tasks, nil
 }
 
-// utFilterTests filters tests based on command line arguments.
-func utFilterTests(tests []utTask, args []string) []utTask {
-	var result []utTask
+// filterTests filters tests based on command line arguments.
+func filterTests(tests []task, args []string) []task {
+	var result []task
 	seen := make(map[string]bool)
 
 	for _, arg := range args {
@@ -274,10 +271,10 @@ func utFilterTests(tests []utTask, args []string) []utTask {
 	return result
 }
 
-// utRunTests runs all tests with parallelism.
-func utRunTests(binary string, tasks []utTask) bool {
-	taskCh := make(chan utTask, 100)
-	workers := make([]utWorker, *flagUTP)
+// runTests runs all tests with parallelism.
+func runTests(binary string, tasks []task) bool {
+	taskCh := make(chan task, 100)
+	workers := make([]worker, *flagMegaP)
 	var wg sync.WaitGroup
 
 	for i := range workers {
@@ -286,7 +283,7 @@ func utRunTests(binary string, tasks []utTask) bool {
 	}
 
 	// Shuffle for better load distribution
-	utShuffle(tasks)
+	shuffle(tasks)
 
 	start := time.Now()
 	for _, task := range tasks {
@@ -304,8 +301,8 @@ func utRunTests(binary string, tasks []utTask) bool {
 	return failures == 0
 }
 
-// utShuffle randomly shuffles tasks.
-func utShuffle(tasks []utTask) {
+// shuffle randomly shuffles tasks.
+func shuffle(tasks []task) {
 	// Simple Fisher-Yates with current time seed
 	for i := len(tasks) - 1; i > 0; i-- {
 		j := int(time.Now().UnixNano()) % (i + 1)
@@ -313,11 +310,11 @@ func utShuffle(tasks []utTask) {
 	}
 }
 
-type utWorker struct {
+type worker struct {
 	failures int
 }
 
-type utResult struct {
+type result struct {
 	pkg      string
 	name     string
 	duration time.Duration
@@ -325,7 +322,7 @@ type utResult struct {
 	output   string
 }
 
-func (w *utWorker) run(wg *sync.WaitGroup, binary string, ch chan utTask) {
+func (w *worker) run(wg *sync.WaitGroup, binary string, ch chan task) {
 	defer wg.Done()
 	for t := range ch {
 		res := w.runOne(binary, t)
@@ -334,7 +331,7 @@ func (w *utWorker) run(wg *sync.WaitGroup, binary string, ch chan utTask) {
 			fmt.Printf("[FAIL]     %s/%s  %.2fs\n", t.pkg, t.name, res.duration.Seconds())
 			if res.output != "" {
 				fmt.Fprintf(os.Stderr, "--- FAIL: %s/%s ---\n%s\n--- END ---\n",
-					t.pkg, t.name, utFilterOutput(res.output))
+					t.pkg, t.name, filterOutput(res.output))
 			}
 		} else {
 			fmt.Printf("[PASS]     %s/%s  %.2fs\n", t.pkg, t.name, res.duration.Seconds())
@@ -342,7 +339,7 @@ func (w *utWorker) run(wg *sync.WaitGroup, binary string, ch chan utTask) {
 	}
 }
 
-func (w *utWorker) runOne(binary string, t utTask) utResult {
+func (w *worker) runOne(binary string, t task) result {
 	pattern := "^" + regexp.QuoteMeta(t.pkg+"/"+t.name) + "$"
 	start := time.Now()
 
@@ -353,12 +350,12 @@ func (w *utWorker) runOne(binary string, t utTask) utResult {
 	for range 3 {
 		//nolint:gosec
 		cmd := exec.Command(binary, "-test.run", "^TestMega$", "-mega.run", pattern)
-		cmd.Dir = utTryDir(t.pkg)
-		var buf utBuffer
+		cmd.Dir = tryDir(t.pkg)
+		var buf buffer
 		cmd.Stdout = &buf
 		cmd.Stderr = &buf
 
-		timer := time.AfterFunc(*flagTimeout, func() {
+		timer := time.AfterFunc(*flagMegaTimeout, func() {
 			if cmd.Process != nil {
 				cmd.Process.Kill()
 				timedOut = true
@@ -380,7 +377,7 @@ func (w *utWorker) runOne(binary string, t utTask) utResult {
 		break
 	}
 
-	result := utResult{
+	result := result{
 		pkg:      t.pkg,
 		name:     t.name,
 		duration: time.Since(start),
@@ -395,20 +392,20 @@ func (w *utWorker) runOne(binary string, t utTask) utResult {
 	return result
 }
 
-// utBuffer is a simple thread-safe byte buffer.
-type utBuffer struct {
+// buffer is a simple thread-safe byte buffer.
+type buffer struct {
 	mu  sync.Mutex
 	buf []byte
 }
 
-func (b *utBuffer) Write(p []byte) (int, error) {
+func (b *buffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.buf = append(b.buf, p...)
 	return len(p), nil
 }
 
-func (b *utBuffer) Bytes() []byte {
+func (b *buffer) Bytes() []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	out := make([]byte, len(b.buf))
@@ -416,8 +413,8 @@ func (b *utBuffer) Bytes() []byte {
 	return out
 }
 
-// utTryDir finds the package directory for a mega test.
-func utTryDir(pkg string) string {
+// tryDir finds the package directory for a mega test.
+func tryDir(pkg string) string {
 	wd := workDir()
 	candidates := []string{
 		filepath.Join(wd, "pkg", pkg),
@@ -431,8 +428,8 @@ func utTryDir(pkg string) string {
 	return wd
 }
 
-// utFilterOutput removes verbose framework boilerplate from test output.
-func utFilterOutput(output string) string {
+// filterOutput removes verbose framework boilerplate from test output.
+func filterOutput(output string) string {
 	filtered := make([]string, 0, 128)
 	for _, line := range strings.Split(output, "\n") {
 		if strings.Contains(line, "Registered tests:") {
