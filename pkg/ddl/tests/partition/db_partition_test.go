@@ -3269,6 +3269,116 @@ func samePartitionSet(actual, expected []string) bool {
 	return slices.Equal(actual, expected)
 }
 
+func newPartitionTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	return tk
+}
+
+func preparePartitionAlterCase(tk *testkit.TestKit, tableName, createSQL string, setupSQLs ...string) {
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(createSQL)
+	for _, sql := range setupSQLs {
+		tk.MustExec(sql)
+	}
+}
+
+func adminCheckPartitionTable(tk *testkit.TestKit, tableName string) {
+	tk.MustExec("set session tidb_enable_fast_table_check = off")
+	tk.MustExec(fmt.Sprintf("admin check table %s", tableName))
+}
+
+type partitionAlterSuccessCase struct {
+	name       string
+	tableName  string
+	createSQL  string
+	sessionSQL []string
+	setupSQLs  []string
+	alterSQL   string
+	checkSQL   string
+	checkRows  []string
+}
+
+type partitionAlterRejectCase struct {
+	name         string
+	tableName    string
+	createSQL    string
+	sessionSQL   []string
+	setupSQLs    []string
+	alterSQL     string
+	errCode      int
+	postAlterSQL []string
+	checkSQL     string
+	checkRows    []string
+}
+
+type partitionAlterVerifyCase struct {
+	name       string
+	tableName  string
+	createSQL  string
+	sessionSQL []string
+	setupSQLs  []string
+	alterSQL   string
+	errCode    int
+	verify     func(t *testing.T, tk *testkit.TestKit)
+}
+
+func runPartitionAlterSuccessCase(t *testing.T, store kv.Storage, tc partitionAlterSuccessCase) {
+	tk := newPartitionTestKit(t, store)
+	preparePartitionAlterCase(tk, tc.tableName, tc.createSQL, tc.setupSQLs...)
+	for _, sql := range tc.sessionSQL {
+		tk.MustExec(sql)
+	}
+	tk.MustExec(tc.alterSQL)
+	adminCheckPartitionTable(tk, tc.tableName)
+	if tc.checkSQL != "" {
+		tk.MustQuery(tc.checkSQL).Check(testkit.Rows(tc.checkRows...))
+	}
+}
+
+func runPartitionAlterRejectCase(t *testing.T, store kv.Storage, tc partitionAlterRejectCase) {
+	tk := newPartitionTestKit(t, store)
+	preparePartitionAlterCase(tk, tc.tableName, tc.createSQL, tc.setupSQLs...)
+	for _, sql := range tc.sessionSQL {
+		tk.MustExec(sql)
+	}
+	tk.MustGetErrCode(tc.alterSQL, tc.errCode)
+	for _, sql := range tc.postAlterSQL {
+		tk.MustExec(sql)
+	}
+	if tc.checkSQL != "" {
+		tk.MustQuery(tc.checkSQL).Check(testkit.Rows(tc.checkRows...))
+	}
+}
+
+func runPartitionAlterVerifyCase(t *testing.T, store kv.Storage, tc partitionAlterVerifyCase) {
+	tk := newPartitionTestKit(t, store)
+	preparePartitionAlterCase(tk, tc.tableName, tc.createSQL, tc.setupSQLs...)
+	for _, sql := range tc.sessionSQL {
+		tk.MustExec(sql)
+	}
+	if tc.errCode != 0 {
+		tk.MustGetErrCode(tc.alterSQL, tc.errCode)
+		return
+	}
+	tk.MustExec(tc.alterSQL)
+	if tc.verify != nil {
+		tc.verify(t, tk)
+	}
+}
+
+func checkPartitionColumnMeta(tk *testkit.TestKit, tableName, columnName, expected string) {
+	tk.MustQuery(fmt.Sprintf(`select column_default, is_nullable, column_comment
+		from information_schema.columns
+		where table_schema='test' and table_name='%s' and column_name='%s'`, tableName, columnName)).
+		Check(testkit.Rows(expected))
+}
+
+func assertExactPrunedPartitions(t *testing.T, tk *testkit.TestKit, sql string, partitions ...string) {
+	rows := tk.MustQuery(sql).Rows()
+	require.True(t, hasExactPartitionsInPlan(rows, partitions...), "expected exact partitions %v for query: %s", partitions, sql)
+}
+
 // Covers modify-column on LIST COLUMNS and KEY partitioned tables and verifies index-read correctness after type change.
 func TestModifyColumnPartitionedTableListAndKeyPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -3318,572 +3428,620 @@ func TestModifyColumnPartitionedTableListAndKeyPartition(t *testing.T) {
 func TestModifyColumnPartitionedTableKeyPartitionWhitelist(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	t.Run("int widening", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_int")
-		tk.MustExec(`create table t_key_wl_int (
-			a tinyint,
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_int values (1,10),(2,20),(3,30)`)
-		tk.MustExec(`alter table t_key_wl_int modify column a int`)
-		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
-		tk.MustExec(`admin check table t_key_wl_int`)
-		tk.MustQuery(`select count(*) from t_key_wl_int`).Check(testkit.Rows("3"))
-	})
+	successCases := []partitionAlterSuccessCase{
+		{
+			name:      "int widening",
+			tableName: "t_key_wl_int",
+			createSQL: `create table t_key_wl_int (
+				a tinyint,
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_int values (1,10),(2,20),(3,30)`},
+			alterSQL:  `alter table t_key_wl_int modify column a int`,
+			checkSQL:  `select count(*) from t_key_wl_int`,
+			checkRows: []string{"3"},
+		},
+		{
+			name:      "int widening by change column",
+			tableName: "t_key_wl_change",
+			createSQL: `create table t_key_wl_change (
+				a tinyint,
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_change values (1,10),(2,20),(3,30)`},
+			alterSQL:  `alter table t_key_wl_change change column a a int`,
+			checkSQL:  `select count(*) from t_key_wl_change`,
+			checkRows: []string{"3"},
+		},
+		{
+			name:      "string widening",
+			tableName: "t_key_wl_str",
+			createSQL: `create table t_key_wl_str (
+				a varchar(8),
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_str values ('a',1),('bbb',2),('cccc',3)`},
+			alterSQL:  `alter table t_key_wl_str modify column a varchar(32)`,
+			checkSQL:  `select count(*) from t_key_wl_str where a in ('a','bbb','cccc')`,
+			checkRows: []string{"3"},
+		},
+		{
+			name:      "enum tail append",
+			tableName: "t_key_wl_enum",
+			createSQL: `create table t_key_wl_enum (
+				a enum('x','y'),
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_enum values ('x',1),('y',2)`},
+			alterSQL:  `alter table t_key_wl_enum modify column a enum('x','y','z')`,
+			checkSQL:  `select count(*) from t_key_wl_enum where a in ('x','y')`,
+			checkRows: []string{"2"},
+		},
+	}
+	for _, tc := range successCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runPartitionAlterSuccessCase(t, store, tc)
+		})
+	}
 
-	t.Run("int widening by change column", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_change")
-		tk.MustExec(`create table t_key_wl_change (
-			a tinyint,
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_change values (1,10),(2,20),(3,30)`)
-		tk.MustExec(`alter table t_key_wl_change change column a a int`)
-		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
-		tk.MustExec(`admin check table t_key_wl_change`)
-		tk.MustQuery(`select count(*) from t_key_wl_change`).Check(testkit.Rows("3"))
-	})
-
-	t.Run("rename by change column rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_change_rename")
-		tk.MustExec(`create table t_key_wl_change_rename (
-			a tinyint,
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_change_rename values (1,10),(2,20),(3,30)`)
-		tk.MustGetErrCode(`alter table t_key_wl_change_rename change column a a2 int`, errno.ErrDependentByPartitionFunctional)
-	})
-
-	t.Run("string widening", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_str")
-		tk.MustExec(`create table t_key_wl_str (
-			a varchar(8),
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_str values ('a',1),('bbb',2),('cccc',3)`)
-		tk.MustExec(`alter table t_key_wl_str modify column a varchar(32)`)
-		tk.MustExec(`admin check table t_key_wl_str`)
-		tk.MustQuery(`select count(*) from t_key_wl_str where a in ('a','bbb','cccc')`).Check(testkit.Rows("3"))
-	})
-
-	t.Run("string collation change rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_str_collate")
-		tk.MustExec(`create table t_key_wl_str_collate (
-			a varchar(8) character set utf8mb4 collate utf8mb4_bin,
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_str_collate values ('a',1),('bbb',2),('cccc',3)`)
-		tk.MustGetErrCode(
-			`alter table t_key_wl_str_collate modify column a varchar(32) character set utf8mb4 collate utf8mb4_general_ci`,
-			errno.ErrUnsupportedDDLOperation,
-		)
-	})
-
-	t.Run("float to double rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_float")
-		tk.MustExec(`create table t_key_wl_float (
-			a float,
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_float values (1.25,1),(2.5,2),(3.75,3)`)
-		tk.MustGetErrCode(`alter table t_key_wl_float modify column a double`, errno.ErrUnsupportedDDLOperation)
-	})
-
-	t.Run("decimal scale widening rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_decimal")
-		tk.MustExec(`create table t_key_wl_decimal (
-			a decimal(10,2),
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_decimal values (1.23,1),(2.34,2),(3.45,3)`)
-		tk.MustGetErrCode(`alter table t_key_wl_decimal modify column a decimal(10,4)`, errno.ErrUnsupportedDDLOperation)
-	})
-
-	t.Run("enum tail append", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_enum")
-		tk.MustExec(`create table t_key_wl_enum (
-			a enum('x','y'),
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_enum values ('x',1),('y',2)`)
-		tk.MustExec(`alter table t_key_wl_enum modify column a enum('x','y','z')`)
-		tk.MustExec(`admin check table t_key_wl_enum`)
-		tk.MustQuery(`select count(*) from t_key_wl_enum where a in ('x','y')`).Check(testkit.Rows("2"))
-	})
-
-	t.Run("datetime fsp rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_dt")
-		tk.MustExec(`create table t_key_wl_dt (
-			a datetime,
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_dt values ('2024-01-01 00:00:00',1),('2024-01-02 00:00:00',2)`)
-		tk.MustGetErrCode(`alter table t_key_wl_dt modify column a datetime(3)`, errno.ErrUnsupportedDDLOperation)
-	})
-
-	t.Run("binary length rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_key_wl_bin")
-		tk.MustExec(`create table t_key_wl_bin (
-			a binary(2),
-			b int
-		) partition by key(a) partitions 3`)
-		tk.MustExec(`insert into t_key_wl_bin values ('aa',1),('bb',2)`)
-		tk.MustGetErrCode(`alter table t_key_wl_bin modify column a binary(3)`, errno.ErrUnsupportedDDLOperation)
-	})
+	rejectCases := []partitionAlterRejectCase{
+		{
+			name:      "rename by change column rejected",
+			tableName: "t_key_wl_change_rename",
+			createSQL: `create table t_key_wl_change_rename (
+				a tinyint,
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_change_rename values (1,10),(2,20),(3,30)`},
+			alterSQL:  `alter table t_key_wl_change_rename change column a a2 int`,
+			errCode:   errno.ErrDependentByPartitionFunctional,
+		},
+		{
+			name:      "string collation change rejected",
+			tableName: "t_key_wl_str_collate",
+			createSQL: `create table t_key_wl_str_collate (
+				a varchar(8) character set utf8mb4 collate utf8mb4_bin,
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_str_collate values ('a',1),('bbb',2),('cccc',3)`},
+			alterSQL:  `alter table t_key_wl_str_collate modify column a varchar(32) character set utf8mb4 collate utf8mb4_general_ci`,
+			errCode:   errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			name:      "float to double rejected",
+			tableName: "t_key_wl_float",
+			createSQL: `create table t_key_wl_float (
+				a float,
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_float values (1.25,1),(2.5,2),(3.75,3)`},
+			alterSQL:  `alter table t_key_wl_float modify column a double`,
+			errCode:   errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			name:      "decimal scale widening rejected",
+			tableName: "t_key_wl_decimal",
+			createSQL: `create table t_key_wl_decimal (
+				a decimal(10,2),
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_decimal values (1.23,1),(2.34,2),(3.45,3)`},
+			alterSQL:  `alter table t_key_wl_decimal modify column a decimal(10,4)`,
+			errCode:   errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			name:      "datetime fsp rejected",
+			tableName: "t_key_wl_dt",
+			createSQL: `create table t_key_wl_dt (
+				a datetime,
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_dt values ('2024-01-01 00:00:00',1),('2024-01-02 00:00:00',2)`},
+			alterSQL:  `alter table t_key_wl_dt modify column a datetime(3)`,
+			errCode:   errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			name:      "binary length rejected",
+			tableName: "t_key_wl_bin",
+			createSQL: `create table t_key_wl_bin (
+				a binary(2),
+				b int
+			) partition by key(a) partitions 3`,
+			setupSQLs: []string{`insert into t_key_wl_bin values ('aa',1),('bb',2)`},
+			alterSQL:  `alter table t_key_wl_bin modify column a binary(3)`,
+			errCode:   errno.ErrUnsupportedDDLOperation,
+		},
+	}
+	for _, tc := range rejectCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runPartitionAlterRejectCase(t, store, tc)
+		})
+	}
 }
 
 func TestModifyColumnPartitionedTableRangeListColumnsWhitelist(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	t.Run("range columns int widening", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_wl_int")
-		tk.MustExec(`create table t_range_cols_wl_int (
-			a tinyint,
-			b int
-		) partition by range columns(a) (
-			partition p0 values less than (10),
-			partition p1 values less than (maxvalue)
-		)`)
-		tk.MustExec(`insert into t_range_cols_wl_int values (1,1),(11,11)`)
-		tk.MustExec(`alter table t_range_cols_wl_int modify column a int`)
-		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
-		tk.MustExec(`admin check table t_range_cols_wl_int`)
-	})
+	successCases := []partitionAlterSuccessCase{
+		{
+			name:      "range columns int widening",
+			tableName: "t_range_cols_wl_int",
+			createSQL: `create table t_range_cols_wl_int (
+				a tinyint,
+				b int
+			) partition by range columns(a) (
+				partition p0 values less than (10),
+				partition p1 values less than (maxvalue)
+			)`,
+			setupSQLs: []string{`insert into t_range_cols_wl_int values (1,1),(11,11)`},
+			alterSQL:  `alter table t_range_cols_wl_int modify column a int`,
+		},
+		{
+			name:      "range columns datetime fsp",
+			tableName: "t_range_cols_wl_dt",
+			createSQL: `create table t_range_cols_wl_dt (
+				a datetime,
+				b int
+			) partition by range columns(a) (
+				partition p0 values less than ('2024-01-10 00:00:00'),
+				partition p1 values less than (maxvalue)
+			)`,
+			setupSQLs: []string{`insert into t_range_cols_wl_dt values ('2024-01-01 00:00:00',1),('2024-02-01 00:00:00',2)`},
+			alterSQL:  `alter table t_range_cols_wl_dt modify column a datetime(3)`,
+			checkSQL:  `select count(*) from t_range_cols_wl_dt where a < '2024-01-10'`,
+			checkRows: []string{"1"},
+		},
+		{
+			name:      "list columns varbinary extension",
+			tableName: "t_list_cols_wl_varbin",
+			createSQL: `create table t_list_cols_wl_varbin (
+				a varbinary(2),
+				b int
+			) partition by list columns(a) (
+				partition p0 values in ('a'),
+				partition p1 values in ('b')
+			)`,
+			setupSQLs: []string{`insert into t_list_cols_wl_varbin values ('a',1),('b',2)`},
+			alterSQL:  `alter table t_list_cols_wl_varbin modify column a varbinary(4)`,
+		},
+	}
+	for _, tc := range successCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runPartitionAlterSuccessCase(t, store, tc)
+		})
+	}
 
-	t.Run("range columns datetime fsp", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_wl_dt")
-		tk.MustExec(`create table t_range_cols_wl_dt (
-			a datetime,
-			b int
-		) partition by range columns(a) (
-			partition p0 values less than ('2024-01-10 00:00:00'),
-			partition p1 values less than (maxvalue)
-		)`)
-		tk.MustExec(`insert into t_range_cols_wl_dt values ('2024-01-01 00:00:00',1),('2024-02-01 00:00:00',2)`)
-		tk.MustExec(`alter table t_range_cols_wl_dt modify column a datetime(3)`)
-		tk.MustExec(`admin check table t_range_cols_wl_dt`)
-		tk.MustQuery(`select count(*) from t_range_cols_wl_dt where a < '2024-01-10'`).Check(testkit.Rows("1"))
-	})
-
-	t.Run("list columns varbinary extension", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_list_cols_wl_varbin")
-		tk.MustExec(`create table t_list_cols_wl_varbin (
-			a varbinary(2),
-			b int
-		) partition by list columns(a) (
-			partition p0 values in ('a'),
-			partition p1 values in ('b')
-		)`)
-		tk.MustExec(`insert into t_list_cols_wl_varbin values ('a',1),('b',2)`)
-		tk.MustExec(`alter table t_list_cols_wl_varbin modify column a varbinary(4)`)
-		tk.MustExec(`admin check table t_list_cols_wl_varbin`)
-	})
-
-	t.Run("list columns varchar shrink under empty sql_mode rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_list_cols_wl_varchar_shrink")
-		tk.MustExec(`create table t_list_cols_wl_varchar_shrink (
-			a varchar(6),
-			b int
-		) partition by list columns(a) (
-			partition p0 values in ('123456'),
-			partition p1 values in ('654321')
-		)`)
-		tk.MustExec(`insert into t_list_cols_wl_varchar_shrink values ('123456',1),('654321',2)`)
-		tk.MustExec(`set session sql_mode = ''`)
-		tk.MustGetErrCode(
-			`alter table t_list_cols_wl_varchar_shrink modify column a varchar(5)`,
-			errno.ErrUnsupportedDDLOperation,
-		)
-		tk.MustExec(`admin check table t_list_cols_wl_varchar_shrink`)
-		tk.MustQuery(`select count(*) from t_list_cols_wl_varchar_shrink`).Check(testkit.Rows("2"))
-	})
-
-	t.Run("list columns binary extension rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_list_cols_wl_bin")
-		tk.MustExec(`create table t_list_cols_wl_bin (
-			a binary(2),
-			b int
-		) partition by list columns(a) (
-			partition p0 values in ('aa'),
-			partition p1 values in ('bb')
-		)`)
-		tk.MustExec(`insert into t_list_cols_wl_bin values ('aa',1),('bb',2)`)
-		tk.MustGetErrCode(`alter table t_list_cols_wl_bin modify column a binary(3)`, errno.ErrUnsupportedDDLOperation)
-	})
+	rejectCases := []partitionAlterRejectCase{
+		{
+			name:      "list columns varchar shrink under empty sql_mode rejected",
+			tableName: "t_list_cols_wl_varchar_shrink",
+			createSQL: `create table t_list_cols_wl_varchar_shrink (
+				a varchar(6),
+				b int
+			) partition by list columns(a) (
+				partition p0 values in ('123456'),
+				partition p1 values in ('654321')
+			)`,
+			sessionSQL: []string{`set session sql_mode = ''`},
+			setupSQLs:  []string{`insert into t_list_cols_wl_varchar_shrink values ('123456',1),('654321',2)`},
+			alterSQL:   `alter table t_list_cols_wl_varchar_shrink modify column a varchar(5)`,
+			errCode:    errno.ErrUnsupportedDDLOperation,
+			postAlterSQL: []string{
+				`set session tidb_enable_fast_table_check = off`,
+				`admin check table t_list_cols_wl_varchar_shrink`,
+			},
+			checkSQL:  `select count(*) from t_list_cols_wl_varchar_shrink`,
+			checkRows: []string{"2"},
+		},
+		{
+			name:      "list columns binary extension rejected",
+			tableName: "t_list_cols_wl_bin",
+			createSQL: `create table t_list_cols_wl_bin (
+				a binary(2),
+				b int
+			) partition by list columns(a) (
+				partition p0 values in ('aa'),
+				partition p1 values in ('bb')
+			)`,
+			setupSQLs: []string{`insert into t_list_cols_wl_bin values ('aa',1),('bb',2)`},
+			alterSQL:  `alter table t_list_cols_wl_bin modify column a binary(3)`,
+			errCode:   errno.ErrUnsupportedDDLOperation,
+		},
+	}
+	for _, tc := range rejectCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runPartitionAlterRejectCase(t, store, tc)
+		})
+	}
 }
 
 func TestModifyColumnPartitionedTablePartitionColumnNullability(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	t.Run("range columns not null to null allowed", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_nullable_ok")
-		tk.MustExec(`create table t_range_cols_nullable_ok (
+	cases := []partitionAlterVerifyCase{
+		{
+			name:      "range columns not null to null allowed",
+			tableName: "t_range_cols_nullable_ok",
+			createSQL: `create table t_range_cols_nullable_ok (
 				a int not null,
 				b int
 			) partition by range columns(a) (
 				partition p0 values less than (10),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustExec(`insert into t_range_cols_nullable_ok values (1,1),(11,11)`)
-		tk.MustExec(`alter table t_range_cols_nullable_ok modify column a int null`)
-		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
-		tk.MustExec(`admin check table t_range_cols_nullable_ok`)
-		tk.MustExec(`insert into t_range_cols_nullable_ok values (null,100)`)
-		tk.MustQuery(`select count(*) from t_range_cols_nullable_ok where a is null`).Check(testkit.Rows("1"))
-	})
-
-	t.Run("range columns null to not null rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_nullable_reject")
-		tk.MustExec(`create table t_range_cols_nullable_reject (
+			)`,
+			setupSQLs: []string{`insert into t_range_cols_nullable_ok values (1,1),(11,11)`},
+			alterSQL:  `alter table t_range_cols_nullable_ok modify column a int null`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				adminCheckPartitionTable(tk, "t_range_cols_nullable_ok")
+				tk.MustExec(`insert into t_range_cols_nullable_ok values (null,100)`)
+				tk.MustQuery(`select count(*) from t_range_cols_nullable_ok where a is null`).Check(testkit.Rows("1"))
+			},
+		},
+		{
+			name:      "range columns null to not null rejected",
+			tableName: "t_range_cols_nullable_reject",
+			createSQL: `create table t_range_cols_nullable_reject (
 				a int null,
 				b int
 			) partition by range columns(a) (
 				partition p0 values less than (10),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustGetErrCode(`alter table t_range_cols_nullable_reject modify column a int not null`, errno.ErrUnsupportedDDLOperation)
-	})
-
-	t.Run("expr not null to null allowed", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_nullable_ok")
-		tk.MustExec(`create table t_expr_nullable_ok (
+			)`,
+			alterSQL: `alter table t_range_cols_nullable_reject modify column a int not null`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			name:      "expr not null to null allowed",
+			tableName: "t_expr_nullable_ok",
+			createSQL: `create table t_expr_nullable_ok (
 				a datetime not null,
 				v int
 			) partition by range (to_days(a)) (
 				partition p0 values less than (to_days('2024-01-10')),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustExec(`insert into t_expr_nullable_ok values ('2024-01-01 00:00:00',1)`)
-		tk.MustExec(`alter table t_expr_nullable_ok modify column a datetime null`)
-		tk.MustExec(`insert into t_expr_nullable_ok values (null,100)`)
-		tk.MustQuery(`select a, v from t_expr_nullable_ok where a is null`).Check(testkit.Rows("<nil> 100"))
-		tk.MustExec(`admin check table t_expr_nullable_ok`)
-	})
-
-	t.Run("expr null to not null rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_nullable_reject")
-		tk.MustExec(`create table t_expr_nullable_reject (
+			)`,
+			setupSQLs: []string{`insert into t_expr_nullable_ok values ('2024-01-01 00:00:00',1)`},
+			alterSQL:  `alter table t_expr_nullable_ok modify column a datetime null`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				tk.MustExec(`insert into t_expr_nullable_ok values (null,100)`)
+				tk.MustQuery(`select a, v from t_expr_nullable_ok where a is null`).Check(testkit.Rows("<nil> 100"))
+				adminCheckPartitionTable(tk, "t_expr_nullable_ok")
+			},
+		},
+		{
+			name:      "expr null to not null rejected",
+			tableName: "t_expr_nullable_reject",
+			createSQL: `create table t_expr_nullable_reject (
 				a datetime null,
 				v int
 			) partition by range (to_days(a)) (
 				partition p0 values less than (to_days('2024-01-10')),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustGetErrCode(`alter table t_expr_nullable_reject modify column a datetime not null`, errno.ErrUnsupportedDDLOperation)
-	})
+			)`,
+			alterSQL: `alter table t_expr_nullable_reject modify column a datetime not null`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runPartitionAlterVerifyCase(t, store, tc)
+		})
+	}
 }
 
 func TestModifyColumnPartitionedTablePartitionColumnDefaultComment(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	t.Run("range columns comment only", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_comment_only")
-		tk.MustExec(`create table t_range_cols_comment_only (
+	cases := []partitionAlterVerifyCase{
+		{
+			name:      "range columns comment only",
+			tableName: "t_range_cols_comment_only",
+			createSQL: `create table t_range_cols_comment_only (
 				a int not null,
 				b int
 			) partition by range columns(a) (
 				partition p0 values less than (10),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustExec(`alter table t_range_cols_comment_only modify column a int not null comment 'only-comment'`)
-		tk.MustQuery(`select column_default, is_nullable, column_comment
-				from information_schema.columns
-				where table_schema='test' and table_name='t_range_cols_comment_only' and column_name='a'`).
-			Check(testkit.Rows("<nil> NO only-comment"))
-		tk.MustGetErrCode(`insert into t_range_cols_comment_only(b) values (101)`, errno.ErrNoDefaultForField)
-		tk.MustQuery(`select count(*) from t_range_cols_comment_only`).Check(testkit.Rows("0"))
-		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
-		tk.MustExec(`admin check table t_range_cols_comment_only`)
-	})
-
-	t.Run("range columns default only", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_default_only")
-		tk.MustExec(`create table t_range_cols_default_only (
+			)`,
+			alterSQL: `alter table t_range_cols_comment_only modify column a int not null comment 'only-comment'`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				checkPartitionColumnMeta(tk, "t_range_cols_comment_only", "a", "<nil> NO only-comment")
+				tk.MustGetErrCode(`insert into t_range_cols_comment_only(b) values (101)`, errno.ErrNoDefaultForField)
+				tk.MustQuery(`select count(*) from t_range_cols_comment_only`).Check(testkit.Rows("0"))
+				adminCheckPartitionTable(tk, "t_range_cols_comment_only")
+			},
+		},
+		{
+			name:      "range columns default only",
+			tableName: "t_range_cols_default_only",
+			createSQL: `create table t_range_cols_default_only (
 				a int not null,
 				b int
 			) partition by range columns(a) (
 				partition p0 values less than (10),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustExec(`alter table t_range_cols_default_only modify column a int not null default 1`)
-		tk.MustQuery(`select column_default, is_nullable, column_comment
-				from information_schema.columns
-				where table_schema='test' and table_name='t_range_cols_default_only' and column_name='a'`).
-			Check(testkit.Rows("1 NO "))
-		tk.MustExec(`insert into t_range_cols_default_only(b) values (101)`)
-		tk.MustQuery(`select a, b from t_range_cols_default_only where b = 101`).Check(testkit.Rows("1 101"))
-		tk.MustExec(`admin check table t_range_cols_default_only`)
-	})
-
-	t.Run("range columns default and comment", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_def_comment")
-		tk.MustExec(`create table t_range_cols_def_comment (
+			)`,
+			alterSQL: `alter table t_range_cols_default_only modify column a int not null default 1`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				checkPartitionColumnMeta(tk, "t_range_cols_default_only", "a", "1 NO ")
+				tk.MustExec(`insert into t_range_cols_default_only(b) values (101)`)
+				tk.MustQuery(`select a, b from t_range_cols_default_only where b = 101`).Check(testkit.Rows("1 101"))
+				adminCheckPartitionTable(tk, "t_range_cols_default_only")
+			},
+		},
+		{
+			name:      "range columns default and comment",
+			tableName: "t_range_cols_def_comment",
+			createSQL: `create table t_range_cols_def_comment (
 				a int not null,
 				b int
 			) partition by range columns(a) (
 				partition p0 values less than (10),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustExec(`alter table t_range_cols_def_comment modify column a int not null default 1 comment 'pcol'`)
-		tk.MustQuery(`select column_default, is_nullable, column_comment
-				from information_schema.columns
-				where table_schema='test' and table_name='t_range_cols_def_comment' and column_name='a'`).
-			Check(testkit.Rows("1 NO pcol"))
-		tk.MustExec(`insert into t_range_cols_def_comment(b) values (102)`)
-		tk.MustQuery(`select a, b from t_range_cols_def_comment where b = 102`).Check(testkit.Rows("1 102"))
-		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
-		tk.MustExec(`admin check table t_range_cols_def_comment`)
-	})
-
-	t.Run("range columns default value changed", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_def_change")
-		tk.MustExec(`create table t_range_cols_def_change (
+			)`,
+			alterSQL: `alter table t_range_cols_def_comment modify column a int not null default 1 comment 'pcol'`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				checkPartitionColumnMeta(tk, "t_range_cols_def_comment", "a", "1 NO pcol")
+				tk.MustExec(`insert into t_range_cols_def_comment(b) values (102)`)
+				tk.MustQuery(`select a, b from t_range_cols_def_comment where b = 102`).Check(testkit.Rows("1 102"))
+				adminCheckPartitionTable(tk, "t_range_cols_def_comment")
+			},
+		},
+		{
+			name:      "range columns default value changed",
+			tableName: "t_range_cols_def_change",
+			createSQL: `create table t_range_cols_def_change (
 				a int not null default 1,
 				b int
 			) partition by range columns(a) (
 				partition p0 values less than (10),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustExec(`alter table t_range_cols_def_change modify column a int not null default 2`)
-		tk.MustQuery(`select column_default, is_nullable, column_comment
-				from information_schema.columns
-				where table_schema='test' and table_name='t_range_cols_def_change' and column_name='a'`).
-			Check(testkit.Rows("2 NO "))
-		tk.MustExec(`insert into t_range_cols_def_change(b) values (103)`)
-		tk.MustQuery(`select a, b from t_range_cols_def_change where b = 103`).Check(testkit.Rows("2 103"))
-		tk.MustExec(`admin check table t_range_cols_def_change`)
-	})
-
-	t.Run("range columns default removed", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_def_removed")
-		tk.MustExec(`create table t_range_cols_def_removed (
+			)`,
+			alterSQL: `alter table t_range_cols_def_change modify column a int not null default 2`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				checkPartitionColumnMeta(tk, "t_range_cols_def_change", "a", "2 NO ")
+				tk.MustExec(`insert into t_range_cols_def_change(b) values (103)`)
+				tk.MustQuery(`select a, b from t_range_cols_def_change where b = 103`).Check(testkit.Rows("2 103"))
+				adminCheckPartitionTable(tk, "t_range_cols_def_change")
+			},
+		},
+		{
+			name:      "range columns default removed",
+			tableName: "t_range_cols_def_removed",
+			createSQL: `create table t_range_cols_def_removed (
 				a int not null default 1,
 				b int
 			) partition by range columns(a) (
 				partition p0 values less than (10),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustExec(`alter table t_range_cols_def_removed modify column a int not null`)
-		tk.MustQuery(`select column_default, is_nullable, column_comment
-				from information_schema.columns
-				where table_schema='test' and table_name='t_range_cols_def_removed' and column_name='a'`).
-			Check(testkit.Rows("<nil> NO "))
-		tk.MustGetErrCode(`insert into t_range_cols_def_removed(b) values (104)`, errno.ErrNoDefaultForField)
-		tk.MustQuery(`select count(*) from t_range_cols_def_removed`).Check(testkit.Rows("0"))
-		tk.MustExec(`admin check table t_range_cols_def_removed`)
-	})
-
-	t.Run("expr default and comment", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_def_comment")
-		tk.MustExec(`create table t_expr_def_comment (
+			)`,
+			alterSQL: `alter table t_range_cols_def_removed modify column a int not null`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				checkPartitionColumnMeta(tk, "t_range_cols_def_removed", "a", "<nil> NO ")
+				tk.MustGetErrCode(`insert into t_range_cols_def_removed(b) values (104)`, errno.ErrNoDefaultForField)
+				tk.MustQuery(`select count(*) from t_range_cols_def_removed`).Check(testkit.Rows("0"))
+				adminCheckPartitionTable(tk, "t_range_cols_def_removed")
+			},
+		},
+		{
+			name:      "expr default and comment",
+			tableName: "t_expr_def_comment",
+			createSQL: `create table t_expr_def_comment (
 				a datetime not null,
 				v int
 			) partition by range (to_days(a)) (
 				partition p0 values less than (to_days('2024-01-10')),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustExec(`alter table t_expr_def_comment modify column a datetime not null default '2024-01-01 00:00:00' comment 'expr pcol'`)
-		tk.MustQuery(`select column_default, is_nullable, column_comment
-				from information_schema.columns
-				where table_schema='test' and table_name='t_expr_def_comment' and column_name='a'`).
-			Check(testkit.Rows("2024-01-01 00:00:00 NO expr pcol"))
-		tk.MustExec(`insert into t_expr_def_comment(v) values (7)`)
-		tk.MustQuery(`select a, v from t_expr_def_comment where v = 7`).Check(testkit.Rows("2024-01-01 00:00:00 7"))
-		tk.MustExec(`admin check table t_expr_def_comment`)
-	})
-
-	t.Run("null to not null with default and comment rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_range_cols_def_reject")
-		tk.MustExec(`create table t_range_cols_def_reject (
+			)`,
+			alterSQL: `alter table t_expr_def_comment modify column a datetime not null default '2024-01-01 00:00:00' comment 'expr pcol'`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				checkPartitionColumnMeta(tk, "t_expr_def_comment", "a", "2024-01-01 00:00:00 NO expr pcol")
+				tk.MustExec(`insert into t_expr_def_comment(v) values (7)`)
+				tk.MustQuery(`select a, v from t_expr_def_comment where v = 7`).Check(testkit.Rows("2024-01-01 00:00:00 7"))
+				adminCheckPartitionTable(tk, "t_expr_def_comment")
+			},
+		},
+		{
+			name:      "null to not null with default and comment rejected",
+			tableName: "t_range_cols_def_reject",
+			createSQL: `create table t_range_cols_def_reject (
 				a int null,
 				b int
 			) partition by range columns(a) (
 				partition p0 values less than (10),
 				partition p1 values less than (maxvalue)
-			)`)
-		tk.MustGetErrCode(`alter table t_range_cols_def_reject modify column a int not null default 1 comment 'reject'`, errno.ErrUnsupportedDDLOperation)
-	})
+			)`,
+			alterSQL: `alter table t_range_cols_def_reject modify column a int not null default 1 comment 'reject'`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runPartitionAlterVerifyCase(t, store, tc)
+		})
+	}
 }
 
 // RANGE/LIST/HASH expression/no-func whitelist matrix for partition columns.
 func TestModifyColumnPartitionedTableExpressionWhitelist(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	t.Run("hash no-func int widening", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_hash_nofunc_wl")
-		tk.MustExec(`create table t_hash_nofunc_wl (
-			a tinyint,
-			b int
-		) partition by hash(a) partitions 4`)
-		tk.MustExec(`insert into t_hash_nofunc_wl values (1,1),(2,2),(3,3),(4,4)`)
-		tk.MustExec(`alter table t_hash_nofunc_wl modify column a int`)
-		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
-		tk.MustExec(`admin check table t_hash_nofunc_wl`)
-	})
+	successCases := []partitionAlterVerifyCase{
+		{
+			name:      "hash no-func int widening",
+			tableName: "t_hash_nofunc_wl",
+			createSQL: `create table t_hash_nofunc_wl (
+				a tinyint,
+				b int
+			) partition by hash(a) partitions 4`,
+			setupSQLs: []string{`insert into t_hash_nofunc_wl values (1,1),(2,2),(3,3),(4,4)`},
+			alterSQL:  `alter table t_hash_nofunc_wl modify column a int`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				adminCheckPartitionTable(tk, "t_hash_nofunc_wl")
+			},
+		},
+		{
+			name:      "unary minus to_days datetime fsp",
+			tableName: "t_expr_unary_minus_todays",
+			createSQL: `create table t_expr_unary_minus_todays (
+				a datetime not null,
+				v int
+			) partition by range (-to_days(a)) (
+				partition p0 values less than (-to_days('2024-06-01')),
+				partition p1 values less than (maxvalue)
+			)`,
+			setupSQLs: []string{`insert into t_expr_unary_minus_todays values ('2024-07-01 00:00:00',1),('2024-03-01 00:00:00',2)`},
+			alterSQL:  `alter table t_expr_unary_minus_todays modify column a datetime(3) not null`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				adminCheckPartitionTable(tk, "t_expr_unary_minus_todays")
+				tk.MustQuery(`select count(*) from t_expr_unary_minus_todays`).Check(testkit.Rows("2"))
+			},
+		},
+		{
+			name:      "to_days and extract on same column",
+			tableName: "t_expr_combo_same_col",
+			createSQL: `create table t_expr_combo_same_col (
+				a datetime not null,
+				v int
+			) partition by range (to_days(a) + extract(day from a)) (
+				partition p0 values less than (to_days('2024-03-01') + extract(day from '2024-03-01')),
+				partition p1 values less than (to_days('2024-06-01') + extract(day from '2024-06-01')),
+				partition pmax values less than (maxvalue)
+			)`,
+			alterSQL: `alter table t_expr_combo_same_col modify column a datetime(3) not null`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				adminCheckPartitionTable(tk, "t_expr_combo_same_col")
+			},
+		},
+		{
+			name:      "to_days and extract on two columns",
+			tableName: "t_expr_combo_two_cols_extract",
+			createSQL: `create table t_expr_combo_two_cols_extract (
+				a datetime not null,
+				b time not null,
+				v int
+			) partition by range (to_days(a) + extract(second from b)) (
+				partition p0 values less than (to_days('2024-03-01') + extract(second from '00:00:30')),
+				partition p1 values less than (to_days('2024-06-01') + extract(second from '00:00:45')),
+				partition pmax values less than (maxvalue)
+			)`,
+			alterSQL: `alter table t_expr_combo_two_cols_extract modify column a datetime(3) not null, modify column b time(3) not null`,
+			verify: func(t *testing.T, tk *testkit.TestKit) {
+				adminCheckPartitionTable(tk, "t_expr_combo_two_cols_extract")
+			},
+		},
+	}
+	for _, tc := range successCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runPartitionAlterVerifyCase(t, store, tc)
+		})
+	}
 
-	t.Run("unix timestamp rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_unix")
-		tk.MustExec(`create table t_expr_unix (
-			ts timestamp
-		) partition by range (floor(unix_timestamp(ts))) (
-			partition p0 values less than (unix_timestamp('2024-01-02 00:00:00')),
-			partition p1 values less than (maxvalue)
-		)`)
-		tk.MustGetErrCode(`alter table t_expr_unix modify column ts timestamp(3)`, errno.ErrFieldTypeNotAllowedAsPartitionField)
-	})
+	rejectCases := []partitionAlterVerifyCase{
+		{
+			name:      "unix timestamp rejected",
+			tableName: "t_expr_unix",
+			createSQL: `create table t_expr_unix (
+				ts timestamp
+			) partition by range (floor(unix_timestamp(ts))) (
+				partition p0 values less than (unix_timestamp('2024-01-02 00:00:00')),
+				partition p1 values less than (maxvalue)
+			)`,
+			alterSQL: `alter table t_expr_unix modify column ts timestamp(3)`,
+			errCode:  errno.ErrFieldTypeNotAllowedAsPartitionField,
+		},
+		{
+			name:      "floor to_days rejected",
+			tableName: "t_expr_floor_todays",
+			createSQL: `create table t_expr_floor_todays (
+				dt datetime,
+				v int
+			) partition by range (floor(to_days(dt))) (
+				partition p0 values less than (floor(to_days('2024-01-10'))),
+				partition p1 values less than (maxvalue)
+			)`,
+			alterSQL: `alter table t_expr_floor_todays modify column dt datetime(3)`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			name:      "year rejected",
+			tableName: "t_expr_other",
+			createSQL: `create table t_expr_other (
+				dt datetime,
+				v int
+			) partition by range (year(dt)) (
+				partition p0 values less than (2025),
+				partition p1 values less than (maxvalue)
+			)`,
+			alterSQL: `alter table t_expr_other modify column dt datetime(3)`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			name:      "to_days plus year rejected",
+			tableName: "t_expr_combo_other",
+			createSQL: `create table t_expr_combo_other (
+				a datetime not null,
+				v int
+			) partition by range (to_days(a) + year(a)) (
+				partition p0 values less than (to_days('2024-03-01') + 2024),
+				partition p1 values less than (to_days('2024-06-01') + 2024),
+				partition pmax values less than (maxvalue)
+			)`,
+			alterSQL: `alter table t_expr_combo_other modify column a datetime(3) not null`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
+		},
+	}
+	for _, tc := range rejectCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			runPartitionAlterVerifyCase(t, store, tc)
+		})
+	}
 
-	t.Run("to_days datetime fsp", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
+	t.Run("to_days datetime fsp pruning unchanged", func(t *testing.T) {
+		tk := newPartitionTestKit(t, store)
 		tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-		tk.MustExec("drop table if exists t_expr_todays")
-		tk.MustExec(`create table t_expr_todays (
+		preparePartitionAlterCase(tk, "t_expr_todays", `create table t_expr_todays (
 			dt datetime,
 			v int
 		) partition by range (to_days(dt)) (
 			partition p0 values less than (to_days('2024-01-10')),
 			partition p1 values less than (maxvalue)
-		)`)
-		tk.MustExec(`insert into t_expr_todays values ('2024-01-01 00:00:00',1),('2024-02-01 00:00:00',2)`)
-		beforeToDays := tk.MustQuery(`explain format='brief' select * from t_expr_todays where dt = '2024-01-01 00:00:00'`).Rows()
-		require.True(t, hasExactPartitionsInPlan(beforeToDays, "p0"), "before modify to_days should prune p0")
+		)`, `insert into t_expr_todays values ('2024-01-01 00:00:00',1),('2024-02-01 00:00:00',2)`)
+		assertExactPrunedPartitions(t, tk, `explain format='brief' select * from t_expr_todays where dt = '2024-01-01 00:00:00'`, "p0")
 		tk.MustExec(`alter table t_expr_todays modify column dt datetime(3)`)
-		afterToDays := tk.MustQuery(`explain format='brief' select * from t_expr_todays where dt = '2024-01-01 00:00:00'`).Rows()
-		require.True(t, hasExactPartitionsInPlan(afterToDays, "p0"), "after modify to_days should still prune p0")
-		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
-		tk.MustExec(`admin check table t_expr_todays`)
+		assertExactPrunedPartitions(t, tk, `explain format='brief' select * from t_expr_todays where dt = '2024-01-01 00:00:00'`, "p0")
+		adminCheckPartitionTable(tk, "t_expr_todays")
 	})
 
-	t.Run("unary minus to_days datetime fsp", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_unary_minus_todays")
-		tk.MustExec(`create table t_expr_unary_minus_todays (
-			a datetime not null,
-			v int
-		) partition by range (-to_days(a)) (
-			partition p0 values less than (-to_days('2024-06-01')),
-			partition p1 values less than (maxvalue)
-		)`)
-		tk.MustExec(`insert into t_expr_unary_minus_todays values ('2024-07-01 00:00:00',1),('2024-03-01 00:00:00',2)`)
-		tk.MustExec(`alter table t_expr_unary_minus_todays modify column a datetime(3) not null`)
-		tk.MustExec(`admin check table t_expr_unary_minus_todays`)
-		tk.MustQuery(`select count(*) from t_expr_unary_minus_todays`).Check(testkit.Rows("2"))
-	})
-
-	t.Run("floor to_days rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_floor_todays")
-		tk.MustExec(`create table t_expr_floor_todays (
-			dt datetime,
-			v int
-		) partition by range (floor(to_days(dt))) (
-			partition p0 values less than (floor(to_days('2024-01-10'))),
-			partition p1 values less than (maxvalue)
-		)`)
-		tk.MustGetErrCode(`alter table t_expr_floor_todays modify column dt datetime(3)`, errno.ErrUnsupportedDDLOperation)
-	})
-
-	t.Run("extract time fsp", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
+	t.Run("extract time fsp pruning unchanged", func(t *testing.T) {
+		tk := newPartitionTestKit(t, store)
 		tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-		tk.MustExec("drop table if exists t_expr_extract")
-		tk.MustExec(`create table t_expr_extract (
+		preparePartitionAlterCase(tk, "t_expr_extract", `create table t_expr_extract (
 			tm time,
 			v int
 		) partition by range (extract(second from tm)) (
 			partition p0 values less than (30),
 			partition p1 values less than (maxvalue)
-		)`)
-		tk.MustExec(`insert into t_expr_extract values ('00:00:10',1),('00:00:40',2)`)
-		beforeExtract := tk.MustQuery(`explain format='brief' select * from t_expr_extract where tm = '00:00:10'`).Rows()
-		require.True(t, hasExactPartitionsInPlan(beforeExtract, "p0"), "before modify extract should prune p0")
+		)`, `insert into t_expr_extract values ('00:00:10',1),('00:00:40',2)`)
+		assertExactPrunedPartitions(t, tk, `explain format='brief' select * from t_expr_extract where tm = '00:00:10'`, "p0")
 		tk.MustExec(`alter table t_expr_extract modify column tm time(3)`)
-		afterExtract := tk.MustQuery(`explain format='brief' select * from t_expr_extract where tm = '00:00:10'`).Rows()
-		require.True(t, hasExactPartitionsInPlan(afterExtract, "p0"), "after modify extract should still prune p0")
-		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
-		tk.MustExec(`admin check table t_expr_extract`)
-	})
-
-	t.Run("to_days and extract on same column", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_combo_same_col")
-		tk.MustExec(`create table t_expr_combo_same_col (
-			a datetime not null,
-			v int
-		) partition by range (to_days(a) + extract(day from a)) (
-			partition p0 values less than (to_days('2024-03-01') + extract(day from '2024-03-01')),
-			partition p1 values less than (to_days('2024-06-01') + extract(day from '2024-06-01')),
-			partition pmax values less than (maxvalue)
-		)`)
-		tk.MustExec(`alter table t_expr_combo_same_col modify column a datetime(3) not null`)
-		tk.MustExec(`admin check table t_expr_combo_same_col`)
+		assertExactPrunedPartitions(t, tk, `explain format='brief' select * from t_expr_extract where tm = '00:00:10'`, "p0")
+		adminCheckPartitionTable(tk, "t_expr_extract")
 	})
 
 	t.Run("to_days and unix_timestamp on two columns", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_combo_two_cols_unix")
-		tk.MustExec(`create table t_expr_combo_two_cols_unix (
+		tk := newPartitionTestKit(t, store)
+		preparePartitionAlterCase(tk, "t_expr_combo_two_cols_unix", `create table t_expr_combo_two_cols_unix (
 			a datetime not null,
 			b timestamp not null,
 			v int
@@ -3893,54 +4051,8 @@ func TestModifyColumnPartitionedTableExpressionWhitelist(t *testing.T) {
 			partition pmax values less than (maxvalue)
 		)`)
 		tk.MustExec(`alter table t_expr_combo_two_cols_unix modify column a datetime(3) not null`)
-		tk.MustExec(`admin check table t_expr_combo_two_cols_unix`)
+		adminCheckPartitionTable(tk, "t_expr_combo_two_cols_unix")
 		tk.MustGetErrCode(`alter table t_expr_combo_two_cols_unix modify column b timestamp(3) not null`, errno.ErrFieldTypeNotAllowedAsPartitionField)
-	})
-
-	t.Run("to_days and extract on two columns", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_combo_two_cols_extract")
-		tk.MustExec(`create table t_expr_combo_two_cols_extract (
-			a datetime not null,
-			b time not null,
-			v int
-		) partition by range (to_days(a) + extract(second from b)) (
-			partition p0 values less than (to_days('2024-03-01') + extract(second from '00:00:30')),
-			partition p1 values less than (to_days('2024-06-01') + extract(second from '00:00:45')),
-			partition pmax values less than (maxvalue)
-		)`)
-		tk.MustExec(`alter table t_expr_combo_two_cols_extract modify column a datetime(3) not null, modify column b time(3) not null`)
-		tk.MustExec(`admin check table t_expr_combo_two_cols_extract`)
-	})
-
-	t.Run("year rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_other")
-		tk.MustExec(`create table t_expr_other (
-			dt datetime,
-			v int
-		) partition by range (year(dt)) (
-			partition p0 values less than (2025),
-			partition p1 values less than (maxvalue)
-		)`)
-		tk.MustGetErrCode(`alter table t_expr_other modify column dt datetime(3)`, errno.ErrUnsupportedDDLOperation)
-	})
-
-	t.Run("to_days plus year rejected", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_expr_combo_other")
-		tk.MustExec(`create table t_expr_combo_other (
-			a datetime not null,
-			v int
-		) partition by range (to_days(a) + year(a)) (
-			partition p0 values less than (to_days('2024-03-01') + 2024),
-			partition p1 values less than (to_days('2024-06-01') + 2024),
-			partition pmax values less than (maxvalue)
-		)`)
-		tk.MustGetErrCode(`alter table t_expr_combo_other modify column a datetime(3) not null`, errno.ErrUnsupportedDDLOperation)
 	})
 }
 
