@@ -69,7 +69,7 @@ func (*mergeCollector) Accepted(_ int64) {}
 
 func (c *mergeCollector) Processed(bytes, rowCnt int64) {
 	if c.summary != nil {
-		c.summary.Bytes.Add(bytes)
+		c.summary.Processed.Add(bytes)
 		c.summary.RowCnt.Add(rowCnt)
 	}
 	if c.counter != nil {

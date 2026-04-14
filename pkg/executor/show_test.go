@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -94,6 +95,18 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	// runtime info have update time, so use it
 	executor.FillOneImportJobInfo(c, jobInfo, &importinto.RuntimeInfo{ImportRows: 0, UpdateTime: t2025})
 	require.EqualValues(t, t2025, c.GetRow(4).GetTime(14))
+
+	// conflict-step runtime progress should use conflict count labels.
+	ri = &importinto.RuntimeInfo{
+		Step:      proto.ImportStepCollectConflicts,
+		Processed: 12,
+		Total:     34,
+		Speed:     5,
+	}
+	executor.FillOneImportJobInfo(c, jobInfo, ri)
+	require.Equal(t, "12 conflicts", c.GetRow(5).GetString(fmap["CurStepProcessedSize"]))
+	require.Equal(t, "34 conflicts", c.GetRow(5).GetString(fmap["CurStepTotalSize"]))
+	require.Equal(t, "5 conflicts/s", c.GetRow(5).GetString(fmap["CurStepSpeed"]))
 }
 
 func TestShow(t *testing.T) {

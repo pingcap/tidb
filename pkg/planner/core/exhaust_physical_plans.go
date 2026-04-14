@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -262,28 +261,6 @@ func constructIndexHashJoinStatic(
 	return indexHashJoins
 }
 
-// calcOuterExpectedCnt computes the expected row count for the outer child of
-// an ordered join (IndexJoin or Apply) given the parent's ExpectedCnt. It
-// accounts for the OptOrderingIdxSelRatio to model extra outer rows that may
-// need to be scanned before the inner side produces enough matching rows.
-// The ordering penalty (rowsToMeetFirst) is only applied when the property
-// requires ordered output.
-func calcOuterExpectedCnt(sctx base.PlanContext, prop *property.PhysicalProperty, outerRowCount, estimatedRowCount float64) float64 {
-	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
-	hasOrder := !prop.IsSortItemEmpty()
-	if (prop.ExpectedCnt < estimatedRowCount) ||
-		(hasOrder && orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
-		var rowsToMeetFirst float64
-		if hasOrder {
-			rowsToMeetFirst = max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
-		}
-		expCntScale := prop.ExpectedCnt / estimatedRowCount
-		return (outerRowCount * expCntScale) + rowsToMeetFirst
-	}
-	return math.MaxFloat64
-}
-
 // constructIndexJoinStatic is used to enumerate a physical index join with undecided inner plan. Via index join prop
 // pushed down to the inner side, the inner plans will check the admission of valid indexJoinProp and enumerate admitted inner
 // operators. This function is quite similar with constructIndexJoin, differing in the following part:
@@ -317,7 +294,7 @@ func constructIndexJoinStatic(
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType,
-		ExpectedCnt:       calcOuterExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
+		ExpectedCnt:       physicalop.CalcChildExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
 		SortItems:         prop.SortItems,
 		CTEProducerStatus: prop.CTEProducerStatus,
 		NoCopPushDown:     prop.NoCopPushDown,
@@ -2160,7 +2137,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 	// inner side produces enough matching rows (same logic used by IndexJoin).
 	outerExpectedCnt := math.MaxFloat64
 	if !prop.IsSortItemEmpty() {
-		outerExpectedCnt = calcOuterExpectedCnt(la.SCtx(), prop, stats0.RowCount, la.StatsInfo().RowCount)
+		outerExpectedCnt = physicalop.CalcChildExpectedCnt(la.SCtx(), prop, stats0.RowCount, la.StatsInfo().RowCount)
 	}
 
 	apply := physicalop.PhysicalApply{
