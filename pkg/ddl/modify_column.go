@@ -1526,10 +1526,6 @@ func isAllowedPartitionColumnFlagChange(oldFlag, newFlag uint) bool {
 	if oldFlag == newFlag {
 		return true
 	}
-	// Reject NULL -> NOT NULL for partition columns.
-	if !mysql.HasNotNullFlag(oldFlag) && mysql.HasNotNullFlag(newFlag) {
-		return false
-	}
 	// Allow default-only change (NoDefaultValueFlag), and allow NOT NULL -> NULL.
 	allowedChangedFlags := mysql.NoDefaultValueFlag
 	if mysql.HasNotNullFlag(oldFlag) && !mysql.HasNotNullFlag(newFlag) {
@@ -1547,74 +1543,37 @@ const (
 	partitionExprColumnUsageKindUnsupported
 )
 
-type partitionStringKind byte
-
-const (
-	partitionStringKindNone partitionStringKind = iota
-	partitionStringKindChar
-	partitionStringKindVarchar
-	partitionStringKindBinary
-	partitionStringKindVarbinary
-)
-
 func checkPartitionColumnTypeChangeWhitelist(tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
-	// No real type change, so allow it.
-	// Example: modify column a int -> int.
-	if !isPartitionColumnTypeChanged(col, newCol) {
-		return nil
-	}
-
 	pi := tblInfo.GetPartitionInfo()
-	// Not a partition table, so this whitelist does not apply.
-	// Example: create table t(a int).
-	if pi == nil {
+	if pi == nil || !isPartitionColumnTypeChanged(col, newCol) {
 		return nil
 	}
 
 	switch pi.Type {
 	case ast.PartitionTypeKey:
-		// KEY partition.
-		// Example: PARTITION BY KEY(id) PARTITIONS 4.
 		if isAllowedTypeChangeForKeyPartition(col, newCol) {
 			return nil
 		}
 		return partitionTypeChangeNotAllowedErr()
-	case ast.PartitionTypeRange, ast.PartitionTypeList:
+	case ast.PartitionTypeRange, ast.PartitionTypeList, ast.PartitionTypeHash:
 		if len(pi.Columns) > 0 {
-			// RANGE/LIST COLUMNS partition.
-			// Example: PARTITION BY RANGE COLUMNS(dt) (...).
+			if pi.Type == ast.PartitionTypeHash {
+				return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("unexpected HASH partition metadata with column list")
+			}
 			if isAllowedTypeChangeForRangeListColumnsPartition(col, newCol) {
 				return nil
 			}
 			return partitionTypeChangeNotAllowedErr()
 		}
-		// RANGE/LIST expression partition.
-		// Example: PARTITION BY RANGE (TO_DAYS(dt)) (...).
-		return checkTypeChangeForExprBasedPartition(pi.Expr, col, newCol)
-	case ast.PartitionTypeHash:
-		if len(pi.Columns) > 0 {
-			// "HASH partition metadata has a column list" cannot happen
-			// from CREATE TABLE syntax in TiDB.
-			// Normal DDL path should never reach here.
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(
-				"unexpected HASH partition metadata with column list",
-			)
-		}
-		// HASH expression partition.
-		// Example: PARTITION BY HASH (a + 1) PARTITIONS 4.
 		return checkTypeChangeForExprBasedPartition(pi.Expr, col, newCol)
 	default:
-		// Any other partition type is not handled here.
 		return partitionTypeChangeNotAllowedErr()
 	}
 }
 
 func checkTypeChangeForExprBasedPartition(partExpr string, col, newCol *model.ColumnInfo) error {
-	usageKinds, err := collectPartitionExprColumnUsageKinds(partExpr, col.Name.L)
-	if err != nil {
-		return partitionTypeChangeNotAllowedErr()
-	}
-	if len(usageKinds) == 0 {
+	usageKinds := collectPartitionExprColumnUsageKinds(partExpr, col.Name.L)
+	if usageKinds == nil {
 		return partitionTypeChangeNotAllowedErr()
 	}
 	if _, hasUnsupported := usageKinds[partitionExprColumnUsageKindUnsupported]; hasUnsupported {
@@ -1650,27 +1609,28 @@ func classifyPartitionExprFuncUsage(fc *ast.FuncCallExpr) partitionExprColumnUsa
 	case ast.Extract:
 		return partitionExprColumnUsageKindExtract
 	case ast.UnixTimestamp:
-		// UNIX_TIMESTAMP is treated as unsupported here.
-		// In partition expr checks, UNIX_TIMESTAMP only accepts TIMESTAMP columns.
-		// Other types (for example VARCHAR/CHAR/DATETIME) are rejected there.
-		// But TIMESTAMP is not an allowed partition-column type in
-		// isColTypeAllowedAsPartitioningCol when modifying type.
-		// So partition-column type change with UNIX_TIMESTAMP should always reject.
+		// Do not allow UNIX_TIMESTAMP here.
+		// UNIX_TIMESTAMP only accepts TIMESTAMP input, but MODIFY/CHANGE COLUMN
+		// revalidates the new type through isColTypeAllowedAsPartitioningCol, and
+		// TIMESTAMP does not pass that check. So no partition-column type change
+		// can be allowed here.
 		return partitionExprColumnUsageKindUnsupported
 	default:
 		return partitionExprColumnUsageKindUnsupported
 	}
 }
 
-func collectPartitionExprColumnUsageKinds(partExpr, targetColumn string) (map[partitionExprColumnUsageKind]struct{}, error) {
-	// Parse partExpr one time, then scan it for targetColumn usage.
+func collectPartitionExprColumnUsageKinds(partExpr, targetColumn string) map[partitionExprColumnUsageKind]struct{} {
 	expr, err := parsePartitionExpr(partExpr)
 	if err != nil {
-		return nil, err
+		return nil
 	}
 	usageKinds := make(map[partitionExprColumnUsageKind]struct{})
 	collectPartitionExprColumnUsageKindsFromExpr(expr, targetColumn, partitionExprColumnUsageKindNoFunc, usageKinds)
-	return usageKinds, nil
+	if len(usageKinds) == 0 {
+		return nil
+	}
+	return usageKinds
 }
 
 func collectPartitionExprColumnUsageKindsFromExpr(
@@ -1705,6 +1665,11 @@ func collectPartitionExprColumnUsageKindsFromExpr(
 	case *ast.UnaryOperationExpr:
 		// Visit unary expr like "-a".
 		collectPartitionExprColumnUsageKindsFromExpr(v.V, targetColumn, currentKind, usageKinds)
+	case ast.ValueExpr, *ast.TimeUnitExpr:
+		// Literal values and EXTRACT units do not use partition columns.
+		return
+	default:
+		usageKinds[partitionExprColumnUsageKindUnsupported] = struct{}{}
 	}
 }
 
@@ -1738,9 +1703,7 @@ func isAllowedTypeChangeForKeyPartition(col, newCol *model.ColumnInfo) bool {
 	if isIntegerTypeWidening(col, newCol) {
 		return true
 	}
-	if isAllowedStringLengthExtensionForKind(col, newCol, partitionStringKindChar) ||
-		isAllowedStringLengthExtensionForKind(col, newCol, partitionStringKindVarchar) ||
-		isAllowedStringLengthExtensionForKind(col, newCol, partitionStringKindVarbinary) {
+	if isStringLengthExtension(col, newCol) {
 		return true
 	}
 	return isEnumSetTailAppend(col, newCol)
@@ -1753,9 +1716,7 @@ func isAllowedTypeChangeForRangeListColumnsPartition(col, newCol *model.ColumnIn
 	if isTimeFspExtended(col, newCol) && (col.GetType() == mysql.TypeDuration || col.GetType() == mysql.TypeDatetime) {
 		return true
 	}
-	if isAllowedStringLengthExtensionForKind(col, newCol, partitionStringKindChar) ||
-		isAllowedStringLengthExtensionForKind(col, newCol, partitionStringKindVarchar) ||
-		isAllowedStringLengthExtensionForKind(col, newCol, partitionStringKindVarbinary) {
+	if isStringLengthExtension(col, newCol) {
 		return true
 	}
 	return false
@@ -1798,53 +1759,24 @@ func isPartitionColumnTypeChanged(col, newCol *model.ColumnInfo) bool {
 }
 
 func isIntegerTypeWidening(col, newCol *model.ColumnInfo) bool {
-	oldRank := integerTypeRank(col.GetType())
-	newRank := integerTypeRank(newCol.GetType())
-	return oldRank >= 0 && newRank >= 0 && newRank > oldRank
+	return mysql.IsIntegerType(col.GetType()) &&
+		mysql.IsIntegerType(newCol.GetType()) &&
+		mysql.DefaultLengthOfMysqlTypes[newCol.GetType()] > mysql.DefaultLengthOfMysqlTypes[col.GetType()]
 }
 
-func integerTypeRank(tp byte) int {
-	switch tp {
-	case mysql.TypeTiny:
-		return 0
-	case mysql.TypeShort:
-		return 1
-	case mysql.TypeInt24:
-		return 2
-	case mysql.TypeLong:
-		return 3
-	case mysql.TypeLonglong:
-		return 4
+func isStringLengthExtension(col, newCol *model.ColumnInfo) bool {
+	oldTp := col.GetType()
+	newTp := newCol.GetType()
+	switch {
+	case oldTp == mysql.TypeString && newTp == mysql.TypeString:
+		if types.IsBinaryStr(&col.FieldType) || types.IsBinaryStr(&newCol.FieldType) {
+			return false
+		}
+	case oldTp == newTp && (oldTp == mysql.TypeVarchar || oldTp == mysql.TypeVarString):
 	default:
-		return -1
-	}
-}
-
-func isAllowedStringLengthExtensionForKind(col, newCol *model.ColumnInfo, kind partitionStringKind) bool {
-	if getPartitionStringKind(&col.FieldType) != kind || getPartitionStringKind(&newCol.FieldType) != kind {
-		return false
-	}
-	if col.GetFlen() <= 0 || newCol.GetFlen() <= 0 {
 		return false
 	}
 	return newCol.GetFlen() > col.GetFlen()
-}
-
-func getPartitionStringKind(ft *types.FieldType) partitionStringKind {
-	switch ft.GetType() {
-	case mysql.TypeString:
-		if types.IsBinaryStr(ft) {
-			return partitionStringKindBinary
-		}
-		return partitionStringKindChar
-	case mysql.TypeVarchar, mysql.TypeVarString:
-		if types.IsBinaryStr(ft) {
-			return partitionStringKindVarbinary
-		}
-		return partitionStringKindVarchar
-	default:
-		return partitionStringKindNone
-	}
 }
 
 func isTimeFspExtended(col, newCol *model.ColumnInfo) bool {
@@ -1872,7 +1804,7 @@ func isEnumSetTailAppend(col, newCol *model.ColumnInfo) bool {
 func isIntLengthDecreasing(col, newCol *model.ColumnInfo) bool {
 	return mysql.IsIntegerType(col.GetType()) &&
 		mysql.IsIntegerType(newCol.GetType()) &&
-		newCol.GetFlen() < col.GetFlen()
+		mysql.DefaultLengthOfMysqlTypes[newCol.GetType()] < mysql.DefaultLengthOfMysqlTypes[col.GetType()]
 }
 
 func partitionTypeChangeNotAllowedErr() error {
