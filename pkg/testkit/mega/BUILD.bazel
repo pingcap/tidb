@@ -1,52 +1,13 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
-
-go_library(
-    name = "mega",
-    srcs = [
-        "mega_main.go",
-        "cli.go",
-    ],
-    importpath = "github.com/pingcap/tidb/pkg/testkit/mega",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/bindinfo/test",
-        "//pkg/ddl/test",
-        "//pkg/ddl/util/test",
-        "//pkg/domain/test",
-        "//pkg/executor/test",
-        "//pkg/extension/test",
-        "//pkg/kv/test",
-        "//pkg/metrics/test",
-        "//pkg/owner/test",
-        "//pkg/planner/cardinality/test",
-        "//pkg/planner/cascades/test",
-        "//pkg/planner/core/casetest/test",
-        "//pkg/planner/core/issuetest/test",
-        "//pkg/planner/core/joinorder/test",
-        "//pkg/planner/core/rule/test",
-        "//pkg/planner/core/test",
-        "//pkg/planner/funcdep/test",
-        "//pkg/planner/indexadvisor/test",
-        "//pkg/planner/util/test",
-        "//pkg/sessiontxn/test",
-        "//pkg/testkit/mega/register",
-        "//pkg/ttl/cache/test",
-        "//pkg/ttl/client/test",
-        "//pkg/ttl/metrics/test",
-        "//pkg/ttl/sqlbuilder/test",
-        "//pkg/util/test",
-        "//pkg/workloadlearning/test",
-    ],
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "mega_test",
     timeout = "short",
     srcs = [
         "main_test.go",
+        "mega_main_test.go",
         "mega_imports_test.go",
     ],
-    embed = [":mega"],
     deps = [
         "//pkg/bindinfo/test",
         "//pkg/bindinfo/tests/test",
