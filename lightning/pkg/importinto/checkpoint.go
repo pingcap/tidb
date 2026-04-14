@@ -81,9 +81,13 @@ type CheckpointManager interface {
 	Update(ctx context.Context, cp *TableCheckpoint) error
 	// Remove removes the checkpoint for a specific table.
 	Remove(ctx context.Context, tableName string) error
-	// IgnoreError resets the status of a failed checkpoint to Pending.
+	// IgnoreError resets failed checkpoints to Pending.
+	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
+	// common.CheckpointTableNotFoundError when the target checkpoint does not exist.
 	IgnoreError(ctx context.Context, tableName string) error
 	// DestroyError removes the checkpoint for a specific table if it is in Failed state.
+	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
+	// common.CheckpointTableNotFoundError when the target checkpoint does not exist.
 	// It returns the list of checkpoints that were removed.
 	DestroyError(ctx context.Context, tableName string) ([]*TableCheckpoint, error)
 	// DumpTables dumps the table checkpoints to a writer.
@@ -481,13 +485,20 @@ func (m *MySQLCheckpointManager) IgnoreError(ctx context.Context, tableName stri
 		return errors.Trace(err)
 	}
 	if affectedRows == 0 {
-		cp, err := m.Get(ctx, tableName)
-		if err != nil {
-			return errors.Trace(err)
+		if err := m.ensureTableCheckpointExists(ctx, tableName); err != nil {
+			return err
 		}
-		if cp == nil {
-			return common.CheckpointTableNotFoundError(tableName)
-		}
+	}
+	return nil
+}
+
+func (m *MySQLCheckpointManager) ensureTableCheckpointExists(ctx context.Context, tableName string) error {
+	cp, err := m.Get(ctx, tableName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cp == nil {
+		return common.CheckpointTableNotFoundError(tableName)
 	}
 	return nil
 }
@@ -548,12 +559,8 @@ func (m *MySQLCheckpointManager) DestroyError(ctx context.Context, tableName str
 		return nil, errors.Trace(err)
 	}
 	if tableName != common.AllTables && len(destroyed) == 0 {
-		cp, err := m.Get(ctx, tableName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cp == nil {
-			return nil, common.CheckpointTableNotFoundError(tableName)
+		if err := m.ensureTableCheckpointExists(ctx, tableName); err != nil {
+			return nil, err
 		}
 	}
 	return destroyed, nil

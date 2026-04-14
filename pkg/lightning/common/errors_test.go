@@ -121,6 +121,7 @@ func TestCheckpointTableNotFoundError(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.IsNotFound(err))
 	require.True(t, IsCheckpointTableNotFoundError(err))
+	require.True(t, IsCheckpointTableNotFoundError(errors.Annotate(err, "wrapped")))
 	require.EqualError(
 		t,
 		err,
@@ -130,5 +131,9 @@ func TestCheckpointTableNotFoundError(t *testing.T) {
 	require.ErrorContains(t, err, "--checkpoint-error-ignore='`db`.`table`'")
 	require.ErrorContains(t, err, "--checkpoint-error-destroy='`db`.`table`'")
 	require.False(t, IsCheckpointTableNotFoundError(errors.NotFoundf("something else")))
+	require.False(t, IsCheckpointTableNotFoundError(errors.NotFoundf(
+		"checkpoint for table `db`.`table`; %s",
+		checkpointTableNotFoundHint,
+	)))
 	require.False(t, IsCheckpointTableNotFoundError(nil))
 }
