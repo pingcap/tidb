@@ -216,10 +216,6 @@ bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run CI coverage flo
 	else \
 		echo "=== Skip gazelle because SKIP_GAZELLE=1 ==="; \
 	fi
-	@echo "=== Phase 1: Running unit tests with bazel ==="
-	@bash scripts/bazel_unit_test_targets.sh | xargs bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) \
-		--define gotags=$(UNIT_TEST_TAGS) --//build:with_nogo_flag=false \
-		|| { $(MAKE) ut-mega-cleanup; exit 1; }
 	@echo "=== Phase 2: Building mega binary ==="
 	@$(MAKE) bazel-mega-binary
 	@echo "=== Phase 2: Running mega tests ==="
@@ -237,7 +233,6 @@ bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run CI coverage flo
 			echo "=== Mega tests failed with $$MEGA_RUN_RET, but continue because MEGA_RUN_STRICT!=1 ==="; \
 		fi; \
 	fi
-	@$(MAKE) ut-mega-cleanup
 
 .PHONY: bazel-mega-binary
 bazel-mega-binary: ## Build the mega test binary. Requires failpoint-ctl enable + gazelle first (see ut-mega).
