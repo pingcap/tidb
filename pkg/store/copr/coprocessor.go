@@ -1909,6 +1909,14 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	// the next paging RPC on this scan can use a tighter pre-charge basis.
 	if task.ema != nil {
 		if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
+			// Classify by readiness *before* this observation so the counter
+			// reflects which regime the current RPC's pre-charge was in, not
+			// whether the new sample nudged us over the threshold.
+			if task.ema.IsReady() {
+				copr_metrics.EMAObservationReady.Inc()
+			} else {
+				copr_metrics.EMAObservationCold.Inc()
+			}
 			task.ema.Observe(readBytes, time.Now())
 		}
 	}

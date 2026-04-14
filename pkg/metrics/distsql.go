@@ -28,6 +28,7 @@ var (
 	DistSQLCoprCacheCounter         *prometheus.CounterVec
 	DistSQLCoprClosestReadCounter   *prometheus.CounterVec
 	DistSQLCoprRespBodySize         *prometheus.HistogramVec
+	DistSQLCoprEMAObservation       *prometheus.CounterVec
 )
 
 // InitDistSQLMetrics initializes distsql metrics.
@@ -92,4 +93,12 @@ func InitDistSQLMetrics() {
 			Help:      "copr task response data size in KiB.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 19),
 		}, []string{LblStore})
+
+	DistSQLCoprEMAObservation = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "distsql",
+			Name:      "copr_ema_observation_total",
+			Help:      "Counter of per-logical-scan EMA observations, labelled by whether the EMA was already ready (>=2 samples) or still cold at observation time.",
+		}, []string{LblType})
 }

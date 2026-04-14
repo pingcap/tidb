@@ -24,6 +24,13 @@ var (
 	CoprCacheCounterEvict prometheus.Counter
 	CoprCacheCounterHit   prometheus.Counter
 	CoprCacheCounterMiss  prometheus.Counter
+
+	// EMAObservationCold counts per-logical-scan EMA.Observe calls made while
+	// the EMA had fewer than the readiness threshold of samples.
+	EMAObservationCold prometheus.Counter
+	// EMAObservationReady counts Observe calls made once the EMA was already
+	// ready (i.e. Predict returns a non-zero hint used by PD pre-charge).
+	EMAObservationReady prometheus.Counter
 )
 
 func init() {
@@ -35,4 +42,7 @@ func InitMetricsVars() {
 	CoprCacheCounterEvict = metrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
 	CoprCacheCounterHit = metrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
 	CoprCacheCounterMiss = metrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
+
+	EMAObservationCold = metrics.DistSQLCoprEMAObservation.WithLabelValues("cold")
+	EMAObservationReady = metrics.DistSQLCoprEMAObservation.WithLabelValues("ready")
 }
