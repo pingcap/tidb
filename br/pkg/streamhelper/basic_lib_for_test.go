@@ -271,13 +271,18 @@ func (t *testEnv) ResolveLocksInOneRegion(
 	loc *tikv.KeyLocation,
 ) (*tikv.KeyLocation, error) {
 	_ = bo
+	var resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	for _, r := range t.RegionList() {
 		if loc != nil && loc.Region.GetID() == r.ID {
 			r.Locks = nil
-			return t.resolveLocks(locks, loc)
+			resolveLocks = t.resolveLocks
+			break
 		}
+	}
+	t.mu.Unlock()
+	if resolveLocks != nil {
+		return resolveLocks(locks, loc)
 	}
 	return loc, nil
 }

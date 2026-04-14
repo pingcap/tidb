@@ -49,3 +49,9 @@ func (c *CheckpointAdvancer) UpdateCheckPointLagLimit(limit time.Duration) {
 		vardef.AdvancerCheckPointLagLimit.Store(limit)
 	}
 }
+
+func (c *CheckpointAdvancer) SetLastCheckpointForTest(ts uint64, resolveLockTime time.Time) {
+	cp := newCheckpointWithTS(ts)
+	cp.resolveLockTime = resolveLockTime
+	c.UpdateLastCheckpoint(cp)
+}

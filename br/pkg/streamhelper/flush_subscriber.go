@@ -266,6 +266,10 @@ func (s *subscription) close(ctx context.Context) {
 func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 	storeID := s.storeID
 	logutil.CL(ctx).Info("Listen starting.", zap.Uint64("store", storeID))
+	failpoint.Inject("subscription.listenOver.delayMs", func(v failpoint.Value) {
+		//nolint:durationcheck
+		time.Sleep(time.Duration(v.(int)) * time.Millisecond)
+	})
 	defer func() {
 		if s.onDaemonExit != nil {
 			s.onDaemonExit()

@@ -341,12 +341,6 @@ func TestResolveLock(t *testing.T) {
 			fmt.Println(c)
 		}
 	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks", `return(true)`))
-	// make sure asyncResolveLocks stuck in optionalTick later.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks", `pause`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks"))
-	}()
 
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	ctx := context.Background()
@@ -375,10 +369,16 @@ func TestResolveLock(t *testing.T) {
 
 	// ensure resolve locks triggered and collect all locks from scan locks
 	resolveLockRef := atomic.NewBool(false)
+	releaseResolveLocks := make(chan struct{})
+	releaseResolveLocksOnce := sync.OnceFunc(func() {
+		close(releaseResolveLocks)
+	})
+	defer releaseResolveLocksOnce()
 	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
 		resolveLockRef.Store(true)
 		// The third lock has skipped, because it's less than max version.
 		require.ElementsMatch(t, locks, allLocks[:2])
+		<-releaseResolveLocks
 		return loc, nil
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
@@ -407,12 +407,13 @@ func TestResolveLock(t *testing.T) {
 	require.Len(t, r.FailureSubRanges, 0)
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 
+	adv.SetLastCheckpointForTest(minCheckpoint, time.Now().Add(-4*time.Minute))
 	env.MaxTS = maxTargetTs + 1
 	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
 		time.Second, 50*time.Millisecond)
-	// now the lock state must be ture. because tick finished and asyncResolveLocks got stuck.
+	// now the lock state must be true because the async resolve is blocked in the test hook.
 	require.True(t, adv.GetInResolvingLock())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks"))
+	releaseResolveLocksOnce()
 	require.Eventually(t, func() bool { return resolveLockRef.Load() },
 		8*time.Second, 50*time.Microsecond)
 	// state must set to false after tick

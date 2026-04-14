@@ -138,28 +138,43 @@ func (r *Region) String() string {
 }
 
 type trivialFlushStream struct {
-	c  <-chan *logbackup.SubscribeFlushEventResponse
-	cx context.Context
+	c      <-chan *logbackup.SubscribeFlushEventResponse
+	cx     context.Context
+	onRecv func(*error)
 }
 
 func (t trivialFlushStream) Recv() (*logbackup.SubscribeFlushEventResponse, error) {
+	var (
+		item *logbackup.SubscribeFlushEventResponse
+		err  error
+		ok   bool
+	)
 	select {
-	case item, ok := <-t.c:
+	case item, ok = <-t.c:
 		if !ok {
-			return nil, io.EOF
+			err = io.EOF
+			break
 		}
-		return item, nil
 	case <-t.cx.Done():
 		select {
-		case item, ok := <-t.c:
+		case item, ok = <-t.c:
 			if !ok {
-				return nil, io.EOF
+				err = io.EOF
+				break
 			}
-			return item, nil
 		default:
 		}
-		return nil, status.Error(codes.Canceled, t.cx.Err().Error())
+		if err == nil && item == nil {
+			err = status.Error(codes.Canceled, t.cx.Err().Error())
+		}
 	}
+	if t.onRecv != nil {
+		t.onRecv(&err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return item, nil
 }
 
 func (t trivialFlushStream) Header() (metadata.MD, error) {
@@ -193,6 +208,7 @@ type Store struct {
 	SupportsSub                      bool
 	BootstrapAt                      uint64
 	OnGetRegionCheckpoint            func(*logbackup.GetLastFlushTSOfRegionRequest) error
+	OnSubscribeFlushEventRecv        func(*error)
 	LegacyRegionCheckpointRPCEnabled bool
 	FlushTaskName                    string
 	subscribers                      map[chan *logbackup.SubscribeFlushEventResponse]struct{}
@@ -245,7 +261,7 @@ func (f *Store) SubscribeFlushEvent(
 		delete(f.subscribers, ch)
 		f.ClientMu.Unlock()
 	}()
-	return trivialFlushStream{c: ch, cx: ctx}, nil
+	return trivialFlushStream{c: ch, cx: ctx, onRecv: f.OnSubscribeFlushEventRecv}, nil
 }
 
 func (f *Store) SetSupportFlushSub(b bool) {
@@ -257,6 +273,12 @@ func (f *Store) SetSupportFlushSub(b bool) {
 
 func (f *Store) SetGetRegionCheckpointHook(hook func(*logbackup.GetLastFlushTSOfRegionRequest) error) {
 	f.OnGetRegionCheckpoint = hook
+}
+
+func (f *Store) SetSubscribeFlushEventRecvHook(hook func(*error)) {
+	f.ClientMu.Lock()
+	defer f.ClientMu.Unlock()
+	f.OnSubscribeFlushEventRecv = hook
 }
 
 func (f *Store) GetLastFlushTSOfRegion(

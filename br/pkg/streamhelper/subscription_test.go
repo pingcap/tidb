@@ -81,8 +81,34 @@ func TestNormalError(t *testing.T) {
 	c := createFakeCluster(t, 4, true)
 	c.splitAndScatter("0001", "0002", "0003", "0008", "0009")
 	installSubscribeSupport(c)
+	req.NoError(failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.delayMs", "return(200)"))
+	defer func() {
+		req.NoError(failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.delayMs"))
+	}()
 
 	sub := streamhelper.NewSubscriber(c, c)
+	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	var sMu sync.Mutex
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for k := range sub.Events() {
+			sMu.Lock()
+			s.Merge(k)
+			sMu.Unlock()
+		}
+	}()
+	defer func() {
+		sub.Drop()
+		<-done
+		if t.Failed() {
+			fmt.Println(c)
+			sMu.Lock()
+			spans.Debug(s)
+			sMu.Unlock()
+		}
+	}()
+
 	c.SetOnGetClient(oneStoreFailure())
 	req.NoError(sub.UpdateStoreTopology(ctx))
 	c.SetOnGetClient(nil)
@@ -94,13 +120,15 @@ func TestNormalError(t *testing.T) {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
-	waitPendingEvents(t, sub)
-	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
+	req.Eventually(func() bool {
+		sMu.Lock()
+		defer sMu.Unlock()
+		return s.MinValue() == cp
+	}, 3*time.Second, 20*time.Millisecond)
+
+	sMu.Lock()
 	req.Equal(cp, s.MinValue(), "%d vs %d", cp, s.MinValue())
+	sMu.Unlock()
 }
 
 func TestHasFailureStores(t *testing.T) {
@@ -248,17 +276,19 @@ func TestEncounterError(t *testing.T) {
 	c := createFakeCluster(t, 4, true)
 	c.splitAndScatter("0001", "0002", "0003", "0008", "0009", "0010", "0100", "0956", "1000")
 
+	o := new(sync.Once)
+	for _, store := range c.storeList() {
+		store.SetSubscribeFlushEventRecvHook(func(err *error) {
+			o.Do(func() {
+				*err = context.Canceled
+			})
+		})
+	}
+
 	sub := streamhelper.NewSubscriber(c, c)
+	defer sub.Drop()
 	installSubscribeSupport(c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
-
-	o := new(sync.Once)
-	failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/streamhelper/listen_flush_stream", func(storeID uint64, err *error) {
-		o.Do(func() {
-			*err = context.Canceled
-		})
-	})
-
 	c.flushAll()
 	require.Eventually(t, func() bool {
 		return sub.PendingErrors() != nil

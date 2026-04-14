@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -327,6 +326,16 @@ func testStreamClose(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	ctx := context.Background()
 	taskName := "close_simple"
 	taskInfo := simpleTask(taskName, 4)
+	watchClient, err := clientv3.New(clientv3.Config{
+		Endpoints: metaCli.Endpoints(),
+	})
+	require.NoError(t, err)
+	defer func() {
+		_ = watchClient.Close()
+	}()
+	metaCli = streamhelper.AdvancerExt{
+		MetaDataClient: streamhelper.MetaDataClient{Client: watchClient},
+	}
 
 	require.NoError(t, metaCli.PutTask(ctx, taskInfo))
 	ch := make(chan streamhelper.TaskEvent, 1024)
@@ -340,13 +349,7 @@ func testStreamClose(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	require.Equal(t, second.Type, streamhelper.EventDel, "%s", second)
 	require.Equal(t, second.Name, taskName, "%s", second)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/advancer_close_channel", "return"))
-	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/advancer_close_channel")
-	// We need to make the channel file some events hence we can simulate the closed channel.
-	taskName2 := "close_simple2"
-	taskInfo2 := simpleTask(taskName2, 4)
-	require.NoError(t, metaCli.PutTask(ctx, taskInfo2))
-	require.NoError(t, metaCli.DeleteTask(ctx, taskName2))
+	require.NoError(t, watchClient.Close())
 
 	third := <-ch
 	require.Equal(t, third.Type, streamhelper.EventErr)
