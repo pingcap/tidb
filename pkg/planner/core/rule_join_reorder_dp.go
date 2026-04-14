@@ -278,7 +278,6 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 
 func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression) (base.LogicalPlan, error) {
 	eqConds := make([]*expression.ScalarFunction, 0, len(edges))
-	var expr2Col map[string]*expression.Column
 	for _, edge := range edges {
 		lArg := edge.edge.GetArgs()[0]
 		rArg := edge.edge.GetArgs()[1]
@@ -293,12 +292,8 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 			return nil, plannererrors.ErrInternal.GenWithStack("join reorder dp: eq edge doesn't connect left/right plans")
 		}
 
-		newEdge, newExpr2Col := s.buildJoinEdge(edge.edge, lExpr, rExpr, &leftPlan, &rightPlan)
-		expr2Col = mergeMap(expr2Col, newExpr2Col)
+		newEdge := s.buildJoinEdge(edge.edge, lExpr, rExpr, &leftPlan, &rightPlan)
 		eqConds = append(eqConds, newEdge)
-	}
-	if len(expr2Col) > 0 && len(otherConds) > 0 {
-		otherConds = joinorder.SubstituteExprsWithColsInExprs(otherConds, expr2Col)
 	}
 	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, base.InnerJoin)
 	_, _, err := join.RecursiveDeriveStats(nil)

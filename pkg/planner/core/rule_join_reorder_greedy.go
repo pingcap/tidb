@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -167,7 +166,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 }
 
 func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan) (base.LogicalPlan, []expression.Expression, bool) {
-	leftPlan, rightPlan, usedEdges, joinType, expr2Col := s.checkConnection(leftPlan, rightPlan)
+	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	isCartesian := len(usedEdges) == 0 && !s.hasOtherJoinCondition(leftPlan, rightPlan)
 	if isCartesian && // cartesian join
 		(!s.allInnerJoin || // not all joins are inner joins
@@ -178,11 +177,6 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 		// For inner joins like `t1 join t2 join t3`, we can reorder them freely, so we allow cartesian join here.
 		return nil, nil, false
 	}
-	otherConds := s.otherConds
-	if len(expr2Col) > 0 && len(otherConds) > 0 {
-		// Reuse the injected expression columns in non-eq conditions to avoid recomputation.
-		otherConds = joinorder.SubstituteExprsWithColsInExprs(otherConds, expr2Col)
-	}
-	join, remainOtherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, otherConds)
+	join, remainOtherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, s.otherConds)
 	return join, remainOtherConds, isCartesian
 }

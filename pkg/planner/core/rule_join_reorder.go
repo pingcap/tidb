@@ -608,7 +608,7 @@ func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, nextNode base.LogicalPlan,
 	hasOuterJoin bool,
 ) (base.LogicalPlan, bool) {
-	lNode, rNode, usedEdges, joinType, expr2Col := s.checkConnection(currentJoin, nextNode)
+	lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nextNode)
 	if hasOuterJoin && len(usedEdges) == 0 {
 		// If the joinGroups contain an outer join, we disable cartesian product.
 		// For non-equality conditions, only allow them when they do not reference
@@ -617,13 +617,8 @@ func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 			return nil, false
 		}
 	}
-	otherConds := s.otherConds
-	if len(expr2Col) > 0 && len(otherConds) > 0 {
-		// Reuse the injected expression columns in non-eq conditions to avoid recomputation.
-		otherConds = joinorder.SubstituteExprsWithColsInExprs(otherConds, expr2Col)
-	}
 	var rem []expression.Expression
-	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType, otherConds)
+	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType, s.otherConds)
 	s.otherConds = rem
 	return currentJoin, true
 }
@@ -661,7 +656,7 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalP
 // Note: join reorder expects eqEdges to be join connectors. With projection inlining
 // restrictions (single-leaf + must reference columns), substituted eqEdges should still
 // connect two different join-group nodes.
-func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan base.LogicalPlan) (leftNode, rightNode base.LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg, expr2Col map[string]*expression.Column) {
+func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan base.LogicalPlan) (leftNode, rightNode base.LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) {
 	joinType = &joinTypeWithExtMsg{JoinType: base.InnerJoin}
 	leftNode, rightNode = leftPlan, rightPlan
 	for idx, edge := range s.eqEdges {
@@ -688,8 +683,7 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 		joinType = s.joinTypes[idx]
 		if !swapped {
 			// Normal order: lArg from left, rArg from right.
-			newEdge, newExpr2Col := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan)
-			expr2Col = mergeMap(expr2Col, newExpr2Col)
+			newEdge := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan)
 			leftNode, rightNode = leftPlan, rightPlan
 			usedEdges = append(usedEdges, newEdge)
 			continue
@@ -699,16 +693,14 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 		if joinType.JoinType != base.InnerJoin {
 			// For outer joins, keep outer/inner side semantics by swapping the node positions.
 			// Note: buildJoinEdge may inject projections, so we must set leftNode/rightNode AFTER it.
-			newEdge, newExpr2Col := s.buildJoinEdge(edge, lArg, rArg, &rightPlan, &leftPlan)
-			expr2Col = mergeMap(expr2Col, newExpr2Col)
+			newEdge := s.buildJoinEdge(edge, lArg, rArg, &rightPlan, &leftPlan)
 			leftNode, rightNode = rightPlan, leftPlan
 			usedEdges = append(usedEdges, newEdge)
 			continue
 		}
 
 		// For inner joins, keep the node positions but swap the arguments (already aligned by alignJoinEdgeArgs).
-		newEdge, newExpr2Col := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan)
-		expr2Col = mergeMap(expr2Col, newExpr2Col)
+		newEdge := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan)
 		leftNode, rightNode = leftPlan, rightPlan
 		usedEdges = append(usedEdges, newEdge)
 	}
@@ -746,7 +738,7 @@ func (s *baseSingleGroupJoinOrderSolver) buildJoinEdge(
 	originalEdge *expression.ScalarFunction,
 	lExpr, rExpr expression.Expression,
 	leftPlan, rightPlan *base.LogicalPlan,
-) (*expression.ScalarFunction, map[string]*expression.Column) {
+) *expression.ScalarFunction {
 	funcName := originalEdge.FuncName.L
 
 	// Check if arguments are already columns
@@ -756,27 +748,25 @@ func (s *baseSingleGroupJoinOrderSolver) buildJoinEdge(
 	// If both are columns, create the edge directly
 	if lIsCol && rIsCol {
 		newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, originalEdge.GetStaticType(), lCol, rCol)
-		return newSf.(*expression.ScalarFunction), nil
+		return newSf.(*expression.ScalarFunction)
 	}
 
 	// Need to inject projections for non-column expressions
-	expr2Col := make(map[string]*expression.Column, 2)
 	if !lIsCol {
 		*leftPlan, lCol = s.injectExpr(*leftPlan, lExpr)
-		if canReuseInjectedJoinExpr(lExpr) {
-			expr2Col[string(lExpr.CanonicalHashCode())] = lCol
-		}
 	}
 	if !rIsCol {
 		*rightPlan, rCol = s.injectExpr(*rightPlan, rExpr)
-		if canReuseInjectedJoinExpr(rExpr) {
-			expr2Col[string(rExpr.CanonicalHashCode())] = rCol
-		}
 	}
 
 	// Create the final edge with column arguments
+	// TODO: Reusing these injected columns inside `otherConds` is intentionally disabled for now.
+	// Residual-predicate reuse can change evaluation timing and warning/error behavior
+	// (for example IF/CASE/AND/OR short-circuiting, division-by-zero, cast overflow or truncation).
+	// Revisit this as a separate optimization after we have a semantics-preserving model for
+	// residual predicate reuse.
 	newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, originalEdge.GetStaticType(), lCol, rCol)
-	return newSf.(*expression.ScalarFunction), expr2Col
+	return newSf.(*expression.ScalarFunction)
 }
 
 func canReuseInjectedJoinExpr(expr expression.Expression) bool {
@@ -793,7 +783,7 @@ func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr exp
 		s.propagateJoinMethodHint(originalPlanID, proj.ID())
 	}
 	// Avoid injecting duplicate expressions into the same projection.
-	// This keeps plans smaller and allows later predicates to reuse computed columns.
+	// This keeps plans smaller when multiple join edges need the same deterministic expression.
 	substituted := expression.ColumnSubstitute(proj.SCtx().GetExprCtx(), expr, proj.Schema(), proj.Exprs)
 	if canReuseInjectedJoinExpr(substituted) {
 		for i, e := range proj.Exprs {

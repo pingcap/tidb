@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
@@ -240,7 +239,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	require.Equal(t, expected, planToString(result))
 }
 
-func TestInjectedJoinExprReuseSkipsMutableExpressions(t *testing.T) {
+func TestInjectedJoinExprMaterializationSafety(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
@@ -273,7 +272,7 @@ func TestInjectedJoinExprReuseSkipsMutableExpressions(t *testing.T) {
 		require.NotEqual(t, injected1.UniqueID, injected2.UniqueID)
 	})
 
-	t.Run("buildJoinEdge does not expose rand expressions for otherConds reuse", func(t *testing.T) {
+	t.Run("buildJoinEdge injects volatile expressions without deduplicating them across calls", func(t *testing.T) {
 		solver := &baseSingleGroupJoinOrderSolver{
 			ctx:                ctx,
 			basicJoinGroupInfo: &basicJoinGroupInfo{},
@@ -284,10 +283,9 @@ func TestInjectedJoinExprReuseSkipsMutableExpressions(t *testing.T) {
 		rightExpr := makeRandPlusCol(rightPlan.Schema().Columns[0])
 
 		originalEdge := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightExpr).(*expression.ScalarFunction)
-		newEdge, expr2Col := solver.buildJoinEdge(originalEdge, leftCol, rightExpr, &leftPlan, &rightPlan)
+		newEdge := solver.buildJoinEdge(originalEdge, leftCol, rightExpr, &leftPlan, &rightPlan)
 
 		require.NotNil(t, newEdge)
-		require.Empty(t, expr2Col)
 
 		proj, ok := rightPlan.(*logicalop.LogicalProjection)
 		require.True(t, ok)
@@ -330,58 +328,5 @@ func TestInjectedJoinExprReuseSkipsMutableExpressions(t *testing.T) {
 		appendedCols := expression.ExtractColumns(appendedExpr)
 		require.Len(t, appendedCols, 1)
 		require.Equal(t, baseCol.UniqueID, appendedCols[0].UniqueID)
-	})
-
-	t.Run("SubstituteExprsWithColsInExprs skips mutable expressions defensively", func(t *testing.T) {
-		plan := newDataSource(ctx, "s", 1)
-		baseCol := plan.Schema().Columns[0]
-		volatileExpr := makeRandPlusCol(baseCol)
-		replacementCol := &expression.Column{
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  volatileExpr.GetType(ctx.GetExprCtx().GetEvalCtx()).Clone(),
-		}
-
-		got := joinorder.SubstituteExprsWithColsInExprs(
-			[]expression.Expression{volatileExpr},
-			map[string]*expression.Column{string(volatileExpr.CanonicalHashCode()): replacementCol},
-		)
-		require.Len(t, got, 1)
-		require.Same(t, volatileExpr, got[0])
-	})
-
-	t.Run("SubstituteExprsWithColsInExprs skips conditionally evaluated descendants", func(t *testing.T) {
-		plan := newDataSource(ctx, "c", 1)
-		baseCol := plan.Schema().Columns[0]
-		repeatedExpr := expression.NewFunctionInternal(ctx, ast.Plus, types.NewFieldType(mysql.TypeLonglong), baseCol, expression.NewOne())
-		replacementCol := &expression.Column{
-			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-			RetType:  repeatedExpr.GetType(ctx.GetExprCtx().GetEvalCtx()).Clone(),
-		}
-
-		plainPredicate := expression.NewFunctionInternal(ctx, ast.GT, types.NewFieldType(mysql.TypeTiny), repeatedExpr, expression.NewZero())
-		gotPlain := joinorder.SubstituteExprsWithColsInExprs(
-			[]expression.Expression{plainPredicate},
-			map[string]*expression.Column{string(repeatedExpr.CanonicalHashCode()): replacementCol},
-		)
-		require.Len(t, gotPlain, 1)
-		require.NotSame(t, plainPredicate, gotPlain[0])
-		plainCols := expression.ExtractColumns(gotPlain[0])
-		require.Len(t, plainCols, 1)
-		require.Equal(t, replacementCol.UniqueID, plainCols[0].UniqueID)
-
-		guardedPredicate := expression.NewFunctionInternal(
-			ctx,
-			ast.If,
-			types.NewFieldType(mysql.TypeLonglong),
-			expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), baseCol, expression.NewZero()),
-			expression.NewZero(),
-			repeatedExpr,
-		)
-		gotGuarded := joinorder.SubstituteExprsWithColsInExprs(
-			[]expression.Expression{guardedPredicate},
-			map[string]*expression.Column{string(repeatedExpr.CanonicalHashCode()): replacementCol},
-		)
-		require.Len(t, gotGuarded, 1)
-		require.Same(t, guardedPredicate, gotGuarded[0])
 	})
 }

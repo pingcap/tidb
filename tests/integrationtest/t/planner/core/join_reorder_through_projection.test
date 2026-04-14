@@ -1423,28 +1423,6 @@ where outer_t.a = dt2.key_a
 order by 1;
 
 # =============================================================================
-# Regression: CanonicalHashCode Cache Invalidation During Substitution
-# =============================================================================
-# When join reorder injects projection columns for expression join keys, it reuses
-# those columns in other conditions via CanonicalHashCode-keyed maps. If a
-# ScalarFunction is cloned and its args are rewritten during that substitution,
-# its cached canonical hash must be cleared; otherwise later substitutions can
-# match based on stale hash and incorrectly replace the rewritten expression.
-set tidb_opt_join_reorder_through_proj = on;
-set tidb_opt_join_reorder_threshold = 0;
-explain format = 'plan_tree' select t1.a, dt.a2 from t1 join (
-  select t2.a as a2, t2.b * 2 as doubled_b, t3.a as a3
-  from t2 join t3 on t2.a = t3.a
-) dt on t1.b = dt.doubled_b and t1.b + 1 = dt.doubled_b + 1
-where dt.doubled_b + 1 > t1.a;
-
-select t1.a, dt.a2 from t1 join (
-  select t2.a as a2, t2.b * 2 as doubled_b, t3.a as a3
-  from t2 join t3 on t2.a = t3.a
-) dt on t1.b = dt.doubled_b and t1.b + 1 = dt.doubled_b + 1
-where dt.doubled_b + 1 > t1.a order by t1.a;
-
-# =============================================================================
 # Derived Column Aliasing - Cross-Leaf Expression Detection
 # =============================================================================
 # This section verifies canInlineProjection rejects cross-leaf expressions even when
