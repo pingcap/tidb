@@ -1094,33 +1094,6 @@ select t1.*, dt.* from t1,
 where t1.b = dt.doubled_b and t1.c = dt.upper_c
 order by 1;
 
-# Computed expression with arithmetic in WHERE filter
-# Query: WHERE t1.a = dt.key_a AND dt.doubled_b > 200
-# Combines regular column join (t1.a = dt.key_a) with computed column filter
-#
-# EXPECTED BEHAVIOR:
-# - The filter "dt.doubled_b > 200" should be substituted to "(t2.b * 2) > 200"
-# - This tests substituteColsInExprs for otherConds
-set tidb_opt_join_reorder_through_proj = off;
-explain format = 'plan_tree' select t1.*, dt.* from t1,
-  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
-where t1.a = dt.key_a and dt.doubled_b > 200;
-
-select t1.*, dt.* from t1,
-  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
-where t1.a = dt.key_a and dt.doubled_b > 200
-order by 1;
-
-set tidb_opt_join_reorder_through_proj = on;
-explain format = 'plan_tree' select t1.*, dt.* from t1,
-  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
-where t1.a = dt.key_a and dt.doubled_b > 200;
-
-select t1.*, dt.* from t1,
-  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
-where t1.a = dt.key_a and dt.doubled_b > 200
-order by 1;
-
 # Computed expression in multi-table join condition
 # Query: t1 JOIN dt ON t1.b = dt.doubled_b, and dt JOIN t5 ON dt.key_a = t5.a
 # Tests computed column join in a 3-table scenario

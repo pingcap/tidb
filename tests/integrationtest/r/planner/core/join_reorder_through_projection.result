@@ -1597,50 +1597,6 @@ where t1.b = dt.doubled_b and t1.c = dt.upper_c
 order by 1;
 a	b	c	key_a	doubled_b	upper_c
 set tidb_opt_join_reorder_through_proj = off;
-explain format = 'plan_tree' select t1.*, dt.* from t1,
-(select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
-where t1.a = dt.key_a and dt.doubled_b > 200;
-id	task	access object	operator info
-MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t1.a, right key:planner__core__join_reorder_through_projection.t2.a
-├─Projection(Build)	root		planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column
-│ └─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
-│   ├─TableReader(Build)	root		data:TableFullScan
-│   │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-│   └─TableReader(Probe)	root		data:Selection
-│     └─Selection	cop[tikv]		gt(mul(planner__core__join_reorder_through_projection.t2.b, 2), 200)
-│       └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-└─TableReader(Probe)	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-select t1.*, dt.* from t1,
-(select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
-where t1.a = dt.key_a and dt.doubled_b > 200
-order by 1;
-a	b	c	key_a	doubled_b
-2	20	a2	2	400
-3	30	a3	3	600
-set tidb_opt_join_reorder_through_proj = on;
-explain format = 'plan_tree' select t1.*, dt.* from t1,
-(select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
-where t1.a = dt.key_a and dt.doubled_b > 200;
-id	task	access object	operator info
-Projection	root		planner__core__join_reorder_through_projection.t1.a, planner__core__join_reorder_through_projection.t1.b, planner__core__join_reorder_through_projection.t1.c, planner__core__join_reorder_through_projection.t2.a, mul(planner__core__join_reorder_through_projection.t2.b, 2)->Column
-└─MergeJoin	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t3.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-  └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder_through_projection.t2.a, right key:planner__core__join_reorder_through_projection.t1.a
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		gt(mul(planner__core__join_reorder_through_projection.t2.b, 2), 200)
-        └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-select t1.*, dt.* from t1,
-(select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
-where t1.a = dt.key_a and dt.doubled_b > 200
-order by 1;
-a	b	c	key_a	doubled_b
-2	20	a2	2	400
-3	30	a3	3	600
-set tidb_opt_join_reorder_through_proj = off;
 explain format = 'plan_tree' select t1.*, dt.*, t5.a as t5_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;

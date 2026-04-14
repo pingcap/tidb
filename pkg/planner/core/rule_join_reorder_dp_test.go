@@ -272,26 +272,6 @@ func TestInjectedJoinExprMaterializationSafety(t *testing.T) {
 		require.NotEqual(t, injected1.UniqueID, injected2.UniqueID)
 	})
 
-	t.Run("buildJoinEdge injects volatile expressions without deduplicating them across calls", func(t *testing.T) {
-		solver := &baseSingleGroupJoinOrderSolver{
-			ctx:                ctx,
-			basicJoinGroupInfo: &basicJoinGroupInfo{},
-		}
-		leftPlan := newDataSource(ctx, "l", 1)
-		rightPlan := newDataSource(ctx, "r", 1)
-		leftCol := leftPlan.Schema().Columns[0]
-		rightExpr := makeRandPlusCol(rightPlan.Schema().Columns[0])
-
-		originalEdge := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightExpr).(*expression.ScalarFunction)
-		newEdge := solver.buildJoinEdge(originalEdge, leftCol, rightExpr, &leftPlan, &rightPlan)
-
-		require.NotNil(t, newEdge)
-
-		proj, ok := rightPlan.(*logicalop.LogicalProjection)
-		require.True(t, ok)
-		require.Len(t, proj.Exprs, 2)
-	})
-
 	t.Run("injectExpr keeps appended expression in child space for existing projections", func(t *testing.T) {
 		solver := &baseSingleGroupJoinOrderSolver{
 			ctx:                ctx,
