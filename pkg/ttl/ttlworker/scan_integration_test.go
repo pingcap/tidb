@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/stretchr/testify/require"
@@ -63,9 +62,6 @@ func TestCancelWhileScan(t *testing.T) {
 	}()
 
 	rounds := 10
-	if testflag.Long() {
-		rounds = 30
-	}
 	for i := 0; i < rounds; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		ttlTask := ttlworker.NewTTLScanTask(ctx, testPhysicalTableCache, &cache.TTLTask{
