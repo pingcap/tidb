@@ -17,10 +17,15 @@ package storage_test
 import (
 	"context"
 	"testing"
+	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -43,7 +48,7 @@ func TestLoadStats(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	colAID := tableInfo.Columns[0].ID
@@ -99,4 +104,59 @@ func TestLoadStats(t *testing.T) {
 	topN := idx.TopN
 	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
+}
+
+func TestColumnStatsIsInvalidSkipsInternalColumnID(t *testing.T) {
+	clearAsyncLoadHistogramNeededItems()
+	t.Cleanup(clearAsyncLoadHistogramNeededItems)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	histColl := &statistics.HistColl{
+		PhysicalID: 1,
+	}
+	statistics.ColumnStatsIsInvalid(nil, tk.Session().GetPlanCtx(), histColl, -1)
+
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+	require.Len(t, items, 0)
+}
+
+func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
+	clearAsyncLoadHistogramNeededItems()
+	t.Cleanup(clearAsyncLoadHistogramNeededItems)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	h := dom.StatsHandle()
+	// Make sure this table exists in stats cache so the old path would touch session context.
+	h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+
+	rowIDItem := model.TableItemID{
+		TableID: tableInfo.ID,
+		ID:      -1,
+	}
+	asyncload.AsyncLoadHistogramNeededItems.Insert(rowIDItem, true)
+
+	require.NotPanics(t, func() {
+		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h)
+		require.NoError(t, err)
+	})
+	require.NotContains(t, asyncload.AsyncLoadHistogramNeededItems.AllItems(), model.StatsLoadItem{
+		TableItemID: rowIDItem,
+		FullLoad:    true,
+	})
+}
+
+func clearAsyncLoadHistogramNeededItems() {
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+	}
 }
