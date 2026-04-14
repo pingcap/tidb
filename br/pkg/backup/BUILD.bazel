@@ -85,7 +85,6 @@ go_test(
         "//br/pkg/mock",
         "//br/pkg/pdutil",
         "//br/pkg/repo",
-        "//br/pkg/repo/snapshotpaths",
         "//br/pkg/rtree",
         "//br/pkg/utils",
         "//pkg/ddl/label",

@@ -15,11 +15,14 @@
 package repo
 
 import (
+	"encoding/hex"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 )
 
 // Layout describes how snapshot backup data is organized under --storage.
@@ -97,4 +100,37 @@ func (id BackupID) IsZero() bool {
 type SnapshotRef struct {
 	Layout   Layout
 	BackupID BackupID
+}
+
+const (
+	RepoMetaPath = "_meta/repo.json"
+	RootLockPath = metautil.LockFile
+
+	snapshotMetadataRootDir = "_meta/snapshot"
+	pendingRootDir          = "_meta/pending"
+	snapshotDataRootDir     = "_data/snapshot"
+)
+
+func SnapshotMetadataDir(backupID BackupID) string {
+	return path.Join(snapshotMetadataRootDir, backupID.StorageName())
+}
+
+func SnapshotMetadataFile(backupID BackupID) string {
+	return path.Join(SnapshotMetadataDir(backupID), metautil.MetaFile)
+}
+
+func PendingConfigHashStorageName(configHash []byte) string {
+	return strings.ToUpper(hex.EncodeToString(configHash))
+}
+
+func PendingDir(configHash []byte) string {
+	return path.Join(pendingRootDir, PendingConfigHashStorageName(configHash))
+}
+
+func PendingFile(configHash []byte, backupID BackupID) string {
+	return path.Join(PendingDir(configHash), backupID.StorageName()+".json")
+}
+
+func SnapshotStoreDataPrefix(storeID uint64, backupID BackupID) string {
+	return path.Join(snapshotDataRootDir, strconv.FormatUint(storeID, 10), backupID.StorageName())
 }

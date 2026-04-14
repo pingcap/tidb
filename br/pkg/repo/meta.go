@@ -37,8 +37,8 @@ type RepoMeta struct {
 	CreatedBy   string `json:"created_by"`
 }
 
-func LoadRepoMeta(ctx context.Context, storage storeapi.Storage, path string) (*RepoMeta, error) {
-	data, err := storage.ReadFile(ctx, path)
+func LoadRepoMeta(ctx context.Context, storage storeapi.Storage) (*RepoMeta, error) {
+	data, err := storage.ReadFile(ctx, RepoMetaPath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -55,18 +55,18 @@ func LoadRepoMeta(ctx context.Context, storage storeapi.Storage, path string) (*
 func EnsureRepo(
 	ctx context.Context,
 	storage storeapi.Storage,
-	repoMetaPath, lockPath, createdBy string,
+	createdBy string,
 ) (*RepoMeta, error) {
-	exists, err := storage.FileExists(ctx, repoMetaPath)
+	exists, err := storage.FileExists(ctx, RepoMetaPath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if exists {
-		meta, err := LoadRepoMeta(ctx, storage, repoMetaPath)
+		meta, err := LoadRepoMeta(ctx, storage)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err := ensureRepoGuard(ctx, storage, lockPath); err != nil {
+		if err := ensureRepoGuard(ctx, storage); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return meta, nil
@@ -86,10 +86,10 @@ func EnsureRepo(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := storage.WriteFile(ctx, repoMetaPath, payload); err != nil {
+	if err := storage.WriteFile(ctx, RepoMetaPath, payload); err != nil {
 		return nil, errors.Annotate(err, "write repo metadata")
 	}
-	if err := ensureRepoGuard(ctx, storage, lockPath); err != nil {
+	if err := ensureRepoGuard(ctx, storage); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return meta, nil
@@ -110,9 +110,9 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 		}
 	}
 	for _, prefix := range []string{
-		"_meta/snapshot",
-		"_meta/pending",
-		"_data/snapshot",
+		snapshotMetadataRootDir,
+		pendingRootDir,
+		snapshotDataRootDir,
 	} {
 		found := false
 		err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(string, int64) error {
@@ -129,13 +129,13 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 	return nil
 }
 
-func ensureRepoGuard(ctx context.Context, storage storeapi.Storage, lockPath string) error {
-	exists, err := storage.FileExists(ctx, lockPath)
+func ensureRepoGuard(ctx context.Context, storage storeapi.Storage) error {
+	exists, err := storage.FileExists(ctx, RootLockPath)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if exists {
 		return nil
 	}
-	return storage.WriteFile(ctx, lockPath, []byte("DO NOT DELETE\nThis path is managed as a BR snapshot repository."))
+	return storage.WriteFile(ctx, RootLockPath, []byte("DO NOT DELETE\nThis path is managed as a BR snapshot repository."))
 }

@@ -37,7 +37,6 @@ go_test(
         ":repo",
         "//br/pkg/checkpoint",
         "//br/pkg/metautil",
-        "//br/pkg/repo/snapshotpaths",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "@com_github_pingcap_kvproto//pkg/brpb",

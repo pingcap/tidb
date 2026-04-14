@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -147,8 +148,7 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 		ctx,
 		c.cfg.Storage,
 		&c.cfg.Config,
-		c.cfg.Layout,
-		c.cfg.BackupID,
+		repo.SnapshotRef{Layout: c.cfg.Layout, BackupID: c.cfg.BackupID},
 	)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to load backupmeta")

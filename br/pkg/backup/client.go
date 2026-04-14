@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/btree"
@@ -80,6 +79,42 @@ const (
 	UnitRegion ProgressUnit = "region"
 )
 
+// PerStoreBackupAdapter rewrites per-store backup requests and responses.
+//
+// BackupRanges passes a store-local copy of the shared request to RewriteStoreRequest.
+// When the request contains a storage backend, its proto is cloned before any adapter
+// runs so adapters can safely mutate it in place.
+type PerStoreBackupAdapter interface {
+	RewriteStoreRequest(storeID uint64, request *backuppb.BackupRequest) error
+	RewriteStoreResponseFiles(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error)
+}
+
+// BackupRangesOption customizes Client.BackupRanges.
+type BackupRangesOption func(*backupRangesOptions)
+
+type backupRangesOptions struct {
+	perStoreBackupAdapters []PerStoreBackupAdapter
+}
+
+// WithPerStoreBackupAdapter registers a per-store request/response adapter for BackupRanges.
+func WithPerStoreBackupAdapter(adapter PerStoreBackupAdapter) BackupRangesOption {
+	return func(opts *backupRangesOptions) {
+		if adapter != nil {
+			opts.perStoreBackupAdapters = append(opts.perStoreBackupAdapters, adapter)
+		}
+	}
+}
+
+func applyBackupRangesOptions(opts []BackupRangesOption) backupRangesOptions {
+	var options backupRangesOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&options)
+		}
+	}
+	return options
+}
+
 type MainBackupLoop struct {
 	BackupSender
 
@@ -95,47 +130,28 @@ type MainBackupLoop struct {
 	// make sure not too many requests are marshaled at the same time
 	Limiter *ResourceConcurrentLimiter
 
-	ProgressCallBack          func(ProgressUnit)
-	GetBackupClientCallBack   func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
-	RewriteStorageBackend     func(storeID uint64, backend *backuppb.StorageBackend) error
-	RewriteResponseFiles      func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error)
-	BeforeFirstRequestToStore func(storeID uint64, request backuppb.BackupRequest) error
-
-	beforeFirstRequestToStoreOnce sync.Map
+	ProgressCallBack        func(ProgressUnit)
+	GetBackupClientCallBack func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error)
+	PerStoreBackupAdapters  []PerStoreBackupAdapter
 }
 
 func (l *MainBackupLoop) buildStoreBackupReq(storeID uint64) (backuppb.BackupRequest, error) {
 	request := l.BackupReq
-	if l.RewriteStorageBackend == nil && l.BeforeFirstRequestToStore == nil {
+	if len(l.PerStoreBackupAdapters) == 0 {
 		return request, nil
 	}
 
 	// The loop-wide request is shared across stores and retries. Clone the backend
-	// before applying any store-specific rewrite or first-request hook so later retries
-	// still start clean.
-	request.StorageBackend = util.ProtoV1Clone(request.StorageBackend)
-	if l.RewriteStorageBackend != nil {
-		if err := l.RewriteStorageBackend(storeID, request.StorageBackend); err != nil {
+	// before applying any store-specific rewrite so later retries still start clean.
+	if request.StorageBackend != nil {
+		request.StorageBackend = util.ProtoV1Clone(request.StorageBackend)
+	}
+	for _, adapter := range l.PerStoreBackupAdapters {
+		if err := adapter.RewriteStoreRequest(storeID, &request); err != nil {
 			return backuppb.BackupRequest{}, errors.Trace(err)
 		}
 	}
-	if err := l.runBeforeFirstRequestToStore(storeID, request); err != nil {
-		return backuppb.BackupRequest{}, errors.Trace(err)
-	}
 	return request, nil
-}
-
-func (l *MainBackupLoop) runBeforeFirstRequestToStore(storeID uint64, request backuppb.BackupRequest) error {
-	if l == nil || l.BeforeFirstRequestToStore == nil {
-		return nil
-	}
-	onceAny, _ := l.beforeFirstRequestToStoreOnce.LoadOrStore(storeID, &sync.Once{})
-	once := onceAny.(*sync.Once)
-	var hookErr error
-	once.Do(func() {
-		hookErr = l.BeforeFirstRequestToStore(storeID, request)
-	})
-	return hookErr
 }
 
 type MainBackupSender struct{}
@@ -429,7 +445,7 @@ mainLoop:
 					// this round backup finished. break and check incomplete ranges in mainLoop.
 					break handleLoop
 				}
-				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree, loop.RewriteResponseFiles)
+				lock, err := bc.OnBackupResponse(handleCtx, respAndStore, errContext, loop.GlobalProgressTree, loop.PerStoreBackupAdapters)
 				if err != nil {
 					// if error occurred here, stop the backup process
 					// because only 3 kinds of errors will be returned here:
@@ -1212,7 +1228,8 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Key
 	return progressRangeTree, nil
 }
 
-// BackupRanges make a backup of the given key ranges.
+// BackupRanges makes a backup of the given key ranges.
+// Use BackupRangesOption values to customize per-store request/response adaptation.
 func (bc *Client) BackupRanges(
 	ctx context.Context,
 	ranges []rtree.KeyRange,
@@ -1221,10 +1238,8 @@ func (bc *Client) BackupRanges(
 	rangeLimit int,
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
-	rewriteStorageBackend func(storeID uint64, backend *backuppb.StorageBackend) error,
-	rewriteResponseFiles func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error),
-	beforeFirstRequestToStore func(storeID uint64, request backuppb.BackupRequest) error,
 	progressCallBack func(ProgressUnit),
+	opts ...BackupRangesOption,
 ) (map[int64]*metautil.ChecksumStats, error) {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
@@ -1239,6 +1254,8 @@ func (bc *Client) BackupRanges(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	options := applyBackupRangesOptions(opts)
+
 	globalProgressTree, err := bc.BuildProgressRangeTree(ctx, ranges, metaWriter, progressCallBack)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1248,17 +1265,15 @@ func (bc *Client) BackupRanges(
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
 
 	mainBackupLoop := &MainBackupLoop{
-		BackupSender:              &MainBackupSender{},
-		BackupReq:                 request,
-		Concurrency:               concurrency,
-		GlobalProgressTree:        &globalProgressTree,
-		ReplicaReadLabel:          replicaReadLabel,
-		StateNotifier:             stateNotifier,
-		Limiter:                   NewResourceMemoryLimiter(rangeLimit),
-		RewriteStorageBackend:     rewriteStorageBackend,
-		RewriteResponseFiles:      rewriteResponseFiles,
-		BeforeFirstRequestToStore: beforeFirstRequestToStore,
-		ProgressCallBack:          progressCallBack,
+		BackupSender:           &MainBackupSender{},
+		BackupReq:              request,
+		Concurrency:            concurrency,
+		GlobalProgressTree:     &globalProgressTree,
+		ReplicaReadLabel:       replicaReadLabel,
+		StateNotifier:          stateNotifier,
+		Limiter:                NewResourceMemoryLimiter(rangeLimit),
+		PerStoreBackupAdapters: options.perStoreBackupAdapters,
+		ProgressCallBack:       progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.
 		GetBackupClientCallBack: func(ctx context.Context, storeID uint64, reset bool) (backuppb.BackupClient, error) {
@@ -1305,12 +1320,28 @@ func (bc *Client) getBackupStores(ctx context.Context, replicaReadLabel map[stri
 	return targetStores, nil
 }
 
+func rewriteStoreResponseFiles(
+	adapters []PerStoreBackupAdapter,
+	storeID uint64,
+	files []*backuppb.File,
+) ([]*backuppb.File, error) {
+	rewritten := files
+	for _, adapter := range adapters {
+		var err error
+		rewritten, err = adapter.RewriteStoreResponseFiles(storeID, rewritten)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return rewritten, nil
+}
+
 func (bc *Client) OnBackupResponse(
 	ctx context.Context,
 	r *ResponseAndStore,
 	errContext *utils.ErrorContext,
 	globalProgressTree *rtree.ProgressRangeTree,
-	rewriteResponseFiles func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error),
+	adapters []PerStoreBackupAdapter,
 ) (*txnlock.Lock, error) {
 	if r == nil || r.GetResponse() == nil {
 		return nil, nil
@@ -1319,8 +1350,8 @@ func (bc *Client) OnBackupResponse(
 	resp := r.GetResponse()
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
-		if rewriteResponseFiles != nil && len(resp.Files) > 0 {
-			files, err := rewriteResponseFiles(storeID, resp.Files)
+		if len(adapters) > 0 && len(resp.Files) > 0 {
+			files, err := rewriteStoreResponseFiles(adapters, storeID, resp.Files)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}

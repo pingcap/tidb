@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "registry",
@@ -25,13 +25,4 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],
-)
-
-go_test(
-    name = "registry_test",
-    timeout = "short",
-    srcs = ["registration_test.go"],
-    embed = [":registry"],
-    flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
 )

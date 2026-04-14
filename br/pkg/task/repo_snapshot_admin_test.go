@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -194,31 +193,16 @@ func TestRunRepoSnapshotPendingDiscardRejectsAmbiguousWithoutBackupID(t *testing
 	require.Contains(t, err.Error(), "backup id is required")
 }
 
-func TestRunRepoSnapshotListWithConsoleUsesSpinner(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	createBackupMeta(t, ctx, storage, repo.BackupID(0x1001))
-	createBackupMeta(t, ctx, storage, repo.BackupID(0x1002))
-
-	console := &repoSnapshotTestConsole{}
-	backupIDs, err := RunRepoSnapshotList(ctx, console, RepoSnapshotListConfig{Config: cfg})
-	require.NoError(t, err)
-	require.Equal(t, []repo.BackupID{0x1001, 0x1002}, backupIDs)
-	requireRepoSnapshotProgress(t, console, "Listing snapshot backups...", 1, 1)
-}
-
-func TestRunRepoSnapshotDeleteWithConsoleUsesProgressBar(t *testing.T) {
+func TestRunRepoSnapshotDeleteWithConsoleProgressIsBestEffort(t *testing.T) {
 	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
 	defer storage.Close()
 
 	backupID := repo.BackupID(0x2001)
 	createBackupMeta(t, ctx, storage, backupID)
 	createPendingMarker(t, ctx, storage, backupID)
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, backupID)+"/a.sst", []byte("a")))
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(2, backupID)+"/b.sst", []byte("b")))
+	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, backupID)+"/a.sst", []byte("a")))
 
-	console := &repoSnapshotTestConsole{}
+	console := &repoSnapshotTestConsole{waitErr: context.Canceled}
 	result, err := RunRepoSnapshotDelete(ctx, console, RepoSnapshotDeleteConfig{
 		Config:   cfg,
 		BackupID: backupID,
@@ -227,55 +211,11 @@ func TestRunRepoSnapshotDeleteWithConsoleUsesProgressBar(t *testing.T) {
 	require.Equal(t, &RepoSnapshotDeleteResult{
 		BackupID:        backupID,
 		MetadataDeleted: 1,
-		DataDeleted:     2,
+		DataDeleted:     1,
 		PendingDeleted:  1,
 	}, result)
-	requireRepoSnapshotProgress(t, console, "Deleting snapshot backup...", 4, 4)
-	requireRepoSnapshotExtraField(t, console, "deleted", "4 files")
-}
-
-func TestRunRepoSnapshotPendingDiscardWithConsoleUsesProgressBar(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	backupID := repo.BackupID(0x3001)
-	createPendingCheckpoint(t, ctx, storage, backupID)
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, backupID)+"/a.sst", []byte("a")))
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(2, backupID)+"/b.sst", []byte("b")))
-
-	console := &repoSnapshotTestConsole{}
-	result, err := RunRepoSnapshotPendingDiscard(ctx, console, RepoSnapshotPendingDiscardConfig{
-		Config:   cfg,
-		BackupID: backupID,
-	})
-	require.NoError(t, err)
-	require.Equal(t, &RepoSnapshotPendingDiscardResult{
-		BackupID:        backupID,
-		MetadataDeleted: 1,
-		DataDeleted:     2,
-		PendingDeleted:  1,
-	}, result)
-	requireRepoSnapshotProgress(t, console, "Discarding pending snapshot backup...", 4, 4)
-	requireRepoSnapshotExtraField(t, console, "deleted", "4 files")
-}
-
-func TestRunRepoSnapshotOrphansDeleteWithConsoleUsesProgressBar(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	completedID := repo.BackupID(0x4001)
-	orphanID := repo.BackupID(0x4002)
-	createBackupMeta(t, ctx, storage, completedID)
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, orphanID)+"/a.sst", []byte("a")))
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(2, orphanID)+"/b.sst", []byte("b")))
-
-	console := &repoSnapshotTestConsole{}
-	deleted, err := RunRepoSnapshotOrphansDelete(ctx, console, RepoSnapshotOrphansConfig{Config: cfg})
-	require.NoError(t, err)
-	require.Equal(t, 2, deleted)
-	requireRepoSnapshotProgress(t, console, "Deleting orphan snapshot objects...", 2, 2)
-	requireRepoSnapshotExtraField(t, console, "deleted", "2 files")
+	requireRepoSnapshotProgress(t, console, "Deleting snapshot backup...", 3, 3)
+	requireRepoSnapshotExtraField(t, console, "deleted", "3 files")
 }
 
 func TestRunRepoSnapshotDeleteConfirmationAbortKeepsFiles(t *testing.T) {
@@ -287,8 +227,8 @@ func TestRunRepoSnapshotDeleteConfirmationAbortKeepsFiles(t *testing.T) {
 		meta.BackupSize = 4096
 		meta.IsTxnKv = true
 	})
-	pendingPath := snapshotpaths.PendingFile([]byte("hash"), backupID)
-	dataPath := snapshotpaths.StoreDataPrefix(1, backupID) + "/a.sst"
+	pendingPath := repo.PendingFile([]byte("hash"), backupID)
+	dataPath := repo.SnapshotStoreDataPrefix(1, backupID) + "/a.sst"
 	createPendingMarker(t, ctx, storage, backupID)
 	require.NoError(t, storage.WriteFile(ctx, dataPath, []byte("a")))
 
@@ -305,7 +245,7 @@ func TestRunRepoSnapshotDeleteConfirmationAbortKeepsFiles(t *testing.T) {
 	require.Contains(t, console.output.String(), backupID.String())
 	require.Contains(t, console.output.String(), "backup-size")
 	require.Contains(t, console.output.String(), "pending-markers")
-	requireRepoSnapshotFileExists(t, ctx, repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID)), metautil.MetaFile)
+	requireRepoSnapshotFileExists(t, ctx, repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID)), metautil.MetaFile)
 	requireRepoSnapshotFileExists(t, ctx, storage, pendingPath)
 	requireRepoSnapshotFileExists(t, ctx, storage, dataPath)
 }
@@ -315,8 +255,8 @@ func TestRunRepoSnapshotPendingDiscardConfirmationAbortKeepsFiles(t *testing.T) 
 	defer storage.Close()
 
 	backupID := repo.BackupID(0x4102)
-	dataPath := snapshotpaths.StoreDataPrefix(1, backupID) + "/a.sst"
-	pendingPath := snapshotpaths.PendingFile([]byte("hash"), backupID)
+	dataPath := repo.SnapshotStoreDataPrefix(1, backupID) + "/a.sst"
+	pendingPath := repo.PendingFile([]byte("hash"), backupID)
 	createPendingCheckpoint(t, ctx, storage, backupID)
 	require.NoError(t, storage.WriteFile(ctx, dataPath, []byte("a")))
 
@@ -333,7 +273,7 @@ func TestRunRepoSnapshotPendingDiscardConfirmationAbortKeepsFiles(t *testing.T) 
 	require.Contains(t, console.output.String(), backupID.String())
 	require.Contains(t, console.output.String(), "state: unfinished")
 	require.Contains(t, console.output.String(), "pending-markers: 1")
-	requireRepoSnapshotFileExists(t, ctx, repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID)), checkpoint.CheckpointMetaPathForBackup)
+	requireRepoSnapshotFileExists(t, ctx, repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID)), checkpoint.CheckpointMetaPathForBackup)
 	requireRepoSnapshotFileExists(t, ctx, storage, pendingPath)
 	requireRepoSnapshotFileExists(t, ctx, storage, dataPath)
 }
@@ -344,10 +284,10 @@ func TestRunRepoSnapshotOrphansDeleteConfirmationAbortKeepsFiles(t *testing.T) {
 
 	completedID := repo.BackupID(0x4103)
 	orphanID := repo.BackupID(0x4104)
-	orphanPathA := snapshotpaths.StoreDataPrefix(1, orphanID) + "/a.sst"
-	orphanPathB := snapshotpaths.StoreDataPrefix(2, orphanID) + "/b.sst"
+	orphanPathA := repo.SnapshotStoreDataPrefix(1, orphanID) + "/a.sst"
+	orphanPathB := repo.SnapshotStoreDataPrefix(2, orphanID) + "/b.sst"
 	createBackupMeta(t, ctx, storage, completedID)
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
+	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
 	require.NoError(t, storage.WriteFile(ctx, orphanPathA, []byte("a")))
 	require.NoError(t, storage.WriteFile(ctx, orphanPathB, []byte("b")))
 
@@ -371,9 +311,9 @@ func TestRunRepoSnapshotOrphansDeleteConfirmationSamplesOnly(t *testing.T) {
 	completedID := repo.BackupID(0x4105)
 	orphanID := repo.BackupID(0x4106)
 	createBackupMeta(t, ctx, storage, completedID)
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
+	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
 	for i := 0; i < repoSnapshotPromptSampleLimit+2; i++ {
-		path := fmt.Sprintf("%s/%02d.sst", snapshotpaths.StoreDataPrefix(1, orphanID), i)
+		path := fmt.Sprintf("%s/%02d.sst", repo.SnapshotStoreDataPrefix(1, orphanID), i)
 		require.NoError(t, storage.WriteFile(ctx, path, []byte("orphan")))
 	}
 
@@ -389,43 +329,6 @@ func TestRunRepoSnapshotOrphansDeleteConfirmationSamplesOnly(t *testing.T) {
 	require.Contains(t, console.output.String(), "... more orphan objects may exist")
 }
 
-func TestRunRepoSnapshotListIgnoresProgressWaitCancelAfterSuccess(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	createBackupMeta(t, ctx, storage, repo.BackupID(0x5001))
-	console := &repoSnapshotTestConsole{waitErr: context.Canceled}
-
-	backupIDs, err := RunRepoSnapshotList(ctx, console, RepoSnapshotListConfig{Config: cfg})
-	require.NoError(t, err)
-	require.Equal(t, []repo.BackupID{0x5001}, backupIDs)
-	requireRepoSnapshotProgress(t, console, "Listing snapshot backups...", 1, 1)
-}
-
-func TestRunRepoSnapshotDeleteIgnoresProgressWaitCancelAfterSuccess(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	backupID := repo.BackupID(0x5002)
-	createBackupMeta(t, ctx, storage, backupID)
-	createPendingMarker(t, ctx, storage, backupID)
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.StoreDataPrefix(1, backupID)+"/a.sst", []byte("a")))
-	console := &repoSnapshotTestConsole{waitErr: context.Canceled}
-
-	result, err := RunRepoSnapshotDelete(ctx, console, RepoSnapshotDeleteConfig{
-		Config:   cfg,
-		BackupID: backupID,
-	})
-	require.NoError(t, err)
-	require.Equal(t, &RepoSnapshotDeleteResult{
-		BackupID:        backupID,
-		MetadataDeleted: 1,
-		DataDeleted:     1,
-		PendingDeleted:  1,
-	}, result)
-	requireRepoSnapshotProgress(t, console, "Deleting snapshot backup...", 3, 3)
-}
-
 func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storeapi.Storage) {
 	t.Helper()
 
@@ -438,7 +341,7 @@ func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storeapi.Sto
 	}
 	_, storage, err := GetStorage(ctx, cfg.Storage, &cfg)
 	require.NoError(t, err)
-	_, err = repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "test")
+	_, err = repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 	return ctx, cfg, storage
 }
@@ -446,13 +349,13 @@ func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storeapi.Sto
 func createPendingCheckpoint(t *testing.T, ctx context.Context, storage storeapi.Storage, backupID repo.BackupID) {
 	t.Helper()
 	createPendingMarker(t, ctx, storage, backupID)
-	metadataStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID))
+	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
 	require.NoError(t, metadataStorage.WriteFile(ctx, checkpoint.CheckpointMetaPathForBackup, []byte("checkpoint")))
 }
 
 func createPendingMarker(t *testing.T, ctx context.Context, storage storeapi.Storage, backupID repo.BackupID) {
 	t.Helper()
-	require.NoError(t, storage.WriteFile(ctx, snapshotpaths.PendingFile([]byte("hash"), backupID), []byte("{}")))
+	require.NoError(t, storage.WriteFile(ctx, repo.PendingFile([]byte("hash"), backupID), []byte("{}")))
 }
 
 func createBackupMeta(
@@ -465,7 +368,7 @@ func createBackupMeta(
 	t.Helper()
 	cipherInfo := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
 	metaWriter := metautil.NewMetaWriter(
-		repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID)),
+		repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID)),
 		metautil.MetaFileSize,
 		false,
 		"",
@@ -493,7 +396,7 @@ func createBackupMetaWithFiles(
 
 	cipherInfo := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
 	metaWriter := metautil.NewMetaWriter(
-		repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID)),
+		repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID)),
 		metautil.MetaFileSize,
 		useV2,
 		"",

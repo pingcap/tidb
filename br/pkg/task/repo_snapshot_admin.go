@@ -27,12 +27,10 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/tikv/client-go/v2/oracle"
@@ -157,7 +155,7 @@ func RunRepoSnapshotGet(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			metadataStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(cfg.BackupID))
+			metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(cfg.BackupID))
 			backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.Config)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -226,9 +224,6 @@ func RunRepoSnapshotPendingDiscard(
 		}
 		target, err := selectPendingBackupForDiscard(cfg.BackupID, pendingBackups)
 		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if err := validateRepoSnapshotPendingDiscardTarget(target); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if err := confirmRepoSnapshotPendingDiscard(console, &cfg, target); err != nil {
@@ -402,7 +397,7 @@ func collectRepoSnapshotDeletePreview(
 	backupID repo.BackupID,
 ) repoSnapshotDeletePreview {
 	preview := repoSnapshotDeletePreview{}
-	metadataStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID))
+	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
 	if backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, cfg); err == nil {
 		preview.HasBasic = true
 		preview.Basic = convertRepoSnapshotBasicView(*backupMeta)
@@ -417,21 +412,6 @@ func collectRepoSnapshotDeletePreview(
 		}
 	}
 	return preview
-}
-
-func validateRepoSnapshotPendingDiscardTarget(target *repo.PendingBackup) error {
-	switch target.State {
-	case repo.PendingBackupStateStale, repo.PendingBackupStateUnfinished:
-		return nil
-	default:
-		return errors.Annotatef(
-			berrors.ErrInvalidArgument,
-			"found inconsistent repo-v1 pending backup %s: pending marker exists but neither %s nor %s was found",
-			target.BackupID,
-			metautil.MetaFile,
-			checkpoint.CheckpointMetaPathForBackup,
-		)
-	}
 }
 
 func confirmRepoSnapshotPendingDiscard(
@@ -450,6 +430,8 @@ func confirmRepoSnapshotPendingDiscard(
 		console.Println("This only removes stale pending markers; completed snapshot metadata and data files are kept.")
 	case repo.PendingBackupStateUnfinished:
 		console.Println("This permanently removes checkpoint/metadata files, data files, and pending markers for the unfinished backup.")
+	default:
+		console.Println("This pending backup is transient and cannot be discarded with this command.")
 	}
 	if !console.PromptBool("Continue? ") {
 		return errors.Trace(berrors.ErrOperationAborted)
@@ -585,7 +567,7 @@ func openSnapshotRepoStorage(ctx context.Context, cfg *Config) (storeapi.Storage
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if _, err := repo.LoadRepoMeta(ctx, storage, snapshotpaths.RepoMetaPath); err != nil {
+	if _, err := repo.LoadRepoMeta(ctx, storage); err != nil {
 		storage.Close()
 		return nil, errors.Trace(err)
 	}
@@ -781,40 +763,25 @@ func collectRepoSnapshotTables(ctx context.Context, reader *metautil.MetaReader)
 }
 
 func collectRepoSnapshotFiles(ctx context.Context, reader *metautil.MetaReader) ([]repoSnapshotFileView, error) {
-	out := make(chan *backuppb.File, 16)
-	errc := make(chan error, 1)
-	go func() {
-		errc <- reader.ReadDataFiles(ctx, out)
-		close(out)
-	}()
-
-	var files []repoSnapshotFileView
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case file, ok := <-out:
-			if !ok {
-				if err := <-errc; err != nil {
-					return nil, errors.Trace(err)
-				}
-				slices.SortFunc(files, func(a, b repoSnapshotFileView) int {
-					if c := cmp.Compare(a.Name, b.Name); c != 0 {
-						return c
-					}
-					if c := cmp.Compare(a.CF, b.CF); c != 0 {
-						return c
-					}
-					if c := cmp.Compare(a.StartKey, b.StartKey); c != 0 {
-						return c
-					}
-					return cmp.Compare(a.EndKey, b.EndKey)
-				})
-				return files, nil
-			}
-			files = append(files, convertRepoSnapshotFileView(file))
-		}
+	files := make([]repoSnapshotFileView, 0)
+	if err := reader.ReadDataFiles(ctx, func(file *backuppb.File) {
+		files = append(files, convertRepoSnapshotFileView(file))
+	}); err != nil {
+		return nil, errors.Trace(err)
 	}
+	slices.SortFunc(files, func(a, b repoSnapshotFileView) int {
+		if c := cmp.Compare(a.Name, b.Name); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.CF, b.CF); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.StartKey, b.StartKey); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.EndKey, b.EndKey)
+	})
+	return files, nil
 }
 
 func convertRepoSnapshotFileView(file *backuppb.File) repoSnapshotFileView {

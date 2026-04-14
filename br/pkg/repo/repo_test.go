@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -85,15 +84,15 @@ func TestEnsureRepo(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
 
-	meta, err := repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "br test")
+	meta, err := repo.EnsureRepo(ctx, storage, "br test")
 	require.NoError(t, err)
 	require.Equal(t, repo.RepoVersion, meta.RepoVersion)
 
-	reloaded, err := repo.LoadRepoMeta(ctx, storage, snapshotpaths.RepoMetaPath)
+	reloaded, err := repo.LoadRepoMeta(ctx, storage)
 	require.NoError(t, err)
 	require.Equal(t, meta.RepoID, reloaded.RepoID)
 
-	exists, err := storage.FileExists(ctx, snapshotpaths.RootLockPath)
+	exists, err := storage.FileExists(ctx, repo.RootLockPath)
 	require.NoError(t, err)
 	require.True(t, exists)
 }
@@ -108,7 +107,7 @@ func TestEnsureRepoRejectsLegacyArtifacts(t *testing.T) {
 		storage := objstore.NewMemStorage()
 		require.NoError(t, storage.WriteFile(ctx, artifact, []byte("x")))
 
-		_, err := repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "br test")
+		_, err := repo.EnsureRepo(ctx, storage, "br test")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), artifact)
 	}
@@ -117,14 +116,14 @@ func TestEnsureRepoRejectsLegacyArtifacts(t *testing.T) {
 func TestEnsureRepoRejectsExistingRepoArtifactsWithoutMeta(t *testing.T) {
 	ctx := context.Background()
 	for _, artifact := range []string{
-		snapshotpaths.MetadataFile(repo.BackupID(1)),
-		snapshotpaths.PendingFile([]byte("hash"), repo.BackupID(2)),
-		snapshotpaths.StoreDataPrefix(3, repo.BackupID(4)) + "/sst",
+		repo.SnapshotMetadataFile(repo.BackupID(1)),
+		repo.PendingFile([]byte("hash"), repo.BackupID(2)),
+		repo.SnapshotStoreDataPrefix(3, repo.BackupID(4)) + "/sst",
 	} {
 		storage := objstore.NewMemStorage()
 		require.NoError(t, storage.WriteFile(ctx, artifact, []byte("x")))
 
-		_, err := repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "br test")
+		_, err := repo.EnsureRepo(ctx, storage, "br test")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "repo-v1 snapshot artifact")
 	}

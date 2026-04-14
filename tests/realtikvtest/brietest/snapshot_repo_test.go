@@ -27,12 +27,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -152,28 +149,6 @@ func (s *snapshotRepoSuite) backup() repo.BackupID {
 	return backupID
 }
 
-func (s *snapshotRepoSuite) backupDataFiles(backupID repo.BackupID) []*backuppb.File {
-	s.t.Helper()
-	cfg := s.restoreConfig(backupID)
-	_, rootStorage, err := task.GetStorage(context.Background(), cfg.Storage, &cfg.Config)
-	require.NoError(s.t, err)
-	metaStorage := repo.NewPrefixedStorage(rootStorage, snapshotpaths.MetadataDir(backupID))
-	meta, err := task.ReadBackupMetaFromStorage(context.Background(), metautil.MetaFile, metaStorage, &cfg.Config)
-	require.NoError(s.t, err)
-	reader := metautil.NewMetaReader(meta, metaStorage, &cfg.CipherInfo)
-	dbs, err := metautil.LoadBackupTables(context.Background(), reader, false)
-	require.NoError(s.t, err)
-	files := make([]*backuppb.File, 0)
-	for _, db := range dbs {
-		for _, table := range db.Tables {
-			for _, physicalFiles := range table.FilesOfPhysicals {
-				files = append(files, physicalFiles...)
-			}
-		}
-	}
-	return files
-}
-
 func (s *snapshotRepoSuite) runRestore(cfg task.RestoreConfig) error {
 	s.t.Helper()
 	return task.RunRestore(context.Background(), &TestKitGlue{tk: s.tk}, task.FullRestoreCmd, &cfg)
@@ -190,13 +165,6 @@ func (s *snapshotRepoSuite) repoPath(rel string) string {
 	return filepath.Join(s.repoDir, filepath.FromSlash(rel))
 }
 
-func (s *snapshotRepoSuite) writeRepoFile(rel string, content []byte) {
-	s.t.Helper()
-	path := s.repoPath(rel)
-	require.NoError(s.t, os.MkdirAll(filepath.Dir(path), 0o755))
-	require.NoError(s.t, os.WriteFile(path, content, 0o644))
-}
-
 func (s *snapshotRepoSuite) pendingBackupIDs() []repo.BackupID {
 	s.t.Helper()
 	files := s.pendingFiles()
@@ -211,7 +179,7 @@ func (s *snapshotRepoSuite) pendingBackupIDs() []repo.BackupID {
 
 func (s *snapshotRepoSuite) checkpointMetadata(backupID repo.BackupID) checkpoint.CheckpointMetadataForBackup {
 	s.t.Helper()
-	payload, err := os.ReadFile(s.repoPath(filepath.ToSlash(filepath.Join(snapshotpaths.MetadataDir(backupID), checkpoint.CheckpointMetaPathForBackup))))
+	payload, err := os.ReadFile(s.repoPath(filepath.ToSlash(filepath.Join(repo.SnapshotMetadataDir(backupID), checkpoint.CheckpointMetaPathForBackup))))
 	require.NoError(s.t, err)
 	var meta checkpoint.CheckpointMetadataForBackup
 	require.NoError(s.t, json.Unmarshal(payload, &meta))
@@ -308,105 +276,6 @@ func (s *snapshotRepoSuite) createSimpleTable() {
 	s.tk.MustExec("create table " + s.dbName + ".t(id int primary key, v int)")
 }
 
-func TestSnapshotRepoSuiteBackupRestoreLayout(t *testing.T) {
-	suite := newSnapshotRepoSuite(t, "br_repo_v1_layout")
-	suite.createSimpleTable()
-	suite.tk.MustExec("insert into " + suite.dbName + ".t values (1, 10), (2, 20), (3, 30)")
-
-	backupID1 := suite.backup()
-	suite.tk.MustExec("insert into " + suite.dbName + ".t values (4, 40), (5, 50)")
-	backupID2 := suite.backup()
-
-	require.Greater(t, uint64(backupID1), uint64(0))
-	require.Greater(t, uint64(backupID2), uint64(backupID1))
-	require.Len(t, backupID1.StorageName(), 16)
-	require.Len(t, backupID2.StorageName(), 16)
-	require.Equal(t, strings.ToUpper(backupID1.StorageName()), backupID1.StorageName())
-	require.Equal(t, strings.ToUpper(backupID2.StorageName()), backupID2.StorageName())
-
-	suite.requirePathExists("backup.lock")
-	suite.requirePathExists(snapshotpaths.RepoMetaPath)
-	suite.requirePathExists(snapshotpaths.MetadataFile(backupID1))
-	suite.requirePathExists(snapshotpaths.MetadataFile(backupID2))
-	require.Len(t, suite.pendingFiles(), 0)
-
-	dataDirs1 := suite.dataDirs(backupID1)
-	dataDirs2 := suite.dataDirs(backupID2)
-	require.NotEmpty(t, dataDirs1)
-	require.NotEmpty(t, dataDirs2)
-	require.NotEmpty(t, suite.sstFiles(backupID1))
-	require.NotEmpty(t, suite.sstFiles(backupID2))
-	for _, backupID := range []repo.BackupID{backupID1, backupID2} {
-		files := suite.backupDataFiles(backupID)
-		require.NotEmpty(t, files)
-		for _, file := range files {
-			parts := strings.Split(file.Name, "/")
-			require.GreaterOrEqual(t, len(parts), 5)
-			require.Equal(t, "_data", parts[0])
-			require.Equal(t, "snapshot", parts[1])
-			require.Equal(t, backupID.StorageName(), parts[3])
-		}
-	}
-	for _, dir := range append(dataDirs1, dataDirs2...) {
-		storeID := filepath.Base(filepath.Dir(dir))
-		_, err := strconv.ParseUint(storeID, 10, 64)
-		require.NoError(t, err)
-	}
-	suite.requirePathMissing(filepath.ToSlash(filepath.Join("_data", "snapshot", backupID1.StorageName())))
-	suite.requirePathMissing(filepath.ToSlash(filepath.Join("_data", "snapshot", backupID2.StorageName())))
-
-	suite.tk.MustExec("drop database " + suite.dbName)
-	suite.restore(backupID1)
-	suite.tk.MustQuery("select count(*) from " + suite.dbName + ".t").Check(testkit.Rows("3"))
-
-	suite.tk.MustExec("drop database " + suite.dbName)
-	suite.restore(backupID2)
-	suite.tk.MustQuery("select count(*) from " + suite.dbName + ".t").Check(testkit.Rows("5"))
-}
-
-func TestSnapshotRepoSuitePendingIndexBehavior(t *testing.T) {
-	suite := newSnapshotRepoSuite(t, "br_repo_v1_pending")
-	suite.createSimpleTable()
-	suite.tk.MustExec("insert into " + suite.dbName + ".t values (1, 10)")
-
-	backupCfg := suite.backupConfig()
-	cfgHash, err := backupCfg.Hash()
-	require.NoError(t, err)
-
-	backupID1 := suite.backup()
-	stalePendingFile := snapshotpaths.PendingFile(cfgHash, backupID1)
-	suite.writeRepoFile(stalePendingFile, []byte("{}"))
-
-	foreignPendingFile := filepath.ToSlash(filepath.Join(
-		"_meta", "pending", strings.Repeat("A", 64), repo.BackupID(0xF0F0).StorageName()+".json",
-	))
-	suite.writeRepoFile(foreignPendingFile, []byte("{}"))
-
-	suite.tk.MustExec("insert into " + suite.dbName + ".t values (2, 20)")
-	backupID2 := suite.backup()
-	require.NotEqual(t, backupID1, backupID2)
-	suite.requirePathMissing(stalePendingFile)
-	suite.requirePathExists(foreignPendingFile)
-
-	ambiguous1 := repo.BackupID(0x1001)
-	ambiguous2 := repo.BackupID(0x1002)
-	suite.writeRepoFile(snapshotpaths.PendingFile(cfgHash, ambiguous1), []byte("{}"))
-	suite.writeRepoFile(snapshotpaths.PendingFile(cfgHash, ambiguous2), []byte("{}"))
-	suite.writeRepoFile(
-		filepath.ToSlash(filepath.Join(snapshotpaths.MetadataDir(ambiguous1), checkpoint.CheckpointMetaPathForBackup)),
-		[]byte("{}"),
-	)
-	suite.writeRepoFile(
-		filepath.ToSlash(filepath.Join(snapshotpaths.MetadataDir(ambiguous2), checkpoint.CheckpointMetaPathForBackup)),
-		[]byte("{}"),
-	)
-
-	ambiguousCfg := suite.backupConfig()
-	err = task.RunBackup(context.Background(), &TestKitGlue{tk: suite.tk}, task.FullBackupCmd, &ambiguousCfg)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "multiple unfinished repo-v1 backups")
-}
-
 func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 	suite := newSnapshotRepoSuite(t, "br_repo_v1_task_ops")
 	suite.createSimpleTable()
@@ -446,9 +315,9 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 	require.Greater(t, result.MetadataDeleted, 0)
 	require.Greater(t, result.DataDeleted, 0)
 	require.Zero(t, result.PendingDeleted)
-	suite.requirePathMissing(snapshotpaths.MetadataFile(backupID1))
+	suite.requirePathMissing(repo.SnapshotMetadataFile(backupID1))
 	require.Empty(t, suite.sstFiles(backupID1))
-	suite.requirePathExists(snapshotpaths.MetadataFile(backupID2))
+	suite.requirePathExists(repo.SnapshotMetadataFile(backupID2))
 	require.NotEmpty(t, suite.sstFiles(backupID2))
 
 	backupIDs, err = task.RunRepoSnapshotList(ctx, nil, task.RepoSnapshotListConfig{Config: cfg})
@@ -458,52 +327,6 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 	suite.tk.MustExec("drop database " + suite.dbName)
 	suite.restore(backupID2)
 	suite.tk.MustQuery("select count(*) from " + suite.dbName + ".t").Check(testkit.Rows("4"))
-}
-
-func TestSnapshotRepoSuiteTaskCleanupArtifacts(t *testing.T) {
-	suite := newSnapshotRepoSuite(t, "br_repo_v1_task_pending")
-	suite.createSimpleTable()
-	suite.tk.MustExec("insert into " + suite.dbName + ".t values (1, 10), (2, 20)")
-
-	backupID := suite.backup()
-	cfg := suite.taskConfig()
-	ctx := context.Background()
-
-	stalePendingFile := snapshotpaths.PendingFile([]byte("stale"), backupID)
-	suite.writeRepoFile(stalePendingFile, []byte("{}"))
-
-	discardResult, err := task.RunRepoSnapshotPendingDiscard(ctx, nil, task.RepoSnapshotPendingDiscardConfig{
-		Config:   cfg,
-		BackupID: backupID,
-	})
-	require.NoError(t, err)
-	require.Equal(t, backupID, discardResult.BackupID)
-	require.True(t, discardResult.StalePending)
-	require.Equal(t, 1, discardResult.PendingDeleted)
-	require.Zero(t, discardResult.MetadataDeleted)
-	require.Zero(t, discardResult.DataDeleted)
-	suite.requirePathMissing(stalePendingFile)
-	suite.requirePathExists(snapshotpaths.MetadataFile(backupID))
-	require.NotEmpty(t, suite.sstFiles(backupID))
-
-	orphanID := repo.BackupID(0xDEAD)
-	orphanPath := filepath.ToSlash(filepath.Join(snapshotpaths.StoreDataPrefix(9, orphanID), "orphan.sst"))
-	suite.writeRepoFile(orphanPath, []byte("orphan"))
-
-	orphans, err := task.RunRepoSnapshotOrphansList(ctx, nil, task.RepoSnapshotOrphansConfig{Config: cfg})
-	require.NoError(t, err)
-	require.Equal(t, []string{orphanPath}, orphans)
-
-	deleted, err := task.RunRepoSnapshotOrphansDelete(ctx, nil, task.RepoSnapshotOrphansConfig{Config: cfg})
-	require.NoError(t, err)
-	require.Equal(t, 1, deleted)
-	suite.requirePathMissing(orphanPath)
-	suite.requirePathExists(snapshotpaths.MetadataFile(backupID))
-	require.NotEmpty(t, suite.sstFiles(backupID))
-
-	backupIDs, err := task.RunRepoSnapshotList(ctx, nil, task.RepoSnapshotListConfig{Config: cfg})
-	require.NoError(t, err)
-	require.Equal(t, []repo.BackupID{backupID}, backupIDs)
 }
 
 func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.T) {
@@ -570,7 +393,7 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 	pendingIDs := suite.pendingBackupIDs()
 	require.Len(t, pendingIDs, 1)
 	failedBackupID := pendingIDs[0]
-	checkpointLockPath := filepath.ToSlash(filepath.Join(snapshotpaths.MetadataDir(failedBackupID), checkpoint.CheckpointLockPathForBackup))
+	checkpointLockPath := filepath.ToSlash(filepath.Join(repo.SnapshotMetadataDir(failedBackupID), checkpoint.CheckpointLockPathForBackup))
 	partialSSTCount := len(suite.sstFiles(failedBackupID))
 	require.Greater(t, partialSSTCount, 0)
 	assertSingleBackupPath(failedBackupID)

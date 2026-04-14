@@ -29,7 +29,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
@@ -231,11 +230,11 @@ func TestGetFullBackupTSReadsRepoV1MetadataStorage(t *testing.T) {
 	require.NoError(t, err)
 
 	backupID := repo.BackupID(0x1234)
-	_, err = repo.EnsureRepo(ctx, storage, snapshotpaths.RepoMetaPath, snapshotpaths.RootLockPath, "test")
+	_, err = repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 	require.NoError(t, storage.WriteFile(ctx, metautil.MetaFile, []byte("not-backupmeta")))
 
-	metaStorage := repo.NewPrefixedStorage(storage, snapshotpaths.MetadataDir(backupID))
+	metaStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
 	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
 	metaWriter := metautil.NewMetaWriter(metaStorage, metautil.MetaFileSize, false, "", cipher)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {

@@ -16,7 +16,6 @@ package backup
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -25,11 +24,29 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/br/pkg/repo/snapshotpaths"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
+
+type testPerStoreBackupAdapter struct {
+	rewriteRequest       func(storeID uint64, request *backuppb.BackupRequest) error
+	rewriteResponseFiles func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error)
+}
+
+func (a testPerStoreBackupAdapter) RewriteStoreRequest(storeID uint64, request *backuppb.BackupRequest) error {
+	if a.rewriteRequest == nil {
+		return nil
+	}
+	return a.rewriteRequest(storeID, request)
+}
+
+func (a testPerStoreBackupAdapter) RewriteStoreResponseFiles(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
+	if a.rewriteResponseFiles == nil {
+		return files, nil
+	}
+	return a.rewriteResponseFiles(storeID, files)
+}
 
 func TestBuildStoreBackupReqRewritesClonedBackend(t *testing.T) {
 	baseBackend := &backuppb.StorageBackend{
@@ -39,11 +56,13 @@ func TestBuildStoreBackupReqRewritesClonedBackend(t *testing.T) {
 		BackupReq: backuppb.BackupRequest{
 			StorageBackend: baseBackend,
 		},
-		RewriteStorageBackend: func(storeID uint64, backend *backuppb.StorageBackend) error {
-			require.NotSame(t, baseBackend, backend)
-			backend.GetS3().Prefix = "root/store-7"
-			return nil
-		},
+		PerStoreBackupAdapters: []PerStoreBackupAdapter{testPerStoreBackupAdapter{
+			rewriteRequest: func(storeID uint64, request *backuppb.BackupRequest) error {
+				require.NotSame(t, baseBackend, request.GetStorageBackend())
+				request.GetStorageBackend().GetS3().Prefix = "root/store-7"
+				return nil
+			},
+		}},
 	}
 
 	storeReq, err := loop.buildStoreBackupReq(7)
@@ -58,30 +77,24 @@ func (fixedCheckpointTimer) GetTS(context.Context) (int64, int64, error) {
 	return 1, 1, nil
 }
 
-func TestBuildStoreBackupReqRunsBeforeFirstRequestToStoreOncePerStore(t *testing.T) {
+func TestBuildStoreBackupReqRunsAdapterOnEveryBuild(t *testing.T) {
 	baseBackend := &backuppb.StorageBackend{
 		Backend: &backuppb.StorageBackend_S3{S3: &backuppb.S3{Bucket: "bucket", Prefix: "root"}},
 	}
-	var (
-		mu    sync.Mutex
-		calls = make(map[uint64]int)
-		seen  = make(map[uint64]string)
-	)
+	calls := make(map[uint64]int)
+	seen := make(map[uint64]string)
 	loop := &MainBackupLoop{
 		BackupReq: backuppb.BackupRequest{
 			StorageBackend: baseBackend,
 		},
-		RewriteStorageBackend: func(storeID uint64, backend *backuppb.StorageBackend) error {
-			backend.GetS3().Prefix = "root/store"
-			return nil
-		},
-		BeforeFirstRequestToStore: func(storeID uint64, request backuppb.BackupRequest) error {
-			mu.Lock()
-			defer mu.Unlock()
-			calls[storeID]++
-			seen[storeID] = request.GetStorageBackend().GetS3().Prefix
-			return nil
-		},
+		PerStoreBackupAdapters: []PerStoreBackupAdapter{testPerStoreBackupAdapter{
+			rewriteRequest: func(storeID uint64, request *backuppb.BackupRequest) error {
+				calls[storeID]++
+				request.GetStorageBackend().GetS3().Prefix = "root/store"
+				seen[storeID] = request.GetStorageBackend().GetS3().Prefix
+				return nil
+			},
+		}},
 	}
 
 	_, err := loop.buildStoreBackupReq(7)
@@ -91,16 +104,14 @@ func TestBuildStoreBackupReqRunsBeforeFirstRequestToStoreOncePerStore(t *testing
 	_, err = loop.buildStoreBackupReq(8)
 	require.NoError(t, err)
 
-	mu.Lock()
-	defer mu.Unlock()
-	require.Equal(t, map[uint64]int{7: 1, 8: 1}, calls)
+	require.Equal(t, map[uint64]int{7: 2, 8: 1}, calls)
 	require.Equal(t, map[uint64]string{7: "root/store", 8: "root/store"}, seen)
 }
 
 func TestBuildProgressRangeTreeLoadsCheckpointDataFromMetadataStorage(t *testing.T) {
 	ctx := context.Background()
 	rootStorage := objstore.NewMemStorage()
-	metadataStorage := repo.NewPrefixedStorage(rootStorage, snapshotpaths.MetadataDir(repo.BackupID(0x1234)))
+	metadataStorage := repo.NewPrefixedStorage(rootStorage, repo.SnapshotMetadataDir(repo.BackupID(0x1234)))
 	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
 
 	runner, err := checkpoint.StartCheckpointBackupRunnerForTest(ctx, metadataStorage, cipher, time.Hour, fixedCheckpointTimer{})

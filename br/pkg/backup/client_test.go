@@ -39,6 +39,22 @@ import (
 	"go.opencensus.io/stats/view"
 )
 
+type responseRewriteAdapter struct{}
+
+func (responseRewriteAdapter) RewriteStoreRequest(uint64, *backuppb.BackupRequest) error {
+	return nil
+}
+
+func (responseRewriteAdapter) RewriteStoreResponseFiles(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
+	rewritten := make([]*backuppb.File, 0, len(files))
+	for _, file := range files {
+		fileCopy := *file
+		fileCopy.Name = fmt.Sprintf("store-%d/%s", storeID, file.Name)
+		rewritten = append(rewritten, &fileCopy)
+	}
+	return rewritten, nil
+}
+
 type testBackup struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -422,15 +438,7 @@ func TestOnBackupResponse(t *testing.T) {
 			Files:    []*backuppb.File{{Name: "file.sst"}},
 		},
 	}
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
-		rewritten := make([]*backuppb.File, 0, len(files))
-		for _, file := range files {
-			fileCopy := *file
-			fileCopy.Name = fmt.Sprintf("store-%d/%s", storeID, file.Name)
-			rewritten = append(rewritten, &fileCopy)
-		}
-		return rewritten, nil
-	})
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, []backup.PerStoreBackupAdapter{responseRewriteAdapter{}})
 	require.NoError(t, err)
 	require.Nil(t, lock)
 	found, findErr := tree.FindContained([]byte("aa"), []byte("c"))

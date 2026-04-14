@@ -178,7 +178,9 @@ const (
 type RegistrationInfo struct {
 	// filter patterns
 	FilterStrings []string
-	BackupID      string
+	// FilterHashInput is the exact input hashed into filter_hash when looking up
+	// or creating registrations. It should already include any repo-v1 backup scope.
+	FilterHashInput string
 
 	// time range for restore
 	StartTS    uint64
@@ -200,18 +202,10 @@ type RegistrationInfoWithID struct {
 }
 
 func registrationFilterHashInput(info RegistrationInfo) string {
-	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
-	if info.BackupID == "" {
-		return filterStrings
+	if info.FilterHashInput != "" {
+		return info.FilterHashInput
 	}
-	var builder strings.Builder
-	builder.Grow(len(filterStrings) + len(info.BackupID) + 32)
-	builder.WriteString("repo-v1")
-	builder.WriteByte(0)
-	builder.WriteString(filterStrings)
-	builder.WriteByte(0)
-	builder.WriteString(info.BackupID)
-	return builder.String()
+	return strings.Join(info.FilterStrings, FilterSeparator)
 }
 
 // Registry manages registrations of restore tasks
@@ -324,7 +318,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 
 	log.Info("attempting to resume or create registration",
 		zap.String("filter_strings", filterStrings),
-		zap.String("backup_id", info.BackupID),
+		zap.String("filter_hash_input", filterHashInput),
 		zap.Uint64("start_ts", info.StartTS),
 		zap.Uint64("restored_ts", info.RestoredTS),
 		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),
@@ -1009,7 +1003,7 @@ func (r *Registry) FindAndDeleteMatchingTask(ctx context.Context,
 
 	log.Info("searching for matching task to delete",
 		zap.String("filter_strings", filterStrings),
-		zap.String("backup_id", info.BackupID),
+		zap.String("filter_hash_input", filterHashInput),
 		zap.Uint64("start_ts", info.StartTS),
 		zap.Uint64("restored_ts", info.RestoredTS),
 		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),

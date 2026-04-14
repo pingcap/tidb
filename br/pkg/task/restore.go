@@ -517,11 +517,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
 	}
-	cfg.Layout, err = parseSnapshotStorageLayoutFlag(flags)
+	cfg.Layout, err = ParseSnapshotStorageLayoutFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.BackupID, err = parseSnapshotBackupIDFlag(flags)
+	cfg.BackupID, err = ParseSnapshotBackupIDFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2795,7 +2795,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 	// create registration info from config to find matching tasks
 	registrationInfo := registry.RegistrationInfo{
-		BackupID:          snapshotRegistrationBackupID(cfg.Layout, cfg.BackupID),
+		FilterHashInput:   snapshotRegistrationFilterHashInput(cfg.FilterStr, snapshotRef(cfg.Layout, cfg.BackupID)),
 		FilterStrings:     cfg.FilterStr,
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,

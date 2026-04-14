@@ -485,11 +485,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 	var (
-		snapshotStorage           *snapshotStorageRef
 		preparedStorage           *preparedRepoV1SnapshotBackup
-		rewriteStorageBackend     func(storeID uint64, backend *backuppb.StorageBackend) error
-		rewriteResponseFiles      func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error)
-		beforeFirstRequestToStore func(storeID uint64, request backuppb.BackupRequest) error
+		backupRangeOpts           []backup.BackupRangesOption
 		removePendingMarkerOnExit bool
 	)
 	if cfg.SnapshotRepoBackupOptions.IsRepoV1() {
@@ -515,16 +512,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if err != nil {
 			return errors.Trace(err)
 		}
-		snapshotStorage = &preparedStorage.snapshotStorageRef
 		client.SetMetadataStorage(preparedStorage.MetadataStorage)
-		backupID := preparedStorage.BackupID
-		rewriteStorageBackend = func(storeID uint64, backend *backuppb.StorageBackend) error {
-			return errors.Trace(rewriteDataBackendForStore(backend, storeID, backupID))
-		}
-		rewriteResponseFiles = func(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
-			return rewriteDataFilesForStore(files, storeID, backupID)
-		}
-		beforeFirstRequestToStore = prepareRepoV1LocalBackendForStore
+		backupRangeOpts = append(backupRangeOpts, backup.WithPerStoreBackupAdapter(preparedStorage))
 		if err := activateSnapshotBackupResume(ctx, client, preparedStorage, cfgHash); err != nil {
 			return errors.Trace(err)
 		}
@@ -680,9 +669,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		err = metawriter.FlushBackupMeta(ctx)
 		if err == nil {
 			gcSafePointKeeperRemovable = true
-			if snapshotStorage != nil && snapshotStorage.Layout.IsRepoV1() {
-				log.Info("completed repo-v1 snapshot backup", zap.String("backup-id", snapshotStorage.BackupID.String()))
-				g.Record("backup id", uint64(snapshotStorage.BackupID))
+			if preparedStorage != nil {
+				log.Info("completed repo-v1 snapshot backup", zap.String("backup-id", preparedStorage.BackupID.String()))
+				g.Record("backup id", uint64(preparedStorage.BackupID))
 			}
 			summary.SetSuccessStatus(true)
 		}
@@ -795,10 +784,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		cfg.RangeLimit,
 		cfg.ReplicaReadLabel,
 		metawriter,
-		rewriteStorageBackend,
-		rewriteResponseFiles,
-		beforeFirstRequestToStore,
 		progressCallBack,
+		backupRangeOpts...,
 	)
 	if err != nil {
 		return errors.Trace(err)
@@ -845,9 +832,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// we can remove the gc safepoint keeper and let the deferred checkpoint
 	// cleanup remove the pending marker afterward.
 	gcSafePointKeeperRemovable = true
-	if snapshotStorage != nil && snapshotStorage.Layout.IsRepoV1() {
-		log.Info("completed repo-v1 snapshot backup", zap.String("backup-id", snapshotStorage.BackupID.String()))
-		g.Record("backup id", uint64(snapshotStorage.BackupID))
+	if preparedStorage != nil {
+		log.Info("completed repo-v1 snapshot backup", zap.String("backup-id", preparedStorage.BackupID.String()))
+		g.Record("backup id", uint64(preparedStorage.BackupID))
 	}
 
 	// Checksum has finished, close checksum progress.

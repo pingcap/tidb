@@ -34,9 +34,9 @@ import (
 type PendingBackupState string
 
 const (
-	PendingBackupStateStale        PendingBackupState = "stale"
-	PendingBackupStateUnfinished   PendingBackupState = "unfinished"
-	PendingBackupStateInconsistent PendingBackupState = "inconsistent"
+	PendingBackupStateStale      PendingBackupState = "stale"
+	PendingBackupStateUnfinished PendingBackupState = "unfinished"
+	PendingBackupStateTransient  PendingBackupState = "transient"
 )
 
 type PendingBackup struct {
@@ -110,10 +110,30 @@ func SnapshotOpsExtension(storage storeapi.Storage) SnapshotOps {
 }
 
 func (ops SnapshotOps) ListPendingBackups(ctx context.Context) ([]PendingBackup, error) {
+	return listPendingBackups(ctx, ops.Storage, &storeapi.WalkOption{SubDir: pendingRootDir})
+}
+
+func ListPendingBackupsForConfigHash(
+	ctx context.Context,
+	storage storeapi.Storage,
+	configHash []byte,
+) ([]PendingBackup, error) {
+	return listPendingBackups(ctx, storage, &storeapi.WalkOption{SubDir: PendingDir(configHash)})
+}
+
+func listPendingBackups(
+	ctx context.Context,
+	storage storeapi.Storage,
+	walkOpt *storeapi.WalkOption,
+) ([]PendingBackup, error) {
 	grouped := make(map[BackupID]*PendingBackup)
-	for err, marker := range WalkPendingMarkers(ctx, ops.Storage) {
+	err := storage.WalkDir(ctx, walkOpt, func(filePath string, _ int64) error {
+		marker, ok, err := ParsePendingMarkerPath(filePath)
 		if err != nil {
-			return nil, errors.Annotatef(err, "walk pending snapshot markers")
+			return errors.Annotatef(err, "walk pending snapshot markers")
+		}
+		if !ok {
+			return nil
 		}
 		entry, ok := grouped[marker.BackupID]
 		if !ok {
@@ -121,28 +141,20 @@ func (ops SnapshotOps) ListPendingBackups(ctx context.Context) ([]PendingBackup,
 			grouped[marker.BackupID] = entry
 		}
 		entry.MarkerPaths = append(entry.MarkerPaths, marker.Path)
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	backups := make([]PendingBackup, 0, len(grouped))
 	for _, entry := range grouped {
 		slices.Sort(entry.MarkerPaths)
-		metadataStorage := NewPrefixedStorage(ops.Storage, snapshotMetadataDir(entry.BackupID))
-		hasBackupMeta, err := metadataStorage.FileExists(ctx, metautil.MetaFile)
+		state, err := inspectPendingBackupState(ctx, storage, entry.BackupID)
 		if err != nil {
-			return nil, errors.Annotatef(err, "check %s for pending backup %s", metautil.MetaFile, entry.BackupID)
+			return nil, errors.Trace(err)
 		}
-		hasCheckpoint, err := metadataStorage.FileExists(ctx, checkpoint.CheckpointMetaPathForBackup)
-		if err != nil {
-			return nil, errors.Annotatef(err, "check %s for pending backup %s", checkpoint.CheckpointMetaPathForBackup, entry.BackupID)
-		}
-		switch {
-		case hasBackupMeta:
-			entry.State = PendingBackupStateStale
-		case hasCheckpoint:
-			entry.State = PendingBackupStateUnfinished
-		default:
-			entry.State = PendingBackupStateInconsistent
-		}
+		entry.State = state
 		backups = append(backups, *entry)
 	}
 
@@ -150,6 +162,29 @@ func (ops SnapshotOps) ListPendingBackups(ctx context.Context) ([]PendingBackup,
 		return cmp.Compare(a.BackupID, b.BackupID)
 	})
 	return backups, nil
+}
+
+func inspectPendingBackupState(
+	ctx context.Context,
+	storage storeapi.Storage,
+	backupID BackupID,
+) (PendingBackupState, error) {
+	metadataStorage := NewPrefixedStorage(storage, SnapshotMetadataDir(backupID))
+	hasBackupMeta, err := metadataStorage.FileExists(ctx, metautil.MetaFile)
+	if err != nil {
+		return "", errors.Annotatef(err, "check %s for pending backup %s", metautil.MetaFile, backupID)
+	}
+	if hasBackupMeta {
+		return PendingBackupStateStale, nil
+	}
+	hasCheckpoint, err := metadataStorage.FileExists(ctx, checkpoint.CheckpointMetaPathForBackup)
+	if err != nil {
+		return "", errors.Annotatef(err, "check %s for pending backup %s", checkpoint.CheckpointMetaPathForBackup, backupID)
+	}
+	if hasCheckpoint {
+		return PendingBackupStateUnfinished, nil
+	}
+	return PendingBackupStateTransient, nil
 }
 
 func (ops SnapshotOps) ListSnapshotOrphans(ctx context.Context) ([]string, error) {
@@ -299,7 +334,7 @@ func (ops SnapshotOps) DeleteSnapshot(
 	}
 
 	var err error
-	result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, snapshotMetadataDir(backupID), opts)
+	result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, SnapshotMetadataDir(backupID), opts)
 	if err != nil {
 		return result, errors.Annotatef(err, "delete snapshot metadata for %s", backupID)
 	}
@@ -348,7 +383,7 @@ func (ops SnapshotOps) DiscardPendingSnapshot(
 		if err := ops.requireRepoStartAfter(); err != nil {
 			return nil, errors.Annotatef(err, "discard unfinished pending snapshot %s", target.BackupID)
 		}
-		result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, snapshotMetadataDir(target.BackupID), opts)
+		result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, SnapshotMetadataDir(target.BackupID), opts)
 		if err != nil {
 			return result, errors.Annotatef(err, "delete snapshot metadata for unfinished backup %s", target.BackupID)
 		}
@@ -363,7 +398,7 @@ func (ops SnapshotOps) DiscardPendingSnapshot(
 	default:
 		return nil, errors.Annotatef(
 			berrors.ErrInvalidArgument,
-			"found inconsistent repo-v1 pending backup %s: pending marker exists but neither %s nor %s was found",
+			"found transient repo-v1 pending backup %s: pending marker exists but neither %s nor %s was found",
 			target.BackupID,
 			metautil.MetaFile,
 			checkpoint.CheckpointMetaPathForBackup,
@@ -511,21 +546,13 @@ func (ops SnapshotOps) walkSnapshotDataFilesAfter(ctx context.Context, startAfte
 	return walkParsedSeq(
 		ctx,
 		ops.Storage,
-		&storeapi.WalkOption{SubDir: snapshotDataDir(), StartAfter: startAfter},
+		&storeapi.WalkOption{SubDir: snapshotDataRootDir, StartAfter: startAfter},
 		ParseSnapshotDataFilePath,
 	)
 }
 
-func snapshotMetadataDir(backupID BackupID) string {
-	return path.Join("_meta", "snapshot", backupID.StorageName())
-}
-
-func snapshotDataDir() string {
-	return path.Join("_data", "snapshot")
-}
-
 func snapshotStoreBackupAnchor(storeID uint64, backupID BackupID) string {
-	return path.Join(snapshotStoreDir(storeID), backupID.StorageName())
+	return SnapshotStoreDataPrefix(storeID, backupID)
 }
 
 func snapshotStoreBackupEndAnchor(storeID uint64, backupID BackupID) string {
@@ -539,5 +566,5 @@ func snapshotStoreEndAnchor(storeID uint64) string {
 }
 
 func snapshotStoreDir(storeID uint64) string {
-	return path.Join(snapshotDataDir(), strconv.FormatUint(storeID, 10))
+	return path.Join(snapshotDataRootDir, strconv.FormatUint(storeID, 10))
 }

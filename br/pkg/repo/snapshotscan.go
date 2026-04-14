@@ -45,7 +45,7 @@ var errStopWalkSeq = errors.New("stop walk seq")
 
 func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]BackupID, error) {
 	ids := make(map[BackupID]struct{})
-	err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: path.Join("_meta", "snapshot")}, func(filePath string, _ int64) error {
+	err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: snapshotMetadataRootDir}, func(filePath string, _ int64) error {
 		backupID, ok, err := ParseCompletedSnapshotMetaPath(filePath)
 		if err != nil {
 			return errors.Trace(err)
@@ -70,7 +70,7 @@ func WalkPendingMarkers(ctx context.Context, storage storeapi.Storage) TrySeq[Pe
 	return walkParsedSeq(
 		ctx,
 		storage,
-		&storeapi.WalkOption{SubDir: path.Join("_meta", "pending")},
+		&storeapi.WalkOption{SubDir: pendingRootDir},
 		ParsePendingMarkerPath,
 	)
 }
@@ -82,7 +82,7 @@ func WalkSnapshotDataFiles(
 	return walkParsedSeq(
 		ctx,
 		storage,
-		&storeapi.WalkOption{SubDir: path.Join("_data", "snapshot")},
+		&storeapi.WalkOption{SubDir: snapshotDataRootDir},
 		ParseSnapshotDataFilePath,
 	)
 }

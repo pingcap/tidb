@@ -18,8 +18,7 @@
 // Repo-v1 treats --storage as a shared snapshot repository. The stable paths
 // are "_meta/repo.json", "backup.lock" at the repository root,
 // "_meta/snapshot/<backup-id>/", "_meta/pending/<config-hash>/<backup-id>.json",
-// and "_data/snapshot/<store-id>/<backup-id>/". The snapshotpaths subpackage
-// builds those paths.
+// and "_data/snapshot/<store-id>/<backup-id>/".
 //
 // layout.go defines Layout and BackupID. BackupID is a stable uint64 that is
 // rendered as 16-character upper-case hexadecimal in storage paths.

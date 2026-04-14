@@ -347,41 +347,8 @@ func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 
 // ReadDataFiles reads the physical data files from the backupmeta.
 // This function is compatible with the old backupmeta.
-func (reader *MetaReader) ReadDataFiles(ctx context.Context, output chan<- *backuppb.File) error {
-	fileCh := make(chan *backuppb.File, MaxBatchSize)
-	errCh := make(chan error, 1)
-	go func() {
-		defer close(fileCh)
-		if err := reader.readDataFiles(ctx, func(file *backuppb.File) {
-			select {
-			case <-ctx.Done():
-			case fileCh <- file:
-			}
-		}); err != nil {
-			errCh <- errors.Trace(err)
-		}
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return errors.Trace(ctx.Err())
-		case file, ok := <-fileCh:
-			if !ok {
-				select {
-				case err := <-errCh:
-					return errors.Trace(err)
-				default:
-					return nil
-				}
-			}
-			select {
-			case <-ctx.Done():
-				return errors.Trace(ctx.Err())
-			case output <- file:
-			}
-		}
-	}
+func (reader *MetaReader) ReadDataFiles(ctx context.Context, output func(*backuppb.File)) error {
+	return reader.readDataFiles(ctx, output)
 }
 
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.

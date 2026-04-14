@@ -2000,8 +2000,7 @@ func getFullBackupTS(
 		ctx,
 		cfg.FullBackupStorage,
 		&cfg.Config,
-		cfg.Layout,
-		cfg.BackupID,
+		snapshotRef(cfg.Layout, cfg.BackupID),
 	)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -2268,7 +2267,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 
 	originalRestoreTS := cfg.RestoreTS
 	registrationInfo := registry.RegistrationInfo{
-		BackupID:          snapshotRegistrationBackupID(cfg.Layout, cfg.BackupID),
+		FilterHashInput:   snapshotRegistrationFilterHashInput(cfg.FilterStr, snapshotRef(cfg.Layout, cfg.BackupID)),
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
 		FilterStrings:     cfg.FilterStr,

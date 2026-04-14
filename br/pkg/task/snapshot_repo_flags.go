@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/spf13/pflag"
 )
@@ -63,7 +64,7 @@ func (o SnapshotRepoBackupOptions) HashLayoutTag() string {
 }
 
 func parseSnapshotRepoBackupOptionsFromFlags(flags *pflag.FlagSet) (SnapshotRepoBackupOptions, error) {
-	layout, err := parseSnapshotStorageLayoutFlag(flags)
+	layout, err := ParseSnapshotStorageLayoutFlag(flags)
 	if err != nil {
 		return SnapshotRepoBackupOptions{}, errors.Trace(err)
 	}
@@ -100,10 +101,6 @@ func ParseSnapshotStorageLayoutFlag(flags *pflag.FlagSet) (repo.Layout, error) {
 	return repo.ParseLayout(raw)
 }
 
-func parseSnapshotStorageLayoutFlag(flags *pflag.FlagSet) (repo.Layout, error) {
-	return ParseSnapshotStorageLayoutFlag(flags)
-}
-
 // ParseSnapshotBackupIDFlag parses the shared snapshot backup id flag.
 func ParseSnapshotBackupIDFlag(flags *pflag.FlagSet) (repo.BackupID, error) {
 	if flags.Lookup(flagBackupID) == nil {
@@ -120,10 +117,6 @@ func ParseSnapshotBackupIDFlag(flags *pflag.FlagSet) (repo.BackupID, error) {
 	return repo.ParseBackupID(raw)
 }
 
-func parseSnapshotBackupIDFlag(flags *pflag.FlagSet) (repo.BackupID, error) {
-	return ParseSnapshotBackupIDFlag(flags)
-}
-
 // ValidateSnapshotRestoreStorage validates the layout/backup-id combination for a snapshot reference.
 func ValidateSnapshotRestoreStorage(layout repo.Layout, backupID repo.BackupID) error {
 	if layout.IsRepoV1() && backupID.IsZero() {
@@ -133,6 +126,25 @@ func ValidateSnapshotRestoreStorage(layout repo.Layout, backupID repo.BackupID) 
 		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s requires --%s=repo-v1", flagBackupID, flagStorageLayout)
 	}
 	return nil
+}
+
+func snapshotRef(layout repo.Layout, backupID repo.BackupID) repo.SnapshotRef {
+	return repo.SnapshotRef{Layout: layout, BackupID: backupID}
+}
+
+func snapshotRegistrationFilterHashInput(filterStrings []string, ref repo.SnapshotRef) string {
+	joined := strings.Join(filterStrings, registry.FilterSeparator)
+	if !ref.Layout.IsRepoV1() || ref.BackupID.IsZero() {
+		return joined
+	}
+	var builder strings.Builder
+	builder.Grow(len(joined) + len(ref.BackupID.String()) + 32)
+	builder.WriteString("repo-v1")
+	builder.WriteByte(0)
+	builder.WriteString(joined)
+	builder.WriteByte(0)
+	builder.WriteString(ref.BackupID.String())
+	return builder.String()
 }
 
 func parseSnapshotOnPendingFlag(flags *pflag.FlagSet) (snapshotRepoOnPendingAction, error) {

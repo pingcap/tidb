@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"path"
 	"reflect"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/gogo/protobuf/proto"
@@ -351,15 +350,14 @@ func parseRepoSnapshotConfig(cmd *cobra.Command) (task.Config, error) {
 }
 
 func parseRepoSnapshotBackupID(cmd *cobra.Command, required bool) (repo.BackupID, error) {
-	raw, err := cmd.Flags().GetString("backup-id")
+	backupID, err := task.ParseSnapshotBackupIDFlag(cmd.Flags())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	raw = strings.TrimSpace(raw)
-	if raw == "" && !required {
-		return 0, nil
+	if required && backupID.IsZero() {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "--backup-id is required")
 	}
-	return repo.ParseBackupID(raw)
+	return backupID, nil
 }
 
 func printRepoSnapshotList(cmd *cobra.Command, backupIDs []repo.BackupID) error {
