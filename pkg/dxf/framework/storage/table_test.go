@@ -1012,6 +1012,97 @@ func TestTaskHistoryTable(t *testing.T) {
 	num, err = testutil.GetTasksFromHistory(ctx, gm)
 	require.NoError(t, err)
 	require.Equal(t, 3, num)
+
+	t.Run("list history tasks with pagination and keyspace", func(t *testing.T) {
+		for _, sql := range []string{
+			"delete from mysql.tidb_background_subtask",
+			"delete from mysql.tidb_background_subtask_history",
+			"delete from mysql.tidb_global_task",
+			"delete from mysql.tidb_global_task_history",
+		} {
+			_, err = gm.ExecuteSQLWithNewSession(ctx, sql)
+			require.NoError(t, err)
+		}
+
+		taskSpecs := []struct {
+			key      string
+			keyspace string
+		}{
+			{key: "history-task-1", keyspace: "ks1"},
+			{key: "history-task-2", keyspace: "ks2"},
+			{key: "history-task-3", keyspace: "ks1"},
+			{key: "history-task-4", keyspace: "ks3"},
+			{key: "history-task-5", keyspace: "ks1"},
+		}
+		allIDs := make([]int64, 0, len(taskSpecs))
+		tasksToTransfer := make([]*proto.Task, 0, len(taskSpecs))
+		for _, spec := range taskSpecs {
+			id, err2 := gm.CreateTask(ctx, spec.key, proto.ImportInto, spec.keyspace, 8, "", 0, proto.ExtraParams{}, []byte("meta"))
+			require.NoError(t, err2)
+			task, err2 := gm.GetTaskByID(ctx, id)
+			require.NoError(t, err2)
+			require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+			require.NoError(t, gm.SucceedTask(ctx, id))
+			task, err2 = gm.GetTaskByID(ctx, id)
+			require.NoError(t, err2)
+			allIDs = append(allIDs, id)
+			tasksToTransfer = append(tasksToTransfer, task)
+		}
+		require.NoError(t, gm.TransferTasks2History(ctx, tasksToTransfer))
+
+		slices.Reverse(allIDs)
+		firstPage, err2 := gm.ListHistoryTasks(ctx, 2, 0, "")
+		require.NoError(t, err2)
+		require.Len(t, firstPage.Items, 2)
+		require.EqualValues(t, 5, firstPage.ApproxTotalCount)
+		require.True(t, firstPage.HasMore)
+		require.Equal(t, allIDs[0], firstPage.Items[0].ID)
+		require.Equal(t, allIDs[1], firstPage.Items[1].ID)
+		require.Equal(t, allIDs[1], firstPage.NextPageToken)
+		require.Equal(t, "history-task-5", firstPage.Items[0].Key)
+		require.Equal(t, "ks1", firstPage.Items[0].Keyspace)
+		require.NotZero(t, firstPage.Items[0].CreateTime)
+		require.NotZero(t, firstPage.Items[0].StartTime)
+		require.NotZero(t, firstPage.Items[0].StateUpdateTime)
+		require.NotZero(t, firstPage.Items[0].EndTime)
+
+		secondPage, err2 := gm.ListHistoryTasks(ctx, 2, firstPage.Items[1].ID, "")
+		require.NoError(t, err2)
+		require.Len(t, secondPage.Items, 2)
+		require.EqualValues(t, 5, secondPage.ApproxTotalCount)
+		require.True(t, secondPage.HasMore)
+		require.Equal(t, allIDs[2], secondPage.Items[0].ID)
+		require.Equal(t, allIDs[3], secondPage.Items[1].ID)
+		require.Equal(t, allIDs[3], secondPage.NextPageToken)
+
+		lastPage, err2 := gm.ListHistoryTasks(ctx, 2, secondPage.Items[1].ID, "")
+		require.NoError(t, err2)
+		require.Len(t, lastPage.Items, 1)
+		require.EqualValues(t, 5, lastPage.ApproxTotalCount)
+		require.False(t, lastPage.HasMore)
+		require.Equal(t, allIDs[4], lastPage.Items[0].ID)
+		require.Zero(t, lastPage.NextPageToken)
+
+		filteredPage, err2 := gm.ListHistoryTasks(ctx, 1, 0, "ks1")
+		require.NoError(t, err2)
+		require.Len(t, filteredPage.Items, 1)
+		require.EqualValues(t, 3, filteredPage.ApproxTotalCount)
+		require.True(t, filteredPage.HasMore)
+		require.Equal(t, "ks1", filteredPage.Items[0].Keyspace)
+		require.Greater(t, filteredPage.NextPageToken, int64(0))
+
+		filteredPageWithToken, err2 := gm.ListHistoryTasks(ctx, 1, filteredPage.Items[0].ID, "ks1")
+		require.NoError(t, err2)
+		require.Len(t, filteredPageWithToken.Items, 1)
+		require.EqualValues(t, 3, filteredPageWithToken.ApproxTotalCount)
+		require.True(t, filteredPageWithToken.HasMore)
+		require.Equal(t, "ks1", filteredPageWithToken.Items[0].Keyspace)
+
+		_, err2 = gm.ListHistoryTasks(ctx, 0, 0, "")
+		require.ErrorContains(t, err2, "page size should be within")
+		_, err2 = gm.ListHistoryTasks(ctx, 201, 0, "")
+		require.ErrorContains(t, err2, "page size should be within")
+	})
 }
 
 func TestPauseAndResume(t *testing.T) {
