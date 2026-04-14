@@ -19,10 +19,14 @@
   },
   {
     "id": "P0-DDL-02",
-    "scenario": "One-policy-per-column uniqueness",
+    "scenario": "Policy name uniqueness scope (same table conflict, cross-table allowed)",
     "coverage_cases": [
       {
         "name": "Duplicate policy on same column returns 8268 (IT-MASK-P0-001)",
+        "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Same table same policy name fails; different tables same policy name succeeds (IT-MASK-P0-012)",
         "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
       }
     ],
@@ -365,7 +369,7 @@
     "coverage_cases": [
       {
         "name": "MASK_FULL integration coverage",
-        "file": "tests/integrationtest/t/expression/builtin.test"
+        "file": "tests/integrationtest/t/expression/masking_builtin_signature.test"
       }
     ],
     "rule": {
@@ -379,7 +383,7 @@
     "coverage_cases": [
       {
         "name": "MASK_PARTIAL integration coverage",
-        "file": "tests/integrationtest/t/expression/builtin.test"
+        "file": "tests/integrationtest/t/expression/masking_builtin_signature.test"
       }
     ],
     "rule": {
@@ -393,7 +397,7 @@
     "coverage_cases": [
       {
         "name": "MASK_NULL integration coverage",
-        "file": "tests/integrationtest/t/expression/builtin.test"
+        "file": "tests/integrationtest/t/expression/masking_builtin_signature.test"
       }
     ],
     "rule": {
@@ -407,7 +411,7 @@
     "coverage_cases": [
       {
         "name": "MASK_DATE integration coverage",
-        "file": "tests/integrationtest/t/expression/builtin.test"
+        "file": "tests/integrationtest/t/expression/masking_builtin_signature.test"
       }
     ],
     "rule": {

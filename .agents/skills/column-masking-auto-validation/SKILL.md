@@ -38,6 +38,12 @@ The output is:
 ./.agents/skills/column-masking-auto-validation/scripts/run_validation.sh --with-bazel-prepare --with-lint
 ```
 
+3. Optional expensive lint sweep (run only when explicitly needed):
+
+```bash
+./.agents/skills/column-masking-auto-validation/scripts/run_validation.sh --with-bazel-lint-changed
+```
+
 3. Read generated report:
 
 - `artifacts/column-masking/<timestamp>/column-masking-report.md`
@@ -53,6 +59,8 @@ The output is:
 ## Notes
 
 - The script uses repository-approved test commands (targeted unit tests + integration tests).
+- Integration checks run with `-t` (verification mode), not `-r` (record mode).
+- Integration checks build and use a non-race test binary to avoid known race/checkptr crashes.
 - The final human-facing outputs are:
   - the test plan (`references/column-masking-test-plan.md`)
   - the generated report in artifacts (created every run)

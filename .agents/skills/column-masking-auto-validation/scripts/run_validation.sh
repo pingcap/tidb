@@ -21,6 +21,7 @@ REPO_ROOT="$(cd "${SKILL_ROOT}/../../.." && pwd)"
 
 WITH_BAZEL_PREPARE=0
 WITH_LINT=0
+WITH_BAZEL_LINT_CHANGED=0
 SKIP_TESTS=0
 ARTIFACTS_DIR=""
 
@@ -30,7 +31,8 @@ Usage: run_validation.sh [options]
 
 Options:
   --with-bazel-prepare     Run make bazel_prepare before tests
-  --with-lint              Run make bazel_lint_changed after tests
+  --with-lint              Run make lint after tests
+  --with-bazel-lint-changed Run make bazel_lint_changed after tests (expensive)
   --skip-tests             Do not run tests; only generate report from artifacts
   --artifacts-dir <dir>    Use a specific artifacts directory
   -h, --help               Show help
@@ -45,6 +47,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --with-lint)
       WITH_LINT=1
+      shift
+      ;;
+    --with-bazel-lint-changed)
+      WITH_BAZEL_LINT_CHANGED=1
       shift
       ;;
     --skip-tests)
@@ -109,11 +115,18 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
   run_step "ut_executor_show" "go test -run 'TestShowMaskingPolicies' -tags=intest,deadlock ./pkg/executor"
   run_step "ut_failpoint_disable" "make failpoint-disable"
 
-  run_step "it_column_masking" "pushd tests/integrationtest >/dev/null && ./run-tests.sh -r privilege/column_masking_policy && popd >/dev/null"
-  run_step "it_column_masking_cte" "pushd tests/integrationtest >/dev/null && ./run-tests.sh -r privilege/column_masking_cte && popd >/dev/null"
-  run_step "it_expression_builtin" "pushd tests/integrationtest >/dev/null && ./run-tests.sh -r expression/builtin && popd >/dev/null"
+  # Build a non-race server for integration tests to avoid runtime checkptr
+  # crashes seen with the default race-enabled integration binary.
+  run_step "it_build_tidb_server" "make server TARGET=tests/integrationtest/integrationtest_tidb-server-norace"
+  run_step "it_column_masking" "pushd tests/integrationtest >/dev/null && ./run-tests.sh -b n -s ./integrationtest_tidb-server-norace -t privilege/column_masking_policy && popd >/dev/null"
+  run_step "it_column_masking_cte" "pushd tests/integrationtest >/dev/null && ./run-tests.sh -b n -s ./integrationtest_tidb-server-norace -t privilege/column_masking_cte && popd >/dev/null"
+  run_step "it_expression_builtin" "pushd tests/integrationtest >/dev/null && ./run-tests.sh -b n -s ./integrationtest_tidb-server-norace -t expression/masking_builtin_signature && popd >/dev/null"
 
   if [[ "${WITH_LINT}" -eq 1 ]]; then
+    run_step "lint" "make lint"
+  fi
+
+  if [[ "${WITH_BAZEL_LINT_CHANGED}" -eq 1 ]]; then
     run_step "bazel_lint_changed" "make bazel_lint_changed"
   fi
 else

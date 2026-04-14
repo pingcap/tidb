@@ -66,7 +66,7 @@ Execution policy:
   - `pkg/planner/core/masking_policy_expr_cache_test.go`
   - `pkg/executor/show_test.go`
 - Integration (masking builtins):
-  - `tests/integrationtest/t/expression/builtin.test`
+  - `tests/integrationtest/t/expression/masking_builtin_signature.test`
 
 ### 3.4 P1 Scenario Groups
 
@@ -141,6 +141,12 @@ Optional strict mode:
 
 ```bash
 ./.agents/skills/column-masking-auto-validation/scripts/run_validation.sh --with-bazel-prepare --with-lint
+```
+
+Optional expensive Bazel lint sweep (explicit use only):
+
+```bash
+./.agents/skills/column-masking-auto-validation/scripts/run_validation.sh --with-bazel-lint-changed
 ```
 
 Output model:
