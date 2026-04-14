@@ -132,14 +132,10 @@ func RunOrchestrator() {
 		os.Exit(1)
 	}
 
-	// Build test list by listing ourselves with -mega.list
-	tests, err := listTestsInternal(self)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "list tests error:", err)
-		os.Exit(1)
-	}
+	// Build test list from registry directly (no subprocess needed)
+	tests := buildTestList()
 
-	// Filter tests by CLI args (everything after -ut)
+	// Filter tests by CLI args
 	args := parseFilterArgs()
 	if len(args) > 0 {
 		tests = filterTests(tests, args)
@@ -159,16 +155,20 @@ func RunOrchestrator() {
 	os.Exit(0)
 }
 
-// listTestsInternal runs the binary with -test.run TestMega -mega.list to get test list.
-func listTestsInternal(binary string) ([]task, error) {
-	//nolint:gosec
-	cmd := exec.Command(binary, "-test.run", "^TestMega$", "-mega.list")
-	cmd.Dir = workDir()
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("list tests: %w\noutput: %s", err, string(output))
+// buildTestList builds the task list from the global registry directly.
+func buildTestList() []task {
+	allTests := register.GlobalRegistry().ListAll()
+	tasks := make([]task, 0, len(allTests))
+	for _, testFullName := range allTests {
+		lastSlashIndex := strings.LastIndex(testFullName, "/")
+		if lastSlashIndex > 0 {
+			tasks = append(tasks, task{
+				pkg:  testFullName[:lastSlashIndex],
+				name: testFullName[lastSlashIndex+1:],
+			})
+		}
 	}
-	return parseTestList(string(output))
+	return tasks
 }
 
 // workDir returns the repository root directory.
@@ -227,33 +227,6 @@ func (t task) String() string {
 	return t.pkg + "/" + t.name
 }
 
-// parseTestList parses the output of -mega.list.
-func parseTestList(output string) ([]task, error) {
-	var tasks []task
-	for _, line := range strings.Split(output, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "===") || strings.HasPrefix(trimmed, "Total") {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "Package ") {
-			continue
-		}
-		// Parse lines like "  - parser/ast/AddQueryWatchStmtRestore"
-		if len(line) >= 4 && line[:2] == "  " && line[2] == '-' {
-			testPath := strings.TrimPrefix(line, "  - ")
-			lastSlash := strings.LastIndex(testPath, "/")
-			if lastSlash > 0 {
-				tasks = append(tasks, task{
-					pkg:  testPath[:lastSlash],
-					name: testPath[lastSlash+1:],
-				})
-			}
-		}
-	}
-	return tasks, nil
-}
-
-// filterTests filters tests based on command line arguments.
 func filterTests(tests []task, args []string) []task {
 	var result []task
 	seen := make(map[string]bool)
