@@ -2824,7 +2824,7 @@
             {
               "editorMode": "code",
               "expr": "increase(go_gc_cycles_total_gc_cycles_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}[1m])",
-              "legendFormat": "gc-rate - {{instance}}",
+              "legendFormat": "gc-increase - {{instance}}",
               "range": true,
               "refId": "A"
             },
