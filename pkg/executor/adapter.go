@@ -185,8 +185,10 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if len(a.traceID) > 0 {
 		ctx = tikvtrace.ContextWithTraceID(ctx, a.traceID)
 	}
+	ctx = inheritStmtRUDetailsContext(ctx, a.stmt)
 
 	err = a.stmt.next(ctx, a.executor, req)
+	syncRUV2MetricsAfterExec(a.stmt)
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 		return err
@@ -202,6 +204,30 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(numRows))
 	}
 	return nil
+}
+
+func inheritStmtRUDetailsContext(ctx context.Context, stmt *ExecStmt) context.Context {
+	if stmt == nil || stmt.GoCtx == nil {
+		return ctx
+	}
+	if ctx.Value(util.RUDetailsCtxKey) == nil {
+		if detail := stmt.GoCtx.Value(util.RUDetailsCtxKey); detail != nil {
+			ctx = context.WithValue(ctx, util.RUDetailsCtxKey, detail)
+		}
+	}
+	return ctx
+}
+
+func syncRUV2MetricsAfterExec(stmt *ExecStmt) {
+	if stmt == nil || stmt.GoCtx == nil {
+		return
+	}
+	sessVars := stmt.Ctx.GetSessionVars()
+	if sessVars.RUV2Metrics == nil {
+		return
+	}
+	ruDetail, _ := stmt.GoCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
 }
 
 // NewChunk create a chunk base on top-level executor's exec.NewFirstChunk().
@@ -1110,6 +1136,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	}
 
 	err = a.next(ctx, e, exec.TryNewCacheChunk(e))
+	syncRUV2MetricsAfterExec(a)
 	if err != nil {
 		return nil, err
 	}
@@ -1717,6 +1744,7 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	if ruDetail == nil {
 		return
 	}
+	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
 
 	weights := sessVars.RUV2Weights()
 	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)

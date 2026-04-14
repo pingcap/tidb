@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -124,6 +125,7 @@ func TestString(t *testing.T) {
 				CommitBackoffTypes   []string
 				SlowestPrewrite      util.ReqDetailInfo
 				CommitPrimary        util.ReqDetailInfo
+				WriteRUV2            *kvrpcpb.RUV2
 			}{
 				CommitBackoffTime: int64(time.Second),
 				PrewriteBackoffTypes: []string{
@@ -411,6 +413,119 @@ func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {
 	require.NotEqual(t, baseline, metrics.CalculateRUValues(updated))
 }
 
+func TestUpdateRUV2MetricsFromRUV2(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	UpdateRUV2MetricsFromRUV2(metrics, &kvrpcpb.RUV2{
+		ReadRpcCount:                      2,
+		WriteRpcCount:                     3,
+		KvEngineCacheMiss:                 5,
+		CoprocessorExecutorIterations:     7,
+		CoprocessorResponseBytes:          11,
+		RaftstoreStoreWriteTriggerWbBytes: 13,
+		StorageProcessedKeysBatchGet:      17,
+		StorageProcessedKeysGet:           19,
+		ExecutorInputs: &kvrpcpb.ExecutorInputs{
+			TikvCoprocessorExecutorWorkTotalBatchIndexScan:    23,
+			TikvCoprocessorExecutorWorkTotalBatchTableScan:    29,
+			TikvCoprocessorExecutorWorkTotalBatchSelection:    31,
+			TikvCoprocessorExecutorWorkTotalBatchTopN:         37,
+			TikvCoprocessorExecutorWorkTotalBatchLimit:        41,
+			TikvCoprocessorExecutorWorkTotalBatchSimpleAggr:   43,
+			TikvCoprocessorExecutorWorkTotalBatchFastHashAggr: 47,
+		},
+	})
+	require.Equal(t, int64(2), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
+	require.Equal(t, int64(5), metrics.TiKVKVEngineCacheMiss())
+	require.Equal(t, int64(7), metrics.TiKVCoprocessorExecutorIterations())
+	require.Equal(t, int64(11), metrics.TiKVCoprocessorResponseBytes())
+	require.Equal(t, int64(13), metrics.TiKVRaftstoreStoreWriteTriggerWB())
+	require.Equal(t, int64(17), metrics.TiKVStorageProcessedKeysBatchGet())
+	require.Equal(t, int64(19), metrics.TiKVStorageProcessedKeysGet())
+
+	detail := FormatRUV2Metrics(metrics, defaultRUV2WeightsForTest(), 0, 0)
+	require.Contains(t, detail, "resource_manager_read_cnt:2")
+	require.Contains(t, detail, "resource_manager_write_cnt:3")
+	require.Contains(t, detail, "tikv_storage_processed_keys_batch_get:17")
+	require.Contains(t, detail, "tikv_storage_processed_keys_get:19")
+	require.Contains(t, detail, "BatchFastHashAggr:47")
+}
+
+func TestSyncRUV2MetricsFromRUDetailsIncremental(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	ruDetails := util.NewRUDetails()
+	ruDetails.AddRUV2(&kvrpcpb.RUV2{
+		ReadRpcCount:                      2,
+		WriteRpcCount:                     3,
+		KvEngineCacheMiss:                 5,
+		RaftstoreStoreWriteTriggerWbBytes: 17,
+		StorageProcessedKeysBatchGet:      7,
+		StorageProcessedKeysGet:           19,
+		ExecutorInputs: &kvrpcpb.ExecutorInputs{
+			TikvCoprocessorExecutorWorkTotalBatchIndexScan:    11,
+			TikvCoprocessorExecutorWorkTotalBatchFastHashAggr: 23,
+		},
+	})
+
+	// First drain picks up all counters.
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Equal(t, int64(2), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
+	require.Equal(t, int64(5), metrics.TiKVKVEngineCacheMiss())
+	require.Equal(t, int64(17), metrics.TiKVRaftstoreStoreWriteTriggerWB())
+	require.Equal(t, int64(7), metrics.TiKVStorageProcessedKeysBatchGet())
+	require.Equal(t, int64(19), metrics.TiKVStorageProcessedKeysGet())
+
+	// Second drain without new data is a no-op.
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Equal(t, int64(2), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
+
+	// New counters accumulate after the first drain.
+	ruDetails.AddRUV2(&kvrpcpb.RUV2{
+		ReadRpcCount:                 10,
+		StorageProcessedKeysBatchGet: 100,
+	})
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Equal(t, int64(12), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(107), metrics.TiKVStorageProcessedKeysBatchGet())
+
+	detail := FormatRUV2Metrics(metrics, defaultRUV2WeightsForTest(), 0, 0)
+	require.Contains(t, detail, "resource_manager_read_cnt:12")
+	require.Contains(t, detail, "resource_manager_write_cnt:3")
+	require.Contains(t, detail, "tikv_storage_processed_keys_batch_get:107")
+	require.Contains(t, detail, "tikv_storage_processed_keys_get:19")
+	require.Contains(t, detail, "BatchIndexScan:11")
+	require.Contains(t, detail, "BatchFastHashAggr:23")
+}
+
+func TestSyncRUV2MetricsFromRUDetailsBypass(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	metrics.SetBypass(true)
+	ruDetails := util.NewRUDetails()
+	ruDetails.AddRUV2(&kvrpcpb.RUV2{
+		StorageProcessedKeysBatchGet: 7,
+	})
+
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Zero(t, metrics.ResourceManagerReadCnt())
+	require.Zero(t, metrics.ResourceManagerWriteCnt())
+	require.Zero(t, metrics.TiKVStorageProcessedKeysBatchGet())
+}
+
+func TestUpdateRUV2MetricsFromRUV2Bypass(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	metrics.SetBypass(true)
+	UpdateRUV2MetricsFromRUV2(metrics, &kvrpcpb.RUV2{
+		ReadRpcCount:                 1,
+		WriteRpcCount:                1,
+		StorageProcessedKeysBatchGet: 1,
+	})
+	require.Zero(t, metrics.ResourceManagerReadCnt())
+	require.Zero(t, metrics.ResourceManagerWriteCnt())
+	require.Zero(t, metrics.TiKVStorageProcessedKeysBatchGet())
+}
+
 func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 	weights := defaultRUV2WeightsForTest()
 	metrics := NewRUV2Metrics()
@@ -515,6 +630,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 			CommitBackoffTypes   []string
 			SlowestPrewrite      util.ReqDetailInfo
 			CommitPrimary        util.ReqDetailInfo
+			WriteRUV2            *kvrpcpb.RUV2
 		}{
 			CommitBackoffTime:    int64(time.Second),
 			PrewriteBackoffTypes: []string{"backoff1", "backoff2", "backoff1"},

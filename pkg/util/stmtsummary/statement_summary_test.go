@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -226,6 +227,7 @@ func TestAddStatement(t *testing.T) {
 					CommitBackoffTypes   []string
 					SlowestPrewrite      util.ReqDetailInfo
 					CommitPrimary        util.ReqDetailInfo
+					WriteRUV2            *kvrpcpb.RUV2
 				}{
 					CommitBackoffTime:    1000,
 					PrewriteBackoffTypes: []string{boTxnLockName},
@@ -391,6 +393,7 @@ func TestAddStatement(t *testing.T) {
 					CommitBackoffTypes   []string
 					SlowestPrewrite      util.ReqDetailInfo
 					CommitPrimary        util.ReqDetailInfo
+					WriteRUV2            *kvrpcpb.RUV2
 				}{
 					CommitBackoffTime:    100,
 					PrewriteBackoffTypes: []string{boTxnLockName},
@@ -720,6 +723,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 					CommitBackoffTypes   []string
 					SlowestPrewrite      util.ReqDetailInfo
 					CommitPrimary        util.ReqDetailInfo
+					WriteRUV2            *kvrpcpb.RUV2
 				}{
 					CommitBackoffTime:    200,
 					PrewriteBackoffTypes: []string{boTxnLockName},

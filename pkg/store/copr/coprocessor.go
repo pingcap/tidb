@@ -2495,9 +2495,6 @@ func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetai
 }
 
 func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) error {
-	if resp != nil && resp.pbResp != nil {
-		updateRUV2MetricsFromExecDetailsV2(bo.GetCtx(), resp.pbResp.ExecDetailsV2)
-	}
 	if worker.stats == nil {
 		return nil
 	}

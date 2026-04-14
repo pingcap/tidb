@@ -34,6 +34,24 @@ func ContextWithInitializedExecDetails(ctx context.Context) context.Context {
 	return ctx
 }
 
+// ContextWithMissingExecDetailsInitialized initializes any missing statement execution, execution,
+// and resource usage details in the context while preserving existing objects.
+func ContextWithMissingExecDetailsInitialized(ctx context.Context) context.Context {
+	if ctx.Value(StmtExecDetailKey) == nil {
+		ctx = context.WithValue(ctx, StmtExecDetailKey, &StmtExecDetails{})
+	}
+	if ctx.Value(util.ExecDetailsKey) == nil {
+		ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
+	}
+	if ctx.Value(util.RUDetailsCtxKey) == nil {
+		ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	}
+	if ctx.Value(RUV2MetricsCtxKey) == nil {
+		ctx = context.WithValue(ctx, RUV2MetricsCtxKey, NewRUV2Metrics())
+	}
+	return ctx
+}
+
 // GetExecDetailsFromContext gets stmt execution, execution and resource usage details from context.
 func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails, tikvExecDetail util.ExecDetails, ruDetails *util.RUDetails) {
 	stmtDetailRaw := ctx.Value(StmtExecDetailKey)

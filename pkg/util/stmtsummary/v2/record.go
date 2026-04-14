@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -668,6 +669,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 					CommitBackoffTypes   []string
 					SlowestPrewrite      util.ReqDetailInfo
 					CommitPrimary        util.ReqDetailInfo
+					WriteRUV2            *kvrpcpb.RUV2
 				}{
 					CommitBackoffTime:    200,
 					PrewriteBackoffTypes: []string{"txnlock"},

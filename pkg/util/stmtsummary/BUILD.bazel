@@ -55,6 +55,7 @@ go_test(
         "//pkg/util/hack",
         "//pkg/util/plancodec",
         "//pkg/util/ppcpuusage",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_log//:log",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_model//go",

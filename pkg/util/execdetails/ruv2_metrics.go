@@ -23,7 +23,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/metrics"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 type ruv2MetricsKeyType struct{}
@@ -58,9 +60,84 @@ func RUV2MetricsFromContext(ctx context.Context) *RUV2Metrics {
 	return metrics
 }
 
+// UpdateRUV2MetricsFromRUV2 adds raw RUv2 counters into the statement-level metrics snapshot.
+func UpdateRUV2MetricsFromRUV2(metrics *RUV2Metrics, ru *kvrpcpb.RUV2) {
+	if metrics == nil || ru == nil {
+		return
+	}
+	if ru.ReadRpcCount != 0 {
+		metrics.AddResourceManagerReadCnt(int64(ru.ReadRpcCount))
+	}
+	if ru.WriteRpcCount != 0 {
+		metrics.AddResourceManagerWriteCnt(int64(ru.WriteRpcCount))
+	}
+	if ru.KvEngineCacheMiss != 0 {
+		metrics.AddTiKVKVEngineCacheMiss(int64(ru.KvEngineCacheMiss))
+	}
+	if ru.CoprocessorExecutorIterations != 0 {
+		metrics.AddTiKVCoprocessorExecutorIterations(int64(ru.CoprocessorExecutorIterations))
+	}
+	if ru.CoprocessorResponseBytes != 0 {
+		metrics.AddTiKVCoprocessorResponseBytes(int64(ru.CoprocessorResponseBytes))
+	}
+	if ru.RaftstoreStoreWriteTriggerWbBytes != 0 {
+		metrics.AddTiKVRaftstoreStoreWriteTriggerWB(int64(ru.RaftstoreStoreWriteTriggerWbBytes))
+	}
+	if ru.StorageProcessedKeysBatchGet != 0 {
+		metrics.AddTiKVStorageProcessedKeysBatchGet(int64(ru.StorageProcessedKeysBatchGet))
+	}
+	if ru.StorageProcessedKeysGet != 0 {
+		metrics.AddTiKVStorageProcessedKeysGet(int64(ru.StorageProcessedKeysGet))
+	}
+	if inputs := ru.ExecutorInputs; inputs != nil {
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchIndexScan", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchTableScan != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchTableScan", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchTableScan))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchSelection != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchSelection", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchSelection))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchTopN != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchTopN))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchLimit != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchLimit", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchLimit))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchSimpleAggr", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchFastHashAggr", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr))
+		}
+	}
+}
+
+// SyncRUV2MetricsFromRUDetails snapshots the raw RUv2 counters accumulated in
+// RUDetails and adds only the delta since the last sync into the statement-level metrics.
+// It is safe to call multiple times; each call transfers only newly accumulated counters.
+func SyncRUV2MetricsFromRUDetails(metrics *RUV2Metrics, ruDetails *tikvutil.RUDetails) {
+	if metrics == nil || ruDetails == nil || metrics.Bypass() {
+		return
+	}
+	current := ruDetails.RUV2()
+	if current == nil {
+		return
+	}
+	metrics.rawRUV2Mu.Lock()
+	delta := subtractRUV2(current, metrics.lastSyncedRawRUV2)
+	metrics.lastSyncedRawRUV2 = cloneRUV2(current)
+	metrics.rawRUV2Mu.Unlock()
+	UpdateRUV2MetricsFromRUV2(metrics, delta)
+}
+
 // RUV2Metrics stores statement-level RUv2 metrics.
 type RUV2Metrics struct {
 	bypass atomic.Bool
+
+	rawRUV2Mu         sync.Mutex
+	lastSyncedRawRUV2 *kvrpcpb.RUV2
 
 	resultChunkCells int64
 
@@ -266,6 +343,9 @@ func (m *RUV2Metrics) Clone() *RUV2Metrics {
 	}
 	cloned := &RUV2Metrics{}
 	cloned.bypass.Store(m.Bypass())
+	m.rawRUV2Mu.Lock()
+	cloned.lastSyncedRawRUV2 = cloneRUV2(m.lastSyncedRawRUV2)
+	m.rawRUV2Mu.Unlock()
 	atomic.StoreInt64(&cloned.resultChunkCells, atomic.LoadInt64(&m.resultChunkCells))
 	cloneRUV2LabelCounter(&cloned.executorL1, &m.executorL1)
 	cloneRUV2LabelCounter(&cloned.executorL2, &m.executorL2)
@@ -378,6 +458,93 @@ func mergeIntoRUV2LabelCounter(dst, src *ruv2LabelCounter) {
 		return
 	}
 	cloneRUV2LabelCounter(dst, src)
+}
+
+func cloneRUV2(src *kvrpcpb.RUV2) *kvrpcpb.RUV2 {
+	if src == nil {
+		return nil
+	}
+	cloned := *src
+	if src.ExecutorInputs != nil {
+		inputs := *src.ExecutorInputs
+		cloned.ExecutorInputs = &inputs
+	}
+	return &cloned
+}
+
+func subtractRUV2(current, previous *kvrpcpb.RUV2) *kvrpcpb.RUV2 {
+	if current == nil {
+		return nil
+	}
+	if previous == nil {
+		return cloneRUV2(current)
+	}
+	delta := &kvrpcpb.RUV2{
+		ReadRpcCount:                      saturatingSubtract(current.ReadRpcCount, previous.ReadRpcCount),
+		WriteRpcCount:                     saturatingSubtract(current.WriteRpcCount, previous.WriteRpcCount),
+		KvEngineCacheMiss:                 saturatingSubtract(current.KvEngineCacheMiss, previous.KvEngineCacheMiss),
+		CoprocessorExecutorIterations:     saturatingSubtract(current.CoprocessorExecutorIterations, previous.CoprocessorExecutorIterations),
+		CoprocessorResponseBytes:          saturatingSubtract(current.CoprocessorResponseBytes, previous.CoprocessorResponseBytes),
+		RaftstoreStoreWriteTriggerWbBytes: saturatingSubtract(current.RaftstoreStoreWriteTriggerWbBytes, previous.RaftstoreStoreWriteTriggerWbBytes),
+		StorageProcessedKeysBatchGet:      saturatingSubtract(current.StorageProcessedKeysBatchGet, previous.StorageProcessedKeysBatchGet),
+		StorageProcessedKeysGet:           saturatingSubtract(current.StorageProcessedKeysGet, previous.StorageProcessedKeysGet),
+	}
+	if current.ExecutorInputs != nil || previous.ExecutorInputs != nil {
+		delta.ExecutorInputs = &kvrpcpb.ExecutorInputs{
+			TikvCoprocessorExecutorWorkTotalBatchIndexScan: saturatingSubtract(executorInputValue(current.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan
+			}), executorInputValue(previous.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan
+			})),
+			TikvCoprocessorExecutorWorkTotalBatchTableScan: saturatingSubtract(executorInputValue(current.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchTableScan
+			}), executorInputValue(previous.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchTableScan
+			})),
+			TikvCoprocessorExecutorWorkTotalBatchSelection: saturatingSubtract(executorInputValue(current.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchSelection
+			}), executorInputValue(previous.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchSelection
+			})),
+			TikvCoprocessorExecutorWorkTotalBatchTopN:  saturatingSubtract(executorInputValue(current.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 { return inputs.TikvCoprocessorExecutorWorkTotalBatchTopN }), executorInputValue(previous.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 { return inputs.TikvCoprocessorExecutorWorkTotalBatchTopN })),
+			TikvCoprocessorExecutorWorkTotalBatchLimit: saturatingSubtract(executorInputValue(current.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 { return inputs.TikvCoprocessorExecutorWorkTotalBatchLimit }), executorInputValue(previous.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 { return inputs.TikvCoprocessorExecutorWorkTotalBatchLimit })),
+			TikvCoprocessorExecutorWorkTotalBatchSimpleAggr: saturatingSubtract(executorInputValue(current.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr
+			}), executorInputValue(previous.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr
+			})),
+			TikvCoprocessorExecutorWorkTotalBatchFastHashAggr: saturatingSubtract(executorInputValue(current.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr
+			}), executorInputValue(previous.ExecutorInputs, func(inputs *kvrpcpb.ExecutorInputs) uint64 {
+				return inputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr
+			})),
+		}
+	}
+	if delta.ExecutorInputs != nil &&
+		delta.ExecutorInputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan == 0 &&
+		delta.ExecutorInputs.TikvCoprocessorExecutorWorkTotalBatchTableScan == 0 &&
+		delta.ExecutorInputs.TikvCoprocessorExecutorWorkTotalBatchSelection == 0 &&
+		delta.ExecutorInputs.TikvCoprocessorExecutorWorkTotalBatchTopN == 0 &&
+		delta.ExecutorInputs.TikvCoprocessorExecutorWorkTotalBatchLimit == 0 &&
+		delta.ExecutorInputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr == 0 &&
+		delta.ExecutorInputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr == 0 {
+		delta.ExecutorInputs = nil
+	}
+	return delta
+}
+
+func executorInputValue(inputs *kvrpcpb.ExecutorInputs, getter func(*kvrpcpb.ExecutorInputs) uint64) uint64 {
+	if inputs == nil {
+		return 0
+	}
+	return getter(inputs)
+}
+
+func saturatingSubtract(current, previous uint64) uint64 {
+	if current <= previous {
+		return 0
+	}
+	return current - previous
 }
 
 // ResultChunkCells returns result cells written by the current statement.
