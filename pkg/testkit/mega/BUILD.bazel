@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "mega",
     srcs = [
-        "mega_imports.go",
         "mega_main.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/testkit/mega",
@@ -47,7 +46,6 @@ go_test(
         "mega_imports_test.go",
     ],
     embed = [":mega"],
-    flaky = True,
     deps = [
         "//pkg/bindinfo/test",
         "//pkg/bindinfo/tests/test",
