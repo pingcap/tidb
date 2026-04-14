@@ -40,7 +40,7 @@ func TestTrimPushDownToTiKV(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	resetTrimPushdownBlacklist := func() {
-		tk.MustExec("delete from mysql.expr_pushdown_blacklist where name='trim' and store_type='tikv' and reason='for trim realtikv test'")
+		tk.MustExec("delete from mysql.expr_pushdown_blacklist where name='trim'")
 		tk.MustExec("admin reload expr_pushdown_blacklist")
 	}
 	checkTrimExplainPushed := func(sql string) {
@@ -78,6 +78,7 @@ func TestTrimPushDownToTiKV(t *testing.T) {
 		resetTrimPushdownBlacklist()
 		tk.MustExec("drop table if exists t_trim_pushdown")
 	})
+	resetTrimPushdownBlacklist()
 
 	tk.MustExec(`create table t_trim_pushdown(
 		id int primary key,
