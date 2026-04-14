@@ -197,14 +197,16 @@ func RunBootstrapWithError(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		require.NoError(t, sessionpkg.ExportedBootstrapSchemas(store))
 	}
+	// Init DDL tables BEFORE creating the session/domain, so the domain's
+	// infoschema includes the DDL tables when the DDL submitter starts.
+	err = sessionpkg.ExportedInitDDLTables(store)
+	require.NoError(t, err)
 	// bootstrap
 	{
 		se, err := sessionpkg.ExportedCreateSession4Test(store)
 		require.NoError(t, err)
 		sessionSe := sessionpkg.ExportedGetSession(se)
 		require.NotNil(t, sessionSe)
-		err = sessionpkg.ExportedInitDDLTables(store)
-		require.NoError(t, err)
 		dom, err := sessionpkg.ExportedDomap().Get(store)
 		require.NoError(t, err)
 		require.NoError(t, dom.Start(ddl.Bootstrap))

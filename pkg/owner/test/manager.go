@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -69,7 +70,7 @@ func RunForceToBeOwner(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTestExternal(t)
+	testsetup.EnsureEtcdTestContext(t)
 
 	tInfo := newTestInfo(t)
 	client := tInfo.client
@@ -108,7 +109,7 @@ func RunSingle(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTestExternal(t)
+	testsetup.EnsureEtcdTestContext(t)
 
 	tInfo := newTestInfo(t)
 	client := tInfo.client
@@ -190,7 +191,7 @@ func RunSetAndGetOwnerOpValue(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTestExternal(t)
+	testsetup.EnsureEtcdTestContext(t)
 
 	tInfo := newTestInfo(t)
 	defer tInfo.Close(t)
@@ -282,7 +283,7 @@ func RunCluster(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTestExternal(t)
+	testsetup.EnsureEtcdTestContext(t)
 
 	originalTTL := owner.ManagerSessionTTL
 	owner.ManagerSessionTTL = 3
@@ -334,7 +335,7 @@ func RunWatchOwner(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTestExternal(t)
+	testsetup.EnsureEtcdTestContext(t)
 
 	tInfo := newTestInfo(t)
 	client := tInfo.client
@@ -398,7 +399,7 @@ func RunWatchOwnerAfterDeleteOwnerKey(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTestExternal(t)
+	testsetup.EnsureEtcdTestContext(t)
 
 	tInfo := newTestInfo(t)
 	client := tInfo.client
@@ -470,7 +471,7 @@ func RunImmediatelyCancel(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	integration.BeforeTestExternal(t)
+	testsetup.EnsureEtcdTestContext(t)
 
 	tInfo := newTestInfo(t)
 	defer tInfo.Close(t)

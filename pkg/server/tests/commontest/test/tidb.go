@@ -1602,7 +1602,8 @@ func waitCollected(ch chan struct{}) {
 }
 
 func RunTopSQLStatementStats(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	cleanup, ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	defer cleanup()
 
 	const ExecCountPerSQL = 2
 	// Test for CRUD.
@@ -1884,7 +1885,7 @@ func (c *resourceTagChecker) checkReqExist(t *testing.T, digest stmtstats.Binary
 	}
 }
 
-func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}) {
+func setupForTestTopSQLStatementStats(t *testing.T) (func(), *servertestkit.TidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}) {
 	// Prepare stmt stats.
 	stmtstats.SetupAggregator()
 
@@ -1952,7 +1953,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuit
 	}
 	unistore.UnistoreRPCClientSendHook.Store(&unistoreRPCClientSendHook)
 
-	t.Cleanup(func() {
+	cleanup := func() {
 		stmtstats.UnregisterCollector(mockCollector)
 		err = failpoint.Disable("github.com/pingcap/tidb/pkg/domain/skipLoadSysVarCacheLoop")
 		require.NoError(t, err)
@@ -1960,13 +1961,14 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuit
 		require.NoError(t, err)
 		stmtstats.CloseAggregator()
 		view.Stop()
-	})
+	}
 
-	return ts, total, tagChecker, collectedNotifyCh
+	return cleanup, ts, total, tagChecker, collectedNotifyCh
 }
 
 func RunTopSQLStatementStats2(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	cleanup, ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	defer cleanup()
 
 	const ExecCountPerSQL = 3
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
@@ -2084,7 +2086,8 @@ func RunTopSQLStatementStats2(t *testing.T) {
 }
 
 func RunTopSQLStatementStats3(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	cleanup, ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	defer cleanup()
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockSleepInTableReaderNext", "return(2000)")
 	require.NoError(t, err)
@@ -2151,7 +2154,8 @@ func RunTopSQLStatementStats3(t *testing.T) {
 }
 
 func RunTopSQLStatementStats4(t *testing.T) {
-	ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	cleanup, ts, total, tagChecker, collectedNotifyCh := setupForTestTopSQLStatementStats(t)
+	defer cleanup()
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockSleepInTableReaderNext", "return(2000)")
 	require.NoError(t, err)
@@ -2232,7 +2236,8 @@ func RunTopSQLResourceTag(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
 	})
-	ts, _, tagChecker, _ := setupForTestTopSQLStatementStats(t)
+	cleanup, ts, _, tagChecker, _ := setupForTestTopSQLStatementStats(t)
+	defer cleanup()
 	defer func() {
 		topsqlstate.DisableTopSQL()
 	}()

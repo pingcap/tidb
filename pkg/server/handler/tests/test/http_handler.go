@@ -75,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -1387,7 +1388,7 @@ func RunSetLabelsWithEtcd(t *testing.T) {
 	defer ts.stopServer(t)
 
 	time.Sleep(time.Second)
-	integration.BeforeTestExternal(t)
+	testsetup.EnsureEtcdTestContext(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
@@ -1706,7 +1707,7 @@ func RunSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 	defer ts.stopServer(t)
 
 	time.Sleep(time.Second)
-	integration.BeforeTestExternal(t)
+	testsetup.EnsureEtcdTestContext(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
