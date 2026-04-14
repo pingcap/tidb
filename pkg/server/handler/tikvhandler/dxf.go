@@ -102,6 +102,66 @@ func (*DXFActiveTaskHandler) ServeHTTP(w http.ResponseWriter, req *http.Request)
 	handler.WriteData(w, summary)
 }
 
+// DXFTaskHistoryHandler handles listing history tasks in `mysql.tidb_global_task_history`.
+type DXFTaskHistoryHandler struct{}
+
+// NewDXFTaskHistoryHandler creates a new DXFTaskHistoryHandler.
+func NewDXFTaskHistoryHandler() *DXFTaskHistoryHandler {
+	return &DXFTaskHistoryHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+func (*DXFTaskHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		handler.WriteError(w, errors.Errorf("This api only support GET method"))
+		return
+	}
+	pageSize, pageToken, keyspace, err := parseTaskHistoryQuery(req)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), requestDefaultTimeout)
+	defer cancel()
+	page, err := handle.ListHistoryTasks(ctx, pageSize, pageToken, keyspace)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to list DXF history tasks", zap.Error(err))
+		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
+		return
+	}
+	handler.WriteData(w, page)
+}
+
+func parseTaskHistoryQuery(req *http.Request) (pageSize int, pageToken int64, keyspace string, err error) {
+	pageSize = storage.DefaultHistoryTaskPageSize
+	pageSizeStr := req.URL.Query().Get("page_size")
+	if pageSizeStr != "" {
+		pageSize, err = strconv.Atoi(pageSizeStr)
+		if err != nil {
+			return 0, 0, "", errors.Errorf("invalid page_size %s", pageSizeStr)
+		}
+	}
+	if err := storage.ValidateHistoryTaskPageSize(pageSize); err != nil {
+		pageSizeStr = strconv.Itoa(pageSize)
+		return 0, 0, "", errors.Errorf("invalid page_size %s", pageSizeStr)
+	}
+
+	pageTokenStr := req.URL.Query().Get("page_token")
+	if pageTokenStr != "" {
+		pageToken, err = strconv.ParseInt(pageTokenStr, 10, 64)
+		if err != nil || pageToken <= 0 {
+			return 0, 0, "", errors.Errorf("invalid page_token %s", pageTokenStr)
+		}
+	}
+
+	keyspace = req.URL.Query().Get("keyspace")
+	if keyspace != "" && naming.CheckKeyspaceName(keyspace) != nil {
+		return 0, 0, "", errors.Errorf("invalid keyspace %s", keyspace)
+	}
+	return pageSize, pageToken, keyspace, nil
+}
+
 // DXFImportIntoHistoryJobInfoHandler handles getting IMPORT INTO history job details.
 type DXFImportIntoHistoryJobInfoHandler struct{}
 

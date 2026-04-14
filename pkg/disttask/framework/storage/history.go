@@ -18,12 +18,24 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+)
+
+const (
+	// DefaultHistoryTaskPageSize is the default page size for history task listing.
+	DefaultHistoryTaskPageSize = 20
+	// MinHistoryTaskPageSize is the minimum page size for history task listing.
+	MinHistoryTaskPageSize = 1
+	// MaxHistoryTaskPageSize is the maximum page size for history task listing.
+	MaxHistoryTaskPageSize    = 200
+	historyTaskSummaryColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.end_time`
 )
 
 // TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
@@ -82,6 +94,112 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 		}
 		return err
 	})
+}
+
+// HistoryTaskSummary contains summary fields for one history task.
+type HistoryTaskSummary struct {
+	*proto.TaskBase
+	StartTime       time.Time
+	StateUpdateTime time.Time
+	EndTime         time.Time
+}
+
+// HistoryTaskPage is the paged result for history task listing.
+type HistoryTaskPage struct {
+	Items            []*HistoryTaskSummary
+	HasMore          bool
+	NextPageToken    int64
+	ApproxTotalCount int64
+}
+
+// ValidateHistoryTaskPageSize validates page size for history task listing.
+func ValidateHistoryTaskPageSize(pageSize int) error {
+	if pageSize < MinHistoryTaskPageSize || pageSize > MaxHistoryTaskPageSize {
+		return fmt.Errorf("page size should be within [%d, %d]", MinHistoryTaskPageSize, MaxHistoryTaskPageSize)
+	}
+	return nil
+}
+
+// ListHistoryTasks lists history tasks with keyset pagination and optional keyspace filter.
+func (mgr *TaskManager) ListHistoryTasks(ctx context.Context, pageSize int, pageToken int64, keyspace string) (*HistoryTaskPage, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	if err := ValidateHistoryTaskPageSize(pageSize); err != nil {
+		return nil, err
+	}
+
+	whereParts := make([]string, 0, 2)
+	countArgs := make([]any, 0, 1)
+	if keyspace != "" {
+		whereParts = append(whereParts, "t.keyspace = %?")
+		countArgs = append(countArgs, keyspace)
+	}
+	dataArgs := append(make([]any, 0, len(countArgs)+2), countArgs...)
+	if pageToken > 0 {
+		whereParts = append(whereParts, "t.id < %?")
+		dataArgs = append(dataArgs, pageToken)
+	}
+	whereSQL := ""
+	if len(whereParts) > 0 {
+		whereSQL = " where " + strings.Join(whereParts, " and ")
+	}
+	dataArgs = append(dataArgs, pageSize+1)
+
+	rows, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select `+historyTaskSummaryColumns+` from mysql.tidb_global_task_history t`+whereSQL+` order by t.id desc limit %?`,
+		dataArgs...)
+	if err != nil {
+		return nil, err
+	}
+	// Intentionally keep this as a separate best-effort read.
+	// Under concurrent task transfers, Items and ApproxTotalCount may observe slightly
+	// different snapshots, which is acceptable for this observability API.
+	// Pagination correctness relies on page rows + HasMore/NextPageToken from the page query.
+	countRows, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select count(1) from mysql.tidb_global_task_history`+func() string {
+			if keyspace == "" {
+				return ""
+			}
+			return " where keyspace = %?"
+		}(),
+		countArgs...)
+	if err != nil {
+		return nil, err
+	}
+
+	page := &HistoryTaskPage{
+		Items:            make([]*HistoryTaskSummary, 0, min(len(rows), pageSize)),
+		ApproxTotalCount: countRows[0].GetInt64(0),
+	}
+	hasMore := len(rows) > pageSize
+	page.HasMore = hasMore
+	if hasMore {
+		rows = rows[:pageSize]
+	}
+	for _, row := range rows {
+		page.Items = append(page.Items, row2HistoryTaskSummary(row))
+	}
+	if hasMore {
+		page.NextPageToken = page.Items[len(page.Items)-1].ID
+	}
+	return page, nil
+}
+
+func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
+	item := &HistoryTaskSummary{
+		TaskBase: row2TaskBasic(r),
+	}
+	if !r.IsNull(12) {
+		item.StartTime, _ = r.GetTime(12).GoTime(time.Local)
+	}
+	if !r.IsNull(13) {
+		item.StateUpdateTime, _ = r.GetTime(13).GoTime(time.Local)
+	}
+	if !r.IsNull(14) {
+		item.EndTime, _ = r.GetTime(14).GoTime(time.Local)
+	}
+	return item
 }
 
 // GCSubtasks deletes the history subtask which is older than the given days.
