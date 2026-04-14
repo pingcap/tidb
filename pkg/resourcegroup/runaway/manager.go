@@ -427,9 +427,17 @@ func (rm *Manager) UpdateNewAndDoneWatch() error {
 		return err
 	}
 	s.syncOKCounter.Inc()
-	s.watchCPGauge.Set(float64(s.newWatchReader.CheckPoint))
-	s.doneCPGauge.Set(float64(s.deletionWatchReader.CheckPoint))
+	s.watchCPGauge.Set(checkpointGaugeValue(s.newWatchReader.CheckPoint))
+	s.doneCPGauge.Set(checkpointGaugeValue(s.deletionWatchReader.CheckPoint))
 	return nil
+}
+
+func checkpointGaugeValue(checkpoint time.Time) float64 {
+	// Preserve the historical neutral zero value before the first successful sync.
+	if checkpoint.IsZero() {
+		return 0
+	}
+	return float64(checkpoint.UnixMilli())
 }
 
 // doSync performs the actual sync work for watch and watch_done tables.
@@ -437,32 +445,22 @@ func (rm *Manager) doSync() error {
 	if !rm.runawaySyncer.checkWatchTableExist() {
 		return nil
 	}
-	for {
-		records, err := rm.runawaySyncer.getNewWatchRecords()
-		if err != nil {
-			return err
-		}
-		for _, r := range records {
-			rm.AddWatch(r)
-		}
-		if len(records) < watchSyncBatchLimit {
-			break
-		}
+	records, err := rm.runawaySyncer.getNewWatchRecords()
+	if err != nil {
+		return err
+	}
+	for _, r := range records {
+		rm.AddWatch(r)
 	}
 	if !rm.runawaySyncer.checkWatchDoneTableExist() {
 		return nil
 	}
-	for {
-		doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
-		if err != nil {
-			return err
-		}
-		for _, r := range doneRecords {
-			rm.removeWatch(r)
-		}
-		if len(doneRecords) < watchSyncBatchLimit {
-			break
-		}
+	doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
+	if err != nil {
+		return err
+	}
+	for _, r := range doneRecords {
+		rm.removeWatch(r)
 	}
 	return nil
 }
