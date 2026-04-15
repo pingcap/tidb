@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -338,11 +339,11 @@ func TestIgnoreOneErrorCheckpointsNotFound(t *testing.T) {
 	err := cpdb.IgnoreErrorCheckpoint(ctx, "db1.t2")
 	require.Error(t, err)
 	require.True(t, errors.IsNotFound(err))
-	require.True(t, checkpoints.IsCheckpointTableNotFoundError(err))
-	require.True(t, checkpoints.IsCheckpointTableNotFoundError(errors.Annotate(err, "wrapped")))
+	require.True(t, common.ErrCheckpointTableNotFoundIdentity.Equal(err))
+	require.True(t, common.ErrCheckpointTableNotFoundIdentity.Equal(errors.Annotate(err, "wrapped")))
 	require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
 	require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")
-	require.False(t, checkpoints.IsCheckpointTableNotFoundError(errors.NotFoundf(
+	require.False(t, common.ErrCheckpointTableNotFoundIdentity.Equal(errors.NotFoundf(
 		"checkpoint for table `db`.`table`; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
 	)))
 }
@@ -414,7 +415,7 @@ func TestDestroyOneErrorCheckpointNotFound(t *testing.T) {
 	dtc, err := cpdb.DestroyErrorCheckpoint(ctx, "db1.t2")
 	require.Error(t, err)
 	require.True(t, errors.IsNotFound(err))
-	require.True(t, checkpoints.IsCheckpointTableNotFoundError(err))
+	require.True(t, common.ErrCheckpointTableNotFoundIdentity.Equal(err))
 	require.Nil(t, dtc)
 	require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
 	require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")

@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,7 +53,7 @@ func TestRunMain(t *testing.T) {
 	})
 
 	t.Run("checkpoint table not found does not print stack", func(t *testing.T) {
-		err := checkpoints.CheckpointTableNotFoundError("`db`.`table`")
+		err := common.ErrCheckpointTableNotFoundIdentity.GenWithStackByArgs("`db`.`table`")
 		require.Equal(t, err.Error(), formatFatalError(err))
 	})
 

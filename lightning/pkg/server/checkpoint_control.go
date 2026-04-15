@@ -93,7 +93,8 @@ func (c *LegacyCheckpointControl) Remove(ctx context.Context, tableName string) 
 
 // IgnoreError marks failed checkpoints as pending so they can be resumed.
 // tableName accepts `all` or `db`.`table`. A table-scoped call returns
-// checkpoints.CheckpointTableNotFoundError when the target checkpoint does not exist.
+// an error matching common.ErrCheckpointTableNotFoundIdentity when the target
+// checkpoint does not exist.
 func (c *LegacyCheckpointControl) IgnoreError(ctx context.Context, tableName string) error {
 	return c.withDB(ctx, func(cpdb checkpoints.DB) error {
 		return errors.Trace(cpdb.IgnoreErrorCheckpoint(ctx, tableName))
@@ -102,7 +103,8 @@ func (c *LegacyCheckpointControl) IgnoreError(ctx context.Context, tableName str
 
 // DestroyError removes failed checkpoints and associated temporary data.
 // tableName accepts `all` or `db`.`table`. A table-scoped call returns
-// checkpoints.CheckpointTableNotFoundError when the target checkpoint does not exist.
+// an error matching common.ErrCheckpointTableNotFoundIdentity when the target
+// checkpoint does not exist.
 func (c *LegacyCheckpointControl) DestroyError(ctx context.Context, tableName string) error {
 	return c.withDB(ctx, func(cpdb checkpoints.DB) error {
 		target, err := importer.NewTiDBManager(ctx, c.cfg.TiDB, c.tls)
@@ -236,7 +238,8 @@ func (c *ImportIntoCheckpointControl) Remove(ctx context.Context, tableName stri
 
 // IgnoreError resets failed checkpoints to allow resuming the import.
 // tableName accepts `all` or `db`.`table`. A table-scoped call returns
-// checkpoints.CheckpointTableNotFoundError when the target checkpoint does not exist.
+// an error matching common.ErrCheckpointTableNotFoundIdentity when the target
+// checkpoint does not exist.
 func (c *ImportIntoCheckpointControl) IgnoreError(ctx context.Context, tableName string) error {
 	defer c.closeManager()
 	return c.mgr.IgnoreError(ctx, tableName)
@@ -244,7 +247,8 @@ func (c *ImportIntoCheckpointControl) IgnoreError(ctx context.Context, tableName
 
 // DestroyError removes failed checkpoints completely.
 // tableName accepts `all` or `db`.`table`. A table-scoped call returns
-// checkpoints.CheckpointTableNotFoundError when the target checkpoint does not exist.
+// an error matching common.ErrCheckpointTableNotFoundIdentity when the target
+// checkpoint does not exist.
 func (c *ImportIntoCheckpointControl) DestroyError(ctx context.Context, tableName string) error {
 	defer c.closeManager()
 
