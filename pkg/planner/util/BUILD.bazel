@@ -11,12 +11,15 @@ go_library(
         "handle_cols.go",
         "misc.go",
         "null_misc.go",
+        "null_misc_builtins.go",
         "path.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/util",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errctx",
         "//pkg/expression",
+        "//pkg/expression/exprctx",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
@@ -48,21 +51,32 @@ go_test(
     srcs = [
         "column_test.go",
         "main_test.go",
+        "null_misc_test.go",
         "path_test.go",
     ],
     embed = [":util"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 3,
+=======
+    shard_count = 6,
+>>>>>>> 757952a76a0 (planner: replace outer-join null-reject evaluation with structural proof | tidb-test=pr/2724 (#67129))
     deps = [
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+<<<<<<< HEAD
         "//pkg/planner/core",
+=======
+        "//pkg/planner/util/coretestsdk",
+        "//pkg/sessionctx/vardef",
+>>>>>>> 757952a76a0 (planner: replace outer-join null-reject evaluation with structural proof | tidb-test=pr/2724 (#67129))
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",
+        "//pkg/util/mock",
         "//pkg/util/ranger",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

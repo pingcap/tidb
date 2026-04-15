@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -328,7 +326,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		if expression.ExprFromSchema(expr, outerTable.Schema()) {
 			continue
 		}
-		isOk := isNullRejected(p.SCtx(), innerTable.Schema(), expr)
+		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
 		if isOk {
 			canBeSimplified = true
 			break
@@ -339,6 +337,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	}
 }
 
+<<<<<<< HEAD
 // isNullRejected check whether a condition is null-rejected
 // A condition would be null-rejected in one of following cases:
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
@@ -414,6 +413,8 @@ func specialNullRejectedCase1(ctx planctx.PlanContext, schema *expression.Schema
 	return false
 }
 
+=======
+>>>>>>> 757952a76a0 (planner: replace outer-join null-reject evaluation with structural proof | tidb-test=pr/2724 (#67129))
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
 func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	leftCols, rightCols := p.ExtractUsedCols(parentUsedCols)

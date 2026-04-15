@@ -39,6 +39,7 @@ func TestOuter2Inner(t *testing.T) {
 	tk.MustExec("create table t0 (a0 int, b0 char, c0 char(2))")
 	tk.MustExec("create table t11 (a1 int, b1 char, c1 char)")
 
+<<<<<<< HEAD
 	var input Input
 	var output []struct {
 		SQL  string
@@ -55,6 +56,54 @@ func TestOuter2Inner(t *testing.T) {
 		plan.Check(testkit.Rows(output[i].Plan...))
 	}
 }
+=======
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1 (k int, a int)")
+		tk.MustExec("create table t2 (k int, b int, key(k))")
+		tk.MustHavePlan(`select /* issue:49616 */ /*+ tidb_inlj(t2, t1) */ *
+  from t2 left join t1 on t1.k=t2.k
+  where a>0 or (a=0 and b>0)`, "IndexJoin")
+		// Structural null-reject proof smoke tests.
+		tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where length(trim(cast(t2.k as char))) > 0`).CheckContain("inner join")
+		tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where length(trim(cast(t2.k as char))) > 0`).CheckNotContain("left outer join")
+		tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where coalesce(t2.k, 1) > 0`).CheckContain("left outer join")
+		tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where 1 in (t2.k, t2.b)`).CheckContain("inner join")
+		tk.MustQuery(`explain format = 'plan_tree' select *
+  from t1 left join t2 on t1.k=t2.k
+  where 1 in (t2.k, 1)`).CheckContain("left outer join")
+
+		// Issue #66825: IN lists containing NULL can still evaluate TRUE on null-extended rows.
+		tk.MustExec("drop table if exists t0, t1")
+		tk.MustExec("create table t0(c0 int)")
+		tk.MustExec("create table t1(c0 int)")
+		tk.MustExec("insert into t1 values (1)")
+		tk.MustQuery(`explain format = 'plan_tree' select t1.c0 as ref0, t0.c0 as ref1
+  from t1 left join t0 on t1.c0 = t0.c0
+  where (t1.c0 = 2) in (null, t0.c0 is false)`).CheckContain("left outer join")
+		tk.MustQuery(`select t1.c0 as ref0, t0.c0 as ref1
+  from t1 left join t0 on t1.c0 = t0.c0
+  where (t1.c0 = 2) in (null, t0.c0 is false)`).Check(testkit.Rows("1 <nil>"))
+
+		// Issue #58793: NULL-safe equality with IS NOT NULL is not null-rejected.
+		tk.MustExec("drop table if exists t0, t1")
+		tk.MustExec("create table t0(c0 text(227))")
+		tk.MustExec("create table t1 like t0")
+		tk.MustExec("insert into t1 values ('')")
+		tk.MustQuery(`explain format = 'plan_tree' select count(*)
+  from t1 left join t0 on t0.c0 <> t1.c0
+  where (null and t1.c0) <=> (t0.c0 is not null)`).CheckContain("left outer join")
+		tk.MustQuery(`select count(*)
+  from t1 left join t0 on t0.c0 <> t1.c0
+  where (null and t1.c0) <=> (t0.c0 is not null)`).Check(testkit.Rows("1"))
+>>>>>>> 757952a76a0 (planner: replace outer-join null-reject evaluation with structural proof | tidb-test=pr/2724 (#67129))
 
 // can not add this test case to TestOuter2Inner because the collation_connection is different
 func TestOuter2InnerIssue55886(t *testing.T) {

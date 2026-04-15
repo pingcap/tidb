@@ -373,7 +373,12 @@ func TestIssue40093(t *testing.T) {
 
 	tk.MustExec("execute st using @b")
 	tk.MustExec("execute st using @b")
+<<<<<<< HEAD:pkg/planner/core/plan_cache_test.go
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+=======
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("deallocate prepare st")
+>>>>>>> 757952a76a0 (planner: replace outer-join null-reject evaluation with structural proof | tidb-test=pr/2724 (#67129)):pkg/planner/core/casetest/plancache/plan_cache_suite_test.go
 }
 
 func TestIssue38205(t *testing.T) {
@@ -405,7 +410,12 @@ func TestIssue38205(t *testing.T) {
 
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustExec("execute stmt using @a, @b, @c")
+<<<<<<< HEAD:pkg/planner/core/plan_cache_test.go
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+=======
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("deallocate prepare stmt")
+>>>>>>> 757952a76a0 (planner: replace outer-join null-reject evaluation with structural proof | tidb-test=pr/2724 (#67129)):pkg/planner/core/casetest/plancache/plan_cache_suite_test.go
 }
 
 func TestIssue49736(t *testing.T) {
