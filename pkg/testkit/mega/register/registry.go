@@ -16,6 +16,7 @@ package register
 
 import (
 	"regexp"
+	"sort"
 	"sync"
 	"testing"
 )
@@ -70,16 +71,44 @@ func (r *Registry) Get(pkg, name string) (func(*testing.T), bool) {
 	return nil, false
 }
 
-// ListAll returns all registered tests in "pkg/name" format
-func (r *Registry) ListAll() []string {
+// testEntry holds a snapshot of a registered test, capturing the function
+// pointer under the read lock to avoid redundant lock acquisition.
+type testEntry struct {
+	pkg  string
+	name string
+	fn   func(*testing.T)
+}
+
+// snapshotAll collects all registered tests into a sorted slice while holding
+// the read lock, also snapshotting the onBefore hooks.
+func (r *Registry) snapshotAll() ([]testEntry, []func(string)) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var result []string
+	entries := make([]testEntry, 0, 64)
 	for pkg, tests := range r.tests {
-		for name := range tests {
-			result = append(result, pkg+"/"+name)
+		for name, fn := range tests {
+			entries = append(entries, testEntry{pkg, name, fn})
 		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].pkg != entries[j].pkg {
+			return entries[i].pkg < entries[j].pkg
+		}
+		return entries[i].name < entries[j].name
+	})
+
+	hooks := make([]func(string), len(r.onBefore))
+	copy(hooks, r.onBefore)
+	return entries, hooks
+}
+
+// ListAll returns all registered tests in "pkg/name" format, sorted deterministically.
+func (r *Registry) ListAll() []string {
+	entries, _ := r.snapshotAll()
+	result := make([]string, len(entries))
+	for i, e := range entries {
+		result[i] = e.pkg + "/" + e.name
 	}
 	return result
 }
@@ -101,19 +130,14 @@ func (r *Registry) RunByPattern(t *testing.T, pattern string) {
 		t.Fatalf("invalid pattern %q: %v", pattern, err)
 	}
 
+	// Snapshot all tests and filter by pattern while under the read lock.
 	r.mu.RLock()
-	var matched []struct {
-		pkg  string
-		name string
-	}
+	var matched []testEntry
 	for pkg, tests := range r.tests {
-		for name := range tests {
+		for name, fn := range tests {
 			fullName := pkg + "/" + name
 			if re.MatchString(fullName) {
-				matched = append(matched, struct {
-					pkg  string
-					name string
-				}{pkg, name})
+				matched = append(matched, testEntry{pkg, name, fn})
 			}
 		}
 	}
@@ -124,6 +148,13 @@ func (r *Registry) RunByPattern(t *testing.T, pattern string) {
 	if len(matched) == 0 {
 		t.Fatalf("no tests matched pattern %q", pattern)
 	}
+
+	sort.Slice(matched, func(i, j int) bool {
+		if matched[i].pkg != matched[j].pkg {
+			return matched[i].pkg < matched[j].pkg
+		}
+		return matched[i].name < matched[j].name
+	})
 
 	// Track which packages have had their hooks called
 	pkgHookCalled := make(map[string]bool)
@@ -136,11 +167,7 @@ func (r *Registry) RunByPattern(t *testing.T, pattern string) {
 		}
 		// Call fn directly without t.Run wrapper so that runtime.Caller(1)
 		// in testdata.LoadTestCases returns the correct function name.
-		testFn, ok := r.Get(m.pkg, m.name)
-		if !ok {
-			t.Fatalf("test %s/%s not found", m.pkg, m.name)
-		}
-		testFn(t)
+		m.fn(t)
 	}
 }
 
@@ -148,35 +175,18 @@ func (r *Registry) RunByPattern(t *testing.T, pattern string) {
 func (r *Registry) RunAll(t *testing.T) {
 	t.Helper()
 
-	r.mu.RLock()
-	type testEntry struct {
-		pkg  string
-		name string
-	}
-	var entries []testEntry
-	for pkg, tests := range r.tests {
-		for name := range tests {
-			entries = append(entries, testEntry{pkg, name})
-		}
-	}
-	hooks := make([]func(string), len(r.onBefore))
-	copy(hooks, r.onBefore)
-	r.mu.RUnlock()
+	entries, hooks := r.snapshotAll()
 
 	pkgHookCalled := make(map[string]bool)
 	for _, e := range entries {
 		if !pkgHookCalled[e.pkg] {
-			for _, fn := range hooks {
-				fn(e.pkg)
+			for _, hook := range hooks {
+				hook(e.pkg)
 			}
 			pkgHookCalled[e.pkg] = true
 		}
 		// Call fn directly without t.Run wrapper so that runtime.Caller(1)
 		// in testdata.LoadTestCases returns the correct function name.
-		fn, ok := r.Get(e.pkg, e.name)
-		if !ok {
-			t.Fatalf("test %s/%s not found", e.pkg, e.name)
-		}
-		fn(t)
+		e.fn(t)
 	}
 }
