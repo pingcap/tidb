@@ -892,6 +892,89 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 	}
 }
 
+func getResultForIN(values []*valueStruct, aVals []int, bVals []int, limit int, desc bool) []*valueStruct {
+	aSet := make(map[int]struct{}, len(aVals))
+	for _, v := range aVals {
+		aSet[v] = struct{}{}
+	}
+	bSet := make(map[int]struct{}, len(bVals))
+	for _, v := range bVals {
+		bSet[v] = struct{}{}
+	}
+	ret := make([]*valueStruct, 0)
+	for _, value := range values {
+		_, aMatch := aSet[value.a]
+		_, bMatch := bSet[value.b]
+		if aMatch || bMatch {
+			ret = append(ret, value)
+		}
+	}
+	slices.SortFunc(ret, func(a, b *valueStruct) int {
+		if desc {
+			return cmp.Compare(b.c, a.c)
+		}
+		return cmp.Compare(a.c, b.c)
+	})
+	if len(ret) > limit {
+		return ret[:limit]
+	}
+	return ret
+}
+
+func TestOrderByWithLimitForINConditions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t_in")
+	tk.MustExec("create table t_in(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c))")
+
+	// Analyze before insert to speed up and let queries use dynamic pruning.
+	tk.MustExec("analyze table t_in")
+
+	valueSlice := make([]*valueStruct, 0, 500)
+	vals := make([]string, 0, 500)
+	for range 500 {
+		a := rand.Intn(16)
+		b := rand.Intn(16)
+		c := rand.Intn(100)
+		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", a, b, c))
+		valueSlice = append(valueSlice, &valueStruct{a, b, c})
+	}
+	tk.MustExec(fmt.Sprintf("insert into t_in values %s", strings.Join(vals, ",")))
+
+	for range 10 {
+		// Generate random IN lists.
+		aVal := rand.Intn(16)
+		numBVals := rand.Intn(3) + 2
+		bVals := make([]int, 0, numBVals)
+		for range numBVals {
+			bVals = append(bVals, rand.Intn(16))
+		}
+		limit := rand.Intn(20) + 1
+
+		bInStr := fmt.Sprintf("%d", bVals[0])
+		for _, v := range bVals[1:] {
+			bInStr += fmt.Sprintf(", %d", v)
+		}
+
+		// Query pattern: a = val OR b IN (...)
+		query := fmt.Sprintf(
+			"select /*+ use_index_merge(t_in, idx_ac, idx_bc) */ * from t_in where a = %d or b in (%s) order by c limit %d",
+			aVal, bInStr, limit)
+		res := tk.MustQuery(query).Rows()
+		tk.MustHavePlan(query, "IndexMerge")
+		tk.MustNotHavePlan(query, "TopN")
+
+		expected := getResultForIN(valueSlice, []int{aVal}, bVals, limit, false)
+		require.Equal(t, len(expected), len(res), "query: %s", query)
+		for j, row := range res {
+			c, _ := strconv.Atoi(row[2].(string))
+			require.Equal(t, expected[j].c, c, "query: %s, row: %d", query, j)
+		}
+	}
+}
+
 func TestIssues46005(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

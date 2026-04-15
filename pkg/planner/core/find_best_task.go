@@ -1431,8 +1431,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// if there is some sort items and this path doesn't match this prop, continue.
 			match := true
 			for _, oneAccessPath := range oneAlternative {
-				// Satisfying the property by a merge sort is not supported for partial paths of index merge.
-				if !noSortItem && matchProperty(ds, oneAccessPath, prop) != property.PropMatched {
+				if !noSortItem && !matchProperty(ds, oneAccessPath, prop).Matched() {
 					match = false
 				}
 			}
@@ -1542,8 +1541,7 @@ func isMatchPropForIndexMerge(ds *logicalop.DataSource, path *util.AccessPath, p
 		return property.PropNotMatched
 	}
 	for _, partialPath := range path.PartialIndexPaths {
-		// Satisfying the property by a merge sort is not supported for partial paths of index merge.
-		if matchProperty(ds, partialPath, prop) != property.PropMatched {
+		if !matchProperty(ds, partialPath, prop).Matched() {
 			return property.PropNotMatched
 		}
 	}
@@ -2325,8 +2323,6 @@ func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool
 }
 
 func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (tablePlan base.PhysicalPlan) {
-	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
-		"partial paths of index merge path should not match property using merge sort")
 	ts, rowCount := physicalop.GetOriginalPhysicalTableScan(ds, prop, path, matchProp.Matched())
 	overwritePartialTableScanSchema(ds, ts)
 	// remove ineffetive filter condition after overwriting physicalscan schema
@@ -2345,6 +2341,10 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 			ts.SetSchema(tmpSchema)
 		}
 		ts.ByItems = byItems
+		if len(path.GroupedRanges) > 0 {
+			ts.GroupedRanges = path.GroupedRanges
+			ts.GroupByColIdxs = path.GroupByColIdxs
+		}
 	}
 	if len(ts.FilterCondition) > 0 {
 		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.FilterCondition, nil)
