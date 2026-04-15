@@ -53,7 +53,7 @@ func TestRunMain(t *testing.T) {
 	})
 
 	t.Run("checkpoint table not found does not print stack", func(t *testing.T) {
-		err := common.ErrCheckpointTableNotFoundIdentity.GenWithStackByArgs("`db`.`table`")
+		err := common.ErrCheckpointTableNotFound.GenWithStackByArgs("`db`.`table`")
 		require.Equal(t, err.Error(), formatFatalError(err))
 	})
 

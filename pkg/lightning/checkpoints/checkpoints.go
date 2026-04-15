@@ -616,12 +616,12 @@ type DB interface {
 	GetLocalStoringTables(ctx context.Context) (map[string][]int32, error)
 	// IgnoreErrorCheckpoint resets failed checkpoints so import can resume.
 	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// an error matching common.ErrCheckpointTableNotFoundIdentity when the target
+	// an error matching common.ErrCheckpointTableNotFound when the target
 	// checkpoint does not exist.
 	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
 	// DestroyErrorCheckpoint removes failed checkpoints and returns removed tables.
 	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// an error matching common.ErrCheckpointTableNotFoundIdentity when the target
+	// an error matching common.ErrCheckpointTableNotFound when the target
 	// checkpoint does not exist.
 	DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error)
 	DumpTables(ctx context.Context, csv io.Writer) error
@@ -1699,7 +1699,7 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 					return errors.Trace(e)
 				}
 				if !found {
-					return common.ErrCheckpointTableNotFoundIdentity.GenWithStackByArgs(tableName)
+					return common.ErrCheckpointTableNotFound.GenWithStackByArgs(tableName)
 				}
 			}
 		}
@@ -1789,7 +1789,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 				return errors.Trace(e)
 			}
 			if !found {
-				return common.ErrCheckpointTableNotFoundIdentity.GenWithStackByArgs(tableName)
+				return common.ErrCheckpointTableNotFound.GenWithStackByArgs(tableName)
 			}
 		}
 
@@ -1990,7 +1990,7 @@ func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTa
 
 	tableModel, ok := cpdb.checkpoints.Checkpoints[targetTableName]
 	if !ok {
-		return common.ErrCheckpointTableNotFoundIdentity.GenWithStackByArgs(targetTableName)
+		return common.ErrCheckpointTableNotFound.GenWithStackByArgs(targetTableName)
 	}
 	if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
 		tableModel.Status = uint32(CheckpointStatusLoaded)
@@ -2034,7 +2034,7 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 	} else {
 		tableModel, ok := cpdb.checkpoints.Checkpoints[targetTableName]
 		if !ok {
-			return nil, common.ErrCheckpointTableNotFoundIdentity.GenWithStackByArgs(targetTableName)
+			return nil, common.ErrCheckpointTableNotFound.GenWithStackByArgs(targetTableName)
 		}
 		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
 			var minEngineID, maxEngineID int32 = math.MaxInt32, math.MinInt32

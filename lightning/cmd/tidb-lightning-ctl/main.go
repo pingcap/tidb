@@ -46,7 +46,7 @@ func formatFatalError(err error) string {
 	// the user-facing "checkpoint table not found" guidance error.
 	// If users later need this stack for troubleshooting, we can add a `-v` option
 	// to print verbose output (including stack traces) for this path too.
-	if err != nil && common.ErrCheckpointTableNotFoundIdentity.Equal(err) {
+	if err != nil && common.ErrCheckpointTableNotFound.Equal(err) {
 		return err.Error()
 	}
 	return errors.ErrorStack(err)

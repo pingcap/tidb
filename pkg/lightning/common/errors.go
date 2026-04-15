@@ -61,9 +61,9 @@ var (
 	ErrUnknownCheckpointDriver = errors.Normalize("unknown checkpoint driver '%s'", errors.RFCCodeText("Lightning:Checkpoint:ErrUnknownCheckpointDriver"))
 	ErrInvalidCheckpoint       = errors.Normalize("invalid checkpoint", errors.RFCCodeText("Lightning:Checkpoint:ErrInvalidCheckpoint"))
 	ErrCheckpointNotFound      = errors.Normalize("checkpoint not found", errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointNotFound"))
-	// ErrCheckpointTableNotFoundIdentity is the stable identity for table-scoped
+	// ErrCheckpointTableNotFound is the stable identity for table-scoped
 	// checkpoint operations when the checkpoint row does not exist.
-	ErrCheckpointTableNotFoundIdentity = errors.Normalize(
+	ErrCheckpointTableNotFound = errors.Normalize(
 		"checkpoint for table %s not found; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
 		errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointTableNotFound"),
 	)
