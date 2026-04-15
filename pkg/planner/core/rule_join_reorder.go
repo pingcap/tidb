@@ -61,10 +61,13 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 	// Check if the current plan is a Selection. If its child is a join, add the selection conditions
 	// to otherConds and continue extracting the join group from the child.
 	// Join reorder may distribute/push down conditions during constructing the new join tree.
-	// For volatile or side-effect expressions, moving them can change evaluation times/orders
-	// thus may change query results, so we skip reordering through Selection in such cases.
+	// For volatile, side-effect, or otherwise non-deterministic expressions, moving them can
+	// change evaluation times/orders or observable results, so we skip reordering through
+	// Selection in such cases.
 	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection && p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
-		!slices.ContainsFunc(selection.Conditions, expression.IsMutableEffectsExpr) {
+		!slices.ContainsFunc(selection.Conditions, func(expr expression.Expression) bool {
+			return expression.IsMutableEffectsExpr(expr) || expression.CheckNonDeterministic(expr)
+		}) {
 		child := selection.Children()[0]
 		if _, isChildJoin := child.(*logicalop.LogicalJoin); isChildJoin {
 			childResult := extractJoinGroup(child)

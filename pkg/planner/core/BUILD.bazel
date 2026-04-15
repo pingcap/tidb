@@ -272,6 +272,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/joinorder",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",

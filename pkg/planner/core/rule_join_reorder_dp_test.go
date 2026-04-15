@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
@@ -308,5 +309,187 @@ func TestInjectedJoinExprMaterializationSafety(t *testing.T) {
 		appendedCols := expression.ExtractColumns(appendedExpr)
 		require.Len(t, appendedCols, 1)
 		require.Equal(t, baseCol.UniqueID, appendedCols[0].UniqueID)
+	})
+}
+
+func TestJoinReorderInlineSafetyGates(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	ctx.GetSessionVars().PlanID.Store(-1)
+
+	newJoin := func(joinType base.JoinType, left, right base.LogicalPlan) *logicalop.LogicalJoin {
+		join := logicalop.LogicalJoin{JoinType: joinType}.Init(ctx, 0)
+		join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
+		join.SetChildren(left, right)
+		return join
+	}
+
+	newProjection := func(child base.LogicalPlan, exprs ...expression.Expression) *logicalop.LogicalProjection {
+		proj := logicalop.LogicalProjection{Exprs: exprs}.Init(ctx, 0)
+		schema := expression.NewSchema()
+		for _, expr := range exprs {
+			col := &expression.Column{
+				UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  expr.GetType(ctx.GetExprCtx().GetEvalCtx()).Clone(),
+			}
+			col.SetCoercibility(expr.Coercibility())
+			col.SetRepertoire(expr.Repertoire())
+			schema.Append(col)
+		}
+		proj.SetSchema(schema)
+		proj.SetChildren(child)
+		return proj
+	}
+
+	t.Run("selection rejects non-deterministic predicates", func(t *testing.T) {
+		left := newDataSource(ctx, "sel_l", 10)
+		right := newDataSource(ctx, "sel_r", 10)
+		join := newJoin(base.InnerJoin, left, right)
+
+		old := ctx.GetSessionVars().TiDBOptJoinReorderThroughSel
+		ctx.GetSessionVars().TiDBOptJoinReorderThroughSel = true
+		t.Cleanup(func() {
+			ctx.GetSessionVars().TiDBOptJoinReorderThroughSel = old
+		})
+
+		foundRows := expression.NewFunctionInternal(ctx, ast.FoundRows, types.NewFieldType(mysql.TypeLonglong))
+		pred := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), foundRows, expression.NewOne())
+		sel := logicalop.LogicalSelection{Conditions: []expression.Expression{pred}}.Init(ctx, 0)
+		sel.SetChildren(join)
+
+		result := extractJoinGroup(sel)
+		require.Len(t, result.group, 1)
+		require.Same(t, sel, result.group[0])
+	})
+
+	t.Run("projection basic gate rejects non-deterministic expressions", func(t *testing.T) {
+		left := newDataSource(ctx, "basic_l", 10)
+		right := newDataSource(ctx, "basic_r", 10)
+		join := newJoin(base.InnerJoin, left, right)
+
+		foundRows := expression.NewFunctionInternal(ctx, ast.FoundRows, types.NewFieldType(mysql.TypeLonglong))
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			left.Schema().Columns[0],
+			foundRows,
+		)
+		proj := newProjection(join, expr)
+		require.False(t, canInlineProjectionBasic(proj))
+	})
+
+	t.Run("projection leaf gate rejects cross-leaf expressions", func(t *testing.T) {
+		left := newDataSource(ctx, "cross_l", 10)
+		right := newDataSource(ctx, "cross_r", 10)
+		join := newJoin(base.InnerJoin, left, right)
+
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			left.Schema().Columns[0],
+			right.Schema().Columns[0],
+		)
+		proj := newProjection(join, expr)
+		require.True(t, canInlineProjectionBasic(proj))
+		require.False(t, canInlineProjection(proj, &joinGroupResult{
+			group:              []base.LogicalPlan{left, right},
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}))
+	})
+
+	t.Run("projection leaf gate rejects null-extended expressions", func(t *testing.T) {
+		left := newDataSource(ctx, "outer_l", 10)
+		right := newDataSource(ctx, "outer_r", 10)
+		join := newJoin(base.LeftOuterJoin, left, right)
+
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			right.Schema().Columns[0],
+			expression.NewOne(),
+		)
+		proj := newProjection(join, expr)
+		require.True(t, canInlineProjectionBasic(proj))
+		require.False(t, canInlineProjection(proj, &joinGroupResult{
+			group: []base.LogicalPlan{left, right},
+			basicJoinGroupInfo: &basicJoinGroupInfo{
+				nullExtendedCols: expression.NewSchema(right.Schema().Columns...),
+			},
+		}))
+	})
+
+	t.Run("tryInlineProjectionForJoinGroup keeps safe single-leaf derived columns", func(t *testing.T) {
+		left := newDataSource(ctx, "inline_l", 10)
+		right := newDataSource(ctx, "inline_r", 10)
+		join := newJoin(base.InnerJoin, left, right)
+
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			left.Schema().Columns[0],
+			expression.NewOne(),
+		)
+		proj := newProjection(join, expr)
+
+		result, handled := tryInlineProjectionForJoinGroup(proj, proj)
+		require.True(t, handled)
+		require.Len(t, result.group, 2)
+		require.Contains(t, result.colExprMap, proj.Schema().Columns[0].UniqueID)
+		require.True(t, expression.ExpressionsSemanticEqual(result.colExprMap[proj.Schema().Columns[0].UniqueID], expr))
+	})
+
+	t.Run("tryInlineProjectionForJoinGroup keeps cross-leaf projection atomic", func(t *testing.T) {
+		left := newDataSource(ctx, "atomic_l", 10)
+		right := newDataSource(ctx, "atomic_r", 10)
+		join := newJoin(base.InnerJoin, left, right)
+
+		expr := expression.NewFunctionInternal(
+			ctx,
+			ast.Plus,
+			types.NewFieldType(mysql.TypeLonglong),
+			left.Schema().Columns[0],
+			right.Schema().Columns[0],
+		)
+		proj := newProjection(join, expr)
+
+		result, handled := tryInlineProjectionForJoinGroup(proj, proj)
+		require.True(t, handled)
+		require.Len(t, result.group, 1)
+		require.Same(t, proj, result.group[0])
+	})
+
+	t.Run("outer join side filters touching multiple leaves block reorder", func(t *testing.T) {
+		left0 := newDataSource(ctx, "oj_l0", 10)
+		left1 := newDataSource(ctx, "oj_l1", 10)
+		right := newDataSource(ctx, "oj_r", 10)
+		join := newJoin(base.LeftOuterJoin, left0, right)
+
+		multiLeafFilter := expression.NewFunctionInternal(
+			ctx,
+			ast.GT,
+			types.NewFieldType(mysql.TypeTiny),
+			expression.NewFunctionInternal(
+				ctx,
+				ast.Plus,
+				types.NewFieldType(mysql.TypeLonglong),
+				left0.Schema().Columns[0],
+				left1.Schema().Columns[0],
+			),
+			expression.NewZero(),
+		)
+		join.LeftConditions = []expression.Expression{multiLeafFilter}
+
+		require.True(t, joinorder.OuterJoinSideFiltersTouchMultipleLeaves(
+			join,
+			[]base.LogicalPlan{left0, left1},
+			nil,
+			true,
+		))
 	})
 }
