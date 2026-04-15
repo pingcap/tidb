@@ -207,12 +207,9 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 		// otherwise wrap the flat ranges as a single group.
 		var groupedRanges [][]*ranger.Range
 		var isIdxScan bool
-		switch x := plan[0].(type) {
-		case *physicalop.PhysicalIndexScan:
+		if x, ok := plan[0].(*physicalop.PhysicalIndexScan); ok {
 			isIdxScan = true
-			if len(x.GroupedRanges) > 0 {
-				groupedRanges = x.GroupedRanges
-			}
+			groupedRanges = x.GroupedRanges
 		}
 		if groupedRanges == nil {
 			groupedRanges = [][]*ranger.Range{e.ranges[i]}
