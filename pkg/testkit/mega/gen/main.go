@@ -65,7 +65,7 @@ func generate(pkgName, outputDir string) error {
 	//    point and must be created by the developer before running gen.
 	entrypointPath := filepath.Join(outputDir, "mega_gen.go")
 	if _, err := os.Stat(entrypointPath); err != nil {
-		return fmt.Errorf("mega_gen.go not found in %s — create it with a //go:generate directive first.\nExample:\n\n\tpackage test\n\n\t//go:generate go run github.com/pingcap/tidb/pkg/testkit/mega/gen -pkg %s -output .\n", outputDir, pkgName)
+		return fmt.Errorf("mega_gen.go not found in %s — create it with a //go:generate directive first.\nexample:\n\n\tpackage test\n\n\t//go:generate go run github.com/pingcap/tidb/pkg/testkit/mega/gen -pkg %s -output . ", outputDir, pkgName)
 	}
 
 	// 1. Scan the directory for .go files (excluding _test.go and mega_gen.go)

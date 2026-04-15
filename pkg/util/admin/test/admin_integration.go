@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// RunAdminCheckTableCorrupted is a test for admin check table corruption.
 func RunAdminCheckTableCorrupted(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

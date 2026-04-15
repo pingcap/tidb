@@ -42,8 +42,8 @@ func Register(pkg, name string, fn func(*testing.T)) {
 	globalRegistry.Register(pkg, name, fn)
 }
 
-// RegisterOnBeforeRun registers a hook on the global registry.
-func RegisterOnBeforeRun(fn func(string)) {
+// OnBeforeRun registers a hook on the global registry.
+func OnBeforeRun(fn func(string)) {
 	globalRegistry.RegisterOnBeforeRun(fn)
 }
 
