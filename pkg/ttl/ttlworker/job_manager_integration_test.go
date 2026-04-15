@@ -1731,14 +1731,15 @@ func TestJobHeartBeatFailNotBlockOthers(t *testing.T) {
 		fmt.Sprintf("%d %s", testTable2.Meta().ID, now.Format(time.DateTime))))
 }
 
-func TestIterationOfRunningJob(t *testing.T) {
+func testIterationOfRunningJobWithTimeout(t *testing.T, sessionTimeout time.Duration, tableCount int64, sleepPerTable time.Duration) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
-	sessionFactory := sessionFactory(t, dom)
+	sessionFactory := sessionFactoryWithTimeout(t, dom, sessionTimeout)
 
 	tk := testkit.NewTestKit(t, store)
 	m := ttlworker.NewJobManager("test-job-manager", dom.SysSessionPool(), store, nil, func() bool { return true })
 
+<<<<<<< HEAD
 	se := sessionFactory()
 	defer se.Close()
 	for tableID := int64(0); tableID < 100; tableID++ {
@@ -1752,14 +1753,58 @@ func TestIterationOfRunningJob(t *testing.T) {
 
 		// update the owner id
 		tk.MustExec("UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = ?", jobID)
-	}
-	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+=======
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+	for tableID := int64(0); tableID < tableCount; tableID++ {
+		func() {
+			se, closeSe := sessionFactory()
+			defer closeSe()
 
-	require.Len(t, m.RunningJobs(), 100)
+			testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
+			m.InfoSchemaCache().Tables[testTable.ID] = testTable
+
+			jobID := uuid.NewString()
+			_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
+			require.NoError(t, err)
+			sql, args := cache.SelectFromTTLTableStatusWithID(tableID)
+			rows, err := se.ExecuteSQL(ctx, sql, args...)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			status, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
+			require.NoError(t, err)
+			require.Equal(t, jobID, status.CurrentJobID)
+			require.Equal(t, m.ID(), status.CurrentJobOwnerID)
+
+			// update the owner id
+			_, err = se.ExecuteSQL(ctx, "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = %?", jobID)
+			require.NoError(t, err)
+
+			if sleepPerTable > 0 {
+				time.Sleep(sleepPerTable)
+			}
+		}()
+>>>>>>> f1434df8b00 (ttl: harden running-job iteration test session usage (#67653))
+	}
+	func() {
+		se, closeSe := sessionFactory()
+		defer closeSe()
+		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+	}()
+
+	require.Len(t, m.RunningJobs(), int(tableCount))
 	m.CheckNotOwnJob()
 
 	// Now all the jobs should have been removed
 	require.Len(t, m.RunningJobs(), 0)
+}
+
+func TestIterationOfRunningJob(t *testing.T) {
+	t.Run("normal", func(t *testing.T) {
+		testIterationOfRunningJobWithTimeout(t, time.Minute, 100, 0)
+	})
+	t.Run("session-timeout", func(t *testing.T) {
+		testIterationOfRunningJobWithTimeout(t, time.Second, 100, 20*time.Millisecond)
+	})
 }
 
 func TestTTLSummaryForTimeoutJob(t *testing.T) {
