@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "admin_integration.go",
+        "mega_gen.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/admin/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["admin_integration_test.go"],
+    embed = [":test"],
+    flaky = True,
+)
