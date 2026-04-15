@@ -15,6 +15,7 @@
 package ranger_test
 
 import (
+	"fmt"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -134,6 +135,30 @@ CREATE TABLE t (
 	b.StopTimer()
 }
 
+func BenchmarkBuildColumnRangeForTimestampLongInList(b *testing.B) {
+	input := prepareColumnRangeBenchmarkInput(b, `
+CREATE TABLE t (
+    ts timestamp NOT NULL,
+    b bigint,
+    KEY idx (ts)
+)`,
+		queryForLongTimestampInListValues(benchmarkLongInListSize, "SELECT * FROM test.t WHERE ts IN (%s)"),
+		"SET time_zone = '+00:00'",
+	)
+
+	b.ReportAllocs()
+	reportRangeMetrics(b, input.rangeCount, input.rangeBytes)
+	b.ResetTimer()
+	for range b.N {
+		ranges, access, remained, err := ranger.BuildColumnRange(input.conds, input.sctx.GetRangerCtx(), input.tp, input.colLen, 0)
+		require.NoError(b, err)
+		require.NotEmpty(b, access)
+		require.Empty(b, remained)
+		benchmarkBuiltRanges = ranges
+	}
+	b.StopTimer()
+}
+
 func prepareIndexRangeBenchmarkInput(b *testing.B, createTableSQL, query string) indexRangeBenchmarkInput {
 	b.Helper()
 
@@ -164,7 +189,7 @@ func prepareIndexRangeBenchmarkInput(b *testing.B, createTableSQL, query string)
 	}
 }
 
-func prepareColumnRangeBenchmarkInput(b *testing.B, createTableSQL, query string) columnRangeBenchmarkInput {
+func prepareColumnRangeBenchmarkInput(b *testing.B, createTableSQL, query string, setupSQL ...string) columnRangeBenchmarkInput {
 	b.Helper()
 
 	store := testkit.CreateMockStore(b)
@@ -172,6 +197,9 @@ func prepareColumnRangeBenchmarkInput(b *testing.B, createTableSQL, query string
 	testKit.MustExec("USE test")
 	testKit.MustExec("DROP TABLE IF EXISTS t")
 	testKit.MustExec(createTableSQL)
+	for _, sql := range setupSQL {
+		testKit.MustExec(sql)
+	}
 
 	sctx := testKit.Session().(sessionctx.Context)
 	selection := getSelectionFromQuery(b, sctx, query)
@@ -208,6 +236,10 @@ func queryForLongInListValues(size int, pattern string) string {
 	return strings.Replace(pattern, "%s", benchmarkIntValuesSQL(size, 1), 1)
 }
 
+func queryForLongTimestampInListValues(size int, pattern string) string {
+	return strings.Replace(pattern, "%s", benchmarkTimestampValuesSQL(size, 1), 1)
+}
+
 func queryForCartesianInListValues(leftSize, rightSize int, pattern string) string {
 	leftValues := benchmarkIntValuesSQL(leftSize, 1)
 	rightValues := benchmarkIntValuesSQL(rightSize, 2)
@@ -237,6 +269,32 @@ func benchmarkIntValuesSQL(size int, seed int64) string {
 	return builder.String()
 }
 
+func benchmarkTimestampValuesSQL(size int, seed int64) string {
+	offsets := make([]int, size)
+	for i := range offsets {
+		offsets[i] = i
+	}
+
+	rng := rand.New(rand.NewSource(seed))
+	rng.Shuffle(len(offsets), func(i, j int) {
+		offsets[i], offsets[j] = offsets[j], offsets[i]
+	})
+
+	var builder strings.Builder
+	builder.Grow(len(offsets) * 34)
+	for i, offset := range offsets {
+		if i > 0 {
+			builder.WriteByte(',')
+		}
+		seconds := offset * 37
+		hour := seconds / 3600
+		minute := seconds % 3600 / 60
+		second := seconds % 60
+		fmt.Fprintf(&builder, "TIMESTAMP '2025-01-01 %02d:%02d:%02d'", hour, minute, second)
+	}
+	return builder.String()
+}
+
 func reportRangeMetrics(b *testing.B, rangeCount int, rangeBytes int64) {
 	b.ReportMetric(float64(rangeCount), "ranges/op")
 	b.ReportMetric(float64(rangeBytes), "range-bytes/op")
@@ -245,6 +303,7 @@ func reportRangeMetrics(b *testing.B, rangeCount int, rangeBytes int64) {
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkBuildColumnRangeForLongInList,
+		BenchmarkBuildColumnRangeForTimestampLongInList,
 		BenchmarkDetachCondAndBuildRangeForIndex,
 		BenchmarkDetachCondAndBuildRangeForIndexCartesianFanout,
 	)
