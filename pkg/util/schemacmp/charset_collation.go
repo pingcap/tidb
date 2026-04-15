@@ -107,11 +107,11 @@ func (a charsetLattice) Join(other Lattice) (Lattice, error) {
 }
 
 type collationLattice struct {
-	value  string
-	family collationFamily
+	value string
 	// suffix will be set to normalized value when family is collationFamilyOther for
 	// implementation simplicity.
 	suffix string
+	family collationFamily
 }
 
 type collationFamily int
