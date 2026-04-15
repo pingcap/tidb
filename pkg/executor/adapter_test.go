@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -580,6 +581,60 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 		require.Zero(t, reporter.tikvRUV2)
 		require.Zero(t, reporter.tidbRUV2)
 		require.Zero(t, reporter.tiflashRU)
+	})
+
+	t.Run("network traffic stats are read atomically", func(t *testing.T) {
+		reporter := &mockRUV2ConsumptionReporter{}
+		ctx := &mockRUV2ReportingContext{
+			Context:  mock.NewContext(),
+			reporter: reporter,
+		}
+		sessVars := ctx.GetSessionVars()
+		sessVars.StartTime = time.Now()
+		sessVars.StmtCtx.StmtType = "Select"
+		sessVars.StmtCtx.OriginalSQL = "select 1"
+		sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+		sessVars.RUV2Metrics = execdetails.NewRUV2Metrics()
+
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		tikvExecDetail := goCtx.Value(util.ExecDetailsKey).(*util.ExecDetails)
+		execStmt := &executor.ExecStmt{
+			Ctx:      ctx,
+			GoCtx:    goCtx,
+			StmtNode: &ast.SelectStmt{},
+		}
+
+		done := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					atomic.AddInt64(&tikvExecDetail.WaitKVRespDuration, int64(time.Millisecond))
+					atomic.AddInt64(&tikvExecDetail.WaitPDRespDuration, int64(time.Millisecond))
+					atomic.AddInt64(&tikvExecDetail.BackoffDuration, int64(time.Millisecond))
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentKVTotal, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedKVTotal, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentKVCrossZone, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedKVCrossZone, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentMPPTotal, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedMPPTotal, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesSentMPPCrossZone, 1)
+					atomic.AddInt64(&tikvExecDetail.UnpackedBytesReceivedMPPCrossZone, 1)
+				}
+			}
+		}()
+
+		for range 64 {
+			execStmt.FinishExecuteStmt(0, nil, false)
+		}
+
+		close(done)
+		wg.Wait()
 	})
 }
 

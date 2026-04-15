@@ -1979,7 +1979,7 @@ func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {
 	hasMPPTraffic := a.updateMPPNetworkTraffic()
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw != nil {
-		tikvExecDetail := tikvExecDetailRaw.(*util.ExecDetails)
+		tikvExecDetail := execdetails.LoadTiKVExecDetails(tikvExecDetailRaw.(*util.ExecDetails))
 		executor_metrics.ExecutorNetworkTransmissionSentTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesSentKVTotal))
 		executor_metrics.ExecutorNetworkTransmissionSentTiKVCrossZone.Add(float64(tikvExecDetail.UnpackedBytesSentKVCrossZone))
 		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesReceivedKVTotal))

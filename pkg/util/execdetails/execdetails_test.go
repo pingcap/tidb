@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -254,6 +255,36 @@ func TestString(t *testing.T) {
 	require.Equal(t, expected, detail.String())
 	detail = &ExecDetails{}
 	require.Equal(t, "", detail.String())
+
+	t.Run("load tikv exec details snapshot", func(t *testing.T) {
+		tikvExecDetail := &util.ExecDetails{}
+		atomic.StoreInt64(&tikvExecDetail.BackoffCount, 2)
+		atomic.StoreInt64(&tikvExecDetail.BackoffDuration, int64(3*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.WaitKVRespDuration, int64(4*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.WaitPDRespDuration, int64(5*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentKVTotal, 11)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedKVTotal, 12)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentKVCrossZone, 13)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedKVCrossZone, 14)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentMPPTotal, 15)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedMPPTotal, 16)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentMPPCrossZone, 17)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedMPPCrossZone, 18)
+
+		snapshot := LoadTiKVExecDetails(tikvExecDetail)
+		require.Equal(t, int64(2), snapshot.BackoffCount)
+		require.Equal(t, int64(3*time.Second), snapshot.BackoffDuration)
+		require.Equal(t, int64(4*time.Second), snapshot.WaitKVRespDuration)
+		require.Equal(t, int64(5*time.Second), snapshot.WaitPDRespDuration)
+		require.Equal(t, int64(11), snapshot.UnpackedBytesSentKVTotal)
+		require.Equal(t, int64(12), snapshot.UnpackedBytesReceivedKVTotal)
+		require.Equal(t, int64(13), snapshot.UnpackedBytesSentKVCrossZone)
+		require.Equal(t, int64(14), snapshot.UnpackedBytesReceivedKVCrossZone)
+		require.Equal(t, int64(15), snapshot.UnpackedBytesSentMPPTotal)
+		require.Equal(t, int64(16), snapshot.UnpackedBytesReceivedMPPTotal)
+		require.Equal(t, int64(17), snapshot.UnpackedBytesSentMPPCrossZone)
+		require.Equal(t, int64(18), snapshot.UnpackedBytesReceivedMPPCrossZone)
+	})
 }
 
 func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {

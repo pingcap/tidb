@@ -19,6 +19,7 @@ import (
 	"context"
 	"math"
 	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/influxdata/tdigest"
@@ -60,7 +61,7 @@ func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails,
 	}
 	tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw != nil {
-		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+		tikvExecDetail = LoadTiKVExecDetails(tikvExecDetailRaw.(*util.ExecDetails))
 	}
 	if ruDetailsVal := ctx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
 		ruDetails = ruDetailsVal.(*util.RUDetails)
@@ -69,6 +70,29 @@ func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails,
 	}
 
 	return
+}
+
+// LoadTiKVExecDetails snapshots the fields in util.ExecDetails that are updated via atomic operations.
+func LoadTiKVExecDetails(detail *util.ExecDetails) util.ExecDetails {
+	if detail == nil {
+		return util.ExecDetails{}
+	}
+	return util.ExecDetails{
+		BackoffCount:       atomic.LoadInt64(&detail.BackoffCount),
+		BackoffDuration:    atomic.LoadInt64(&detail.BackoffDuration),
+		WaitKVRespDuration: atomic.LoadInt64(&detail.WaitKVRespDuration),
+		WaitPDRespDuration: atomic.LoadInt64(&detail.WaitPDRespDuration),
+		TrafficDetails: util.TrafficDetails{
+			UnpackedBytesSentKVTotal:          atomic.LoadInt64(&detail.UnpackedBytesSentKVTotal),
+			UnpackedBytesReceivedKVTotal:      atomic.LoadInt64(&detail.UnpackedBytesReceivedKVTotal),
+			UnpackedBytesSentKVCrossZone:      atomic.LoadInt64(&detail.UnpackedBytesSentKVCrossZone),
+			UnpackedBytesReceivedKVCrossZone:  atomic.LoadInt64(&detail.UnpackedBytesReceivedKVCrossZone),
+			UnpackedBytesSentMPPTotal:         atomic.LoadInt64(&detail.UnpackedBytesSentMPPTotal),
+			UnpackedBytesReceivedMPPTotal:     atomic.LoadInt64(&detail.UnpackedBytesReceivedMPPTotal),
+			UnpackedBytesSentMPPCrossZone:     atomic.LoadInt64(&detail.UnpackedBytesSentMPPCrossZone),
+			UnpackedBytesReceivedMPPCrossZone: atomic.LoadInt64(&detail.UnpackedBytesReceivedMPPCrossZone),
+		},
+	}
 }
 
 type canGetFloat64 interface {
