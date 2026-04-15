@@ -518,6 +518,7 @@ type RefreshMaterializedViewStmt struct {
 	Type          RefreshMaterializedViewType
 	// CompleteType configures COMPLETE refresh mode.
 	// It is only meaningful when Type == RefreshMaterializedViewTypeComplete.
+	// COMPLETE refresh must specify one explicit subtype.
 	CompleteType RefreshMaterializedViewCompleteType
 	ObserveType  RefreshMaterializedViewObserveType
 	AsOf         *AsOfClause
@@ -595,7 +596,7 @@ func (t RefreshMaterializedViewType) String() string {
 type RefreshMaterializedViewCompleteType int
 
 const (
-	RefreshMaterializedViewCompleteTypeDefault RefreshMaterializedViewCompleteType = iota
+	_ RefreshMaterializedViewCompleteType = iota
 	RefreshMaterializedViewCompleteTypeInPlace
 	RefreshMaterializedViewCompleteTypeOutOfPlace
 	RefreshMaterializedViewCompleteTypeDeltaApply
@@ -603,8 +604,6 @@ const (
 
 func (t RefreshMaterializedViewCompleteType) String() string {
 	switch t {
-	case RefreshMaterializedViewCompleteTypeDefault:
-		return "DEFAULT"
 	case RefreshMaterializedViewCompleteTypeInPlace:
 		return "IN PLACE"
 	case RefreshMaterializedViewCompleteTypeOutOfPlace:
@@ -649,9 +648,10 @@ func (n *RefreshMaterializedViewStmt) Mode() (RefreshMaterializedViewMode, error
 	case RefreshMaterializedViewTypeFast:
 		return RefreshMaterializedViewModeFast, nil
 	case RefreshMaterializedViewTypeComplete:
+		if n.CompleteType == 0 {
+			return 0, errors.New("RefreshMaterializedViewStmt: COMPLETE refresh mode must be specified explicitly")
+		}
 		switch n.CompleteType {
-		case RefreshMaterializedViewCompleteTypeDefault:
-			return RefreshMaterializedViewModeCompleteDeltaApply, nil
 		case RefreshMaterializedViewCompleteTypeInPlace:
 			return RefreshMaterializedViewModeCompleteInPlace, nil
 		case RefreshMaterializedViewCompleteTypeOutOfPlace:
@@ -686,8 +686,10 @@ func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord(n.Type.String())
 	if n.Type == RefreshMaterializedViewTypeComplete {
+		if n.CompleteType == 0 {
+			return errors.New("RefreshMaterializedViewStmt: COMPLETE refresh mode must be specified explicitly")
+		}
 		switch n.CompleteType {
-		case RefreshMaterializedViewCompleteTypeDefault:
 		case RefreshMaterializedViewCompleteTypeInPlace:
 			ctx.WriteKeyWord(" IN PLACE")
 		case RefreshMaterializedViewCompleteTypeOutOfPlace:
