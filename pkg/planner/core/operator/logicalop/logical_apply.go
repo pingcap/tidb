@@ -15,19 +15,19 @@
 package logicalop
 
 import (
+	"math"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -40,6 +40,10 @@ type LogicalApply struct {
 	CorCols []*expression.CorrelatedColumn `hash64-equals:"true"`
 	// NoDecorrelate is from /*+ no_decorrelate() */ hint.
 	NoDecorrelate bool `hash64-equals:"true"`
+	// IsLateral indicates this Apply came from a LATERAL join (not a scalar correlated subquery).
+	// LATERAL joins may return multiple rows per left row, so they cannot be eliminated
+	// based solely on column pruning (unlike scalar subqueries with MaxOneRow guarantee).
+	IsLateral bool `hash64-equals:"true"`
 }
 
 // Init initializes LogicalApply.
@@ -74,31 +78,62 @@ func (la *LogicalApply) ReplaceExprColumns(replace map[string]*expression.Column
 
 // PredicatePushDown inherits the BaseLogicalPlan.LogicalPlan.<1st> implementation.
 
+// findChildFullSchema returns the FullSchema of p if it is a LogicalJoin or
+// LogicalApply (possibly wrapped by LogicalSelection from ON clauses). Used
+// during column pruning to find redundant USING/NATURAL columns from the
+// left child so that LATERAL correlation extraction sees them.
+func findChildFullSchema(p base.LogicalPlan) *expression.Schema {
+	for {
+		switch x := p.(type) {
+		case *LogicalJoin:
+			return x.FullSchema // may be nil
+		case *LogicalApply:
+			return x.FullSchema // may be nil
+		case *LogicalSelection:
+			children := p.Children()
+			if len(children) != 1 {
+				return nil
+			}
+			p = children[0]
+		default:
+			return nil
+		}
+	}
+}
+
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	leftCols, rightCols := la.ExtractUsedCols(parentUsedCols)
 	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
 	var err error
-	if allowEliminateApply && rightCols == nil && la.JoinType == base.LeftOuterJoin {
-		logicaltrace.ApplyEliminateTraceStep(la.Children()[1], opt)
+	// IMPORTANT: We can only eliminate Apply for scalar correlated subqueries (which have MaxOneRow guarantee).
+	// For LATERAL joins (IsLateral=true), the subquery may return multiple rows per left row, so eliminating
+	// the Apply would change result multiplicity (wrong COUNT(*), aggregate results, etc.).
+	if allowEliminateApply && !la.IsLateral && rightCols == nil && la.JoinType == base.LeftOuterJoin {
 		resultPlan := la.Children()[0]
 		// reEnter the new child's column pruning, returning child[0] as a new child here.
-		return resultPlan.PruneColumns(parentUsedCols, opt)
+		return resultPlan.PruneColumns(parentUsedCols)
 	}
 
 	// column pruning for child-1.
-	la.Children()[1], err = la.Children()[1].PruneColumns(rightCols, opt)
+	la.Children()[1], err = la.Children()[1].PruneColumns(rightCols)
 	if err != nil {
 		return nil, err
 	}
 
-	la.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(la.Children()[1], la.Children()[0].Schema())
+	// Use FullSchema when available to capture redundant USING/NATURAL columns.
+	// Without this, LATERAL over USING joins would lose correlation during pruning.
+	outerSchema := la.Children()[0].Schema()
+	if fs := findChildFullSchema(la.Children()[0]); fs != nil {
+		outerSchema = fs
+	}
+	la.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(la.Children()[1], outerSchema)
 	for _, col := range la.CorCols {
 		leftCols = append(leftCols, &col.Column)
 	}
 
 	// column pruning for child-0.
-	la.Children()[0], err = la.Children()[0].PruneColumns(leftCols, opt)
+	la.Children()[0], err = la.Children()[0].PruneColumns(leftCols)
 	if err != nil {
 		return nil, err
 	}
@@ -134,8 +169,59 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		return la.StatsInfo(), false, nil
 	}
 	leftProfile := childStats[0]
+	rightProfile := childStats[1]
+	// For LATERAL joins (IsLateral=true), the right side can return 0..N rows per outer row,
+	// so we estimate cardinality based on join multiplicity.
+	// For scalar subqueries (IsLateral=false), they return at most 1 row per outer row,
+	// so RowCount = leftProfile.RowCount is correct.
+	rowCount := leftProfile.RowCount
+	if la.IsLateral && (la.JoinType == base.InnerJoin || la.JoinType == base.LeftOuterJoin) {
+		leftJoinKeys, rightJoinKeys, _, _ := la.GetJoinKeys()
+		if len(leftJoinKeys) > 0 {
+			// Explicit ON-clause join keys: use the same join cardinality estimation as
+			// LogicalJoin so that key NDV selectivity is reflected in the row count.
+			la.EqualCondOutCnt = cardinality.EstimateFullJoinRowCount(la.SCtx(),
+				false,
+				leftProfile, rightProfile,
+				leftJoinKeys, rightJoinKeys,
+				childSchema[0], childSchema[1],
+				nil, nil)
+			rowCount = la.EqualCondOutCnt
+		} else if len(la.CorCols) > 0 {
+			// No explicit join keys; the inner plan is a correlated subquery.
+			// childStats[1] is derived for the inner plan as a standalone subtree
+			// (total rows of that plan), not a per-outer-row execution count.
+			// Dividing by the NDV of the outer correlated columns converts it to a
+			// per-outer-row estimate before multiplying by the left row count, mirroring
+			// the key-based selectivity division in EstimateFullJoinRowCount.
+			//
+			// TODO: when the inner plan is bounded by LIMIT or a scalar aggregate,
+			// rightProfile.RowCount is already effectively per-outer-row (LIMIT caps it;
+			// aggregates always return 1 row). In those cases this formula underestimates
+			// by ~NDV(outerCols). A future improvement should detect the LIMIT/aggregate
+			// case and skip the NDV scaling, restoring the correct left*right product.
+			outerCols := make([]*expression.Column, 0, len(la.CorCols))
+			for i := range la.CorCols {
+				outerCols = append(outerCols, &la.CorCols[i].Column)
+			}
+			outerNDV, _ := cardinality.EstimateColsNDVWithMatchedLen(la.SCtx(), outerCols, childSchema[0], leftProfile)
+			rowCount = leftProfile.RowCount * rightProfile.RowCount / math.Max(outerNDV, 1)
+		} else {
+			// No correlation at all: decorrelation will convert this to a plain cross
+			// join, so the Cartesian product is the correct upper-bound estimate.
+			rowCount = leftProfile.RowCount * rightProfile.RowCount
+		}
+		if la.JoinType == base.LeftOuterJoin {
+			rowCount = max(rowCount, leftProfile.RowCount)
+		}
+	} else if la.JoinType == base.SemiJoin || la.JoinType == base.AntiSemiJoin {
+		// For SemiJoin and AntiSemiJoin Apply operators (EXISTS / NOT EXISTS
+		// subqueries that cannot be decorrelated), apply SelectionFactor to
+		// the row count estimate, consistent with LogicalJoin.DeriveStats.
+		rowCount *= cost.SelectionFactor
+	}
 	la.SetStats(&property.StatsInfo{
-		RowCount: leftProfile.RowCount,
+		RowCount: rowCount,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
 	// TODO: investigate why this cannot be replaced with maps.Copy()
@@ -146,7 +232,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		la.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 	} else {
 		for i := childSchema[0].Len(); i < selfSchema.Len(); i++ {
-			la.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID] = leftProfile.RowCount
+			la.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID] = rowCount
 		}
 	}
 	la.StatsInfo().GroupNDVs = la.getGroupNDVs(childStats)
@@ -175,11 +261,6 @@ func (la *LogicalApply) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (la *LogicalApply) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalApply(la, prop)
-}
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {

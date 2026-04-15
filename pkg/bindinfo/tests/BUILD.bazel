@@ -5,12 +5,13 @@ go_test(
     timeout = "moderate",
     srcs = [
         "bind_test.go",
+        "bind_usage_info_test.go",
         "cross_db_binding_test.go",
         "main_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 22,
+    shard_count = 24,
     deps = [
         "//pkg/bindinfo",
         "//pkg/domain",

@@ -58,7 +58,7 @@ var (
 // SplitClient is an external client used by RegionSplitter.
 type SplitClient interface {
 	// GetStore gets a store by a store id.
-	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
+	GetStore(ctx context.Context, storeID uint64, opts ...opt.GetStoreOption) (*metapb.Store, error)
 	// GetRegion gets a region which includes a specified key.
 	GetRegion(ctx context.Context, key []byte) (*RegionInfo, error)
 	// GetRegionByID gets a region by a region id.
@@ -191,8 +191,13 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 	// the retry is for the temporary network errors during sending request.
 	err := utils.WithRetry(ctx, func() error {
 		failedRegionsID, err := c.tryScatterRegions(ctx, newRegions)
-		if isUnsupportedError(err) {
-			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
+		// if err is unsupported, we need to fallback to the old method.
+		// ErrPDRegionsNotFullyScatter means the regions are not fully scattered,
+		// in new version of PD, the scatter regions API will return the failed regions id,
+		// but the old version of PD will only return the FinishedPercentage.
+		// so we need to retry the regions one by one.
+		if isUnsupportedError(err) || berrors.ErrPDRegionsNotFullyScatter.Equal(err) {
+			log.Warn("failed to batch scatter regions, rollback to sequentially scatter", logutil.ShortError(err))
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
 				// backoff about 1h total, or we give up scattering this region.
@@ -237,22 +242,29 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 			"pd returns error during batch scattering: %s", pbErr)
 	}
 
-	failedRegionsID := make(map[uint64]struct{})
-	for _, id := range resp.FailedRegionsId {
-		failedRegionsID[id] = struct{}{}
+	if len(resp.FailedRegionsId) > 0 {
+		failedRegionsID := make(map[uint64]struct{})
+		for _, id := range resp.FailedRegionsId {
+			failedRegionsID[id] = struct{}{}
+		}
+		return failedRegionsID, nil
 	}
 
-	return failedRegionsID, nil
+	if finished := resp.GetFinishedPercentage(); finished < 100 {
+		return nil, errors.Annotatef(berrors.ErrPDRegionsNotFullyScatter, "scatter finished percentage %d less than 100", finished)
+	}
+
+	return nil, nil
 }
 
-func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+func (c *pdClient) GetStore(ctx context.Context, storeID uint64, opts ...opt.GetStoreOption) (*metapb.Store, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	store, ok := c.storeCache[storeID]
 	if ok {
 		return store, nil
 	}
-	store, err := c.client.GetStore(ctx, storeID)
+	store, err := c.client.GetStore(ctx, storeID, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

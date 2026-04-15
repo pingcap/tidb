@@ -23,6 +23,7 @@ import (
 var (
 	AutoAnalyzeHistogram      prometheus.Histogram
 	AutoAnalyzeCounter        *prometheus.CounterVec
+	ManualAnalyzeCounter      *prometheus.CounterVec
 	StatsInaccuracyRate       prometheus.Histogram
 	PseudoEstimation          *prometheus.CounterVec
 	SyncLoadCounter           prometheus.Counter
@@ -59,6 +60,14 @@ func InitStatsMetrics() {
 			Subsystem: "statistics",
 			Name:      "auto_analyze_total",
 			Help:      "Counter of auto analyze.",
+		}, []string{LblType})
+
+	ManualAnalyzeCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "manual_analyze_total",
+			Help:      "Counter of manual analyze.",
 		}, []string{LblType})
 
 	StatsInaccuracyRate = metricscommon.NewHistogram(

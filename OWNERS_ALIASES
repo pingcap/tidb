@@ -1,15 +1,21 @@
 # See the OWNERS docs at https://www.kubernetes.dev/docs/guide/owners/#owners_aliases
 # The members of 'sig-community-*' are synced from memberships defined in repository: https://github.com/pingcap/community.
 aliases:
+  sig-approvers-stats:
+    - mjonss
+    - 0xPoe
+    - time-and-fate
+    - terry1purcell
+    - henrybw
   sig-critical-approvers-tidb-server:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
   sig-critical-approvers-tidb-lightning:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
   sig-critical-approvers-parser:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
   sig-critical-approvers-dep:
     - bb7133
     - cfzjywxk
@@ -43,64 +49,62 @@ aliases:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
+    - OliverS929
   sig-approvers-domain:
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
+    - fzzf678
   sig-approvers-ddl:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
+    - fzzf678
   sig-approvers-disttask:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-dumpling:
     - Benjamin2037
     - gmhdbjd
-    - tangenta
+    - D3Hunter
   sig-approvers-infoschema:
     - wjhuang2016
-    - tangenta
     - D3Hunter
     - Benjamin2037
     - gmhdbjd
+    - fzzf678
   sig-approvers-meta:
     - Benjamin2037
     - gmhdbjd
-    - tangenta
     - wjhuang2016
     - D3Hunter
+    - fzzf678
   sig-approvers-owner:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
     - D3Hunter
+    - fzzf678
   sig-approvers-parser:
     - bb7133
+    - Benjamin2037
     - BornChanger
     - D3Hunter
-    - tangenta
   sig-approvers-resourcemanager:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - tangenta
     - wjhuang2016
   sig-approvers-table:
     - Benjamin2037
     - cfzjywxk
     - gmhdbjd
-    - tangenta
     - wjhuang2016
+    - fzzf678
   sig-approvers-lock:
     - Benjamin2037
-    - tangenta
     - wjhuang2016
   sig-approvers-tidb-binlog:
     - Benjamin2037
@@ -109,16 +113,14 @@ aliases:
     - AilinKid
     - 0xPoe
     - elsa0520
-    - fixdb
     - hawkingrei
     - qw4990
     - time-and-fate
     - winoros
     - terry1purcell
-    - ghazalfamilyusa
     - henrybw
-    - wddevries
     - King-Dylan
+    - guo-shaoge
   sig-approvers-metrics:
     - XuHuaiyu
     - zimulala
@@ -127,10 +129,8 @@ aliases:
   sig-community-reviewers:
     - CabinfeverB
     - ChenPeng2013
-    - King-Dylan
     - LittleFall
     - MoCuishle28
-    - RidRisR
     - SeaRise
     - Tjianke
     - TonsnakeLin
@@ -144,7 +144,7 @@ aliases:
     - fengou1
     - fzzf678
     - gengliqi
-    - ghazalfamilyusa
+    - henrybw
     - iamxy
     - js00070
     - lamxTyler
@@ -181,10 +181,13 @@ aliases:
     - GMHDBJD
     - IANTHEREAL
     - JmPotato
+    - King-Dylan
     - Leavrth
     - Little-Wallace
     - MyonKeminta
+    - OliverS929
     - Reminiscent
+    - RidRisR
     - SunRunAway
     - Tammyxia
     - WangXiangUSTC
@@ -213,7 +216,6 @@ aliases:
     - ekexium
     - elsa0520
     - eurekaka
-    - fixdb
     - francis0407
     - fzhedu
     - glorv

@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -130,7 +130,7 @@ func TestVerifyChecksum(t *testing.T) {
 	ctx2, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
 	err = importer.VerifyChecksum(ctx2, plan2, localChecksum, logutil.BgLogger(), func() (*local.RemoteChecksum, error) {
-		return importer.RemoteChecksumTableBySQL(ctx2, tk.Session(), plan, logutil.BgLogger())
+		return importer.RemoteChecksumTableBySQL(ctx2, tk.Session(), plan2, logutil.BgLogger())
 	})
 	require.ErrorContains(t, err, "Query execution was interrupted")
 
@@ -172,6 +172,9 @@ func TestVerifyChecksum(t *testing.T) {
 }
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled in nextgen")
+	}
 	store, tm, ctx := testutil.InitTableTest(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -293,7 +296,7 @@ func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, table
 	if path != "" {
 		require.NoError(t, controller.InitDataStore(ctx))
 	}
-	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", &storeHelper{kvStore: store})
+	ti, err := importer.NewTableImporterForTest(ctx, controller, "11", store)
 	require.NoError(t, err)
 	return ti
 }
@@ -431,16 +434,16 @@ func TestCalResourceParams(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", handle.GetTargetScope()))
-	c := &importer.LoadDataController{Plan: &importer.Plan{TotalFileSize: 200 * units.TiB, TableInfo: &model.TableInfo{}}}
+	c := &importer.LoadDataController{TotalRealSize: 200 * units.TiB, Plan: &importer.Plan{TableInfo: &model.TableInfo{}}}
 	importer.WithLogger(zap.NewNop())(c)
-	require.NoError(t, c.CalResourceParams(ctx))
+	require.NoError(t, c.CalResourceParams(ctx, nil))
 	require.Equal(t, 8, c.ThreadCnt)
 	require.Equal(t, 32, c.MaxNodeCnt)
 	require.Equal(t, 256, c.DistSQLScanConcurrency)
 
-	c = &importer.LoadDataController{Plan: &importer.Plan{TotalFileSize: 300 * units.GiB, TableInfo: &model.TableInfo{}}}
+	c = &importer.LoadDataController{TotalRealSize: 300 * units.GiB, Plan: &importer.Plan{TableInfo: &model.TableInfo{}}}
 	importer.WithLogger(zap.NewNop())(c)
-	require.NoError(t, c.CalResourceParams(ctx))
+	require.NoError(t, c.CalResourceParams(ctx, nil))
 	require.Equal(t, 8, c.ThreadCnt)
 	require.Equal(t, 2, c.MaxNodeCnt)
 	require.Equal(t, 124, c.DistSQLScanConcurrency)

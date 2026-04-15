@@ -29,7 +29,7 @@ func (impl *HashJoinImpl) CalcCost(_ float64, children ...memo.Implementation) f
 	hashJoin := impl.plan.(*physicalop.PhysicalHashJoin)
 	// The children here are only used to calculate the cost.
 	hashJoin.SetChildren(children[0].GetPlan(), children[1].GetPlan())
-	selfCost := hashJoin.GetCost(children[0].GetPlan().StatsCount(), children[1].GetPlan().StatsCount(), false, 0, nil)
+	selfCost := hashJoin.GetCost(children[0].GetPlan().StatsCount(), children[1].GetPlan().StatsCount(), false, 0)
 	impl.cost = selfCost + children[0].GetCost() + children[1].GetCost()
 	return impl.cost
 }

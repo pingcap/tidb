@@ -79,6 +79,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 			uniques[i],
 			openedEngine,
 			openedEngine.GetEngineUUID(),
+			bc.backend,
 			bc.memRoot,
 		)
 	}

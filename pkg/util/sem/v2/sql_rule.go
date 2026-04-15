@@ -18,7 +18,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -91,11 +92,11 @@ var ImportWithExternalIDRule SQLRule = func(stmt ast.StmtNode) bool {
 		if err != nil {
 			return false
 		}
-		if storage.IsS3(u) {
+		if objstore.IsS3Like(u) {
 			values := u.Query()
 			for k := range values {
 				lowerK := strings.ToLower(k)
-				if lowerK == storage.S3ExternalID {
+				if lowerK == s3like.S3ExternalID {
 					return true
 				}
 			}
@@ -119,11 +120,15 @@ var SelectIntoFileRule SQLRule = func(stmt ast.StmtNode) bool {
 var ImportFromLocalRule SQLRule = func(stmt ast.StmtNode) bool {
 	switch stmt := stmt.(type) {
 	case *ast.ImportIntoStmt:
+		// Allow `IMPORT INTO ... FROM SELECT ...`, whose path is empty.
+		if stmt.Select != nil {
+			return false
+		}
 		u, err := url.Parse(stmt.Path)
 		if err != nil {
 			return false
 		}
-		return storage.IsLocal(u)
+		return objstore.IsLocal(u)
 	case *ast.LoadDataStmt:
 		if stmt.FileLocRef == ast.FileLocClient {
 			return false
@@ -134,7 +139,7 @@ var ImportFromLocalRule SQLRule = func(stmt ast.StmtNode) bool {
 			return false
 		}
 
-		return storage.IsLocal(u)
+		return objstore.IsLocal(u)
 	}
 
 	return false

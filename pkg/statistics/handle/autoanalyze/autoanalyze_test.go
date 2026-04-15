@@ -68,7 +68,7 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	statistics.AutoAnalyzeMinCnt = 0
@@ -91,7 +91,7 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	// Lock the table.
 	tk.MustExec("lock stats t")
 	is := dom.InfoSchema()
@@ -105,7 +105,7 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 
 	// Unlock the table.
 	tk.MustExec("unlock stats t")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	// Try again, it should analyze the table.
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
@@ -123,7 +123,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.DumpColStatsUsageToKV())
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	statistics.AutoAnalyzeMinCnt = 0
@@ -171,7 +171,7 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 
@@ -193,85 +193,6 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 	require.Eventually(t, func() bool {
 		return dom.StatsHandle().HandleAutoAnalyze()
 	}, 10*time.Second, 100*time.Millisecond)
-}
-
-func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, index idx(a))")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("set @@global.tidb_analyze_version = 1")
-	do := dom
-	statistics.AutoAnalyzeMinCnt = 0
-	defer func() {
-		statistics.AutoAnalyzeMinCnt = 1000
-	}()
-	h := do.StatsHandle()
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	is := do.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	// Auto analyze when global ver is 1.
-	h.HandleAutoAnalyze()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	statsTbl1 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	// Check that all the version of t's stats are 1.
-	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.Equal(t, int64(1), col.GetStatsVer())
-		return false
-	})
-	statsTbl1.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		require.Equal(t, int64(1), idx.GetStatsVer())
-		return false
-	})
-	require.Equal(t, 1, statsTbl1.StatsVer)
-	tk.MustExec("set @@global.tidb_analyze_version = 2")
-	tk.MustExec("insert into t values(1), (2), (3), (4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(context.Background(), is))
-	// Auto analyze t whose version is 1 after setting global ver to 2.
-	h.HandleAutoAnalyze()
-	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl1 = h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
-	// All of its statistics should still be version 1.
-	statsTbl1.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.Equal(t, int64(1), col.GetStatsVer())
-		return false
-	})
-	statsTbl1.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		require.Equal(t, int64(1), idx.GetStatsVer())
-		return false
-	})
-	require.Equal(t, 1, statsTbl1.StatsVer)
-	// Add a new table after the analyze version set to 2.
-	tk.MustExec("create table tt(a int, index idx(a))")
-	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	is = do.InfoSchema()
-	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tt"))
-	require.NoError(t, err)
-	require.NoError(t, h.Update(context.Background(), is))
-	h.HandleAutoAnalyze()
-	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
-	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
-	statsTbl2.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		require.Equal(t, int64(2), col.GetStatsVer())
-		return false
-	})
-	statsTbl2.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-		require.Equal(t, int64(2), idx.GetStatsVer())
-		return false
-	})
-	require.Equal(t, 2, statsTbl2.StatsVer)
-	tk.MustExec("set @@global.tidb_analyze_version = 1")
 }
 
 func TestTableAnalyzed(t *testing.T) {
@@ -369,7 +290,7 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
 	tk.MustExec("select * from t where a = 1 and b = 1 and c = '1'")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
@@ -407,7 +328,7 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
 	// test if it will be limited by the time range
@@ -443,7 +364,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze())

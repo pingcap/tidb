@@ -37,8 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -55,11 +53,15 @@ type LogicalJoin struct {
 	StraightJoin bool
 
 	// HintInfo stores the join algorithm hint information specified by client.
-	HintInfo            *utilhint.PlanHints
-	PreferJoinType      uint
-	PreferJoinOrder     bool
-	LeftPreferJoinType  uint
-	RightPreferJoinType uint
+	HintInfo *utilhint.PlanHints
+	// InternalHintInfo stores a synthesized LEADING preference used only by the
+	// order-aware reorder rule. It must not be treated as a user hint.
+	InternalHintInfo        *utilhint.PlanHints
+	PreferJoinType          uint
+	PreferJoinOrder         bool
+	InternalPreferJoinOrder bool
+	LeftPreferJoinType      uint
+	RightPreferJoinType     uint
 
 	EqualConditions []*expression.ScalarFunction `hash64-equals:"true" shallow-ref:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
@@ -93,12 +95,21 @@ type LogicalJoin struct {
 	// (*PlanBuilder).unfoldWildStar() handles the schema for such case.
 	FullSchema *expression.Schema
 	FullNames  types.NameSlice
+	// RedundantColsToOutputIdx maps a redundant column unique-id introduced by USING/NATURAL JOIN
+	// to the canonical visible output column index in Join.Schema()/OutputNames().
+	// It is built once during join construction and then treated as immutable.
+	RedundantColsToOutputIdx map[int64]int
 
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
 
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
 	allJoinLeaf []*expression.Schema
+
+	// FromDecorrelatedApply marks joins that come from decorrelating an Apply in the
+	// first logical round. It is only used to decide whether an equivalent same-order
+	// PhysicalIndexJoin candidate has already been generated.
+	FromDecorrelatedApply bool
 }
 
 // Init initializes LogicalJoin.
@@ -133,17 +144,17 @@ func (p *LogicalJoin) ExplainInfo() string {
 
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) {
-	for _, equalExpr := range p.EqualConditions {
-		ruleutil.ResolveExprAndReplace(equalExpr, replace)
+	for i, equalExpr := range p.EqualConditions {
+		p.EqualConditions[i] = ruleutil.ResolveExprAndReplace(equalExpr, replace).(*expression.ScalarFunction)
 	}
-	for _, leftExpr := range p.LeftConditions {
-		ruleutil.ResolveExprAndReplace(leftExpr, replace)
+	for i, leftExpr := range p.LeftConditions {
+		p.LeftConditions[i] = ruleutil.ResolveExprAndReplace(leftExpr, replace)
 	}
-	for _, rightExpr := range p.RightConditions {
-		ruleutil.ResolveExprAndReplace(rightExpr, replace)
+	for i, rightExpr := range p.RightConditions {
+		p.RightConditions[i] = ruleutil.ResolveExprAndReplace(rightExpr, replace)
 	}
-	for _, otherExpr := range p.OtherConditions {
-		ruleutil.ResolveExprAndReplace(otherExpr, replace)
+	for i, otherExpr := range p.OtherConditions {
+		p.OtherConditions[i] = ruleutil.ResolveExprAndReplace(otherExpr, replace)
 	}
 }
 
@@ -154,7 +165,27 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 // HashCode inherits the BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
-func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	switch p.JoinType {
+	case base.AntiLeftOuterSemiJoin, base.LeftOuterSemiJoin, base.AntiSemiJoin:
+		// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we can actually generate
+		// `col is not null` according to expressions in `OtherConditions` now, but we
+		// are putting column equal condition converted from `in (subq)` into
+		// `OtherConditions`(@sa https://github.com/pingcap/tidb/pull/9051), then it would
+		// cause wrong results, so we disable this optimization for outer semi joins now.
+	case base.SemiJoin, base.InnerJoin:
+		// It will be better to simplify OtherConditions through predicate pushdown for SemiJoin and InnerJoin,
+	default:
+		// Join ON conditions are not simplified through predicate pushdown.
+		// However, we still need to eliminate obvious logical constants in OtherConditions
+		// (e.g. "a = b OR 0") to avoid losing join keys.
+		p.OtherConditions = ruleutil.ApplyPredicateSimplification(
+			p.SCtx(),
+			p.OtherConditions,
+			false,
+			nil,
+		)
+	}
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -166,7 +197,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 			p.Children()[0].Schema(), p.Children()[1].Schema(), false, nil)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
-			AppendTableDualTraceStep(p, dual, predicates, opt)
 			return ret, dual, nil
 		}
 		// Handle where conditions
@@ -187,7 +217,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		predicates = p.outerJoinPropConst(predicates, p.isVaildConstantPropagationExpressionForRightOuterJoin)
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
-			AppendTableDualTraceStep(p, dual, predicates, opt)
 			return ret, dual, nil
 		}
 		// Handle where conditions
@@ -216,7 +245,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
-			AppendTableDualTraceStep(p, dual, tempCond, opt)
 			return ret, dual, nil
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
@@ -234,7 +262,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, predicates)
 		if dual != nil {
-			AppendTableDualTraceStep(p, dual, predicates, opt)
 			return ret, dual, nil
 		}
 		// `predicates` should only contain left conditions or constant filters.
@@ -256,16 +283,16 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	leftChild := children[0]
 	rightCond = constraint.DeleteTrueExprsBySchema(evalCtx, rightChild.Schema(), rightCond)
 	leftCond = constraint.DeleteTrueExprsBySchema(evalCtx, leftChild.Schema(), leftCond)
-	leftRet, lCh, err := leftChild.PredicatePushDown(leftCond, opt)
+	leftRet, lCh, err := leftChild.PredicatePushDown(leftCond)
 	if err != nil {
 		return nil, nil, err
 	}
-	rightRet, rCh, err := rightChild.PredicatePushDown(rightCond, opt)
+	rightRet, rCh, err := rightChild.PredicatePushDown(rightCond)
 	if err != nil {
 		return nil, nil, err
 	}
-	AddSelection(p, lCh, leftRet, 0, opt)
-	AddSelection(p, rCh, rightRet, 1, opt)
+	AddSelection(p, lCh, leftRet, 0)
+	AddSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
@@ -381,16 +408,16 @@ func specialNullRejectedCase1(ctx planctx.PlanContext, schema *expression.Schema
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
-func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	leftCols, rightCols := p.ExtractUsedCols(parentUsedCols)
 
 	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(leftCols, opt)
+	p.Children()[0], err = p.Children()[0].PruneColumns(leftCols)
 	if err != nil {
 		return nil, err
 	}
 
-	p.Children()[1], err = p.Children()[1].PruneColumns(rightCols, opt)
+	p.Children()[1], err = p.Children()[1].PruneColumns(rightCols)
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +427,7 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 		joinCol := p.Schema().Columns[len(p.Schema().Columns)-1]
 		parentUsedCols = append(parentUsedCols, joinCol)
 	}
-	p.InlineProjection(parentUsedCols, opt)
+	p.InlineProjection(parentUsedCols)
 	return p, nil
 }
 
@@ -421,8 +448,9 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		leftCols := make([]*expression.Column, 0, len(p.EqualConditions))
 		rightCols := make([]*expression.Column, 0, len(p.EqualConditions))
 		for _, expr := range p.EqualConditions {
-			leftCols = append(leftCols, expr.GetArgs()[0].(*expression.Column))
-			rightCols = append(rightCols, expr.GetArgs()[1].(*expression.Column))
+			l, r := expression.ExtractColumnsFromColOpCol(expr)
+			leftCols = append(leftCols, l)
+			rightCols = append(rightCols, r)
 		}
 		checkColumnsMatchPKOrUK := func(cols []*expression.Column, pkOrUK []expression.KeyInfo) bool {
 			if len(pkOrUK) == 0 {
@@ -469,7 +497,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 }
 
 // PushDownTopN implements the base.LogicalPlan.<5th> interface.
-func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
@@ -477,13 +505,13 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 	topnEliminated := false
 	switch p.JoinType {
 	case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
-		p.Children()[0], topnEliminated = p.pushDownTopNToChild(topN, 0, opt)
-		p.Children()[1] = p.Children()[1].PushDownTopN(nil, opt)
+		p.Children()[0], topnEliminated = p.pushDownTopNToChild(topN, 0)
+		p.Children()[1] = p.Children()[1].PushDownTopN(nil)
 	case base.RightOuterJoin:
-		p.Children()[1], topnEliminated = p.pushDownTopNToChild(topN, 1, opt)
-		p.Children()[0] = p.Children()[0].PushDownTopN(nil, opt)
+		p.Children()[1], topnEliminated = p.pushDownTopNToChild(topN, 1)
+		p.Children()[0] = p.Children()[0].PushDownTopN(nil)
 	default:
-		return p.BaseLogicalPlan.PushDownTopN(topN, opt)
+		return p.BaseLogicalPlan.PushDownTopN(topN)
 	}
 
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
@@ -498,7 +526,7 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 			// If the topN has no order by items, simply return the join itself.
 			return p.Self()
 		}
-		return topN.AttachChild(p.Self(), opt)
+		return topN.AttachChild(p.Self())
 	}
 	return p.Self()
 }
@@ -560,7 +588,7 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 */
 // Return nil if the root of plan has not been changed
 // Return new root if the root of plan is changed to selection
-func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentChildIdx int) (newRoot base.LogicalPlan) {
 	// step1: get constant predicate from left or right according to the JoinType
 	var getConstantPredicateFromLeft bool
 	var getConstantPredicateFromRight bool
@@ -587,7 +615,7 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 	}
 
 	// step2: add selection above of LogicalJoin
-	return addCandidateSelection(p, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
+	return addCandidateSelection(p, currentChildIdx, parentPlan, candidateConstantPredicates)
 }
 
 // PullUpConstantPredicates inherits the BaseLogicalPlan.LogicalPlan.<9th> implementation.
@@ -687,9 +715,10 @@ func (p *LogicalJoin) ExtractColGroups(colGroups [][]*expression.Column) [][]*ex
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	leftProperties := childrenProperties[0]
-	rightProperties := childrenProperties[1]
+func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	leftProperties := childrenProperties[0].Orders
+	rightProperties := childrenProperties[1].Orders
+	p.hasTiFlash = childrenProperties[0].HasTiFlash && childrenProperties[1].HasTiFlash
 	// TODO: We should consider properties propagation.
 	p.LeftProperties = leftProperties
 	p.RightProperties = rightProperties
@@ -708,16 +737,10 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 		resultProperties[leftLen+i] = make([]*expression.Column, len(cols))
 		copy(resultProperties[leftLen+i], cols)
 	}
-	return resultProperties
-}
-
-// ExhaustPhysicalPlans implements the base.LogicalPlan.<14th> interface.
-// it can generates hash join, index join and sort merge join.
-// Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
-// If the hint is not matched, it will get other candidates.
-// If the hint is not figured, we will pick all candidates.
-func (p *LogicalJoin) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalJoin(p, prop)
+	return &base.PossiblePropertiesInfo{
+		Orders:     resultProperties,
+		HasTiFlash: p.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements the base.LogicalPlan.<15th> interface.
@@ -838,6 +861,53 @@ func (p *LogicalJoin) IsNAAJ() bool {
 func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p
 	return join.Init(p.SCtx(), p.QueryBlockOffset())
+}
+
+// RegisterRedundantColumnMapping records a canonical mapping from a redundant USING/NATURAL JOIN
+// column to the visible output column.
+func (p *LogicalJoin) RegisterRedundantColumnMapping(redundantCol, visibleCol *expression.Column) {
+	if p == nil || redundantCol == nil || visibleCol == nil || p.Schema() == nil {
+		return
+	}
+	visibleIdx := p.Schema().ColumnIndex(visibleCol)
+	if visibleIdx < 0 {
+		return
+	}
+	if p.RedundantColsToOutputIdx == nil {
+		p.RedundantColsToOutputIdx = make(map[int64]int)
+	}
+	p.RedundantColsToOutputIdx[redundantCol.UniqueID] = visibleIdx
+}
+
+func redundantColumnRemapTypesMatch(redundantCol, visibleCol *expression.Column) bool {
+	if redundantCol == nil || visibleCol == nil || redundantCol.RetType == nil || visibleCol.RetType == nil {
+		return false
+	}
+	return redundantCol.RetType.Equal(visibleCol.RetType)
+}
+
+// ResolveRedundantColumn maps a redundant USING/NATURAL JOIN column to the canonical visible output.
+func (p *LogicalJoin) ResolveRedundantColumn(col *expression.Column) (*expression.Column, *types.FieldName) {
+	if p == nil || col == nil || len(p.RedundantColsToOutputIdx) == 0 || p.Schema() == nil {
+		return nil, nil
+	}
+	// Remapping redundant USING/NATURAL columns is only valid for inner join.
+	// For outer joins, preserving original side semantics is required.
+	if p.JoinType != base.InnerJoin {
+		return nil, nil
+	}
+	visibleIdx, ok := p.RedundantColsToOutputIdx[col.UniqueID]
+	if !ok {
+		return nil, nil
+	}
+	if visibleIdx < 0 || visibleIdx >= p.Schema().Len() || visibleIdx >= len(p.OutputNames()) {
+		return nil, nil
+	}
+	visibleCol := p.Schema().Columns[visibleIdx]
+	if !redundantColumnRemapTypesMatch(col, visibleCol) {
+		return nil, nil
+	}
+	return visibleCol, p.OutputNames()[visibleIdx]
 }
 
 // ExtractFDForSemiJoin extracts FD for semi join.
@@ -1012,8 +1082,9 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(equivFromApply [][]intset.FastIntSet
 // means whether there is a `NullEQ` of a join key.
 func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
 	for _, expr := range p.EqualConditions {
-		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
-		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		l, r := expression.ExtractColumnsFromColOpCol(expr)
+		leftKeys = append(leftKeys, l)
+		rightKeys = append(rightKeys, r)
 		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
 		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
 	}
@@ -1023,8 +1094,9 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 // GetNAJoinKeys extracts join keys(columns) from NAEqualCondition.
 func (p *LogicalJoin) GetNAJoinKeys() (leftKeys, rightKeys []*expression.Column) {
 	for _, expr := range p.NAEQConditions {
-		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
-		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		l, r := expression.ExtractColumnsFromColOpCol(expr)
+		leftKeys = append(leftKeys, l)
+		rightKeys = append(rightKeys, r)
 	}
 	return
 }
@@ -1035,8 +1107,9 @@ func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*proper
 	for _, expr := range p.EqualConditions {
 		_, coll := expr.CharsetAndCollation()
 		collateID := property.GetCollateIDByNameForPartition(coll)
-		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateID: collateID})
-		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateID: collateID})
+		l, r := expression.ExtractColumnsFromColOpCol(expr)
+		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: l, CollateID: collateID})
+		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: r, CollateID: collateID})
 	}
 	return
 }
@@ -1122,13 +1195,10 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
-
-		_, lhsIsCol := newCond.GetArgs()[0].(*expression.Column)
-		_, rhsIsCol := newCond.GetArgs()[1].(*expression.Column)
-
+		_, _, ok := expression.IsColOpCol(newCond)
 		// If the columns used in the new filter are not all expression.Column,
 		// we can not use it as join's equal condition.
-		if !(lhsIsCol && rhsIsCol) {
+		if !ok {
 			p.OtherConditions = append(p.OtherConditions, newCond)
 			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
@@ -1227,30 +1297,40 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	for _, naeqCond := range p.NAEQConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(naeqCond)...)
 	}
-	lChild := p.Children()[0]
-	rChild := p.Children()[1]
-	lSchema := lChild.Schema()
-	rSchema := rChild.Schema()
-	var lFullSchema, rFullSchema *expression.Schema
-	// parentused col = t2.a
-	// leftChild schema = t1.a(t2.a) + and others
-	// rightChild schema = t3 related + and others
-	if join, ok := lChild.(*LogicalJoin); ok {
-		lFullSchema = join.FullSchema
-	}
-	if join, ok := rChild.(*LogicalJoin); ok {
-		rFullSchema = join.FullSchema
-	}
 	for _, col := range parentUsedCols {
-		if (lSchema != nil && lSchema.Contains(col)) ||
-			(lFullSchema != nil && lFullSchema.Contains(col)) {
+		if planCanResolveUsedCol(p.Children()[0], col) {
 			leftCols = append(leftCols, col)
-		} else if (rSchema != nil && rSchema.Contains(col)) ||
-			(rFullSchema != nil && rFullSchema.Contains(col)) {
+		} else if planCanResolveUsedCol(p.Children()[1], col) {
 			rightCols = append(rightCols, col)
 		}
 	}
 	return leftCols, rightCols
+}
+
+// planCanResolveUsedCol walks through unary wrappers and join FullSchema so
+// pruning keeps redundant USING/NATURAL JOIN columns needed by upper filters.
+func planCanResolveUsedCol(p base.LogicalPlan, col *expression.Column) bool {
+	if p == nil || col == nil {
+		return false
+	}
+	if schema := p.Schema(); schema != nil && schema.Contains(col) {
+		return true
+	}
+	switch x := p.(type) {
+	case *LogicalSelection, *LogicalLimit, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+		return planCanResolveUsedCol(x.Children()[0], col)
+	case *LogicalApply:
+		for _, child := range x.Children() {
+			if planCanResolveUsedCol(child, col) {
+				return true
+			}
+		}
+	case *LogicalJoin:
+		if x.FullSchema != nil && x.FullSchema.Contains(col) {
+			return true
+		}
+	}
+	return false
 }
 
 // MergeSchema merge the schema of left and right child of join.
@@ -1261,16 +1341,16 @@ func (p *LogicalJoin) MergeSchema() {
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
 // When it's outer join and there's unique key information. The TopN can be totally pushed down to the join.
 // We just need reserve the ORDER informaion
-func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool) {
+func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) (base.LogicalPlan, bool) {
 	if topN == nil {
-		return p.Children()[idx].PushDownTopN(nil, opt), false
+		return p.Children()[idx].PushDownTopN(nil), false
 	}
 
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
 			if !p.Children()[idx].Schema().Contains(col) {
-				return p.Children()[idx].PushDownTopN(nil, opt), false
+				return p.Children()[idx].PushDownTopN(nil), false
 			}
 		}
 	}
@@ -1320,8 +1400,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}
-	appendTopNPushDownJoinTraceStep(p, newTopN, idx, opt)
-	return p.Children()[idx].PushDownTopN(newTopN, opt), selfEliminated
+	return p.Children()[idx].PushDownTopN(newTopN), selfEliminated
 }
 
 // Add a new selection between parent plan and current plan with candidate predicates
@@ -1343,7 +1422,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 // If the currentPlan at the top of query plan, return new root plan (selection)
 // Else return nil
 func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, parentPlan base.LogicalPlan,
-	candidatePredicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (newRoot base.LogicalPlan) {
+	candidatePredicates []expression.Expression) (newRoot base.LogicalPlan) {
 	// generate a new selection for candidatePredicates
 	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.QueryBlockOffset())
 	// add selection above of p
@@ -1353,7 +1432,6 @@ func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, pa
 		parentPlan.SetChild(currentChildIdx, selection)
 	}
 	selection.SetChildren(currentPlan)
-	AppendAddSelectionTraceStep(parentPlan, currentPlan, selection, opt)
 	if parentPlan == nil {
 		return newRoot
 	}
@@ -1459,9 +1537,8 @@ func (p *LogicalJoin) ExtractOnCondition(
 		}
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
-			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
-			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
-			if lOK && rOK {
+			arg0, arg1, ok := expression.IsColOpCol(binop)
+			if ok {
 				leftCol := leftSchema.RetrieveColumn(arg0)
 				rightCol := rightSchema.RetrieveColumn(arg1)
 				if leftCol == nil || rightCol == nil {
@@ -1495,6 +1572,15 @@ func (p *LogicalJoin) ExtractOnCondition(
 		// `columns` may be empty, if the condition is like `correlated_column op constant`, or `constant`,
 		// push this kind of constant condition down according to join type.
 		if len(columns) == 0 {
+			// The IsMutableEffectsExpr check is primarily designed to prevent mutable expressions
+			// like rand() > 0.5 from being pushed down; instead, such expressions should remain
+			// in other conditions.
+			// Checking len(columns) == 0 first is to let filter like rand() > tbl.col
+			// to be able pushdown as left or right condition
+			if expression.IsMutableEffectsExpr(expr) {
+				otherCond = append(otherCond, expr)
+				continue
+			}
 			leftCond, rightCond = p.pushDownConstExpr(expr, leftCond, rightCond, deriveLeft || deriveRight)
 			continue
 		}
@@ -1788,6 +1874,11 @@ func (p *LogicalJoin) updateEQCond() {
 			}
 			for i := range leftKeys {
 				lKey, rKey := leftKeys[i], rightKeys[i]
+				lCastCol, lCasted := extractCastSourceColumn(lKey)
+				rCastCol, rCasted := extractCastSourceColumn(rKey)
+				if lCasted && rCasted {
+					p.appendImplicitJoinKeyConversionWarning(lCastCol, rCastCol)
+				}
 				if lProj != nil {
 					lKey = lProj.AppendExpr(lKey)
 				}
@@ -1795,10 +1886,45 @@ func (p *LogicalJoin) updateEQCond() {
 					rKey = rProj.AppendExpr(rKey)
 				}
 				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+				eqSf := eqCond.(*expression.ScalarFunction)
+				if _, _, isColOpCol := expression.IsColOpCol(eqSf); !isColOpCol {
+					origLCol, lIsCol := lKey.(*expression.Column)
+					origRCol, rIsCol := rKey.(*expression.Column)
+					if lIsCol && rIsCol &&
+						(isCastWrappedJoinKey(eqSf.GetArgs()[0], origLCol) || isCastWrappedJoinKey(eqSf.GetArgs()[1], origRCol)) {
+						p.appendImplicitJoinKeyConversionWarning(origLCol, origRCol)
+					}
+					// Join reorder and several join implementations assume each EqualCondition
+					// is strictly `col = col`. However, NewFunctionInternal may inject implicit
+					// casts (for example tinyint = bit/bool from a view), turning one side into
+					// a scalar expression (e.g. cast(col)) instead of a plain column.
+					//
+					// To preserve optimizer behavior while keeping that invariant true, we
+					// materialize non-column sides via child projections and then rebuild
+					// the equality with the projection output columns.
+					if _, isCol := eqSf.GetArgs()[0].(*expression.Column); !isCol {
+						if lProj == nil {
+							lProj = p.getProj(0)
+						}
+						lKey = lProj.AppendExpr(eqSf.GetArgs()[0])
+					} else {
+						lKey = eqSf.GetArgs()[0]
+					}
+					if _, isCol := eqSf.GetArgs()[1].(*expression.Column); !isCol {
+						if rProj == nil {
+							rProj = p.getProj(1)
+						}
+						rKey = rProj.AppendExpr(eqSf.GetArgs()[1])
+					} else {
+						rKey = eqSf.GetArgs()[1]
+					}
+					eqCond = expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+					eqSf = eqCond.(*expression.ScalarFunction)
+				}
 				if isNA {
-					p.NAEQConditions = append(p.NAEQConditions, eqCond.(*expression.ScalarFunction))
+					p.NAEQConditions = append(p.NAEQConditions, eqSf)
 				} else {
-					p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
+					p.EqualConditions = append(p.EqualConditions, eqSf)
 				}
 			}
 		}
@@ -1833,6 +1959,40 @@ func (p *LogicalJoin) updateEQCond() {
 		// here is for cases like: select (a+1, b*3) not in (select a,b from t2) from t1.
 		adjustKeyForm(lNAKeys, rNAKeys, true)
 	}
+}
+
+func isCastWrappedJoinKey(expr expression.Expression, originalCol *expression.Column) bool {
+	castExpr, ok := expr.(*expression.ScalarFunction)
+	if !ok || castExpr.FuncName.L != ast.Cast {
+		return false
+	}
+	castArg, ok := castExpr.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return false
+	}
+	return castArg.EqualColumn(originalCol)
+}
+
+func extractCastSourceColumn(expr expression.Expression) (*expression.Column, bool) {
+	castExpr, ok := expr.(*expression.ScalarFunction)
+	if !ok || castExpr.FuncName.L != ast.Cast {
+		return nil, false
+	}
+	castArg, ok := castExpr.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return nil, false
+	}
+	return castArg, true
+}
+
+func (p *LogicalJoin) appendImplicitJoinKeyConversionWarning(leftCol, rightCol *expression.Column) {
+	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	warn := errors.NewNoStackErrorf(
+		"Implicit type or collation conversion on join keys (%s = %s) may make indexes unusable",
+		leftCol.StringWithCtx(evalCtx, errors.RedactLogDisable),
+		rightCol.StringWithCtx(evalCtx, errors.RedactLogDisable),
+	)
+	p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warn)
 }
 
 func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
@@ -1968,11 +2128,13 @@ func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
 	subAgg.SetSchema(expression.NewSchema(aggOutputCols...))
 	subAgg.BuildSelfKeyInfo(subAgg.Schema())
 	innerJoin := LogicalJoin{
-		JoinType:        base.InnerJoin,
-		HintInfo:        p.HintInfo,
-		PreferJoinType:  p.PreferJoinType,
-		PreferJoinOrder: p.PreferJoinOrder,
-		EqualConditions: make([]*expression.ScalarFunction, 0, len(p.EqualConditions)),
+		JoinType:                base.InnerJoin,
+		HintInfo:                p.HintInfo,
+		InternalHintInfo:        p.InternalHintInfo,
+		PreferJoinType:          p.PreferJoinType,
+		PreferJoinOrder:         p.PreferJoinOrder,
+		InternalPreferJoinOrder: p.InternalPreferJoinOrder,
+		EqualConditions:         make([]*expression.ScalarFunction, 0, len(p.EqualConditions)),
 	}.Init(p.SCtx(), p.QueryBlockOffset())
 	innerJoin.SetChildren(p.Children()[0], subAgg)
 	innerJoin.SetSchema(expression.MergeSchema(p.Children()[0].Schema().Clone(), subAgg.Schema().Clone()))
@@ -1983,50 +2145,6 @@ func (p *LogicalJoin) SemiJoinRewrite() (base.LogicalPlan, error) {
 	proj.SetChildren(innerJoin)
 	proj.SetSchema(p.Children()[0].Schema().Clone())
 	return proj, nil
-}
-
-func appendTopNPushDownJoinTraceStep(p *LogicalJoin, topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) {
-	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	action := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v is added and pushed into %v_%v's ",
-			topN.TP(), topN.ID(), p.TP(), p.ID()))
-		if idx == 0 {
-			buffer.WriteString("left ")
-		} else {
-			buffer.WriteString("right ")
-		}
-		buffer.WriteString("table")
-		return buffer.String()
-	}
-	reason := func() string {
-		buffer := bytes.NewBufferString(fmt.Sprintf("%v_%v's joinType is %v, and all ByItems[", p.TP(), p.ID(), p.JoinType.String()))
-		for i, item := range topN.ByItems {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(item.StringWithCtx(ectx, errors.RedactLogDisable))
-		}
-		buffer.WriteString("] contained in ")
-		if idx == 0 {
-			buffer.WriteString("left ")
-		} else {
-			buffer.WriteString("right ")
-		}
-		buffer.WriteString("table")
-		return buffer.String()
-	}
-	opt.AppendStepToCurrent(p.ID(), p.TP(), reason, action)
-}
-
-// AppendAddSelectionTraceStep appends a trace step for adding a selection operator.
-func AppendAddSelectionTraceStep(p base.LogicalPlan, child base.LogicalPlan, sel *LogicalSelection, opt *optimizetrace.LogicalOptimizeOp) {
-	reason := func() string {
-		return ""
-	}
-	action := func() string {
-		return fmt.Sprintf("add %v_%v to connect %v_%v and %v_%v", sel.TP(), sel.ID(), p.TP(), p.ID(), child.TP(), child.ID())
-	}
-	opt.AppendStepToCurrent(sel.ID(), sel.TP(), reason, action)
 }
 
 // containDifferentJoinTypes checks whether `PreferJoinType` contains different
@@ -2170,9 +2288,8 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
 	}
-	arg0, lOK := binop.GetArgs()[0].(*expression.Column)
-	arg1, rOK := binop.GetArgs()[1].(*expression.Column)
-	if !lOK || !rOK {
+	arg0, arg1, ok := expression.IsColOpCol(binop)
+	if !ok {
 		return nil
 	}
 	childCol := schema.RetrieveColumn(arg0)

@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -130,17 +130,17 @@ func (p *PointGetPlan) Schema() *expression.Schema {
 }
 
 // GetCost returns cost of the PointGetPlan.
-func (p *PointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	return utilfuncp.GetCost4PointGetPlan(p, opt)
+func (p *PointGetPlan) GetCost() float64 {
+	return utilfuncp.GetCost4PointGetPlan(p)
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PointGetPlan(p, taskType, option)
 }
 
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-func (p *PointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func (p *PointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PointGetPlan(p, taskType, option)
 }
 
@@ -284,9 +284,6 @@ func (p *PointGetPlan) SetAccessCols(cols []*expression.Column) {
 	p.accessCols = cols
 }
 
-// AppendChildCandidate implements PhysicalPlan interface.
-func (*PointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
-
 const emptyPointGetPlanSize = int64(unsafe.Sizeof(PointGetPlan{}))
 
 // MemoryUsage return the memory usage of PointGetPlan
@@ -346,7 +343,7 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 			tableID = pi.Definitions[*idx].ID
 		}
 	}
-	utilfuncp.LoadTableStats(ctx, p.TblInfo, tableID)
+	stats.LoadTableStats(ctx, p.TblInfo, tableID)
 }
 
 // PrunePartitions will check which partition to use
@@ -585,17 +582,17 @@ func (p *BatchPointGetPlan) SetAccessCols(cols []*expression.Column) {
 }
 
 // GetCost implements PhysicalPlan interface.
-func (p *BatchPointGetPlan) GetCost(opt *optimizetrace.PhysicalOptimizeOp) float64 {
-	return utilfuncp.GetCost4BatchPointGetPlan(p, opt)
+func (p *BatchPointGetPlan) GetCost() float64 {
+	return utilfuncp.GetCost4BatchPointGetPlan(p)
 }
 
 // GetPlanCostVer1 implements PhysicalPlan cost v1 for BatchPointGetPlan.
-func (p *BatchPointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *BatchPointGetPlan) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14BatchPointGetPlan(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements PhysicalPlan cost v2 for BatchPointGetPlan.
-func (p *BatchPointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func (p *BatchPointGetPlan) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24BatchPointGetPlan(p, taskType, option)
 }
 
@@ -714,9 +711,6 @@ func (p *BatchPointGetPlan) SetOutputNames(names types.NameSlice) {
 	p.SimpleSchemaProducer.SetOutputNames(names)
 }
 
-// AppendChildCandidate implements PhysicalPlan interface.
-func (*BatchPointGetPlan) AppendChildCandidate(_ *optimizetrace.PhysicalOptimizeOp) {}
-
 const emptyBatchPointGetPlanSize = int64(unsafe.Sizeof(BatchPointGetPlan{}))
 
 // MemoryUsage return the memory usage of BatchPointGetPlan
@@ -765,7 +759,7 @@ func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	// as a `BatchPointGet` can access multiple partitions, and we cannot distinguish how many rows come from each
 	// partitions in the existing statistics information, we treat all index usage through a `BatchPointGet` just
 	// like a normal global index.
-	utilfuncp.LoadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
+	stats.LoadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
 }
 
 func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr) bool {

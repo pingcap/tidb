@@ -61,12 +61,3 @@ func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, 
 	}, utilstats.FlagWrapTxn)
 	return
 }
-
-// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
-func (u *statsUsageImpl) CollectColumnsInExtendedStats(tableID int64) (columnIDs []int64, err error) {
-	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		columnIDs, err = predicatecolumn.CollectColumnsInExtendedStats(sctx, tableID)
-		return err
-	})
-	return
-}

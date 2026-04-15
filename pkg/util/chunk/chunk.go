@@ -476,7 +476,7 @@ func (c *Chunk) AppendPartialRowByColIdxs(colOff int, row Row, colIdxs []int) (w
 // appendCellByCell appends the cell with rowIdx of src into dst.
 func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 	dst.appendNullBitmap(!src.IsNull(rowIdx))
-	if src.isFixed() {
+	if src.IsFixed() {
 		elemLen := len(src.elemBuf)
 		offset := rowIdx * elemLen
 		dst.data = append(dst.data, src.data[offset:offset+elemLen]...)
@@ -490,7 +490,7 @@ func appendCellByCell(dst *Column, src *Column, rowIdx int) {
 
 // AppendCellFromRawData appends the cell from raw data
 func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset int) int {
-	if dst.isFixed() {
+	if dst.IsFixed() {
 		elemLen := len(dst.elemBuf)
 		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset), elemLen)...)
 		currentOffset += elemLen
@@ -510,7 +510,7 @@ func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset in
 func (c *Chunk) Append(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
 		dst := c.columns[colID]
-		if src.isFixed() {
+		if src.IsFixed() {
 			elemLen := len(src.elemBuf)
 			dst.data = append(dst.data, src.data[begin*elemLen:end*elemLen]...)
 		} else {
@@ -535,7 +535,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 func (c *Chunk) TruncateTo(numRows int) {
 	c.Reconstruct()
 	for _, col := range c.columns {
-		if col.isFixed() {
+		if col.IsFixed() {
 			elemLen := len(col.elemBuf)
 			col.data = col.data[:numRows*elemLen]
 		} else {

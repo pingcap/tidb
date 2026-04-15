@@ -15,13 +15,43 @@
 package ddl_test
 
 import (
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
 
+	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
+
+type mockEtcdBackend struct {
+	kv.Storage
+	pdAddrs []string
+}
+
+func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
+
+func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
 
 func TestDDLStatementsBackFill(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -52,4 +82,217 @@ func TestDDLStatementsBackFill(t *testing.T) {
 		tk.MustExec(tc.ddlSQL)
 		require.Equal(t, tc.expectedNeedReorg, needReorg, tc)
 	}
+}
+
+func TestPartialIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	// test validate column exists in create table
+	tk.MustExec("create table t (a int, b int, key(b) where a = 1);")
+	tk.MustGetDBError("create table t1 (a int, b int, key(b) where c = 1);",
+		dbterror.ErrUnsupportedAddPartialIndex)
+	tk.MustExec("drop table t;")
+
+	// test primary key is not allowed in partial index
+	tk.MustExec("create table t (a int, b int, key(b) where a = 1);")
+	tk.MustGetDBError("create table t2 (a int, b int, primary key(b) where a = 1);",
+		dbterror.ErrUnsupportedAddPartialIndex)
+	tk.MustExec("drop table t;")
+
+	checkColumnTypes := func(columnTypes []string, literals []string, shouldAllowed bool) {
+		for _, columnType := range columnTypes {
+			for _, literal := range literals {
+				tk.MustExec("drop table if exists t;")
+				sql := fmt.Sprintf("create table t (a %s, b int, key(b) where a = %s);", columnType, literal)
+				if shouldAllowed {
+					tk.MustExec(sql)
+					tk.MustExec("drop table t;")
+				} else {
+					tk.MustGetDBError(sql, dbterror.ErrUnsupportedAddPartialIndex)
+				}
+			}
+		}
+	}
+
+	// test create table type validation
+	differentTypeLiterals := [][]string{
+		{"1", "true", "1998"}, // int
+		{"'1'"},               // string with default collate
+		{"1.0"},               // float
+		{"b'101010'", "0x1234567890abcdef", "0b10"}, // binary literal
+		{"null"}, // null
+	}
+	differentColumnTypes := [][]string{
+		{"int", "bigint", "tinyint", "smallint", "year"},
+		{"char(25)", "varchar(123)", "text", "char(25) collate utf8mb4_general_ci", "char(25) collate utf8mb4_bin"},
+		{"float", "double"},
+		{"binary(25) collate binary", "varbinary(123)", "blob", "char(25) collate binary"},
+		{},
+	}
+	for i, columnTypes := range differentColumnTypes {
+		for j, literals := range differentTypeLiterals {
+			checkColumnTypes(columnTypes, literals, i == j)
+		}
+	}
+
+	// test comparing between time column and string constant is allowed.
+	timeColumnTypes := []string{"timestamp", "datetime", "date", "time"}
+	allowedLiterals := []string{"'2025-07-28 12:34:56'", "'2025-07-28'", "'12:34:56'"}
+	notAllowedLiterals := []string{"1", "1.0", "true", "null"}
+	checkColumnTypes(timeColumnTypes, allowedLiterals, true)
+	checkColumnTypes(timeColumnTypes, notAllowedLiterals, false)
+
+	// test comparing between enum/set column and int/string constant is allowed.
+	enumSetColumnTypes := []string{"enum('a', 'b', 'c')", "set('a', 'b', 'c')"}
+	allowedLiterals = []string{"1", "'1'", "'a'"}
+	notAllowedLiterals = []string{"1.0", "null"}
+	checkColumnTypes(enumSetColumnTypes, allowedLiterals, true)
+	checkColumnTypes(enumSetColumnTypes, notAllowedLiterals, false)
+
+	// test alter table type validation
+	for i, literals := range differentTypeLiterals {
+		for _, literal := range literals {
+			for j, columnTypes := range differentColumnTypes {
+				tk.MustExec("drop table if exists t;")
+				for _, columnType := range columnTypes {
+					sql := fmt.Sprintf("create table t (a %s, b int, key idx_b(b) where a = %s);", columnType, literal)
+					if i == j {
+						tk.MustExec(sql)
+						tk.MustExec("drop table t;")
+					} else {
+						tk.MustGetDBError(sql, dbterror.ErrUnsupportedAddPartialIndex)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestDropTableAdminCheckTableFastCheckTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, key(b) where a = 1);")
+
+	dom := domain.GetDomain(tk.Session())
+	require.NotNil(t, dom)
+	pool := dom.SysSessionPool()
+
+	seOn, err := pool.Get()
+	require.NoError(t, err)
+	seOff, err := pool.Get()
+	require.NoError(t, err)
+
+	seOffCtx := seOff.(sessionctx.Context)
+	require.NoError(t, seOffCtx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.Off))
+
+	pool.Put(seOn)
+	pool.Put(seOff)
+
+	oldCheckTableBeforeDrop := config.CheckTableBeforeDrop
+	config.CheckTableBeforeDrop = true
+	defer func() {
+		config.CheckTableBeforeDrop = oldCheckTableBeforeDrop
+	}()
+	tk.MustExec("drop table t;")
+}
+
+func TestMaintainAffectColumns(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t (col2 int, key(col2) where col2 > 0);")
+	// Now, the offset of col2 is 0
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 0, tbl.Meta().Indices[0].AffectColumn[0].Offset)
+
+	tk.MustExec("alter table t add column col1 int first;")
+	// Now, the offset of col2 should be 1
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 1, tbl.Meta().Indices[0].AffectColumn[0].Offset)
+
+	tk.MustExec("alter table t add column col3 int after col1;")
+	// Now, the offset of col2 should be 2
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 2, tbl.Meta().Indices[0].AffectColumn[0].Offset)
+
+	tk.MustExec("alter table t drop column col1;")
+	// Now, the offset of col2 should be 1
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Equal(t, 1, tbl.Meta().Indices[0].AffectColumn[0].Offset)
+}
+
+func TestJobVersionAndGlobalIndexV1SupportForNextGen(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("nextgen only")
+	}
+	integration.BeforeTestExternal(t)
+
+	originJobVer := model.GetJobVerInUse()
+	originGlobalIdxV1 := model.GetGlobalIndexV1Supported()
+	t.Cleanup(func() {
+		model.SetJobVerInUse(originJobVer)
+		model.SetGlobalIndexV1Supported(originGlobalIdxV1)
+	})
+	require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+	require.True(t, model.GetGlobalIndexV1Supported())
+
+	serverInfos := map[string]*serverinfo.ServerInfo{
+		"node0": {
+			StaticInfo: serverinfo.StaticInfo{
+				VersionInfo: serverinfo.VersionInfo{Version: "8.0.11-TiDB-CLOUD.202510.1"},
+			},
+		},
+	}
+	bytes, err := json.Marshal(serverInfos)
+	require.NoError(t, err)
+	testfailpoint.Enable(t,
+		"github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo",
+		fmt.Sprintf("return(`%s`)", string(bytes)),
+	)
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	mockStore := &mockEtcdBackend{
+		Storage: store,
+		pdAddrs: []string{cluster.Members[0].GRPCURL()},
+	}
+	storeTypeBak := config.GetGlobalConfig().Store
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	t.Cleanup(func() {
+		config.GetGlobalConfig().Store = storeTypeBak
+		ddl.CloseOwnerManager(mockStore)
+	})
+	require.NoError(t, ddl.StartOwnerManager(context.Background(), mockStore))
+
+	newDDL, _ := ddl.NewDDL(context.Background(),
+		ddl.WithStore(mockStore),
+		ddl.WithInfoCache(dom.InfoCache()),
+		ddl.WithLease(testLease),
+		ddl.WithSchemaLoader(dom),
+		ddl.WithEtcdClient(cluster.RandClient()),
+	)
+	err = newDDL.Start(ddl.Normal, pools.NewResourcePool(func() (pools.Resource, error) {
+		session := testkit.NewTestKit(t, mockStore).Session()
+		session.GetSessionVars().CommonGlobalLoaded = true
+		return session, nil
+	}, 1, 1, time.Second))
+	require.NoError(t, err)
+	require.NoError(t, newDDL.Stop())
+
+	// The only meaningful assert in this test. It makes sure that the JobVersion is 2
+	// and the global index v1 is always supported for next-gen cluster.
+	require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
+	require.True(t, model.GetGlobalIndexV1Supported())
 }

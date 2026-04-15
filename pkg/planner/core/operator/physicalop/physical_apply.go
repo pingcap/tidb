@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -33,7 +32,14 @@ type PhysicalApply struct {
 
 	CanUseCache bool
 	Concurrency int
+	// KeepOrder indicates that parallel apply must emit results in the same
+	// order as the outer child produces rows.  When true the executor uses a
+	// reorder buffer so that inner workers can run concurrently while the
+	// consumer still sees rows in outer-order.
+	KeepOrder   bool
 	OuterSchema []*expression.CorrelatedColumn
+	// NoDecorrelate is used to flag that an Apply operator remained undecorrelated due to the no_decorrelate hint exists. This allows the EXPLAIN EXPLORE feature to know exactly when to suggest adding a no_decorrelate hint when reverse-generating the sql recommended hints from the physical plan tree."
+	NoDecorrelate bool
 }
 
 // Init initializes PhysicalApply.
@@ -66,6 +72,8 @@ func (p *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error
 	cloned.PhysicalHashJoin = *hj
 	cloned.CanUseCache = p.CanUseCache
 	cloned.Concurrency = p.Concurrency
+	cloned.KeepOrder = p.KeepOrder
+	cloned.NoDecorrelate = p.NoDecorrelate
 	for _, col := range p.OuterSchema {
 		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
 	}
@@ -87,7 +95,7 @@ func (p *PhysicalApply) GetCost(lCount, rCount, lCost, rCost float64) float64 {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalApply) GetPlanCostVer1(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption) (float64, error) {
+	option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalApply(p, taskType, option)
 }
 
@@ -95,7 +103,7 @@ func (p *PhysicalApply) GetPlanCostVer1(taskType property.TaskType,
 // plan-cost = build-child-cost + build-filter-cost + probe-cost + probe-filter-cost
 // probe-cost = probe-child-cost * build-rows
 func (p *PhysicalApply) GetPlanCostVer2(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalApply(p, taskType, option)
 }
 
@@ -105,7 +113,7 @@ func (p *PhysicalApply) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
+	sum = p.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
 		int64(cap(p.OuterSchema))*size.SizeOfPointer
 	for _, corrCol := range p.OuterSchema {
 		sum += corrCol.MemoryUsage()

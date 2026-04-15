@@ -85,6 +85,8 @@ const (
 	TypeDelete = "Delete"
 	// TypeIndexLookUp is the type of IndexLookUp.
 	TypeIndexLookUp = "IndexLookUp"
+	// TypeLocalIndexLookUp is the type of LocalIndexLookUp.
+	TypeLocalIndexLookUp = "LocalIndexLookUp"
 	// TypeTableReader is the type of TableReader.
 	TypeTableReader = "TableReader"
 	// TypeIndexReader is the type of IndexReader.
@@ -204,6 +206,7 @@ const (
 	typeExpandID              int = 58
 	typeImportIntoID          int = 59
 	TypeScalarSubQueryID      int = 60
+	typeLocalIndexLookUpID    int = 61
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -271,6 +274,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeDeleteID
 	case TypeIndexLookUp:
 		return typeIndexLookUpID
+	case TypeLocalIndexLookUp:
+		return typeLocalIndexLookUpID
 	case TypeTableReader:
 		return typeTableReaderID
 	case TypeIndexReader:
@@ -399,6 +404,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeDelete
 	case typeIndexLookUpID:
 		return TypeIndexLookUp
+	case typeLocalIndexLookUpID:
+		return TypeLocalIndexLookUp
 	case typeTableReaderID:
 		return TypeTableReader
 	case typeIndexReaderID:

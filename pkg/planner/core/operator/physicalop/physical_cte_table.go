@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -50,4 +51,22 @@ func (p *PhysicalCTETable) MemoryUsage() (sum int64) {
 	}
 
 	return p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt
+}
+
+func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, nil
+	}
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTETable](super)
+	if !prop.IsSortItemEmpty() {
+		return base.InvalidTask, nil
+	}
+
+	pcteTable := PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
+	pcteTable.SetSchema(p.Schema())
+	rt := &RootTask{}
+	rt.SetPlan(pcteTable)
+	t = rt
+	return t, nil
 }

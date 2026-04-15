@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -153,6 +155,8 @@ func (n *DDLNotifier) start() {
 
 	ctx := kv.WithInternalSourceType(n.ctx, kv.InternalDDLNotifier)
 	ctx = logutil.WithCategory(ctx, "ddl-notifier")
+	trace := traceevent.NewTrace()
+	ctx = tracing.WithFlightRecorder(ctx, trace)
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 	for {
@@ -169,6 +173,7 @@ func (n *DDLNotifier) start() {
 				)
 				logutil.Logger(ctx).Error("Error processing events", zap.Error(err))
 			}
+			trace.DiscardOrFlush(ctx)
 		}
 	}
 }
@@ -178,6 +183,8 @@ func (n *DDLNotifier) start() {
 var ProcessEventsBatchSize = 1024
 
 func (n *DDLNotifier) processEvents(ctx context.Context) error {
+	r := tracing.StartRegion(ctx, "DDLNotifier.processEvents")
+	defer r.End()
 	s, err := n.sysSessionPool.Get()
 	if err != nil {
 		return errors.Trace(err)

@@ -101,7 +101,7 @@ func (r *recordSet) Close() error {
 }
 
 func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong), Version1)
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong), Version2)
 	ctx := context.Background()
 	for {
 		req := records.NewChunk(nil)
@@ -172,7 +172,7 @@ func TestMergeHistogram(t *testing.T) {
 	for _, tt := range tests {
 		lh := mockHistogram(tt.leftLower, tt.leftNum)
 		rh := mockHistogram(tt.rightLower, tt.rightNum)
-		h, err := MergeHistograms(sc, lh, rh, bucketCount, Version1)
+		h, err := MergeHistograms(sc, lh, rh, bucketCount, Version2)
 		require.NoError(t, err)
 		require.Equal(t, tt.ndv, h.NDV)
 		require.Equal(t, tt.bucketNum, h.Len())
@@ -231,50 +231,60 @@ func SubTestColumnRange() func(*testing.T) {
 			HighVal:   []types.Datum{types.MaxValueDatum()},
 			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
-		count, err := GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		var countEst RowEstimate
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, false)
+		count := countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0] = types.MinNotNullDatum()
-		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 99900, int(count))
 		ran[0].LowVal[0] = types.NewIntDatum(1000)
 		ran[0].LowExclude = true
 		ran[0].HighVal[0] = types.NewIntDatum(2000)
 		ran[0].HighExclude = true
-		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 2500, int(count))
 		ran[0].LowExclude = false
 		ran[0].HighExclude = false
-		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 2500, int(count))
 		ran[0].LowVal[0] = ran[0].HighVal[0]
-		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100, int(count))
 
 		tbl.SetCol(0, col)
 		ran[0].LowVal[0] = types.Datum{}
 		ran[0].HighVal[0] = types.MaxValueDatum()
-		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0] = types.NewIntDatum(1000)
 		ran[0].LowExclude = true
 		ran[0].HighVal[0] = types.NewIntDatum(2000)
 		ran[0].HighExclude = true
-		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 9998, int(count))
 		ran[0].LowExclude = false
 		ran[0].HighExclude = false
-		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 10000, int(count))
 		ran[0].LowVal[0] = ran[0].HighVal[0]
-		count, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, false)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 	}
@@ -300,22 +310,27 @@ func SubTestIntColumnRanges() func(*testing.T) {
 			HighVal:   []types.Datum{types.NewIntDatum(math.MaxInt64)},
 			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
-		count, err := GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		var countEst RowEstimate
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count := countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0].SetInt64(1000)
 		ran[0].HighVal[0].SetInt64(2000)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1000, int(count))
 		ran[0].LowVal[0].SetInt64(1001)
 		ran[0].HighVal[0].SetInt64(1999)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 998, int(count))
 		ran[0].LowVal[0].SetInt64(1000)
 		ran[0].HighVal[0].SetInt64(1000)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 
@@ -324,49 +339,58 @@ func SubTestIntColumnRanges() func(*testing.T) {
 			HighVal:   []types.Datum{types.NewUintDatum(math.MaxUint64)},
 			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0].SetUint64(1000)
 		ran[0].HighVal[0].SetUint64(2000)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1000, int(count))
 		ran[0].LowVal[0].SetUint64(1001)
 		ran[0].HighVal[0].SetUint64(1999)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 998, int(count))
 		ran[0].LowVal[0].SetUint64(1000)
 		ran[0].HighVal[0].SetUint64(1000)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 
 		tbl.SetCol(0, col)
 		ran[0].LowVal[0].SetInt64(math.MinInt64)
 		ran[0].HighVal[0].SetInt64(math.MaxInt64)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0].SetInt64(1000)
 		ran[0].HighVal[0].SetInt64(2000)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1001, int(count))
 		ran[0].LowVal[0].SetInt64(1001)
 		ran[0].HighVal[0].SetInt64(1999)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 999, int(count))
 		ran[0].LowVal[0].SetInt64(1000)
 		ran[0].HighVal[0].SetInt64(1000)
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 
 		tbl.RealtimeCount *= 10
-		count, err = GetRowCountByIntColumnRanges(ctx, &tbl.HistColl, 0, ran)
+		countEst, err = GetRowCountByColumnRanges(ctx, &tbl.HistColl, 0, ran, true)
+		count = countEst.Est
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 	}
@@ -456,7 +480,7 @@ func checkRepeats(t *testing.T, hg *Histogram) {
 }
 
 func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, *CMSketch, error) {
-	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob), Version1)
+	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob), Version2)
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
 	req := records.NewChunk(nil)
@@ -526,7 +550,7 @@ func SubTestBuild() func(*testing.T) {
 		count = col.LessRowCount(nil, types.NewIntDatum(1))
 		require.Equal(t, 5, int(count))
 
-		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true, nil, false)
+		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true, nil)
 		require.NoError(t, err)
 		require.NotNil(t, topnv2.TopN)
 		// The most common one's occurrence is 9990, the second most common one's occurrence is 30.
@@ -605,7 +629,7 @@ func SubTestBuild() func(*testing.T) {
 
 		datum := types.Datum{}
 		datum.SetMysqlJSON(types.BinaryJSON{TypeCode: types.JSONTypeCodeLiteral})
-		item := &SampleItem{Value: datum}
+		item := &SampleItem{Value: &datum}
 		collector = &SampleCollector{
 			Count:     1,
 			NullCount: 0,

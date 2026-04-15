@@ -51,8 +51,8 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkUser.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
-		"TableReader_6 10000.00 root  data:TableFullScan_5",
-		"└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"TableReader_5 10000.00 root  data:TableFullScan_4",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 	))
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=1;")
 	check := func() {
@@ -75,13 +75,13 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, `TableReader_6 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0 data:TableFullScan_5 N/A N/A\n`+
-			`└─TableFullScan_5 10000\.00 0 cop\[tikv\] table:t1  keep order:false, stats:pseudo N/A N/A`,
+		require.Regexp(t, `TableReader(?:_\d+)? 10000\.00 0 root  time:0s, open:0s, close:0s, loops:0(?:, RU:\d+\.\d+)? data:TableFullScan(?:_\d+)? N/A N/A\n`+
+			`└─TableFullScan(?:_\d+)? 10000\.00 0 cop\[tikv\] table:t1 .* keep order:false, stats:pseudo N/A N/A`,
 			buf.String())
 	}
 	tkRoot.MustQuery("select * from t1;")
 	check()
-	tkRoot.MustQuery("explain analyze select * from t1;")
+	tkRoot.MustQuery("explain analyze format = 'brief' select * from t1;")
 	check()
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 	require.True(t, plannererrors.ErrAccessDenied.Equal(err))
@@ -161,8 +161,8 @@ func TestIssue11124(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	rs := tk.MustQuery("explain select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
-	rs2 := tk2.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
+	rs := tk.MustQuery("explain format = 'brief' select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
+	rs2 := tk2.MustQuery(fmt.Sprintf("explain format = 'brief' for connection %d", tkRootProcess.ID)).Rows()
 	for i := range rs {
 		require.Equal(t, rs2[i], rs[i])
 	}
@@ -265,7 +265,7 @@ func TestExplainDotForQuery(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk2.MustQuery("explain format=\"dot\" select 1").Check(testkit.Rows(
-		"\ndigraph Projection_3 {\nsubgraph cluster3{\nnode [style=filled, color=lightgrey]\ncolor=black\nlabel = \"root\"\n\"Projection_3\" -> \"TableDual_5\"\n}\n}\n",
+		"\ndigraph Projection_3 {\nsubgraph cluster3{\nnode [style=filled, color=lightgrey]\ncolor=black\nlabel = \"root\"\n\"Projection_3\" -> \"TableDual_4\"\n}\n}\n",
 	))
 	err := tk.ExecToErr(fmt.Sprintf("explain format=\"dot\" for connection %s", connID))
 	require.Error(t, err)
@@ -499,8 +499,8 @@ func TestIssue28259(t *testing.T) {
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
-	// Plan cache skipped due to OR simplification
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// Plan cache should not be skipped because the OR simplification has not been performed.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
 	ps = []*sessmgr.ProcessInfo{tkProcess}

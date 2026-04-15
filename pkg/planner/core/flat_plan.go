@@ -179,7 +179,7 @@ type operatorCtx struct {
 	reqType     physicalop.ReadReqType
 	indent      string
 	isLastChild bool
-	// IsINLProbeChild indicates whether this operator is in indexLookupReader or indexMergeReader inner side.
+	// IsINLProbeChild indicates whether this operator is in indexLookupReader / indexMergeReader / indexLookUp inner side.
 	isINLProbeChild bool
 }
 
@@ -274,6 +274,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		// inherit the isINLProbeChild from the upper.
 		isINLProbeChild: info.isINLProbeChild,
 	}
+	indexOfINLProbeChild := -1
 	// For physical operators, we just enumerate their children and collect their information.
 	// Note that some physical operators are special, and they are handled below this part.
 	if physPlan, ok := p.(base.PhysicalPlan); ok {
@@ -308,6 +309,10 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		case *physicalop.PhysicalIndexHashJoin:
 			label[plan.InnerChildIdx] = ProbeSide
 			label[1-plan.InnerChildIdx] = BuildSide
+		case *physicalop.PhysicalLocalIndexLookUp:
+			label[0] = BuildSide
+			label[1] = ProbeSide
+			indexOfINLProbeChild = 1
 		}
 
 		children := make([]base.PhysicalPlan, len(physPlan.Children()))
@@ -328,6 +333,7 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		for i := range children {
 			childCtx.label = label[i]
 			childCtx.isLastChild = i == len(children)-1
+			childCtx.isINLProbeChild = childCtx.isINLProbeChild || indexOfINLProbeChild == i
 			target, childIdx = f.flattenRecursively(children[i], childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
@@ -370,18 +376,21 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.isRoot = false
 		childCtx.reqType = physicalop.Cop
 		childCtx.storeType = kv.TiKV
-		for _, pchild := range plan.PartialPlansRaw {
+		hasProbe := plan.TablePlan != nil
+		for i, pchild := range plan.PartialPlansRaw {
 			childCtx.label = BuildSide
-			childCtx.isLastChild = false
+			childCtx.isLastChild = !hasProbe && i == len(plan.PartialPlansRaw)-1
 			target, childIdx = f.flattenRecursively(pchild, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-		childCtx.label = ProbeSide
-		childCtx.isLastChild = true
-		// set the index merge child signal.
-		childCtx.isINLProbeChild = true
-		target, childIdx = f.flattenRecursively(plan.TablePlan, childCtx, target)
-		childIdxs = append(childIdxs, childIdx)
+		if plan.TablePlan != nil {
+			childCtx.label = ProbeSide
+			childCtx.isLastChild = true
+			// set the index merge child signal.
+			childCtx.isINLProbeChild = true
+			target, childIdx = f.flattenRecursively(plan.TablePlan, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
+		}
 	case *physicalop.PhysicalShuffleReceiverStub:
 		childCtx.isRoot = true
 		childCtx.label = Empty

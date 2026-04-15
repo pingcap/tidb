@@ -36,3 +36,16 @@ func Int64sToStrings(ints []int64) []string {
 	}
 	return strs
 }
+
+// DeepClone uses Clone() to clone a slice.
+// The elements in the slice must implement func (T) Clone() T.
+func DeepClone[T interface{ Clone() T }](s []T) []T {
+	if s == nil {
+		return nil
+	}
+	cloned := make([]T, 0, len(s))
+	for _, item := range s {
+		cloned = append(cloned, item.Clone())
+	}
+	return cloned
+}

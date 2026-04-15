@@ -1836,7 +1836,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	p, _, err = physicalOptimize(p.(base.LogicalPlan))
 	return p.(base.PhysicalPlan), stmt, err
 }
 
@@ -1996,7 +1996,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
-			result: "PRIMARY_KEY,c_d_e,f_g",
+			result: "PRIMARY_KEY,c_d_e,g,f_g",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
@@ -2012,7 +2012,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "PRIMARY_KEY,b_c_global",
+			result: "PRIMARY_KEY,c_d_e,b_c_global",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
@@ -2137,7 +2137,7 @@ func TestUpdateEQCond(t *testing.T) {
 	}{
 		{
 			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
-			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#27)->Projection->Projection",
 		},
 	}
 	s := coretestsdk.CreatePlannerSuiteElems()
@@ -2233,11 +2233,11 @@ func TestResolvingCorrelatedAggregate(t *testing.T) {
 		},
 		{
 			sql:  "select (select sum(count(a))) from t",
-			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Aggr(sum(Column#13))->MaxOneRow}->Projection",
+			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Aggr(sum(Column#14))->MaxOneRow}->Projection",
 		},
 		{
 			sql:  "select (select sum(count(n.a)) from t) from t n",
-			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Aggr(sum(Column#25))->MaxOneRow}->Projection",
+			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Aggr(sum(Column#27))->MaxOneRow}->Projection",
 		},
 		{
 			sql:  "select (select cnt from (select count(a) as cnt) n) from t",
@@ -2310,28 +2310,6 @@ func TestFastPathInvalidBatchPointGet(t *testing.T) {
 			require.Nil(t, plan)
 		}
 	}
-}
-
-func TestTraceFastPlan(t *testing.T) {
-	s := coretestsdk.CreatePlannerSuiteElems()
-	defer s.Close()
-	s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	defer func() {
-		s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = false
-	}()
-	s.GetCtx().GetSessionVars().SnapshotInfoschema = s.GetIS()
-	sql := "select * from t where a=1"
-	comment := fmt.Sprintf("sql:%s", sql)
-	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
-	require.NoError(t, err, comment)
-	nodeW := resolve.NewNodeW(stmt)
-	err = Preprocess(context.Background(), s.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()}))
-	require.NoError(t, err, comment)
-	plan := TryFastPlan(s.GetCtx(), nodeW)
-	require.NotNil(t, plan)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.FinalPlan)
-	require.True(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.IsFastPlan)
 }
 
 func TestWindowLogicalPlanAmbiguous(t *testing.T) {
@@ -2460,13 +2438,13 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
 	// for grouping set {}: gid = '00' = 0
 	require.Equal(t, expression.ExplainExpressionList(s.GetCtx().GetExprCtx().GetEvalCtx(), expand.LevelExprs[0], expand.Schema(), errors.RedactLogDisable),
-		"test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
+		"test.t.a, <nil>->Column#14, <nil>->Column#15, 0->gid")
 	// for grouping set {a}: gid = '01' = 1
 	require.Equal(t, expression.ExplainExpressionList(s.GetCtx().GetExprCtx().GetEvalCtx(), expand.LevelExprs[1], expand.Schema(), errors.RedactLogDisable),
-		"test.t.a, Column#13, <nil>->Column#14, 1->gid")
+		"test.t.a, Column#14, <nil>->Column#15, 1->gid")
 	// for grouping set {a,b}: gid = '11' = 3
 	require.Equal(t, expression.ExplainExpressionList(s.GetCtx().GetExprCtx().GetEvalCtx(), expand.LevelExprs[2], expand.Schema(), errors.RedactLogDisable),
-		"test.t.a, Column#13, Column#14, 3->gid")
+		"test.t.a, Column#14, Column#15, 3->gid")
 
 	require.Equal(t, expand.Schema().Len(), 4)
 	// source column a should be kept as real.

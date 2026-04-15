@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"go.uber.org/zap"
 )
 
@@ -118,9 +119,17 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if tbl != nil && tbl.Meta().Name.L != strings.ToLower(e.Level.TableName) {
 			return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 		}
+		if tbl != nil {
+			// Use the real table name from schema metadata.
+			// This makes `t` and `T` write to the same privilege row.
+			e.Level.TableName = tbl.Meta().Name.O
+		}
+		db, succ := schema.SchemaByName(dbNameStr)
+		if succ {
+			dbName = db.Name.O
+		}
 		if len(e.Level.DBName) > 0 {
 			// The database name should also match.
-			db, succ := schema.SchemaByName(dbNameStr)
 			if !succ || db.Name.L != dbNameStr.L {
 				return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 			}
@@ -425,8 +434,8 @@ func tlsOption2GlobalPriv(authTokenOrTLSOptions []*ast.AuthTokenOrTLSOption) (pr
 		case ast.Cipher:
 			gp.SSLType = privileges.SslTypeSpecified
 			if len(opt.Value) > 0 {
-				if _, ok := util.SupportCipher[opt.Value]; !ok {
-					err = errors.Errorf("Unsupported cipher suit: %s", opt.Value)
+				if _, ok := tlsutil.SupportCipher[opt.Value]; !ok {
+					err = errors.Errorf("Unsupported cipher suite: %s", opt.Value)
 					return
 				}
 				gp.SSLCipher = opt.Value

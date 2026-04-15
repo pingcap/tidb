@@ -21,10 +21,11 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/constants"
 )
 
 func newUnistore(opts *mockOptions) (kv.Storage, error) {
-	client, pdClient, cluster, err := unistore.New(opts.path, opts.pdAddrs, opts.keyspaceMeta)
+	client, pdClient, cluster, err := unistore.New(opts.path, opts.pdAddrs, opts.currentKeyspaceID, opts.clusterKeyspaces)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -34,7 +35,7 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 	}
 
 	var kvstore *tikv.KVStore
-	if opts.keyspaceMeta == nil {
+	if opts.currentKeyspaceID == constants.NullKeyspaceID {
 		kvstore, err = tikv.NewTestTiKVStore(
 			newClientRedirector(client), pdClient,
 			opts.clientHijacker, opts.pdClientHijacker,
@@ -47,7 +48,7 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 			pdClient, opts.clientHijacker,
 			opts.pdClientHijacker,
 			opts.txnLocalLatches,
-			*opts.keyspaceMeta,
+			*opts.currentKeyspaceMeta(),
 			opts.tikvOptions...,
 		)
 		if err != nil {
@@ -55,5 +56,5 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		}
 	}
 
-	return mockstorage.NewMockStorage(kvstore, opts.keyspaceMeta)
+	return mockstorage.NewMockStorage(kvstore, opts.currentKeyspaceMeta())
 }

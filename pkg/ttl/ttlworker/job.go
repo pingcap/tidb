@@ -16,7 +16,6 @@ package ttlworker
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -120,8 +119,7 @@ type ttlJob struct {
 
 	// status is the only field which should be protected by a mutex, as `Cancel` may be called at any time, and will
 	// change the status
-	statusMutex sync.Mutex
-	status      cache.JobStatus
+	status cache.JobStatus
 }
 
 // finish turns current job into last job, and update the error message and statistics summary

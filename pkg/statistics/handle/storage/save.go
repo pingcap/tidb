@@ -16,14 +16,13 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -127,6 +126,12 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 		return 0, err
 	}
 	version := txn.StartTS()
+	failpoint.Inject("saveAnalyzeResultToStorageErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(uint64(0), errors.New("mock save analyze result error"))
+		}
+	})
+	failpoint.InjectCall("saveAnalyzeResultToStorage")
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.
@@ -149,7 +154,10 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	// txn1: lockKeys on point get (index lock)
 	// txn2: lockKeys on batch point get (row lock) — waits for txn1 for index lock
 	// txn1: lockKeys on point get (row lock) — deadlock occurs here and it's not retryable
-	fakeID := int64(-1988)
+	// Pick a fake table ID to reduce lock contention on mysql.stats_meta.
+	// Under repeatable-read, even non-existent keys are locked.
+	// Using the negative table ID keeps it separate from real table IDs and from other fake IDs.
+	fakeID := -tableID
 	tableIDStrs := []string{strconv.FormatInt(fakeID, 10), strconv.FormatInt(tableID, 10)}
 	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id in (%?) for update", tableIDStrs)
 	if err != nil {
@@ -299,29 +307,6 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 			}
 		}
 	}
-	// 3. Save extended statistics.
-	extStats := results.ExtStats
-	if extStats == nil || len(extStats.Stats) == 0 {
-		return
-	}
-	var bytes []byte
-	var statsStr string
-	for name, item := range extStats.Stats {
-		bytes, err = json.Marshal(item.ColIDs)
-		if err != nil {
-			return 0, err
-		}
-		strColIDs := string(bytes)
-		switch item.Tp {
-		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
-			statsStr = fmt.Sprintf("%f", item.ScalarVals)
-		case ast.StatsTypeDependency:
-			statsStr = item.StringVals
-		}
-		if _, err = util.Exec(sctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, %?)", name, item.Tp, tableID, strColIDs, statsStr, version, statistics.ExtendedStatsAnalyzed); err != nil {
-			return 0, err
-		}
-	}
 	return
 }
 
@@ -431,20 +416,6 @@ func InsertColStats2KV(
 		return 0, errors.Trace(err)
 	}
 
-	// First of all, we update the version.
-	_, err = util.ExecWithCtx(
-		ctx, sctx,
-		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
-		startTS, startTS, physicalID,
-	)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
-	if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-		return startTS, nil
-	}
-
 	// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 	var rs sqlexec.RecordSet
 	rs, err = util.ExecWithCtx(
@@ -461,7 +432,12 @@ func InsertColStats2KV(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	// If no row is returned, it means the stats of this table does not exist.
+	if req.NumRows() == 0 {
+		return startTS, nil
+	}
 	count := req.GetRow(0).GetInt64(0)
+	hasStatsUpdate := false
 	for _, colInfo := range colInfos {
 		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 		if err != nil {
@@ -471,12 +447,15 @@ func InsertColStats2KV(
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
 			if _, err = util.ExecWithCtx(
 				ctx, sctx,
-				`insert into mysql.stats_histograms
+				`insert ignore into mysql.stats_histograms
 					(version, table_id, is_index, hist_id, distinct_count, null_count)
 				values (%?, %?, 0, %?, 0, %?)`,
 				startTS, physicalID, colInfo.ID, count,
 			); err != nil {
 				return 0, errors.Trace(err)
+			}
+			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+				hasStatsUpdate = true
 			}
 			continue
 		}
@@ -484,13 +463,19 @@ func InsertColStats2KV(
 		// If this stats doest not exist, we insert histogram meta first, the distinct_count will always be one.
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_histograms
+			`insert ignore into mysql.stats_histograms
 				(version, table_id, is_index, hist_id, distinct_count, tot_col_size)
 			values (%?, %?, 0, %?, 1, GREATEST(%?, 0))`,
 			startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count,
 		); err != nil {
 			return 0, errors.Trace(err)
 		}
+		// The histogram may have been created by ANALYZE TABLE ... ALL COLUMNS before the add-column DDL event is handled.
+		// Skip inserting the default-value bucket in that case.
+		if sctx.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			continue
+		}
+		hasStatsUpdate = true
 		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -498,13 +483,24 @@ func InsertColStats2KV(
 		// There must be only one bucket for this new column and the value is the default value.
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_buckets
+			`insert ignore into mysql.stats_buckets
 				(table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound)
 			values (%?, 0, %?, 0, %?, %?, %?, %?)`,
 			physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes(),
 		); err != nil {
 			return 0, errors.Trace(err)
 		}
+	}
+	if !hasStatsUpdate {
+		return startTS, nil
+	}
+	_, err = util.ExecWithCtx(
+		ctx, sctx,
+		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
+		startTS, startTS, physicalID,
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
 	return startTS, nil
 }

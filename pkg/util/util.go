@@ -19,11 +19,9 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
@@ -63,38 +62,6 @@ func StringsToInterfaces(strs []string) []any {
 	}
 
 	return is
-}
-
-// GetJSON fetches a page and parses it as JSON. The parsed result will be
-// stored into the `v`. The variable `v` must be a pointer to a type that can be
-// unmarshalled from JSON.
-//
-// Example:
-//
-//	client := &http.Client{}
-//	var resp struct { IP string }
-//	if err := util.GetJSON(client, "http://api.ipify.org/?format=json", &resp); err != nil {
-//		return errors.Trace(err)
-//	}
-//	fmt.Println(resp.IP)
-//
-// nolint:unused
-func GetJSON(client *http.Client, url string, v any) error {
-	resp, err := client.Get(url)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Errorf("get %s http status code != 200, message %s", url, string(body))
-	}
-
-	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
 }
 
 // Str2Int64Map converts a string to a map[int64]struct{}.
@@ -162,6 +129,21 @@ func GenLogFields(costTime time.Duration, info *sessmgr.ProcessInfo, needTruncat
 	if memTracker := info.MemTracker; memTracker != nil {
 		logFields = append(logFields, zap.String("mem_max", fmt.Sprintf("%d Bytes (%v)", memTracker.MaxConsumed(), memTracker.FormatBytes(memTracker.MaxConsumed()))))
 	}
+	if memTracker := info.StmtCtx.MemTracker; memTracker != nil {
+		s := ""
+		if dur := memTracker.MemArbitration(); dur > 0 {
+			s += fmt.Sprintf("cost_time %ss", strconv.FormatFloat(dur.Seconds(), 'f', -1, 64)) // mem quota arbitration time of current SQL
+		}
+		if ts, sz := memTracker.WaitArbitrate(); sz > 0 {
+			if s != "" {
+				s += ", "
+			}
+			s += fmt.Sprintf("wait_start %s, wait_bytes %d Bytes (%v)", ts.In(time.UTC).Format("2006-01-02 15:04:05.999 MST"), sz, memTracker.FormatBytes(sz)) // mem quota wait arbitrate time of current SQL
+		}
+		if s != "" {
+			logFields = append(logFields, zap.String("mem_arbitration", s))
+		}
+	}
 
 	const logSQLLen = 1024 * 8
 	var sql string
@@ -212,7 +194,7 @@ func FmtNonASCIIPrintableCharToHex(str string, maxBytesToShow int, displayDelete
 
 		b.WriteString(`\x`)
 		// turns non-printable-ASCII character into hex-string
-		b.WriteString(fmt.Sprintf("%02X", str[i]))
+		fmt.Fprintf(&b, "%02X", str[i])
 	}
 	return b.String()
 }
@@ -307,6 +289,7 @@ func IsInCorrectIdentifierName(name string) bool {
 
 // GetRecoverError gets the error from recover.
 func GetRecoverError(r any) error {
+	traceevent.DumpFlightRecorderToLogger("GetRecoverError")
 	if err, ok := r.(error); ok {
 		// Runtime panic also implements error interface.
 		// So do not forget to add stack info for it.

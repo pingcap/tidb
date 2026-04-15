@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -71,10 +72,14 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
 	}()
+	origStatsLease := vardef.GetStatsLease()
+	defer vardef.SetStatsLease(origStatsLease)
+	vardef.SetStatsLease(3 * time.Second)
 	newConfig := *origConfig
 	for _, lite := range []bool{false, true} {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats", "pause"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStatsLite", "pause"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest", "return(true)"))
 		newConfig.Performance.LiteInitStats = lite
 		config.StoreGlobalConfig(&newConfig)
 
@@ -104,7 +109,32 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 		}, 10*time.Second, 10*time.Millisecond, "min_start_ts is not blocked over 1s")
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStatsLite"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest"))
 		dom.Close()
 		require.NoError(t, store.Close())
 	}
+}
+
+func TestInitStatsSessionBlockGCCanBeCanceled(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest", "return(true)"))
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	infoSyncer := dom.InfoSyncer()
+	// This prevents the session from being created because we do not set a session manager.
+	infoSyncer.SetSessionManager(nil)
+	h := dom.StatsHandle()
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(1 * time.Second)
+		cancel()
+	}()
+	require.ErrorIs(t, h.InitStats(ctx, dom.InfoSchema()), context.Canceled)
+	require.ErrorIs(t, h.InitStatsLite(ctx), context.Canceled)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/syssession/ForceBlockGCInTest"))
+	dom.Close()
+	require.NoError(t, store.Close())
 }

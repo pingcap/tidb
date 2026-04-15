@@ -20,16 +20,16 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +37,9 @@ var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
 	ConcurrentReaderBufferSizePerConc = int(8 * size.MB)
+	// concurrentReaderTotalConcurrency is the maximum concurrent-read budget used by
+	// external readers within one task.
+	concurrentReaderTotalConcurrency = 256
 	// in readAllData, expected concurrency less than this value will not use
 	// concurrent reader.
 	readAllDataConcThreshold = uint64(4)
@@ -47,7 +50,7 @@ var (
 // data to improve throughput.
 type byteReader struct {
 	ctx           context.Context
-	storageReader storage.ExternalFileReader
+	storageReader objectio.Reader
 
 	// curBuf is either smallBuf or concurrentReader.largeBuf.
 	curBuf       [][]byte
@@ -57,7 +60,7 @@ type byteReader struct {
 
 	concurrentReader struct {
 		largeBufferPool *membuf.Buffer
-		store           storage.ExternalStorage
+		store           storeapi.Storage
 		filename        string
 		concurrency     int
 		bufSizePerConc  int
@@ -71,17 +74,16 @@ type byteReader struct {
 
 	logger               *zap.Logger
 	mergeSortReadCounter prometheus.Counter
-	requestCnt           atomic.Int64
 }
 
 func openStoreReaderAndSeek(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	name string,
 	initFileOffset uint64,
 	prefetchSize int,
-) (storage.ExternalFileReader, error) {
-	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{
+) (objectio.Reader, error) {
+	storageReader, err := store.Open(ctx, name, &storeapi.ReaderOption{
 		StartOffset:  aws.Int64(int64(initFileOffset)),
 		PrefetchSize: prefetchSize,
 	})
@@ -96,7 +98,7 @@ func openStoreReaderAndSeek(
 // concurrent reading mode.
 func newByteReader(
 	ctx context.Context,
-	storageReader storage.ExternalFileReader,
+	storageReader objectio.Reader,
 	bufSize int,
 ) (r *byteReader, err error) {
 	defer func() {
@@ -113,12 +115,11 @@ func newByteReader(
 	r.curBuf = [][]byte{r.smallBuf}
 	r.logger = logutil.Logger(r.ctx)
 	// When the storage reader is open, a GET request has been made.
-	r.requestCnt.Add(1)
 	return r, r.reload()
 }
 
 func (r *byteReader) enableConcurrentRead(
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	filename string,
 	concurrency int,
 	bufSizePerConc int,
@@ -193,7 +194,6 @@ func (r *byteReader) switchToConcurrentReader() error {
 		fileSize,
 		readerFields.concurrency,
 		readerFields.bufSizePerConc,
-		&r.requestCnt,
 	)
 	if err != nil {
 		return err

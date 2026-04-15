@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutils "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -30,12 +32,19 @@ import (
 	"go.uber.org/zap"
 )
 
+func setTiDBGlueDBFilter(newFilter func(dbName ast.CIStr) bool) func() {
+	oldFilter := tidbGlue.InfoSchemaFilter
+	tidbGlue.InfoSchemaFilter = gluetidb.NewInfoSchemaFilter(newFilter)
+	return func() { tidbGlue.InfoSchemaFilter = oldFilter }
+}
+
 var (
 	initOnce        = sync.Once{}
 	defaultContext  context.Context
 	hasLogFile      uint64
 	tidbGlue        = gluetidb.New()
 	envLogToTermKey = "BR_LOG_TO_TERM"
+	statusPreparers sync.Map
 
 	filterOutSysAndMemKeepAuthAndBind = []string{
 		"*.*",
@@ -92,8 +101,23 @@ const (
 	defaultHeapDumpDir = "/tmp/br_heap_dumps"
 )
 
+type statusServerRegistrar func(*http.ServeMux)
+type statusServerPreparer func(*cobra.Command) (statusServerRegistrar, error)
+
 func timestampLogFileName() string {
 	return filepath.Join(os.TempDir(), time.Now().Format("br.log.2006-01-02T15.04.05Z0700"))
+}
+
+func registerStatusServerPreparer(cmd *cobra.Command, preparer statusServerPreparer) {
+	statusPreparers.Store(cmd, preparer)
+}
+
+func prepareStatusServer(cmd *cobra.Command) (statusServerRegistrar, error) {
+	preparer, ok := statusPreparers.Load(cmd)
+	if !ok {
+		return nil, nil
+	}
+	return preparer.(statusServerPreparer)(cmd)
 }
 
 // DefineCommonFlags defines the common flags for all BR cmd operation.
@@ -125,11 +149,27 @@ func DefineCommonFlags(cmd *cobra.Command) {
 }
 
 func calculateMemoryLimit(memleft uint64) uint64 {
+	// Special case: if no memory left, return 0
+	if memleft == 0 {
+		return 0
+	}
+
 	// memreserved = f(memleft) = 512MB * memleft / (memleft + 4GB)
 	//  * f(0) = 0
 	//  * f(4GB) = 256MB
 	//  * f(+inf) -> 512MB
 	memreserved := halfGiB / (1 + fourGiB/(memleft|1))
+
+	// Prevent uint64 underflow when memreserved >= memleft
+	// This can happen when available memory is very low (< 256MB)
+	if memreserved >= memleft {
+		log.Warn("insufficient memory left for BR, capping to available",
+			zap.Uint64("memleft", memleft),
+			zap.Uint64("memreserved", memreserved))
+		// Return available memory instead of forcing a minimum
+		return memleft
+	}
+
 	// 0     memused          memtotal-memreserved  memtotal
 	// +--------+--------------------+----------------+
 	//          ^            br mem upper limit
@@ -274,6 +314,10 @@ func Init(cmd *cobra.Command) (err error) {
 
 // Initialize the metrics/pprof server.
 func startStatusServer(cmd *cobra.Command) error {
+	registrar, err := prepareStatusServer(cmd)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	statusAddr, err := cmd.Flags().GetString(FlagStatusAddr)
 	if err != nil {
 		return errors.Trace(err)
@@ -288,8 +332,14 @@ func startStatusServer(cmd *cobra.Command) error {
 		return errors.Trace(err)
 	}
 
+	mux := http.NewServeMux()
+	utils.RegisterDefaultStatusHandlers(mux)
+	if registrar != nil {
+		registrar(mux)
+	}
+
 	if statusAddr != "" {
-		return utils.StartStatusListener(statusAddr, tls)
+		return utils.StartStatusListenerWithHandler(statusAddr, tls, mux)
 	}
 	utils.StartDynamicPProfListener(tls)
 	return nil

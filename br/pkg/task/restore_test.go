@@ -82,7 +82,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 	ctx := context.Background()
-	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, nil))
+	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, nil, false))
 
 	for i := range tables {
 		if i == 0 || i > 2 {
@@ -94,7 +94,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		}
 	}
 
-	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, tiflashrec.New()))
+	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, tiflashrec.New(), false))
 	for i := range tables {
 		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}

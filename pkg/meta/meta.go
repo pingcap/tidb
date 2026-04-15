@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
+	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -51,8 +51,9 @@ import (
 )
 
 var (
-	globalIDMutex sync.Mutex
-	policyIDMutex sync.Mutex
+	globalIDMutex        sync.Mutex
+	policyIDMutex        sync.Mutex
+	maskingPolicyIDMutex sync.Mutex
 )
 
 // Meta structure:
@@ -77,25 +78,28 @@ var (
 var (
 	mMetaPrefix = []byte("m")
 	// the value inside it is actually the max current used ID, not next id.
-	mNextGlobalIDKey     = []byte("NextGlobalID")
-	mSchemaVersionKey    = []byte("SchemaVersionKey")
-	mDBs                 = []byte("DBs")
-	mDBPrefix            = "DB"
-	mTablePrefix         = "Table"
-	mSequencePrefix      = "SID"
-	mSeqCyclePrefix      = "SequenceCycle"
-	mTableIDPrefix       = "TID"
-	mIncIDPrefix         = "IID"
-	mRandomIDPrefix      = "TARID"
-	mBootstrapKey        = []byte("BootstrapKey")
-	mSchemaDiffPrefix    = "Diff"
-	mPolicies            = []byte("Policies")
-	mPolicyPrefix        = "Policy"
-	mResourceGroups      = []byte("ResourceGroups")
-	mResourceGroupPrefix = "RG"
-	mPolicyGlobalID      = []byte("PolicyGlobalID")
-	mPolicyMagicByte     = CurrentMagicByteVer
-	mDDLTableVersion     = []byte("DDLTableVersion")
+	mNextGlobalIDKey       = []byte("NextGlobalID")
+	mSchemaVersionKey      = []byte("SchemaVersionKey")
+	mDBs                   = []byte("DBs")
+	mDBPrefix              = "DB"
+	mTablePrefix           = "Table"
+	mSequencePrefix        = "SID"
+	mSeqCyclePrefix        = "SequenceCycle"
+	mTableIDPrefix         = "TID"
+	mIncIDPrefix           = "IID"
+	mRandomIDPrefix        = "TARID"
+	mBootstrapKey          = []byte("BootstrapKey")
+	mSchemaDiffPrefix      = "Diff"
+	mPolicies              = []byte("Policies")
+	mPolicyPrefix          = "Policy"
+	mMaskingPolicies       = []byte("MaskingPolicies")
+	mMaskingPolicyPrefix   = "MaskingPolicy"
+	mResourceGroups        = []byte("ResourceGroups")
+	mResourceGroupPrefix   = "RG"
+	mPolicyGlobalID        = []byte("PolicyGlobalID")
+	mMaskingPolicyGlobalID = []byte("MaskingPolicyGlobalID")
+	mPolicyMagicByte       = CurrentMagicByteVer
+	mDDLTableVersion       = []byte("DDLTableVersion")
 	// the name doesn't contain nextgen, as we might impl the same logic in classic
 	// kernel later, then we can reuse the same meta key.
 	mBootTableVersion = []byte("BootTableVersion")
@@ -150,6 +154,10 @@ var (
 	ErrPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyExists)
 	// ErrPolicyNotExists is the error for policy not exists.
 	ErrPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyNotExists)
+	// ErrMaskingPolicyExists is the error for masking policy exists.
+	ErrMaskingPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyExists)
+	// ErrMaskingPolicyNotExists is the error for masking policy not exists.
+	ErrMaskingPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyNotExists)
 	// ErrResourceGroupExists is the error for resource group exists.
 	ErrResourceGroupExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists is the error for resource group not exists.
@@ -290,6 +298,14 @@ func (m *Mutator) GenPlacementPolicyID() (int64, error) {
 	return m.txn.Inc(mPolicyGlobalID, 1)
 }
 
+// GenMaskingPolicyID generates next masking policy id globally.
+func (m *Mutator) GenMaskingPolicyID() (int64, error) {
+	maskingPolicyIDMutex.Lock()
+	defer maskingPolicyIDMutex.Unlock()
+
+	return m.txn.Inc(mMaskingPolicyGlobalID, 1)
+}
+
 // GetGlobalID gets current global id.
 func (m *Mutator) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
@@ -300,8 +316,17 @@ func (m *Mutator) GetPolicyID() (int64, error) {
 	return m.txn.GetInt64(mPolicyGlobalID)
 }
 
+// GetMaskingPolicyID gets current masking policy global id.
+func (m *Mutator) GetMaskingPolicyID() (int64, error) {
+	return m.txn.GetInt64(mMaskingPolicyGlobalID)
+}
+
 func (*Mutator) policyKey(policyID int64) []byte {
 	return fmt.Appendf(nil, "%s:%d", mPolicyPrefix, policyID)
+}
+
+func (*Mutator) maskingPolicyKey(policyID int64) []byte {
+	return fmt.Appendf(nil, "%s:%d", mMaskingPolicyPrefix, policyID)
 }
 
 func (*Mutator) resourceGroupKey(groupID int64) []byte {
@@ -549,6 +574,22 @@ func (m *Mutator) checkPolicyNotExists(policyKey []byte) error {
 	return errors.Trace(err)
 }
 
+func (m *Mutator) checkMaskingPolicyExists(policyID int64, policyKey []byte) error {
+	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
+	if err == nil && v == nil {
+		err = errors.WithMessage(ErrMaskingPolicyNotExists, fmt.Sprintf("masking policy id : %d doesn't exist", policyID))
+	}
+	return errors.Trace(err)
+}
+
+func (m *Mutator) checkMaskingPolicyNotExists(policyID int64, policyKey []byte) error {
+	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
+	if err == nil && v != nil {
+		err = errors.WithMessage(ErrMaskingPolicyExists, fmt.Sprintf("masking policy id : %d already exists", policyID))
+	}
+	return errors.Trace(err)
+}
+
 func (m *Mutator) checkResourceGroupNotExists(groupKey []byte) error {
 	v, err := m.txn.HGet(mResourceGroups, groupKey)
 	if err == nil && v != nil {
@@ -615,6 +656,24 @@ func (m *Mutator) CreatePolicy(policy *model.PolicyInfo) error {
 	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
+// CreateMaskingPolicy creates a masking policy.
+func (m *Mutator) CreateMaskingPolicy(policy *model.MaskingPolicyInfo) error {
+	if policy.ID == 0 {
+		return errors.New("masking policy.ID is invalid")
+	}
+
+	policyKey := m.maskingPolicyKey(policy.ID)
+	if err := m.checkMaskingPolicyNotExists(policy.ID, policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mMaskingPolicies, policyKey, attachMagicByte(data))
+}
+
 // UpdatePolicy updates a policy.
 func (m *Mutator) UpdatePolicy(policy *model.PolicyInfo) error {
 	policyKey := m.policyKey(policy.ID)
@@ -628,6 +687,21 @@ func (m *Mutator) UpdatePolicy(policy *model.PolicyInfo) error {
 		return errors.Trace(err)
 	}
 	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
+}
+
+// UpdateMaskingPolicy updates a masking policy.
+func (m *Mutator) UpdateMaskingPolicy(policy *model.MaskingPolicyInfo) error {
+	policyKey := m.maskingPolicyKey(policy.ID)
+
+	if err := m.checkMaskingPolicyExists(policy.ID, policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mMaskingPolicies, policyKey, attachMagicByte(data))
 }
 
 // AddResourceGroup creates a resource group.
@@ -968,6 +1042,18 @@ func (m *Mutator) DropPolicy(policyID int64) error {
 	return nil
 }
 
+// DropMaskingPolicy drops the specified masking policy.
+func (m *Mutator) DropMaskingPolicy(policyID int64) error {
+	policyKey := m.maskingPolicyKey(policyID)
+	if err := m.txn.HClear(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.HDel(mMaskingPolicies, policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // DropDatabase drops whole database.
 func (m *Mutator) DropDatabase(dbID int64) error {
 	// Check if db exists.
@@ -1045,6 +1131,19 @@ func (m *Mutator) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	return errors.Trace(err)
 }
 
+// IterDatabases iterates all the Databases at once, stop iterate when fn returns an error.
+func (m *Mutator) IterDatabases(fn func(info *model.DBInfo) error) error {
+	err := m.txn.HGetIter(mDBs, func(r structure.HashPair) error {
+		dbInfo := &model.DBInfo{}
+		err := json.Unmarshal(r.Value, dbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return fn(dbInfo)
+	})
+	return errors.Trace(err)
+}
+
 // IterTables iterates all the table at once, in order to avoid oom.
 func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) error {
 	dbKey := m.dbKey(dbID)
@@ -1101,10 +1200,8 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 	defer cancel()
 	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
 
-	if concurrency >= 15 {
-		concurrency = 15
-	}
-
+	// In case of too many goroutines or 0 concurrency. fetchAllTablesAndBuildAnalysisJobs may pass 0 concurrency on 1C machine.
+	concurrency = max(1, min(15, concurrency))
 	kvRanges := splitRangeInt64Max(int64(concurrency))
 
 	mu := sync.Mutex{}
@@ -1168,26 +1265,55 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
-var checkAttributesInOrder = []string{
-	`"fk_info":null`,
-	`"partition":null`,
-	`"Lock":null`,
-	`"tiflash_replica":null`,
-	`"temp_table_type":0`,
-	`"policy_ref_info":null`,
-	`"ttl_info":null`,
+// foreign key info contain null and [] two situations
+var checkForeignKeyAttributesNil = `"fk_info":null`
+var checkForeignKeyAttributesZero = `"fk_info":[]`
+
+// MustLoadFilterAttr defines filters for IsTableInfoMustLoad.
+// LoadIfMissing controls whether the absence or presence of the attribute
+// should trigger loading: when true, load if the attribute is missing;
+// when false, load if the attribute is present.
+type MustLoadFilterAttr struct {
+	Attr          string
+	LoadIfMissing bool
+}
+
+var checkAttributesInOrder = []MustLoadFilterAttr{
+	{Attr: `"partition":null`, LoadIfMissing: true},
+	{Attr: `"Lock":null`, LoadIfMissing: true},
+	{Attr: `"tiflash_replica":null`, LoadIfMissing: true},
+	{Attr: `"temp_table_type":0`, LoadIfMissing: true},
+	{Attr: `"policy_ref_info":null`, LoadIfMissing: true},
+	{Attr: `"ttl_info":null`, LoadIfMissing: true},
+	{Attr: `"affinity":{`, LoadIfMissing: false},
 }
 
 // isTableInfoMustLoad checks whether the table info needs to be loaded.
-// If the byte representation contains all the given attributes,
-// then it does not need to be loaded and this function will return false.
-// Otherwise, it will return true, indicating that the table info should be loaded.
+// If the byte representation follows filterAttrs, it returns true.
+// Otherwise, it returns false meaning that table is not needed to load.
 // Since attributes are checked in sequence, it's important to choose the order carefully.
-func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
+// isCheckForeignKeyAttrsInOrder check foreign key or not, since fk_info contains two null situations.
+func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filterAttrs ...MustLoadFilterAttr) bool {
 	idx := 0
-	for _, substr := range filterAttrs {
-		idx = bytes.Index(json, hack.Slice(substr))
+	if isCheckForeignKeyAttrsInOrder {
+		idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesNil))
 		if idx == -1 {
+			idx = bytes.Index(json, hack.Slice(checkForeignKeyAttributesZero))
+			if idx == -1 {
+				return true
+			}
+		}
+		json = json[idx:]
+	}
+	for _, filter := range filterAttrs {
+		idx = bytes.Index(json, hack.Slice(filter.Attr))
+		if idx == -1 {
+			if filter.LoadIfMissing {
+				return true
+			}
+			continue
+		}
+		if !filter.LoadIfMissing {
 			return true
 		}
 		json = json[idx:]
@@ -1198,7 +1324,7 @@ func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
 // IsTableInfoMustLoad checks whether the table info needs to be loaded.
 // Exported for testing.
 func IsTableInfoMustLoad(json []byte) bool {
-	return isTableInfoMustLoad(json, checkAttributesInOrder...)
+	return isTableInfoMustLoad(json, true, checkAttributesInOrder...)
 }
 
 // NameExtractRegexp is exported for testing.
@@ -1243,7 +1369,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if isTableInfoMustLoad(value, checkAttributesInOrder...) {
+		if isTableInfoMustLoad(value, true, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1259,8 +1385,13 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 }
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.
-// The filterAttrs are used to filter out any table that is not needed.
-func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) ([]*model.TableInfo, error) {
+// filterAttrs is a list of MustLoadFilterAttr rules that decide which tables must be loaded:
+//   - Each rule describes an attribute marker to search for in the serialized table info.
+//   - If a rule has LoadIfMissing == true, the table is loaded when that marker is NOT present
+//     (e.g. when a default/null marker is missing and the table should be treated specially).
+//   - If a rule has LoadIfMissing == false, the table is loaded only when that marker IS present
+//     (e.g. when a special attribute flag is explicitly set on the table).
+func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...MustLoadFilterAttr) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
@@ -1272,7 +1403,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 			return nil
 		}
 
-		if isTableInfoMustLoad(value, filterAttrs...) {
+		if isTableInfoMustLoad(value, false, filterAttrs...) {
 			tbInfo := &model.TableInfo{}
 			err := json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1445,6 +1576,29 @@ func (m *Mutator) ListPolicies() ([]*model.PolicyInfo, error) {
 	return policies, nil
 }
 
+// ListMaskingPolicies shows all masking policies.
+func (m *Mutator) ListMaskingPolicies() ([]*model.MaskingPolicyInfo, error) {
+	res, err := m.txn.HGetAll(mMaskingPolicies)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	policies := make([]*model.MaskingPolicyInfo, 0, len(res))
+	for _, r := range res {
+		value, err := detachMagicByte(r.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policy := &model.MaskingPolicyInfo{}
+		err = json.Unmarshal(value, policy)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policies = append(policies, policy)
+	}
+	return policies, nil
+}
+
 // GetPolicy gets the database value with ID.
 func (m *Mutator) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 	policyKey := m.policyKey(policyID)
@@ -1462,6 +1616,27 @@ func (m *Mutator) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 	}
 
 	policy := &model.PolicyInfo{}
+	err = json.Unmarshal(value, policy)
+	return policy, errors.Trace(err)
+}
+
+// GetMaskingPolicy gets the masking policy value with ID.
+func (m *Mutator) GetMaskingPolicy(policyID int64) (*model.MaskingPolicyInfo, error) {
+	policyKey := m.maskingPolicyKey(policyID)
+	value, err := m.txn.HGet(mMaskingPolicies, policyKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if value == nil {
+		return nil, errors.WithMessage(ErrMaskingPolicyNotExists, fmt.Sprintf("masking policy id : %d doesn't exist", policyID))
+	}
+
+	value, err = detachMagicByte(value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	policy := &model.MaskingPolicyInfo{}
 	err = json.Unmarshal(value, policy)
 	return policy, errors.Trace(err)
 }

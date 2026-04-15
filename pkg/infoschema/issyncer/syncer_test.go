@@ -22,7 +22,7 @@ import (
 )
 
 func TestSyncerSkipMDLCheck(t *testing.T) {
-	syncer := New(nil, nil, 0, nil, nil)
+	syncer := New(nil, nil, 0, nil, nil, nil)
 	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{}))
 	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}}))
 	require.False(t, syncer.skipMDLCheck(map[int64]struct{}{123: {}, 456: {}}))

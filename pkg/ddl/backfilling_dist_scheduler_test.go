@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -51,7 +51,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB", "return(1048576)"))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB")
 	/// 1. test partition table.
-	tk.MustExec("create table tp1(id int primary key, v int) PARTITION BY RANGE (id) (\n    " +
+	tk.MustExec("create table tp1(id int primary key, v int, key idx (id)) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
@@ -131,11 +131,17 @@ func TestCalculateRegionBatch(t *testing.T) {
 
 	// Test calculate in local storage.
 	batchCnt = ddl.CalculateRegionBatch(100, 8, true)
-	require.Equal(t, 13, batchCnt)
+	require.Equal(t, 100, batchCnt)
 	batchCnt = ddl.CalculateRegionBatch(2, 8, true)
-	require.Equal(t, 1, batchCnt)
+	require.Equal(t, 2, batchCnt)
 	batchCnt = ddl.CalculateRegionBatch(24, 8, true)
-	require.Equal(t, 3, batchCnt)
+	require.Equal(t, 24, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(1000, 8, true)
+	require.Equal(t, 334, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(1000, 2, true)
+	require.Equal(t, 500, batchCnt)
+	batchCnt = ddl.CalculateRegionBatch(200, 3, true)
+	require.Equal(t, 100, batchCnt)
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
@@ -285,6 +291,16 @@ func TestGetNextStep(t *testing.T) {
 		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
 		task.Step = nextStep
 	}
+
+	// 3. merge temp index
+	task = &proto.Task{
+		TaskBase: proto.TaskBase{Step: proto.StepInit},
+	}
+	ext = &ddl.LitBackfillScheduler{MergeTempIndex: true}
+	for _, nextStep := range []proto.Step{proto.BackfillStepMergeTempIndex, proto.StepDone} {
+		require.Equal(t, nextStep, ext.GetNextStep(&task.TaskBase))
+		task.Step = nextStep
+	}
 }
 
 func createAddIndexTask(t *testing.T,
@@ -319,13 +335,24 @@ func createAddIndexTask(t *testing.T,
 			ReorgMeta: &model.DDLReorgMeta{
 				SQLMode:     defaultSQLMode,
 				Location:    &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
-				ReorgTp:     model.ReorgTypeLitMerge,
+				ReorgTp:     model.ReorgTypeIngest,
 				IsDistReorg: true,
 			},
+			Version: model.JobVersion2,
 		},
 		EleIDs:     []int64{10},
 		EleTypeKey: meta.IndexElementKey,
 	}
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName: ast.NewCIStr("idx"),
+			Global:    false,
+		}},
+		OpType: model.OpAddIndex,
+	}
+	taskMeta.Job.FillArgs(args)
+	_, err = taskMeta.Job.Encode(true)
+	require.NoError(t, err)
 	if useGlobalSort {
 		var err error
 		opt := fakestorage.Options{
@@ -352,12 +379,12 @@ func createAddIndexTask(t *testing.T,
 
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{
-			ID:          time.Now().UnixMicro(),
-			Type:        taskType,
-			Step:        proto.StepInit,
-			State:       proto.TaskStatePending,
-			Concurrency: 16,
-			Keyspace:    ks,
+			ID:            time.Now().UnixMicro(),
+			Type:          taskType,
+			Step:          proto.StepInit,
+			State:         proto.TaskStatePending,
+			RequiredSlots: 16,
+			Keyspace:      ks,
 		},
 		Meta:            taskMetaBytes,
 		StartTime:       time.Now(),

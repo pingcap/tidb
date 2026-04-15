@@ -38,6 +38,15 @@ type PhysicalLimit struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	// Used for both execution (via UniqueID) and explain (via column name).
+	// If prefix index optimization is not used, this field is nil.
+	PrefixCol *expression.Column
+
+	// PrefixLen is the prefix index length (in bytes) for TiKV-side short-circuiting.
+	// If prefix index optimization is not used, this field is 0.
+	PrefixLen int
 }
 
 // ExhaustPhysicalPlans4LogicalLimit will be called by LogicalLimit in logicalOp pkg.
@@ -47,8 +56,9 @@ func ExhaustPhysicalPlans4LogicalLimit(p *logicalop.LogicalLimit, prop *property
 	}
 
 	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	sessionVars := p.SCtx().GetSessionVars()
 	// lift the recursive check of canPushToCop(tiFlash)
-	if p.SCtx().GetSessionVars().IsMPPAllowed() {
+	if util.ShouldCheckTiFlashPushDown(p.SCtx(), logicalop.GetHasTiFlash(p)) && sessionVars.IsMPPAllowed() {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
 	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
@@ -102,7 +112,10 @@ func (p *PhysicalLimit) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
+	sum = p.PhysicalSchemaProducer.MemoryUsage() +
+		size.SizeOfUint64*2 + // Offset, Count
+		size.SizeOfInt64 + // PrefixColID
+		size.SizeOfInt // PrefixLen
 	return
 }
 
@@ -112,15 +125,28 @@ func (p *PhysicalLimit) ExplainInfo() string {
 	redact := p.SCtx().GetSessionVars().EnableRedactLog
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
-		buffer = util.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
+		buffer = property.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)
 		fmt.Fprintf(buffer, ", ")
 	}
 	if redact == perrors.RedactLogDisable {
 		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:%v, prefix_len:%v",
+				prefixColName, p.PrefixLen)
+		}
 	} else if redact == perrors.RedactLogMarker {
 		fmt.Fprintf(buffer, "offset:‹%v›, count:‹%v›", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:‹%v›, prefix_len:‹%v›",
+				prefixColName, p.PrefixLen)
+		}
 	} else if redact == perrors.RedactLogEnable {
 		fmt.Fprintf(buffer, "offset:?, count:?")
+		if p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:?, prefix_len:?")
+		}
 	}
 	return buffer.String()
 }
@@ -134,6 +160,16 @@ func (p *PhysicalLimit) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (
 	executorID := ""
 	for _, item := range p.PartitionBy {
 		limitExec.PartitionBy = append(limitExec.PartitionBy, expression.SortByItemToPB(ctx.GetExprCtx().GetEvalCtx(), client, item.Col.Clone(), item.Desc))
+	}
+	// init partial order params
+	if p.PrefixCol != nil {
+		truncateKeyExprs := make([]expression.Expression, 0, 1)
+		truncateKeyExprs = append(truncateKeyExprs, p.PrefixCol)
+		truncateKeyExprsPB, err := expression.ExpressionsToPBList(ctx.GetExprCtx().GetEvalCtx(), truncateKeyExprs, client)
+		if err != nil {
+			return nil, err
+		}
+		limitExec.TruncateKeyExpr = truncateKeyExprsPB
 	}
 	if storeType == kv.TiFlash {
 		var err error
@@ -154,4 +190,26 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalLimit) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalLimit(p, tasks...)
+}
+
+func getPhysLimits(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	p, canPass := GetPropByOrderByItems(lt.ByItems)
+	if !canPass {
+		return nil
+	}
+	// note: don't change the task enumeration order here.
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType, property.RootTaskType}
+	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	for _, tp := range allTaskTypes {
+		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), SortItems: p.SortItems,
+			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
+		limit := PhysicalLimit{
+			Count:       lt.Count,
+			Offset:      lt.Offset,
+			PartitionBy: lt.GetPartitionBy(),
+		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		limit.SetSchema(lt.Schema())
+		ret = append(ret, limit)
+	}
+	return ret
 }

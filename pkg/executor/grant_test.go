@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -103,6 +104,23 @@ func TestGrantDBScope(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, exeerrors.ErrWrongUsage.GenWithStackByArgs("DB GRANT", "NON-DB PRIVILEGES")))
 }
 
+func TestGrantDBScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
+	oldNewCollationEnabled := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(oldNewCollationEnabled)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`DROP USER IF EXISTS 'testDBCase'@'%'`)
+	tk.MustExec(`CREATE USER 'testDBCase'@'%' IDENTIFIED BY '123'`)
+
+	tk.MustExec(`GRANT SELECT ON test.* TO 'testDBCase'@'%'`)
+	tk.MustExec(`GRANT SELECT ON TEST.* TO 'testDBCase'@'%'`)
+	tk.MustQuery(`SELECT DB, Select_priv FROM mysql.db WHERE User='testDBCase' AND Host='%' ORDER BY DB`).
+		Check(testkit.Rows("test Y"))
+}
+
 func TestGrantTableScope(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -144,6 +162,25 @@ func TestGrantTableScope(t *testing.T) {
 
 	tk.MustGetErrMsg("GRANT SUPER ON test2 TO 'testTbl1'@'localhost';",
 		"[executor:1144]Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used")
+}
+
+func TestGrantTableScopeCaseInsensitiveWithNewCollationDisabled(t *testing.T) {
+	oldNewCollationEnabled := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(oldNewCollationEnabled)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`DROP USER IF EXISTS 'testTblCase'@'%'`)
+	tk.MustExec(`CREATE USER 'testTblCase'@'%' IDENTIFIED BY '123'`)
+	tk.MustExec(`DROP TABLE IF EXISTS test.issue66867_grant`)
+	tk.MustExec(`CREATE TABLE test.issue66867_grant(c1 int)`)
+
+	tk.MustExec(`GRANT SELECT ON test.issue66867_grant TO 'testTblCase'@'%'`)
+	tk.MustExec(`GRANT SELECT ON test.ISSUE66867_GRANT TO 'testTblCase'@'%'`)
+	tk.MustQuery(`SELECT Table_name, Table_priv FROM mysql.tables_priv WHERE User='testTblCase' AND Host='%' AND DB='test' ORDER BY Table_name`).
+		Check(testkit.Rows("issue66867_grant Select"))
 }
 
 func TestGrantColumnScope(t *testing.T) {

@@ -29,10 +29,10 @@ import (
 
 // MockConfigProvider implements ConfigProvider for testing
 type MockConfigProvider struct {
-	ratio         float64
-	keepNum       int64
 	logDir        string
 	componentName string
+	ratio         float64
+	keepNum       int64
 }
 
 func (p *MockConfigProvider) GetMemoryUsageAlarmRatio() float64 {

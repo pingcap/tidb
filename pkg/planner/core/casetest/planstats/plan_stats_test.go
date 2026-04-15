@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,9 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -207,6 +211,70 @@ func TestPlanStatsLoad(t *testing.T) {
 			tableInfo := tbl.Meta()
 			testCase.check(p, tableInfo)
 		}
+
+		// issue:48257
+		checkTableFullScanPlan := func(rows [][]any, tableName string, expectPseudo bool) {
+			t.Helper()
+			require.Len(t, rows, 2)
+			rowToString := func(row []any) string {
+				parts := make([]string, 0, len(row))
+				for _, col := range row {
+					parts = append(parts, fmt.Sprint(col))
+				}
+				return strings.Join(parts, " ")
+			}
+			firstRow := rowToString(rows[0])
+			secondRow := rowToString(rows[1])
+			require.Contains(t, firstRow, "TableReader")
+			require.Contains(t, firstRow, "data:TableFullScan")
+			require.Contains(t, secondRow, "└─TableFullScan")
+			require.Contains(t, secondRow, "table:"+tableName)
+			if expectPseudo {
+				require.Contains(t, secondRow, "stats:pseudo")
+				return
+			}
+			require.NotContains(t, secondRow, "stats:pseudo")
+		}
+		h := dom.StatsHandle()
+		oriLeaseIssue := h.Lease()
+		h.SetLease(1)
+		defer func() {
+			h.SetLease(oriLeaseIssue)
+		}()
+
+		testKit.MustExec("create table t_issue48257(a int)")
+		testutil.HandleNextDDLEventWithTxn(h)
+		testKit.MustExec("insert into t_issue48257 value(1)")
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		testKit.MustExec("analyze table t_issue48257 all columns")
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t_issue48257").Rows(), "t_issue48257", false)
+		testKit.MustExec("insert into t_issue48257 value(1)")
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t_issue48257").Rows(), "t_issue48257", false)
+		testKit.MustExec("set tidb_opt_objective='determinate'")
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t_issue48257").Rows(), "t_issue48257", false)
+		testKit.MustExec("set tidb_opt_objective='moderate'")
+
+		// async load
+		testKit.MustExec("set tidb_stats_load_sync_wait = 0")
+		testKit.MustExec("create table t1_issue48257(a int)")
+		testutil.HandleNextDDLEventWithTxn(h)
+		testKit.MustExec("insert into t1_issue48257 value(1)")
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		testKit.MustExec("analyze table t1_issue48257 all columns")
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
+		testKit.MustExec("insert into t1_issue48257 value(1)")
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
+		testKit.MustExec("set tidb_opt_objective='determinate'")
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", true)
+		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		checkTableFullScanPlan(testKit.MustQuery("explain format = brief select * from t1_issue48257").Rows(), "t1_issue48257", false)
 	})
 }
 
@@ -337,6 +405,85 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	})
 }
 
+func TestPreparedPlanCacheInvalidatedAfterSyncLoadTimeoutFallback(t *testing.T) {
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
+	newConfig.Performance.StatsLoadQueueSize = 1
+	config.StoreGlobalConfig(newConfig)
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	originalPseudoTimeout := tk.MustQuery("select @@tidb_stats_load_pseudo_timeout").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_stats_load_pseudo_timeout = %v", originalPseudoTimeout))
+	}()
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+
+	tk.MustExec("set global tidb_stats_load_pseudo_timeout = 1")
+	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 1")
+	tk.MustExec("set @@session.tidb_plan_cache_invalidation_on_fresh_stats = 1")
+	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk.MustExec("analyze table t all columns")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	colBID := tblInfo.Columns[1].ID
+
+	statsTbl := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	colBStats := statsTbl.GetCol(colBID)
+	require.NotNil(t, colBStats)
+	require.True(t, colBStats.IsAllEvicted())
+
+	tk.MustExec("prepare st from 'select * from t where b > ?'")
+	tk.MustExec("set @p = 2")
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// Wait for the async histogram load item corresponding to column b to be marked
+	// as sync-load failed, which confirms the sync-load path timed out and fell back
+	// to async loading for this full-load stats item.
+	require.Eventually(t, func() bool {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			if item.TableID == tblInfo.ID && item.ID == colBID && !item.IsIndex && item.FullLoad && item.IsSyncLoadFailed {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 100*time.Millisecond)
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	require.Equal(t, 0, tk.Session().GetSessionPlanCache().Size())
+
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	statsTbl = dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	colBStats = statsTbl.GetCol(colBID)
+	require.NotNil(t, colBStats)
+	require.True(t, colBStats.IsFullLoad())
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	require.Equal(t, 1, tk.Session().GetSessionPlanCache().Size())
+
+	tk.MustExec("execute st using @p")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
 func TestPlanStatsStatusRecord(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -440,8 +587,91 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 	})
 }
 
-func TestPartialStatsInExplain(t *testing.T) {
+func TestStatsAnalyzedInDDL(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("set session tidb_stats_update_during_ddl = 1")
+		// test normal table
+		testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+
+		// insert data
+		for i := range 50 {
+			testKit.MustExec("insert into t values (?,?,?)", i, i, i)
+		}
+		var (
+			input  []string
+			output []struct {
+				Query  string
+				Result []string
+			}
+		)
+		testData := GetPlanStatsData()
+		testData.LoadTestCases(t, &input, &output, cascades, caller)
+		var (
+			lastIsSelect     bool
+			lastStatsVersion string
+			curStatsVersion  string
+		)
+		getHistID := func(name string, isIndex bool) (int64, int64) {
+			require.NoError(t, dom.Reload())
+			is := dom.InfoSchema()
+			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			require.NoError(t, err)
+			tableID := tbl.Meta().ID
+			histID := int64(0)
+			if isIndex {
+				histID = tbl.Meta().FindIndexByName(name).ID
+			} else {
+				histID = dbutil.FindColumnByName(tbl.Meta().Columns, name).ID
+			}
+			return tableID, histID
+		}
+		for i, sql := range input {
+			isSelect := strings.HasPrefix(sql, "select")
+			testdata.OnRecord(func() {
+				output[i].Query = input[i]
+				if isSelect {
+					// explain the query
+					output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format='brief' " + sql).Rows())
+				} else {
+					output[i].Result = nil
+				}
+			})
+			if isSelect {
+				// explain the query
+				testKit.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(output[i].Result...))
+				// assert the version
+				indexName := ""
+				if strings.Contains(sql, "idx_c") {
+					indexName = "idx_c"
+				} else {
+					indexName = "idx_bc"
+				}
+				tableID, histID := getHistID(indexName, true)
+				res := testKit.MustQuery("select version from mysql.stats_histograms where table_id = ? and hist_id = ? and is_index=?;", tableID, histID, true)
+				if len(res.Rows()) > 0 {
+					curStatsVersion = res.Rows()[0][0].(string)
+					// since the index is re-analyzed, so each usage of them use a new version.
+					if lastIsSelect {
+						require.Equal(t, lastStatsVersion, curStatsVersion)
+					} else {
+						// last is ddl
+						require.NotEqual(t, lastStatsVersion, curStatsVersion)
+					}
+					lastStatsVersion = curStatsVersion
+				}
+				lastIsSelect = true
+			} else {
+				// run the ddl anyway
+				testKit.MustExec(sql)
+				lastIsSelect = false
+			}
+		}
+	})
+}
+
+func TestPartialStatsInExplain(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, _, _ string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 		testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
@@ -466,21 +696,42 @@ func TestPartialStatsInExplain(t *testing.T) {
 		testKit.RequireNoError(dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 		testKit.MustQuery("explain select * from tp where a = 1")
 		testKit.MustExec("set @@tidb_stats_load_sync_wait = 0")
-		var (
-			input  []string
-			output []struct {
-				Query  string
-				Result []string
+		type explainCase struct {
+			sql         string
+			contains    []string
+			notContains []string
+		}
+		cases := []explainCase{
+			{
+				sql:      "explain format = brief select * from tp where b = 10",
+				contains: []string{"stats:partial["},
+			},
+			{
+				sql:         "explain format = brief select * from tp where b = 10",
+				notContains: []string{"stats:partial["},
+			},
+			{
+				sql:      "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
+				contains: []string{"stats:partial[", "allEvicted"},
+			},
+			{
+				sql:         "explain format = brief select * from t join tp where tp.a = 10 and t.b = tp.c",
+				notContains: []string{"stats:partial["},
+			},
+			{
+				sql:      "explain format = brief select * from t join tp partition (p0) join t2 where t.a < 10 and t.b = tp.c and t2.a > 10 and t2.a = tp.c",
+				contains: []string{"IndexHashJoin", "stats:partial[", "allEvicted"},
+			},
+		}
+		for _, c := range cases {
+			result := testdata.ConvertRowsToStrings(testKit.MustQuery(c.sql).Rows())
+			plan := strings.Join(result, "\n")
+			for _, expected := range c.contains {
+				require.Contains(t, plan, expected, "sql:%s", c.sql)
 			}
-		)
-		testData := GetPlanStatsData()
-		testData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, sql := range input {
-			testdata.OnRecord(func() {
-				output[i].Query = input[i]
-				output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(sql).Rows())
-			})
-			testKit.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+			for _, unexpected := range c.notContains {
+				require.NotContains(t, plan, unexpected, "sql:%s", c.sql)
+			}
 			require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 		}
 	})

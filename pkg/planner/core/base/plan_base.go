@@ -24,10 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -49,6 +48,9 @@ type Plan interface {
 
 	// Get the ID.
 	ID() int
+
+	// SetID sets the ID
+	SetID(id int)
 
 	// TP get the plan type.
 	TP(...bool) string
@@ -79,12 +81,16 @@ type Plan interface {
 	// the hint should be applied on the sub-query, whose query block is 2.
 	QueryBlockOffset() int
 
-	BuildPlanTrace() *tracing.PlanTrace
-
 	// CloneForPlanCache clones this Plan for Plan Cache.
 	// Compared with Clone, CloneForPlanCache doesn't deep clone every fields, fields with tag
 	// `plan-cache-shallow-clone:"true"` are allowed to be shallow cloned.
 	CloneForPlanCache(newCtx PlanContext) (cloned Plan, ok bool)
+
+	// SetNoncacheableReason marks plans containing this operator as non-cacheable.  The reason will be returned to the user.
+	SetNoncacheableReason(reason string)
+
+	// GetNoncacheableReason returns the reason the plan is non-cacheable.
+	GetNoncacheableReason() string
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -92,10 +98,10 @@ type PhysicalPlan interface {
 	Plan
 
 	// GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver1.
-	GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error)
+	GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error)
 
 	// GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost on model ver2.
-	GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
+	GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error)
 
 	// Attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -137,10 +143,6 @@ type PhysicalPlan interface {
 	// Clone clones this physical plan.
 	Clone(newCtx PlanContext) (PhysicalPlan, error)
 
-	// AppendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
-	// be tracked during findBestTask or enumeratePhysicalPlans4Task
-	AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp)
-
 	// MemoryUsage return the memory usage of PhysicalPlan
 	MemoryUsage() int64
 
@@ -165,27 +167,6 @@ type PhysicalPlan interface {
 	GetActualProbeCnt(*execdetails.RuntimeStatsColl) int64
 }
 
-// PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
-type PlanCounterTp int64
-
-// Dec minus PlanCounterTp value by x.
-func (c *PlanCounterTp) Dec(x int64) {
-	if *c <= 0 {
-		return
-	}
-	*c = max(PlanCounterTp(int64(*c)-x), 0)
-}
-
-// Empty indicates whether the PlanCounterTp is clear now.
-func (c *PlanCounterTp) Empty() bool {
-	return *c == 0
-}
-
-// IsForce indicates whether to force a plan.
-func (c *PlanCounterTp) IsForce() bool {
-	return *c != -1
-}
-
 // LogicalPlan is a tree of logical operators.
 // We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
 type LogicalPlan interface {
@@ -199,20 +180,10 @@ type LogicalPlan interface {
 	// PredicatePushDown pushes down the predicates in the where/on/having clauses as deeply as possible.
 	// It will accept a predicate that is an expression slice, and return the expressions that can't be pushed.
 	// Because it might change the root if the having clause exists, we need to return a plan that represents a new root.
-	PredicatePushDown([]expression.Expression, *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, LogicalPlan, error)
+	PredicatePushDown([]expression.Expression) ([]expression.Expression, LogicalPlan, error)
 
 	// PruneColumns prunes the unused columns, and return the new logical plan if changed, otherwise it's same.
-	PruneColumns([]*expression.Column, *optimizetrace.LogicalOptimizeOp) (LogicalPlan, error)
-
-	// FindBestTask converts the logical plan to the physical plan. It's a new interface.
-	// It is called recursively from the parent to the children to create the result physical plan.
-	// Some logical plans will convert the children to the physical plans in different ways, and return the one
-	// With the lowest cost and how many plans are found in this function.
-	// planCounter is a counter for planner to force a plan.
-	// If planCounter > 0, the clock_th plan generated in this function will be returned.
-	// If planCounter = 0, the plan generated in this function will not be considered.
-	// If planCounter = -1, then we will not force plan.
-	FindBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *optimizetrace.PhysicalOptimizeOp) (Task, int64, error)
+	PruneColumns([]*expression.Column) (LogicalPlan, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -222,16 +193,16 @@ type LogicalPlan interface {
 
 	// PushDownTopN will push down the topN or limit operator during logical optimization.
 	// interface definition should depend on concrete implementation type.
-	PushDownTopN(topN LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
+	PushDownTopN(topN LogicalPlan) LogicalPlan
 
 	// DeriveTopN derives an implicit TopN from a filter on row_number window function...
-	DeriveTopN(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
+	DeriveTopN() LogicalPlan
 
 	// PredicateSimplification consolidates different predcicates on a column and its equivalence classes.
-	PredicateSimplification(opt *optimizetrace.LogicalOptimizeOp) LogicalPlan
+	PredicateSimplification() LogicalPlan
 
 	// ConstantPropagation generate new constant predicate according to column equivalence relation
-	ConstantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *optimizetrace.LogicalOptimizeOp) (newRoot LogicalPlan)
+	ConstantPropagation(parentPlan LogicalPlan, currentChildIdx int) (newRoot LogicalPlan)
 
 	// PullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
 	PullUpConstantPredicates() []expression.Expression
@@ -253,7 +224,7 @@ type LogicalPlan interface {
 
 	// PreparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
-	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
+	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...*PossiblePropertiesInfo) *PossiblePropertiesInfo
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -310,23 +281,25 @@ type GroupExpression interface {
 	IsExplored(i uint) bool
 	// InputsLen returns the length of inputs.
 	InputsLen() int
+	// GetInputSchema returns the input logical's schema by index.
+	GetInputSchema(idx int) *expression.Schema
 }
 
-// GetGEAndLogical is get the possible group expression and logical operator from common super pointer.
-func GetGEAndLogical[T LogicalPlan](super LogicalPlan) (ge GroupExpression, proj T) {
+// GetGEAndLogicalOp is get the possible group expression and logical operator from common super pointer.
+func GetGEAndLogicalOp[T LogicalPlan](super LogicalPlan) (ge GroupExpression, logicalOp T) {
 	switch x := super.(type) {
 	case T:
 		// previously, wrapped BaseLogicalPlan serve as the common part, so we need to use self()
 		// to downcast as the every specific logical operator.
-		proj = x
+		logicalOp = x
 	case GroupExpression:
 		// currently, since GroupExpression wrap a LogicalPlan as its first field, we GE itself is
 		// naturally can be referred as a LogicalPlan, and we need to use GetWrappedLogicalPlan to
 		// get the specific logical operator inside.
 		ge = x
-		proj = ge.GetWrappedLogicalPlan().(T)
+		logicalOp = ge.GetWrappedLogicalPlan().(T)
 	}
-	return ge, proj
+	return ge, logicalOp
 }
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
@@ -348,6 +321,17 @@ const (
 	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
 	AntiLeftOuterSemiJoin
 )
+
+// NOTE: keep JoinType value unchanged, because they are used in conflict_detector.go
+func init() {
+	intest.Assert(InnerJoin == 0 &&
+		LeftOuterJoin == 1 &&
+		RightOuterJoin == 2 &&
+		SemiJoin == 3 &&
+		AntiSemiJoin == 4 &&
+		LeftOuterSemiJoin == 5 &&
+		AntiLeftOuterSemiJoin == 6)
+}
 
 // IsOuterJoin returns if this joiner is an outer joiner
 func (tp JoinType) IsOuterJoin() bool {
@@ -393,4 +377,64 @@ type PhysicalJoin interface {
 	PhysicalJoinImplement()
 	GetInnerChildIdx() int
 	GetJoinType() JoinType
+}
+
+// PossiblePropertiesInfo is used to store all possible order properties.
+type PossiblePropertiesInfo struct {
+	// all possible order properties
+	Orders [][]*expression.Column
+	// HasTiFlash is a runtime pruning signal and is intentionally excluded from hash/equals.
+	HasTiFlash bool
+}
+
+// Hash64 implements the HashEquals interface.
+func (info *PossiblePropertiesInfo) Hash64(h base.Hasher) {
+	if info == nil {
+		h.HashByte(base.NilFlag)
+		return
+	}
+	h.HashByte(base.NotNilFlag)
+	if info.Orders == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(info.Orders))
+		for _, one := range info.Orders {
+			h.HashInt(len(one))
+			for _, col := range one {
+				col.Hash64(h)
+			}
+		}
+	}
+}
+
+// Equals implements the HashEquals interface.
+func (info *PossiblePropertiesInfo) Equals(other any) bool {
+	info2, ok := other.(*PossiblePropertiesInfo)
+	if !ok {
+		return false
+	}
+	if info == nil {
+		return info2 == nil
+	}
+	if info2 == nil {
+		return false
+	}
+	if (info.Orders == nil && info2.Orders != nil) || (info.Orders != nil && info2.Orders == nil) || len(info.Orders) != len(info2.Orders) {
+		return false
+	}
+	for i, one := range info.Orders {
+		if len(one) != len(info2.Orders[i]) {
+			return false
+		}
+		for j, col := range one {
+			if (col == nil && info2.Orders[i][j] != nil) || (col != nil && info2.Orders[i][j] == nil) {
+				return false
+			}
+			if col != nil && !col.Equals(info2.Orders[i][j]) {
+				return false
+			}
+		}
+	}
+	return true
 }
