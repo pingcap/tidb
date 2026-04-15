@@ -1478,7 +1478,7 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 		newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
 		return partitionTypeChangeNotAllowedErr()
 	}
-	if err := checkPartitionColumnTypeChangeWhitelist(tblInfo, col, newCol); err != nil {
+	if err := checkPartitionColumnTypeChangeAllowlist(tblInfo, col, newCol); err != nil {
 		return err
 	}
 	// Generate a new PartitionInfo and validate it together with the new column definition
@@ -1543,7 +1543,7 @@ const (
 	partitionExprColumnUsageKindUnsupported
 )
 
-func checkPartitionColumnTypeChangeWhitelist(tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+func checkPartitionColumnTypeChangeAllowlist(tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || !isPartitionColumnTypeChanged(col, newCol) {
 		return nil
