@@ -33,7 +33,7 @@ func TestCharsetCompareUsesFamily(t *testing.T) {
 
 	// Ensure error messages keep the original values.
 	_, err = Charset("uTF8").Compare(Charset("GBK"))
-	require.Regexp(t, `incompatible mysql charset \(uTF8 vs GBK\)`, err)
+	require.ErrorContains(t, err, "incompatible mysql charset (uTF8 vs GBK)")
 
 	cmp, err = Charset("latin1").Compare(Charset("utf8mb4"))
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestCharsetCompareUsesFamily(t *testing.T) {
 	require.Equal(t, 1, cmp)
 
 	_, err = Charset("other1").Compare(Charset("other2"))
-	require.Regexp(t, `incompatible mysql charset \(other1 vs other2\)`, err)
+	require.ErrorContains(t, err, "incompatible mysql charset (other1 vs other2)")
 }
 
 func TestCollationCompareUsesFamily(t *testing.T) {
@@ -63,15 +63,15 @@ func TestCollationCompareUsesFamily(t *testing.T) {
 
 	// Ensure error messages keep the original values.
 	_, err = Collation("UTF8_BIN").Compare(Collation("GBK_BIN"))
-	require.Regexp(t, `incompatible mysql collation \(UTF8_BIN vs GBK_BIN\)`, err)
+	require.ErrorContains(t, err, "incompatible mysql collation (UTF8_BIN vs GBK_BIN)")
 
 	cmp, err = Collation("utf8mb4_general_ci").Compare(Collation("utf8_general_ci"))
 	require.NoError(t, err)
 	require.Equal(t, 1, cmp)
 
 	_, err = Collation("utf8mb4_general_ci").Compare(Collation("utf8mb4_0900_ai_ci"))
-	require.Regexp(t, `incompatible mysql collation \(utf8mb4_general_ci vs utf8mb4_0900_ai_ci\)`, err)
+	require.ErrorContains(t, err, "incompatible mysql collation (utf8mb4_general_ci vs utf8mb4_0900_ai_ci)")
 
 	_, err = Collation("other_cs_bin").Compare(Collation("other_cs_ci"))
-	require.Regexp(t, `incompatible mysql collation \(other_cs_bin vs other_cs_ci\)`, err)
+	require.ErrorContains(t, err, "incompatible mysql collation (other_cs_bin vs other_cs_ci)")
 }
