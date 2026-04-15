@@ -171,20 +171,20 @@ func TestRefreshMaterializedViewStmtRestoreDeltaApply(t *testing.T) {
 	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` COMPLETE DELTA APPLY", sb.String())
 }
 
-func TestRefreshMaterializedViewStmtRestoreDefaultCompleteType(t *testing.T) {
+func TestRefreshMaterializedViewStmtRestoreUnspecifiedCompleteType(t *testing.T) {
 	stmt := &ast.RefreshMaterializedViewStmt{
 		ViewName: &ast.TableName{
 			Schema: model.NewCIStr("test"),
 			Name:   model.NewCIStr("mv"),
 		},
-		Type:         ast.RefreshMaterializedViewTypeComplete,
-		CompleteType: ast.RefreshMaterializedViewCompleteTypeDefault,
+		Type: ast.RefreshMaterializedViewTypeComplete,
 	}
 
 	var sb strings.Builder
 	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	require.NoError(t, stmt.Restore(rctx))
-	require.Equal(t, "REFRESH MATERIALIZED VIEW `test`.`mv` COMPLETE", sb.String())
+	err := stmt.Restore(rctx)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "COMPLETE refresh mode must be specified explicitly")
 }
 
 func TestRefreshMaterializedViewStmtRestoreFastIgnoresOutOfPlaceCompleteType(t *testing.T) {
@@ -276,12 +276,11 @@ func TestRefreshMaterializedViewStmtMode(t *testing.T) {
 			expectedMode: ast.RefreshMaterializedViewModeCompleteDeltaApply,
 		},
 		{
-			name: "complete default",
+			name: "complete unspecified",
 			stmt: &ast.RefreshMaterializedViewStmt{
-				Type:         ast.RefreshMaterializedViewTypeComplete,
-				CompleteType: ast.RefreshMaterializedViewCompleteTypeDefault,
+				Type: ast.RefreshMaterializedViewTypeComplete,
 			},
-			expectedMode: ast.RefreshMaterializedViewModeCompleteDeltaApply,
+			expectErr: "COMPLETE refresh mode must be specified explicitly",
 		},
 		{
 			name: "unknown type",
