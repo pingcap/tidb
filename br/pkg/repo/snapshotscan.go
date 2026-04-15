@@ -23,8 +23,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"go.uber.org/zap"
 )
 
 type PendingMarker struct {
@@ -115,9 +117,15 @@ func walkParsedSeq[T any](
 	}
 }
 
-func ParseCompletedSnapshotMetaPath(filePath string) (BackupID, bool, error) {
+func ParseCompletedSnapshotMetaPath(filePath string) (id BackupID, parsed bool, err error) {
 	parts := splitRepoPath(filePath)
-	if len(parts) < 4 || parts[0] != "_meta" || parts[1] != "snapshot" {
+	if len(parts) < 2 || parts[0] != "_meta" || parts[1] != "snapshot" {
+		return 0, false, nil
+	}
+	defer func() {
+		logSkippedRepoPath(parsed, err, filePath, "skip non-completed repo-v1 snapshot metadata path while scanning completed snapshots")
+	}()
+	if len(parts) < 4 {
 		return 0, false, nil
 	}
 	base := parts[len(parts)-1]
@@ -131,9 +139,15 @@ func ParseCompletedSnapshotMetaPath(filePath string) (BackupID, bool, error) {
 	return backupID, true, nil
 }
 
-func ParsePendingMarkerPath(filePath string) (PendingMarker, bool, error) {
+func ParsePendingMarkerPath(filePath string) (marker PendingMarker, parsed bool, err error) {
 	parts := splitRepoPath(filePath)
-	if len(parts) != 4 || parts[0] != "_meta" || parts[1] != "pending" {
+	if len(parts) < 2 || parts[0] != "_meta" || parts[1] != "pending" {
+		return PendingMarker{}, false, nil
+	}
+	defer func() {
+		logSkippedRepoPath(parsed, err, filePath, "skip invalid repo-v1 pending marker path while scanning pending markers")
+	}()
+	if len(parts) != 4 {
 		return PendingMarker{}, false, nil
 	}
 	base := parts[3]
@@ -151,9 +165,15 @@ func ParsePendingMarkerPath(filePath string) (PendingMarker, bool, error) {
 	}, true, nil
 }
 
-func ParseSnapshotDataFilePath(filePath string) (SnapshotDataFile, bool, error) {
+func ParseSnapshotDataFilePath(filePath string) (dataFile SnapshotDataFile, parsed bool, err error) {
 	parts := splitRepoPath(filePath)
-	if len(parts) < 5 || parts[0] != "_data" || parts[1] != "snapshot" {
+	if len(parts) < 2 || parts[0] != "_data" || parts[1] != "snapshot" {
+		return SnapshotDataFile{}, false, nil
+	}
+	defer func() {
+		logSkippedRepoPath(parsed, err, filePath, "skip invalid repo-v1 snapshot data path while scanning snapshot data files")
+	}()
+	if len(parts) < 5 {
 		return SnapshotDataFile{}, false, nil
 	}
 	storeID, err := strconv.ParseUint(parts[2], 10, 64)
@@ -169,6 +189,17 @@ func ParseSnapshotDataFilePath(filePath string) (SnapshotDataFile, bool, error) 
 		BackupID: backupID,
 		Path:     filePath,
 	}, true, nil
+}
+
+func logSkippedRepoPath(parsed bool, err error, filePath, message string) {
+	if parsed {
+		return
+	}
+	fields := []zap.Field{zap.String("path", filePath)}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
+	log.Warn(message, fields...)
 }
 
 func splitRepoPath(filePath string) []string {

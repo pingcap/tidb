@@ -24,10 +24,12 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -212,6 +214,8 @@ func (ops SnapshotOps) WalkSnapshotOrphans(ctx context.Context) TrySeq[string] {
 	}
 
 	if !ops.supportsRepoStartAfter() {
+		log.Warn("WalkSnapshotOrphans: StartAfter is unavaliable in this storage, will full-scan, which may be slow.",
+			zap.String("storage", ops.URI()))
 		return ops.walkSnapshotOrphansByFullScan(ctx, completedSet)
 	}
 
