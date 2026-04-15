@@ -346,7 +346,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	if job.SchemaState == model.StateNone {
-		err = postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
+		err = reCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -1410,55 +1410,47 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 }
 
 func preCheckPartitionModifiableColumn(sctx sessionctx.Context, t table.Table, col, newCol *table.Column) error {
-	// Check that the column change does not affect the partitioning column
-	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if t.Meta().Partition != nil {
-		pt, ok := t.(table.PartitionedTable)
-		if !ok {
-			// Should never happen!
-			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
-		}
-		for _, name := range pt.GetPartitionColumnNames() {
-			if strings.EqualFold(name.L, col.Name.L) {
-				return checkPartitionColumnModifiable(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
-			}
-		}
-	}
-	return nil
+	return checkPartitionModifiableColumn(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
 }
 
-func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+func reCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	if tblInfo.Partition == nil {
+		return nil
+	}
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer w.sessPool.Put(sctx)
+	return checkPartitionModifiableColumn(sctx, tblInfo, col, newCol)
+}
+
+func checkPartitionModifiableColumn(
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	col, newCol *model.ColumnInfo,
+) error {
 	// Check that the column change does not affect the partitioning column
 	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if tblInfo.Partition != nil {
-		sctx, err := w.sessPool.Get()
-		if err != nil {
-			return err
-		}
-		defer w.sessPool.Put(sctx)
-		if len(tblInfo.Partition.Columns) > 0 {
-			for _, pc := range tblInfo.Partition.Columns {
-				if strings.EqualFold(pc.L, col.Name.L) {
-					err := checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-			return nil
-		}
-		partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		var partCol *model.ColumnInfo
-		for _, pc := range partCols {
-			if strings.EqualFold(pc.Name.L, col.Name.L) {
-				partCol = pc
-				break
+	if tblInfo.Partition == nil {
+		return nil
+	}
+
+	if len(tblInfo.Partition.Columns) > 0 {
+		for _, pc := range tblInfo.Partition.Columns {
+			if strings.EqualFold(pc.L, col.Name.L) {
+				return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
 			}
 		}
-		if partCol != nil {
+		return nil
+	}
+
+	partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, pc := range partCols {
+		if strings.EqualFold(pc.Name.L, col.Name.L) {
 			return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
 		}
 	}
