@@ -31,7 +31,7 @@ const (
 	pkdbDefaultScanPageSize         = 256
 	pkdbDefaultReadStoreConcurrency = 16
 	pkdbDefaultWritePDConcurrency   = 16
-	pkdbDefaultRetryWait            = time.Second
+	pkdbDefaultRetryWaitDuration    = time.Second
 )
 
 type pkdbErrEmptyStoreAddr struct {
@@ -81,6 +81,23 @@ type pkdbErrMissingRegionMeta struct {
 func (e *pkdbErrMissingRegionMeta) Error() string {
 	return fmt.Sprintf(
 		"missing region meta: region_id=%d store=%s",
+		e.regionID, e.storeAddr,
+	)
+}
+
+// pkdbErrRegionInfoNotFound indicates the TiKV debug RegionInfo RPC returned
+// gRPC NOT_FOUND for the given region on the given store.
+//
+// This usually means the PD scan result is stale (leader/peer moved) and the
+// caller should rescan regions from PD instead of retrying the same store.
+type pkdbErrRegionInfoNotFound struct {
+	regionID  uint64
+	storeAddr string
+}
+
+func (e *pkdbErrRegionInfoNotFound) Error() string {
+	return fmt.Sprintf(
+		"region info not found: region_id=%d store=%s",
 		e.regionID, e.storeAddr,
 	)
 }
@@ -569,6 +586,11 @@ func pkdbIsRetryableRegionInfoError(err error) bool {
 	default:
 		return false
 	}
+}
+
+func pkdbIsRegionInfoNotFound(err error) bool {
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.NotFound
 }
 
 func adjustRetryStartKey(key []byte) []byte {

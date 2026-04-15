@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,9 +18,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/rawkv"
 	"github.com/tikv/client-go/v2/tikv"
@@ -31,7 +32,6 @@ import (
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -49,6 +49,14 @@ var (
 	// the etcd watch. It is guarded by `intest.InTest`, so it does not affect
 	// production builds.
 	tidbWaitJobAfterCreateWatch func()
+
+	// tidbWaitDataSyncScanRetryWaitDuration is used when waitDataSync retries PD
+	// region scans due to transient errors or inconsistent results. Tests can
+	// shorten it to speed up retry loops.
+	tidbWaitDataSyncScanRetryWaitDuration = pkdbDefaultRetryWaitDuration
+	// tidbWaitDataSyncScanBatchSize controls the batch size when scanning regions
+	// from PD in waitDataSync.
+	tidbWaitDataSyncScanBatchSize = pkdbDefaultScanPageSize
 )
 
 // tidbWaitJob represents a log replication action that need to use tidb-server's
@@ -173,7 +181,7 @@ func (w waitDataSync) getVersion(bs []byte) uint64 {
 func (w waitDataSync) checkAndWait(ctx context.Context, newJobBytes []byte, lastFinishedVersion uint64, store kv.Storage, etcdCli *clientv3.Client) (version uint64, err error) {
 	curr := &pdpb.ReplicaWaitDataSync{}
 	if err = curr.Unmarshal(newJobBytes); err != nil {
-		return 0, errors.Errorf("waitRegionsInit failed to unmarshal request: %v", err)
+		return 0, errors.Errorf("waitDataSync failed to unmarshal request: %v", err)
 	}
 	version = curr.GetVersion()
 	if version <= lastFinishedVersion {
@@ -202,14 +210,82 @@ func (w waitDataSync) wait(runCtx context.Context, sourcePDAddrs []string) error
 	}
 	defer cli.Close()
 
-	commitIndexes, err := getRegionCommitIndexes(runCtx, sourcePDAddrs)
+	ctx, cancel := context.WithCancelCause(runCtx)
+	defer cancel(nil)
+
+	sourcePDCli, err := pd.NewClientWithContext(ctx, sourcePDAddrs, pd.SecurityOption{})
 	if err != nil {
 		return err
 	}
+	defer sourcePDCli.Close()
 
-	return backoffWait(runCtx, func() (bool, error) {
-		return isSynced(runCtx, cli, commitIndexes)
+	stores, err := sourcePDCli.GetAllStores(ctx)
+	if err != nil {
+		return err
+	}
+	storeAddrs := make(map[uint64]string)
+	for _, store := range stores {
+		storeAddrs[store.GetId()] = store.GetAddress()
+	}
+
+	debugCliPool := newPkdbDebugClientPool([]grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	})
+	defer debugCliPool.Close()
+
+	// Scan source regions and fetch their raft commit indexes in batches, and
+	// wait each batch to be synced before proceeding.
+	//
+	// This keeps peak memory bounded by the batch size (instead of O(#regions))
+	// and pipelines "fetch next batch" with "wait current batch".
+	commitIndexBatches := make(chan []regionCommitIndex, 1)
+	go func() {
+		defer util.Recover(metrics.LabelDDL, "waitDataSync", func() {
+			cancel(errors.New("panic in waitDataSync"))
+		}, false)
+		defer close(commitIndexBatches)
+		// TODO(lance6716): after primary TiKV disabling write, there still may exist
+		// some in-flight raft log that will commit in future. From yujie.
+		err := fetchRegionCommitIndexInBatch(
+			ctx,
+			sourcePDCli,
+			storeAddrs,
+			debugCliPool,
+			func(batch []regionCommitIndex) error {
+				select {
+				case commitIndexBatches <- batch:
+					return nil
+				case <-ctx.Done():
+					return context.Cause(ctx)
+				}
+			},
+		)
+		if err != nil {
+			cancel(err)
+		}
+	}()
+
+	var waitErr error
+	for batch := range commitIndexBatches {
+		// Always drain commitIndexBatches to ensure the fetch goroutine has fully
+		// exited.
+		if waitErr != nil {
+			continue
+		}
+		err := backoffWait(ctx, func() (bool, error) {
+			return isSynced(ctx, cli, batch)
+		})
+		if err != nil {
+			waitErr = err
+			cancel(err)
+			continue
+		}
+	}
+
+	if waitErr != nil {
+		return waitErr
+	}
+	return context.Cause(ctx)
 }
 
 type regionCommitIndex struct {
@@ -218,6 +294,10 @@ type regionCommitIndex struct {
 }
 
 func pkdbBatchScanAllRegions(ctx context.Context, pdCli pd.Client) ([]*pd.Region, error) {
+	// TODO(lance6716): This helper materializes *all* regions into memory. On
+	// clusters with a very large region count, this can be slow and can OOM TiDB.
+	// Prefer a streaming/iterator style (consume each batch via callback) for
+	// callers that only need to aggregate a small result (e.g. progress).
 	var (
 		all     []*pd.Region
 		nextKey []byte
@@ -252,66 +332,234 @@ func pkdbBatchScanAllRegions(ctx context.Context, pdCli pd.Client) ([]*pd.Region
 	}
 }
 
-func getRegionCommitIndexes(ctx context.Context, pdAddrs []string) ([]regionCommitIndex, error) {
-	pdCli, err := pd.NewClientWithContext(ctx, pdAddrs, pd.SecurityOption{})
-	if err != nil {
-		return nil, err
-	}
-	defer pdCli.Close()
+type regionScanner interface {
+	BatchScanRegions(ctx context.Context, ranges []pd.KeyRange, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error)
+}
 
-	stores, err := pdCli.GetAllStores(ctx)
-	if err != nil {
-		return nil, err
-	}
-	storeAddrs := make(map[uint64]string)
-	for _, store := range stores {
-		storeAddrs[store.GetId()] = store.GetAddress()
-	}
-
-	regions, err := pkdbBatchScanAllRegions(ctx, pdCli)
-	if err != nil {
-		return nil, err
-	}
-	storeAddrToRegionIDs := make(map[string][]uint64)
-	for _, region := range regions {
-		if region.Leader == nil || region.Leader.Id == 0 {
-			return nil, errors.Errorf("region %d has no leader", region.Meta.Id)
+func fetchRegionCommitIndexInBatch(
+	ctx context.Context,
+	pdCli regionScanner,
+	storeAddrs map[uint64]string,
+	debugCliPool *pkdbDebugClientPool,
+	onBatch func([]regionCommitIndex) error,
+) error {
+	var nextKey []byte
+scanRegions:
+	for {
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
 		}
+
+		// NOTE: We intentionally do NOT use opt.WithAllowFollowerHandle() here.
+		// waitDataSync relies on the leader who has the latest region info.
+		batch, err := pdCli.BatchScanRegions(
+			ctx,
+			[]pd.KeyRange{{StartKey: nextKey}},
+			tidbWaitDataSyncScanBatchSize,
+		)
+		if err != nil {
+			logutil.BgLogger().Warn(
+				"log replication fetchRegionCommitIndexInBatch failed, retrying",
+				zap.Error(err),
+				zap.String("startKey", redact.Key(nextKey)),
+			)
+			sleep(ctx, tidbWaitDataSyncScanRetryWaitDuration)
+			continue
+		}
+		// NOTE: PD `BatchScanRegions` returns regions ordered by start key. We
+		// rely on this ordering so each commit index batch is already sorted by
+		// start key, which `isSynced` requires.
+		if err := checkPartRegionConsistency(nextKey, batch); err != nil {
+			logutil.BgLogger().Warn(
+				"log replication fetchRegionCommitIndexInBatch got inconsistent result, retrying",
+				zap.Error(err),
+				zap.String("startKey", redact.Key(nextKey)),
+				zap.Int("regionLength", len(batch)),
+			)
+			sleep(ctx, tidbWaitDataSyncScanRetryWaitDuration)
+			continue
+		}
+
+		var commitIndexes []regionCommitIndex
+		for {
+			if ctx.Err() != nil {
+				return context.Cause(ctx)
+			}
+			commitIndexes, err = getRegionCommitIndexesFromBatch(ctx, batch, storeAddrs, debugCliPool)
+			if err == nil {
+				break
+			}
+
+			// Region epoch/confver can change during splits/merges. In this case, the
+			// PD scan result becomes stale and we need to re-scan regions.
+			switch err.(type) {
+			case *pkdbErrRegionEpochMismatch, *pkdbErrMissingRegionMeta, *pkdbErrRegionInfoNotFound:
+				logutil.BgLogger().Warn(
+					"log replication fetchRegionCommitIndexInBatch got stale region meta while fetching commit indexes, retrying scan regions",
+					zap.Error(err),
+					zap.String("startKey", redact.Key(nextKey)),
+					zap.Int("regionLength", len(batch)),
+				)
+				sleep(ctx, tidbWaitDataSyncScanRetryWaitDuration)
+				continue scanRegions
+			}
+			// Retry transient RegionInfo errors with the same PD scan result.
+			if pkdbIsRetryableRegionInfoError(err) {
+				logutil.BgLogger().Warn(
+					"log replication fetchRegionCommitIndexInBatch failed to fetch region commit indexes, retrying",
+					zap.Error(err),
+					zap.String("startKey", redact.Key(nextKey)),
+					zap.Int("regionLength", len(batch)),
+				)
+				sleep(ctx, tidbWaitDataSyncScanRetryWaitDuration)
+				continue
+			}
+			return err
+		}
+		if err = onBatch(commitIndexes); err != nil {
+			return err
+		}
+
+		endKey := batch[len(batch)-1].Meta.GetEndKey()
+		if len(endKey) == 0 {
+			return nil
+		}
+		// Defensive: endKey should always move forward; otherwise we'd keep
+		// scanning the same range and loop forever.
+		if bytes.Compare(endKey, nextKey) <= 0 {
+			logutil.BgLogger().Error(
+				"log replication fetchRegionCommitIndexInBatch got non-progressing end key",
+				zap.String("startKey", redact.Key(nextKey)),
+				zap.String("endKey", redact.Key(endKey)),
+				zap.Int("regionLength", len(batch)),
+			)
+			return errors.New("batch scan regions returned non-progressing end key")
+		}
+		nextKey = endKey
+	}
+}
+
+// checkPartRegionConsistency only checks the continuity of regions and the
+// first region consistency (like BR's split module does).
+func checkPartRegionConsistency(startKey []byte, regions []*pd.Region) error {
+	// PD can't guarantee the consistency of returned regions.
+	if len(regions) == 0 {
+		return errors.New("scan regions returned empty result")
+	}
+
+	first := regions[0]
+	if first == nil || first.Meta == nil {
+		return errors.New("scan regions returned nil region meta")
+	}
+	if bytes.Compare(first.Meta.StartKey, startKey) > 0 {
+		return errors.Errorf("first region %d's start key is after scan start key", first.Meta.Id)
+	}
+	if first.Leader == nil || first.Leader.GetStoreId() == 0 {
+		return errors.Errorf("region %d has no leader store", first.Meta.Id)
+	}
+
+	cur := first
+	for _, r := range regions[1:] {
+		if r == nil || r.Meta == nil {
+			return errors.New("scan regions returned nil region meta")
+		}
+		if r.Leader == nil || r.Leader.GetStoreId() == 0 {
+			return errors.Errorf("region %d has no leader store", r.Meta.Id)
+		}
+		if !bytes.Equal(cur.Meta.EndKey, r.Meta.StartKey) {
+			return errors.Errorf("region %d's end key does not match next region %d's start key", cur.Meta.Id, r.Meta.Id)
+		}
+		cur = r
+	}
+	return nil
+}
+
+func getRegionCommitIndexesFromBatch(
+	ctx context.Context,
+	batch []*pd.Region,
+	storeAddrs map[uint64]string,
+	debugCliPool *pkdbDebugClientPool,
+) ([]regionCommitIndex, error) {
+	type regionFetchTask struct {
+		regionID uint64
+		idx      int
+	}
+
+	storeAddrToTasks := make(map[string][]regionFetchTask)
+	for i, region := range batch {
 		storeAddr, ok := storeAddrs[region.Leader.GetStoreId()]
 		if !ok {
 			return nil, errors.Errorf("store %d not found", region.Leader.GetStoreId())
 		}
-		storeAddrToRegionIDs[storeAddr] = append(storeAddrToRegionIDs[storeAddr], region.Meta.Id)
+		storeAddrToTasks[storeAddr] = append(storeAddrToTasks[storeAddr], regionFetchTask{
+			regionID: region.Meta.Id,
+			idx:      i,
+		})
 	}
 
-	var (
-		result   []regionCommitIndex
-		resultMu sync.Mutex
-	)
-	g, gCtx := errgroup.WithContext(ctx)
-	for storeAddr, regionIDs := range storeAddrToRegionIDs {
-		storeAddr := storeAddr // seems unnecessary after go1.22?
-		regionIDs := regionIDs // seems unnecessary after go1.22?
+	// The output order matches PD's BatchScanRegions order (start key order).
+	result := make([]regionCommitIndex, len(batch))
+
+	g, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	g.SetLimit(pkdbDefaultReadStoreConcurrency)
+	for storeAddr, tasks := range storeAddrToTasks {
 		g.Go(func() error {
-			conn, err := grpc.DialContext(gCtx, storeAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if gCtx.Err() != nil {
+				return context.Cause(gCtx)
+			}
+
+			debugCli, err := debugCliPool.Get(gCtx, storeAddr)
 			if err != nil {
 				return err
 			}
-			defer conn.Close()
-
-			debugCli := debugpb.NewDebugClient(conn)
-
-			for _, regionID := range regionIDs {
-				resp, err := debugCli.RegionInfo(ctx, &debugpb.RegionInfoRequest{RegionId: regionID})
+			for _, task := range tasks {
+				// TODO(lance6716): add batch RPC
+				resp, err := debugCli.RegionInfo(gCtx, &debugpb.RegionInfoRequest{RegionId: task.regionID})
 				if err != nil {
+					if pkdbIsRegionInfoNotFound(err) {
+						// TiKV debug service returns NOT_FOUND when the store doesn't have any local
+						// metadata for this region. In this case, retrying the same store with the same
+						// PD scan result can loop forever. Let the caller rescan regions from PD.
+						return &pkdbErrRegionInfoNotFound{
+							regionID:  task.regionID,
+							storeAddr: storeAddr,
+						}
+					}
+					if pkdbIsRetryableRegionInfoError(err) {
+						// Force re-dial next time for transient connection issues.
+						debugCliPool.Delete(storeAddr)
+					}
 					return err
 				}
-				resultMu.Lock()
-				result = append(result, regionCommitIndex{
-					region:      resp.RegionLocalState.Region,
-					commitIndex: resp.RaftLocalState.HardState.Commit,
-				})
-				resultMu.Unlock()
+
+				regionLocalState := resp.GetRegionLocalState()
+				regionMeta := regionLocalState.GetRegion()
+				if regionMeta == nil {
+					return &pkdbErrMissingRegionMeta{
+						regionID:  task.regionID,
+						storeAddr: storeAddr,
+					}
+				}
+				actualEpoch := regionMeta.GetRegionEpoch()
+				expectedEpoch := batch[task.idx].Meta.GetRegionEpoch()
+				if actualEpoch.GetConfVer() != expectedEpoch.GetConfVer() ||
+					actualEpoch.GetVersion() != expectedEpoch.GetVersion() {
+					return &pkdbErrRegionEpochMismatch{
+						regionID:  task.regionID,
+						storeAddr: storeAddr,
+						expected:  expectedEpoch,
+						actual:    actualEpoch,
+					}
+				}
+
+				raftLocalState := resp.GetRaftLocalState()
+				if raftLocalState == nil || raftLocalState.HardState == nil {
+					return errors.Errorf("region %d got nil raft local state from store %s", task.regionID, storeAddr)
+				}
+				result[task.idx] = regionCommitIndex{
+					region:      batch[task.idx].Meta,
+					commitIndex: raftLocalState.GetHardState().GetCommit(),
+				}
 			}
 			return nil
 		})
@@ -322,54 +570,78 @@ func getRegionCommitIndexes(ctx context.Context, pdAddrs []string) ([]regionComm
 	return result, nil
 }
 
-func isSynced(ctx context.Context, cli *rawkv.Client, commitIndexes []regionCommitIndex) (bool, error) {
-	states, err := scanReplStates(ctx, cli)
+type rawKVScanClient interface {
+	Scan(ctx context.Context, startKey, endKey []byte, limit int, options ...rawkv.RawOption) (keys [][]byte, values [][]byte, err error)
+	ReverseScan(ctx context.Context, startKey, endKey []byte, limit int, options ...rawkv.RawOption) (keys [][]byte, values [][]byte, err error)
+}
+
+func isSynced(ctx context.Context, cli rawKVScanClient, commitIndexes []regionCommitIndex) (bool, error) {
+	if len(commitIndexes) == 0 {
+		return true, nil
+	}
+
+	// Only scan the replica state for the key range covered by this batch. Because
+	// the log replication has been initialized, TiKV will maintain the states to be
+	// continuous.
+	states, err := scanReplStatesInRange(
+		ctx,
+		cli,
+		commitIndexes[0].region.StartKey,
+		commitIndexes[len(commitIndexes)-1].region.EndKey,
+	)
 	if err != nil {
 		return false, err
 	}
 
-	slices.SortFunc(commitIndexes, func(a, b regionCommitIndex) int {
-		return bytes.Compare(a.region.StartKey, b.region.StartKey)
-	})
+	// Ensure the scanned states cover the batch start key; otherwise treat it as a
+	// gap and keep waiting (instead of returning a permanent error).
+	if len(states) > 0 && bytes.Compare(states[0].StartKey, commitIndexes[0].region.StartKey) > 0 {
+		logutil.BgLogger().Info(
+			"range gap found during wait for standby sync",
+			zap.String("from", redact.Key(commitIndexes[0].region.StartKey)),
+			zap.String("to", redact.Key(states[0].StartKey)),
+		)
+		return false, nil
+	}
 
 	for _, ci := range commitIndexes {
 		region, commitIndex := ci.region, ci.commitIndex
 		startKey, endKey := region.StartKey, region.EndKey
 		allCovered := false
-		for !allCovered && len(states) > 0 {
-			first := states[0]
+		for len(states) > 0 {
+			firstState := states[0]
 			// first is completely before the region.
-			if len(first.EndKey) > 0 && bytes.Compare(first.EndKey, startKey) <= 0 {
+			if len(firstState.EndKey) > 0 && bytes.Compare(firstState.EndKey, startKey) <= 0 {
 				states = states[1:]
 				continue
 			}
 			// first is completely after the region.
-			if len(endKey) > 0 && bytes.Compare(first.StartKey, endKey) >= 0 {
+			if len(endKey) > 0 && bytes.Compare(firstState.StartKey, endKey) >= 0 {
 				break
 			}
 			// first and region overlaps.
-			if bytes.Compare(first.StartKey, startKey) > 0 {
+			if bytes.Compare(firstState.StartKey, startKey) > 0 {
 				logutil.BgLogger().Info(
 					"range gap found during wait for standby sync",
-					zap.Binary("from", startKey),
-					zap.Binary("to", first.StartKey),
+					zap.String("from", redact.Key(startKey)),
+					zap.String("to", redact.Key(firstState.StartKey)),
 				)
 				return false, nil
 			}
-			if first.Region.RegionEpoch.Version < region.RegionEpoch.Version ||
-				first.Region.RegionEpoch.Version == region.RegionEpoch.Version && first.AppliedIndex < commitIndex {
+			if firstState.Region.RegionEpoch.Version < region.RegionEpoch.Version ||
+				firstState.Region.RegionEpoch.Version == region.RegionEpoch.Version && firstState.AppliedIndex < commitIndex {
 				logutil.BgLogger().Info(
 					"region not synced yet during wait for standby sync",
 					zap.Uint64("regionID", region.Id),
 					zap.Stringer("regionEpoch", region.RegionEpoch),
 					zap.Uint64("commitIndex", commitIndex),
-					zap.Stringer("appliedEpoch", first.Region.RegionEpoch),
-					zap.Uint64("appliedIndex", first.AppliedIndex),
+					zap.Stringer("appliedEpoch", firstState.Region.RegionEpoch),
+					zap.Uint64("appliedIndex", firstState.AppliedIndex),
 				)
 				return false, nil
 			}
-			if len(first.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(first.EndKey, endKey) < 0) {
-				startKey = first.EndKey
+			if len(firstState.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(firstState.EndKey, endKey) < 0) {
+				startKey = firstState.EndKey
 				states = states[1:]
 			} else {
 				startKey = endKey // all covered
@@ -378,13 +650,13 @@ func isSynced(ctx context.Context, cli *rawkv.Client, commitIndexes []regionComm
 			}
 		}
 		if !allCovered {
-			to := zap.Binary("to", endKey)
+			to := zap.String("to", redact.Key(endKey))
 			if len(endKey) == 0 {
 				to = zap.String("to", "infinity")
 			}
 			logutil.BgLogger().Info(
 				"range gap found during wait for standby sync",
-				zap.Binary("from", startKey),
+				zap.String("from", redact.Key(startKey)),
 				to,
 			)
 			return false, nil
@@ -497,6 +769,10 @@ func (w waitFlashback) checkAndWait(
 		StartKey: []byte{0},
 		EndKey:   nil,
 	}
+	// TODO(lance6716): Flashback is an all-region operation (range task over the
+	// whole keyspace). On clusters with huge region counts it can be extremely
+	// expensive and may increase memory usage (e.g. via region cache growth).
+	// Keep this in mind when adding any additional per-region bookkeeping here.
 	err = flashbackToVersion(ctx, store,
 		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			stats, err := SendPrepareFlashbackToVersionRPC(
@@ -566,6 +842,9 @@ func (r resetTS) checkAndWait(
 	}
 	defer rawCli.Close()
 
+	// TODO(lance6716): We only need max_ts, but scanReplStates materializes all
+	// states in memory. This can OOM on large-region clusters; consider scanning
+	// in a streaming fashion and only keeping the running max.
 	states, err := scanReplStates(ctx, rawCli)
 	if err != nil {
 		return 0, err
@@ -669,7 +948,7 @@ func (s saveRaftIndex) checkAndWait(
 		pageSize:             pkdbDefaultScanPageSize,
 		readStoreConcurrency: pkdbDefaultReadStoreConcurrency,
 		writePDConcurrency:   pkdbDefaultWritePDConcurrency,
-		retryWait:            pkdbDefaultRetryWait,
+		retryWait:            pkdbDefaultRetryWaitDuration,
 	}, saveRaftAndRegionState2PD(pdCli))
 	if err != nil {
 		return 0, err
@@ -1081,8 +1360,8 @@ func isInited(ctx context.Context, cli *rawkv.Client) (bool, []*logreplicationpb
 		if bytes.Compare(state.StartKey, lastEndKey) > 0 {
 			logutil.BgLogger().Info(
 				"range gap found during wait for standby init",
-				zap.Binary("from", lastEndKey),
-				zap.Binary("to", state.StartKey),
+				zap.String("from", redact.Key(lastEndKey)),
+				zap.String("to", redact.Key(state.StartKey)),
 			)
 			return false, states, nil
 		}
@@ -1095,7 +1374,7 @@ func isInited(ctx context.Context, cli *rawkv.Client) (bool, []*logreplicationpb
 	}
 	logutil.BgLogger().Info(
 		"range gap found during wait for standby init",
-		zap.Binary("from", lastEndKey),
+		zap.String("from", redact.Key(lastEndKey)),
 		zap.String("to", "infinity"),
 	)
 	return false, states, nil
@@ -1118,6 +1397,10 @@ func checkInitedAndUpdateProgress(
 		}
 		return true, nil
 	}
+	// TODO(lance6716): This scans all regions on every retry to compute a
+	// percentage, which is risky on large-region clusters (time + memory). If we
+	// only need coarse progress, consider sampling, caching, or using PD-side
+	// progress APIs to avoid full scans.
 	regions, err := pkdbBatchScanAllRegions(ctx, sourcePDCli)
 	if err != nil {
 		return false, err
@@ -1165,17 +1448,35 @@ func getStandbyInitPercentage(regions []*pd.Region, states []*logreplicationpb.L
 	return float64(done) / float64(len(regions)) * 100
 }
 
-func scanReplStates(ctx context.Context, cli *rawkv.Client) ([]*logreplicationpb.LogReplicationState, error) {
+func scanReplStates(ctx context.Context, cli rawKVScanClient) ([]*logreplicationpb.LogReplicationState, error) {
+	// TODO(lance6716): This scans the whole lr-state CF and materializes all
+	// states into memory. In log replication workflows this may be invoked in
+	// retry loops (e.g. resetTS), so a large region count can cause
+	// repeated large allocations and OOM. Consider a streaming scan API that
+	// yields states to a caller-provided callback.
+	return scanReplStatesInRange(ctx, cli, nil, nil)
+}
+
+// scanReplStatesInRange returns the covering log replication states for
+// [startKey, endKey). It does not guarantee the returned states are continuous,
+// but different call sites may have enough knowledge to know that. For startKey
+// which is not minKey(""), it will prepend one previous state to covers startKey
+// to avoid false "gap" reports.
+func scanReplStatesInRange(
+	ctx context.Context,
+	cli rawKVScanClient,
+	startKey, endKey []byte,
+) ([]*logreplicationpb.LogReplicationState, error) {
 	var states []*logreplicationpb.LogReplicationState
 
-	var startKey []byte
+	scanKey := startKey
 	for {
-		keys, values, err := cli.Scan(ctx, startKey, nil, 1000, rawkv.SetColumnFamily(logReplStateCf))
+		keys, values, err := cli.Scan(ctx, scanKey, endKey, pkdbDefaultScanPageSize, rawkv.SetColumnFamily(logReplStateCf))
 		if err != nil {
 			return nil, err
 		}
 		if len(keys) == 0 {
-			return states, nil
+			break
 		}
 		for _, v := range values {
 			pb := &logreplicationpb.LogReplicationState{}
@@ -1185,9 +1486,30 @@ func scanReplStates(ctx context.Context, cli *rawkv.Client) ([]*logreplicationpb
 			}
 			states = append(states, pb)
 		}
-		startKey = keys[len(keys)-1]
-		startKey = append(startKey, 0)
+		scanKey = keys[len(keys)-1]
+		scanKey = append(scanKey, 0)
 	}
+
+	// The lr-state CF is usually keyed by range start key, but a state whose key
+	// is < startKey can still cover startKey (e.g. after split/merge changes). If
+	// the first scanned state starts after startKey, include one previous state
+	// to avoid false "gap" reports.
+	if len(startKey) > 0 && (len(states) == 0 || bytes.Compare(states[0].StartKey, startKey) > 0) {
+		_, prevValues, err := cli.ReverseScan(ctx, startKey, nil, 1, rawkv.SetColumnFamily(logReplStateCf))
+		if err != nil {
+			return nil, err
+		}
+		if len(prevValues) > 0 {
+			prev := &logreplicationpb.LogReplicationState{}
+			if err := prev.Unmarshal(prevValues[0]); err != nil {
+				return nil, err
+			}
+			if len(prev.EndKey) == 0 || bytes.Compare(prev.EndKey, startKey) > 0 {
+				states = append([]*logreplicationpb.LogReplicationState{prev}, states...)
+			}
+		}
+	}
+	return states, nil
 }
 
 func sleep(ctx context.Context, d time.Duration) {

@@ -144,6 +144,11 @@ func resolveLocksForWholeCluster(
 
 	runner := rangetask.NewRangeTaskRunner("pkdb-resolve-locks-runner", store, concurrency, handler)
 	// Run resolve lock on the whole TiKV cluster. Empty keys means the range is unbounded.
+	// TODO(lance6716): This touches every region in the cluster. On clusters with
+	// huge region counts this can be slow and may increase memory usage (e.g. via
+	// region cache growth) even though rangetask itself is streamed. Consider
+	// making it more incremental/bounded or reusing GCWorker's resolveLocks
+	// implementation which already has operational knobs.
 	if err := runner.RunOnRange(ctx, []byte(""), []byte("")); err != nil {
 		return errors.Trace(err)
 	}
