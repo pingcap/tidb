@@ -251,7 +251,10 @@ func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.Fiel
 		}
 		//revive:enable:empty-block
 	}
-	if point.value.Equals(&casted) {
+	// Even when the timestamp value compares equal, ConvertTo may normalize time
+	// metadata such as the MySQL time type or FSP. Keep the converted datum for
+	// time points so range formatting and later boundary handling stay unchanged.
+	if point.value.Kind() != types.KindMysqlTime && point.value.Equals(&casted) {
 		return point, nil
 	}
 	valCmpCasted, err := point.value.Compare(sctx.TypeCtx, &casted, collate.GetCollator(newTp.GetCollate()))
