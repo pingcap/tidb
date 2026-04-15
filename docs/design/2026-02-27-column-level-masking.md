@@ -425,7 +425,7 @@ SELECT phone FROM contacts WHERE id = 1;
 -- Example 2: MASK_FULL - completely mask SSN
 CREATE MASKING POLICY p_mask_ssn
   ON employees(ssn)
-  AS MASK_FULL(ssn) ENABLE;
+  AS MASK_FULL(ssn, 'X') ENABLE;
 
 -- Query returns: 'XXXXXXXXX' for any 9-digit SSN
 SELECT ssn FROM employees WHERE id = 1;
