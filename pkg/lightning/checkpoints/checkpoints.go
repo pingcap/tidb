@@ -85,23 +85,14 @@ const (
 	columnTableName = "table_name"
 )
 
-var (
-	// ErrCheckpointTableNotFoundIdentity is the stable identity for table-scoped
-	// checkpoint operations when the checkpoint row does not exist.
-	ErrCheckpointTableNotFoundIdentity = errors.Normalize(
-		"checkpoint for table %s not found; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
-		errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointTableNotFound"),
-	)
-)
-
 // CheckpointTableNotFoundError returns a user-facing error for missing table checkpoints.
 func CheckpointTableNotFoundError(tableName string) error {
-	return ErrCheckpointTableNotFoundIdentity.GenWithStackByArgs(tableName)
+	return common.ErrCheckpointTableNotFoundIdentity.GenWithStackByArgs(tableName)
 }
 
 // IsCheckpointTableNotFoundError reports whether err was produced by CheckpointTableNotFoundError.
 func IsCheckpointTableNotFoundError(err error) bool {
-	return err != nil && ErrCheckpointTableNotFoundIdentity.Equal(err)
+	return err != nil && common.ErrCheckpointTableNotFoundIdentity.Equal(err)
 }
 
 // some frequently used SQL statement templates.
