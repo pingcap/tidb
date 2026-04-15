@@ -179,9 +179,20 @@ func TestDropNotNullColumn(t *testing.T) {
 
 func TestTwoStates(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	tk.MustExec("use test_db_state")
+	setupSess, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer setupSess.Close()
+
+	mustExec := func(sql string) {
+		rss, err := setupSess.Execute(context.Background(), sql)
+		require.NoError(t, err)
+		for _, rs := range rss {
+			require.NoError(t, rs.Close())
+		}
+	}
+
+	mustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	mustExec("use test_db_state")
 
 	cnt := 5
 	// New the testExecInfo.
@@ -210,73 +221,129 @@ func TestTwoStates(t *testing.T) {
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
-	tk.MustExec(`create table t (
+	mustExec(`create table t (
 		c1 int,
 		c2 varchar(64),
 		c3 enum('N','Y') not null default 'N',
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
-	tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
+	mustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
+	dom := domain.GetDomain(setupSess)
+	require.NotNil(t, dom)
+	tblInfo, err := dom.InfoSchema().TableInfoByName(ast.NewCIStr("test_db_state"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tblInfo.ID
 
-	prevState := model.StateNone
 	require.NoError(t, testInfo.parseSQLs(parser.New()))
 
-	times := 0
-	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
-			return
+	alterErrCh := make(chan error, 1)
+	go backgroundExec(store, "test_db_state", alterTableSQL, alterErrCh)
+
+	controlSess, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	defer controlSess.Close()
+	_, err = controlSess.Execute(context.Background(), "use test_db_state")
+	require.NoError(t, err)
+
+	getAlterJob := func() (*model.Job, error) {
+		jobs, err := ddl.GetAllDDLJobs(context.Background(), controlSess)
+		if err != nil {
+			return nil, err
 		}
-		times++
-		switch job.SchemaState {
-		case model.StateDeleteOnly:
-			// This state we execute every sqlInfo one time using the first session and other information.
-			err := testInfo.compileSQL(0)
-			if err != nil {
-				checkErr = err
-				break
-			}
-			err = testInfo.execSQL(0)
-			if err != nil {
-				checkErr = err
-			}
-		case model.StateWriteOnly:
-			// This state we put the schema information to the second case.
-			err := testInfo.compileSQL(1)
-			if err != nil {
-				checkErr = err
-			}
-		case model.StateWriteReorganization:
-			// This state we execute every sqlInfo one time using the third session and other information.
-			err := testInfo.compileSQL(2)
-			if err != nil {
-				checkErr = err
-				break
-			}
-			err = testInfo.execSQL(2)
-			if err != nil {
-				checkErr = err
-				break
-			}
-			// Mock the server is in `write only` state.
-			err = testInfo.execSQL(1)
-			if err != nil {
-				checkErr = err
-				break
-			}
-			// This state we put the schema information to the fourth case.
-			err = testInfo.compileSQL(3)
-			if err != nil {
-				checkErr = err
+		for _, job := range jobs {
+			if job.TableID == tableID && job.Type == model.ActionAddColumn {
+				return job, nil
 			}
 		}
+		return nil, nil
+	}
+	waitColumnState := func(expected model.SchemaState) {
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			require.NoError(t, dom.Reload())
+			is := dom.InfoSchema()
+			current, err := is.TableInfoByName(ast.NewCIStr("test_db_state"), ast.NewCIStr("t"))
+			require.NoError(t, err)
+			for _, col := range current.Columns {
+				if col.Name.L == "d3" && col.State == expected {
+					return
+				}
+			}
+			time.Sleep(time.Millisecond)
+		}
+		require.FailNowf(t, "state barrier", "timed out waiting for infoschema state %s", expected)
+	}
+	pauseAtState := func(expected model.SchemaState) int64 {
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			job, err := getAlterJob()
+			require.NoError(t, err)
+			if job != nil && job.SchemaState == expected {
+				if !job.IsPaused() && !job.IsPausing() {
+					errs, err := ddl.PauseJobs(context.Background(), controlSess, []int64{job.ID})
+					require.NoError(t, err)
+					require.Len(t, errs, 1)
+					require.NoError(t, errs[0])
+				}
+				if job.IsPaused() || job.IsPausing() {
+					pauseDeadline := time.Now().Add(10 * time.Second)
+					for time.Now().Before(pauseDeadline) {
+						pausedJob, err := getAlterJob()
+						require.NoError(t, err)
+						if pausedJob != nil && pausedJob.ID == job.ID && pausedJob.IsPaused() && pausedJob.SchemaState == expected {
+							waitColumnState(expected)
+							return pausedJob.ID
+						}
+						time.Sleep(time.Millisecond)
+					}
+					require.FailNowf(t, "state barrier", "timed out pausing job %d at schema state %s", job.ID, expected)
+				}
+			}
+			select {
+			case err := <-alterErrCh:
+				require.NoError(t, err)
+				require.FailNowf(t, "state barrier", "alter table finished before reaching schema state %s", expected)
+			default:
+			}
+			time.Sleep(time.Millisecond)
+		}
+		require.FailNowf(t, "state barrier", "timed out waiting to pause schema state %s", expected)
+		return 0
+	}
+	resumeJob := func(jobID int64) {
+		errs, err := ddl.ResumeJobs(context.Background(), controlSess, []int64{jobID})
+		require.NoError(t, err)
+		require.Len(t, errs, 1)
+		require.NoError(t, errs[0])
+	}
+	runAtState := func(expected model.SchemaState, fn func()) {
+		jobID := pauseAtState(expected)
+		fn()
+		resumeJob(jobID)
+	}
+
+	runAtState(model.StateDeleteOnly, func() {
+		require.NoError(t, testInfo.compileSQL(0))
+		require.NoError(t, testInfo.execSQL(0))
 	})
-	tk.MustExec(alterTableSQL)
+
+	runAtState(model.StateWriteOnly, func() {
+		require.NoError(t, testInfo.compileSQL(1))
+	})
+
+	runAtState(model.StateWriteReorganization, func() {
+		require.NoError(t, testInfo.compileSQL(2))
+		require.NoError(t, testInfo.execSQL(2))
+		// Mock the server is in `write only` state.
+		require.NoError(t, testInfo.execSQL(1))
+		require.NoError(t, testInfo.compileSQL(3))
+	})
+
+	require.NoError(t, <-alterErrCh)
 	require.NoError(t, testInfo.compileSQL(4))
 	require.NoError(t, testInfo.execSQL(4))
 	// Mock the server is in `write reorg` state.
 	require.NoError(t, testInfo.execSQL(3))
-	require.NoError(t, checkErr)
 }
 
 type stateCase struct {
