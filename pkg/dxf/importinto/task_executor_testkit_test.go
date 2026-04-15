@@ -17,19 +17,26 @@ package importinto_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -104,4 +111,97 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	executor = importinto.NewPostProcessStepExecutor(1, store, taskMgr, taskMeta, taskKS, zap.NewExample())
 	err = executor.RunSubtask(context.Background(), &proto.Subtask{Meta: bytes})
 	require.NoError(t, err)
+}
+
+func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("next-gen doesn't support local sort, skip this test")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	dataPath := filepath.ToSlash(filepath.Join(t.TempDir(), "data.csv"))
+	require.NoError(t, os.WriteFile(dataPath, []byte("1,1\n"), 0o600))
+
+	taskMetaBytes, err := json.Marshal(importinto.TaskMeta{
+		Plan: importer.Plan{
+			DBID:             dbInfo.ID,
+			DBName:           "test",
+			TableInfo:        tbl.Meta(),
+			DesiredTableInfo: tbl.Meta(),
+			ThreadCnt:        1,
+			InImportInto:     true,
+			Format:           importer.DataFormatCSV,
+		},
+		Stmt: fmt.Sprintf("import into test.t from '%s'", dataPath),
+	})
+	require.NoError(t, err)
+
+	task := &proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:   1,
+			Type: proto.ImportInto,
+			Step: proto.ImportStepImport,
+		},
+		Meta: taskMetaBytes,
+	}
+	taskExecutor := importinto.NewImportExecutor(
+		context.Background(),
+		task,
+		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", store),
+	)
+	t.Cleanup(taskExecutor.Close)
+
+	stepExecutorFactory := taskExecutor.(interface {
+		GetStepExecutor(task *proto.Task) (execute.StepExecutor, error)
+	})
+	stepExecutor, err := stepExecutorFactory.GetStepExecutor(task)
+	require.NoError(t, err)
+
+	resource := &proto.StepResource{
+		CPU: proto.NewAllocatable(4),
+		Mem: proto.NewAllocatable(8 << 30),
+	}
+	execute.SetFrameworkInfo(stepExecutor, task, resource, nil, nil)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/createTableImporterForTest", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/errorWhenSortChunk", `return(true)`)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, stepExecutor.Init(ctx))
+
+	subtaskMetaBytes, err := json.Marshal(importinto.ImportStepMeta{
+		ID: 1,
+		Chunks: []importer.Chunk{
+			{
+				Path:        dataPath,
+				Type:        mydump.SourceTypeCSV,
+				Compression: mydump.CompressionNone,
+			},
+		},
+	})
+	require.NoError(t, err)
+	subtask := &proto.Subtask{
+		SubtaskBase: proto.SubtaskBase{
+			ID: 1,
+		},
+		Meta: subtaskMetaBytes,
+	}
+
+	err = stepExecutor.RunSubtask(ctx, subtask)
+	require.ErrorContains(t, err, "occur an error when sort chunk")
+	require.NotContains(t, err.Error(), "already exists")
+
+	err = stepExecutor.RunSubtask(ctx, subtask)
+	require.ErrorContains(t, err, "occur an error when sort chunk")
+	require.NotContains(t, err.Error(), "already exists")
 }

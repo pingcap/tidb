@@ -301,6 +301,10 @@ type PlanReplayerStmt struct {
 	// 2. plan replayer dump explain <analyze> 'file'
 	File string
 
+	// StmtList is used for PLAN REPLAYER DUMP EXPLAIN [ANALYZE] ( "sql1", "sql2", ... )
+	// When non-nil, multiple SQL strings are dumped in one command.
+	StmtList []string
+
 	// Fields below are currently useless.
 
 	// Where is the where clause in select statement.
@@ -346,6 +350,17 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EXPLAIN ANALYZE ")
 	} else {
 		ctx.WriteKeyWord("EXPLAIN ")
+	}
+	if len(n.StmtList) > 0 {
+		ctx.WritePlain("(")
+		for i, s := range n.StmtList {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteString(s)
+		}
+		ctx.WritePlain(")")
+		return nil
 	}
 	if n.Stmt == nil {
 		if len(n.File) > 0 {
@@ -3818,7 +3833,9 @@ func RedactURL(str string) string {
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
-			"sas-token": {},
+			"account-key":    {},
+			"encryption-key": {},
+			"sas-token":      {},
 		}
 	}
 
@@ -4087,7 +4104,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
+	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "use_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}

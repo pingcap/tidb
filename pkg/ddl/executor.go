@@ -1044,6 +1044,23 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
+
+	// Process region split policies from CREATE TABLE
+	if len(s.SplitIndex) > 0 {
+		for _, splitOpt := range s.SplitIndex {
+			policy, indexName, err := normalizeSplitPolicy(metaBuildCtx.GetExprCtx(), splitOpt, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if indexName == "" {
+				tbInfo.TableSplitPolicy = policy
+			} else {
+				indexInfo := tbInfo.FindIndexByName(indexName)
+				indexInfo.RegionSplitPolicy = policy
+			}
+		}
+	}
+
 	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
 		return err
 	}
@@ -1917,9 +1934,9 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableWithoutValidation:
 			sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedAlterTableWithoutValidation)
 		case ast.AlterTableAddStatistics:
-			err = e.AlterTableAddStatistics(sctx, ident, spec.Statistics, spec.IfNotExists)
+			err = e.AlterTableAddStatistics()
 		case ast.AlterTableDropStatistics:
-			err = e.AlterTableDropStatistics(sctx, ident, spec.Statistics, spec.IfExists)
+			err = e.AlterTableDropStatistics()
 		case ast.AlterTableAttributes:
 			err = e.AlterTableAttributes(sctx, ident, spec)
 		case ast.AlterTablePartitionAttributes:
@@ -1933,6 +1950,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
 			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
 			// MyISAM specific
+		case ast.AlterTableSplitIndex:
+			err = e.AlterTableSetRegionSplitPolicy(sctx, ident, spec.SplitIndex)
 		case ast.AlterTableRemoveTTL:
 			// the parser makes sure we have only one `ast.AlterTableRemoveTTL` in an alter statement
 			err = e.AlterTableRemoveTTL(sctx, ident)
@@ -3889,67 +3908,16 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 	return nil
 }
 
-// AlterTableAddStatistics registers extended statistics for a table.
-func (e *executor) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifNotExists bool) error {
-	if !ctx.GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	// Not support Cardinality and Dependency statistics type for now.
-	if stats.StatsType == ast.StatsTypeCardinality || stats.StatsType == ast.StatsTypeDependency {
-		return errors.New("Cardinality and Dependency statistics types are not supported now")
-	}
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
-	if err != nil {
-		return err
-	}
-	tblInfo := tbl.Meta()
-	if tblInfo.GetPartitionInfo() != nil {
-		return errors.New("Extended statistics on partitioned tables are not supported now")
-	}
-	colIDs := make([]int64, 0, 2)
-	colIDSet := make(map[int64]struct{}, 2)
-	// Check whether columns exist.
-	for _, colName := range stats.Columns {
-		col := table.FindCol(tbl.VisibleCols(), colName.Name.L)
-		if col == nil {
-			return infoschema.ErrColumnNotExists.GenWithStackByArgs(colName.Name, ident.Name)
-		}
-		if stats.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("No need to create correlation statistics on the integer primary key column"))
-			return nil
-		}
-		if _, exist := colIDSet[col.ID]; exist {
-			return errors.Errorf("Cannot create extended statistics on duplicate column names '%s'", colName.Name.L)
-		}
-		colIDSet[col.ID] = struct{}{}
-		colIDs = append(colIDs, col.ID)
-	}
-	if len(colIDs) != 2 && (stats.StatsType == ast.StatsTypeCorrelation || stats.StatsType == ast.StatsTypeDependency) {
-		return errors.New("Only support Correlation and Dependency statistics types on 2 columns")
-	}
-	if len(colIDs) < 1 && stats.StatsType == ast.StatsTypeCardinality {
-		return errors.New("Only support Cardinality statistics type on at least 2 columns")
-	}
-	// TODO: check whether covering index exists for cardinality / dependency types.
-
-	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
-	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return e.statsHandle.InsertExtendedStats(stats.StatsName, colIDs, int(stats.StatsType), tblInfo.ID, ifNotExists)
+// AlterTableAddStatistics would register extended statistics for a table.
+// The extended statistics feature has been removed; this always returns an error.
+func (*executor) AlterTableAddStatistics() error {
+	return errors.New("Extended statistics feature has been removed")
 }
 
-// AlterTableDropStatistics logically deletes extended statistics for a table.
-func (e *executor) AlterTableDropStatistics(ctx sessionctx.Context, ident ast.Ident, stats *ast.StatisticsSpec, ifExists bool) error {
-	if !ctx.GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	_, tbl, err := e.getSchemaAndTableByIdent(ident)
-	if err != nil {
-		return err
-	}
-	tblInfo := tbl.Meta()
-	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
-	// because locking in Handle can guarantee the correctness of `version` in system tables.
-	return e.statsHandle.MarkExtendedStatsDeleted(stats.StatsName, tblInfo.ID, ifExists)
+// AlterTableDropStatistics would logically delete extended statistics for a table.
+// The extended statistics feature has been removed; this always returns an error.
+func (*executor) AlterTableDropStatistics() error {
+	return errors.New("Extended statistics feature has been removed")
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
@@ -4242,7 +4210,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				err := adminCheckTableBeforeDrop(ctx, fullti)
+				err := adminCheckTableBeforeDrop(e.sessPool, fullti)
 				if err != nil {
 					return err
 				}
@@ -4317,35 +4285,44 @@ func (e *executor) dropTableObject(
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
 // Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
 // using it in other places by mistake, it's named like this.
-func adminCheckTableBeforeDrop(ctx sessionctx.Context, fullti ast.Ident) error {
+func adminCheckTableBeforeDrop(sessPool *sess.Pool, fullti ast.Ident) error {
 	logutil.DDLLogger().Warn("admin check table before drop",
 		zap.String("database", fullti.Schema.O),
 		zap.String("table", fullti.Name.O),
 	)
-	exec := ctx.GetRestrictedSQLExecutor()
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
-	// `tidb_enable_fast_table_check` is already the default value, and some feature (e.g. partial index)
-	// doesn't support admin check with `tidb_enable_fast_table_check = OFF`, so we just set it to `ON` here.
-	// TODO: set the value of `tidb_enable_fast_table_check` to 'ON' for all internal sessions if it's OK.
-	originalFastTableCheck := ctx.GetSessionVars().FastCheckTable
-	_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'ON';")
+	sctx, err := sessPool.Get()
 	if err != nil {
+		return err
+	}
+	var discardErr error
+	defer func() {
+		if discardErr == nil {
+			sessPool.Put(sctx)
+			return
+		}
+		logutil.DDLLogger().Warn("discard internal session because tidb_enable_fast_table_check change failed", zap.Error(discardErr))
+		sessPool.Destroy(sctx)
+	}()
+	s := sess.NewSession(sctx)
+
+	// Some features (e.g. partial index) doesn't support admin check with `tidb_enable_fast_table_check = OFF`,
+	// so we temporarily enable it in the internal DDL session and restore it afterward.
+	originalFastTableCheck := sctx.GetSessionVars().FastCheckTable
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
+		discardErr = err
 		return err
 	}
 	if !originalFastTableCheck {
 		defer func() {
-			_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'OFF';")
-			if err != nil {
-				logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(err))
+			if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.Off); err != nil {
+				discardErr = err
 			}
 		}()
 	}
-	_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err = s.Execute(internalCtx, "admin check table %n.%n", "admin_check_table_before_drop", fullti.Schema.O, fullti.Name.O)
+	return err
 }
 
 // DropTable will proceed even if some table in the list does not exists.
@@ -5097,6 +5074,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		}},
 		OpType: model.OpAddIndex,
 	}
+
+	// Check if we should warn about missing region split policy
+	// If other indexes already have region split policy, warn user to set policy for new index
+	checkAndWarnMissingRegionSplitPolicy(ctx, tblInfo, indexName)
 
 	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
@@ -7198,4 +7179,58 @@ func isReservedSchemaObjInNextGen(id int64) bool {
 		failpoint.Return(false)
 	})
 	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
+}
+
+// AlterTableSetRegionSplitPolicy sets persistent region split policy for table
+func (e *executor) AlterTableSetRegionSplitPolicy(ctx sessionctx.Context, ident ast.Ident, splitOpt *ast.SplitIndexOption) error {
+	schema, tb, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+
+	policy, indexName, err := normalizeSplitPolicy(ctx.GetExprCtx(), splitOpt, tb.Meta())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      meta.Name.L,
+		Type:           model.ActionAlterTableSetRegionSplitPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
+	}
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+
+	args := &model.AlterTableSetRegionSplitPolicyArgs{
+		IndexName: indexName,
+		Policy:    policy,
+	}
+	return e.doDDLJob2(ctx, job, args)
+}
+
+// checkAndWarnMissingRegionSplitPolicy checks if table has other indexes with region split policy,
+// and warns user to set policy for newly created index.
+func checkAndWarnMissingRegionSplitPolicy(ctx sessionctx.Context, tblInfo *model.TableInfo, newIndexName ast.CIStr) {
+	// Check if any existing index has RegionSplitPolicy
+	hasExistingPolicy := false
+	for _, idx := range tblInfo.Indices {
+		if idx.RegionSplitPolicy != nil {
+			hasExistingPolicy = true
+			break
+		}
+	}
+
+	// If existing indexes have region split policy, warn about new index
+	if hasExistingPolicy {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			"It is recommended to add a region split strategy to the new index '" + newIndexName.O + "' to avoid write hotspots"))
+	}
 }

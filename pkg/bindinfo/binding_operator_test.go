@@ -23,6 +23,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -648,6 +649,37 @@ func TestShowBindingDigestField(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show global bindings;")
 	require.Equal(t, len(result.Rows()), 0)
+}
+
+func TestIssue63032(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx_a(a))")
+
+	// Enable pessimistic-auto-commit globally.
+	origVal := config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()
+	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
+	defer config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(origVal)
+
+	// Ensure the session is in auto-commit mode (default) and pessimistic txn mode (default).
+	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@tidb_txn_mode").Check(testkit.Rows("pessimistic"))
+
+	// CREATE BINDING should not panic with "context provider not set".
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.StatusEnabled, rows[0][3])
+
+	// Also test session binding.
+	tk.MustExec("create binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
+
+	// DROP BINDING should also work.
+	tk.MustExec("drop global binding for select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 0)
 }
 
 func TestIssue64558(t *testing.T) {

@@ -152,11 +152,11 @@ func TestGetLocalPathDirNameWithWritePerm(t *testing.T) {
 	})
 
 	fs := afero.NewMemMapFs()
-	require.NoError(t, fs.MkdirAll("/var/log/tidb", 0o755))
+	require.NoError(t, fs.MkdirAll("/var/log/tidb/replayer", 0o755))
 	basePathFsMem := afero.NewBasePathFs(fs, "/")
 
 	path := getLocalPathDirName(basePathFsMem)
-	require.Equal(t, "/var/log/tidb", path)
+	require.Equal(t, "/var/log/tidb", path, "should return log dir as storage root when replayer subdir is writable")
 }
 
 func TestGetLocalPathDirNameWithoutWritePerm(t *testing.T) {
@@ -197,9 +197,9 @@ func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 
 	tempDir := t.TempDir()
 	logDir := filepath.Join(tempDir, "log")
-	// Use afero MemMapFs with log dir created so canWriteToFile succeeds (like TestPlanReplayerPathWithWritePrem).
+	replayerDir := filepath.Join(logDir, "replayer")
 	fs := afero.NewMemMapFs()
-	require.NoError(t, fs.MkdirAll(logDir, 0o755))
+	require.NoError(t, fs.MkdirAll(replayerDir, 0o755))
 	testLocalPathFS = fs
 
 	config.UpdateGlobal(func(conf *config.Config) {

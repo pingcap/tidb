@@ -483,6 +483,7 @@ type UnlockStats struct {
 type PlanReplayer struct {
 	physicalop.SimpleSchemaProducer
 	ExecStmt          ast.StmtNode
+	StmtList          []string // For PLAN REPLAYER DUMP EXPLAIN ( "sql1", "sql2", ... )
 	Analyze           bool
 	Load              bool
 	File              string

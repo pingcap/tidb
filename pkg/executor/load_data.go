@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -399,7 +401,7 @@ func (w *encodeWorker) processStream(
 			if err != nil {
 				return err
 			}
-			if err = w.controller.HandleSkipNRows(dataParser); err != nil {
+			if err = importer.HandleSkipNRows(dataParser, w.controller.IgnoreLines); err != nil {
 				return err
 			}
 			err = w.processOneStream(ctx, dataParser, outCh)
@@ -581,9 +583,15 @@ func (w *encodeWorker) parserData2TableData(
 		if w.controller.Restrictive {
 			return nil, err
 		}
+		// ErrInvalidAutoRandom should always be returned as a real error,
+		// not treated as a warning, because returning nil row causes panic
+		// when looking up index. See https://github.com/pingcap/tidb/issues/65585
+		if dbterror.ErrInvalidAutoRandom.Equal(err) {
+			return nil, err
+		}
 		w.handleWarning(err)
 		logutil.Logger(ctx).Error("failed to get row", zap.Error(err))
-		// TODO: should not return nil! caller will panic when lookup index
+		// TODO: shall we ignore this row? Returning nil will make the caller panic.
 		return nil, nil
 	}
 
@@ -666,6 +674,16 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 		return err
 	}
 	w.Ctx().GetSessionVars().StmtCtx.AddRecordRows(cnt)
+
+	// LOAD DATA LOW_PRIORITY should lower both read and write priority of its KV operations
+	// (unique/PK conflict checks + 2PC requests).
+	if w.Ctx().GetSessionVars().StmtCtx.Priority == mysql.LowPriority {
+		txn, err := w.Ctx().Txn(true)
+		if err != nil {
+			return err
+		}
+		txn.SetOption(kv.Priority, kv.PriorityLow)
+	}
 
 	switch w.controller.OnDuplicate {
 	case ast.OnDuplicateKeyHandlingReplace:

@@ -153,7 +153,7 @@ go_test(
     ],
     embed = [":domain"],
     flaky = True,
-    shard_count = 29,
+    shard_count = 30,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -197,6 +197,7 @@ go_test(
         "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//resource_group/controller",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_uber_go_goleak//:goleak",
     ],

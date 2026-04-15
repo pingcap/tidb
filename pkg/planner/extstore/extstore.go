@@ -135,7 +135,7 @@ func getLocalPathDirName(vfs ...afero.Fs) string {
 	}
 	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
 	tidbLogDir = filepath.Clean(tidbLogDir)
-	if canWriteToFile(fs, tidbLogDir) {
+	if canWriteToReplayerDirFile(fs, tidbLogDir) {
 		logutil.BgLogger().Info("use log dir as local path", zap.String("dir", tidbLogDir))
 		return tidbLogDir
 	}
@@ -144,11 +144,12 @@ func getLocalPathDirName(vfs ...afero.Fs) string {
 	return tempDir
 }
 
-func canWriteToFile(vfs afero.Fs, path string) bool {
+func canWriteToReplayerDirFile(vfs afero.Fs, dir string) bool {
 	now := time.Now()
 	timeStr := now.Format("20060102150405")
 	filename := fmt.Sprintf("test_%s.txt", timeStr)
-	path = filepath.Join(path, filename)
+	dir = filepath.Join(dir, "replayer")
+	path := filepath.Join(dir, filename)
 	if !canWriteToFileInternal(vfs, path) {
 		logutil.BgLogger().Warn("cannot write to file", zap.String("path", path))
 		return false

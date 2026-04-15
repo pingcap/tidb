@@ -531,6 +531,12 @@ func splitForOneSubtask(
 	}()
 
 	ret := make([]planner.PipelineSpec, 0, 16)
+	var (
+		subtaskCount      int
+		totalDataFiles    int
+		totalRangeJobKeys int
+		totalRegionKeyCnt int
+	)
 
 	startKey := tidbkv.Key(kvMeta.StartKey)
 	var endKey tidbkv.Key
@@ -544,7 +550,7 @@ func splitForOneSubtask(
 		} else {
 			endKey = tidbkv.Key(endKeyOfGroup).Clone()
 		}
-		logutil.Logger(ctx).Info("kv range as subtask",
+		logutil.Logger(ctx).Debug("kv range as subtask",
 			zap.String("kvGroup", kvGroup),
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)),
@@ -581,12 +587,24 @@ func splitForOneSubtask(
 			TS:             ts,
 		}
 		ret = append(ret, &WriteIngestSpec{m})
+		subtaskCount++
+		totalDataFiles += len(dataFiles)
+		totalRangeJobKeys += len(interiorRangeJobKeys)
+		totalRegionKeyCnt += len(interiorRegionSplitKeys)
 
 		startKey = endKey
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
 	}
+
+	logutil.Logger(ctx).Info("kv range split summary",
+		zap.String("kvGroup", kvGroup),
+		zap.Int("subtasks", subtaskCount),
+		zap.Int("dataFiles", totalDataFiles),
+		zap.Int("rangeJobKeys", totalRangeJobKeys),
+		zap.Int("regionSplitKeys", totalRegionKeyCnt),
+	)
 
 	return ret, nil
 }
@@ -691,7 +709,6 @@ func getRangeSplitter(
 		zap.Int64("range-keys", rangeKeys),
 	)
 
-	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(
 		ctx,
 		kvMeta.MultipleFilesStats,
@@ -715,6 +732,8 @@ func generateCollectConflictsSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]p
 	if err != nil {
 		return nil, err
 	}
+	// For conflict handling steps, RowCnt stores conflict KV pair counts.
+	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {
 		return []planner.PipelineSpec{}, nil
@@ -743,6 +762,8 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([
 	if err != nil {
 		return nil, err
 	}
+	// For conflict handling steps, RowCnt stores conflict KV pair counts.
+	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {
 		return []planner.PipelineSpec{}, nil
@@ -812,4 +833,21 @@ func collectConflictInfos(ctx context.Context, store storeapi.Storage, planCtx p
 		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
 	}
 	return m, nil
+}
+
+func totalConflicts(groupConflictInfos *KVGroupConflictInfos) int64 {
+	if groupConflictInfos == nil {
+		return 0
+	}
+	var total int64
+	for _, conflictInfo := range groupConflictInfos.ConflictInfos {
+		if conflictInfo == nil {
+			continue
+		}
+		if conflictInfo.Count > uint64(math.MaxInt64-total) {
+			return math.MaxInt64
+		}
+		total += int64(conflictInfo.Count)
+	}
+	return total
 }

@@ -298,7 +298,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.UpdateDeltaForTableID(id)
 	}
-	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys))
+	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys), false)
 	if err != nil {
 		return err
 	}
@@ -335,7 +335,7 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 	return nil
 }
 
-func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikvstore.LockCtx, error) {
+func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inSharedMode bool) (*tikvstore.LockCtx, error) {
 	seVars := sctx.GetSessionVars()
 	forUpdateTS, err := sessiontxn.GetTxnManager(sctx).GetStmtForUpdateTS()
 	if err != nil {
@@ -344,6 +344,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
+	lockCtx.InShareMode = inSharedMode
 
 	// Set max_execution_time deadline for SELECT statements
 	maxExectionTime := seVars.GetMaxExecutionTime()
@@ -540,6 +541,10 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
+	return e.open(ctx)
+}
+
+func (e *LimitExec) open(ctx context.Context) error {
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
@@ -949,26 +954,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.CTEStorageMap.(map[int]*CTEStorages))
 	}
-	if sc.LockTableIDs == nil {
-		sc.LockTableIDs = make(map[int64]struct{})
-	} else {
-		clear(sc.LockTableIDs)
-	}
-	if sc.TableStats == nil {
-		sc.TableStats = make(map[int64]any)
-	} else {
-		clear(sc.TableStats)
-	}
-	if sc.RelatedTableIDs == nil {
-		sc.RelatedTableIDs = make(map[int64]struct{})
-	} else {
-		clear(sc.RelatedTableIDs)
-	}
-	if sc.TblInfo2UnionScan == nil {
-		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
-	} else {
-		clear(sc.TblInfo2UnionScan)
-	}
+	// These maps are lazily initialized at their write sites to avoid
+	// allocation overhead for simple queries (e.g. point-gets) that never
+	// use them.  If already allocated (reused StatementContext), clear to
+	// preserve the backing array for the next complex query.  All read
+	// sites handle nil maps safely (len(nil)==0, range over nil is a no-op).
+	clear(sc.LockTableIDs)
+	clear(sc.TableStats)
+	clear(sc.RelatedTableIDs)
+	clear(sc.TblInfo2UnionScan)
 	sc.IsStaleness = false
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
@@ -998,6 +992,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.SessionID.Store(vars.ConnectionID)
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.DiskTracker.Killer = &vars.SQLKiller
+	if vars.InRestrictedSQL && vars.InternalSQLScanUserTable {
+		failpoint.InjectCall("beforeResetSQLKillerForTTLScan", s)
+	}
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID.Store(vars.ConnectionID)
 	vars.ResetRelevantOptVarsAndFixes(false)
@@ -1147,6 +1144,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.LoadDataStmt:
 		sc.MemSensitive = true
 		sc.InLoadDataStmt = true
+		// LOAD DATA has a dedicated LOW_PRIORITY keyword (not the common stmt.Priority field).
+		// Align it with other statements so downstream KV requests can reuse StmtCtx.Priority.
+		if stmt.LowPriority {
+			sc.Priority = mysql.LowPriority
+		}
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 	case *ast.ImportIntoStmt:

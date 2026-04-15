@@ -20,6 +20,7 @@ import (
 	goerrors "errors"
 	"io"
 	"path"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -205,6 +206,27 @@ func (c *s3Client) DeleteObject(ctx context.Context, name string) error {
 	return errors.Trace(err)
 }
 
+// PresignObject creates a presigned URL for the given object.
+// It implements the presignableClient interface used by s3like.Storage.
+func (c *s3Client) PresignObject(ctx context.Context, name string, expire time.Duration) (string, error) {
+	key := c.ObjectKey(name)
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(c.Bucket),
+		Key:    aws.String(key),
+	}
+	// PresignClient requires *s3.Client; S3API is implemented by *s3.Client in production.
+	client, ok := c.svc.(*s3.Client)
+	if !ok {
+		return "", errors.New("PresignObject requires concrete S3 client")
+	}
+	presignClient := s3.NewPresignClient(client)
+	result, err := presignClient.PresignGetObject(ctx, input, s3.WithPresignExpires(expire))
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return result.URL, nil
+}
+
 func (c *s3Client) DeleteObjects(ctx context.Context, names []string) error {
 	if len(names) == 0 {
 		return nil
@@ -251,6 +273,22 @@ func (c *s3Client) IsObjectExists(ctx context.Context, name string) (bool, error
 		return false, errors.Trace(err)
 	}
 	return true, nil
+}
+
+func (c *s3Client) HeadObject(ctx context.Context, name string) (*s3like.HeadObjectResp, error) {
+	key := c.ObjectKey(name)
+	input := &s3.HeadObjectInput{
+		Bucket: aws.String(c.Bucket),
+		Key:    aws.String(key),
+	}
+
+	output, err := c.svc.HeadObject(ctx, input)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &s3like.HeadObjectResp{
+		ReplicationStatus: string(output.ReplicationStatus),
+	}, nil
 }
 
 func (c *s3Client) ListObjects(ctx context.Context, extraPrefix, startAfter string, continuationToken *string, maxKeys int) (*s3like.ListResp, error) {

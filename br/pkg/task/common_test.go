@@ -327,6 +327,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		StatsConcurrency:         0xc,
 		BatchFlushInterval:       16000000000,
 		DdlBatchSize:             0x80,
+		RegionScanConcurrency:    256,
 		WithPlacementPolicy:      "STRICT",
 		Layout:                   repo.LayoutLegacy,
 		UseCheckpoint:            true,
