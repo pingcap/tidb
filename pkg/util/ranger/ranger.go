@@ -184,7 +184,7 @@ func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 	highValBuf := make([]types.Datum, rangeCount)
 	collatorBuf := make([]collate.Collator, rangeCount)
 	rangeCollator := collate.GetCollator(newTp.GetCollate())
-	for i := 0; i < rangeCount; i++ {
+	for i := range rangeCount {
 		startPoint, endPoint := convertedPoints[i*2], convertedPoints[i*2+1]
 		// Batch-allocate the backing arrays, but clamp each slice to len==cap.
 		// Some callers append tail datums to an emitted range later, and that append
