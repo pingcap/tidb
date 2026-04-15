@@ -561,8 +561,8 @@ func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
 		}
-		assertMultiSchema(t, job, 3)
-		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
+		assertMultiSchema(t, job, 1)
+		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", hook.OnJobUpdated)
 	sql := "alter table t modify column a tinyint, modify column b bigint, modify column c char(20);"
@@ -783,21 +783,41 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"'2020-01-01 10:00:00', 'wer', '10:00:00', 2.1, 12, 'qwer', 12, 'asdf');")
 
 	var checkErr error
+	var updated bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if checkErr != nil {
+		if checkErr != nil || updated {
 			return
 		}
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		// Wait for "drop column c_drop_2" entering delete-only state.
-		if job.MultiSchemaInfo.SubJobs[8].SchemaState == model.StateDeleteOnly {
+		dropColumnReady := false
+		for i, subJob := range job.MultiSchemaInfo.SubJobs {
+			if subJob.Type != model.ActionDropColumn || subJob.SchemaState != model.StateDeleteOnly {
+				continue
+			}
+			proxyJob := subJob.ToProxyJob(job, i)
+			args, err := model.GetTableColumnArgs(&proxyJob)
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if args.Col != nil && args.Col.Name.L == "c_drop_2" {
+				dropColumnReady = true
+				break
+			}
+		}
+		if dropColumnReady {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test;")
-			_, checkErr = tk2.Exec("update t set c_4 = '2020-01-01 10:00:00', c_5 = 'c_5_update', c_1 = 102, " +
+			// The merged modify job can still expose the old TIME column here.
+			// Use a value valid under both schemas while checking concurrent DML.
+			_, checkErr = tk2.Exec("update t set c_4 = '2020-01-01 10:00:00', c_5 = '11:11:11', c_1 = 102, " +
 				"c_2 = '1', c_pos_1 = 102, c_idx_visible = 102, c_3 = 3.1, c_drop_idx = 'er', c_6 = 2, c_pos_2 = 'dddd', " +
 				"c_add_idx_1 = 102, c_add_idx_2 = 'zxc', c_add_2 = 10001, c_add_1 = 10001 where c_drop_idx = 'wer';")
 			if checkErr != nil {
 				return
 			}
+			updated = true
 		}
 	})
 	tk.MustExec("alter table t " +
@@ -816,6 +836,9 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 		"alter index idx_visible invisible, " +
 		"modify column c_3 decimal(10, 2);")
 	require.NoError(t, checkErr)
+	require.True(t, updated, "the concurrent update must run at the target drop-column state")
+	tk.MustQuery("select c_1, c_5, c_add_1, c_add_2 from t").Check(testkit.Rows("102 11:11:11 10001 10001"))
+	tk.MustExec("admin check table t")
 }
 
 func TestMultiSchemaChangeModifyColumnOrderByStates(t *testing.T) {

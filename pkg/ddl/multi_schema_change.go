@@ -51,6 +51,16 @@ func updateParentJobFromProxy(parentJob, proxyJob *model.Job) {
 // For multi-schema change, analyze and reorg are done by parent job.
 // So we just skip them for sub-jobs.
 func skipReorgAndAnalyzeForSubJob(jobCtx *jobContext, tblInfo *model.TableInfo, job *model.Job, reorgStage model.ReorgStage) (int64, error) {
+	return skipReorgAndAnalyzeForSubJobWithMark(jobCtx, tblInfo, job, reorgStage, true)
+}
+
+func skipReorgAndAnalyzeForSubJobWithMark(
+	jobCtx *jobContext,
+	tblInfo *model.TableInfo,
+	job *model.Job,
+	reorgStage model.ReorgStage,
+	markNonRevertible bool,
+) (int64, error) {
 	v, err := getValidCurrentVersion(jobCtx.store)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -64,7 +74,9 @@ func skipReorgAndAnalyzeForSubJob(jobCtx *jobContext, tblInfo *model.TableInfo, 
 	}
 	job.ReorgMeta.Stage = reorgStage
 	job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-	checkAndMarkNonRevertible(job)
+	if markNonRevertible {
+		checkAndMarkNonRevertible(job)
+	}
 
 	return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 }
@@ -659,6 +671,51 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 
 	// place the merged add index job at the end of the sub-jobs.
 	mergedSubJob.JobArgs = newAddIndexesArgs
+	newSubJobs = append(newSubJobs, mergedSubJob)
+	info.SubJobs = newSubJobs
+}
+
+func mergeModifyColumn(info *model.MultiSchemaInfo) {
+	var (
+		mergedSubJob *model.SubJob
+		mergeCnt     int
+	)
+	for _, subJob := range info.SubJobs {
+		if subJob.Type != model.ActionModifyColumn {
+			continue
+		}
+		mergeCnt++
+		if mergedSubJob == nil {
+			mergedSubJob = subJob.Clone()
+			mergedSubJob.RawArgs = nil
+		}
+	}
+	if mergeCnt <= 1 {
+		return
+	}
+
+	mergedArgs := &model.ModifyColumnsArgs{
+		ModifyColumns: make([]*model.ModifyColumnSubArgs, 0, mergeCnt),
+	}
+	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs)-mergeCnt+1)
+	for _, subJob := range info.SubJobs {
+		if subJob.Type != model.ActionModifyColumn {
+			newSubJobs = append(newSubJobs, subJob)
+			continue
+		}
+		args := subJob.JobArgs.(*model.ModifyColumnArgs)
+		cloneArg := *args
+		mergedArgs.ModifyColumns = append(mergedArgs.ModifyColumns, &model.ModifyColumnSubArgs{
+			ModifyColumnArgs:  &cloneArg,
+			ChildSchemaState:  model.StateNone,
+			ChildAnalyzeState: model.AnalyzeStateNone,
+			ChildReorgStage:   model.ReorgStageNone,
+		})
+		if subJob.NeedReorg {
+			mergedSubJob.NeedReorg = true
+		}
+	}
+	mergedSubJob.JobArgs = mergedArgs
 	newSubJobs = append(newSubJobs, mergedSubJob)
 	info.SubJobs = newSubJobs
 }
