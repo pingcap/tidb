@@ -86,8 +86,8 @@ func encodeFieldTypeToLattice(ft *types.FieldType) Tuple {
 		Byte(encodeAntiKeys(ft.GetFlag())),
 		defVal,
 
-		Singleton(ft.GetCharset()),
-		Singleton(ft.GetCollate()),
+		Charset(ft.GetCharset()),
+		Collation(ft.GetCollate()),
 		StringList(ft.GetElems()),
 	}
 }
