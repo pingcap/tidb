@@ -16,9 +16,12 @@ package importinto
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"strconv"
 	"testing"
 
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -27,6 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -72,6 +79,63 @@ func TestImportTaskExecutor(t *testing.T) {
 	require.Error(t, err)
 	_, err = executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}, Meta: []byte("")})
 	require.Error(t, err)
+}
+
+func TestTiCITaskIDForImportIntoUsesTaskKey(t *testing.T) {
+	jobID := int64(12345)
+	require.Equal(t, TaskKey(jobID), ticiTaskIDForImportInto(jobID))
+}
+
+func TestGetTableImporterSetsTiCITaskID(t *testing.T) {
+	ctx := context.Background()
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	cfg := tidbconfig.GetGlobalConfig()
+	originalTempDir := cfg.TempDir
+	cfg.TempDir = t.TempDir()
+	t.Cleanup(func() {
+		cfg.TempDir = originalTempDir
+	})
+
+	tableInfo := &model.TableInfo{
+		ID:    2,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{{
+			ID:        1,
+			Name:      ast.NewCIStr("a"),
+			Offset:    0,
+			State:     model.StatePublic,
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		}},
+	}
+
+	path := filepath.Join(t.TempDir(), "input.csv")
+	taskMeta := &TaskMeta{
+		JobID: 12345,
+		Plan: importer.Plan{
+			DBID:             1,
+			DBName:           "test",
+			TableInfo:        tableInfo,
+			DesiredTableInfo: tableInfo,
+			Path:             path,
+			Format:           importer.DataFormatCSV,
+			InImportInto:     true,
+			DataSourceType:   importer.DataSourceTypeFile,
+		},
+		Stmt: fmt.Sprintf("IMPORT INTO test.t FROM '%s'", path),
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/createTableImporterForTest", `return(true)`)
+	tableImporter, err := getTableImporter(ctx, 99, taskMeta, store, zap.NewNop())
+	require.NoError(t, err)
+	require.Equal(t, TaskKey(taskMeta.JobID), tableImporter.LoadDataController.TiDBTaskIDForTiCI)
+	tableImporter.LoadDataController.Close()
+	tableImporter.Backend().CloseEngineMgr()
 }
 
 func TestGetOnDupForKVGroup(t *testing.T) {

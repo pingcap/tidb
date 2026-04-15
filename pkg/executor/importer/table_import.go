@@ -166,6 +166,13 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 	return local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
 }
 
+func ticiTaskIDForImporter(e *LoadDataController, importerID string) string {
+	if e != nil && len(e.TiDBTaskIDForTiCI) > 0 {
+		return e.TiDBTaskIDForTiCI
+	}
+	return importerID
+}
+
 // NewTableImporter creates a new table importer.
 func NewTableImporter(
 	ctx context.Context,
@@ -207,7 +214,8 @@ func NewTableImporter(
 
 	// Collect all the indexIDs for TiCI writer group initialization.
 	newIndexIDs := tici.GetTiCIIndexIDs(e.Table.Meta())
-	if err := localBackend.InitTiCIWriterGroup(ctx, e.Table.Meta(), e.DBName, id, newIndexIDs); err != nil {
+	tidbTaskID := ticiTaskIDForImporter(e, id)
+	if err := localBackend.InitTiCIWriterGroup(ctx, e.Table.Meta(), e.DBName, tidbTaskID, newIndexIDs); err != nil {
 		return nil, err
 	}
 
