@@ -432,8 +432,15 @@ func (rm *Manager) UpdateNewAndDoneWatch() error {
 	return nil
 }
 
+// checkpointGaugeValue renders a syncer CheckPoint for the
+// `tidb_server_runaway_syncer_checkpoint` gauge. A zero `time.Time` means no
+// scan has advanced the checkpoint yet (reader is still at NullTime, or every
+// scan so far has been empty/errored); it is reported as `0` to stay
+// compatible with the pre-time-cursor metric convention and to avoid emitting
+// `time.Time{}.UnixMilli() == -62135596800000`, which would otherwise dominate
+// the Grafana panel's y-axis on any cluster that has not yet produced a
+// runaway watch row. Non-zero checkpoints are reported as Unix milliseconds.
 func checkpointGaugeValue(checkpoint time.Time) float64 {
-	// Preserve the historical neutral zero value before the first successful sync.
 	if checkpoint.IsZero() {
 		return 0
 	}
