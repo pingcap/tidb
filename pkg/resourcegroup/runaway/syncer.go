@@ -54,6 +54,85 @@ func getRunawayWatchDoneTableName() string {
 	return fmt.Sprintf("mysql.%s", runawayWatchDoneTableName)
 }
 
+// Column layout of `mysql.tidb_runaway_watch`. Keep the values in sync with
+// the table's CREATE definition; readQuarantineRecords consults these by name
+// so any column is resolved at the call site instead of via index arithmetic.
+const (
+	watchColID = iota
+	watchColResourceGroupName
+	watchColStartTime
+	watchColEndTime
+	watchColWatch
+	watchColWatchText
+	watchColSource
+	watchColAction
+	watchColSwitchGroupName
+	watchColExceedCause
+)
+
+// Column layout of `mysql.tidb_runaway_watch_done`. The done table prepends
+// its own primary-key column and appends `done_time`; the QuarantineRecord
+// fields sit in between. Listing every column explicitly (rather than
+// expressing this table's layout as an offset of `tidb_runaway_watch`) keeps
+// decoding robust against future schema drift on either table.
+const (
+	watchDoneColDoneID = iota
+	watchDoneColID
+	watchDoneColResourceGroupName
+	watchDoneColStartTime
+	watchDoneColEndTime
+	watchDoneColWatch
+	watchDoneColWatchText
+	watchDoneColSource
+	watchDoneColAction
+	watchDoneColSwitchGroupName
+	watchDoneColExceedCause
+	watchDoneColDoneTime
+)
+
+// quarantineColumns projects QuarantineRecord fields onto the columns of a
+// runaway watch system table. Each systemTableReader carries its own instance
+// so the decoder never has to assume a shared layout between tables.
+type quarantineColumns struct {
+	ID                int
+	ResourceGroupName int
+	StartTime         int
+	EndTime           int
+	Watch             int
+	WatchText         int
+	Source            int
+	Action            int
+	SwitchGroupName   int
+	ExceedCause       int
+}
+
+var (
+	watchRecordColumns = quarantineColumns{
+		ID:                watchColID,
+		ResourceGroupName: watchColResourceGroupName,
+		StartTime:         watchColStartTime,
+		EndTime:           watchColEndTime,
+		Watch:             watchColWatch,
+		WatchText:         watchColWatchText,
+		Source:            watchColSource,
+		Action:            watchColAction,
+		SwitchGroupName:   watchColSwitchGroupName,
+		ExceedCause:       watchColExceedCause,
+	}
+	watchDoneRecordColumns = quarantineColumns{
+		ID:                watchDoneColID,
+		ResourceGroupName: watchDoneColResourceGroupName,
+		StartTime:         watchDoneColStartTime,
+		EndTime:           watchDoneColEndTime,
+		Watch:             watchDoneColWatch,
+		WatchText:         watchDoneColWatchText,
+		Source:            watchDoneColSource,
+		Action:            watchDoneColAction,
+		SwitchGroupName:   watchDoneColSwitchGroupName,
+		ExceedCause:       watchDoneColExceedCause,
+	}
+)
+
 // Syncer is used to sync the runaway records.
 type syncer struct {
 	newWatchReader      *systemTableReader
@@ -77,15 +156,19 @@ func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache)
 		sysSessionPool: sysSessionPool,
 		infoCache:      infoCache,
 		newWatchReader: &systemTableReader{
-			getRunawayWatchTableName(),
-			"start_time",
-			NullTime,
-			NullTime},
+			TableName:     getRunawayWatchTableName(),
+			KeyCol:        "start_time",
+			RecordColumns: watchRecordColumns,
+			CheckPoint:    NullTime,
+			UpperBound:    NullTime,
+		},
 		deletionWatchReader: &systemTableReader{
-			getRunawayWatchDoneTableName(),
-			"done_time",
-			NullTime,
-			NullTime},
+			TableName:     getRunawayWatchDoneTableName(),
+			KeyCol:        "done_time",
+			RecordColumns: watchDoneRecordColumns,
+			CheckPoint:    NullTime,
+			UpperBound:    NullTime,
+		},
 		syncInterval:   metrics.RunawaySyncerIntervalHistogram.WithLabelValues(lblSync),
 		syncDuration:   metrics.RunawaySyncerDurationHistogram.WithLabelValues(lblSync),
 		watchCPGauge:   metrics.RunawaySyncerCheckpointGauge.WithLabelValues(lblWatch),
@@ -124,135 +207,101 @@ func (s *syncer) checkTableExist(tableName ast.CIStr) bool {
 }
 
 func (s *syncer) getWatchRecordByID(id int64) ([]*QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id))
+	return s.readQuarantineRecords(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id))
 }
 
 func (s *syncer) getWatchRecordByGroup(groupName string) ([]*QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByGroupStmt(groupName))
+	return s.readQuarantineRecords(s.newWatchReader, s.newWatchReader.genSelectByGroupStmt(groupName))
 }
 
 func (s *syncer) getNewWatchRecords() ([]*QuarantineRecord, error) {
-	reader := s.newWatchReader
-	reader.UpperBound = time.Now().UTC()
-	records, err := s.getWatchRecord(reader, reader.genSelectStmt)
-	if err != nil {
-		return nil, err
-	}
-	// Advance the checkpoint from the fixed upper bound captured before the scan starts.
-	// Keep a small overlap so rows that become visible slightly later can still be re-scanned.
-	// De-duplication will be handled later by `AddWatch` in memory.
-	if len(records) > 0 {
-		reader.CheckPoint = reader.UpperBound.Add(-watchSyncOverlap)
-	}
-	return records, nil
+	return s.scanNewRecordsInRange(s.newWatchReader)
 }
 
 func (s *syncer) getNewWatchDoneRecords() ([]*QuarantineRecord, error) {
-	reader := s.deletionWatchReader
+	return s.scanNewRecordsInRange(s.deletionWatchReader)
+}
+
+// scanNewRecordsInRange performs a time-windowed scan over reader's table using
+// the `[CheckPoint, UpperBound)` range produced by genSelectStmt. When any rows
+// are returned, it advances CheckPoint to just before the captured UpperBound
+// (keeping a small overlap so rows that become visible slightly later can still
+// be re-scanned; de-duplication is later handled by `AddWatch` in memory).
+func (s *syncer) scanNewRecordsInRange(reader *systemTableReader) ([]*QuarantineRecord, error) {
+	// Capture the upper bound before reading so the checkpoint can advance
+	// deterministically from it rather than from a post-decode `time.Now()`.
 	reader.UpperBound = time.Now().UTC()
-	records, err := s.getWatchDoneRecord(reader, reader.genSelectStmt)
+	records, err := s.readQuarantineRecords(reader, reader.genSelectStmt)
 	if err != nil {
 		return nil, err
 	}
-	// Ditto as getNewWatchRecords.
 	if len(records) > 0 {
 		reader.CheckPoint = reader.UpperBound.Add(-watchSyncOverlap)
 	}
 	return records, nil
 }
 
-func (s *syncer) getWatchRecord(reader *systemTableReader, sqlGenFn func() (string, []any)) ([]*QuarantineRecord, error) {
-	return getRunawayWatchRecord(s.sysSessionPool, reader, sqlGenFn)
-}
-
-func (s *syncer) getWatchDoneRecord(reader *systemTableReader, sqlGenFn func() (string, []any)) ([]*QuarantineRecord, error) {
-	return getRunawayWatchDoneRecord(s.sysSessionPool, reader, sqlGenFn)
-}
-
-func getRunawayWatchRecord(
-	sysSessionPool util.SessionPool,
+// readQuarantineRecords runs sqlGenFn against reader's table and decodes each
+// row into a QuarantineRecord using reader.RecordColumns to address every
+// field by its table-specific column index. This keeps decoding robust when
+// either table's schema evolves: a new or reordered column only requires
+// updating the corresponding column-index constants, not this decoder.
+// Rows whose start_time or end_time cannot be decoded are skipped rather
+// than failing the whole scan.
+func (s *syncer) readQuarantineRecords(
 	reader *systemTableReader,
 	sqlGenFn func() (string, []any),
 ) ([]*QuarantineRecord, error) {
-	rs, err := reader.Read(sysSessionPool, sqlGenFn)
+	rows, err := reader.Read(s.sysSessionPool, sqlGenFn)
 	if err != nil {
 		return nil, err
 	}
-	ret := make([]*QuarantineRecord, 0, len(rs))
-	for _, r := range rs {
-		startTime, err := r.GetTime(2).GoTime(time.UTC)
+	cols := reader.RecordColumns
+	ret := make([]*QuarantineRecord, 0, len(rows))
+	for _, r := range rows {
+		startTime, err := r.GetTime(cols.StartTime).GoTime(time.UTC)
 		if err != nil {
 			continue
 		}
 		var endTime time.Time
-		if !r.IsNull(3) {
-			endTime, err = r.GetTime(3).GoTime(time.UTC)
+		if !r.IsNull(cols.EndTime) {
+			endTime, err = r.GetTime(cols.EndTime).GoTime(time.UTC)
 			if err != nil {
 				continue
 			}
 		}
-		qr := &QuarantineRecord{
-			ID:                r.GetInt64(0),
-			ResourceGroupName: r.GetString(1),
+		ret = append(ret, &QuarantineRecord{
+			ID:                r.GetInt64(cols.ID),
+			ResourceGroupName: r.GetString(cols.ResourceGroupName),
 			StartTime:         startTime,
 			EndTime:           endTime,
-			Watch:             rmpb.RunawayWatchType(r.GetInt64(4)),
-			WatchText:         r.GetString(5),
-			Source:            r.GetString(6),
-			Action:            rmpb.RunawayAction(r.GetInt64(7)),
-			SwitchGroupName:   r.GetString(8),
-			ExceedCause:       r.GetString(9),
-		}
-		ret = append(ret, qr)
-	}
-	return ret, nil
-}
-
-func getRunawayWatchDoneRecord(
-	sysSessionPool util.SessionPool,
-	reader *systemTableReader,
-	sqlGenFn func() (string, []any),
-) ([]*QuarantineRecord, error) {
-	rs, err := reader.Read(sysSessionPool, sqlGenFn)
-	if err != nil {
-		return nil, err
-	}
-	ret := make([]*QuarantineRecord, 0, len(rs))
-	for _, r := range rs {
-		startTime, err := r.GetTime(3).GoTime(time.UTC)
-		if err != nil {
-			continue
-		}
-		var endTime time.Time
-		if !r.IsNull(4) {
-			endTime, err = r.GetTime(4).GoTime(time.UTC)
-			if err != nil {
-				continue
-			}
-		}
-		qr := &QuarantineRecord{
-			ID:                r.GetInt64(1),
-			ResourceGroupName: r.GetString(2),
-			StartTime:         startTime,
-			EndTime:           endTime,
-			Watch:             rmpb.RunawayWatchType(r.GetInt64(5)),
-			WatchText:         r.GetString(6),
-			Source:            r.GetString(7),
-			Action:            rmpb.RunawayAction(r.GetInt64(8)),
-			SwitchGroupName:   r.GetString(9),
-			ExceedCause:       r.GetString(10),
-		}
-		ret = append(ret, qr)
+			Watch:             rmpb.RunawayWatchType(r.GetInt64(cols.Watch)),
+			WatchText:         r.GetString(cols.WatchText),
+			Source:            r.GetString(cols.Source),
+			Action:            rmpb.RunawayAction(r.GetInt64(cols.Action)),
+			SwitchGroupName:   r.GetString(cols.SwitchGroupName),
+			ExceedCause:       r.GetString(cols.ExceedCause),
+		})
 	}
 	return ret, nil
 }
 
 // SystemTableReader is used to read table `runaway_watch` and `runaway_watch_done`.
+//
+// RecordColumns maps every QuarantineRecord field to its column index in this
+// reader's table. Each reader owns its own mapping, so the shared decoder
+// never has to infer one table's layout from the other's.
+//
+// CheckPoint and UpperBound define the half-open `[CheckPoint, UpperBound)`
+// time window used by the paginated scan in genSelectStmt. UpperBound is
+// captured before each scan so the checkpoint can advance deterministically
+// from it rather than from a post-decode `time.Now()`.
 type systemTableReader struct {
-	TableName  string
-	KeyCol     string
-	CheckPoint time.Time
-	UpperBound time.Time
+	TableName     string
+	KeyCol        string
+	RecordColumns quarantineColumns
+	CheckPoint    time.Time
+	UpperBound    time.Time
 }
 
 func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {

@@ -146,10 +146,11 @@ func TestGenSelectStmts(t *testing.T) {
 	checkpoint := time.Date(2026, 4, 14, 9, 59, 0, 0, time.UTC)
 	upperBound := checkpoint.Add(10 * time.Second)
 	reader := &systemTableReader{
-		TableName:  getRunawayWatchTableName(),
-		KeyCol:     "start_time",
-		CheckPoint: checkpoint,
-		UpperBound: upperBound,
+		TableName:     getRunawayWatchTableName(),
+		KeyCol:        "start_time",
+		RecordColumns: watchRecordColumns,
+		CheckPoint:    checkpoint,
+		UpperBound:    upperBound,
 	}
 
 	sql, params := reader.genSelectStmt()
@@ -174,9 +175,10 @@ func TestWatchAdvanceCheckpoint(t *testing.T) {
 	initialCheckpoint := time.Date(2026, 4, 14, 9, 59, 0, 0, time.UTC)
 	session := newStubRestrictedSession([]chunk.Row{newWatchRow(30005, "rg_bulk", startTime, &endTime)})
 	reader := &systemTableReader{
-		TableName:  getRunawayWatchTableName(),
-		KeyCol:     "start_time",
-		CheckPoint: initialCheckpoint,
+		TableName:     getRunawayWatchTableName(),
+		KeyCol:        "start_time",
+		RecordColumns: watchRecordColumns,
+		CheckPoint:    initialCheckpoint,
 	}
 	s := &syncer{
 		sysSessionPool: &stubSessionPool{resource: session},
@@ -211,9 +213,10 @@ func TestWatchHoldCheckpoint(t *testing.T) {
 	t.Run("empty result", func(t *testing.T) {
 		session := newStubRestrictedSession(nil)
 		reader := &systemTableReader{
-			TableName:  getRunawayWatchTableName(),
-			KeyCol:     "start_time",
-			CheckPoint: initialCheckpoint,
+			TableName:     getRunawayWatchTableName(),
+			KeyCol:        "start_time",
+			RecordColumns: watchRecordColumns,
+			CheckPoint:    initialCheckpoint,
 		}
 		s := &syncer{
 			sysSessionPool: &stubSessionPool{resource: session},
@@ -229,9 +232,10 @@ func TestWatchHoldCheckpoint(t *testing.T) {
 	t.Run("all rows dropped during decode", func(t *testing.T) {
 		session := newStubRestrictedSession([]chunk.Row{newInvalidWatchRow(30006, "rg_bulk")})
 		reader := &systemTableReader{
-			TableName:  getRunawayWatchTableName(),
-			KeyCol:     "start_time",
-			CheckPoint: initialCheckpoint,
+			TableName:     getRunawayWatchTableName(),
+			KeyCol:        "start_time",
+			RecordColumns: watchRecordColumns,
+			CheckPoint:    initialCheckpoint,
 		}
 		s := &syncer{
 			sysSessionPool: &stubSessionPool{resource: session},
@@ -248,9 +252,10 @@ func TestWatchHoldCheckpoint(t *testing.T) {
 		session := newStubRestrictedSession(nil)
 		session.err = errors.New("read failed")
 		reader := &systemTableReader{
-			TableName:  getRunawayWatchTableName(),
-			KeyCol:     "start_time",
-			CheckPoint: initialCheckpoint,
+			TableName:     getRunawayWatchTableName(),
+			KeyCol:        "start_time",
+			RecordColumns: watchRecordColumns,
+			CheckPoint:    initialCheckpoint,
 		}
 		s := &syncer{
 			sysSessionPool: &stubSessionPool{resource: session},
@@ -271,9 +276,10 @@ func TestWatchDoneAdvanceCheckpoint(t *testing.T) {
 	initialCheckpoint := time.Date(2026, 4, 14, 9, 59, 0, 0, time.UTC)
 	session := newStubRestrictedSession([]chunk.Row{newWatchDoneRow(1, 30005, "rg_bulk", startTime, &endTime, doneTime)})
 	reader := &systemTableReader{
-		TableName:  getRunawayWatchDoneTableName(),
-		KeyCol:     "done_time",
-		CheckPoint: initialCheckpoint,
+		TableName:     getRunawayWatchDoneTableName(),
+		KeyCol:        "done_time",
+		RecordColumns: watchDoneRecordColumns,
+		CheckPoint:    initialCheckpoint,
 	}
 	s := &syncer{
 		sysSessionPool:      &stubSessionPool{resource: session},
@@ -307,9 +313,10 @@ func TestWatchDoneHoldCheckpoint(t *testing.T) {
 	t.Run("empty result", func(t *testing.T) {
 		session := newStubRestrictedSession(nil)
 		reader := &systemTableReader{
-			TableName:  getRunawayWatchDoneTableName(),
-			KeyCol:     "done_time",
-			CheckPoint: initialCheckpoint,
+			TableName:     getRunawayWatchDoneTableName(),
+			KeyCol:        "done_time",
+			RecordColumns: watchDoneRecordColumns,
+			CheckPoint:    initialCheckpoint,
 		}
 		s := &syncer{
 			sysSessionPool:      &stubSessionPool{resource: session},
@@ -326,9 +333,10 @@ func TestWatchDoneHoldCheckpoint(t *testing.T) {
 		session := newStubRestrictedSession(nil)
 		session.err = errors.New("read failed")
 		reader := &systemTableReader{
-			TableName:  getRunawayWatchDoneTableName(),
-			KeyCol:     "done_time",
-			CheckPoint: initialCheckpoint,
+			TableName:     getRunawayWatchDoneTableName(),
+			KeyCol:        "done_time",
+			RecordColumns: watchDoneRecordColumns,
+			CheckPoint:    initialCheckpoint,
 		}
 		s := &syncer{
 			sysSessionPool:      &stubSessionPool{resource: session},
