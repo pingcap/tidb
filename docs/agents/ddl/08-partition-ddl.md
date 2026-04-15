@@ -14,7 +14,7 @@ Partition DDL is subtle because correctness depends on **multi-version semantics
 `ALTER TABLE ... MODIFY/CHANGE COLUMN` on a partition column is **not** part of
 the partition-DDL job family documented here. It still runs through
 `model.ActionModifyColumn`; see `docs/agents/ddl/07-modify-column.md` for the
-partition-column whitelist and compatibility checks.
+partition-column allowlist and compatibility checks.
 
 ## Entry points (start here)
 
