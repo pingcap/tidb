@@ -38,7 +38,13 @@ const (
 
 	// watchSyncInterval is the interval to sync the watch record.
 	watchSyncInterval = time.Second
-	// watchSyncOverlap is the amount of overlap retained between consecutive scans.
+	// watchSyncOverlap is how far back CheckPoint rewinds from the captured
+	// UpperBound after a non-empty scan, so the next scan re-inspects the
+	// tail of the previous window. It budgets the lag between "now" on this
+	// syncer node and the moment a row with `start_time ≈ now` becomes
+	// visible to a subsequent snapshot read (commit/read-TS delay and
+	// wall-clock skew). De-duplication across the overlap is handled by
+	// `AddWatch` in memory.
 	watchSyncOverlap = 3 * watchSyncInterval
 	// watchTableName is the name of system table which save runaway watch items.
 	runawayWatchTableName = "tidb_runaway_watch"
@@ -54,9 +60,10 @@ func getRunawayWatchDoneTableName() string {
 	return fmt.Sprintf("mysql.%s", runawayWatchDoneTableName)
 }
 
-// Column layout of `mysql.tidb_runaway_watch`. Keep the values in sync with
-// the table's CREATE definition; readQuarantineRecords consults these by name
-// so any column is resolved at the call site instead of via index arithmetic.
+// Column layout of `mysql.tidb_runaway_watch`, in DDL order (see
+// `CreateTiDBRunawayWatchTable` in pkg/meta/metadef/system_tables_def.go).
+// `watchColRule` is the DB column literally named `rule`; it persists
+// `QuarantineRecord.ExceedCause` (see watchRecordColumns).
 const (
 	watchColID = iota
 	watchColResourceGroupName
@@ -67,17 +74,17 @@ const (
 	watchColSource
 	watchColAction
 	watchColSwitchGroupName
-	watchColExceedCause
+	watchColRule
 )
 
-// Column layout of `mysql.tidb_runaway_watch_done`. The done table prepends
-// its own primary-key column and appends `done_time`; the QuarantineRecord
-// fields sit in between. Listing every column explicitly (rather than
-// expressing this table's layout as an offset of `tidb_runaway_watch`) keeps
-// decoding robust against future schema drift on either table.
+// Column layout of `mysql.tidb_runaway_watch_done`, in DDL order (see
+// `CreateTiDBRunawayWatchDoneTable` in pkg/meta/metadef/system_tables_def.go).
+// The done table prepends its own `id`/`record_id` and appends `done_time`;
+// `watchDoneColID` (the done-row PK) and `watchDoneColDoneTime` are declared
+// but not projected onto QuarantineRecord.
 const (
-	watchDoneColDoneID = iota
-	watchDoneColID
+	watchDoneColID = iota
+	watchDoneColRecordID
 	watchDoneColResourceGroupName
 	watchDoneColStartTime
 	watchDoneColEndTime
@@ -86,13 +93,15 @@ const (
 	watchDoneColSource
 	watchDoneColAction
 	watchDoneColSwitchGroupName
-	watchDoneColExceedCause
+	watchDoneColRule
 	watchDoneColDoneTime
 )
 
 // quarantineColumns projects QuarantineRecord fields onto the columns of a
 // runaway watch system table. Each systemTableReader carries its own instance
-// so the decoder never has to assume a shared layout between tables.
+// so the decoder never has to assume a shared layout between tables. The two
+// naming divergences (`ID`↔`record_id` on the done table; `ExceedCause`↔`rule`
+// on both) are resolved by the initializers below.
 type quarantineColumns struct {
 	ID                int
 	ResourceGroupName int
@@ -117,10 +126,10 @@ var (
 		Source:            watchColSource,
 		Action:            watchColAction,
 		SwitchGroupName:   watchColSwitchGroupName,
-		ExceedCause:       watchColExceedCause,
+		ExceedCause:       watchColRule,
 	}
 	watchDoneRecordColumns = quarantineColumns{
-		ID:                watchDoneColID,
+		ID:                watchDoneColRecordID,
 		ResourceGroupName: watchDoneColResourceGroupName,
 		StartTime:         watchDoneColStartTime,
 		EndTime:           watchDoneColEndTime,
@@ -129,7 +138,7 @@ var (
 		Source:            watchDoneColSource,
 		Action:            watchDoneColAction,
 		SwitchGroupName:   watchDoneColSwitchGroupName,
-		ExceedCause:       watchDoneColExceedCause,
+		ExceedCause:       watchDoneColRule,
 	}
 )
 
@@ -223,12 +232,11 @@ func (s *syncer) getNewWatchDoneRecords() ([]*QuarantineRecord, error) {
 }
 
 // scanNewRecordsInRange performs a time-windowed scan over reader's table using
-// the `[CheckPoint, UpperBound)` range produced by genSelectStmt. When any rows
-// are returned, it advances CheckPoint to just before the captured UpperBound
-// (keeping a small overlap so rows that become visible slightly later can still
-// be re-scanned; de-duplication is later handled by `AddWatch` in memory).
+// the `[CheckPoint, UpperBound)` range produced by genSelectStmt. On a non-empty
+// scan it advances CheckPoint to `UpperBound - watchSyncOverlap`, keeping a
+// small re-scan window for rows that become visible slightly later.
 func (s *syncer) scanNewRecordsInRange(reader *systemTableReader) ([]*QuarantineRecord, error) {
-	// Capture the upper bound before reading so the checkpoint can advance
+	// Capture UpperBound before reading so the checkpoint advances
 	// deterministically from it rather than from a post-decode `time.Now()`.
 	reader.UpperBound = time.Now().UTC()
 	records, err := s.readQuarantineRecords(reader, reader.genSelectStmt)
@@ -242,12 +250,8 @@ func (s *syncer) scanNewRecordsInRange(reader *systemTableReader) ([]*Quarantine
 }
 
 // readQuarantineRecords runs sqlGenFn against reader's table and decodes each
-// row into a QuarantineRecord using reader.RecordColumns to address every
-// field by its table-specific column index. This keeps decoding robust when
-// either table's schema evolves: a new or reordered column only requires
-// updating the corresponding column-index constants, not this decoder.
-// Rows whose start_time or end_time cannot be decoded are skipped rather
-// than failing the whole scan.
+// row into a QuarantineRecord via reader.RecordColumns. Rows whose start_time
+// or end_time cannot be decoded are skipped rather than failing the whole scan.
 func (s *syncer) readQuarantineRecords(
 	reader *systemTableReader,
 	sqlGenFn func() (string, []any),
@@ -286,16 +290,10 @@ func (s *syncer) readQuarantineRecords(
 	return ret, nil
 }
 
-// SystemTableReader is used to read table `runaway_watch` and `runaway_watch_done`.
-//
-// RecordColumns maps every QuarantineRecord field to its column index in this
-// reader's table. Each reader owns its own mapping, so the shared decoder
-// never has to infer one table's layout from the other's.
-//
-// CheckPoint and UpperBound define the half-open `[CheckPoint, UpperBound)`
-// time window used by the paginated scan in genSelectStmt. UpperBound is
-// captured before each scan so the checkpoint can advance deterministically
-// from it rather than from a post-decode `time.Now()`.
+// systemTableReader reads `tidb_runaway_watch` or `tidb_runaway_watch_done`.
+// RecordColumns gives the per-table column-index layout; CheckPoint and
+// UpperBound define the half-open `[CheckPoint, UpperBound)` window used by
+// the paginated scan in genSelectStmt.
 type systemTableReader struct {
 	TableName     string
 	KeyCol        string
