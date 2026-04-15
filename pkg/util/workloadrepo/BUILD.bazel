@@ -60,6 +60,8 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
+        "//pkg/session",
+        "//pkg/session/sessionapi",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
