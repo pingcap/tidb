@@ -85,13 +85,11 @@ const (
 	columnTableName = "table_name"
 )
 
-const checkpointTableNotFoundHint = "valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'"
-
 var (
 	// ErrCheckpointTableNotFoundIdentity is the stable identity for table-scoped
 	// checkpoint operations when the checkpoint row does not exist.
 	ErrCheckpointTableNotFoundIdentity = errors.Normalize(
-		"checkpoint for table %s not found; "+checkpointTableNotFoundHint,
+		"checkpoint for table %s not found; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
 		errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointTableNotFound"),
 	)
 )
