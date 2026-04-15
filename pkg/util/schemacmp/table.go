@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pcharset "github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -239,8 +240,7 @@ func (indexMap) JoinWithNil(_ Lattice) (Lattice, error) {
 }
 
 const (
-	tableInfoTupleIndexCharset = iota
-	tableInfoTupleIndexCollate
+	tableInfoTupleIndexCollate = iota
 	tableInfoTupleIndexColumns
 	tableInfoTupleIndexIndices
 	// nolint:unused, varcheck, deadcode
@@ -270,9 +270,18 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 		}
 	}
 
+	collate := ti.Collate
+	if collate == "" && ti.Charset != "" {
+		if defaultCollate, err := pcharset.GetDefaultCollation(ti.Charset); err == nil {
+			collate = defaultCollate
+		} else {
+			// Fall back to charset-only if the default collation isn't known.
+			collate = ti.Charset
+		}
+	}
+
 	return Tuple{
-		Charset(ti.Charset),
-		Collation(ti.Collate),
+		Collation(collate),
 		Map(columns),
 		Map(indices),
 		// TODO ForeignKeys?
@@ -324,13 +333,15 @@ func restoreTableInfoFromUnwrapped(ctx *format.RestoreCtx, table []any, tableNam
 	}
 
 	ctx.WritePlain(")")
-	if charset := table[tableInfoTupleIndexCharset].(string); charset != "" {
+	collate := table[tableInfoTupleIndexCollate].(string)
+	if collate != "" {
+		cs, _, hasSuffix := strings.Cut(collate, "_")
 		ctx.WriteKeyWord(" CHARSET ")
-		ctx.WriteKeyWord(charset)
-	}
-	if collate := table[tableInfoTupleIndexCollate].(string); collate != "" {
-		ctx.WriteKeyWord(" COLLATE ")
-		ctx.WriteKeyWord(collate)
+		ctx.WriteKeyWord(cs)
+		if hasSuffix {
+			ctx.WriteKeyWord(" COLLATE ")
+			ctx.WriteKeyWord(collate)
+		}
 	}
 	if bits := table[tableInfoTupleIndexShardRowIDBits].(uint64); bits > 0 {
 		ctx.WriteKeyWord(" SHARD_ROW_ID_BITS ")

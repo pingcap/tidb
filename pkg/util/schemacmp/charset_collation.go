@@ -21,42 +21,18 @@ import (
 )
 
 type charsetLattice struct {
-	value  string
-	family charsetFamily
+	value string
 }
-
-type charsetFamily int
-
-const (
-	charsetFamilyOther charsetFamily = iota
-	charsetFamilyLatin1
-	charsetFamilyUTF8
-	charsetFamilyUTF8MB4
-)
 
 // Charset is a lattice for comparing/joining character sets. Currently it
 // supports the ordering: latin1 < utf8mb4 and utf8(utf8mb3) < utf8mb4. Other
 // charsets are only comparable when identical.
-func Charset(cs string) Lattice {
-	ret := charsetLattice{value: cs}
-
+func Charset(cs string) charsetLattice {
 	normalized := strings.ToLower(cs)
 	if normalized == tidbcharset.CharsetUTF8MB3 {
 		normalized = tidbcharset.CharsetUTF8
 	}
-
-	switch normalized {
-	case tidbcharset.CharsetLatin1:
-		ret.family = charsetFamilyLatin1
-	case tidbcharset.CharsetUTF8:
-		ret.family = charsetFamilyUTF8
-	case tidbcharset.CharsetUTF8MB4:
-		ret.family = charsetFamilyUTF8MB4
-	default:
-		// Caller should always pass an explicit charset. Unrecognized values are treated as "other".
-		ret.family = charsetFamilyOther
-	}
-	return ret
+	return charsetLattice{value: normalized}
 }
 
 func (a charsetLattice) Unwrap() any {
@@ -69,22 +45,16 @@ func (a charsetLattice) Compare(other Lattice) (int, error) {
 		return 0, typeMismatchError(a, other)
 	}
 
-	if a.family == b.family {
-		if a.family == charsetFamilyOther && a.value != b.value {
-			return 0, incompatibleCharsetError(a.value, b.value)
-		}
-		return 0, nil
-	}
-
 	switch {
-	case a.family == charsetFamilyUTF8 && b.family == charsetFamilyUTF8MB4:
-		return -1, nil
-	case a.family == charsetFamilyUTF8MB4 && b.family == charsetFamilyUTF8:
+	case a.value == b.value:
+		return 0, nil
+	// This must be compatible with ddl.checkModifyCharsetAndCollation().
+	case a.value == tidbcharset.CharsetUTF8MB4 &&
+		(b.value == tidbcharset.CharsetUTF8 || b.value == tidbcharset.CharsetLatin1):
 		return 1, nil
-	case a.family == charsetFamilyLatin1 && b.family == charsetFamilyUTF8MB4:
+	case b.value == tidbcharset.CharsetUTF8MB4 &&
+		(a.value == tidbcharset.CharsetUTF8 || a.value == tidbcharset.CharsetLatin1):
 		return -1, nil
-	case a.family == charsetFamilyUTF8MB4 && b.family == charsetFamilyLatin1:
-		return 1, nil
 	default:
 		return 0, incompatibleCharsetError(a.value, b.value)
 	}
@@ -107,62 +77,38 @@ func (a charsetLattice) Join(other Lattice) (Lattice, error) {
 }
 
 type collationLattice struct {
-	value string
-	// suffix will be set to normalized value when family is collationFamilyOther for
-	// implementation simplicity.
+	charset charsetLattice
+	// suffix is the part after "<charset>_" in the normalized collation name.
+	// For collations without an underscore, suffix is empty and charset==collation.
 	suffix string
-	family collationFamily
 }
 
-type collationFamily int
-
-const (
-	collationFamilyOther collationFamily = iota
-	collationFamilyLatin1
-	collationFamilyUTF8
-	collationFamilyUTF8MB4
-)
-
 // Collation is a lattice for comparing/joining collations.
+//
 // It supports the ordering:
 //   - latin1_<suffix> < utf8mb4_<suffix>
 //   - utf8_<suffix> < utf8mb4_<suffix>
 //
 // (same suffix only).
+//
 // Other collations are only comparable when identical.
-func Collation(co string) Lattice {
-	ret := collationLattice{value: co}
-
-	const (
-		utf8mb3Prefix = tidbcharset.CharsetUTF8MB3 + "_"
-		utf8mb4Prefix = tidbcharset.CharsetUTF8MB4 + "_"
-		utf8Prefix    = tidbcharset.CharsetUTF8 + "_"
-		latin1Prefix  = tidbcharset.CharsetLatin1 + "_"
-	)
-
+func Collation(co string) collationLattice {
 	normalized := strings.ToLower(co)
-	if after, ok := strings.CutPrefix(normalized, utf8mb3Prefix); ok {
-		normalized = utf8Prefix + after
-	}
 
-	if after, ok := strings.CutPrefix(normalized, utf8mb4Prefix); ok {
-		ret.suffix = after
-		ret.family = collationFamilyUTF8MB4
-	} else if after, ok := strings.CutPrefix(normalized, utf8Prefix); ok {
-		ret.suffix = after
-		ret.family = collationFamilyUTF8
-	} else if after, ok := strings.CutPrefix(normalized, latin1Prefix); ok {
-		ret.suffix = after
-		ret.family = collationFamilyLatin1
-	} else {
-		ret.family = collationFamilyOther
-		ret.suffix = normalized
-	}
-	return ret
+	charsetName, suffix, _ := strings.Cut(normalized, "_")
+
+	return collationLattice{charset: Charset(charsetName), suffix: suffix}
 }
 
 func (a collationLattice) Unwrap() any {
-	return a.value
+	return a.unwrapString()
+}
+
+func (a collationLattice) unwrapString() string {
+	if a.suffix == "" {
+		return a.charset.value
+	}
+	return a.charset.value + "_" + a.suffix
 }
 
 func (a collationLattice) Compare(other Lattice) (int, error) {
@@ -172,25 +118,14 @@ func (a collationLattice) Compare(other Lattice) (int, error) {
 	}
 
 	if a.suffix != b.suffix {
-		return 0, incompatibleCollationError(a.value, b.value)
+		return 0, incompatibleCollationError(a.unwrapString(), b.unwrapString())
 	}
 
-	if a.family == b.family {
-		return 0, nil
+	cmp, err := a.charset.Compare(b.charset)
+	if err != nil {
+		return 0, err
 	}
-
-	switch {
-	case a.family == collationFamilyUTF8 && b.family == collationFamilyUTF8MB4:
-		return -1, nil
-	case a.family == collationFamilyUTF8MB4 && b.family == collationFamilyUTF8:
-		return 1, nil
-	case a.family == collationFamilyLatin1 && b.family == collationFamilyUTF8MB4:
-		return -1, nil
-	case a.family == collationFamilyUTF8MB4 && b.family == collationFamilyLatin1:
-		return 1, nil
-	default:
-		return 0, incompatibleCollationError(a.value, b.value)
-	}
+	return cmp, nil
 }
 
 func (a collationLattice) Join(other Lattice) (Lattice, error) {

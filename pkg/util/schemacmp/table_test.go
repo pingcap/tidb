@@ -515,8 +515,9 @@ func TestTableString(t *testing.T) {
 			ti.Charset = charset
 			ti.Collate = collate
 			sql := strings.ToLower(schemacmp.Encode(ti).String())
-			require.Equal(t, charset != "", strings.Contains(sql, "charset"))
-			require.Equal(t, collate != "", strings.Contains(sql, "collate"))
+			hasOption := charset != "" || collate != ""
+			require.Equal(t, hasOption, strings.Contains(sql, "charset"))
+			require.Equal(t, hasOption, strings.Contains(sql, "collate"))
 			_, err := toTableInfo(p, sctx, sql)
 			require.NoError(t, err)
 		}

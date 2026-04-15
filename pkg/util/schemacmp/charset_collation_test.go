@@ -21,8 +21,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCharsetCompareUsesFamily(t *testing.T) {
-	// Ensure Compare only depends on the normalized kind, not the original input string.
+func TestCharsetCompare(t *testing.T) {
+	// Ensure normalization makes comparisons case-insensitive.
 	cmp, err := Charset("UTF8").Compare(Charset("utf8"))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
@@ -31,9 +31,8 @@ func TestCharsetCompareUsesFamily(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
-	// Ensure error messages keep the original values.
 	_, err = Charset("uTF8").Compare(Charset("GBK"))
-	require.ErrorContains(t, err, "incompatible mysql charset (uTF8 vs GBK)")
+	require.ErrorContains(t, err, "incompatible mysql charset (utf8 vs gbk)")
 
 	cmp, err = Charset("latin1").Compare(Charset("utf8mb4"))
 	require.NoError(t, err)
@@ -45,9 +44,12 @@ func TestCharsetCompareUsesFamily(t *testing.T) {
 
 	_, err = Charset("other1").Compare(Charset("other2"))
 	require.ErrorContains(t, err, "incompatible mysql charset (other1 vs other2)")
+
+	_, err = Charset("other1").Compare(Charset("utf8"))
+	require.ErrorContains(t, err, "incompatible mysql charset (other1 vs utf8)")
 }
 
-func TestCollationCompareUsesFamily(t *testing.T) {
+func TestCollationCompare(t *testing.T) {
 	// Ensure Compare only depends on the normalized kind, not the original input string.
 	cmp, err := Collation("UTF8_BIN").Compare(Collation("utf8_bin"))
 	require.NoError(t, err)
@@ -61,9 +63,9 @@ func TestCollationCompareUsesFamily(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, -1, cmp)
 
-	// Ensure error messages keep the original values.
 	_, err = Collation("UTF8_BIN").Compare(Collation("GBK_BIN"))
-	require.ErrorContains(t, err, "incompatible mysql collation (UTF8_BIN vs GBK_BIN)")
+	// note the error message is charset because collation suffix is the same
+	require.ErrorContains(t, err, "incompatible mysql charset (utf8 vs gbk)")
 
 	cmp, err = Collation("utf8mb4_general_ci").Compare(Collation("utf8_general_ci"))
 	require.NoError(t, err)
@@ -74,4 +76,12 @@ func TestCollationCompareUsesFamily(t *testing.T) {
 
 	_, err = Collation("other_cs_bin").Compare(Collation("other_cs_ci"))
 	require.ErrorContains(t, err, "incompatible mysql collation (other_cs_bin vs other_cs_ci)")
+
+	// special fallback cases, where collation is not set and charset is known to TiDB
+	_, err = Collation("unknowCS").Compare(Collation("unknowCS2"))
+	require.ErrorContains(t, err, "incompatible mysql charset (unknowcs vs unknowcs2)")
+
+	cmp, err = Collation("unknowCS").Compare(Collation("unknowCS"))
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
 }
