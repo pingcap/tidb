@@ -1113,13 +1113,23 @@ func assertMultiSchema(t *testing.T, job *model.Job, subJobLen int) {
 
 func TestMultiSchemaChangeReorgOnlyOnce(t *testing.T) {
 	type testCase struct {
-		alterSQL string
-		expected int
+		createSQL          string
+		alterSQL           string
+		expectedIndexReorg int
+		expectedRowReorg   int
 	}
 
-	var reorgCount int
+	var (
+		indexReorgCount int
+		rowReorgCount   int
+	)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", func(_ *model.Job) {
-		reorgCount++
+		indexReorgCount++
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdatePhysicalTableRow", func(job *model.Job) {
+		if job.Type == model.ActionMultiSchemaChange {
+			rowReorgCount++
+		}
 	})
 
 	store := testkit.CreateMockStore(t)
@@ -1128,24 +1138,48 @@ func TestMultiSchemaChangeReorgOnlyOnce(t *testing.T) {
 
 	for _, tc := range []testCase{
 		{
-			alterSQL: "alter table t add index i1(a), add index i2(b), modify column c int unsigned",
-			expected: 1,
+			// Current master keeps signedness changes on the full reorg path
+			// until statistics encoding is compatible with the index-only path.
+			alterSQL:           "alter table t add index i1(a), add index i2(b), modify column c int unsigned",
+			expectedIndexReorg: 1,
+			expectedRowReorg:   1,
 		},
 		{
-			alterSQL: "alter table t modify column a int unsigned, modify column c int unsigned",
-			expected: 1,
+			alterSQL:           "alter table t modify column a int unsigned, modify column c int unsigned",
+			expectedIndexReorg: 1,
+			expectedRowReorg:   1,
 		},
 		{
-			alterSQL: "alter table t modify column a int, modify column c int, drop index idx_b",
-			expected: 0,
+			createSQL: "create table t (a char(20) collate utf8mb4_bin, b int, c char(20) collate utf8mb4_bin, " +
+				"index idx_a(a), index idx_b(b), index idx_c(c))",
+			alterSQL: "alter table t modify column a varchar(10) collate utf8mb4_bin, " +
+				"modify column c varchar(10) collate utf8mb4_bin",
+			expectedIndexReorg: 1,
+			expectedRowReorg:   0,
+		},
+		{
+			alterSQL:           "alter table t modify column a int, modify column c int, drop index idx_b",
+			expectedIndexReorg: 0,
+			expectedRowReorg:   0,
+		},
+		{
+			alterSQL:           "alter table t modify column a varchar(20), modify column c varchar(20)",
+			expectedIndexReorg: 1,
+			expectedRowReorg:   1,
 		},
 	} {
-		reorgCount = 0
+		indexReorgCount = 0
+		rowReorgCount = 0
 		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
+		createSQL := tc.createSQL
+		if createSQL == "" {
+			createSQL = "create table t (a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))"
+		}
+		tk.MustExec(createSQL)
 		tk.MustExec("insert into t values (1, 2, 3), (2, 3, 4), (3, 4, 5)")
 		tk.MustExec(tc.alterSQL)
-		require.EqualValues(t, tc.expected, reorgCount)
+		require.EqualValues(t, tc.expectedIndexReorg, indexReorgCount, tc.alterSQL)
+		require.EqualValues(t, tc.expectedRowReorg, rowReorgCount, tc.alterSQL)
 		tk.MustExec("admin check table t")
 	}
 }

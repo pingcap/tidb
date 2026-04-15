@@ -1398,6 +1398,10 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.AnalyzeStateNone:
 			switch job.ReorgMeta.Stage {
 			case model.ReorgStageModifyColumnUpdateColumn:
+				if job.MultiSchemaInfo != nil {
+					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job, model.ReorgStageModifyColumnUpdateColumn)
+				}
+
 				var done bool
 				reorgElements := BuildElements(changingCol, changingIdxs)
 				done, ver, err = doReorgWorkForModifyColumn(jobCtx, w, job, tbl, oldCol, reorgElements)
@@ -1407,9 +1411,6 @@ func (w *worker) doModifyColumnTypeWithData(
 				// The row reorg persists only a job-stage change, so account the
 				// RU staged by its backfill transactions here.
 				accountPendingReorgRU(jobCtx, job, err)
-				if job.MultiSchemaInfo != nil {
-					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
-				}
 				if len(changingIdxs) > 0 {
 					job.SnapshotVer = 0
 					job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
@@ -1624,7 +1625,7 @@ func (w *worker) doModifyColumnIndexReorg(
 				job.ReorgMeta.Stage = model.ReorgStageModifyColumnRecreateIndex
 			case model.ReorgStageModifyColumnRecreateIndex:
 				if job.MultiSchemaInfo != nil {
-					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job)
+					return skipReorgAndAnalyzeForSubJob(jobCtx, tbl.Meta(), job, model.ReorgStageModifyColumnRecreateIndex)
 				}
 				var done bool
 				done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, changingIdxInfos)
