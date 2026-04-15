@@ -42,6 +42,7 @@ go_test(
     deps = [
         "//br/pkg/version/build",
         "//pkg/lightning/checkpoints/checkpointspb",
+        "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/mydump",
         "//pkg/lightning/verification",

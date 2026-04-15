@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//lightning/pkg/importer",
         "//lightning/pkg/server",
-        "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/tikv",
@@ -31,7 +30,7 @@ go_test(
     embed = [":tidb-lightning-ctl_lib"],
     flaky = True,
     deps = [
-        "//pkg/lightning/checkpoints",
+        "//pkg/lightning/common",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],

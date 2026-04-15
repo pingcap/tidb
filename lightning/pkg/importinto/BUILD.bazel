@@ -16,7 +16,6 @@ go_library(
     deps = [
         "//lightning/pkg/precheck",
         "//pkg/importsdk",
-        "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
