@@ -94,7 +94,7 @@ require (
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20251125085256-097db0b2c02a
+	github.com/pingcap/tipb v0.0.0-20250928030846-9fd33ded6f2c
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
@@ -340,7 +340,6 @@ replace (
 
 replace (
 	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260319025030-07b5dac79aa6
-	github.com/pingcap/tipb => git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334
 	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260319031005-7a64b379802e
 	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260313102847-0957282e3772
 )

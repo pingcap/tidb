@@ -832,8 +832,8 @@ git.pingcap.net/pingkai/rust2go v0.0.0-20260116050154-68094297cea8 h1:kdvLSAPT9F
 git.pingcap.net/pingkai/rust2go v0.0.0-20260116050154-68094297cea8/go.mod h1:N9Ilfo4S/neIfonOwJuRaMAQYWz86kxjIZWfMrjVf5I=
 git.pingcap.net/pingkai/semver v0.0.0-20251217135932-2e4e3afe6494 h1:gsPcTuGwqnE9MlIhIP7KnXZSYpaMx6JGRX0Xu2j2e7U=
 git.pingcap.net/pingkai/semver v0.0.0-20251217135932-2e4e3afe6494/go.mod h1:ovzDCvyE6yzeKg1jepY3GCZ5YnjbW0QccFQUZJdXKcQ=
-git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334 h1:UnaqteJZbNqYb5CqLy6hFsU7A2msfPTMC+cnv/klfiI=
-git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
+github.com/pingcap/tipb v0.0.0-20250928030846-9fd33ded6f2c h1:tddMjEiXU0d1VlJ+yHwim4gINeHmFR9CCkitatuby2c=
+github.com/pingcap/tipb v0.0.0-20250928030846-9fd33ded6f2c/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
 git.sr.ht/~sbinet/gg v0.3.1/go.mod h1:KGYtlADtqsqANL9ueOFkWymvzUvLMQllU5Ixo+8v3pc=
 gitee.com/Trisia/gotlcp v1.3.18 h1:eVa41lAeNHsiT6uR/zWlY3dlqXVJ2aEqJ4qsQjfqAK8=
 gitee.com/Trisia/gotlcp v1.3.18/go.mod h1:neIy4hVQh598WBn2DwMlBuOE8E+SlW6z4GEfUfvww0o=
