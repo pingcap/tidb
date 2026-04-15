@@ -1224,12 +1224,12 @@ var defaultConf = Config{
 		ColumnarStoreType:      "tiflash",
 		ColumnarCollectTimeout: 5 * time.Second,
 	},
-	TiDBMaxReuseChunk:                    64,
-	TiDBMaxReuseColumn:                   256,
-	TiDBEnableExitCheck:                  false,
-	InMemSlowQueryTopNNum:                30,
-	InMemSlowQueryRecentNum:              500,
-	LowerCaseTableNamesOnFirstBootstrap:  2,
+	TiDBMaxReuseChunk:                   64,
+	TiDBMaxReuseColumn:                  256,
+	TiDBEnableExitCheck:                 false,
+	InMemSlowQueryTopNNum:               30,
+	InMemSlowQueryRecentNum:             500,
+	LowerCaseTableNamesOnFirstBootstrap: 2,
 }
 
 var (
