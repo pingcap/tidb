@@ -757,9 +757,9 @@ func rangeDatumCmp(tc types.Context, a, b *types.Datum, collator collate.Collato
 
 func datumsToPoints(values []types.Datum) []*point {
 	pointCount := len(values) * 2
+	// Keep the pointer list and point structs in batch storage so long-IN
+	// workloads do not pay one heap object per emitted endpoint.
 	rangePoints := make([]*point, pointCount)
-	// Keep the point structs in one backing array so long-IN workloads do not pay
-	// one heap object per emitted endpoint.
 	pointObjs := make([]point, pointCount)
 	for i := range values {
 		startPoint := &pointObjs[i*2]

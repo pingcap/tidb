@@ -176,6 +176,8 @@ func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 		return fullRange, true, nil
 	}
 	rangeCount := len(convertedPoints) / 2
+	// Keep emitted ranges and their single-column backing slices in batch
+	// storage to avoid per-range heap allocations on long-IN workloads.
 	ranges := make(Ranges, rangeCount)
 	rangeObjs := make([]Range, rangeCount)
 	lowValBuf := make([]types.Datum, rangeCount)
@@ -353,6 +355,8 @@ func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoin
 
 func appendPoints2IndexRange(origin *Range, rangePoints []*point, ft *types.FieldType) (Ranges, error) {
 	rangeCount := len(rangePoints) / 2
+	// Keep emitted ranges in batch storage; each range will take one widened
+	// low/high/collator segment from the backing buffers below.
 	newRanges := make(Ranges, rangeCount)
 	rangeObjs := make([]Range, rangeCount)
 	width := len(origin.LowVal) + 1
@@ -428,6 +432,8 @@ func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 		}
 	}
 
+	// Allocate storage for the full fanout once. Individual result ranges take
+	// capped subslices below, which avoids per-result slice allocation.
 	newRanges := make(Ranges, rangeCount)
 	rangeObjs := make([]Range, rangeCount)
 	lowValBuf := make([]types.Datum, totalDatumCount)
