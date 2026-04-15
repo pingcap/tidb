@@ -82,17 +82,50 @@ func TestTrimPushDownToTiKV(t *testing.T) {
 
 	tk.MustExec(`create table t_trim_pushdown(
 		id int primary key,
-		c varchar(64) charset utf8mb4 collate utf8mb4_general_ci
+		c varchar(64) charset utf8mb4 collate utf8mb4_general_ci,
+		c_bin varchar(64) charset utf8mb4 collate utf8mb4_bin,
+		c_ascii varchar(64) charset ascii collate ascii_bin,
+		vb varbinary(64)
 	)`)
 	tk.MustExec(`insert into t_trim_pushdown values
-		(1, 'aaaaa'),
-		(2, 'ppp'),
-		(3, 'xyxyx')`)
+		(1, 'aaaaa', 'aaaaa', 'aaaaa', x'207820'),
+		(2, 'ppp', 'ppp', 'ppp', x'20707020'),
+		(3, 'xyxyx', 'xyxyx', 'xyxyx', x'2078797820'),
+		(4, '  x  ', '  x  ', '  x  ', x'207820'),
+		(5, 'xybarxy', 'xybarxy', 'xybarxy', x'20787920'),
+		(6, 'xyxybarxy', 'xyxybarxy', 'xyxybarxy', x'2078797820'),
+		(7, 'xybarxyxy', 'xybarxyxy', 'xybarxyxy', x'207879787920'),
+		(8, 'xyxybarxyxy', 'xyxybarxyxy', 'xyxybarxyxy', x'207879787920'),
+		(9, '', '', '', x''),
+		(10, null, null, null, null),
+		(11, '   ', '   ', '   ', x'202020'),
+		(12, '好好bar好好', '好好bar好好', null, x''),
+		(13, 'bar', 'bar', 'bar', x'626172'),
+		(14, 'x', 'x', 'x', x'78'),
+		(15, 'ff', 'ff', 'ff', x'20ff20'),
+		(16, null, null, null, x'20ff7820'),
+		(17, null, null, null, x'00207820')`)
 
 	explainCases := []string{
 		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim('aaa' from c) = 'aa'",
 		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(both 'pp' from c) = 'p'",
 		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(both 'xyx' from c) = 'yx'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(c) = 'x'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim('xy' from c) = 'bar'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(leading 'xy' from c) = 'barxy'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(trailing 'xy' from c) = 'xybar'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(both 'xy' from c) = 'bar'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(c) is null",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(c) = ''",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim('' from c) = 'bar'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim('xy' from c) = 'x'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim('xy' from c) is null",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(c_ascii) = 'x'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(vb) = x''",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim('好' from c_bin) = 'bar' and c_bin like '%好%'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(vb) = x'ff'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(vb) = x'ff78'",
+		"select /*+ read_from_storage(tikv[t_trim_pushdown]) */ * from t_trim_pushdown where trim(vb) = x'002078'",
 	}
 	for _, sql := range explainCases {
 		checkTrimExplainPushed(sql)
@@ -113,6 +146,70 @@ func TestTrimPushDownToTiKV(t *testing.T) {
 		{
 			sql:      "select id from t_trim_pushdown where trim(both 'xyx' from c) = 'yx' order by id",
 			expected: []string{"3"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(c) = 'x' order by id",
+			expected: []string{"4", "14"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim('xy' from c) = 'bar' order by id",
+			expected: []string{"5", "6", "7", "8", "13"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(leading 'xy' from c) = 'barxy' order by id",
+			expected: []string{"5", "6"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(trailing 'xy' from c) = 'xybar' order by id",
+			expected: []string{"5", "7"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(both 'xy' from c) = 'bar' order by id",
+			expected: []string{"5", "6", "7", "8", "13"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(c) = '' order by id",
+			expected: []string{"9", "11"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim('' from c) = 'bar' order by id",
+			expected: []string{"13"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim('xy' from c) = 'x' order by id",
+			expected: []string{"3", "14"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim('xy' from c) is null order by id",
+			expected: []string{"10", "16", "17"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(c_ascii) = 'x' order by id",
+			expected: []string{"4", "14"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(vb) = x'' order by id",
+			expected: []string{"9", "11", "12"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim('好' from c_bin) = 'bar' and c_bin like '%好%' order by id",
+			expected: []string{"12"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(vb) = x'ff' order by id",
+			expected: []string{"15"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(vb) = x'ff78' order by id",
+			expected: []string{"16"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(vb) = x'002078' order by id",
+			expected: []string{"17"},
+		},
+		{
+			sql:      "select id from t_trim_pushdown where trim(c) is null order by id",
+			expected: []string{"10", "16", "17"},
 		},
 	}
 	for _, tc := range resultCases {
