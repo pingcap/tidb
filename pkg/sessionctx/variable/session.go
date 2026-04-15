@@ -1194,6 +1194,10 @@ type SessionVars struct {
 	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
 	EnableOuterJoinReorder bool
 
+	// EnableCommonSubplanExtract enables logical extraction of identical Join
+	// subtrees into a shared CTE at the logical optimization phase.
+	EnableCommonSubplanExtract bool
+
 	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
 	OptimizerEnableNAAJ bool
 
@@ -2341,6 +2345,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AlwaysKeepJoinKey:                vardef.DefOptAlwaysKeepJoinKey,
 		CartesianJoinOrderThreshold:      vardef.DefOptCartesianJoinOrderThreshold,
 		EnableOuterJoinReorder:           vardef.DefTiDBEnableOuterJoinReorder,
+		EnableCommonSubplanExtract:       vardef.DefTiDBOptEnableCommonSubplanExtract,
 		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
 		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
 		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,

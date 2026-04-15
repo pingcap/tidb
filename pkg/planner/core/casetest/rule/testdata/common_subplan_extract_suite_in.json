@@ -1,0 +1,49 @@
+[
+  {
+    "name": "TestCommonSubplanExtract",
+    "cases": [
+      // =============================================
+      // Positive cases: identical subtrees must fire.
+      // =============================================
+
+      // Two identical inner-join + WHERE subtrees.
+      "select * from (select t1.a from t1, t2 where t1.a = t2.a and t1.b > 10) x, (select t1.a from t1, t2 where t1.a = t2.a and t1.b > 10) y where x.a = y.a",
+
+      // Three identical inner-join subtrees.
+      "select * from (select t1.a from t1, t2 where t1.a = t2.a) a, (select t1.a from t1, t2 where t1.a = t2.a) b, (select t1.a from t1, t2 where t1.a = t2.a) c where a.a = b.a and b.a = c.a",
+
+      // Same-table self-join repeated with matching aliases.
+      "select * from (select x1.a from t1 x1, t1 x2 where x1.a = x2.a) a, (select x1.a from t1 x1, t1 x2 where x1.a = x2.a) b where a.a = b.a",
+
+      // =============================================
+      // Negative cases: rule must stay silent.
+      // =============================================
+
+      // Single occurrence — nothing to share.
+      "select * from t1, t2 where t1.a = t2.a",
+
+      // Join condition differs (a=a vs a=b).
+      "select * from (select t1.a from t1, t2 where t1.a = t2.a) x, (select t1.a from t1, t2 where t1.a = t2.b) y where x.a = y.a",
+
+      // WHERE condition differs (L0 is strict).
+      "select * from (select t1.a from t1, t2 where t1.a = t2.a and t1.b > 10) x, (select t1.a from t1, t2 where t1.a = t2.a and t1.b > 20) y where x.a = y.a",
+
+      // Outer join subtree is excluded by the allowlist.
+      "select * from (select t1.a from t1 left join t2 on t1.a = t2.a) x, (select t1.a from t1 left join t2 on t1.a = t2.a) y where x.a = y.a",
+
+      // Non-deterministic expression disqualifies the subtree.
+      "select * from (select t1.a from t1, t2 where t1.a = t2.a and t1.b > rand()) x, (select t1.a from t1, t2 where t1.a = t2.a and t1.b > rand()) y where x.a = y.a",
+
+      // Different underlying tables — different fingerprint.
+      "select * from (select t1.a from t1, t2 where t1.a = t2.a) x, (select t1.a from t1, t3 where t1.a = t3.a) y where x.a = y.a",
+
+      // Diverging aliases — documented L0 limit (OrigName embeds alias).
+      "select * from (select x1.a from t1 x1, t1 x2 where x1.a = x2.a) a, (select y1.a from t1 y1, t1 y2 where y1.a = y2.a) b where a.a = b.a",
+
+      // Variable OFF ⇒ no note even for identical subtrees.
+      "set @@tidb_opt_enable_common_subplan_extract = 0",
+      "select * from (select t1.a from t1, t2 where t1.a = t2.a and t1.b > 10) x, (select t1.a from t1, t2 where t1.a = t2.a and t1.b > 10) y where x.a = y.a",
+      "set @@tidb_opt_enable_common_subplan_extract = 1"
+    ]
+  }
+]

@@ -334,6 +334,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableOuterJoinReorder = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableCommonSubplanExtract, Value: BoolToOnOff(vardef.DefTiDBOptEnableCommonSubplanExtract), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableCommonSubplanExtract = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptimizerEnableNAAJ, Value: BoolToOnOff(vardef.DefTiDBEnableNAAJ), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.OptimizerEnableNAAJ = TiDBOptOn(val)
 		return nil

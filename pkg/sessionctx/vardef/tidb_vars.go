@@ -179,6 +179,11 @@ const (
 
 	TiDBOptimizerEnableOuterJoinReorder = "tidb_enable_outer_join_reorder"
 
+	// TiDBOptEnableCommonSubplanExtract enables logical extraction of identical
+	// Join subtrees (same structure, same join conds, same where conds) into a
+	// shared CTE to avoid duplicated execution. Off by default.
+	TiDBOptEnableCommonSubplanExtract = "tidb_opt_enable_common_subplan_extract"
+
 	// TiDBOptimizerEnableNAAJ is used to open the newly null-aware anti join
 	TiDBOptimizerEnableNAAJ = "tidb_enable_null_aware_anti_join"
 
@@ -1495,6 +1500,7 @@ const (
 	DefTiDBOptIndexPruneThreshold           = 20
 	DefTiDBOptimizerEnableNewOFGB           = false
 	DefTiDBEnableOuterJoinReorder           = true
+	DefTiDBOptEnableCommonSubplanExtract    = false
 	DefTiDBEnableNAAJ                       = true
 	DefTiDBAllowBatchCop                    = 1
 	DefShardRowIDBits                       = 0
