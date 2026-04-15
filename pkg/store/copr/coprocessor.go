@@ -177,11 +177,11 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	tryRowHint := optRowHint(req)
 	elapsed := time.Duration(0)
 	buildOpt := &buildCopTaskOpt{
-		req:               req,
-		cache:             c.store.GetRegionCache(),
-		eventCb:           eventCb,
-		respChan:          req.KeepOrder,
-		elapsed:           &elapsed,
+		req:             req,
+		cache:           c.store.GetRegionCache(),
+		eventCb:         eventCb,
+		respChan:        req.KeepOrder,
+		elapsed:         &elapsed,
 		pagingSizeBytes: pagingSizeBytes,
 	}
 	buildTaskFunc := func(ranges []kv.KeyRange, hints []int) error {
@@ -310,10 +310,7 @@ type copTask struct {
 	pagingSize      uint64
 	pagingSizeBytes uint64
 	pagingTaskIdx   uint32
-	// ema is the per-logical-scan read-bytes EMA used to refine the RC
-	// paging pre-charge on each paging RPC. Nil for non-paging tasks and
-	// before the first successful paging response; lazily created on the
-	// first paging RPC. Propagated across region/lock-error retries.
+	// ema refines the RC paging pre-charge from observed per-RPC read bytes.
 	ema *ruEMA
 
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
@@ -723,6 +720,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				busyThreshold:     req.StoreBusyThreshold,
 				skipBuckets:       opt.skipBuckets,
 				exceedsBoundRetry: opt.exceedsBoundRetry,
+				ema:               newRUEMA(),
 			}
 			if opt.skipBuckets {
 				task.buildLocStartKey = append([]byte(nil), loc.Location.StartKey...)
@@ -927,6 +925,7 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 			storeType:    req.StoreType,
 			storeAddr:    addr,
 			RowCountHint: -1,
+			ema:          newRUEMA(),
 		})
 	}
 	return tasks, nil
@@ -1682,9 +1681,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 
 	if task.paging {
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
-		if task.ema == nil {
-			task.ema = newRUEMA()
-		}
 	}
 
 	copReq := coprocessor.Request{
@@ -1905,20 +1901,15 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		return result, nil
 	}
 
-	// Observe the MVCC read bytes for this successful paging response so
-	// the next paging RPC on this scan can use a tighter pre-charge basis.
-	if task.ema != nil {
-		if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
-			// Classify by readiness *before* this observation so the counter
-			// reflects which regime the current RPC's pre-charge was in, not
-			// whether the new sample nudged us over the threshold.
-			if task.ema.IsReady() {
-				copr_metrics.EMAObservationReady.Inc()
-			} else {
-				copr_metrics.EMAObservationCold.Inc()
-			}
-			task.ema.Observe(readBytes, time.Now())
+	if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
+		// Classify before Observe so the counter reflects the regime that
+		// gated the just-completed RPC's pre-charge, not the post-update one.
+		if task.ema.IsReady() {
+			copr_metrics.EMAObservationReady.Inc()
+		} else {
+			copr_metrics.EMAObservationCold.Inc()
 		}
+		task.ema.Observe(readBytes, time.Now())
 	}
 
 	// calculate next ranges and grow the paging size

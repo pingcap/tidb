@@ -24,10 +24,6 @@ import (
 )
 
 func TestRUEMAColdStart(t *testing.T) {
-	var nilEMA *ruEMA
-	require.False(t, nilEMA.IsReady(), "nil EMA is never ready")
-	require.Zero(t, nilEMA.Predict(), "nil EMA always predicts 0")
-
 	e := newRUEMA()
 	require.False(t, e.IsReady(), "fresh EMA: no samples => not ready")
 	require.Zero(t, e.Predict(), "fresh EMA: no prediction")
