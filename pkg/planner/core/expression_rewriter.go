@@ -2526,6 +2526,7 @@ func (er *expressionRewriter) rewriteVectorSearchFuncCallWithEmbedding(v *ast.Fu
 		return sf, nil
 	}
 	funcTextEmbed, err := er.newFunctionWithInit(
+		"",
 		ast.EmbedText,
 		types.NewFieldType(mysql.TypeUnspecified),
 		fnInit,

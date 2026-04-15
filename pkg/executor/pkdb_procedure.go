@@ -889,7 +889,7 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		return nil, nil, err
 	}
 
-	builder := newExecutorBuilder(e.Ctx(), e.is, nil)
+	builder := newExecutorBuilder(e.Ctx(), e.is)
 	if triggerCtx := e.Ctx().GetSessionVars().StmtCtx.TriggerCtx; triggerCtx.InTrigger {
 		if trigExec, ok := triggerCtx.Exec.(*TriggerExec); ok {
 			// Preserve the caller's latest executor to avoid leaking the inner statement's executor

@@ -1237,7 +1237,6 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) exec.Executor {
 }
 
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) exec.Executor {
-	b.setTelemetryInfo(v)
 	switch v.Statement.(type) {
 	case *ast.CreateProcedureInfo, *ast.DropProcedureStmt, *ast.AlterProcedureStmt:
 		if !variable.TiDBEnableProcedureValue.Load() {
