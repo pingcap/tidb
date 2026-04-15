@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -771,7 +772,7 @@ func constructDS2TableScanTask(
 		Columns:         ds.Columns,
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		FilterCondition: ds.PushedDownConds,
+		FilterCondition: rewriteLargeIntNotInFiltersForIndexJoinProbe(ds.SCtx(), ds.PushedDownConds),
 		Ranges:          ranges,
 		RangeInfo:       rangeInfo,
 		KeepOrder:       keepOrder,
@@ -970,6 +971,7 @@ func constructDS2IndexScanTask(
 	}
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
+	tblConds = rewriteLargeIntNotInFiltersForIndexJoinProbe(ds.SCtx(), tblConds)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
 	//
@@ -1059,6 +1061,217 @@ func constructDS2IndexScanTask(
 		return nil
 	}
 	return cop
+}
+
+const minLargeNotInListLenForIndexJoinProbeRewrite = 8
+
+// rewriteLargeIntNotInFiltersForIndexJoinProbe compresses large integer NOT IN lists on
+// IndexJoin probe filters into interval predicates. This keeps the point-lookup access path
+// unchanged while shrinking the pushed-down expression payload; we intentionally avoid turning
+// these filters into access ranges because wide range scans can regress MVCC-heavy workloads.
+func rewriteLargeIntNotInFiltersForIndexJoinProbe(sctx base.PlanContext, conds []expression.Expression) []expression.Expression {
+	rewritten := make([]expression.Expression, 0, len(conds))
+	changed := false
+	for _, cond := range conds {
+		newCond, ok := tryRewriteLargeIntNotInFilterForIndexJoinProbe(sctx, cond)
+		if !ok {
+			rewritten = append(rewritten, cond)
+			continue
+		}
+		changed = true
+		rewritten = append(rewritten, newCond)
+	}
+	if !changed {
+		return conds
+	}
+	return rewritten
+}
+
+func tryRewriteLargeIntNotInFilterForIndexJoinProbe(sctx base.PlanContext, expr expression.Expression) (expression.Expression, bool) {
+	notFunc, ok := expr.(*expression.ScalarFunction)
+	if !ok || notFunc.FuncName.L != ast.UnaryNot {
+		return nil, false
+	}
+	inFunc, ok := notFunc.GetArgs()[0].(*expression.ScalarFunction)
+	if !ok || inFunc.FuncName.L != ast.In {
+		return nil, false
+	}
+	args := inFunc.GetArgs()
+	if len(args) < minLargeNotInListLenForIndexJoinProbeRewrite+1 {
+		return nil, false
+	}
+	col, ok := args[0].(*expression.Column)
+	if !ok {
+		return nil, false
+	}
+	colType := col.GetType(sctx.GetExprCtx().GetEvalCtx())
+	if !mysql.IsIntegerType(colType.GetType()) {
+		return nil, false
+	}
+	if mysql.HasUnsignedFlag(colType.GetFlag()) {
+		vals, ok := collectSortedUnsignedNotInValues(args[1:])
+		if !ok {
+			return nil, false
+		}
+		return buildUnsignedNotInIntervalFilter(sctx, col, vals)
+	}
+	vals, ok := collectSortedSignedNotInValues(args[1:])
+	if !ok {
+		return nil, false
+	}
+	return buildSignedNotInIntervalFilter(sctx, col, vals)
+}
+
+func collectSortedSignedNotInValues(args []expression.Expression) ([]int64, bool) {
+	vals := make([]int64, 0, len(args))
+	for _, arg := range args {
+		con, ok := arg.(*expression.Constant)
+		if !ok || con.DeferredExpr != nil || con.ParamMarker != nil {
+			return nil, false
+		}
+		switch con.Value.Kind() {
+		case types.KindNull:
+			return nil, false
+		case types.KindInt64:
+			vals = append(vals, con.Value.GetInt64())
+		case types.KindUint64:
+			u := con.Value.GetUint64()
+			if u > math.MaxInt64 {
+				return nil, false
+			}
+			vals = append(vals, int64(u))
+		default:
+			return nil, false
+		}
+	}
+	slices.Sort(vals)
+	return slices.Compact(vals), true
+}
+
+func collectSortedUnsignedNotInValues(args []expression.Expression) ([]uint64, bool) {
+	vals := make([]uint64, 0, len(args))
+	for _, arg := range args {
+		con, ok := arg.(*expression.Constant)
+		if !ok || con.DeferredExpr != nil || con.ParamMarker != nil {
+			return nil, false
+		}
+		switch con.Value.Kind() {
+		case types.KindNull:
+			return nil, false
+		case types.KindInt64:
+			v := con.Value.GetInt64()
+			if v < 0 {
+				return nil, false
+			}
+			vals = append(vals, uint64(v))
+		case types.KindUint64:
+			vals = append(vals, con.Value.GetUint64())
+		default:
+			return nil, false
+		}
+	}
+	slices.Sort(vals)
+	return slices.Compact(vals), true
+}
+
+func buildSignedNotInIntervalFilter(sctx base.PlanContext, col *expression.Column, vals []int64) (expression.Expression, bool) {
+	if len(vals) < minLargeNotInListLenForIndexJoinProbeRewrite {
+		return nil, false
+	}
+	type interval struct {
+		start int64
+		end   int64
+	}
+	intervals := make([]interval, 0, len(vals))
+	start, end := vals[0], vals[0]
+	for _, v := range vals[1:] {
+		if end != math.MaxInt64 && v == end+1 {
+			end = v
+			continue
+		}
+		intervals = append(intervals, interval{start: start, end: end})
+		start, end = v, v
+	}
+	intervals = append(intervals, interval{start: start, end: end})
+	if len(intervals)*2 >= len(vals) {
+		return nil, false
+	}
+
+	dnfItems := make([]expression.Expression, 0, len(intervals)+1)
+	if intervals[0].start != math.MinInt64 {
+		dnfItems = append(dnfItems, newBinaryCmpExpr(sctx, ast.LT, col, newTypedSignedConst(col, intervals[0].start)))
+	}
+	for i := 1; i < len(intervals); i++ {
+		left := newBinaryCmpExpr(sctx, ast.GT, col, newTypedSignedConst(col, intervals[i-1].end))
+		right := newBinaryCmpExpr(sctx, ast.LT, col, newTypedSignedConst(col, intervals[i].start))
+		dnfItems = append(dnfItems, expression.ComposeCNFCondition(sctx.GetExprCtx(), left, right))
+	}
+	if intervals[len(intervals)-1].end != math.MaxInt64 {
+		dnfItems = append(dnfItems, newBinaryCmpExpr(sctx, ast.GT, col, newTypedSignedConst(col, intervals[len(intervals)-1].end)))
+	}
+	if len(dnfItems) == 0 {
+		return nil, false
+	}
+	return expression.ComposeDNFCondition(sctx.GetExprCtx(), dnfItems...), true
+}
+
+func buildUnsignedNotInIntervalFilter(sctx base.PlanContext, col *expression.Column, vals []uint64) (expression.Expression, bool) {
+	if len(vals) < minLargeNotInListLenForIndexJoinProbeRewrite {
+		return nil, false
+	}
+	type interval struct {
+		start uint64
+		end   uint64
+	}
+	intervals := make([]interval, 0, len(vals))
+	start, end := vals[0], vals[0]
+	for _, v := range vals[1:] {
+		if end != math.MaxUint64 && v == end+1 {
+			end = v
+			continue
+		}
+		intervals = append(intervals, interval{start: start, end: end})
+		start, end = v, v
+	}
+	intervals = append(intervals, interval{start: start, end: end})
+	if len(intervals)*2 >= len(vals) {
+		return nil, false
+	}
+
+	dnfItems := make([]expression.Expression, 0, len(intervals)+1)
+	if intervals[0].start != 0 {
+		dnfItems = append(dnfItems, newBinaryCmpExpr(sctx, ast.LT, col, newTypedUnsignedConst(col, intervals[0].start)))
+	}
+	for i := 1; i < len(intervals); i++ {
+		left := newBinaryCmpExpr(sctx, ast.GT, col, newTypedUnsignedConst(col, intervals[i-1].end))
+		right := newBinaryCmpExpr(sctx, ast.LT, col, newTypedUnsignedConst(col, intervals[i].start))
+		dnfItems = append(dnfItems, expression.ComposeCNFCondition(sctx.GetExprCtx(), left, right))
+	}
+	if intervals[len(intervals)-1].end != math.MaxUint64 {
+		dnfItems = append(dnfItems, newBinaryCmpExpr(sctx, ast.GT, col, newTypedUnsignedConst(col, intervals[len(intervals)-1].end)))
+	}
+	if len(dnfItems) == 0 {
+		return nil, false
+	}
+	return expression.ComposeDNFCondition(sctx.GetExprCtx(), dnfItems...), true
+}
+
+func newBinaryCmpExpr(sctx base.PlanContext, op string, col *expression.Column, con *expression.Constant) expression.Expression {
+	return expression.NewFunctionInternal(sctx.GetExprCtx(), op, types.NewFieldType(mysql.TypeTiny), col, con)
+}
+
+func newTypedSignedConst(col *expression.Column, v int64) *expression.Constant {
+	return &expression.Constant{
+		Value:   types.NewIntDatum(v),
+		RetType: col.RetType,
+	}
+}
+
+func newTypedUnsignedConst(col *expression.Column, v uint64) *expression.Constant {
+	return &expression.Constant{
+		Value:   types.NewUintDatum(v),
+		RetType: col.RetType,
+	}
 }
 
 const (

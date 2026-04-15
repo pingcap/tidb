@@ -283,6 +283,14 @@
     ]
   },
   {
+    "name": "TestIssue67573",
+    "cases": [
+      "explain format = 'brief' select /*+ TIDB_INLJ(issue67573_t2) */ * from issue67573_t1 join issue67573_t2 on issue67573_t1.a = issue67573_t2.a where issue67573_t2.b not in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);",
+      "explain format = 'brief' select /*+ TIDB_INLJ(issue67573_t2) */ * from issue67573_t1 join issue67573_t2 on issue67573_t1.a = issue67573_t2.a where issue67573_t2.b not in (1, 2, 3, 10, 11, 12, 100, 101, 102, 103);",
+      "explain format = 'brief' select /*+ TIDB_INLJ(issue67573_t2) */ * from issue67573_t1 join issue67573_t2 on issue67573_t1.a = issue67573_t2.a where issue67573_t2.b not in (1, 3, 5, 7, 9, 11, 13, 15);"
+    ]
+  },
+  {
     "name": "TestIndexJoinPreferIndexCoversMoreJoinKeyCols",
     "cases": [
       "explain format ='brief' SELECT \n  mp.col1,\n  mp.col2,\n  mp.col3,\n  mp.col4,\n  mp.col5,\n  mp.col6\nFROM\n  mp\n  LEFT JOIN ab ON ab.col1 = mp.col2\n  AND ab.col2 = mp.col6\nWHERE\n  mp.col5 = 'PKR'\n  AND mp.col3 = 1\n  AND mp.col6 IN ('1685', '2239')\n  AND mp.col4 >= 1764788400\n  AND mp.col4 <= 1767466799\n  AND ab.col3 IN ('cj9dkqw7', 'del_cj9dkqw7')\nORDER BY\n  mp.col4 DESC\nLIMIT\n  100;"

@@ -209,6 +209,27 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 				}
 			}
 		}
+
+		// issue:67573
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists issue67573_t1, issue67573_t2")
+		tk.MustExec("create table issue67573_t1 (a int)")
+		tk.MustExec("create table issue67573_t2 (id int primary key, a int, b int, key idx_a(a))")
+		tk.MustExec("insert into issue67573_t1 values (1), (2), (3)")
+		tk.MustExec("insert into issue67573_t2 values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+		var input67573 []string
+		var output67573 []struct {
+			SQL  string
+			Plan []string
+		}
+		analyzeSuiteData.LoadTestCasesByName("TestIssue67573", t, &input67573, &output67573, cascades, caller)
+		for i, tt := range input67573 {
+			testdata.OnRecord(func() {
+				output67573[i].SQL = tt
+				output67573[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output67573[i].Plan...))
+		}
 	})
 }
 
