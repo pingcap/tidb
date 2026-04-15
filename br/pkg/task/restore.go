@@ -1220,9 +1220,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UpstreamClusterID == 0 {
 		cfg.UpstreamClusterID = backupMeta.ClusterId
 	}
-	if err := metautil.CheckBackupMetaCompatibility(backupMeta, cfg.CheckRequirements); err != nil {
-		return errors.Trace(err)
-	}
 	if loadStatsPhysical || loadSysTablePhysical {
 		schemaVersionPair := snapclient.SchemaVersionPairT{}
 		upstreamClusterVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)

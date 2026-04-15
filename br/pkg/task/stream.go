@@ -1946,8 +1946,11 @@ func getLogInfoFromStorage(
 	if err = backupMeta.Unmarshal(metaData); err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
-	if err = metautil.CheckBackupMetaCompatibility(backupMeta, checkRequirements); err != nil {
-		return backupLogInfo{}, errors.Trace(err)
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(metaData, backupMeta); err != nil {
+		if checkRequirements {
+			return backupLogInfo{}, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
 	// endVersion > 0 represents that the storage has been used for `br backup`
 	if backupMeta.GetEndVersion() > 0 {
@@ -2021,8 +2024,11 @@ func getFullBackupTS(
 	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	if err = metautil.CheckBackupMetaCompatibility(backupmeta, cfg.CheckRequirements); err != nil {
-		return 0, 0, errors.Trace(err)
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptedMetaData, backupmeta); err != nil {
+		if cfg.CheckRequirements {
+			return 0, 0, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
 
 	// start and end are identical in full backup, pick random one

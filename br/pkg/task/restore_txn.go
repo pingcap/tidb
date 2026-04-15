@@ -54,9 +54,6 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = metautil.CheckBackupMetaCompatibility(backupMeta, cfg.CheckRequirements); err != nil {
-		return errors.Trace(err)
-	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true, nil, nil,
 		cfg.ExplicitFilter, isFullRestore(cmdName), false); err != nil {

@@ -180,8 +180,11 @@ func (rc *LogClient) loadPITRIDMapBackupMeta(metaData []byte) (*backuppb.BackupM
 	if err := backupMeta.Unmarshal(metaData); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := metautil.CheckBackupMetaCompatibility(backupMeta, rc.checkRequirements); err != nil {
-		return nil, errors.Trace(err)
+	if err := metautil.CheckBackupMetaCompatibilityFromBytes(metaData, backupMeta); err != nil {
+		if rc.checkRequirements {
+			return nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", zap.Error(err))
 	}
 	return backupMeta, nil
 }

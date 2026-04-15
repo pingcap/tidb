@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 func checksum(m *backuppb.MetaFile) []byte {
@@ -28,6 +29,18 @@ func marshal(t *testing.T, m *backuppb.MetaFile) []byte {
 	data, err := m.Marshal()
 	require.NoError(t, err)
 	return data
+}
+
+func appendVarintField(dst []byte, fieldNumber protowire.Number, v uint64) []byte {
+	dst = protowire.AppendTag(dst, fieldNumber, protowire.VarintType)
+	dst = protowire.AppendVarint(dst, v)
+	return dst
+}
+
+func appendBytesField(dst []byte, fieldNumber protowire.Number, v []byte) []byte {
+	dst = protowire.AppendTag(dst, fieldNumber, protowire.BytesType)
+	dst = protowire.AppendBytes(dst, v)
+	return dst
 }
 
 func TestWalkMetaFileEmpty(t *testing.T) {
@@ -277,18 +290,16 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 
 	// Cover the compatibility contract for backupmeta:
 	// 1. current schema version should pass;
-	// 2. newer schema version should be rejected unless requirements checks are disabled;
-	// 3. unknown protobuf fields should still be guarded by the same switch.
+	// 2. newer schema version should be rejected;
+	// 3. unknown protobuf fields should still be rejected.
 	cases := []struct {
-		name              string
-		backupMeta        *backuppb.BackupMeta
-		checkRequirements bool
-		expectedErr       string
+		name        string
+		backupMeta  *backuppb.BackupMeta
+		expectedErr string
 	}{
 		{
-			name:              "compatible backupmeta",
-			backupMeta:        baseMeta,
-			checkRequirements: true,
+			name:       "compatible backupmeta",
+			backupMeta: baseMeta,
 		},
 		{
 			name: "reject newer schema version",
@@ -297,17 +308,7 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 				ClusterVersion:      "8.5.6",
 				BrVersion:           "v8.5.6",
 			},
-			checkRequirements: true,
-			expectedErr:       "requires schema version",
-		},
-		{
-			name: "warn for newer schema version when requirements disabled",
-			backupMeta: &backuppb.BackupMeta{
-				BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
-				ClusterVersion:      "8.5.6",
-				BrVersion:           "v8.5.6",
-			},
-			checkRequirements: false,
+			expectedErr: "requires schema version",
 		},
 		{
 			name: "reject unknown fields",
@@ -317,24 +318,13 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 				BrVersion:           "v8.5.6",
 				XXX_unrecognized:    []byte{0x08, 0x01},
 			},
-			checkRequirements: true,
-			expectedErr:       "unknown protobuf fields",
-		},
-		{
-			name: "warn for unknown fields when requirements disabled",
-			backupMeta: &backuppb.BackupMeta{
-				BackupSchemaVersion: backuppb.BackupSchemaVersion,
-				ClusterVersion:      "8.5.6",
-				BrVersion:           "v8.5.6",
-				XXX_unrecognized:    []byte{0x08, 0x01},
-			},
-			checkRequirements: false,
+			expectedErr: "unknown protobuf fields",
 		},
 	}
 
 	for _, ca := range cases {
 		t.Run(ca.name, func(t *testing.T) {
-			err := CheckBackupMetaCompatibility(ca.backupMeta, ca.checkRequirements)
+			err := CheckBackupMetaCompatibility(ca.backupMeta)
 			if ca.expectedErr == "" {
 				require.NoError(t, err)
 				return
@@ -342,6 +332,70 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 			require.ErrorContains(t, err, ca.expectedErr)
 		})
 	}
+}
+
+func TestCheckBackupMetaCompatibilityFromBytesDetectsNestedUnknownFields(t *testing.T) {
+	// Build a nested File message and append an unknown field(200) into it.
+	nestedFile := make([]byte, 0, 64)
+	nestedFile = appendBytesField(nestedFile, 1, []byte("nested-file"))
+	nestedFile = appendVarintField(nestedFile, 200, 1)
+
+	// Build BackupMeta bytes manually to keep the nested unknown field in wire bytes.
+	backupMetaBytes := make([]byte, 0, 128)
+	backupMetaBytes = appendBytesField(backupMetaBytes, 2, []byte("8.5.6"))
+	backupMetaBytes = appendBytesField(backupMetaBytes, 11, []byte("v8.5.6"))
+	backupMetaBytes = appendVarintField(backupMetaBytes, 26, uint64(backuppb.BackupSchemaVersion))
+	backupMetaBytes = appendBytesField(backupMetaBytes, 4, nestedFile)
+
+	backupMeta := &backuppb.BackupMeta{}
+	require.NoError(t, backupMeta.Unmarshal(backupMetaBytes))
+
+	// Legacy struct-only check cannot observe nested unknown fields.
+	require.NoError(t, CheckBackupMetaCompatibility(backupMeta))
+
+	err := CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta)
+	require.ErrorContains(t, err, "unknown protobuf fields")
+}
+
+func TestCheckBackupMetaCompatibilityFromBytesDetectsTopLevelUnknownFields(t *testing.T) {
+	backupMetaBytes := make([]byte, 0, 128)
+	backupMetaBytes = appendBytesField(backupMetaBytes, 2, []byte("8.5.6"))
+	backupMetaBytes = appendBytesField(backupMetaBytes, 11, []byte("v8.5.6"))
+	backupMetaBytes = appendVarintField(backupMetaBytes, 26, uint64(backuppb.BackupSchemaVersion))
+	backupMetaBytes = appendVarintField(backupMetaBytes, 200, 1)
+
+	backupMeta := &backuppb.BackupMeta{}
+	require.NoError(t, backupMeta.Unmarshal(backupMetaBytes))
+
+	err := CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta)
+	require.ErrorContains(t, err, "unknown protobuf fields")
+}
+
+func TestCheckBackupMetaCompatibilityFromBytesDetectsDeepNestedUnknownFields(t *testing.T) {
+	// Build File bytes with unknown field(201).
+	nestedFile := make([]byte, 0, 64)
+	nestedFile = appendBytesField(nestedFile, 1, []byte("deep-file"))
+	nestedFile = appendVarintField(nestedFile, 201, 1)
+
+	// Build MetaFile bytes that contains the File in meta_files.
+	nestedMetaFile := make([]byte, 0, 96)
+	nestedMetaFile = appendBytesField(nestedMetaFile, 1, nestedFile)
+
+	// Build BackupMeta bytes that contains the MetaFile in file_index.
+	backupMetaBytes := make([]byte, 0, 192)
+	backupMetaBytes = appendBytesField(backupMetaBytes, 2, []byte("8.5.6"))
+	backupMetaBytes = appendBytesField(backupMetaBytes, 11, []byte("v8.5.6"))
+	backupMetaBytes = appendVarintField(backupMetaBytes, 26, uint64(backuppb.BackupSchemaVersion))
+	backupMetaBytes = appendBytesField(backupMetaBytes, 13, nestedMetaFile)
+
+	backupMeta := &backuppb.BackupMeta{}
+	require.NoError(t, backupMeta.Unmarshal(backupMetaBytes))
+
+	// Struct-only check still can't observe nested unknown fields.
+	require.NoError(t, CheckBackupMetaCompatibility(backupMeta))
+
+	err := CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta)
+	require.ErrorContains(t, err, "unknown protobuf fields")
 }
 
 func TestNewMetaWriterInitializesBackupSchemaVersion(t *testing.T) {
