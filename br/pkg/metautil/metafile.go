@@ -72,32 +72,15 @@ var (
 	protoFieldCache   sync.Map // map[reflect.Type]map[protowire.Number]protobufFieldInfo
 )
 
-// CheckBackupMetaUnknownFields blocks restore when backup metadata contains
-// protobuf fields the current BR binary does not recognize.
-func CheckBackupMetaUnknownFields(
-	backupMeta *backuppb.BackupMeta,
-) error {
-	if backupMeta == nil || len(backupMeta.XXX_unrecognized) == 0 {
-		return nil
-	}
-
-	err := errors.Annotatef(
-		berrors.ErrVersionMismatch,
-		"backupmeta contains unknown protobuf fields. restoring with an older BR may silently ignore "+
-			"newer backup metadata. backup cluster version: %s, backup BR version: %s. use "+
-			"--check-requirements=false to skip this check",
-		backupMeta.GetClusterVersion(),
-		backupMeta.GetBrVersion(),
-	)
-	return err
-}
-
 func checkBackupMetaUnknownFieldsFromBytes(
 	backupMetaBytes []byte,
 	backupMeta *backuppb.BackupMeta,
 ) error {
 	if len(backupMetaBytes) == 0 {
-		return nil
+		return errors.Annotate(
+			berrors.ErrInvalidArgument,
+			"backupmeta bytes are required for compatibility check",
+		)
 	}
 	hasUnknownFields, err := detectUnknownProtobufFields(backupMetaBytes, reflect.TypeOf(backuppb.BackupMeta{}))
 	if err != nil {
@@ -236,26 +219,10 @@ func getNestedMessageType(fieldTyp reflect.Type) (reflect.Type, bool) {
 	return nil, false
 }
 
-// CheckBackupMetaCompatibility blocks restore when backup metadata requires a
-// newer metadata schema reader or contains protobuf fields the current BR
-// binary does not recognize.
-func CheckBackupMetaCompatibility(
-	backupMeta *backuppb.BackupMeta,
-) error {
-	return checkBackupMetaCompatibility(nil, backupMeta)
-}
-
-// CheckBackupMetaCompatibilityFromBytes performs the same compatibility check as
-// CheckBackupMetaCompatibility, and additionally checks unknown protobuf fields
-// in raw backupmeta bytes to cover nested messages.
+// CheckBackupMetaCompatibilityFromBytes blocks restore when backup metadata
+// requires a newer metadata schema reader or contains protobuf fields the
+// current BR binary does not recognize.
 func CheckBackupMetaCompatibilityFromBytes(
-	backupMetaBytes []byte,
-	backupMeta *backuppb.BackupMeta,
-) error {
-	return checkBackupMetaCompatibility(backupMetaBytes, backupMeta)
-}
-
-func checkBackupMetaCompatibility(
 	backupMetaBytes []byte,
 	backupMeta *backuppb.BackupMeta,
 ) error {
@@ -271,10 +238,7 @@ func checkBackupMetaCompatibility(
 			backupMeta.GetBrVersion(),
 		)
 	}
-	if len(backupMetaBytes) > 0 {
-		return checkBackupMetaUnknownFieldsFromBytes(backupMetaBytes, backupMeta)
-	}
-	return CheckBackupMetaUnknownFields(backupMeta)
+	return checkBackupMetaUnknownFieldsFromBytes(backupMetaBytes, backupMeta)
 }
 
 // Encrypt encrypts the content according to CipherInfo.

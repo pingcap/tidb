@@ -288,43 +288,48 @@ func TestCheckBackupMetaCompatibility(t *testing.T) {
 		BrVersion:           "v8.5.6",
 	}
 
+	baseMetaBytes, err := baseMeta.Marshal()
+	require.NoError(t, err)
+	newerSchemaMeta := &backuppb.BackupMeta{
+		BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
+		ClusterVersion:      "8.5.6",
+		BrVersion:           "v8.5.6",
+	}
+	newerSchemaMetaBytes, err := newerSchemaMeta.Marshal()
+	require.NoError(t, err)
+
 	// Cover the compatibility contract for backupmeta:
 	// 1. current schema version should pass;
 	// 2. newer schema version should be rejected;
-	// 3. unknown protobuf fields should still be rejected.
+	// 3. compatibility check requires raw bytes.
 	cases := []struct {
 		name        string
+		backupBytes []byte
 		backupMeta  *backuppb.BackupMeta
 		expectedErr string
 	}{
 		{
-			name:       "compatible backupmeta",
-			backupMeta: baseMeta,
+			name:        "compatible backupmeta",
+			backupBytes: baseMetaBytes,
+			backupMeta:  baseMeta,
 		},
 		{
-			name: "reject newer schema version",
-			backupMeta: &backuppb.BackupMeta{
-				BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
-				ClusterVersion:      "8.5.6",
-				BrVersion:           "v8.5.6",
-			},
+			name:        "reject newer schema version",
+			backupBytes: newerSchemaMetaBytes,
+			backupMeta:  newerSchemaMeta,
 			expectedErr: "requires schema version",
 		},
 		{
-			name: "reject unknown fields",
-			backupMeta: &backuppb.BackupMeta{
-				BackupSchemaVersion: backuppb.BackupSchemaVersion,
-				ClusterVersion:      "8.5.6",
-				BrVersion:           "v8.5.6",
-				XXX_unrecognized:    []byte{0x08, 0x01},
-			},
-			expectedErr: "unknown protobuf fields",
+			name:        "reject empty bytes input",
+			backupBytes: nil,
+			backupMeta:  baseMeta,
+			expectedErr: "bytes are required",
 		},
 	}
 
 	for _, ca := range cases {
 		t.Run(ca.name, func(t *testing.T) {
-			err := CheckBackupMetaCompatibility(ca.backupMeta)
+			err := CheckBackupMetaCompatibilityFromBytes(ca.backupBytes, ca.backupMeta)
 			if ca.expectedErr == "" {
 				require.NoError(t, err)
 				return
@@ -349,9 +354,6 @@ func TestCheckBackupMetaCompatibilityFromBytesDetectsNestedUnknownFields(t *test
 
 	backupMeta := &backuppb.BackupMeta{}
 	require.NoError(t, backupMeta.Unmarshal(backupMetaBytes))
-
-	// Legacy struct-only check cannot observe nested unknown fields.
-	require.NoError(t, CheckBackupMetaCompatibility(backupMeta))
 
 	err := CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta)
 	require.ErrorContains(t, err, "unknown protobuf fields")
@@ -390,9 +392,6 @@ func TestCheckBackupMetaCompatibilityFromBytesDetectsDeepNestedUnknownFields(t *
 
 	backupMeta := &backuppb.BackupMeta{}
 	require.NoError(t, backupMeta.Unmarshal(backupMetaBytes))
-
-	// Struct-only check still can't observe nested unknown fields.
-	require.NoError(t, CheckBackupMetaCompatibility(backupMeta))
 
 	err := CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta)
 	require.ErrorContains(t, err, "unknown protobuf fields")
