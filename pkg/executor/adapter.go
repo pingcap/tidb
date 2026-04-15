@@ -1474,6 +1474,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 	}
 
 	b := newExecutorBuilder(ctx, a.InfoSchema)
+	b.triggerExec = newTriggerExec(a.GoCtx, b, a)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
