@@ -1735,7 +1735,7 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
 			// AnalyzeStateSkipped may come from older owners before this branch
 			// was split; run FinishIndexUpload once for compatibility.
-			taskID := strconv.FormatInt(job.ID, 10)
+			taskID := ticiTaskIDForDDL(job.ID)
 			// FinishIndexUpload should run after the reorg ingest
 			// completes using the lightweight helper
 			// to finalize TiCI uploads here.
@@ -1927,7 +1927,7 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
 			// AnalyzeStateSkipped may come from older owners before this branch
 			// was split; run FinishIndexUpload once for compatibility.
-			taskID := strconv.FormatInt(job.ID, 10)
+			taskID := ticiTaskIDForDDL(job.ID)
 			// FinishIndexUpload should run after the reorg ingest
 			// completes using the lightweight helper
 			// to finalize TiCI uploads here.
@@ -4418,16 +4418,14 @@ func (b *TaskKeyBuilder) Build(jobID int64) string {
 
 // TaskKey generates a task key for the backfill job.
 func TaskKey(jobID int64, mergeTempIdx bool) string {
-	labels := make([]string, 0, 8)
-	if kerneltype.IsNextGen() {
-		ks := keyspace.GetKeyspaceNameBySettings()
-		labels = append(labels, ks)
-	}
-	labels = append(labels, "ddl", proto.Backfill.String(), strconv.FormatInt(jobID, 10))
-	if mergeTempIdx {
-		labels = append(labels, "merge")
-	}
-	return strings.Join(labels, "/")
+	return ddlutil.BuildBackfillTaskKey(jobID, mergeTempIdx)
+}
+
+// ticiTaskIDForDDL returns the TiCI-facing task identifier for DDL add-index ingest.
+// TiCI fulltext/hybrid add-index does not enter the merge-temp-index catch-up stage, so
+// it should always use the primary backfill task key.
+func ticiTaskIDForDDL(jobID int64) string {
+	return TaskKey(jobID, false)
 }
 
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {

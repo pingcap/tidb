@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -141,7 +142,12 @@ func TestGetImportStoragePrefix(t *testing.T) {
 	indexIDs := []int64{2, 3}
 
 	mockClient.
-		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID))).
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(func(req *GetImportStoragePrefixRequest) bool {
+			return matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID)(req) &&
+				req.GetTidbTaskId() == taskID &&
+				req.GetTableId() == tblID &&
+				slices.Equal(req.GetIndexIds(), indexIDs)
+		})).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "/s3/path?endpoint=http://127.0.0.1"}, nil).
 		Once()
 	path, jobID, err := ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
@@ -150,14 +156,24 @@ func TestGetImportStoragePrefix(t *testing.T) {
 	assert.Equal(t, "/s3/path?endpoint=http://127.0.0.1", path)
 
 	mockClient.
-		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID))).
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(func(req *GetImportStoragePrefixRequest) bool {
+			return matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID)(req) &&
+				req.GetTidbTaskId() == taskID &&
+				req.GetTableId() == tblID &&
+				slices.Equal(req.GetIndexIds(), indexIDs)
+		})).
 		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_UNKNOWN_ERROR, ErrorMessage: "fail"}, nil).
 		Once()
 	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)
 	assert.Error(t, err)
 
 	mockClient.
-		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID))).
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(func(req *GetImportStoragePrefixRequest) bool {
+			return matchKeyspace[*GetImportStoragePrefixRequest](keyspaceID)(req) &&
+				req.GetTidbTaskId() == taskID &&
+				req.GetTableId() == tblID &&
+				slices.Equal(req.GetIndexIds(), indexIDs)
+		})).
 		Return(&GetImportStoragePrefixResponse{}, errors.New("rpc error")).
 		Once()
 	_, _, err = ctx.GetCloudStoragePrefix(context.Background(), taskID, tblID, indexIDs)

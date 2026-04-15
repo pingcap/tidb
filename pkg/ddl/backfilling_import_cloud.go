@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
-	"strconv"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -102,7 +101,7 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 		}
 	}
 	if len(newTiciIndexIDs) > 0 {
-		taskID := strconv.FormatInt(e.job.ID, 10)
+		taskID := ticiTaskIDForDDL(e.job.ID)
 		if err := bd.InitTiCIWriterGroup(ctx, e.ptbl.Meta(), e.job.SchemaName, taskID, newTiciIndexIDs); err != nil {
 			return err
 		}

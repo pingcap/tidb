@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 	"time"
 
@@ -388,7 +387,7 @@ func TestBackfillingSchedulerGlobalSortModeTiCIPreSplit(t *testing.T) {
 	require.NotEmpty(t, raw)
 	var req tici.PreSplitImportShardsRequest
 	require.NoError(t, json.Unmarshal(raw, &req))
-	require.Equal(t, strconv.FormatInt(taskMeta.Job.ID, 10), req.TidbTaskId)
+	require.Equal(t, ddl.TaskKey(taskMeta.Job.ID, false), req.TidbTaskId)
 	require.Equal(t, taskMeta.Job.TableID, req.TableId)
 	require.Equal(t, []int64{10}, req.IndexIds)
 	require.Equal(t, scanSnapshotTS, req.ScanSnapshotTs)
