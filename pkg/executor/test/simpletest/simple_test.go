@@ -819,3 +819,28 @@ func TestSelectWhereInvalidDSTTime(t *testing.T) {
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'"))
 }
+
+// TestIssue44135 tests that CAST(float AS DATETIME) returns consistent results
+// See https://github.com/pingcap/tidb/issues/44135
+func TestIssue44135(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Case 1: With generated column
+	tk.MustExec("DROP TABLE IF EXISTS t0")
+	tk.MustExec("CREATE TABLE t0(`c0` float GENERATED ALWAYS AS (`c1`), `c1` float)")
+	tk.MustExec("INSERT INTO t0(c1) VALUES (0.5822439)")
+	result1 := tk.MustQuery("SELECT * FROM t0 WHERE (~ (CAST(c0 AS DATETIME)))")
+
+	// Case 2: Without generated column (base column only)
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1(`c1` float)")
+	tk.MustExec("INSERT INTO t1(c1) VALUES (0.5822439)")
+	result2 := tk.MustQuery("SELECT * FROM t1 WHERE (~ (CAST(c1 AS DATETIME)))")
+
+	// Both queries should return consistent results (either both return the row or both return empty)
+	rows1 := result1.Rows()
+	rows2 := result2.Rows()
+	require.Equal(t, len(rows1), len(rows2), "CAST(float AS DATETIME) should return consistent results for generated column and base column")
+}
