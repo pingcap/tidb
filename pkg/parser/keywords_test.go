@@ -36,7 +36,7 @@ func TestKeywords(t *testing.T) {
 }
 
 func TestKeywordsLength(t *testing.T) {
-	require.Equal(t, 736, len(parser.Keywords)) // TODO: verify after merge, adjust if keywords added/removed
+	require.Equal(t, 738, len(parser.Keywords))
 	reservedNr := 0
 	for _, kw := range parser.Keywords {
 		if kw.Reserved {
