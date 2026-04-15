@@ -1526,19 +1526,6 @@ type AdminShowBDRRole struct {
 	baseSchemaProducer
 }
 
-// CreateProcedure create procedure plan
-type CreateProcedure struct {
-	baseSchemaProducer
-	CreateProcedureInfo ast.StmtNode
-	is                  infoschema.InfoSchema
-}
-
-// DropProcedure drop procedure plan
-type DropProcedure struct {
-	baseSchemaProducer
-	Procedure *ast.DropProcedureStmt
-}
-
 // CallStmt call plan
 type CallStmt struct {
 	baseSchemaProducer
@@ -1551,10 +1538,10 @@ type CallStmt struct {
 	CachedProcedurePlan *RoutineCacahe
 }
 
-// AlterProcedure alter procedure plan
-type AlterProcedure struct {
+// TriggerProcedure trigger procedure plan.
+type TriggerProcedure struct {
 	baseSchemaProducer
-	Procedure *ast.AlterProcedureStmt
+	Plan *ProcedurePlan
 }
 
 // SignalInfo record signal information item

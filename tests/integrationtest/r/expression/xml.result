@@ -1,0 +1,836 @@
+SET @xml='<a aa1="aa1" aa2="aa2">a1<b ba1="ba1">b1<c>c1</c>b2</b>a2</a>';
+SELECT extractValue(@xml,'/a');
+extractValue(@xml,'/a')
+a1 a2
+SELECT extractValue(@xml,'/a/b');
+extractValue(@xml,'/a/b')
+b1 b2
+SELECT extractValue(@xml,'/a/b/c');
+extractValue(@xml,'/a/b/c')
+c1
+SELECT extractValue(@xml,'/a/@aa1');
+extractValue(@xml,'/a/@aa1')
+aa1
+SELECT extractValue(@xml,'/a/@aa2');
+extractValue(@xml,'/a/@aa2')
+aa2
+SELECT extractValue(@xml,'/a/@*');
+extractValue(@xml,'/a/@*')
+aa1 aa2
+SELECT extractValue(@xml,'//@ba1');
+extractValue(@xml,'//@ba1')
+ba1
+SELECT extractValue(@xml,'//a');
+extractValue(@xml,'//a')
+a1 a2
+SELECT extractValue(@xml,'//b');
+extractValue(@xml,'//b')
+b1 b2
+SELECT extractValue(@xml,'//c');
+extractValue(@xml,'//c')
+c1
+SELECT extractValue(@xml,'/a//b');
+extractValue(@xml,'/a//b')
+b1 b2
+SELECT extractValue(@xml,'/a//c');
+extractValue(@xml,'/a//c')
+c1
+SELECT extractValue(@xml,'//*');
+extractValue(@xml,'//*')
+a1 b1 c1 b2 a2
+SELECT extractValue(@xml,'/a//*');
+extractValue(@xml,'/a//*')
+b1 c1 b2
+SELECT extractValue(@xml,'/./a');
+extractValue(@xml,'/./a')
+a1 a2
+SELECT extractValue(@xml,'/a/b/.');
+extractValue(@xml,'/a/b/.')
+b1 b2
+SELECT extractValue(@xml,'/a/b/..');
+extractValue(@xml,'/a/b/..')
+a1 a2
+SELECT extractValue(@xml,'/a/b/../@aa1');
+extractValue(@xml,'/a/b/../@aa1')
+aa1
+SELECT extractValue(@xml,'/*');
+extractValue(@xml,'/*')
+a1 a2
+SELECT extractValue(@xml,'/a/child::*');
+extractValue(@xml,'/a/child::*')
+b1 b2
+SELECT extractValue(@xml,'/a/self::*');
+extractValue(@xml,'/a/self::*')
+a1 a2
+SELECT extractValue(@xml,'/a/descendant::*');
+extractValue(@xml,'/a/descendant::*')
+b1 c1 b2
+SELECT extractValue(@xml,'/a/descendant-or-self::*');
+extractValue(@xml,'/a/descendant-or-self::*')
+a1 b1 c1 b2 a2
+SELECT extractValue(@xml,'/a/attribute::*');
+extractValue(@xml,'/a/attribute::*')
+aa1 aa2
+SELECT extractValue(@xml,'/a/b/c/parent::*');
+extractValue(@xml,'/a/b/c/parent::*')
+b1 b2
+SELECT extractValue(@xml,'/a/b/c/ancestor::*');
+extractValue(@xml,'/a/b/c/ancestor::*')
+a1 b1 b2 a2
+SELECT extractValue(@xml,'/a/b/c/ancestor-or-self::*');
+extractValue(@xml,'/a/b/c/ancestor-or-self::*')
+a1 b1 c1 b2 a2
+SELECT extractValue(@xml,'/descendant-or-self::*');
+extractValue(@xml,'/descendant-or-self::*')
+a1 b1 c1 b2 a2
+SET @xml='<a>a11<b ba="ba11" ba="ba12">b11</b><b ba="ba21" ba="ba22">b21<c>c1</c>b22</b>a12</a>';
+SELECT extractValue(@xml,'/a/b/c/ancestor-or-self::*');
+extractValue(@xml,'/a/b/c/ancestor-or-self::*')
+a11 b21 c1 b22 a12
+SELECT extractValue(@xml,'//@ba');
+extractValue(@xml,'//@ba')
+ba11 ba12 ba21 ba22
+SET @xml='<a><b>b</b><c>c</c></a>';
+SELECT extractValue(@xml,'/a/b');
+extractValue(@xml,'/a/b')
+b
+SELECT extractValue(@xml,'/a/c');
+extractValue(@xml,'/a/c')
+c
+SELECT extractValue(@xml,'/a/child::b');
+extractValue(@xml,'/a/child::b')
+b
+SELECT extractValue(@xml,'/a/child::c');
+extractValue(@xml,'/a/child::c')
+c
+SET @xml='<a><b>b1</b><c>c1</c><b>b2</b><c>c2</c></a>';
+SELECT extractValue(@xml,'/a/b[1]');
+extractValue(@xml,'/a/b[1]')
+b1
+SELECT extractValue(@xml,'/a/b[2]');
+extractValue(@xml,'/a/b[2]')
+b2
+SELECT extractValue(@xml,'/a/c[1]');
+extractValue(@xml,'/a/c[1]')
+c1
+SELECT extractValue(@xml,'/a/c[2]');
+extractValue(@xml,'/a/c[2]')
+c2
+SET @xml='<a><b x="xb1" x="xb2"/><c x="xc1" x="xc2"/></a>';
+SELECT extractValue(@xml,'/a//@x');
+extractValue(@xml,'/a//@x')
+xb1 xb2 xc1 xc2
+SET @xml='<a><b>b1</b><b>b2</b></a>';
+SELECT extractValue(@xml,'/a/b[1+0]');
+extractValue(@xml,'/a/b[1+0]')
+b1
+SELECT extractValue(@xml,'/a/b[1*1]');
+extractValue(@xml,'/a/b[1*1]')
+b1
+SELECT extractValue(@xml,'/a/b[--1]');
+extractValue(@xml,'/a/b[--1]')
+b1
+SELECT extractValue(@xml,'/a/b[2*1-1]');
+extractValue(@xml,'/a/b[2*1-1]')
+b1
+SELECT extractValue(@xml,'/a/b[1+1]');
+extractValue(@xml,'/a/b[1+1]')
+b2
+SELECT extractValue(@xml,'/a/b[1*2]');
+extractValue(@xml,'/a/b[1*2]')
+b2
+SELECT extractValue(@xml,'/a/b[--2]');
+extractValue(@xml,'/a/b[--2]')
+b2
+SELECT extractValue(@xml,'/a/b[1*(3-1)]');
+extractValue(@xml,'/a/b[1*(3-1)]')
+b2
+SELECT extractValue(@xml,'//*[1=1]');
+extractValue(@xml,'//*[1=1]')
+b1 b2
+SELECT extractValue(@xml,'//*[1!=1]');
+extractValue(@xml,'//*[1!=1]')
+
+SELECT extractValue(@xml,'//*[1>1]');
+extractValue(@xml,'//*[1>1]')
+
+SELECT extractValue(@xml,'//*[2>1]');
+extractValue(@xml,'//*[2>1]')
+b1 b2
+SELECT extractValue(@xml,'//*[1>2]');
+extractValue(@xml,'//*[1>2]')
+
+SELECT extractValue(@xml,'//*[1>=1]');
+extractValue(@xml,'//*[1>=1]')
+b1 b2
+SELECT extractValue(@xml,'//*[2>=1]');
+extractValue(@xml,'//*[2>=1]')
+b1 b2
+SELECT extractValue(@xml,'//*[1>=2]');
+extractValue(@xml,'//*[1>=2]')
+
+SELECT extractValue(@xml,'//*[1<1]');
+extractValue(@xml,'//*[1<1]')
+
+SELECT extractValue(@xml,'//*[2<1]');
+extractValue(@xml,'//*[2<1]')
+
+SELECT extractValue(@xml,'//*[1<2]');
+extractValue(@xml,'//*[1<2]')
+b1 b2
+SELECT extractValue(@xml,'//*[1<=1]');
+extractValue(@xml,'//*[1<=1]')
+b1 b2
+SELECT extractValue(@xml,'//*[2<=1]');
+extractValue(@xml,'//*[2<=1]')
+
+SELECT extractValue(@xml,'//*[1<=2]');
+extractValue(@xml,'//*[1<=2]')
+b1 b2
+SET @xml='<a><b>b11<c>c11</c></b><b>b21<c>c21</c></b></a>';
+SELECT extractValue(@xml,'/a/b[c="c11"]');
+extractValue(@xml,'/a/b[c="c11"]')
+b11
+SELECT extractValue(@xml,'/a/b[c="c21"]');
+extractValue(@xml,'/a/b[c="c21"]')
+b21
+SET @xml='<a><b c="c11">b11</b><b c="c21">b21</b></a>';
+SELECT extractValue(@xml,'/a/b[@c="c11"]');
+extractValue(@xml,'/a/b[@c="c11"]')
+b11
+SELECT extractValue(@xml,'/a/b[@c="c21"]');
+extractValue(@xml,'/a/b[@c="c21"]')
+b21
+SET @xml='<a>a1<b c="c11">b11<d>d11</d></b><b c="c21">b21<d>d21</d></b></a>';
+SELECT extractValue(@xml, '/a/b[@c="c11"]/d');
+extractValue(@xml, '/a/b[@c="c11"]/d')
+d11
+SELECT extractValue(@xml, '/a/b[@c="c21"]/d');
+extractValue(@xml, '/a/b[@c="c21"]/d')
+d21
+SELECT extractValue(@xml, '/a/b[d="d11"]/@c');
+extractValue(@xml, '/a/b[d="d11"]/@c')
+c11
+SELECT extractValue(@xml, '/a/b[d="d21"]/@c');
+extractValue(@xml, '/a/b[d="d21"]/@c')
+c21
+SELECT extractValue(@xml, '/a[b="b11"]');
+extractValue(@xml, '/a[b="b11"]')
+a1
+SELECT extractValue(@xml, '/a[b/@c="c11"]');
+extractValue(@xml, '/a[b/@c="c11"]')
+a1
+SELECT extractValue(@xml, '/a[b/d="d11"]');
+extractValue(@xml, '/a[b/d="d11"]')
+a1
+SELECT extractValue(@xml, '/a[/a/b="b11"]');
+extractValue(@xml, '/a[/a/b="b11"]')
+a1
+SELECT extractValue(@xml, '/a[/a/b/@c="c11"]');
+extractValue(@xml, '/a[/a/b/@c="c11"]')
+a1
+SELECT extractValue(@xml, '/a[/a/b/d="d11"]');
+extractValue(@xml, '/a[/a/b/d="d11"]')
+a1
+SELECT extractValue('<a>a</a>', '/a[false()]');
+extractValue('<a>a</a>', '/a[false()]')
+
+SELECT extractValue('<a>a</a>', '/a[true()]');
+extractValue('<a>a</a>', '/a[true()]')
+a
+SELECT extractValue('<a>a</a>', '/a[not(false())]');
+extractValue('<a>a</a>', '/a[not(false())]')
+a
+SELECT extractValue('<a>a</a>', '/a[not(true())]');
+extractValue('<a>a</a>', '/a[not(true())]')
+
+SELECT extractValue('<a>a</a>', '/a[true() and true()]');
+extractValue('<a>a</a>', '/a[true() and true()]')
+a
+SELECT extractValue('<a>a</a>', '/a[true() and false()]');
+extractValue('<a>a</a>', '/a[true() and false()]')
+
+SELECT extractValue('<a>a</a>', '/a[false()and false()]');
+extractValue('<a>a</a>', '/a[false()and false()]')
+
+SELECT extractValue('<a>a</a>', '/a[false()and true()]');
+extractValue('<a>a</a>', '/a[false()and true()]')
+
+SELECT extractValue('<a>a</a>', '/a[true() or true()]');
+extractValue('<a>a</a>', '/a[true() or true()]')
+a
+SELECT extractValue('<a>a</a>', '/a[true() or false()]');
+extractValue('<a>a</a>', '/a[true() or false()]')
+a
+SELECT extractValue('<a>a</a>', '/a[false()or false()]');
+extractValue('<a>a</a>', '/a[false()or false()]')
+
+SELECT extractValue('<a>a</a>', '/a[false()or true()]');
+extractValue('<a>a</a>', '/a[false()or true()]')
+a
+SET @xml='<a>ab<b c="c" c="e">b1</b><b c="d">b2</b><b c="f" c="e">b3</b></a>';
+select extractValue(@xml,'/a/b[@c="c"]');
+extractValue(@xml,'/a/b[@c="c"]')
+b1
+select extractValue(@xml,'/a/b[@c="d"]');
+extractValue(@xml,'/a/b[@c="d"]')
+b2
+select extractValue(@xml,'/a/b[@c="e"]');
+extractValue(@xml,'/a/b[@c="e"]')
+b1 b3
+select extractValue(@xml,'/a/b[not(@c="e")]');
+extractValue(@xml,'/a/b[not(@c="e")]')
+b2
+select extractValue(@xml,'/a/b[@c!="e"]');
+extractValue(@xml,'/a/b[@c!="e"]')
+b1 b2 b3
+select extractValue(@xml,'/a/b[@c="c" or @c="d"]');
+extractValue(@xml,'/a/b[@c="c" or @c="d"]')
+b1 b2
+select extractValue(@xml,'/a/b[@c="c" and @c="e"]');
+extractValue(@xml,'/a/b[@c="c" and @c="e"]')
+b1
+SET @xml='<a><b c="c" d="d">b1</b><b d="d" e="e">b2</b></a>';
+select extractValue(@xml,'/a/b[@c]');
+extractValue(@xml,'/a/b[@c]')
+b1
+select extractValue(@xml,'/a/b[@d]');
+extractValue(@xml,'/a/b[@d]')
+b1 b2
+select extractValue(@xml,'/a/b[@e]');
+extractValue(@xml,'/a/b[@e]')
+b2
+select extractValue(@xml,'/a/b[not(@c)]');
+extractValue(@xml,'/a/b[not(@c)]')
+b2
+select extractValue(@xml,'/a/b[not(@d)]');
+extractValue(@xml,'/a/b[not(@d)]')
+
+select extractValue(@xml,'/a/b[not(@e)]');
+extractValue(@xml,'/a/b[not(@e)]')
+b1
+select extractValue(@xml, '/a/b[boolean(@c) or boolean(@d)]');
+extractValue(@xml, '/a/b[boolean(@c) or boolean(@d)]')
+b1 b2
+select extractValue(@xml, '/a/b[boolean(@c) or boolean(@e)]');
+extractValue(@xml, '/a/b[boolean(@c) or boolean(@e)]')
+b1 b2
+select extractValue(@xml, '/a/b[boolean(@d) or boolean(@e)]');
+extractValue(@xml, '/a/b[boolean(@d) or boolean(@e)]')
+b1 b2
+select extractValue(@xml, '/a/b[boolean(@c) and boolean(@d)]');
+extractValue(@xml, '/a/b[boolean(@c) and boolean(@d)]')
+b1
+select extractValue(@xml, '/a/b[boolean(@c) and boolean(@e)]');
+extractValue(@xml, '/a/b[boolean(@c) and boolean(@e)]')
+
+select extractValue(@xml, '/a/b[boolean(@d) and boolean(@e)]');
+extractValue(@xml, '/a/b[boolean(@d) and boolean(@e)]')
+b2
+select extractValue(@xml, '/a/b[@c or @d]');
+extractValue(@xml, '/a/b[@c or @d]')
+b1 b2
+select extractValue(@xml, '/a/b[@c or @e]');
+extractValue(@xml, '/a/b[@c or @e]')
+b1 b2
+select extractValue(@xml, '/a/b[@d or @e]');
+extractValue(@xml, '/a/b[@d or @e]')
+b1 b2
+select extractValue(@xml, '/a/b[@c and @d]');
+extractValue(@xml, '/a/b[@c and @d]')
+b1
+select extractValue(@xml, '/a/b[@c and @e]');
+extractValue(@xml, '/a/b[@c and @e]')
+
+select extractValue(@xml, '/a/b[@d and @e]');
+extractValue(@xml, '/a/b[@d and @e]')
+b2
+SET @xml='<a><b c="c">b1</b><b>b2</b></a>';
+SELECT extractValue(@xml,'/a/b[@*]');
+extractValue(@xml,'/a/b[@*]')
+b1
+SELECT extractValue(@xml,'/a/b[not(@*)]');
+extractValue(@xml,'/a/b[not(@*)]')
+b2
+SELECT extractValue('<a>a</a>', '/a[ceiling(3.1)=4]');
+extractValue('<a>a</a>', '/a[ceiling(3.1)=4]')
+a
+SELECT extractValue('<a>a</a>', '/a[floor(3.1)=3]');
+extractValue('<a>a</a>', '/a[floor(3.1)=3]')
+a
+SELECT extractValue('<a><b>b</b><c>c</c></a>', '/a/b | /a/c');
+extractValue('<a><b>b</b><c>c</c></a>', '/a/b | /a/c')
+b c
+select extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[position()=1]');
+extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[position()=1]')
+b1
+select extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[position()=2]');
+extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[position()=2]')
+b2
+select extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[position()=3]');
+extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[position()=3]')
+b3
+select extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[1=position()]');
+extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[1=position()]')
+b1
+select extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[2=position()]');
+extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[2=position()]')
+b2
+select extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[3=position()]');
+extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[3=position()]')
+b3
+select extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[2>=position()]');
+extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[2>=position()]')
+b1 b2
+select extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[2<=position()]');
+extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[2<=position()]')
+b2 b3
+select extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[position()=3 or position()=2]');
+extractValue('<a b="b1" b="b2" b="b3"/>','/a/@b[position()=3 or position()=2]')
+b2 b3
+SELECT extractValue('<a>a<b>a1<c>c1</c></b><b>a2</b></a>','/a/b[count(c)=0]');
+extractValue('<a>a<b>a1<c>c1</c></b><b>a2</b></a>','/a/b[count(c)=0]')
+a2
+SELECT extractValue('<a>a<b>a1<c>c1</c></b><b>a2</b></a>','/a/b[count(c)=1]');
+extractValue('<a>a<b>a1<c>c1</c></b><b>a2</b></a>','/a/b[count(c)=1]')
+a1
+select extractValue('<a>a1<b ba="1" ba="2">b1</b><b>b2</b>4</a>','/a/b[sum(@ba)=3]');
+extractValue('<a>a1<b ba="1" ba="2">b1</b><b>b2</b>4</a>','/a/b[sum(@ba)=3]')
+b1
+select extractValue('<a><b>b1</b><b>b2</b></a>','/a/b[1]');
+extractValue('<a><b>b1</b><b>b2</b></a>','/a/b[1]')
+b1
+select extractValue('<a><b>b1</b><b>b2</b></a>','/a/b[boolean(1)]');
+extractValue('<a><b>b1</b><b>b2</b></a>','/a/b[boolean(1)]')
+b1 b2
+select extractValue('<a><b>b1</b><b>b2</b></a>','/a/b[true()]');
+extractValue('<a><b>b1</b><b>b2</b></a>','/a/b[true()]')
+b1 b2
+select extractValue('<a>ab</a>','/a[contains("abc","b")]');
+extractValue('<a>ab</a>','/a[contains("abc","b")]')
+ab
+select extractValue('<a>ab</a>','/a[contains(.,"a")]');
+extractValue('<a>ab</a>','/a[contains(.,"a")]')
+ab
+select extractValue('<a>ab</a>','/a[contains(.,"b")]');
+extractValue('<a>ab</a>','/a[contains(.,"b")]')
+ab
+select extractValue('<a>ab</a>','/a[contains(.,"c")]');
+extractValue('<a>ab</a>','/a[contains(.,"c")]')
+
+select extractValue('<a b="1">ab</a>','/a[concat(@b,"2")="12"]');
+extractValue('<a b="1">ab</a>','/a[concat(@b,"2")="12"]')
+ab
+SET @xml='<a b="11" b="12" b="21" b="22">ab</a>';
+select extractValue(@xml, '/a/@b[substring(.,2)="1"]');
+extractValue(@xml, '/a/@b[substring(.,2)="1"]')
+11 21
+select extractValue(@xml, '/a/@b[substring(.,2)="2"]');
+extractValue(@xml, '/a/@b[substring(.,2)="2"]')
+12 22
+select extractValue(@xml, '/a/@b[substring(.,1,1)="1"]');
+extractValue(@xml, '/a/@b[substring(.,1,1)="1"]')
+11 12
+select extractValue(@xml, '/a/@b[substring(.,1,1)="2"]');
+extractValue(@xml, '/a/@b[substring(.,1,1)="2"]')
+21 22
+select extractValue(@xml, '/a/@b[substring(.,2,1)="1"]');
+extractValue(@xml, '/a/@b[substring(.,2,1)="1"]')
+11 21
+select extractValue(@xml, '/a/@b[substring(.,2,1)="2"]');
+extractValue(@xml, '/a/@b[substring(.,2,1)="2"]')
+12 22
+SET @xml='<a><b>b1</b><b>b2</b></a>';
+SELECT extractValue(@xml, '/a/b[string-length("x")=1]');
+extractValue(@xml, '/a/b[string-length("x")=1]')
+b1 b2
+SELECT extractValue(@xml, '/a/b[string-length("xx")=2]');
+extractValue(@xml, '/a/b[string-length("xx")=2]')
+b1 b2
+SELECT extractValue(@xml, '/a/b[string-length("xxx")=2]');
+extractValue(@xml, '/a/b[string-length("xxx")=2]')
+
+SELECT extractValue(@xml, '/a/b[string-length("x")]');
+extractValue(@xml, '/a/b[string-length("x")]')
+b1
+SELECT extractValue(@xml, '/a/b[string-length("xx")]');
+extractValue(@xml, '/a/b[string-length("xx")]')
+b2
+SELECT extractValue(@xml, 'string-length()');
+Error 1105 (HY000): XPATH syntax error: 'string-length()'
+SELECT extractValue(@xml, 'string-length("x")');
+extractValue(@xml, 'string-length("x")')
+1
+SET @xml='<a b="b11" b="b12" b="b21" b="22"/>';
+select extractValue(@xml,'/a/@b');
+extractValue(@xml,'/a/@b')
+b11 b12 b21 22
+select extractValue(@xml,'/a/@b[contains(.,"1")]');
+extractValue(@xml,'/a/@b[contains(.,"1")]')
+b11 b12 b21
+select extractValue(@xml,'/a/@b[contains(.,"1")][contains(.,"2")]');
+extractValue(@xml,'/a/@b[contains(.,"1")][contains(.,"2")]')
+b12 b21
+select extractValue(@xml,'/a/@b[contains(.,"1")][contains(.,"2")][2]');
+extractValue(@xml,'/a/@b[contains(.,"1")][contains(.,"2")][2]')
+b21
+SET @xml= '<order><clerk>lesser wombat</clerk></order>';
+select extractvalue(@xml,'order/clerk');
+extractvalue(@xml,'order/clerk')
+lesser wombat
+select extractvalue(@xml,'/order/clerk');
+extractvalue(@xml,'/order/clerk')
+lesser wombat
+select extractvalue('<a><b>B</b></a>','/a|/b');
+extractvalue('<a><b>B</b></a>','/a|/b')
+
+select extractvalue('<a><b>B</b></a>','/a|b');
+extractvalue('<a><b>B</b></a>','/a|b')
+
+select extractvalue('<a>a<b>B</b></a>','/a|/b');
+extractvalue('<a>a<b>B</b></a>','/a|/b')
+a
+select extractvalue('<a>a<b>B</b></a>','/a|b');
+extractvalue('<a>a<b>B</b></a>','/a|b')
+a
+select extractvalue('<a>a<b>B</b></a>','a|/b');
+extractvalue('<a>a<b>B</b></a>','a|/b')
+a
+select extractvalue('<a>A</a>','/<a>');
+Error 1105 (HY000): XPATH syntax error: '/<a>'
+select extractvalue('<a>A<b>B<c>C</c></b></a>','/a/descendant::*');
+extractvalue('<a>A<b>B<c>C</c></b></a>','/a/descendant::*')
+B C
+select extractvalue('<a>A<b>B<c>C</c></b></a>','/a/self::*');
+extractvalue('<a>A<b>B<c>C</c></b></a>','/a/self::*')
+A
+select extractvalue('<a>A<b>B<c>C</c></b></a>','/a/descendant-or-self::*');
+extractvalue('<a>A<b>B<c>C</c></b></a>','/a/descendant-or-self::*')
+A B C
+select extractvalue('<A_B>A</A_B>','/A_B');
+extractvalue('<A_B>A</A_B>','/A_B')
+A
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[position()]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[position()]')
+B1 B2
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)=last()]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)=last()]')
+B1 B2
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()]')
+B2
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()-1]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()-1]')
+B1
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()=1]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()=1]')
+
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()=2]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()=2]')
+B1 B2
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()=position()]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[last()=position()]')
+B2
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)]')
+B2
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)-1]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)-1]')
+B1
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)=1]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)=1]')
+
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)=2]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)=2]')
+B1 B2
+select extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)=position()]');
+extractvalue('<a>A<b>B1</b><b>B2</b></a>','/a/b[count(.)=position()]')
+B2
+select extractvalue('<a>Jack</a>','/a[contains(../a,"J")]');
+extractvalue('<a>Jack</a>','/a[contains(../a,"J")]')
+Jack
+select extractvalue('<a>Jack</a>','/a[contains(../a,"j")]');
+extractvalue('<a>Jack</a>','/a[contains(../a,"j")]')
+
+set names latin1;
+select extractvalue('<a>Jack</a>','/a[contains(../a,"j")]' collate latin1_bin);
+extractvalue('<a>Jack</a>','/a[contains(../a,"j")]' collate latin1_bin)
+
+select extractvalue('<a>Jack</a>' collate latin1_bin,'/a[contains(../a,"j")]');
+extractvalue('<a>Jack</a>' collate latin1_bin,'/a[contains(../a,"j")]')
+
+set names utf8mb4;
+select ExtractValue('<tag1><![CDATA[test]]></tag1>','/tag1');
+ExtractValue('<tag1><![CDATA[test]]></tag1>','/tag1')
+test
+select extractValue('<a>a','/a');
+extractValue('<a>a','/a')
+NULL
+select extractValue('<a>a<','/a');
+extractValue('<a>a<','/a')
+NULL
+select extractValue('<a>a</','/a');
+extractValue('<a>a</','/a')
+NULL
+select extractValue('<a>a</a','/a');
+extractValue('<a>a</a','/a')
+NULL
+select extractValue('<a>a</a></b>','/a');
+extractValue('<a>a</a></b>','/a')
+NULL
+select extractValue('<a b=>a</a>','/a');
+extractValue('<a b=>a</a>','/a')
+NULL
+select extractValue('<e><a>1</a></e>','/e/');
+Error 1105 (HY000): XPATH syntax error: '/e/'
+select extractValue('<ns:element xmlns:ns="myns"/>','count(ns:element)');
+extractValue('<ns:element xmlns:ns="myns"/>','count(ns:element)')
+1
+select extractValue('<ns:element xmlns:ns="myns">a</ns:element>','/ns:element');
+extractValue('<ns:element xmlns:ns="myns">a</ns:element>','/ns:element')
+a
+select extractValue('<ns:element xmlns:ns="myns">a</ns:element>','/ns:element/@xmlns:ns');
+extractValue('<ns:element xmlns:ns="myns">a</ns:element>','/ns:element/@xmlns:ns')
+myns
+select extractValue('<foo><foo.bar>Data</foo.bar><something>Otherdata</something></foo>','/foo/foo.bar');
+extractValue('<foo><foo.bar>Data</foo.bar><something>Otherdata</something></foo>','/foo/foo.bar')
+Data
+select extractValue('<foo><foo.bar>Data</foo.bar><something>Otherdata</something></foo>','/foo/something');
+extractValue('<foo><foo.bar>Data</foo.bar><something>Otherdata</something></foo>','/foo/something')
+Otherdata
+select extractValue('<.>test</.>','//*');
+extractValue('<.>test</.>','//*')
+NULL
+select extractValue('<->test</->','//*');
+extractValue('<->test</->','//*')
+NULL
+select extractValue('<:>test</:>','//*');
+extractValue('<:>test</:>','//*')
+test
+select extractValue('<_>test</_>','//*');
+extractValue('<_>test</_>','//*')
+test
+select extractValue('<x.-_:>test</x.-_:>','//*');
+extractValue('<x.-_:>test</x.-_:>','//*')
+test
+set @xml= "<entry><id>pt10</id><pt>10</pt></entry><entry><id>pt50</id><pt>50</pt></entry>";
+select ExtractValue(@xml, "/entry[(pt=10)]/id");
+ExtractValue(@xml, "/entry[(pt=10)]/id")
+pt10
+select ExtractValue(@xml, "/entry[(pt!=10)]/id");
+ExtractValue(@xml, "/entry[(pt!=10)]/id")
+pt50
+select ExtractValue(@xml, "/entry[(pt<10)]/id");
+ExtractValue(@xml, "/entry[(pt<10)]/id")
+
+select ExtractValue(@xml, "/entry[(pt<=10)]/id");
+ExtractValue(@xml, "/entry[(pt<=10)]/id")
+pt10
+select ExtractValue(@xml, "/entry[(pt>10)]/id");
+ExtractValue(@xml, "/entry[(pt>10)]/id")
+pt50
+select ExtractValue(@xml, "/entry[(pt>=10)]/id");
+ExtractValue(@xml, "/entry[(pt>=10)]/id")
+pt10 pt50
+select ExtractValue(@xml, "/entry[(pt=50)]/id");
+ExtractValue(@xml, "/entry[(pt=50)]/id")
+pt50
+select ExtractValue(@xml, "/entry[(pt!=50)]/id");
+ExtractValue(@xml, "/entry[(pt!=50)]/id")
+pt10
+select ExtractValue(@xml, "/entry[(pt<50)]/id");
+ExtractValue(@xml, "/entry[(pt<50)]/id")
+pt10
+select ExtractValue(@xml, "/entry[(pt<=50)]/id");
+ExtractValue(@xml, "/entry[(pt<=50)]/id")
+pt10 pt50
+select ExtractValue(@xml, "/entry[(pt>50)]/id");
+ExtractValue(@xml, "/entry[(pt>50)]/id")
+
+select ExtractValue(@xml, "/entry[(pt>=50)]/id");
+ExtractValue(@xml, "/entry[(pt>=50)]/id")
+pt50
+select ExtractValue(@xml, "/entry[(10=pt)]/id");
+ExtractValue(@xml, "/entry[(10=pt)]/id")
+pt10
+select ExtractValue(@xml, "/entry[(10!=pt)]/id");
+ExtractValue(@xml, "/entry[(10!=pt)]/id")
+pt50
+select ExtractValue(@xml, "/entry[(10>pt)]/id");
+ExtractValue(@xml, "/entry[(10>pt)]/id")
+
+select ExtractValue(@xml, "/entry[(10>=pt)]/id");
+ExtractValue(@xml, "/entry[(10>=pt)]/id")
+pt10
+select ExtractValue(@xml, "/entry[(10<pt)]/id");
+ExtractValue(@xml, "/entry[(10<pt)]/id")
+pt50
+select ExtractValue(@xml, "/entry[(10<=pt)]/id");
+ExtractValue(@xml, "/entry[(10<=pt)]/id")
+pt10 pt50
+select ExtractValue(@xml, "/entry[(50=pt)]/id");
+ExtractValue(@xml, "/entry[(50=pt)]/id")
+pt50
+select ExtractValue(@xml, "/entry[(50!=pt)]/id");
+ExtractValue(@xml, "/entry[(50!=pt)]/id")
+pt10
+select ExtractValue(@xml, "/entry[(50>pt)]/id");
+ExtractValue(@xml, "/entry[(50>pt)]/id")
+pt10
+select ExtractValue(@xml, "/entry[(50>=pt)]/id");
+ExtractValue(@xml, "/entry[(50>=pt)]/id")
+pt10 pt50
+select ExtractValue(@xml, "/entry[(50<pt)]/id");
+ExtractValue(@xml, "/entry[(50<pt)]/id")
+
+select ExtractValue(@xml, "/entry[(50<=pt)]/id");
+ExtractValue(@xml, "/entry[(50<=pt)]/id")
+pt50
+select ExtractValue('<a><b><Text>test</Text></b></a>','/a/b/Text');
+ExtractValue('<a><b><Text>test</Text></b></a>','/a/b/Text')
+test
+select ExtractValue('<a><b><comment>test</comment></b></a>','/a/b/comment');
+ExtractValue('<a><b><comment>test</comment></b></a>','/a/b/comment')
+test
+select ExtractValue('<a><b><node>test</node></b></a>','/a/b/node');
+ExtractValue('<a><b><node>test</node></b></a>','/a/b/node')
+test
+select ExtractValue('<a><b><processing-instruction>test</processing-instruction></b></a>','/a/b/processing-instruction');
+ExtractValue('<a><b><processing-instruction>test</processing-instruction></b></a>','/a/b/processing-instruction')
+test
+select ExtractValue('<a><and>test</and></a>', '/a/and');
+ExtractValue('<a><and>test</and></a>', '/a/and')
+test
+select ExtractValue('<a><or>test</or></a>', '/a/or');
+ExtractValue('<a><or>test</or></a>', '/a/or')
+test
+select ExtractValue('<a><mod>test</mod></a>', '/a/mod');
+ExtractValue('<a><mod>test</mod></a>', '/a/mod')
+test
+select ExtractValue('<a><div>test</div></a>', '/a/div');
+ExtractValue('<a><div>test</div></a>', '/a/div')
+test
+select ExtractValue('<a><ancestor>test</ancestor></a>', '/a/ancestor');
+ExtractValue('<a><ancestor>test</ancestor></a>', '/a/ancestor')
+test
+select ExtractValue('<a><ancestor-or-self>test</ancestor-or-self></a>', '/a/ancestor-or-self');
+ExtractValue('<a><ancestor-or-self>test</ancestor-or-self></a>', '/a/ancestor-or-self')
+test
+select ExtractValue('<a><attribute>test</attribute></a>', '/a/attribute');
+ExtractValue('<a><attribute>test</attribute></a>', '/a/attribute')
+test
+select ExtractValue('<a><child>test</child></a>', '/a/child');
+ExtractValue('<a><child>test</child></a>', '/a/child')
+test
+select ExtractValue('<a><descendant>test</descendant></a>', '/a/descendant');
+ExtractValue('<a><descendant>test</descendant></a>', '/a/descendant')
+test
+select ExtractValue('<a><descendant-or-self>test</descendant-or-self></a>', '/a/descendant-or-self');
+ExtractValue('<a><descendant-or-self>test</descendant-or-self></a>', '/a/descendant-or-self')
+test
+select ExtractValue('<a><following>test</following></a>', '/a/following');
+ExtractValue('<a><following>test</following></a>', '/a/following')
+test
+select ExtractValue('<a><following-sibling>test</following-sibling></a>', '/a/following-sibling');
+ExtractValue('<a><following-sibling>test</following-sibling></a>', '/a/following-sibling')
+test
+select ExtractValue('<a><namespace>test</namespace></a>', '/a/namespace');
+ExtractValue('<a><namespace>test</namespace></a>', '/a/namespace')
+test
+select ExtractValue('<a><parent>test</parent></a>', '/a/parent');
+ExtractValue('<a><parent>test</parent></a>', '/a/parent')
+test
+select ExtractValue('<a><preceding>test</preceding></a>', '/a/preceding');
+ExtractValue('<a><preceding>test</preceding></a>', '/a/preceding')
+test
+select ExtractValue('<a><preceding-sibling>test</preceding-sibling></a>', '/a/preceding-sibling');
+ExtractValue('<a><preceding-sibling>test</preceding-sibling></a>', '/a/preceding-sibling')
+test
+select ExtractValue('<a><self>test</self></a>', '/a/self');
+ExtractValue('<a><self>test</self></a>', '/a/self')
+test
+Multiple matches, but no index specification
+SELECT ExtractValue('<a><b>b1</b><b>b2</b></a>','/a/b');
+ExtractValue('<a><b>b1</b><b>b2</b></a>','/a/b')
+b1 b2
+No matches
+SELECT ExtractValue('<a><b>b1</b><b>b2</b></a>','/a/c');
+ExtractValue('<a><b>b1</b><b>b2</b></a>','/a/c')
+
+Index out of range
+SELECT ExtractValue('<a><b>b1</b><b>b2</b></a>','/a/b[-1]');
+ExtractValue('<a><b>b1</b><b>b2</b></a>','/a/b[-1]')
+
+SELECT ExtractValue('<a><b>b1</b><b>b2</b></a>','/a/b[10]');
+ExtractValue('<a><b>b1</b><b>b2</b></a>','/a/b[10]')
+
+SET @xml=
+'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<head>
+<title> Title - document with document declaration</title>
+</head>
+<body> Hi, Im a webpage with document a declaration </body>
+</html>';
+SELECT ExtractValue(@xml, 'html/head/title');
+ExtractValue(@xml, 'html/head/title')
+ Title - document with document declaration
+SELECT ExtractValue(@xml, 'html/body');
+ExtractValue(@xml, 'html/body')
+ Hi, Im a webpage with document a declaration 
+SELECT ExtractValue('<xml "xxx" "yyy">CharData</xml>', '/xml');
+ExtractValue('<xml "xxx" "yyy">CharData</xml>', '/xml')
+NULL
+SELECT ExtractValue('<xml  xxx  "yyy">CharData</xml>', '/xml');
+ExtractValue('<xml  xxx  "yyy">CharData</xml>', '/xml')
+NULL
+CREATE TABLE IF NOT EXISTS t1 (
+id int(10) unsigned NOT NULL AUTO_INCREMENT,
+xml text,
+PRIMARY KEY (id)
+);
+INSERT INTO t1 (id, xml) VALUES
+(15, '<?xml version="1.0"?><bla name="blubb"></bla>'),
+(14, '<xml version="kaputt">');
+SELECT
+extractvalue( xml, '/bla/@name' ),
+extractvalue( xml, '/bla/@name' )
+FROM t1 ORDER BY t1.id;
+extractvalue( xml, '/bla/@name' )	extractvalue( xml, '/bla/@name' )
+NULL	NULL
+blubb	blubb
+DROP TABLE t1;
+#
+# Bug#57257 Replace(ExtractValue(...)) causes MySQL crash
+#
+SET NAMES utf8;
+SELECT REPLACE(EXTRACTVALUE('1', '/a'),'ds','');
+REPLACE(EXTRACTVALUE('1', '/a'),'ds','')
+NULL
+#
+# Bug #57820 extractvalue crashes
+#
+SELECT AVG(DISTINCT EXTRACTVALUE((''),('$@k')));
+AVG(DISTINCT EXTRACTVALUE((''),('$@k')))
+NULL
+#
+# Bug#11766725 (bug#59901): EXTRACTVALUE STILL BROKEN AFTER FIX FOR BUG #44332
+#
+SELECT ExtractValue(CONVERT('<\"', BINARY(10)), 1);
+ExtractValue(CONVERT('<\"', BINARY(10)), 1)
+NULL
+End of 5.1 tests
+#
+# Bug#13358486 WEIGHT_STRING = MY_STRNXFRM_UNICODE:
+#              ASSERTION `SRC' FAILED
+#
+#
+# Bug#22552615 EXTRACTVALUE RETURNS NULL WHEN NO MATCHING
+#              TEXT NODE IS FOUND FOR THE EXPRESSION
+#
+set @x = '<MESSAGE><DATA1>HOLA</DATA1></MESSAGE>';
+set @y = 'Default Value';
+select ExtractValue( @x, '/MESSAGE/DATA2' ) into @y;
+select @y;
+@y
+

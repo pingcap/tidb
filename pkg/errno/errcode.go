@@ -1178,6 +1178,14 @@ const (
 
 	// Enterprise Edit errors.
 	ErrRowLabelUnAccessible = 8800
+	ErrInvalidValueOfType   = 8801
+
+	// LBAC errors.
+	ErrLBACInvalid       = 8802
+	ErrLBACNotFound      = 8803
+	ErrLBACAlreadyExists = 8804
+
+	ErrProcedureDisabled = 8810
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

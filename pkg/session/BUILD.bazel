@@ -85,6 +85,23 @@ go_library(
         "//pkg/disttask/importinto",
         "//pkg/domain",
         "//pkg/domain/infosync",
+<<<<<<< HEAD
+||||||| parent of aba8cebcd5 (Implement log replication (!579))
+        "//pkg/domain/sqlsvrapi",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor",
+        "//pkg/dxf/importinto",
+=======
+        "//pkg/domain/pkdb_repl",
+        "//pkg/domain/sqlsvrapi",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor",
+        "//pkg/dxf/importinto",
+>>>>>>> aba8cebcd5 (Implement log replication (!579))
         "//pkg/errno",
         "//pkg/executor",
         "//pkg/executor/pkdb_remote",

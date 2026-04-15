@@ -902,17 +902,18 @@ func TestCartesianProduct(t *testing.T) {
 func TestBatchInsertDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
-	originLimit := kv.TxnTotalSizeLimit.Load()
-	defer func() {
-		kv.TxnTotalSizeLimit.Store(originLimit)
-	}()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists batch_insert")
 	tk.MustExec("create table batch_insert (c int)")
 	tk.MustExec("drop table if exists batch_insert_on_duplicate")
 	tk.MustExec("create table batch_insert_on_duplicate (id int primary key, c int)")
+
+	originLimit := kv.TxnTotalSizeLimit.Load()
+	defer func() {
+		kv.TxnTotalSizeLimit.Store(originLimit)
+	}()
+
 	// Set the limitation to a small value after DDL setup to avoid blocking DDL job updates.
 	kv.TxnTotalSizeLimit.Store(8050)
 	// Insert 10 rows.

@@ -739,7 +739,7 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 		return nil, nil
 	}
 	is := infoCache.GetLatest()
-	referredFKs := is.GetTableReferredForeignKeys(job.SchemaName, tblInfo.Name.L)
+	referredFKs := is.GetTableReferredForeignKeys(job.GetSchemaName(), tblInfo.Name)
 	if len(referredFKs) == 0 {
 		return nil, nil
 	}
@@ -1655,7 +1655,7 @@ func GetModifiableColumnJob(
 		return nil, err
 	}
 
-	if err = checkModifyColumnWithForeignKeyConstraint(is, schema.Name.L, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
+	if err = checkModifyColumnWithForeignKeyConstraint(is, schema.Name, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1736,6 +1736,10 @@ func GetModifiableColumnJob(
 		if t.Meta().TTLInfo.ColumnName.L == originalColName.L && !types.IsTypeTime(newCol.ColumnInfo.FieldType.GetType()) {
 			return nil, errors.Trace(dbterror.ErrUnsupportedColumnInTTLConfig.GenWithStackByArgs(newCol.ColumnInfo.Name.O))
 		}
+	}
+
+	if err = validateColumnSecurityLabelForTable(ctx, sctx, t.Meta(), newCol.ColumnInfo); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	var newAutoRandBits uint64
@@ -2056,6 +2060,9 @@ func processModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 			if err != nil {
 				return errors.Trace(err)
 			}
+		case ast.ColumnOptionSecuredWith:
+			label := pmodel.NewCIStr(opt.StrValue)
+			col.SecurityLabel = &label
 		case ast.ColumnOptionNotNull:
 			col.AddFlag(mysql.NotNullFlag)
 		case ast.ColumnOptionNull:

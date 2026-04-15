@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
@@ -708,6 +709,7 @@ func (s *UserVars) Clone() UserVarsReader {
 
 // SetUserVarVal set user defined variables' value
 func (s *UserVars) SetUserVarVal(name string, dt types.Datum) {
+	name = strings.ToLower(name)
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.values[name] = dt
@@ -724,6 +726,7 @@ func (s *UserVars) UnsetUserVar(varName string) {
 
 // GetUserVarVal get user defined variables' value
 func (s *UserVars) GetUserVarVal(name string) (types.Datum, bool) {
+	name = strings.ToLower(name)
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	dt, ok := s.values[name]
@@ -732,6 +735,7 @@ func (s *UserVars) GetUserVarVal(name string) (types.Datum, bool) {
 
 // SetUserVarType set user defined variables' type
 func (s *UserVars) SetUserVarType(name string, ft *types.FieldType) {
+	name = strings.ToLower(name)
 	s.lock.Lock()
 	defer s.lock.Unlock()
 	s.types[name] = ft
@@ -739,6 +743,7 @@ func (s *UserVars) SetUserVarType(name string, ft *types.FieldType) {
 
 // GetUserVarType get user defined variables' type
 func (s *UserVars) GetUserVarType(name string) (*types.FieldType, bool) {
+	name = strings.ToLower(name)
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	ft, ok := s.types[name]
@@ -854,6 +859,10 @@ type SessionVars struct {
 
 	// CurrentDB is the default database of this session.
 	CurrentDB string
+
+	// CurrentDBCI is the CIStr version of CurrentDB.
+	// TODO(lower_case_table_names): remove CurrentDB and only use this.
+	CurrentDBCI pmodel.CIStr
 
 	// CurrentDBChanged indicates if the CurrentDB has been updated, and if it is we should print it into
 	// the slow log to make it be compatible with MySQL, https://github.com/pingcap/tidb/issues/17846.
@@ -1392,6 +1401,9 @@ type SessionVars struct {
 	// EnablePseudoForOutdatedStats if using pseudo for outdated stats
 	EnablePseudoForOutdatedStats bool
 
+	// EnableSelectedPartitionStats controls whether dynamic partition pruning can use selected partition stats.
+	EnableSelectedPartitionStats bool
+
 	// RegardNULLAsPoint if regard NULL as Point
 	RegardNULLAsPoint bool
 
@@ -1789,6 +1801,9 @@ type SessionVars struct {
 
 	// EnableIndexLookUpPushDown indicates whether to enable index lookup push down optimization for TiDBX.
 	EnableIndexLookUpPushDown bool
+
+	// LogHistory indicate historical login information
+	LogHistory string
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2328,6 +2343,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TiFlashComputeDispatchPolicy:           tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                      resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:             mysql.DefaultCollationName,
+		EnableSelectedPartitionStats:           DefTiDBOptEnableSelectedPartitionStats,
 		GroupConcatMaxLen:                      DefGroupConcatMaxLen,
 		EnableRemotePlan:                       DefTiDBXRemotePlanEnable,
 		EnableRemotePlanInTxnRead:              DefTiDBXRemotePlanEnableInTxnRead,
@@ -2584,7 +2600,6 @@ func (s *SessionVars) GetParseParams() []parser.ParseParam {
 
 // SetStringUserVar set the value and collation for user defined variable.
 func (s *SessionVars) SetStringUserVar(name string, strVal string, collation string) {
-	name = strings.ToLower(name)
 	if len(collation) > 0 {
 		s.SetUserVarVal(name, types.NewCollationStringDatum(stringutil.Copy(strVal), collation))
 	} else {
@@ -2699,6 +2714,17 @@ func (s *SessionVars) SetTxnIsolationLevelOneShotStateForNextTxn() {
 			isoLevelOneShot.value = ""
 		}
 	}
+}
+
+// TakeIsolationLevelOneShotInTxn takes the isoLevelOneShot value in transaction.
+func (s *SessionVars) TakeIsolationLevelOneShotInTxn() string {
+	if isoLevelOneShot := &s.txnIsolationLevelOneShot; isoLevelOneShot.state == oneShotSet {
+		isolation := isoLevelOneShot.value
+		isoLevelOneShot.value = ""
+		isoLevelOneShot.state = oneShotDef
+		return isolation
+	}
+	return ""
 }
 
 // IsPessimisticReadConsistency if true it means the statement is in a read consistency pessimistic transaction.
@@ -2994,6 +3020,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	// Encode other session contexts.
 	sessionStates.PreparedStmtID = s.preparedStmtID
 	sessionStates.Status = s.status.Load()
+	// TODO(lower_case_table_names): use model.CIStr to store database name.
 	sessionStates.CurrentDB = s.CurrentDB
 	sessionStates.LastTxnInfo = s.LastTxnInfo
 	if s.LastQueryInfo.StartTS != 0 {
@@ -3030,7 +3057,9 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	// Decode other session contexts.
 	s.preparedStmtID = sessionStates.PreparedStmtID
 	s.status.Store(sessionStates.Status)
+	// TODO(lower_case_table_names): use model.CIStr to store database name.
 	s.CurrentDB = sessionStates.CurrentDB
+	s.CurrentDBCI = pmodel.NewCIStr(sessionStates.CurrentDB)
 	s.LastTxnInfo = sessionStates.LastTxnInfo
 	if sessionStates.LastQueryInfo != nil {
 		s.LastQueryInfo = *sessionStates.LastQueryInfo

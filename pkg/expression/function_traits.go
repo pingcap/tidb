@@ -66,6 +66,8 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.AnyValue:        {},
 	ast.SetProcedureVar: {},
 	ast.GetProcedureVar: {},
+	ast.Seclabel:        {},
+	ast.SeclabelToChar:  {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.

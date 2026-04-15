@@ -2200,7 +2200,7 @@ func checkDropIndex(infoCache *infoschema.InfoCache, t *meta.Mutator, job *model
 		}
 
 		// Double check for drop index needed in foreign key.
-		if err := checkIndexNeededInForeignKeyInOwner(infoCache, job, job.SchemaName, tblInfo, indexInfo); err != nil {
+		if err := checkIndexNeededInForeignKeyInOwner(infoCache, job, job.GetSchemaName(), tblInfo, indexInfo); err != nil {
 			return nil, nil, false, errors.Trace(err)
 		}
 		indexInfos = append(indexInfos, indexInfo)

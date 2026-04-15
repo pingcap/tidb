@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	storepkg "github.com/pingcap/tidb/pkg/store"
@@ -39,6 +40,11 @@ func StartOwnerManager(ctx context.Context, store kv.Storage) error {
 // CloseOwnerManager closes the global DDL owner manager.
 func CloseOwnerManager() {
 	globalOwnerManager.Close()
+}
+
+func init() {
+	// TODO(lance6716): maybe let owner cleanup stale KV when starts?
+	pkdbrepl.CloseDDLOwnerMgr = CloseOwnerManager
 }
 
 // ownerManager is used to manage lifecycle of a global DDL owner manager which

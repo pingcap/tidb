@@ -60,6 +60,16 @@ type Builder struct {
 	bundleInfoBuilder
 	infoData *Data
 	store    kv.Storage
+	crossKS  bool
+
+	// Snapshot loads must be side-effect free. Reloading loadable functions is a global side effect.
+	// Since loadable functions are registered globally and not versioned, snapshot loads must not touch it.
+	loadableFunctionReload bool
+}
+
+// SetSchemaVersion sets the schema version of the InfoSchema.
+func (b *Builder) SetSchemaVersion(ver int64) {
+	b.schemaMetaVersion = ver
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -91,6 +101,14 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return applyDropResourceGroup(b, m, diff), nil
 	case model.ActionCreateTableGroup:
 		return nil, applyCreateTableGroup(b, m, diff.SchemaID)
+	case model.ActionCreateProcedure, model.ActionDropProcedure, model.ActionAlterProcedure:
+		if err := b.reloadRoutines(); err != nil {
+			return nil, err
+		}
+		if err := b.reloadLoadableFunctions(); err != nil {
+			return nil, err
+		}
+		return nil, nil
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
@@ -618,7 +636,7 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
+	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.NameAsID())
 	oldTableID, newTableID, err := b.getTableIDs(m, diff)
 	if err != nil {
 		return nil, err
@@ -718,7 +736,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m meta.Reader, diff *model.
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.NameAsID())
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
 	return nil
@@ -735,7 +753,7 @@ func (b *Builder) applyModifySchemaDefaultPlacement(m meta.Reader, diff *model.S
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.getSchemaAndCopyIfNecessary(di.Name.L)
+	newDbInfo := b.getSchemaAndCopyIfNecessary(di.NameAsID())
 	newDbInfo.PlacementPolicyRef = di.PlacementPolicyRef
 	return nil
 }
@@ -890,8 +908,8 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 	}
 
 	if !b.enableV2 {
-		tableNames := b.infoSchema.schemaMap[dbInfo.Name.L]
-		tableNames.tables[tblInfo.Name.L] = tbl
+		tableNames := b.infoSchema.schemaMap[dbInfo.NameAsID()]
+		tableNames.tables[tblInfo.NameAsID()] = tbl
 	}
 	b.addTable(schemaVersion, dbInfo, tblInfo, tbl)
 
@@ -949,8 +967,9 @@ func (b *Builder) applyDropTable(diff *model.SchemaDiff, dbInfo *model.DBInfo, t
 	if idx == -1 {
 		return affected
 	}
+	tblInfo := sortedTbls[idx].Meta()
+	b.infoSchema.deleteTriggers(dbInfo.Name, tblInfo)
 	if tableNames, ok := b.infoSchema.schemaMap[dbInfo.Name.L]; ok {
-		tblInfo := sortedTbls[idx].Meta()
 		delete(tableNames.tables, tblInfo.Name.L)
 		affected = appendAffectedIDs(affected, tblInfo)
 	}
@@ -1019,6 +1038,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	oldIS.tableGroupMutex.RUnlock()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
+	b.infoSchema.triggerTableMap = maps.Clone(oldIS.triggerTableMap)
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil
@@ -1060,6 +1080,16 @@ func (b *Builder) sortAllTablesByID() {
 			return cmp.Compare(a.Meta().ID, b.Meta().ID)
 		})
 	}
+}
+
+func (b *Builder) reloadRoutines() error {
+	return nil
+}
+
+func (b *Builder) reloadLoadableFunctions() error {
+	// Loadable functions (UDF) are intentionally not implemented in this build, so
+	// infoschema reload should not attempt to load metadata from mysql.func.
+	return nil
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
@@ -1105,7 +1135,11 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	b.sortAllTablesByID()
 
-	return nil
+	if err = b.reloadRoutines(); err != nil {
+		return err
+	}
+	err = b.reloadLoadableFunctions()
+	return err
 }
 
 func tableFromMeta(alloc autoid.Allocators, factory func() (pools.Resource, error), tblInfo *model.TableInfo) (table.Table, error) {
@@ -1143,7 +1177,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 
-		schTbls.tables[t.Name.L] = tbl
+		schTbls.tables[t.NameAsID()] = tbl
 		b.addTable(schemaVersion, di, t, tbl)
 		if len(di.TableName2ID) > 0 {
 			delete(di.TableName2ID, t.Name.L)
@@ -1185,6 +1219,7 @@ func (b *Builder) addDB(schemaVersion int64, di *model.DBInfo, schTbls *schemaTa
 }
 
 func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model.TableInfo, tbl table.Table) {
+	b.infoSchema.addTriggers(di.Name, tblInfo)
 	if b.enableV2 {
 		b.infoData.addReferredForeignKeys(di.Name, tblInfo, schemaVersion)
 		b.infoData.add(tableItem{
@@ -1223,6 +1258,8 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 		factory:      factory,
 		infoData:     infoData,
 		enableV2:     useV2,
+		// Reload loadable functions on schema reload by default.
+		loadableFunctionReload: true,
 	}
 	schemaCacheSize := variable.SchemaCacheSize.Load()
 	infoData.tableCache.SetCapacity(schemaCacheSize)
@@ -1232,6 +1269,18 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 // WithStore attaches the given store to builder.
 func (b *Builder) WithStore(s kv.Storage) *Builder {
 	b.store = s
+	return b
+}
+
+// WithCrossKS marks whether this builder is used to build I_S for cross keyspace.
+func (b *Builder) WithCrossKS(crossKS bool) *Builder {
+	b.crossKS = crossKS
+	return b
+}
+
+// WithLoadableFunctionReload controls whether to reload loadable functions.
+func (b *Builder) WithLoadableFunctionReload(enable bool) *Builder {
+	b.loadableFunctionReload = enable
 	return b
 }
 

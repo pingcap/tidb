@@ -713,7 +713,7 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
-		testkit.RowsWithSep("|", "96"))
+		testkit.RowsWithSep("|", "102"))
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
@@ -918,22 +918,22 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-		"153|add index|public|146|151|t1|synced",
-		"152|create table|public|146|151|t1|synced",
-		"139|add index|public|132|137|t1|synced",
-		"138|create table|public|132|137|t1|synced",
+		"165|add index|public|158|163|t1|synced",
+		"164|create table|public|158|163|t1|synced",
+		"151|add index|public|144|149|t1|synced",
+		"150|create table|public|144|149|t1|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-		"159|add index|public|146|157|t3|synced",
-		"156|add index|public|146|154|t2|synced",
-		"153|add index|public|146|151|t1|synced",
-		"150|add index|public|146|148|t0|synced",
+		"171|add index|public|158|169|t3|synced",
+		"168|add index|public|158|166|t2|synced",
+		"165|add index|public|158|163|t1|synced",
+		"162|add index|public|158|160|t0|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-		"145|add index|public|132|143|t3|synced",
-		"144|create table|public|132|143|t3|synced",
+		"157|add index|public|144|155|t3|synced",
+		"156|create table|public|144|155|t3|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())
@@ -944,15 +944,15 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"160 add index write only 132 134 t0 running",
+				"172|add index|write only|144|146|t0|running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"160 add index write only 132 134 t0 running",
+				"172|add index|write only|144|146|t0|running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-				"160 add index write only 132 134 t0 running",
+				"172|add index|write only|144|146|t0|running",
 			))
 		}
 	})
@@ -968,8 +968,8 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk.MustExec("create table test2.t1(id int)")
 	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-		"169|create table|public|166|168|t1|synced",
-		"164|create table|public|161|163|t1|synced",
+		"181|create table|public|178|180|t1|synced",
+		"176|create table|public|173|175|t1|synced",
 	))
 
 	// Test explain output, since the output may change in future.
@@ -1025,6 +1025,7 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 			strings.HasPrefix(tableName, "METRICS_") ||
 			strings.HasPrefix(tableName, "TIFLASH_") ||
 			strings.HasPrefix(tableName, "TIKV_") ||
+			strings.HasPrefix(tableName, "LR_") ||
 			strings.HasPrefix(tableName, "USER_") ||
 			tableName == "TABLE_STORAGE_STATS" ||
 			strings.Contains(tableName, "REGION") {

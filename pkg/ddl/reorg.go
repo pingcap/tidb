@@ -222,6 +222,13 @@ func (*reorgTableMutateContext) GetExchangePartitionDMLSupport() (tblctx.Exchang
 	return nil, false
 }
 
+// GetTriggerSupport implements table.MutateContext.GetTriggerSupport.
+func (*reorgTableMutateContext) GetTriggerSupport() (tblctx.TriggerSupport, bool) {
+	// We can just return `(nil, false)` because:
+	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
+	return nil, false
+}
+
 // newReorgTableMutateContext creates a new table.MutateContext for reorganization.
 func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext {
 	rowEncoder := &rowcodec.Encoder{

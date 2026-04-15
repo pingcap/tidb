@@ -321,6 +321,8 @@ type Column struct {
 	collationInfo
 
 	CorrelatedColUniqueID int64
+
+	Encryption bool
 }
 
 // SafeToShareAcrossSession returns if the function can be shared across different sessions.

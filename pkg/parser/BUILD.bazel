@@ -47,6 +47,7 @@ go_test(
         "lexer_test.go",
         "main_test.go",
         "parser_test.go",
+        "pkdb_parser_test.go",
     ],
     data = glob(["**"]),
     embed = [":parser"],

@@ -456,6 +456,23 @@ type StatementContext struct {
 		HasFKCascades bool
 	}
 
+	TriggerCtx struct {
+		HasTriggerCascades bool
+
+		InTrigger bool
+		TableInfo *model.TableInfo
+		OldData   []types.Datum
+		NewData   []types.Datum
+		Updated   []bool
+		Exec      any
+	}
+
+	UserFuncCtx struct {
+		sync.RWMutex
+		StoredFuncName       map[[2]string]*types.FieldType
+		loadableFuncCleanups []func()
+	}
+
 	// MPPQueryInfo stores some id and timestamp of current MPP query statement.
 	MPPQueryInfo struct {
 		QueryID              atomic2.Uint64
@@ -536,6 +553,12 @@ func (sc *StatementContext) Reset() bool {
 		}
 		defer sc.StaleTSOProvider.Unlock()
 	}
+
+	// UDF cleanups are statement-scoped and must not leak across statements.
+	// Execute them here as a safety net in case statement execution exits early
+	// and misses the normal cleanup path in executor.
+	sc.UDFCleanup()
+
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -567,7 +590,27 @@ func (sc *StatementContext) Reset() bool {
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
+	sc.UserFuncCtx.StoredFuncName = nil
 	return true
+}
+
+// RegisterUDFCleanup registers a statement-scoped cleanup callback for loadable
+// functions (UDF). It is concurrency-safe.
+func (sc *StatementContext) RegisterUDFCleanup(cleanup func()) {
+	if cleanup == nil {
+		return
+	}
+	sc.UserFuncCtx.Lock()
+	sc.UserFuncCtx.loadableFuncCleanups = append(sc.UserFuncCtx.loadableFuncCleanups, cleanup)
+	sc.UserFuncCtx.Unlock()
+}
+
+// UDFCleanup calls cleanup functions registered by RegisterUDFCleanup.
+func (sc *StatementContext) UDFCleanup() {
+	for _, f := range sc.UserFuncCtx.loadableFuncCleanups {
+		f()
+	}
+	sc.UserFuncCtx.loadableFuncCleanups = nil
 }
 
 // CtxID returns the context id of the statement
@@ -1104,11 +1147,12 @@ func (sc *StatementContext) CopyMuForCallProcedure(srcCtx *StatementContext) {
 	srcCtx.mu.message = sc.mu.message
 	srcCtx.WarnHandler.SetWarnings(sc.GetWarnings())
 	//
-	d := srcCtx.SyncExecDetails.GetExecDetails()
-	sc.SyncExecDetails.Reset()
-	sc.SyncExecDetails.MergeExecDetails(&d, nil)
-	sc.MemTracker = srcCtx.MemTracker
-	sc.DiskTracker = srcCtx.DiskTracker
+	d := sc.SyncExecDetails.GetExecDetails()
+	srcCtx.SyncExecDetails.Reset()
+	srcCtx.SyncExecDetails.MergeExecDetails(&d, nil)
+	srcCtx.MemTracker = sc.MemTracker
+	srcCtx.DiskTracker = sc.DiskTracker
+	srcCtx.SetTimeZone(sc.TimeZone())
 }
 
 // ResetForRetry resets the changed states during execution.

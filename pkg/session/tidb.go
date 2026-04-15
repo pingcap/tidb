@@ -37,11 +37,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	tidbtypes "github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -396,7 +398,18 @@ func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.Rec
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {
-				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
+				ft := &rs.Fields()[j].Column.FieldType
+				d := row.GetDatum(j, ft)
+				switch ft.GetSubType() {
+				case mysql.SubTypeIntervalYearToMonth:
+					iRow[j] = tidbtypes.FormatIntervalYearToMonth(d.GetInt64())
+					continue
+				case mysql.SubTypeIntervalDayToSecond:
+					iRow[j] = tidbtypes.FormatIntervalDayToSecond(d.GetInt64())
+					continue
+				default:
+					// fall through to base type output.
+				}
 				iRow[j], err = d.ToString()
 				if err != nil {
 					return nil, err

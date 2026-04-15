@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
+	"github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -70,6 +71,18 @@ var dynamicPrivs = []string{
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
+
+var dutySeparationPrivTables = map[string]struct{}{
+	strings.ToLower(mysql.UserTable):        {},
+	strings.ToLower(mysql.DBTable):          {},
+	strings.ToLower(mysql.TablePrivTable):   {},
+	strings.ToLower(mysql.ColumnPrivTable):  {},
+	strings.ToLower(mysql.GlobalPrivTable):  {},
+	"global_grants":                         {},
+	strings.ToLower(mysql.RoleEdgeTable):    {},
+	strings.ToLower(mysql.DefaultRoleTable): {},
+	strings.ToLower(mysql.ProcsPriv):        {},
+}
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -165,6 +178,19 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 				mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
+			}
+		}
+	}
+
+	// In duty separation mode, only users with RESTRICTED_USER_ADMIN can modify privilege tables.
+	// This prevents roles like database_admin from bypassing CREATE USER/ROLE via direct DML.
+	if variable.EnableDutySeparationMode.Load() && dbLowerName == mysql.SystemDB {
+		if _, ok := dutySeparationPrivTables[tblLowerName]; ok {
+			switch priv {
+			case mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				if !p.HasExplicitlyGrantedDynamicPrivilege(activeRoles, "RESTRICTED_USER_ADMIN", false) {
+					return false
+				}
 			}
 		}
 	}
@@ -391,6 +417,11 @@ func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
 		return record.MaxUserConnections, nil
 	}
 	return 0, errors.New("Failed to get max user connections")
+}
+
+// GetSecurityLabelCache exposes the LBAC metadata cache for access checks.
+func (p *UserPrivileges) GetSecurityLabelCache() *lbac.SecurityLabelCache {
+	return p.Handle.Get().GetSecurityLabelCache()
 }
 
 // GetEncodedPassword implements the Manager interface.

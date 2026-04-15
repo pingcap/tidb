@@ -17,10 +17,12 @@ package ast_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/stretchr/testify/require"
 )
 
@@ -128,6 +130,26 @@ func TestProcedure(t *testing.T) {
 	}
 }
 
+func TestStoredFunctionCharacteristics(t *testing.T) {
+	p := parser.New()
+	testcases := []string{
+		`create function func_det() returns int deterministic return 1;`,
+		`create function func_not_det() returns int not deterministic return 1;`,
+		`create function func_no_sql() returns int no sql return 1;`,
+		`create function func_reads() returns int reads sql data return 1;`,
+		`create function func_modifies() returns int modifies sql data begin return 1; end;`,
+		`create function func_contains() returns int contains sql begin return 1; end;`,
+		`create function func_lang() returns int language sql return 1;`,
+	}
+	for _, testcase := range testcases {
+		stmt, _, err := p.Parse(testcase, "", "")
+		require.NoError(t, err)
+		info, ok := stmt[0].(*ast.CreateProcedureInfo)
+		require.True(t, ok, testcase)
+		require.NotNil(t, info.FunctionInfo.RetType, testcase)
+	}
+}
+
 func TestShowCreateProcedure(t *testing.T) {
 	p := parser.New()
 	stmt, _, err := p.Parse("show create procedure proc_2", "", "")
@@ -176,10 +198,45 @@ func TestProcedureVisitor(t *testing.T) {
 	}
 }
 
+func TestProcedureJumpRestoreUsesIdentifierLabel(t *testing.T) {
+	testCases := []struct {
+		name     string
+		isLeave  bool
+		expected string
+	}{
+		{
+			name:     "leave",
+			isLeave:  true,
+			expected: "LEAVE `labeltri`",
+		},
+		{
+			name:     "iterate",
+			isLeave:  false,
+			expected: "ITERATE `labeltri`",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			jump := &ast.ProcedureJump{
+				Name:    "labeltri",
+				IsLeave: testCase.isLeave,
+			}
+			var sb strings.Builder
+			err := jump.Restore(format.NewRestoreCtx(
+				format.RestoreStringSingleQuotes|format.RestoreKeyWordUppercase|format.RestoreNameBackQuotes,
+				&sb,
+			))
+			require.NoError(t, err)
+			require.Equal(t, testCase.expected, sb.String())
+		})
+	}
+}
+
 func TestProcedureRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` BIGINT(20), IN `id2` VARCHAR(100), IN `id3` DECIMAL(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END",
-			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` BIGINT(20), IN `id2` VARCHAR(100), IN `id3` DECIMAL(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(IN `id` bigint(20), IN `id2` varchar(100), IN `id3` decimal(30,2)) BEGIN DECLARE `s` VARCHAR(100) DEFAULT FROM_UNIXTIME(1447430881);SELECT `s`;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111); END",
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN SELECT * FROM `t1`;IF `i`>1 THEN SELECT 2;ELSEIF `i`=3 THEN SELECT 4;ELSE SELECT 5;END IF; END",
@@ -199,11 +256,15 @@ func TestProcedureRestore(t *testing.T) {
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
-			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(IN `id` int(11)) BEGIN WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE TEST1 CURSOR FOR SELECT 1;SELECT 1;OPEN TEST1;FETCH TEST1 INTO A;CLOSE TEST1; END",
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE TEST1 CURSOR FOR SELECT 1;SELECT 1;OPEN TEST1;FETCH TEST1 INTO A;CLOSE TEST1; END",
+		},
+		{
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CLOSE CURSOR FOR SELECT 1;SELECT 1;OPEN CLOSE;FETCH CLOSE INTO A;CLOSE CLOSE; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CLOSE CURSOR FOR SELECT 1;SELECT 1;OPEN CLOSE;FETCH CLOSE INTO A;CLOSE CLOSE; END",
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
@@ -211,7 +272,7 @@ func TestProcedureRestore(t *testing.T) {
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( INOUT `id` BIGINT(20), OUT `id1` BIGINT(20)) BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR 1211, SQLSTATE 'xdw' SELECT 1; END",
-			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( INOUT `id` BIGINT(20), OUT `id1` BIGINT(20)) BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR 1211, SQLSTATE 'xdw' SELECT 1; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(INOUT `id` bigint(20), OUT `id1` bigint(20)) BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR 1211, SQLSTATE 'xdw' SELECT 1; END",
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `a` INT(11);DECLARE CONTINUE HANDLER FOR SQLSTATE 'ssss' WHILE `id`<10 DO SET @@SESSION.`id`=`id`+1;SELECT 1;END WHILE; END",
@@ -251,7 +312,7 @@ func TestProcedureRestore(t *testing.T) {
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN `labelname`: REPEAT SET @@SESSION.`id`=`id`+1;SELECT 1;UNTIL `id`<10 END REPEAT `labelname`; END",
-			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` INT(11)) BEGIN `labelname`: REPEAT SET @@SESSION.`id`=`id`+1;SELECT 1;UNTIL `id`<10 END REPEAT `labelname`; END",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(IN `id` int(11)) BEGIN `labelname`: REPEAT SET @@SESSION.`id`=`id`+1;SELECT 1;UNTIL `id`<10 END REPEAT `labelname`; END",
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() COMMENT '11' BEGIN DECLARE `a` INT(11);DECLARE EXIT HANDLER FOR SQLWARNING, NOT FOUND, SQLEXCEPTION SELECT 1; END",
@@ -283,11 +344,11 @@ func TestProcedureRestore(t *testing.T) {
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` CHAR(30) CHARACTER SET UTF8 COLLATE UTF8_BIN) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
-			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( IN `id` CHAR(30) CHARACTER SET UTF8 COLLATE UTF8_BIN) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(IN `id` char(30) CHARACTER SET utf8 COLLATE utf8_bin) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( INOUT `id` CHAR(30) CHARACTER SET UTF8 COLLATE UTF8_BIN) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
-			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`( INOUT `id` CHAR(30) CHARACTER SET UTF8 COLLATE UTF8_BIN) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`(INOUT `id` char(30) CHARACTER SET utf8 COLLATE utf8_bin) LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP",
 		},
 		{
 			"CREATE DEFINER = CURRENT_USER PROCEDURE `proc_2`() BEGIN DECLARE `id` CHAR(30) CHARACTER SET UTF8 COLLATE UTF8_BIN;LOOP SET @@SESSION.`id`=`id`+1;SELECT 1; END LOOP; END",

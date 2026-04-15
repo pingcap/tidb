@@ -1612,6 +1612,33 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 		require.Equal(t, pruneMode == string(variable.Dynamic), tk.Session().GetSessionVars().FoundInPlanCache)
 	}
+
+	t.Run("selected partition stats skip plan cache", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustQuery(`select @@session.tidb_enable_prepared_plan_cache`).Check(testkit.Rows("1"))
+
+		tk.MustExec("use test")
+		tk.MustExec(`set @@tidb_partition_prune_mode = 'dynamic'`)
+		tk.MustExec(`set @@tidb_opt_enable_selected_partition_stats = 1`)
+		tk.MustExec(`drop table if exists t`)
+		tk.MustExec(`create table t (a int, b int) partition by range (a) (
+			partition p0 values less than (0),
+			partition p1 values less than (100),
+			partition p2 values less than maxvalue
+		)`)
+		tk.MustExec(`insert into t values (-5, 1), (10, 2), (150, 3)`)
+		tk.MustExec(`analyze table t`)
+		tk.MustExec(`prepare stmt from 'select a from t where a < ? order by a'`)
+
+		tk.MustExec(`set @a = 1000`)
+		tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("-5", "10", "150"))
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+		tk.MustExec(`set @a = 0`)
+		tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("-5"))
+		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	})
 }
 
 func TestHashPartitionAndPlanCache(t *testing.T) {

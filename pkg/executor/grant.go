@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -114,7 +115,8 @@ func (e *GrantExec) checkRoutineLegality(ctx context.Context, internalSession se
 }
 
 func (e *GrantExec) checkTableOrColumnExists(tbl table.Table, dbName string) error {
-	if tbl.Meta().Name.L != strings.ToLower(e.Level.TableName) {
+	// TODO(lower_case_table_names): support case sensitive table name in GrantExec Level.
+	if !model.NameEqual(tbl.Meta().Name, pmodel.NewCIStr(e.Level.TableName)) {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(dbName, e.Level.TableName)
 	}
 	for _, p := range e.Privs {
@@ -169,9 +171,10 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 					}
 				}
 			}
-			dbNameStr := model.NewCIStr(dbName)
+			dbNameStr := pmodel.NewCIStr(dbName)
 			schema := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
-			tbl, err := schema.TableByName(ctx, dbNameStr, model.NewCIStr(e.Level.TableName))
+			// TODO(lower_case_table_names): support case sensitive table name in GrantExec Level.
+			tbl, err := schema.TableByName(ctx, dbNameStr, pmodel.NewCIStr(e.Level.TableName))
 			// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 			if err != nil {
 				allowed := false
@@ -266,6 +269,11 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				return err
 			}
 		}
+	}
+
+	// Check if granting INSERT/UPDATE/DELETE to users with special roles
+	if err := e.checkDataPrivGrantToSpecialRoles(internalCtx, internalSession); err != nil {
+		return err
 	}
 
 	// Grant for each user
@@ -987,8 +995,9 @@ func getTargetSchemaAndTable(ctx context.Context, sctx sessionctx.Context, dbNam
 			return "", nil, errors.New("miss DB name for grant privilege")
 		}
 	}
-	name := model.NewCIStr(tableName)
-	tbl, err := is.TableByName(ctx, model.NewCIStr(dbName), name)
+	name := pmodel.NewCIStr(tableName)
+	// TODO(lower_case_table_names): handle case sensitivity.
+	tbl, err := is.TableByName(ctx, pmodel.NewCIStr(dbName), name)
 	if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
 		return dbName, nil, err
 	}

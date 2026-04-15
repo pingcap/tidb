@@ -1796,6 +1796,12 @@ func (b *builtinCastStringAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res
 	}
 
 	val = strings.TrimSpace(val)
+	switch b.tp.GetSubType() {
+	case mysql.SubTypeIntervalYearToMonth, mysql.SubTypeIntervalDayToSecond:
+		res, err = types.ConvertIntervalStringToInt(val, b.tp.GetSubType(), b.tp.GetFlen())
+		return res, isNull, err
+	}
+
 	isNegative := false
 	if len(val) > 1 && val[0] == '-' { // negative number
 		isNegative = true

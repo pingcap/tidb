@@ -201,6 +201,26 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeAlterRange(x)
 	case *ast.DropQueryWatchStmt:
 		err = e.executeDropQueryWatch(x)
+	case *ast.CreateSecurityLabelComponentStmt:
+		err = executeCreateSecurityLabelComponent(ctx, e.Ctx(), x)
+	case *ast.DropSecurityLabelComponentStmt:
+		err = executeDropSecurityLabelComponent(ctx, e.Ctx(), x)
+	case *ast.CreateSecurityPolicyStmt:
+		err = executeCreateSecurityPolicy(ctx, e.Ctx(), x)
+	case *ast.DropSecurityPolicyStmt:
+		err = executeDropSecurityPolicy(ctx, e.Ctx(), x)
+	case *ast.CreateSecurityLabelStmt:
+		err = executeCreateSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.DropSecurityLabelStmt:
+		err = executeDropSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.GrantSecurityLabelStmt:
+		err = executeGrantSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.RevokeSecurityLabelStmt:
+		err = executeRevokeSecurityLabel(ctx, e.Ctx(), x)
+	case *ast.GrantExemptionStmt:
+		err = executeGrantExemption(ctx, e.Ctx(), x)
+	case *ast.RevokeExemptionStmt:
+		err = executeRevokeExemption(ctx, e.Ctx(), x)
 	}
 	e.done = true
 	return err
@@ -600,6 +620,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	}
 	e.Ctx().GetSessionVars().CurrentDBChanged = dbname.O != e.Ctx().GetSessionVars().CurrentDB
 	e.Ctx().GetSessionVars().CurrentDB = dbname.O
+	e.Ctx().GetSessionVars().CurrentDBCI = dbname
 	sessionVars := e.Ctx().GetSessionVars()
 	dbCollate := dbinfo.Collate
 	if dbCollate == "" {
@@ -2135,12 +2156,21 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 		}
 	}
 
+	if err := checkSpecialRoleGrantingByRoot(e.Ctx(), s.Roles); err != nil {
+		return err
+	}
+
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
 	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
 	sqlExecutor := restrictedCtx.GetSQLExecutor()
+
+	err = checkExclusiveRoleGranting(internalCtx, sqlExecutor, s.Roles, s.Users)
+	if err != nil {
+		return err
+	}
 
 	// begin a transaction to insert role graph edges.
 	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
@@ -2856,7 +2886,10 @@ func (e *SimpleExec) autoNewTxn() bool {
 	// Data definition language (DDL) statements that define or modify database objects.
 	// (handled in DDL package)
 	// Statements that implicitly use or modify tables in the mysql database.
-	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt, *ast.RevokeRoleStmt, *ast.GrantRoleStmt:
+	case *ast.CreateUserStmt, *ast.AlterUserStmt, *ast.DropUserStmt, *ast.RenameUserStmt, *ast.RevokeRoleStmt, *ast.GrantRoleStmt,
+		*ast.CreateSecurityLabelComponentStmt, *ast.DropSecurityLabelComponentStmt, *ast.CreateSecurityPolicyStmt, *ast.DropSecurityPolicyStmt,
+		*ast.CreateSecurityLabelStmt, *ast.DropSecurityLabelStmt, *ast.GrantSecurityLabelStmt, *ast.RevokeSecurityLabelStmt,
+		*ast.GrantExemptionStmt, *ast.RevokeExemptionStmt:
 		return true
 	// Transaction-control and locking statements.  BEGIN, LOCK TABLES, SET autocommit = 1 (if the value is not already 1), START TRANSACTION, UNLOCK TABLES.
 	// (handled in other place)
@@ -2950,7 +2983,7 @@ func (e *SimpleExec) executeAdminLBACEnable(s *ast.AdminStmt) error {
 	if err != nil {
 		return err
 	}
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabeSecurity)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabelSecurity)
 	defer clearSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 	defer func() {

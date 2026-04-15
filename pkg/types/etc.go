@@ -217,3 +217,18 @@ func IsTypeTemporal(tp byte) bool {
 	}
 	return false
 }
+
+var subtype2Str = map[byte]string{
+	mysql.SubTypeArray:               "array",
+	mysql.SubTypeXML:                 "xml",
+	mysql.SubTypeIntervalYearToMonth: "interval year to month",
+	mysql.SubTypeIntervalDayToSecond: "interval day to second",
+}
+
+// FieldTypeToStr converts FieldType to a string.
+func FieldTypeToStr(ft *FieldType) string {
+	if str, ok := subtype2Str[ft.GetSubType()]; ok {
+		return str
+	}
+	return TypeStr(ft.GetType())
+}

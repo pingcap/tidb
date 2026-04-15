@@ -44,6 +44,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -312,7 +313,9 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 	}
 	defer func() {
 		if rewriter.planCtx != nil {
-			rewriter.planCtx.builder.appendColumnsToVisitedInfo(rewriter.planCtx.columnVisited, priv)
+			builder := rewriter.planCtx.builder
+			builder.appendColumnsToVisitedInfo(rewriter.planCtx.columnVisited, priv)
+			builder.appendColumnsToLBACVisitInfo(rewriter.planCtx.columnVisited, priv)
 		}
 	}()
 	exprNode.Accept(rewriter)
@@ -1680,7 +1683,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 }
 
 // newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.
-func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *types.FieldType, init expression.ScalarFunctionCallBack, args ...expression.Expression) (ret expression.Expression, err error) {
+func (er *expressionRewriter) newFunctionWithInit(schema, funcName string, retType *types.FieldType, init expression.ScalarFunctionCallBack, args ...expression.Expression) (ret expression.Expression, err error) {
 	if init != nil {
 		ret, err = expression.NewFunctionWithInit(er.sctx, funcName, retType, init, args...)
 	} else if er.disableFoldCounter > 0 {
@@ -1688,7 +1691,7 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 	} else if er.tryFoldCounter > 0 {
 		ret, err = expression.NewFunctionTryFold(er.sctx, funcName, retType, args...)
 	} else {
-		ret, err = expression.NewFunction(er.sctx, funcName, retType, args...)
+		ret, err = expression.NewGenericFunction(er.sctx, schema, funcName, retType, args...)
 	}
 	if err != nil {
 		return
@@ -1698,7 +1701,11 @@ func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *type
 
 // newFunction is being redirected to newFunctionWithInit.
 func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
-	return er.newFunctionWithInit(funcName, retType, nil, args...)
+	return er.newFunctionWithInit("", funcName, retType, nil, args...)
+}
+
+func (er *expressionRewriter) newGenericFunction(schema, funcName string, retType *types.FieldType, args ...expression.Expression) (ret expression.Expression, err error) {
+	return er.newFunctionWithInit(schema, funcName, retType, nil, args...)
 }
 
 func (*expressionRewriter) checkTimePrecision(ft *types.FieldType) error {
@@ -2426,7 +2433,7 @@ func (er *expressionRewriter) funcCallToExpressionWithPlanCtx(planCtx *exprRewri
 				err = groupingFunc.Function.(*expression.BuiltinGroupingImplSig).SetMetadata(planCtx.rollExpand.GroupingMode, planCtx.rollExpand.GenerateGroupingMarks(resolvedCols))
 				return groupingFunc, err
 			}
-			function, er.err = er.newFunctionWithInit(v.FnName.L, &v.Type, init, newArg)
+			function, er.err = er.newFunctionWithInit("", v.FnName.L, &v.Type, init, newArg)
 			er.ctxStackAppend(function, types.EmptyName)
 		}
 	default:
@@ -2574,7 +2581,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 			er.ctxStackAppend(c, types.EmptyName)
 		}
 	} else {
-		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
+		function, er.err = er.newGenericFunction(v.Schema.L, v.FnName.L, &v.Type, args...)
 		er.ctxStackAppend(function, types.EmptyName)
 	}
 }
@@ -2646,6 +2653,58 @@ func (er *expressionRewriter) clause() clauseCode {
 	return expressionClause
 }
 
+func tryRewriteTriggerPseudoColumn(er *expressionRewriter, v *ast.ColumnName) bool {
+	if !v.IsTriggerPseudoRecord() || er.planCtx == nil {
+		return false
+	}
+	trigCtx := er.planCtx.builder.ctx.GetSessionVars().StmtCtx.TriggerCtx
+	if !trigCtx.InTrigger {
+		return false
+	}
+	colIdx := -1
+	var retType *types.FieldType
+	for i, col := range trigCtx.TableInfo.Columns {
+		if col.Name.L == v.Name.L {
+			colIdx = i
+			retType = &col.FieldType
+			break
+		}
+	}
+	if colIdx == -1 {
+		er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
+		return true
+	}
+	var d types.Datum
+	switch v.Table.L {
+	case "new":
+		if len(trigCtx.NewData) == 0 {
+			er.err = dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("NEW", "")
+			return true
+		}
+		if colIdx >= len(trigCtx.NewData) {
+			er.err = plannererrors.ErrInternal.GenWithStack("trigger pseudo record NEW index out of range: colIdx=%d, newLen=%d", colIdx, len(trigCtx.NewData))
+			return true
+		}
+		d = trigCtx.NewData[colIdx]
+	case "old":
+		if len(trigCtx.OldData) == 0 {
+			er.err = dbterror.ErrTrgNoSuchRowInTrg.FastGenByArgs("OLD", "")
+			return true
+		}
+		if colIdx >= len(trigCtx.OldData) {
+			er.err = plannererrors.ErrInternal.GenWithStack("trigger pseudo record OLD index out of range: colIdx=%d, oldLen=%d", colIdx, len(trigCtx.OldData))
+			return true
+		}
+		d = trigCtx.OldData[colIdx]
+	default:
+		er.err = plannererrors.ErrInternal.GenWithStack("unknown trigger pseudo record: %s", v.Table.O)
+		return true
+	}
+	expr := er.assembleConstant(d, retType)
+	er.ctxStackAppend(expr, types.EmptyName)
+	return true
+}
+
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	if v.Table.String() == "" && er.planCtx != nil && er.planCtx.builder.ctx.GetSessionVars().GetCallProcedure() {
 		notFind, err := er.searchSpVariables(v.Name.L)
@@ -2656,6 +2715,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		if !notFind {
 			return
 		}
+	}
+	if tryRewriteTriggerPseudoColumn(er, v) {
+		return
 	}
 	var columnVisited *types.FieldName
 	defer func() {
@@ -2934,6 +2996,36 @@ func (b *PlanBuilder) appendColumnsToVisitedInfo(columnVisited []*ast.ColumnName
 				plannererrors.ErrColumnaccessDenied.FastGenByArgs(strings.ToUpper(mysql.Priv2Str[priv.column]), user, host, colName.Name.L, colName.Table.L),
 			)
 		}
+	}
+}
+
+func (b *PlanBuilder) appendColumnsToLBACVisitInfo(columnVisited []*ast.ColumnName, priv *checkedPrivilege) {
+	if !variable.EnableLBAC.Load() || b == nil || b.is == nil || priv == nil || priv.column != mysql.SelectPriv {
+		return
+	}
+	for _, colName := range columnVisited {
+		if colName == nil || colName.Schema.L == "" || colName.Table.L == "" || colName.Name.L == "" {
+			continue
+		}
+		tbl, err := b.is.TableByName(context.Background(), colName.Schema, colName.Table)
+		if err != nil {
+			continue
+		}
+		tableInfo := tbl.Meta()
+		if tableInfo == nil || tableInfo.SecurityPolicy == nil || tableInfo.SecurityPolicy.L == "" {
+			continue
+		}
+		colInfo := model.FindColumnInfo(tableInfo.Columns, colName.Name.L)
+		if colInfo == nil || colInfo.SecurityLabel == nil || colInfo.SecurityLabel.O == "" {
+			continue
+		}
+		b.lbacVisitInfo = append(b.lbacVisitInfo, ColumnVisitInfo{
+			PolicyName: tableInfo.SecurityPolicy.L,
+			LabelName:  colInfo.SecurityLabel.L,
+			Table:      colName.Table.L,
+			Column:     colName.Name.L,
+			AccessType: ast.SecurityLabelAccessTypeRead,
+		})
 	}
 }
 

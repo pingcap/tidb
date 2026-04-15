@@ -19,6 +19,7 @@ go_library(
         "//pkg/config",
         "//pkg/ddl/placement",
         "//pkg/domain/infosync",
+        "//pkg/domain/pkdb_repl",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/metrics",

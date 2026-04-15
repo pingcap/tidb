@@ -32,3 +32,6 @@ pkg/server/tests/commontest TestAuditPluginRetrying
 pkg/statistics/handle/storage TestGCExtendedStats
 pkg/executor/test/analyzetest TestKillAutoAnalyze
 pkg/executor TestSplitTablesQueryMatch
+pkg/util/gctuner TestGlobalMemoryTuner
+pkg/server/tests/cursor TestCursorExceedQuota
+pkg/util/gctuner TestIssue48741

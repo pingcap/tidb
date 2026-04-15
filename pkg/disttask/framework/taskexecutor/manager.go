@@ -16,6 +16,7 @@ package taskexecutor
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -303,6 +305,7 @@ func (m *Manager) recoverMetaLoop() {
 			m.logger.Info("recoverMetaLoop done")
 			return
 		case <-ticker.C:
+			pkdbrepl.CheckStandbyBlocking(m.ctx)
 			if err := m.recoverMeta(); err != nil {
 				m.logErr(err)
 				continue
@@ -427,7 +430,12 @@ func (m *Manager) runWithRetry(fn func() error, msg string) error {
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err1 := handle.RunWithRetry(m.ctx, scheduler.RetrySQLTimes, backoffer, m.logger,
 		func(_ context.Context) (bool, error) {
-			return true, fn()
+			err := fn()
+			retry := true
+			if err != nil {
+				retry = !strings.Contains(err.Error(), "cluster is in standby mode")
+			}
+			return retry, err
 		},
 	)
 	if err1 != nil {

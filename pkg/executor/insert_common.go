@@ -93,13 +93,19 @@ type InsertValues struct {
 	stats *InsertRuntimeStat
 
 	// fkChecks contains the foreign key checkers.
-	fkChecks   []*FKCheckExec
-	fkCascades []*FKCascadeExec
+	fkChecks    []*FKCheckExec
+	fkCascades  []*FKCascadeExec
+	triggerExec *TriggerExec
+	// The real execution may be advanced to get the new row before the check or auto-id allocation.
+	// We need this field to avoid activating the same trigger multiple times.
+	triggerSkip bool
 
 	ignoreErr   bool
 	PolicyName  string // The label policy name binded to this table.
 	UserLabel   string // The label binded to current user.
 	LabelColumn string // The column name of this table used to store label value.
+
+	lbacGuard *lbacDMLGuard
 }
 
 type defaultVal struct {
@@ -218,6 +224,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	memUsageOfRows := int64(0)
 	memTracker := e.memTracker
+	e.triggerSkip = false
 	for i, list := range e.Lists {
 		e.rowCount++
 		var row []types.Datum
@@ -234,9 +241,11 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err != nil {
 				return err
 			}
+			e.triggerSkip = true
 			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
+			e.triggerSkip = false
 			rows = rows[:0]
 			memTracker.Consume(-memUsageOfRows)
 			memUsageOfRows = 0
@@ -245,6 +254,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			}
 		}
 	}
+	e.triggerSkip = true
 	if len(rows) != 0 {
 		memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
 		memTracker.Consume(memUsageOfRows)
@@ -289,7 +299,7 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 		if err1 != nil {
 			logutil.BgLogger().Debug("truncated/wrong value error", zap.Error(err1))
 		}
-		err = table.ErrTruncatedWrongValueForField.FastGenByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+		err = table.ErrTruncatedWrongValueForField.FastGenByArgs(types.FieldTypeToStr(&col.FieldType), valStr, colName, rowIdx+1)
 	} else if types.ErrWarnDataOutOfRange.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.FastGenByArgs(colName, rowIdx+1)
 	}
@@ -491,6 +501,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		chkMemUsage := chk.MemoryUsage()
 		memTracker.Consume(chkMemUsage)
 		var totalMemDelta int64
+		e.triggerSkip = false
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
@@ -505,9 +516,11 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
 				totalMemDelta += memUsageOfRows + memUsageOfExtraCols
 				e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
+				e.triggerSkip = true
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
+				e.triggerSkip = false
 				rows = rows[:0]
 				extraColsInSel = extraColsInSel[:0]
 				totalMemDelta += -memUsageOfRows - memUsageOfExtraCols
@@ -517,6 +530,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				}
 			}
 		}
+		e.triggerSkip = true
 		memTracker.Consume(totalMemDelta)
 
 		if len(rows) != 0 {
@@ -693,6 +707,15 @@ func IsLabelAccessible(ctx expression.BuildContext, rowLbl types.Datum, userLbl 
 	return true, nil
 }
 
+func (e *InsertValues) initLBACGuard() (err error) {
+	if !variable.EnableLBAC.Load() {
+		return nil
+	}
+
+	e.lbacGuard, err = newLBACDMLGuard(e.Ctx(), e.Table.Meta())
+	return err
+}
+
 // fillRow fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 // When lazyFillAutoID is true, fill row will lazily handle auto increment datum for lazy batch allocation.
@@ -702,6 +725,11 @@ func IsLabelAccessible(ctx expression.BuildContext, rowLbl types.Datum, userLbl 
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) (
 	[]types.Datum, error,
 ) {
+	if ts, ok := e.Ctx().GetTableCtx().GetTriggerSupport(); ok && !e.triggerSkip {
+		if err := ts.OnInsertBefore(e.Table.Meta(), row, hasValue); err != nil {
+			return nil, err
+		}
+	}
 	gCols := make([]*table.Column, 0)
 	tCols := e.Table.Cols()
 	if e.hasExtraHandle {
@@ -743,6 +771,13 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 					return nil, exeerrors.ErrRowLabelUnAccessible.GenWithStackByArgs(row[i].GetString(), e.UserLabel)
 				}
 				labelEvaluated = true
+			}
+			if e.lbacGuard != nil && c.ID == e.lbacGuard.labelColID {
+				labelDatum, err := e.lbacGuard.EnforceWriteLabel(row[i])
+				if err != nil {
+					return nil, err
+				}
+				row[i] = labelDatum
 			}
 		}
 	}
@@ -1385,7 +1420,7 @@ func (e *InsertValues) removeRow(
 	handle kv.Handle,
 	r toBeCheckedRow,
 	inReplace bool,
-) (bool, error) {
+) (unchanged bool, err error) {
 	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
 	if err != nil {
@@ -1398,6 +1433,21 @@ func (e *InsertValues) removeRow(
 			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
 		}
 		return false, err
+	}
+	if e.lbacGuard != nil {
+		if err := e.lbacGuard.CheckRowLabelAccess(oldRow[e.lbacGuard.labelColOffset]); err != nil {
+			return false, err
+		}
+	}
+	if ts, ok := e.Ctx().GetTableCtx().GetTriggerSupport(); ok {
+		if err := ts.OnDeleteBefore(e.Table.Meta(), oldRow); err != nil {
+			return false, err
+		}
+		defer func() {
+			if err == nil {
+				err = ts.OnDeleteAfter(e.Table.Meta(), oldRow)
+			}
+		}()
 	}
 
 	identical, err := e.equalDatumsAsBinary(oldRow, newRow)
@@ -1464,6 +1514,11 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
 ) (err error) {
 	vars := e.Ctx().GetSessionVars()
+	if ts, ok := e.Ctx().GetTableCtx().GetTriggerSupport(); ok && !e.triggerSkip {
+		if err := ts.OnInsertBefore(e.Table.Meta(), row, nil); err != nil {
+			return err
+		}
+	}
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -1493,6 +1548,11 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	if e.Table.Meta().TTLInfo != nil {
 		// update the TTL metrics if the table is a TTL table
 		vars.TxnCtx.InsertTTLRowsCount++
+	}
+	if ts, ok := e.Ctx().GetTableCtx().GetTriggerSupport(); ok {
+		if err := ts.OnInsertAfter(e.Table.Meta(), row); err != nil {
+			return err
+		}
 	}
 
 	return nil

@@ -45,4 +45,4 @@ select floor((unix_timestamp() - unix_timestamp(b)) / 2) from t;
 set @@time_zone='Asia/Tokyo';
 alter table t modify column c timestamp not null;
 select floor((unix_timestamp() - unix_timestamp(c)) / 2) from t;
-set @@time_zone='SYSTEM'
+set @@time_zone='SYSTEM';

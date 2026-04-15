@@ -65,6 +65,7 @@ go_library(
         "//pkg/util/parser",
         "//pkg/util/size",
         "//pkg/util/stringutil",
+        "@com_github_antchfx_xmlquery//:xmlquery",
         "@com_github_json_iterator_go//:go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",

@@ -38,7 +38,7 @@ func onCreateSequence(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 
 	tbInfo := args.TableInfo
 	tbInfo.State = model.StateNone
-	err = checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name.L)
+	err = checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled

@@ -490,6 +490,31 @@ func TestGetProcedureVar(t *testing.T) {
 	}
 }
 
+func TestGetProcedureDurationVar(t *testing.T) {
+	ctx := createContext(t)
+	con := variable.NewProcedureContext(0)
+	ctx.GetSessionVars().SetInCallProcedure()
+	err := ctx.GetSessionVars().SetProcedureContext(con)
+	require.NoError(t, err)
+
+	durType := types.NewFieldType(mysql.TypeDuration)
+	durType.SetFlen(mysql.MaxDurationWidthNoFsp)
+	durType.SetDecimal(0)
+	con.Vars = append(con.Vars, variable.NewProcedureVars("dur", durType))
+
+	dur := types.Duration{Duration: 12*time.Hour + 20*time.Minute + 12*time.Second, Fsp: 0}
+	err = UpdateVariableVar("dur", types.NewDurationDatum(dur), ctx.GetSessionVars())
+	require.NoError(t, err)
+
+	fn, err := BuildGetProcedureVarFunction(ctx, datumsToConstants(types.MakeDatums("dur"))[0], durType)
+	require.NoError(t, err)
+
+	res, isNull, err := fn.EvalDuration(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, dur, res)
+}
+
 func TestSetProcedureVarFromColumn(t *testing.T) {
 	ctx := createContext(t)
 	con := variable.NewProcedureContext(0)

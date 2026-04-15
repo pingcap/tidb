@@ -50,4 +50,4 @@ alter table t modify column c timestamp not null;
 select floor((unix_timestamp() - unix_timestamp(c)) / 2) from t;
 floor((unix_timestamp() - unix_timestamp(c)) / 2)
 0
-set @@time_zone='SYSTEM'
+set @@time_zone='SYSTEM';

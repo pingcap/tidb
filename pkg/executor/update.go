@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -75,12 +76,15 @@ type UpdateExec struct {
 	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
 	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
-	fkCascades map[int64][]*FKCascadeExec
+	fkCascades  map[int64][]*FKCascadeExec
+	triggerExec *TriggerExec
 
 	IgnoreError bool
 	PolicyName  string // The label policy name binded to this table.
 	UserLabel   string // The label binded to current user.
 	LabelColumn string // The column name of this table used to store label value.
+
+	lbacGuard *lbacDMLGuard
 }
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
@@ -451,6 +455,12 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 					return 0, exeerrors.ErrRowLabelUnAccessible.GenWithStackByArgs(datumRow[labelColPos].GetString(), e.UserLabel)
 				}
 			}
+			if e.lbacGuard != nil {
+				labelDatum := datumRow[e.lbacGuard.labelColOffset]
+				if err := e.lbacGuard.CheckRowLabelAccess(labelDatum); err != nil {
+					return 0, err
+				}
+			}
 			// precomputes handles
 			if err := e.prepare(datumRow); err != nil {
 				return 0, err
@@ -463,6 +473,13 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			// merge non-generated columns
 			if err := e.mergeNonGenerated(datumRow, newRow); err != nil {
 				return 0, err
+			}
+			if e.lbacGuard != nil {
+				labelDatum, err := e.lbacGuard.EnforceWriteLabel(newRow[e.lbacGuard.labelColOffset])
+				if err != nil {
+					return 0, err
+				}
+				newRow[e.lbacGuard.labelColOffset] = labelDatum
 			}
 
 			if e.virtualAssignmentsOffset < len(e.OrderedList) {
@@ -498,6 +515,17 @@ func (e *UpdateExec) getLabelColumnPos() int {
 	}
 
 	return -1
+}
+
+func (e *UpdateExec) initLBACGuard() (err error) {
+	if !variable.EnableLBAC.Load() || len(e.tblID2table) != 1 {
+		return nil
+	}
+	for _, tbl := range e.tblID2table {
+		e.lbacGuard, err = newLBACDMLGuard(e.Ctx(), tbl.Meta())
+		return err
+	}
+	return nil
 }
 
 func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
@@ -709,6 +737,11 @@ func (e *UpdateExec) GetFKCascades() []*FKCascadeExec {
 		fkCascades = append(fkCascades, fkc...)
 	}
 	return fkCascades
+}
+
+// GetTriggerExec implements WithTriggerSupport interface.
+func (e *UpdateExec) GetTriggerExec() *TriggerExec {
+	return e.triggerExec
 }
 
 // HasFKCascades implements WithForeignKeyTrigger interface.

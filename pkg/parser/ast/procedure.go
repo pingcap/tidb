@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
@@ -34,8 +36,9 @@ var (
 	_ ExprNode = &ProcedureVar{}
 
 	_ StmtNode = &ProcedureBlock{}
-	_ StmtNode = &CreateProcedureInfo{}
-	_ StmtNode = &DropProcedureStmt{}
+	_ DDLNode  = &CreateProcedureInfo{}
+	_ DDLNode  = &DropProcedureStmt{}
+	_ DDLNode  = &AlterProcedureStmt{}
 	_ StmtNode = &ProcedureElseIfBlock{}
 	_ StmtNode = &ProcedureElseBlock{}
 	_ StmtNode = &ProcedureIfBlock{}
@@ -163,26 +166,81 @@ type ProcedureErrorCondition struct {
 // StoreParameter Stored procedure entry and exit parameters.
 type StoreParameter struct {
 	node
-	Paramstatus int
-	ParamType   *types.FieldType
-	ParamName   string
+	Paramstatus     int
+	ParamType       *types.FieldType
+	ParamName       string
+	OmitParamStatus bool
+}
+
+// RestoreRoutineFieldType restores a stored routine field type in a form that can round-trip
+// through SHOW CREATE / mysql.routines without reintroducing implicit widths or collations.
+func RestoreRoutineFieldType(ctx *format.RestoreCtx, origin *types.FieldType) error {
+	ft := origin.Clone()
+	switch ft.GetType() {
+	case mysql.TypeFloat, mysql.TypeDouble:
+		// (p) syntax for float/double is not supported.
+		// When decimal is unspecified, it must be default length (see defaultLengthAndDecimal).
+		defaultFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
+		if ft.GetDecimal() == types.UnspecifiedLength && ft.GetFlen() == defaultFlen {
+			ft.SetFlen(types.UnspecifiedLength)
+			ft.SetDecimal(types.UnspecifiedLength)
+		}
+	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		// For stored routine parameters, the tiny/medium/long text/blob types never accept a length,
+		// and restoring with a default length (e.g. tinytext(255), mediumtext(16777215)) is unparsable.
+		ft.SetFlen(types.UnspecifiedLength)
+		ft.SetDecimal(types.UnspecifiedLength)
+	case mysql.TypeBlob:
+		// TEXT/BLOB optionally accept a length (e.g. TEXT(100)), but TiDB fills the implicit default
+		// max length when it's unspecified. Restore should omit that default so the output matches
+		// MySQL's SHOW CREATE PROCEDURE and remains parseable.
+		//
+		// Note: when the user explicitly specifies TEXT(65535)/BLOB(65535), the parser keeps
+		// decimal as UnspecifiedLength (-1), so we can preserve the explicit length.
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
+		if ft.GetFlen() == defaultFlen && ft.GetDecimal() == defaultDecimal {
+			ft.SetFlen(types.UnspecifiedLength)
+			ft.SetDecimal(types.UnspecifiedLength)
+		}
+	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDuration:
+		// (0) is the implicit default for fractional seconds precision (fsp). MySQL omits it in
+		// SHOW CREATE PROCEDURE output, so restore should omit it too.
+		if ft.GetDecimal() == 0 {
+			ft.SetDecimal(types.UnspecifiedLength)
+		}
+	case mysql.TypeDate:
+		// "date(p)" syntax is invalid for procedure parameter.
+		ft.SetFlen(types.UnspecifiedLength)
+		ft.SetDecimal(types.UnspecifiedLength)
+	case mysql.TypeJSON:
+		// "json(p)" syntax is invalid for procedure parameter.
+		ft.SetFlen(types.UnspecifiedLength)
+		ft.SetDecimal(types.UnspecifiedLength)
+	}
+	// For stored routines we want:
+	// - lower-case type names (to match existing routine restore output),
+	// - no implicit display width / default length when unspecified (so restore can round-trip).
+	flags := ctx.Flags
+	flags &^= format.RestoreKeyWordUppercase
+	flags &^= format.RestoreKeyWordLowercase
+	return ft.Restore(format.NewRestoreCtx(flags, ctx.In))
 }
 
 // Restore implements Node interface.
 func (n *StoreParameter) Restore(ctx *format.RestoreCtx) error {
-	switch n.Paramstatus {
-	case MODE_IN:
-		ctx.WriteKeyWord(" IN ")
-	case MODE_OUT:
-		ctx.WriteKeyWord(" OUT ")
-	case MODE_INOUT:
-		ctx.WriteKeyWord(" INOUT ")
+	if !n.OmitParamStatus {
+		switch n.Paramstatus {
+		case MODE_IN:
+			ctx.WriteKeyWord("IN ")
+		case MODE_OUT:
+			ctx.WriteKeyWord("OUT ")
+		case MODE_INOUT:
+			ctx.WriteKeyWord("INOUT ")
+		}
 	}
-
 	ctx.WriteName(n.ParamName)
 	ctx.WritePlain(" ")
-	ctx.WriteKeyWord(n.ParamType.String())
-	return nil
+	return RestoreRoutineFieldType(ctx, n.ParamType)
 }
 
 // Accept implements Node Accept interface.
@@ -213,7 +271,18 @@ func (n *ProcedureDecl) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(name)
 	}
 	ctx.WritePlain(" ")
-	ctx.WriteKeyWord(n.DeclType.String())
+	ft := n.DeclType.Clone()
+	if collate := ft.GetCollate(); collate != "" {
+		switch {
+		case ctx.Flags.HasKeyWordUppercaseFlag():
+			ft.SetCollate(strings.ToUpper(collate))
+		case ctx.Flags.HasKeyWordLowercaseFlag():
+			ft.SetCollate(strings.ToLower(collate))
+		}
+	}
+	if err := ft.Restore(ctx); err != nil {
+		return err
+	}
 	if n.DeclDefault != nil {
 		ctx.WriteKeyWord(" DEFAULT ")
 		if err := n.DeclDefault.Restore(ctx); err != nil {
@@ -391,27 +460,106 @@ func (n *ProcedureLabelLoop) GetLabelName() string {
 	return n.LabelName
 }
 
+// StoredFuncName represents a pair of schema and table names.
+type StoredFuncName struct {
+	Schema string
+	Func   string
+}
+
 // CreateProcedureInfo stored procedure object
 type CreateProcedureInfo struct {
-	stmtNode
-	IfNotExists       bool
-	Definer           *auth.UserIdentity
-	ProcedureName     *TableName
-	ProcedureParam    []*StoreParameter
-	ProcedureBody     StmtNode
-	ProcedureParamStr string
-	Characteristics   []ProcedureCharacteristic
+	ddlNode
+	IfNotExists     bool
+	Definer         *auth.UserIdentity
+	ProcedureName   *TableName
+	ProcedureParam  []*StoreParameter
+	ProcedureBody   StmtNode
+	Characteristics []ProcedureCharacteristic
+	FunctionInfo    struct {
+		RetType            *types.FieldType
+		IsLoadable         bool
+		Aggregate          bool
+		LoadableReturnType types.EvalType
+		SoName             string
+	}
 }
 
 // Restore implements CreateProcedureInfo interface.
 func (n *CreateProcedureInfo) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE ")
-	if n.Definer != nil {
+	if !n.FunctionInfo.IsLoadable && n.Definer != nil {
 		ctx.WriteKeyWord("DEFINER = ")
 		if err := n.Definer.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore definer")
 		}
 		ctx.WriteKeyWord(" ")
+	}
+	if n.FunctionInfo.IsLoadable {
+		if n.FunctionInfo.Aggregate {
+			ctx.WriteKeyWord("AGGREGATE ")
+		}
+		ctx.WriteKeyWord("FUNCTION ")
+		if n.IfNotExists {
+			ctx.WriteKeyWord("IF NOT EXISTS ")
+		}
+		ctx.WriteName(n.ProcedureName.Name.String())
+		ctx.WriteKeyWord(" RETURNS ")
+		switch n.FunctionInfo.LoadableReturnType {
+		case types.ETInt:
+			ctx.WriteKeyWord("INTEGER")
+		case types.ETString:
+			ctx.WriteKeyWord("STRING")
+		case types.ETReal:
+			ctx.WriteKeyWord("REAL")
+		case types.ETDecimal:
+			ctx.WriteKeyWord("DECIMAL")
+		default:
+			ctx.WriteKeyWord(n.FunctionInfo.LoadableReturnType.String())
+		}
+		ctx.WriteKeyWord(" SONAME ")
+		ctx.WriteString(n.FunctionInfo.SoName)
+		return nil
+	}
+	if n.FunctionInfo.RetType != nil {
+		ctx.WriteKeyWord("FUNCTION ")
+		if n.IfNotExists {
+			ctx.WriteKeyWord("IF NOT EXISTS ")
+		}
+		err := n.ProcedureName.Restore(ctx)
+		if err != nil {
+			return err
+		}
+		ctx.WritePlain("(")
+		for i, ProcedureParam := range n.ProcedureParam {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			err := ProcedureParam.Restore(ctx)
+			if err != nil {
+				return err
+			}
+		}
+		ctx.WritePlain(") ")
+		ctx.WriteKeyWord("RETURNS ")
+		err = RestoreRoutineFieldType(ctx, n.FunctionInfo.RetType)
+		if err != nil {
+			return err
+		}
+		ctx.WritePlain(" ")
+		if n.Characteristics != nil {
+			for _, characteristic := range n.Characteristics {
+				err = characteristic.Restore(ctx)
+				if err != nil {
+					return err
+				}
+				ctx.WriteKeyWord(" ")
+			}
+		}
+		err = (n.ProcedureBody).Restore(ctx)
+		if err != nil {
+			return err
+		}
+		return nil
 	}
 	ctx.WriteKeyWord("PROCEDURE ")
 	if n.IfNotExists {
@@ -424,7 +572,7 @@ func (n *CreateProcedureInfo) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain("(")
 	for i, ProcedureParam := range n.ProcedureParam {
 		if i > 0 {
-			ctx.WritePlain(",")
+			ctx.WritePlain(", ")
 		}
 		err := ProcedureParam.Restore(ctx)
 		if err != nil {
@@ -469,29 +617,44 @@ func (n *CreateProcedureInfo) Accept(v Visitor) (Node, bool) {
 		}
 		n.Characteristics[i] = node.(ProcedureCharacteristic)
 	}
-	node, ok := n.ProcedureBody.Accept(v)
-	if !ok {
-		return n, false
+	if n.ProcedureBody != nil {
+		node, ok := n.ProcedureBody.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ProcedureBody = node.(StmtNode)
 	}
-	n.ProcedureBody = node.(StmtNode)
 	return v.Leave(n)
 }
 
-// DropProcedureStmt
+// DropProcedureStmt is the statement to drop a stored procedure or function.
 type DropProcedureStmt struct {
-	stmtNode
+	ddlNode
 
-	IfExists      bool
-	ProcedureName *TableName
+	IfExists   bool
+	Name       *TableName
+	IsFunction bool
+}
+
+// Type returns the type of the routine, PROCEDURE or FUNCTION.
+func (n *DropProcedureStmt) Type() string {
+	if n.IsFunction {
+		return "FUNCTION"
+	}
+	return "PROCEDURE"
 }
 
 // Restore implements DropProcedureStmt interface.
 func (n *DropProcedureStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("DROP PROCEDURE ")
+	if n.IsFunction {
+		ctx.WriteKeyWord("DROP FUNCTION ")
+	} else {
+		ctx.WriteKeyWord("DROP PROCEDURE ")
+	}
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	err := n.ProcedureName.Restore(ctx)
+	err := n.Name.Restore(ctx)
 	if err != nil {
 		return err
 	}
@@ -505,6 +668,44 @@ func (n *DropProcedureStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropProcedureStmt)
+	return v.Leave(n)
+}
+
+type ProcedureReturnStmt struct {
+	stmtNode
+	ReturnExpr ExprNode
+}
+
+// Restore implements ProcedureReturnStmt interface.
+// TODO(lance6716): generated by AI, need review
+func (n *ProcedureReturnStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RETURN ")
+	if n.ReturnExpr != nil {
+		err := n.ReturnExpr.Restore(ctx)
+		if err != nil {
+			return errors.Annotate(err, "An error occurred while restore return expr")
+		}
+	} else {
+		ctx.WritePlain("NULL")
+	}
+	return nil
+}
+
+// Accept implements ProcedureReturnStmt Accept interface.
+func (n *ProcedureReturnStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ProcedureReturnStmt)
+
+	if n.ReturnExpr != nil {
+		node, ok := n.ReturnExpr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ReturnExpr = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
@@ -1307,7 +1508,7 @@ func (n *ProcedureJump) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("ITERATE ")
 	}
 
-	ctx.WriteString(n.Name)
+	ctx.WriteName(n.Name)
 	return nil
 }
 
@@ -1323,14 +1524,20 @@ func (n *ProcedureJump) Accept(v Visitor) (Node, bool) {
 
 // AlterProcedureStmt saved change stored procedure Characteristics
 type AlterProcedureStmt struct {
-	stmtNode
+	ddlNode
 	ProcedureName   *TableName
 	Characteristics []ProcedureCharacteristic
+	IsFunction      bool
 }
 
 // Restore implements Node interface.
 func (n *AlterProcedureStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("ALTER PROCEDURE ")
+	ctx.WriteKeyWord("ALTER ")
+	if !n.IsFunction {
+		ctx.WriteKeyWord("PROCEDURE ")
+	} else {
+		ctx.WriteKeyWord("FUNCTION ")
+	}
 	err := n.ProcedureName.Restore(ctx)
 	if err != nil {
 		return err

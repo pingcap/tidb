@@ -15,6 +15,8 @@
 package engine
 
 import (
+	"slices"
+
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pdhttp "github.com/tikv/pd/client/http"
 )
@@ -48,4 +50,18 @@ func IsTiFlashWriteNodeHTTPResp(store *pdhttp.MetaStore) bool {
 		}
 	}
 	return false
+}
+
+// IsReplicator check whether the store is a replicator store.
+func IsReplicator(store *metapb.Store) bool {
+	return slices.ContainsFunc(store.Labels, func(label *metapb.StoreLabel) bool {
+		return label.Key == "engine" && label.Value == "replicator"
+	})
+}
+
+// IsReplicatorHTTPResp tests whether the store is a replicator store from a PD HTTP response.
+func IsReplicatorHTTPResp(store *pdhttp.MetaStore) bool {
+	return slices.ContainsFunc(store.Labels, func(label pdhttp.StoreLabel) bool {
+		return label.Key == "engine" && label.Value == "replicator"
+	})
 }

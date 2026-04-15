@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/printer"
@@ -75,6 +76,7 @@ var (
 	_ functionClass = &setValFunctionClass{}
 	_ functionClass = &formatBytesFunctionClass{}
 	_ functionClass = &formatNanoTimeFunctionClass{}
+	_ functionClass = &ColumnDecryptionFunctionClass{}
 )
 
 var (
@@ -1548,6 +1550,47 @@ func (b *builtinTiDBDecodePlanSig) evalString(ctx EvalContext, row chunk.Row) (s
 		return planString, false, nil
 	}
 	return planTree, false, nil
+}
+
+// ColumnDecryptionFunctionClass is used to decrypt a column value.
+type ColumnDecryptionFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *ColumnDecryptionFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	return &builtinColumnDecryptionSig{baseBuiltinFunc: bf}, nil
+}
+
+type builtinColumnDecryptionSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinColumnDecryptionSig) Clone() builtinFunc {
+	newSig := &builtinColumnDecryptionSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinColumnDecryptionSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	encoded, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	cipherBytes := []byte(encoded)
+
+	plaintext, err := encrypt.AESDecryptWithGCM(cipherBytes)
+	if err != nil {
+		return encoded, false, nil
+	}
+
+	return string(plaintext), false, nil
 }
 
 type builtinTiDBDecodeBinaryPlanSig struct {

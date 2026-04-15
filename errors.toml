@@ -916,6 +916,16 @@ error = '''
 Conflicting declarations: 'CHARACTER SET %s' and 'CHARACTER SET %s'
 '''
 
+["ddl:1313"]
+error = '''
+RETURN is only allowed in a FUNCTION
+'''
+
+["ddl:1314"]
+error = '''
+%s is not allowed in stored procedures
+'''
+
 ["ddl:1347"]
 error = '''
 '%-.192s.%-.192s' is not %s
@@ -936,14 +946,49 @@ error = '''
 In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 '''
 
+["ddl:1359"]
+error = '''
+Trigger already exists
+'''
+
+["ddl:1360"]
+error = '''
+Trigger does not exist
+'''
+
+["ddl:1361"]
+error = '''
+Trigger's '%-.192s' is view or temporary table
+'''
+
+["ddl:1362"]
+error = '''
+Updating of %s row is not allowed in %strigger
+'''
+
+["ddl:1363"]
+error = '''
+There is no %s row in %s trigger
+'''
+
 ["ddl:1391"]
 error = '''
 Key part '%-.192s' length cannot be 0
 '''
 
+["ddl:1435"]
+error = '''
+Trigger in wrong schema
+'''
+
 ["ddl:1452"]
 error = '''
 Cannot add or update a child row: a foreign key constraint fails (%.192s)
+'''
+
+["ddl:1465"]
+error = '''
+Triggers can not be created on system tables
 '''
 
 ["ddl:1470"]
@@ -1651,6 +1696,11 @@ error = '''
 Unknown column '%-.192s' in '%-.192s'
 '''
 
+["executor:1125"]
+error = '''
+Function '%-.192s' already exists
+'''
+
 ["executor:1133"]
 error = '''
 Can't find any matching row in the user table
@@ -1736,6 +1786,11 @@ error = '''
 Incorrect number of arguments for %s %s; expected %d, got %d
 '''
 
+["executor:1321"]
+error = '''
+FUNCTION %s ended without RETURN
+'''
+
 ["executor:1330"]
 error = '''
 Duplicate parameter: %s
@@ -1764,6 +1819,11 @@ Operation %s failed for %.256s
 ["executor:1410"]
 error = '''
 You are not allowed to create a user with GRANT
+'''
+
+["executor:1442"]
+error = '''
+Can't update table '%-.192s' in stored function/trigger because it is already used by statement which invoked this stored function/trigger.
 '''
 
 ["executor:1456"]
@@ -2078,7 +2138,12 @@ Unknown background task name '%-.192s'
 
 ["executor:8800"]
 error = '''
-This row has a unaccessible label, row label [%s], user lbael [%s]
+This row has a unaccessible label, row label [%s], user label [%s]
+'''
+
+["executor:8810"]
+error = '''
+Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`
 '''
 
 ["expression:1139"]
@@ -2134,6 +2199,11 @@ Too-big precision %d specified for '%-.192s'. Maximum is %d.
 ["expression:1582"]
 error = '''
 Incorrect parameter count in the call to native function '%-.192s'
+'''
+
+["expression:1585"]
+error = '''
+This function '%-.192s' has the same name as a native function
 '''
 
 ["expression:3020"]
@@ -2639,6 +2709,11 @@ Duplicate handler declared in the same block
 ["planner:1414"]
 error = '''
 OUT or INOUT argument %d for routine %s is not a variable or NEW pseudo-variable in BEFORE trigger
+'''
+
+["planner:1415"]
+error = '''
+Not allowed to return a result set from a %s
 '''
 
 ["planner:1444"]
@@ -3714,6 +3789,11 @@ Build global-level stats failed due to missing partition-level stats: %s
 ["types:8244"]
 error = '''
 Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions
+'''
+
+["types:8801"]
+error = '''
+Invalid %s value
 '''
 
 ["variable:1193"]

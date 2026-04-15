@@ -431,6 +431,9 @@ func checkPreparedPriv(ctx context.Context, sctx sessionctx.Context, stmt *PlanC
 		if err := CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
 			return err
 		}
+		if err := CheckLBACColumnAccess(sctx.GetPlanCtx(), pm, stmt.LBACVisitInfos); err != nil {
+			return err
+		}
 	}
 	err := CheckTableLock(sctx, is, stmt.VisitInfos)
 	return err

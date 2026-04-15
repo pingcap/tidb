@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -340,6 +341,7 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 			// ctx is canceled or timeout.
 			return errors.Trace(err)
 		}
+		pkdbrepl.CheckStandbyBlocking(ctx)
 
 		if variable.EnableMDL.Load() {
 			serverInfos, err := infosync.GetAllServerInfo(ctx)

@@ -30,9 +30,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -588,12 +590,16 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			existingDBReplace.DbID = newID
 		}
 
-		// db replace in `TableMappingManager` has no name yet, it is determined by baseMap.
-		// TODO: update the name of the db replace that is not exists in baseMap.
-		// Now it is OK because user tables' name is not used.
-		if existingDBReplace.Name == "" {
-			if baseDBReplace, exists := baseMap[upDBID]; exists && baseDBReplace.Name != "" {
+		if baseDBReplace, exists := baseMap[upDBID]; exists {
+			// db replace in `TableMappingManager` has no name yet, it is determined by baseMap.
+			// TODO: update the name of the db replace that is not exists in baseMap.
+			// Now it is OK because user tables' name is not used.
+			if existingDBReplace.Name == "" && baseDBReplace.Name != "" {
 				existingDBReplace.Name = baseDBReplace.Name
+			}
+			// update the reused flag of the db replace, maybe it is reused in snapshot restore.
+			if baseDBReplace.Reused {
+				existingDBReplace.Reused = true
 			}
 		}
 
@@ -743,6 +749,22 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	return nil
 }
 
+func (tm *TableMappingManager) ReuseExistingDatabaseIDs(infoschema infoschema.InfoSchema) {
+	for dbID, dbReplace := range tm.DBReplaceMap {
+		if dbReplace.FilteredOut || dbReplace.DbID > 0 {
+			continue
+		}
+		if dbInfo, exists := infoschema.SchemaByName(pmodel.NewCIStr(dbReplace.Name)); exists {
+			dbReplace.DbID = dbInfo.ID
+			dbReplace.Reused = true
+			log.Info("reuse existing database id",
+				zap.String("db-name", dbReplace.Name),
+				zap.Int64("upstream-db-id", dbID),
+				zap.Int64("downstream-db-id", dbReplace.DbID))
+		}
+	}
+}
+
 func (tm *TableMappingManager) ApplyFilterToDBReplaceMap(tracker *utils.PiTRIdTracker) {
 	// iterate through existing DBReplaceMap
 	for dbID, dbReplace := range tm.DBReplaceMap {
@@ -838,7 +860,15 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database, tab
 		}
 		_, exist := dbReplaces[oldDB.Info.ID]
 		if !exist {
-			dbReplaces[oldDB.Info.ID] = NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
+			dbReplace := NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
+			dbReplace.Reused = oldDB.IsReusedByPITR()
+			if dbReplace.Reused {
+				log.Info("the database is reused by snapshot restore",
+					zap.Stringer("db", newDBInfo.Name),
+					zap.Int64("upstream-db-id", oldDB.Info.ID),
+					zap.Int64("downstream-db-id", newDBInfo.ID))
+			}
+			dbReplaces[oldDB.Info.ID] = dbReplace
 		}
 	}
 

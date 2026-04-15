@@ -510,7 +510,7 @@ func initStats(ds *logicalop.DataSource, colGroups [][]*expression.Column) {
 		return
 	}
 	if ds.StatisticTable == nil {
-		ds.StatisticTable = getStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)
+		ds.StatisticTable = getStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID, ds.StaticPrunedPartitionIDs)
 	}
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.StatisticTable.RealtimeCount),
@@ -727,7 +727,7 @@ func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64)
 	}
 
 	pctx := ctx.GetPlanCtx()
-	tableStats := getStatsTable(pctx, tblInfo, pid)
+	tableStats := getStatsTable(pctx, tblInfo, pid, nil)
 
 	name := tblInfo.Name.O
 	partInfo := tblInfo.GetPartitionInfo()

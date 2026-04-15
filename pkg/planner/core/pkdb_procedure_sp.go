@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -13,13 +14,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -74,6 +77,52 @@ type ProcedureExecPlan interface {
 	GetContext() *variable.ProcedureContext
 	CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan
 	GetString(ctx sessionctx.Context, level string) string
+
+	RegisterCompileAndExecFunc(fn func(ctx context.Context, stmt ast.StmtNode) ([]chunk.Row, []*types.FieldType, error))
+}
+
+type baseProcedureExecPlan struct {
+	compileAndExec func(ctx context.Context, stmt ast.StmtNode) ([]chunk.Row, []*types.FieldType, error)
+}
+
+func (p *baseProcedureExecPlan) Hanlable() bool {
+	return true
+}
+
+func (p *baseProcedureExecPlan) GetContext() *variable.ProcedureContext {
+	return nil
+}
+
+func (p *baseProcedureExecPlan) CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan {
+	return nil
+}
+
+func (p *baseProcedureExecPlan) GetString(_ sessionctx.Context, level string) string {
+	return fmt.Sprintf("[%s] base procedure exec plan", level)
+}
+
+func (p *baseProcedureExecPlan) executeStmt(
+	ctx context.Context,
+	exec sqlexec.RestrictedSQLExecutor,
+	stmt ast.StmtNode,
+	opts ...sqlexec.OptionFuncAlias) ([]chunk.Row, []*types.FieldType, error) {
+	if p.compileAndExec == nil {
+		rows, fields, err := exec.ExecRestrictedStmt(ctx, stmt, opts...)
+		if err != nil {
+			return nil, nil, err
+		}
+		fts := make([]*types.FieldType, 0, len(fields))
+		for _, f := range fields {
+			fts = append(fts, &f.Column.FieldType)
+		}
+		return rows, fts, nil
+	}
+	return p.compileAndExec(ctx, stmt)
+}
+
+func (p *baseProcedureExecPlan) RegisterCompileAndExecFunc(
+	fn func(ctx context.Context, stmt ast.StmtNode) ([]chunk.Row, []*types.FieldType, error)) {
+	p.compileAndExec = fn
 }
 
 // ProcedureExec stores procedure plans.
@@ -94,10 +143,10 @@ func (p *ProcedureExec) initProcedureExec() {
 // procedurceCurInfo stores procedure cursor info.
 type procedurceCurInfo struct {
 	curName      string
-	selectStmt   string // select ast
+	selectAst    ast.StmtNode
 	context      *variable.ProcedureContext
 	reader       chunk.RowContainerReader
-	fields       []*resolve.ResultField
+	fields       []*types.FieldType
 	open         bool // tag
 	rowContainer *chunk.RowContainer
 }
@@ -123,11 +172,11 @@ func (node *CacheAst) GetString() string {
 	return node.sql
 }
 
-// CcahePrepareCheck skip DDL cache.
+// CachePrepareCheck skip DDL cache.
 // DDL is not used frequently in stored procedures
 // There is a bug in DDL syntax tree reuse.
 // https://github.com/pingcap/tidb/issues/49465
-func (node *CacheAst) CcahePrepareCheck() {
+func (node *CacheAst) CachePrepareCheck() {
 	if node == nil || node.isInvalid {
 		return
 	}
@@ -247,8 +296,8 @@ func deleteCacheCurs(id uint, cache []NeedCloseCur, name string) ([]NeedCloseCur
 	return cache, nil
 }
 
-// ReleseAll close all Cursor.
-func ReleseAll(cache []NeedCloseCur) []NeedCloseCur {
+// ReleaseAll close all Cursor.
+func ReleaseAll(cache []NeedCloseCur) []NeedCloseCur {
 	for _, curs := range cache {
 		terror.Log(curs.Cursor.CloseCurs())
 	}
@@ -292,13 +341,19 @@ func ExprNodeToString(node ast.ExprNode) string {
 	return ""
 }
 
-// NewProcedurceCurInfo create procedurceCurInfo instance only use test.
-func NewProcedurceCurInfo(curName, selectStmt string, context *variable.ProcedureContext) *procedurceCurInfo {
-	return &procedurceCurInfo{curName: curName, selectStmt: selectStmt, context: context}
+// NewProcedurceCurInfoForTest create procedurceCurInfo instance only use test.
+func NewProcedurceCurInfoForTest(curName, selectStmt string, context *variable.ProcedureContext) *procedurceCurInfo {
+	p := parser.New()
+	selectAST, _, err := p.ParseSQL(selectStmt)
+	if err != nil {
+		return nil
+	}
+	return &procedurceCurInfo{curName: curName, selectAst: selectAST[0], context: context}
 }
 
 // ResetProcedurceCursor clear cursor.
 type ResetProcedurceCursor struct {
+	baseProcedureExecPlan
 	curName string
 	context *variable.ProcedureContext
 }
@@ -344,6 +399,7 @@ func (p *ResetProcedurceCursor) GetContext() *variable.ProcedureContext {
 
 // ProcedurceCursorClose close cursor instance.
 type ProcedurceCursorClose struct {
+	baseProcedureExecPlan
 	curName string
 	context *variable.ProcedureContext
 }
@@ -413,6 +469,7 @@ func (p *ResetProcedurceCursor) CloneStructure(contextMap map[*variable.Procedur
 
 // ProcedurceFetchInto fetch into procedure value.
 type ProcedurceFetchInto struct {
+	baseProcedureExecPlan
 	curName string
 	context *variable.ProcedureContext
 	vars    []string
@@ -445,7 +502,9 @@ func (curInfo *procedurceCurInfo) GetLevel() uint {
 // needUpdateCache check cache is finished reading.
 func (curInfo *procedurceCurInfo) Clone(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) variable.CursorRes {
 	return &procedurceCurInfo{
-		curName: curInfo.curName, selectStmt: curInfo.selectStmt, context: curInfo.context.CopyContext(contextMap),
+		curName:   curInfo.curName,
+		selectAst: curInfo.selectAst, // It is safe to shadow the AST here because it is read-only.
+		context:   curInfo.context.CopyContext(contextMap),
 	}
 }
 
@@ -480,7 +539,7 @@ func (p *ProcedurceFetchInto) Execute(ctx context.Context, sctx sessionctx.Conte
 	ResetCallStatus(sctx)
 	sctx.GetSessionVars().SetProcedureContext(p.context)
 	for i := 0; i < curs.GetRow().Len(); i++ {
-		datum := curs.GetRow().GetDatum(i, &curs.fields[i].Column.FieldType)
+		datum := curs.GetRow().GetDatum(i, curs.fields[i])
 		err := UpdateVariableVar(p.vars[i], datum, sctx.GetSessionVars())
 		if err != nil {
 			return cache, err
@@ -523,6 +582,7 @@ func (p *ProcedurceFetchInto) CloneStructure(contextMap map[*variable.ProcedureC
 
 // OpenProcedurceCursor open cursor.
 type OpenProcedurceCursor struct {
+	baseProcedureExecPlan
 	curName string
 	context *variable.ProcedureContext
 }
@@ -547,7 +607,7 @@ func (p *OpenProcedurceCursor) Execute(ctx context.Context, sctx sessionctx.Cont
 	if !ok {
 		return cache, errors.Errorf("unspport CursorRes type %T", cursors)
 	}
-	err = curs.OpenCurs(ctx, sctx)
+	err = curs.OpenCurs(ctx, sctx, &p.baseProcedureExecPlan)
 	if err != nil {
 		return cache, err
 	}
@@ -577,6 +637,7 @@ func (p *OpenProcedurceCursor) CloneStructure(contextMap map[*variable.Procedure
 
 // UpdateVariables init procedure variable.
 type UpdateVariables struct {
+	baseProcedureExecPlan
 	name     string
 	expr     string
 	context  *variable.ProcedureContext
@@ -585,6 +646,7 @@ type UpdateVariables struct {
 
 // ProcedureSaveIP save next execute id.
 type ProcedureSaveIP struct {
+	baseProcedureExecPlan
 	context *variable.ProcedureContext
 	dest    uint
 }
@@ -628,6 +690,7 @@ func (p *ProcedureSaveIP) CloneStructure(contextMap map[*variable.ProcedureConte
 
 // ProcedureNoNeedSave do nothing.
 type ProcedureNoNeedSave struct {
+	baseProcedureExecPlan
 	dest    uint
 	context *variable.ProcedureContext
 }
@@ -670,6 +733,7 @@ func (p *ProcedureNoNeedSave) CloneStructure(contextMap map[*variable.ProcedureC
 
 // ProcedureOutputIP recover execute ip.
 type ProcedureOutputIP struct {
+	baseProcedureExecPlan
 	context *variable.ProcedureContext
 }
 
@@ -723,6 +787,7 @@ func (p ProcedureExec) GetLen() uint {
 
 // ProcedureClearBlockVar clear block variables
 type ProcedureClearBlockVar struct {
+	baseProcedureExecPlan
 	context *variable.ProcedureContext
 }
 
@@ -751,11 +816,12 @@ func (p *ProcedureClearBlockVar) GetString(_ sessionctx.Context, level string) s
 
 // CloneStructure Clone ProcedureClearBlockVar data structure without data.
 func (p *ProcedureClearBlockVar) CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan {
-	return &ProcedureClearBlockVar{p.context.CopyContext(contextMap)}
+	return &ProcedureClearBlockVar{context: p.context.CopyContext(contextMap)}
 }
 
 // ProcedureGoToStart go to label begin.
 type ProcedureGoToStart struct {
+	baseProcedureExecPlan
 	dest  uint
 	label *variable.ProcedureLabel
 }
@@ -807,6 +873,7 @@ func (jump *ProcedureGoToStart) CloneStructure(map[*variable.ProcedureContext]*v
 
 // ProcedureGoToEnd go to label end.
 type ProcedureGoToEnd struct {
+	baseProcedureExecPlan
 	dest  uint
 	label *variable.ProcedureLabel
 }
@@ -858,6 +925,7 @@ func (jump *ProcedureGoToEnd) CloneStructure(map[*variable.ProcedureContext]*var
 
 // ProcedureGoToEndWithOutStmt goes to label end.
 type ProcedureGoToEndWithOutStmt struct {
+	baseProcedureExecPlan
 	dest    uint
 	label   *variable.ProcedureLabel
 	context *variable.ProcedureContext
@@ -920,7 +988,8 @@ func (vars *UpdateVariables) Execute(ctx context.Context, sctx sessionctx.Contex
 	}
 	// according to bug14643_1.
 	// If the initialization fails, the variable will still be created.
-	d, err := GetExprValue(ctx, &CacheExpr{expr: vars.expr, isInvalid: true}, vars.declType, sctx, vars.name)
+	exec := vars.baseProcedureExecPlan.compileAndExec
+	d, err := GetExprValue(ctx, &CacheExpr{expr: vars.expr, isInvalid: true}, vars.declType, sctx, vars.name, exec)
 	vari := variable.NewProcedureVars(vars.name, vars.declType)
 	vars.context.Vars = append(vars.context.Vars, vari)
 	if err != nil {
@@ -959,6 +1028,7 @@ func (vars *UpdateVariables) CloneStructure(contextMap map[*variable.ProcedureCo
 
 // ProcedureIfGo Logical Judgment Jump Structure.
 type ProcedureIfGo struct {
+	baseProcedureExecPlan
 	context   *variable.ProcedureContext
 	label     *variable.ProcedureLabel
 	expr      *CacheExpr
@@ -987,7 +1057,8 @@ func (pIf *ProcedureIfGo) Execute(ctx context.Context, sctx sessionctx.Context, 
 	if err != nil {
 		return cache, err
 	}
-	datum, err := GetExprValue(ctx, pIf.expr, types.NewFieldType(mysql.TypeTiny), sctx, "")
+	exec := pIf.baseProcedureExecPlan.compileAndExec
+	datum, err := GetExprValue(ctx, pIf.expr, types.NewFieldType(mysql.TypeTiny), sctx, "", exec)
 	if err != nil {
 		return cache, err
 	}
@@ -1097,8 +1168,112 @@ func NewExecuteBaseSQL(sql string, context *variable.ProcedureContext) *executeB
 
 // executeBaseSQL execute base sql.
 type executeBaseSQL struct {
+	baseProcedureExecPlan
 	cacheStmt *CacheAst
 	context   *variable.ProcedureContext
+}
+
+type returnInst struct {
+	baseProcedureExecPlan
+	cacheStmt *CacheAst
+	context   *variable.ProcedureContext
+	retType   *types.FieldType
+}
+
+// Execute execute base sql.
+func (p *returnInst) Execute(ctx context.Context, sctx sessionctx.Context, id *uint, cache []NeedCloseCur) (outcache []NeedCloseCur, err error) {
+	*id++
+	outcache = cache
+	defer func() {
+		if !variable.TiDBEnableSPAstReuse.Load() {
+			p.cacheStmt.isInvalid = true
+		}
+		if err != nil {
+			p.cacheStmt.isInvalid = true
+		}
+	}()
+	err = sctx.GetSessionVars().SetProcedureContext(p.context)
+	if err != nil {
+		return cache, err
+	}
+	ResetCallStatus(sctx)
+	p.cacheStmt.CachePrepareCheck()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnProcedure)
+	err = prepareCacheAst(ctx, p.cacheStmt, sctx.(sqlexec.SQLParser))
+	if err != nil {
+		return cache, err
+	}
+	for _, stmt := range p.cacheStmt.stmts {
+		switch x := stmt.(type) {
+		case *ast.ProcedureReturnStmt:
+			exec := p.baseProcedureExecPlan.compileAndExec
+			d, err2 := GetExprValue(ctx, NewCacheExpr(true, ExprNodeToString(x.ReturnExpr), nil), p.retType, sctx, "", exec)
+			if err2 != nil {
+				return cache, err2
+			}
+			*id = math.MaxUint
+			p.context.SetReturnDatum(&d)
+		default:
+			panic(fmt.Sprintf("unexpected stmt type %T", x))
+		}
+
+	}
+	return cache, nil
+}
+
+// GetContext gets base context.
+func (p *returnInst) GetContext() *variable.ProcedureContext {
+	return p.context
+}
+
+// GetString gets the currently executed instruction
+func (p *returnInst) GetString(ctx sessionctx.Context, level string) string {
+	str := fmt.Sprintf("[%s] execute SQL: %s.", level, p.cacheStmt.sql)
+	for _, stmt := range p.cacheStmt.stmts {
+		switch x := stmt.(type) {
+		case *ast.SelectStmt, *ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.CallStmt:
+			localVars := getlocalVariableFromAst(x, p.context, ctx)
+			if len(localVars) > 0 {
+				var varStr string
+				for i, localVar := range localVars {
+					varStr += fmt.Sprintf("%s:%s", localVar.name, localVar.data)
+					if i < len(localVars)-1 {
+						varStr += ","
+					}
+				}
+				str += fmt.Sprintf(" [local variables[%s]]", varStr)
+			}
+		}
+	}
+
+	return str
+}
+
+// Hanlable indicates whether the command can handle.
+func (p *returnInst) Hanlable() bool {
+	if p.cacheStmt.stmts == nil {
+		return false
+	}
+	for _, stmt := range p.cacheStmt.stmts {
+		switch v := stmt.(type) {
+		case *ast.ShowStmt:
+			if v.Tp == ast.ShowWarnings || v.Tp == ast.ShowErrors || v.Tp == ast.ShowSessionStates {
+				return false
+			}
+			// case *ast.GetDiagnosticsStmt:
+			// 	return false
+		}
+	}
+	return true
+}
+
+// CloneStructure gets base context.
+func (p *returnInst) CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan {
+	return &returnInst{
+		context:   p.context.CopyContext(contextMap),
+		cacheStmt: p.cacheStmt,
+		retType:   p.retType,
+	}
 }
 
 // conditionDest If condition equal jump to dest destination
@@ -1134,6 +1309,7 @@ func (procedureCase *procedureSimpleCase) AddDest(con *conditionDest) {
 
 // procedureSimpleCase represent `case expr when ... then ... `
 type procedureSimpleCase struct {
+	baseProcedureExecPlan
 	hasElse   bool
 	context   *variable.ProcedureContext
 	condition *CacheExpr
@@ -1155,13 +1331,13 @@ func (procedureCase *procedureSimpleCase) Execute(ctx context.Context, sctx sess
 	if err != nil {
 		return cache, err
 	}
-	datum, err := getExprValue(ctx, procedureCase.condition, sctx)
+	datum, err := getExprValue(ctx, procedureCase.condition, sctx, &procedureCase.baseProcedureExecPlan)
 	if err != nil {
 		return cache, err
 	}
 	for i, dest := range procedureCase.dests {
 		procedureCase.ID = i
-		datum1, err := getExprValue(ctx, dest.condition, sctx)
+		datum1, err := getExprValue(ctx, dest.condition, sctx, &procedureCase.baseProcedureExecPlan)
 		if err != nil {
 			return cache, err
 		}
@@ -1267,6 +1443,7 @@ func (procedureSearch *procedureSearchCase) AddDest(con *conditionDest) {
 
 // procedureSearchCase represent `case when ... then ... `
 type procedureSearchCase struct {
+	baseProcedureExecPlan
 	hasElse  bool
 	context  *variable.ProcedureContext
 	dests    []conditionDest
@@ -1289,7 +1466,7 @@ func (procedureSearch *procedureSearchCase) Execute(ctx context.Context, sctx se
 	}
 	for i, dest := range procedureSearch.dests {
 		procedureSearch.id = i
-		datum1, err := getExprValue(ctx, dest.condition, sctx)
+		datum1, err := getExprValue(ctx, dest.condition, sctx, &procedureSearch.baseProcedureExecPlan)
 		if err != nil {
 			return cache, err
 		}
@@ -1359,14 +1536,14 @@ func (procedureSearch *procedureSearchCase) CloneStructure(contextMap map[*varia
 // executeSelectStmt handling selectstmt with and without result set in procedure.
 // if param `v` is not nil, the param `node` is the internal statement of `v`.
 // if param `v` is nil, only the param `node` is effective.
-func executeSelectStmt(ctx context.Context, sctx sessionctx.Context, node *ast.SelectStmt, v *ast.ExecuteStmt) error {
+func executeSelectStmt(ctx context.Context, sctx sessionctx.Context, node *ast.SelectStmt, v *ast.ExecuteStmt, p *baseProcedureExecPlan) error {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	var execNode ast.StmtNode = node
 	if v != nil {
 		execNode = v
 	}
 	if node.SelectIntoOpt != nil {
-		rows, _, err := exec.ExecRestrictedStmt(ctx, execNode, sqlexec.ExecOptionUseCurSession)
+		rows, _, err := p.executeStmt(ctx, exec, execNode, sqlexec.ExecOptionUseCurSession)
 		if err != nil {
 			return err
 		}
@@ -1401,7 +1578,7 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 		return cache, err
 	}
 	ResetCallStatus(sctx)
-	p.cacheStmt.CcahePrepareCheck()
+	p.cacheStmt.CachePrepareCheck()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnProcedure)
 	err = prepareCacheAst(ctx, p.cacheStmt, sctx.(sqlexec.SQLParser))
 	if err != nil {
@@ -1409,13 +1586,23 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 	}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	for _, stmt := range p.cacheStmt.stmts {
+		if sctx.GetSessionVars().StmtCtx.TriggerCtx.InTrigger {
+			rows, _, err := p.executeStmt(ctx, exec, stmt, sqlexec.ExecOptionUseCurSession)
+			if err != nil {
+				return cache, err
+			}
+			if len(rows) > 0 {
+				return cache, exeerrors.ErrSpNoRetset.FastGenByArgs("TRIGGER")
+			}
+			continue
+		}
 		switch x := stmt.(type) {
 		case *ast.SelectStmt:
 			// https://github.com/pingcap/tidb/issues/49166
 			if x.SelectIntoOpt != nil {
 				p.cacheStmt.isInvalid = true
 			}
-			err := executeSelectStmt(ctx, sctx, x, nil)
+			err := executeSelectStmt(ctx, sctx, x, nil, &p.baseProcedureExecPlan)
 			if err != nil {
 				return cache, err
 			}
@@ -1431,7 +1618,7 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 			// According to the official mysql documentation, prepare cannot use stored procedure local variables
 			sctx.GetSessionVars().OutCallTemp()
 			defer sctx.GetSessionVars().RecoveryCall()
-			rows, _, err := exec.ExecRestrictedStmt(ctx, x, sqlexec.ExecOptionUseCurSession)
+			rows, _, err := p.executeStmt(ctx, exec, x, sqlexec.ExecOptionUseCurSession)
 			if err != nil {
 				return cache, err
 			}
@@ -1459,7 +1646,7 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 			// Query the prepare object to determine whether there is a return value.
 			switch v := stmt.PreparedAst.Stmt.(type) {
 			case *ast.SelectStmt:
-				err := executeSelectStmt(ctx, sctx, v, x)
+				err := executeSelectStmt(ctx, sctx, v, x, &p.baseProcedureExecPlan)
 				if err != nil {
 					return cache, err
 				}
@@ -1471,7 +1658,7 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 					return cache, err
 				}
 			default:
-				rows, _, err := exec.ExecRestrictedStmt(ctx, x, sqlexec.ExecOptionUseCurSession)
+				rows, _, err := p.executeStmt(ctx, exec, x, sqlexec.ExecOptionUseCurSession)
 				if err != nil {
 					return cache, err
 				}
@@ -1483,7 +1670,7 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 			}
 
 		default:
-			rows, _, err := exec.ExecRestrictedStmt(ctx, x, sqlexec.ExecOptionUseCurSession)
+			rows, _, err := p.executeStmt(ctx, exec, x, sqlexec.ExecOptionUseCurSession)
 			if err != nil {
 				return cache, err
 			}
@@ -1552,69 +1739,137 @@ func (p *executeBaseSQL) CloneStructure(contextMap map[*variable.ProcedureContex
 	}
 }
 
-func getResType(fields []*resolve.ResultField) []*types.FieldType {
-	ftypes := make([]*types.FieldType, 0, len(fields))
-	for _, field := range fields {
-		ftypes = append(ftypes, field.Column.FieldType.Clone())
-	}
-	return ftypes
-}
-
 // OpenCurs gets current row.
-func (curInfo *procedurceCurInfo) OpenCurs(ctx context.Context, sctx sessionctx.Context) error {
+func (curInfo *procedurceCurInfo) OpenCurs(ctx context.Context, sctx sessionctx.Context, p *baseProcedureExecPlan) error {
 	if curInfo.open {
 		return errors.AddStack(plannererrors.ErrSpCursorAlreadyOpen)
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnProcedure)
-	exec := sctx.(sqlexec.SQLExecutor)
 	err := sctx.GetSessionVars().SetProcedureContext(curInfo.context)
 	if err != nil {
 		return err
 	}
-	rs, err := exec.ExecuteInternal(ctx, curInfo.selectStmt)
-	if err != nil {
-		return err
-	}
-	if rs == nil {
-		return errors.New(fmt.Sprintf("CURSOR %s without RecordSet", curInfo.selectStmt))
-	}
-	rowContainer := chunk.NewRowContainer(getResType(rs.Fields()), sctx.GetSessionVars().MaxChunkSize)
-	rowContainer.GetMemTracker().AttachTo(sctx.GetSessionVars().MemTracker)
-	rowContainer.GetMemTracker().SetLabel(memory.LabelForFetchInto)
-	rowContainer.GetDiskTracker().AttachTo(sctx.GetSessionVars().DiskTracker)
-	rowContainer.GetDiskTracker().SetLabel(memory.LabelForFetchInto)
-	if variable.EnableTmpStorageOnOOM.Load() {
-		action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
-		sctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(action)
-	}
+	var (
+		fieldTps     []*types.FieldType
+		rowContainer *chunk.RowContainer
+		openErr      error
+	)
 	defer func() {
-		if err != nil {
+		if openErr != nil && rowContainer != nil {
 			rowContainer.GetMemTracker().Detach()
 			rowContainer.GetDiskTracker().Detach()
 			errCloseRowContainer := rowContainer.Close()
 			if errCloseRowContainer != nil {
 				logutil.Logger(ctx).Error("Fail to close rowContainer in error handler. May cause resource leak",
-					zap.NamedError("original-error", err), zap.NamedError("close-error", errCloseRowContainer))
+					zap.NamedError("original-error", openErr), zap.NamedError("close-error", errCloseRowContainer))
 			}
 		}
-		rs.Close()
 	}()
-	for {
-		req := rs.NewChunk(nil)
-		if err = rs.Next(ctx, req); err != nil {
-			return err
-		}
-		rowCount := req.NumRows()
-		if rowCount == 0 {
-			break
-		}
-		err = rowContainer.Add(req)
+
+	// TODO(udf): refactor open cursor logic to make it real streaming, instead of materializing the whole result in memory.
+	// This is important for large result set and also necessary for supporting cursor in stored function.
+
+	// When executing stored functions, the executor registers a compile&exec callback so the statement
+	// can run without resetting the outer statement context. In that mode we must execute via `p.executeStmt`.
+	if p.compileAndExec != nil {
+		exec := sctx.(sqlexec.RestrictedSQLExecutor)
+		rows, tps, err := p.executeStmt(ctx, exec, curInfo.selectAst, sqlexec.ExecOptionUseCurSession)
 		if err != nil {
+			openErr = err
 			return err
+		}
+		fieldTps = tps
+		if len(fieldTps) == 0 {
+			openErr = errors.New(fmt.Sprintf("CURSOR %s without RecordSet", curInfo.selectAst.Text()))
+			return openErr
+		}
+		rowContainer = chunk.NewRowContainer(fieldTps, sctx.GetSessionVars().MaxChunkSize)
+		rowContainer.GetMemTracker().AttachTo(sctx.GetSessionVars().MemTracker)
+		rowContainer.GetMemTracker().SetLabel(memory.LabelForFetchInto)
+		rowContainer.GetDiskTracker().AttachTo(sctx.GetSessionVars().DiskTracker)
+		rowContainer.GetDiskTracker().SetLabel(memory.LabelForFetchInto)
+		if variable.EnableTmpStorageOnOOM.Load() {
+			action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
+			sctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(action)
+		}
+		req := chunk.NewChunkWithCapacity(fieldTps, sctx.GetSessionVars().MaxChunkSize)
+		for i := range rows {
+			req.AppendRow(rows[i])
+			if req.NumRows() == req.Capacity() {
+				err := rowContainer.Add(req)
+				if err != nil {
+					openErr = errors.Trace(err)
+					return openErr
+				}
+				req = chunk.NewChunkWithCapacity(fieldTps, sctx.GetSessionVars().MaxChunkSize)
+			}
+		}
+		if req.NumRows() > 0 {
+			err := rowContainer.Add(req)
+			if err != nil {
+				openErr = errors.Trace(err)
+				return openErr
+			}
+		}
+	} else {
+		sqlExec := sctx.(sqlexec.SQLExecutor)
+		rset, err := sqlExec.ExecuteStmt(ctx, curInfo.selectAst)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendError(err)
+			openErr = err
+			return err
+		}
+		if rset == nil {
+			openErr = errors.New(fmt.Sprintf("CURSOR %s without RecordSet", curInfo.selectAst.Text()))
+			return openErr
+		}
+		defer func() {
+			if closeErr := rset.Close(); closeErr != nil {
+				logutil.Logger(ctx).Error("Fail to close record set in cursor open. May cause resource leak",
+					zap.NamedError("close-error", closeErr))
+			}
+		}()
+
+		fields := rset.Fields()
+		if len(fields) == 0 {
+			openErr = errors.New(fmt.Sprintf("CURSOR %s without RecordSet", curInfo.selectAst.Text()))
+			return openErr
+		}
+		fieldTps = make([]*types.FieldType, 0, len(fields))
+		for _, f := range fields {
+			fieldTps = append(fieldTps, &f.Column.FieldType)
+		}
+
+		// Drain the record set to rowContainer directly to avoid materializing the whole result in memory.
+		rowContainer = chunk.NewRowContainer(fieldTps, sctx.GetSessionVars().MaxChunkSize)
+		rowContainer.GetMemTracker().AttachTo(sctx.GetSessionVars().MemTracker)
+		rowContainer.GetMemTracker().SetLabel(memory.LabelForFetchInto)
+		rowContainer.GetDiskTracker().AttachTo(sctx.GetSessionVars().DiskTracker)
+		rowContainer.GetDiskTracker().SetLabel(memory.LabelForFetchInto)
+		if variable.EnableTmpStorageOnOOM.Load() {
+			action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
+			sctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(action)
+		}
+		req := rset.NewChunk(nil)
+		for {
+			err := rset.Next(ctx, req)
+			if err != nil {
+				openErr = err
+				return err
+			}
+			if req.NumRows() == 0 {
+				break
+			}
+			err = rowContainer.Add(req)
+			if err != nil {
+				openErr = errors.Trace(err)
+				return openErr
+			}
+			req = rset.NewChunk(nil)
 		}
 	}
 	curInfo.reader = chunk.NewRowContainerReader(rowContainer)
-	curInfo.fields = rs.Fields()
+	curInfo.fields = fieldTps
 	curInfo.open = true
 	curInfo.rowContainer = rowContainer
 	return nil
@@ -1644,6 +1899,15 @@ func (curInfo *procedurceCurInfo) CloseCurs() error {
 func (b *PlanBuilder) buildCallBodyPlan(ctx context.Context, stmtNodes *ast.CreateProcedureInfo, collate string) error {
 	b.ctx.GetSessionVars().SetInCallProcedure()
 	defer b.ctx.GetSessionVars().OutCallProcedure(false)
+	if stmtNodes.FunctionInfo.RetType != nil {
+		retType, err := b.setDefaultLengthAndCharset(stmtNodes.FunctionInfo.RetType, collate)
+		if err != nil {
+			return err
+		}
+		b.storedFuncRetType = retType
+	} else {
+		b.storedFuncRetType = nil
+	}
 	return b.procedureNodePlan(ctx, stmtNodes.ProcedureBody, collate)
 }
 
@@ -1797,9 +2061,13 @@ func (p *executeBaseSQL) checkProcedureStatus(ctx context.Context, sctx base.Pla
 	for _, stmt := range p.cacheStmt.stmts {
 		switch x := stmt.(type) {
 		case *ast.SetStmt:
+			inTrigger := sctx.GetSessionVars().StmtCtx.TriggerCtx.InTrigger
 			// check variable if exists.
 			for _, vari := range x.Variables {
 				if !vari.IsSystem {
+					continue
+				}
+				if inTrigger && isTriggerPseudoRecord(vari) {
 					continue
 				}
 				if vari.CanSPVariable {
@@ -1812,12 +2080,14 @@ func (p *executeBaseSQL) checkProcedureStatus(ctx context.Context, sctx base.Pla
 					}
 				}
 
-				sysVar := variable.GetSysVar(vari.Name)
-				if sysVar == nil {
-					if variable.IsRemovedSysVar(vari.Name) {
-						continue // removed vars permit parse-but-ignore
+				if !inTrigger {
+					sysVar := variable.GetSysVar(vari.Name)
+					if sysVar == nil {
+						if variable.IsRemovedSysVar(vari.Name) {
+							continue // removed vars permit parse-but-ignore
+						}
+						return variable.ErrUnknownSystemVar.GenWithStackByArgs(vari.Name)
 					}
-					return variable.ErrUnknownSystemVar.GenWithStackByArgs(vari.Name)
 				}
 			}
 		case *ast.ExecuteStmt:
@@ -1841,6 +2111,16 @@ func (p *executeBaseSQL) checkProcedureStatus(ctx context.Context, sctx base.Pla
 		}
 	}
 	return nil
+}
+
+func isTriggerPseudoRecord(v *ast.VariableAssignment) bool {
+	lhs := v.Name
+	ss := strings.Split(lhs, ".")
+	if len(ss) != 2 {
+		return false
+	}
+	tableRef := ss[0]
+	return strings.ToLower(tableRef) == "new"
 }
 
 // procedureNodePlan Generate execution plan for procedure node.
@@ -2262,6 +2542,16 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		}
 		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, toBegin)
 		b.procedureNowContext = procedureLoop.GetRoot()
+	case *ast.ProcedureReturnStmt:
+		ri := &returnInst{
+			context:   b.procedureNowContext,
+			cacheStmt: &CacheAst{node.Text(), false, []ast.StmtNode{node}},
+			retType:   b.storedFuncRetType,
+		}
+		// TODO(lance6716): like below `default` branch, add a checkProcedureStatus logic?
+		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, ri)
+	case *ast.UseStmt:
+		return dbterror.ErrSpBadstatement.FastGenByArgs("USE")
 	default:
 		exec := &executeBaseSQL{
 			context:   b.procedureNowContext,
@@ -2292,9 +2582,9 @@ func (b *PlanBuilder) newVariableVars(ctx context.Context, collate string, conte
 			}
 		}
 		cursor := &procedurceCurInfo{
-			curName:    x.CurName,
-			selectStmt: x.Selectstring.Text(),
-			context:    b.procedureNowContext,
+			curName:   x.CurName,
+			selectAst: x.Selectstring,
+			context:   b.procedureNowContext,
 		}
 		context.Cursors = append(context.Cursors, cursor)
 		exec := &ResetProcedurceCursor{
@@ -2478,17 +2768,23 @@ func (b *PlanBuilder) newVariableVars(ctx context.Context, collate string, conte
 	return nil
 }
 
+// ProcedureCompileAndExec defines a function type for compiling and executing procedure statements.
+type ProcedureCompileAndExec func(ctx context.Context, stmt ast.StmtNode) ([]chunk.Row, []*types.FieldType, error)
+
 // GetExprValue gets expr value by execute select expr.
 // (*PlanBuilder).rewrite expr ==> expr.Eval() cannot handle a in (select * from t1)
 // To Do: Gets results from logical plan.
-func GetExprValue(ctx context.Context, node *CacheExpr, tp *types.FieldType, sctx sessionctx.Context, name string) (types.Datum, error) {
+func GetExprValue(ctx context.Context, node *CacheExpr, tp *types.FieldType, sctx sessionctx.Context, name string, exec ProcedureCompileAndExec) (types.Datum, error) {
 	if node == nil || node.expr == "" {
 		// if node is null ,sets default value is NULL.
 		datum := types.NewDatum("")
 		datum.SetNull()
 		return datum.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), tp)
 	}
-	datum, err := getExprValue(ctx, node, sctx)
+	p := &baseProcedureExecPlan{
+		compileAndExec: exec,
+	}
+	datum, err := getExprValue(ctx, node, sctx, p)
 	if err != nil {
 		return types.NewDatum(""), err
 	}
@@ -2496,9 +2792,9 @@ func GetExprValue(ctx context.Context, node *CacheExpr, tp *types.FieldType, sct
 	return table.CastValue(sctx, *datum.Clone(), col, false, false)
 }
 
-func getExprValue(ctx context.Context, node *CacheExpr, sctx sessionctx.Context) (d types.Datum, err error) {
+func getExprValue(ctx context.Context, node *CacheExpr, sctx sessionctx.Context, basePlan *baseProcedureExecPlan) (d types.Datum, err error) {
 	var rows []chunk.Row
-	var fields []*resolve.ResultField
+	var fields []*types.FieldType
 	defer func() {
 		if !variable.TiDBEnableSPAstReuse.Load() {
 			node.isInvalid = true
@@ -2513,8 +2809,8 @@ func getExprValue(ctx context.Context, node *CacheExpr, sctx sessionctx.Context)
 		return types.NewDatum(nil), err
 	}
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	//execute as select expr.
-	rows, fields, err = exec.ExecRestrictedStmt(ctx, node.stmt, sqlexec.ExecOptionUseCurSession)
+	// execute as select expr.
+	rows, fields, err = basePlan.executeStmt(ctx, exec, node.stmt, sqlexec.ExecOptionUseCurSession)
 	if err != nil {
 		return types.NewDatum(nil), err
 	}
@@ -2531,7 +2827,7 @@ func getExprValue(ctx context.Context, node *CacheExpr, sctx sessionctx.Context)
 			if row.IsNull(0) {
 				break
 			}
-			r := row.GetDatum(0, fields[0].Column.FieldType.Clone())
+			r := row.GetDatum(0, fields[0].Clone())
 			return r, nil
 		}
 	}
@@ -2564,6 +2860,9 @@ func ResetFlagBySQLMode(sc *stmtctx.StatementContext, vars *variable.SessionVars
 func UpdateVariableVar(name string, val types.Datum, sessVars *variable.SessionVars) error {
 	pCon := sessVars.GetProcedureContext()
 	if pCon == nil {
+		logutil.BgLogger().Warn("no procedure context found when update variable",
+			zap.Bool("inCall", sessVars.GetCallProcedure()),
+			zap.String("varName", name))
 		return plannererrors.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	pCon.Lock.Lock()

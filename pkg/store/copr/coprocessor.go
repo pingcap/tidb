@@ -37,6 +37,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
@@ -1871,6 +1872,9 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) error {
 	if lockErr == nil {
 		return nil
+	}
+	if pkdbrepl.IsStandbyMode() {
+		return errors.Trace(derr.ErrResolveLockTimeout)
 	}
 	resolveLockDetail := worker.getLockResolverDetails()
 	// Be care that we didn't redact the SQL statement because the log is DEBUG level.
