@@ -38,6 +38,8 @@ const (
 
 	// watchSyncInterval is the interval to sync the watch record.
 	watchSyncInterval = time.Second
+	// watchSyncOverlap is the amount of overlap retained between consecutive scans.
+	watchSyncOverlap = 3 * watchSyncInterval
 	// watchTableName is the name of system table which save runaway watch items.
 	runawayWatchTableName = "tidb_runaway_watch"
 	// watchDoneTableName is the name of system table which save done runaway watch items.
@@ -77,10 +79,12 @@ func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache)
 		newWatchReader: &systemTableReader{
 			getRunawayWatchTableName(),
 			"start_time",
+			NullTime,
 			NullTime},
 		deletionWatchReader: &systemTableReader{
 			getRunawayWatchDoneTableName(),
 			"done_time",
+			NullTime,
 			NullTime},
 		syncInterval:   metrics.RunawaySyncerIntervalHistogram.WithLabelValues(lblSync),
 		syncDuration:   metrics.RunawaySyncerDurationHistogram.WithLabelValues(lblSync),
@@ -120,37 +124,61 @@ func (s *syncer) checkTableExist(tableName ast.CIStr) bool {
 }
 
 func (s *syncer) getWatchRecordByID(id int64) ([]*QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id), false)
+	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id))
 }
 
 func (s *syncer) getWatchRecordByGroup(groupName string) ([]*QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByGroupStmt(groupName), false)
+	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectByGroupStmt(groupName))
 }
 
 func (s *syncer) getNewWatchRecords() ([]*QuarantineRecord, error) {
-	return s.getWatchRecord(s.newWatchReader, s.newWatchReader.genSelectStmt, true)
+	reader := s.newWatchReader
+	reader.UpperBound = time.Now().UTC()
+	records, err := s.getWatchRecord(reader, reader.genSelectStmt)
+	if err != nil {
+		return nil, err
+	}
+	// Advance the checkpoint from the fixed upper bound captured before the scan starts.
+	// Keep a small overlap so rows that become visible slightly later can still be re-scanned.
+	// De-duplication will be handled later by `AddWatch` in memory.
+	if len(records) > 0 {
+		reader.CheckPoint = reader.UpperBound.Add(-watchSyncOverlap)
+	}
+	return records, nil
 }
 
 func (s *syncer) getNewWatchDoneRecords() ([]*QuarantineRecord, error) {
-	return s.getWatchDoneRecord(s.deletionWatchReader, s.deletionWatchReader.genSelectStmt, true)
+	reader := s.deletionWatchReader
+	reader.UpperBound = time.Now().UTC()
+	records, err := s.getWatchDoneRecord(reader, reader.genSelectStmt)
+	if err != nil {
+		return nil, err
+	}
+	// Ditto as getNewWatchRecords.
+	if len(records) > 0 {
+		reader.CheckPoint = reader.UpperBound.Add(-watchSyncOverlap)
+	}
+	return records, nil
 }
 
-func (s *syncer) getWatchRecord(reader *systemTableReader, sqlGenFn func() (string, []any), push bool) ([]*QuarantineRecord, error) {
-	return getRunawayWatchRecord(s.sysSessionPool, reader, sqlGenFn, push)
+func (s *syncer) getWatchRecord(reader *systemTableReader, sqlGenFn func() (string, []any)) ([]*QuarantineRecord, error) {
+	return getRunawayWatchRecord(s.sysSessionPool, reader, sqlGenFn)
 }
 
-func (s *syncer) getWatchDoneRecord(reader *systemTableReader, sqlGenFn func() (string, []any), push bool) ([]*QuarantineRecord, error) {
-	return getRunawayWatchDoneRecord(s.sysSessionPool, reader, sqlGenFn, push)
+func (s *syncer) getWatchDoneRecord(reader *systemTableReader, sqlGenFn func() (string, []any)) ([]*QuarantineRecord, error) {
+	return getRunawayWatchDoneRecord(s.sysSessionPool, reader, sqlGenFn)
 }
 
-func getRunawayWatchRecord(sysSessionPool util.SessionPool, reader *systemTableReader,
-	sqlGenFn func() (string, []any), push bool) ([]*QuarantineRecord, error) {
+func getRunawayWatchRecord(
+	sysSessionPool util.SessionPool,
+	reader *systemTableReader,
+	sqlGenFn func() (string, []any),
+) ([]*QuarantineRecord, error) {
 	rs, err := reader.Read(sysSessionPool, sqlGenFn)
 	if err != nil {
 		return nil, err
 	}
 	ret := make([]*QuarantineRecord, 0, len(rs))
-	now := time.Now().UTC()
 	for _, r := range rs {
 		startTime, err := r.GetTime(2).GoTime(time.UTC)
 		if err != nil {
@@ -177,24 +205,19 @@ func getRunawayWatchRecord(sysSessionPool util.SessionPool, reader *systemTableR
 		}
 		ret = append(ret, qr)
 	}
-	// If at leaset one record is found from the current checkpoint with push enabled,
-	// advance the checkpoint to now to ensure the next scan will get the latest records.
-	// Add a negative offset to leave some buffer for slower TiDB instances that may write
-	// records after the checkpoint has advanced.
-	if push && len(ret) > 0 {
-		reader.CheckPoint = now.Add(-3 * watchSyncInterval)
-	}
 	return ret, nil
 }
 
-func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTableReader,
-	sqlGenFn func() (string, []any), push bool) ([]*QuarantineRecord, error) {
+func getRunawayWatchDoneRecord(
+	sysSessionPool util.SessionPool,
+	reader *systemTableReader,
+	sqlGenFn func() (string, []any),
+) ([]*QuarantineRecord, error) {
 	rs, err := reader.Read(sysSessionPool, sqlGenFn)
 	if err != nil {
 		return nil, err
 	}
 	ret := make([]*QuarantineRecord, 0, len(rs))
-	now := time.Now().UTC()
 	for _, r := range rs {
 		startTime, err := r.GetTime(3).GoTime(time.UTC)
 		if err != nil {
@@ -221,10 +244,6 @@ func getRunawayWatchDoneRecord(sysSessionPool util.SessionPool, reader *systemTa
 		}
 		ret = append(ret, qr)
 	}
-	// Ditto as getRunawayWatchRecord.
-	if push && len(ret) > 0 {
-		reader.CheckPoint = now.Add(-3 * watchSyncInterval)
-	}
 	return ret, nil
 }
 
@@ -233,6 +252,7 @@ type systemTableReader struct {
 	TableName  string
 	KeyCol     string
 	CheckPoint time.Time
+	UpperBound time.Time
 }
 
 func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
@@ -261,14 +281,16 @@ func (r *systemTableReader) genSelectByGroupStmt(groupName string) func() (strin
 
 func (r *systemTableReader) genSelectStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]any, 0, 1)
+	params := make([]any, 0, 2)
 	builder.WriteString("select * from ")
 	builder.WriteString(r.TableName)
 	builder.WriteString(" where ")
 	builder.WriteString(r.KeyCol)
-	builder.WriteString(" > %? order by ")
+	builder.WriteString(" >= %? and ")
 	builder.WriteString(r.KeyCol)
-	params = append(params, r.CheckPoint)
+	builder.WriteString(" < %? order by ")
+	builder.WriteString(r.KeyCol)
+	params = append(params, r.CheckPoint, r.UpperBound)
 	return builder.String(), params
 }
 

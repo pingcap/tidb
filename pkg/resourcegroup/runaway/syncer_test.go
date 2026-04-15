@@ -142,25 +142,19 @@ func newWatchDoneRow(doneID, recordID int64, groupName string, startTime time.Ti
 	)
 }
 
-func requireCheckpointInRange(t *testing.T, actual, before, after time.Time) {
-	t.Helper()
-	minCheckpoint := before.Add(-3 * watchSyncInterval)
-	maxCheckpoint := after.Add(-3 * watchSyncInterval)
-	require.False(t, actual.Before(minCheckpoint), "checkpoint %v should be >= %v", actual, minCheckpoint)
-	require.False(t, actual.After(maxCheckpoint), "checkpoint %v should be <= %v", actual, maxCheckpoint)
-}
-
 func TestGenSelectStmts(t *testing.T) {
 	checkpoint := time.Date(2026, 4, 14, 9, 59, 0, 0, time.UTC)
+	upperBound := checkpoint.Add(10 * time.Second)
 	reader := &systemTableReader{
 		TableName:  getRunawayWatchTableName(),
 		KeyCol:     "start_time",
 		CheckPoint: checkpoint,
+		UpperBound: upperBound,
 	}
 
 	sql, params := reader.genSelectStmt()
-	require.Equal(t, "select * from mysql.tidb_runaway_watch where start_time > %? order by start_time", sql)
-	require.Equal(t, []any{checkpoint}, params)
+	require.Equal(t, "select * from mysql.tidb_runaway_watch where start_time >= %? and start_time < %? order by start_time", sql)
+	require.Equal(t, []any{checkpoint, upperBound}, params)
 
 	sqlGenFn := reader.genSelectByIDStmt(42)
 	sql, params = sqlGenFn()
@@ -184,9 +178,13 @@ func TestWatchAdvanceCheckpoint(t *testing.T) {
 		KeyCol:     "start_time",
 		CheckPoint: initialCheckpoint,
 	}
+	s := &syncer{
+		sysSessionPool: &stubSessionPool{resource: session},
+		newWatchReader: reader,
+	}
 
 	before := time.Now().UTC()
-	records, err := getRunawayWatchRecord(&stubSessionPool{resource: session}, reader, reader.genSelectStmt, true)
+	records, err := s.getNewWatchRecords()
 	after := time.Now().UTC()
 
 	require.NoError(t, err)
@@ -194,33 +192,21 @@ func TestWatchAdvanceCheckpoint(t *testing.T) {
 	require.Equal(t, int64(30005), records[0].ID)
 	require.Equal(t, "rg_bulk", records[0].ResourceGroupName)
 	require.Equal(t, endTime, records[0].EndTime)
-	require.Contains(t, session.sql, "where start_time > %? order by start_time")
-	require.NotContains(t, session.sql, "where id > %?")
-	require.Len(t, session.args, 1)
+	require.Contains(t, session.sql, "where start_time >= %? and start_time < %? order by start_time")
+	require.Len(t, session.args, 2)
 
 	checkpointArg, ok := session.args[0].(time.Time)
 	require.True(t, ok)
 	require.True(t, checkpointArg.Equal(initialCheckpoint))
-	requireCheckpointInRange(t, reader.CheckPoint, before, after)
+	upperBoundArg, ok := session.args[1].(time.Time)
+	require.True(t, ok)
+	require.False(t, upperBoundArg.Before(before))
+	require.False(t, upperBoundArg.After(after))
+	require.True(t, reader.CheckPoint.Equal(upperBoundArg.Add(-watchSyncOverlap)))
 }
 
 func TestWatchHoldCheckpoint(t *testing.T) {
-	startTime := time.Date(2026, 4, 14, 10, 0, 0, 123000000, time.UTC)
 	initialCheckpoint := time.Date(2026, 4, 14, 9, 59, 0, 0, time.UTC)
-
-	t.Run("push disabled", func(t *testing.T) {
-		session := newStubRestrictedSession([]chunk.Row{newWatchRow(30005, "rg_bulk", startTime, nil)})
-		reader := &systemTableReader{
-			TableName:  getRunawayWatchTableName(),
-			KeyCol:     "start_time",
-			CheckPoint: initialCheckpoint,
-		}
-
-		records, err := getRunawayWatchRecord(&stubSessionPool{resource: session}, reader, reader.genSelectStmt, false)
-		require.NoError(t, err)
-		require.Len(t, records, 1)
-		require.True(t, reader.CheckPoint.Equal(initialCheckpoint))
-	})
 
 	t.Run("empty result", func(t *testing.T) {
 		session := newStubRestrictedSession(nil)
@@ -229,8 +215,12 @@ func TestWatchHoldCheckpoint(t *testing.T) {
 			KeyCol:     "start_time",
 			CheckPoint: initialCheckpoint,
 		}
+		s := &syncer{
+			sysSessionPool: &stubSessionPool{resource: session},
+			newWatchReader: reader,
+		}
 
-		records, err := getRunawayWatchRecord(&stubSessionPool{resource: session}, reader, reader.genSelectStmt, true)
+		records, err := s.getNewWatchRecords()
 		require.NoError(t, err)
 		require.Empty(t, records)
 		require.True(t, reader.CheckPoint.Equal(initialCheckpoint))
@@ -243,8 +233,12 @@ func TestWatchHoldCheckpoint(t *testing.T) {
 			KeyCol:     "start_time",
 			CheckPoint: initialCheckpoint,
 		}
+		s := &syncer{
+			sysSessionPool: &stubSessionPool{resource: session},
+			newWatchReader: reader,
+		}
 
-		records, err := getRunawayWatchRecord(&stubSessionPool{resource: session}, reader, reader.genSelectStmt, true)
+		records, err := s.getNewWatchRecords()
 		require.NoError(t, err)
 		require.Empty(t, records)
 		require.True(t, reader.CheckPoint.Equal(initialCheckpoint))
@@ -258,8 +252,12 @@ func TestWatchHoldCheckpoint(t *testing.T) {
 			KeyCol:     "start_time",
 			CheckPoint: initialCheckpoint,
 		}
+		s := &syncer{
+			sysSessionPool: &stubSessionPool{resource: session},
+			newWatchReader: reader,
+		}
 
-		records, err := getRunawayWatchRecord(&stubSessionPool{resource: session}, reader, reader.genSelectStmt, true)
+		records, err := s.getNewWatchRecords()
 		require.ErrorContains(t, err, "read failed")
 		require.Nil(t, records)
 		require.True(t, reader.CheckPoint.Equal(initialCheckpoint))
@@ -277,43 +275,34 @@ func TestWatchDoneAdvanceCheckpoint(t *testing.T) {
 		KeyCol:     "done_time",
 		CheckPoint: initialCheckpoint,
 	}
+	s := &syncer{
+		sysSessionPool:      &stubSessionPool{resource: session},
+		deletionWatchReader: reader,
+	}
 
 	before := time.Now().UTC()
-	records, err := getRunawayWatchDoneRecord(&stubSessionPool{resource: session}, reader, reader.genSelectStmt, true)
+	records, err := s.getNewWatchDoneRecords()
 	after := time.Now().UTC()
 
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	require.Equal(t, int64(30005), records[0].ID)
 	require.Equal(t, endTime, records[0].EndTime)
-	require.Contains(t, session.sql, "where done_time > %? order by done_time")
-	require.NotContains(t, session.sql, "where id > %?")
-	require.Len(t, session.args, 1)
+	require.Contains(t, session.sql, "where done_time >= %? and done_time < %? order by done_time")
+	require.Len(t, session.args, 2)
 
 	checkpointArg, ok := session.args[0].(time.Time)
 	require.True(t, ok)
 	require.True(t, checkpointArg.Equal(initialCheckpoint))
-	requireCheckpointInRange(t, reader.CheckPoint, before, after)
+	upperBoundArg, ok := session.args[1].(time.Time)
+	require.True(t, ok)
+	require.False(t, upperBoundArg.Before(before))
+	require.False(t, upperBoundArg.After(after))
+	require.True(t, reader.CheckPoint.Equal(upperBoundArg.Add(-watchSyncOverlap)))
 }
 
 func TestWatchDoneHoldCheckpoint(t *testing.T) {
-	startTime := time.Date(2026, 4, 14, 10, 0, 0, 123000000, time.UTC)
-	doneTime := time.Date(2026, 4, 14, 10, 1, 0, 123000000, time.UTC)
 	initialCheckpoint := time.Date(2026, 4, 14, 9, 59, 0, 0, time.UTC)
-
-	t.Run("push disabled", func(t *testing.T) {
-		session := newStubRestrictedSession([]chunk.Row{newWatchDoneRow(1, 30005, "rg_bulk", startTime, nil, doneTime)})
-		reader := &systemTableReader{
-			TableName:  getRunawayWatchDoneTableName(),
-			KeyCol:     "done_time",
-			CheckPoint: initialCheckpoint,
-		}
-
-		records, err := getRunawayWatchDoneRecord(&stubSessionPool{resource: session}, reader, reader.genSelectStmt, false)
-		require.NoError(t, err)
-		require.Len(t, records, 1)
-		require.True(t, reader.CheckPoint.Equal(initialCheckpoint))
-	})
 
 	t.Run("empty result", func(t *testing.T) {
 		session := newStubRestrictedSession(nil)
@@ -322,8 +311,12 @@ func TestWatchDoneHoldCheckpoint(t *testing.T) {
 			KeyCol:     "done_time",
 			CheckPoint: initialCheckpoint,
 		}
+		s := &syncer{
+			sysSessionPool:      &stubSessionPool{resource: session},
+			deletionWatchReader: reader,
+		}
 
-		records, err := getRunawayWatchDoneRecord(&stubSessionPool{resource: session}, reader, reader.genSelectStmt, true)
+		records, err := s.getNewWatchDoneRecords()
 		require.NoError(t, err)
 		require.Empty(t, records)
 		require.True(t, reader.CheckPoint.Equal(initialCheckpoint))
@@ -337,8 +330,12 @@ func TestWatchDoneHoldCheckpoint(t *testing.T) {
 			KeyCol:     "done_time",
 			CheckPoint: initialCheckpoint,
 		}
+		s := &syncer{
+			sysSessionPool:      &stubSessionPool{resource: session},
+			deletionWatchReader: reader,
+		}
 
-		records, err := getRunawayWatchDoneRecord(&stubSessionPool{resource: session}, reader, reader.genSelectStmt, true)
+		records, err := s.getNewWatchDoneRecords()
 		require.ErrorContains(t, err, "read failed")
 		require.Nil(t, records)
 		require.True(t, reader.CheckPoint.Equal(initialCheckpoint))

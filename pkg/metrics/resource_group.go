@@ -112,7 +112,7 @@ func InitResourceGroupMetrics() {
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "runaway_syncer_checkpoint",
-			Help:      "Current checkpoint of runaway syncer: Unix milliseconds of the last synced start_time (watch) or done_time (watch_done).",
+			Help:      "Current lower-bound checkpoint of runaway syncer: Unix milliseconds of the next scan window for start_time (watch) or done_time (watch_done).",
 		}, []string{LblType})
 
 	RunawaySyncerCounter = metricscommon.NewCounterVec(

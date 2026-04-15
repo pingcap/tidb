@@ -3414,7 +3414,7 @@
                "dashes": false,
                "datasource": "${DS_TEST-CLUSTER}",
                "decimals": 0,
-               "description": "The current checkpoint of runaway syncer, expressed as Unix milliseconds of the last synced start_time (watch) or done_time (watch_done). A value of 0 means no checkpoint has been established yet.",
+               "description": "The current lower-bound checkpoint of runaway syncer, expressed as Unix milliseconds of the next scan window for start_time (watch) or done_time (watch_done). A value of 0 means no checkpoint has been established yet.",
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
