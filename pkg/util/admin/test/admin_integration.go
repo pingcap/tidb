@@ -44,8 +44,8 @@ func RunAdminCheckTableCorrupted(t *testing.T) {
 			key := make([]byte, len(it.Key()))
 			copy(key, it.Key())
 			copy(value, it.Value())
-			key[len(key)-1] += 1
-			memBuffer.Set(key, value)
+			key[len(key)-1]++
+			_ = memBuffer.Set(key, value)
 		}
 		err = it.Next()
 		require.NoError(t, err)
