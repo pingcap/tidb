@@ -220,8 +220,8 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 
 		// Determine the physical tables to scan.
 		type tblInfo struct {
-			physTblID    int64
-			isCommonHdl  bool
+			physTblID   int64
+			isCommonHdl bool
 		}
 		var tables []tblInfo
 		if isIdxScan && e.partitionTableMode && e.indexes[i] != nil && e.indexes[i].Global {
@@ -309,7 +309,6 @@ func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
 	}
 	return nil
 }
-
 
 func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	exitCh := make(chan struct{})
