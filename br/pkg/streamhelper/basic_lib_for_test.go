@@ -97,8 +97,11 @@ type testEnv struct {
 	task           streamhelper.TaskEvent
 
 	resolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
+	beforeStores func()
+	beforeScan   func()
 
-	mu sync.Mutex
+	mu     sync.Mutex
+	hookMu sync.Mutex
 	pd.Client
 }
 
@@ -230,6 +233,38 @@ func (t *testEnv) putTask() {
 		},
 		Ranges: rngs,
 	}
+}
+
+func (t *testEnv) setTimingHooks(beforeStores, beforeScan func()) {
+	t.hookMu.Lock()
+	defer t.hookMu.Unlock()
+	t.beforeStores = beforeStores
+	t.beforeScan = beforeScan
+}
+
+func (t *testEnv) Stores(ctx context.Context) ([]streamhelper.Store, error) {
+	t.hookMu.Lock()
+	hook := t.beforeStores
+	t.hookMu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return t.Cluster.Stores(ctx)
+}
+
+func (t *testEnv) RegionScan(
+	ctx context.Context,
+	key []byte,
+	endKey []byte,
+	limit int,
+) ([]streamhelper.RegionWithLeader, error) {
+	t.hookMu.Lock()
+	hook := t.beforeScan
+	t.hookMu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return t.Cluster.RegionScan(ctx, key, endKey, limit)
 }
 
 func (t *testEnv) ScanLocksInOneRegion(

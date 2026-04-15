@@ -440,7 +440,6 @@ func TestOwnerDropped(t *testing.T) {
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	installSubscribeSupport(c)
 	env := newTestEnv(c, t)
-	fp := "github.com/pingcap/tidb/br/pkg/streamhelper/get_subscriber"
 	defer func() {
 		if t.Failed() {
 			fmt.Println(c)
@@ -451,18 +450,42 @@ func TestOwnerDropped(t *testing.T) {
 	adv.OnStart(ctx)
 	adv.SpawnSubscriptionHandler(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	failpoint.Enable(fp, "pause")
-	ch := make(chan struct{})
-	go func() {
-		defer close(ch)
-		require.NoError(t, adv.OnTick(ctx))
-	}()
-	adv.OnStop()
-	failpoint.Disable(fp)
+	getSubscriberReached := make(chan struct{}, 1)
+	beforeManualPollReached := make(chan struct{}, 1)
+	releaseSubscriber := make(chan struct{})
+	releaseManualPoll := make(chan struct{})
+	env.setTimingHooks(func() {
+		select {
+		case getSubscriberReached <- struct{}{}:
+		default:
+		}
+		<-releaseSubscriber
+	}, func() {
+		select {
+		case beforeManualPollReached <- struct{}{}:
+		default:
+		}
+		<-releaseManualPoll
+	})
+	defer env.setTimingHooks(nil, nil)
 
+	tickDone := make(chan error, 1)
+	go func() {
+		tickDone <- adv.OnTick(ctx)
+	}()
+	<-getSubscriberReached
+	stopDone := make(chan struct{})
+	go func() {
+		adv.OnStop()
+		close(stopDone)
+	}()
+	close(releaseSubscriber)
+	<-stopDone
+	<-beforeManualPollReached
 	cp := c.advanceCheckpoints()
 	c.flushAll()
-	<-ch
+	close(releaseManualPoll)
+	require.NoError(t, <-tickDone)
 	adv.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
 		// Advancer will manually poll the checkpoint...
 		require.Equal(t, vsf.MinValue(), cp)
