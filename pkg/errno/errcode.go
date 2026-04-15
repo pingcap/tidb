@@ -919,6 +919,7 @@ const (
 	ErrDefValGeneratedNamedFunctionIsNotAllowed              = 3770
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
+	ErrInvalidLateralJoin                                    = 3809
 	ErrNonBooleanExprForCheckConstraint                      = 3812
 	ErrColumnCheckConstraintReferencesOtherColumn            = 3813
 	ErrCheckConstraintNamedFunctionIsNotAllowed              = 3814
@@ -1078,6 +1079,7 @@ const (
 	ErrInvalidOptionVal                    = 8164
 	ErrDuplicateOption                     = 8165
 	ErrLoadDataUnsupportedOption           = 8166
+	ErrLoadDataDuplicateKeyConflict        = 8167
 	ErrLoadDataJobNotFound                 = 8170
 	ErrLoadDataInvalidOperation            = 8171
 	ErrLoadDataLocalUnsupportedOption      = 8172
@@ -1089,6 +1091,7 @@ const (
 	ErrKeyTooLarge                         = 8178
 	ErrTimeStampInDSTTransition            = 8179
 	ErrQueryExecStopped                    = 8180
+	_                                      = 8181 // reserved for ErrPDTimestampLagsTooMuch
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1141,15 +1144,16 @@ const (
 	ErrIngestCheckEnvFailed               = 8256
 	ErrProtectedTableMode                 = 8258
 	ErrInvalidTableModeSet                = 8259
-
-	ErrCannotPauseDDLJob  = 8260
-	ErrCannotResumeDDLJob = 8261
-	ErrPausedDDLJob       = 8262
-	ErrBDRRestrictedDDL   = 8263
-
-	ErrGlobalIndexNotExplicitlySet = 8264
-
+	ErrCannotPauseDDLJob                  = 8260
+	ErrCannotResumeDDLJob                 = 8261
+	ErrPausedDDLJob                       = 8262
+	ErrBDRRestrictedDDL                   = 8263
+	ErrGlobalIndexNotExplicitlySet        = 8264
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
+	ErrInvalidAffinityOption              = 8266
+	ErrForbiddenDDL                       = 8267
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1167,6 +1171,8 @@ const (
 	ErrStorageClassInvalidSpec                  = 8271
 	ErrModifyColumnReferencedByPartialCondition = 8272
 	ErrCheckPartialIndexWithoutFastCheck        = 8273
+
+	// [8800, 8900) are reserved for a downstream fork
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

@@ -650,6 +650,14 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinIsIPv6Sig{base}
 	case tipb.ScalarFuncSig_UUID:
 		f = &builtinUUIDSig{base}
+	case tipb.ScalarFuncSig_UUIDv4:
+		f = &builtinUUIDv4Sig{base}
+	case tipb.ScalarFuncSig_UUIDv7:
+		f = &builtinUUIDv7Sig{base}
+	case tipb.ScalarFuncSig_UUIDVersion:
+		f = &builtinUUIDVersionSig{base}
+	case tipb.ScalarFuncSig_UUIDTimestamp:
+		f = &builtinUUIDTimestampSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IlikeSig:
@@ -1008,7 +1016,7 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 	case tipb.ScalarFuncSig_FieldString:
 		f = &builtinFieldStringSig{base}
 	case tipb.ScalarFuncSig_FindInSet:
-		f = &builtinFindInSetSig{base}
+		f = &builtinFindInSetSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_Format:
 		f = &builtinFormatSig{base}
 	case tipb.ScalarFuncSig_FormatWithLocale:

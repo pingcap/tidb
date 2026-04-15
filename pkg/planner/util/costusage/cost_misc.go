@@ -175,6 +175,13 @@ func MulCostVer2(cost CostVer2, scale float64) (ret CostVer2) {
 // ZeroCostVer2 is a pre-defined zero CostVer2.
 var ZeroCostVer2 = NewZeroCostVer2(false)
 
+// AddCostWithoutTrace adds a cost value to the given CostVer2 without affecting its trace.
+// This is useful for adding small tie-breaker costs that should not appear in explain output.
+func AddCostWithoutTrace(cost CostVer2, additionalCost float64) CostVer2 {
+	cost.cost += additionalCost
+	return cost
+}
+
 // NewDefaultPlanCostOption returns PlanCostOption
 func NewDefaultPlanCostOption() *PlanCostOption {
 	return &PlanCostOption{}

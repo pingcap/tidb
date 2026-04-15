@@ -13,22 +13,23 @@ import (
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/data"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
-func ReadBackupMetaData(ctx context.Context, s storage.ExternalStorage) (uint64, int, error) {
+func ReadBackupMetaData(ctx context.Context, s storeapi.Storage) (uint64, int, error) {
 	metaInfo, err := config.NewMetaFromStorage(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -88,15 +89,15 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 
 	// stop gc before restore tikv data
-	sp := utils.BRServiceSafePoint{
+	sp := gc.BRServiceSafePoint{
 		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+		TTL:      gc.DefaultBRGCSafePointTTL,
+		ID:       gc.MakeSafePointID(),
 	}
 
 	// TODO: since data restore does not have tidb up, it looks we can remove this keeper
 	// it requires to do more test, then remove this part of code.
-	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+	err = gc.StartServiceSafePointKeeper(ctx, sp, mgr.GetGCManager())
 	if err != nil {
 		return errors.Trace(err)
 	}

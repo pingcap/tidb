@@ -28,19 +28,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/session"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -122,7 +122,7 @@ func NewAddIndexIngestPipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgMeta.UseCloudStorage)
 
 	failpoint.InjectCall("beforeAddIndexScan")
 
@@ -152,7 +152,7 @@ func NewAddIndexIngestPipeline(
 func NewWriteIndexToExternalStoragePipeline(
 	ctx *workerpool.Context,
 	store kv.Storage,
-	extStore storage.ExternalStorage,
+	extStore storeapi.Storage,
 	sessPool opSessPool,
 	taskID, subtaskID int64,
 	tbl table.PhysicalTable,
@@ -180,7 +180,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
-	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize, reorgMeta.UseCloudStorage)
 
 	memCap := resource.Mem.Capacity()
 	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
@@ -532,6 +532,16 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
+	// Local ingest may trigger partial import/reset while the scan transaction is
+	// still open, so only the global-sort path can stream results immediately.
+	enableStreaming := w.reorgMeta.UseCloudStorage
+	sendResult := func(idxResult IndexRecordChunk) {
+		sender(idxResult)
+		if w.cpOp != nil {
+			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), idxResult.Done)
+		}
+		w.totalCount.Add(idxResult.tableScanRowCount)
+	}
 	var scanCtx context.Context = w.ctx
 	if scanCtx.Value(kvutil.ExecDetailsKey) == nil {
 		scanCtx = context.WithValue(w.ctx, kvutil.ExecDetailsKey, &execDetails)
@@ -565,6 +575,11 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk)
+			failpoint.Inject("mockScanRecordPartialError", func(val failpoint.Value) {
+				if shouldFail, _ := val.(bool); shouldFail {
+					err = errors.New("mock partial scan error")
+				}
+			})
 			if err != nil || scanCtx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
@@ -574,19 +589,21 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed})
+			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
 			lastTableScanRowCount = tableScanRowCount
+			if enableStreaming {
+				sendResult(idxResult)
+			} else {
+				idxResults = append(idxResults, idxResult)
+			}
 		}
 		return rs.Close()
 	})
 
-	for i, idxResult := range idxResults {
-		sender(idxResult)
-		if w.cpOp != nil {
-			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
+	if !enableStreaming {
+		for _, idxResult := range idxResults {
+			sendResult(idxResult)
 		}
-		w.totalCount.Add(idxResult.tableScanRowCount)
 	}
 
 	return err
@@ -626,7 +643,7 @@ func NewWriteExternalStoreOperator(
 	subtaskID int64,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	srcChunkPool *sync.Pool,
 	concurrency int,
 	onClose external.OnWriterCloseFunc,
@@ -809,10 +826,6 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 	}
 	w.collector.Processed(int64(bytes), ck.tableScanRowCount)
 	scannedCount := ck.tableScanRowCount
-	if scannedCount == 0 {
-		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
-		return nil
-	}
 	if w.totalCount != nil {
 		w.totalCount.Add(scannedCount)
 	}

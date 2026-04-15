@@ -52,6 +52,8 @@ func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
 
 // IsRestrictedPrivilege checks if a privilege is restricted under SEM rules.
 func IsRestrictedPrivilege(privilege string) bool {
+	intest.Assert(strings.ToUpper(privilege) == privilege, "privilege name must be uppercase")
+
 	sem := globalSem.Load()
 	if sem == nil {
 		return false

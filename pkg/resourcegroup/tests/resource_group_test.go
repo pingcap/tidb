@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -333,7 +335,7 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 }
 
 func TestResourceGroupRunaway(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
@@ -346,14 +348,19 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 
 	tk.MustExec("set global tidb_enable_resource_control='on'")
-	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
-	tk.MustExec("create resource group rg2 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT duration '1s')")
-	tk.MustExec("create resource group rg3 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg2'").Check(testkit.Rows("rg2 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION='1s' <nil>"))
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg3'").Check(testkit.Rows("rg3 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION=UNLIMITED <nil>"))
+	// Create resource groups without query limit first, since the `EXEC_ELAPSED='50ms'` threshold
+	// can be exceeded on slow/loaded CI machines even for a simple query.
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=()")
+	tk.MustExec("create resource group rg2 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=()")
+	tk.MustExec("create resource group rg3 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=()")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ resource_group(rg3) */ * from t").Check(testkit.Rows("1"))
+	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
+	tk.MustExec("alter resource group rg2 RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT duration '1s')")
+	tk.MustExec("alter resource group rg3 RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg2'").Check(testkit.Rows("rg2 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION='1s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg3'").Check(testkit.Rows("rg3 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION=UNLIMITED <nil>"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", fmt.Sprintf("return(%d)", 60)))
 	err := tk.QueryToErr("select /*+ resource_group(rg1) */ * from t")
@@ -423,7 +430,8 @@ func TestResourceGroupRunaway(t *testing.T) {
 }
 
 func TestResourceGroupRunawayExceedTiDBSide(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	// Use a longer expired duration to avoid the record being deleted too fast, 2500 means 2.5 seconds.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(2500)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
@@ -444,33 +452,106 @@ func TestResourceGroupRunawayExceedTiDBSide(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
 
-	err := tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.5) from t")
+	runawayQuery := "select /*+ resource_group(rg1) */ sleep(1) from t"
+	err := tk.QueryToErr(runawayQuery)
 	require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query")
 
 	tryInterval := time.Millisecond * 100
 	maxWaitDuration := time.Second * 5
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
-		testkit.Rows("rg1 select /*+ resource_group(rg1) */ sleep(0.5) from t identify"), maxWaitDuration, tryInterval)
-	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, start_time from mysql.tidb_runaway_queries", nil,
-		nil, maxWaitDuration, tryInterval)
+		testkit.Rows(fmt.Sprintf("rg1 %s identify", runawayQuery)), maxWaitDuration, tryInterval)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/deleteExpiredRows", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/deleteExpiredRows"))
-	}()
 	for i := range 20 {
-		err := tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.5) from t")
+		err := tk.QueryToErr(runawayQuery)
 		require.ErrorContains(t, err, "[executor:8253]Query execution was interrupted, identified as runaway query", i)
 	}
-	// just wait 1s to flush the sqls to the table
-	time.Sleep(time.Second)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/deleteExpiredRows", `return(false)`))
+	// Due to the expired duration is set to 2.5 seconds at the beginning, so all the records should be deleted within the 5 seconds of `maxWaitDuration`.
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, start_time from mysql.tidb_runaway_queries", nil,
 		nil, maxWaitDuration, tryInterval)
 }
 
+func TestRunawayRecordFlushLoopAddAndFlush(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(20000)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("create table t_flush(a int)")
+	tk.MustExec("insert into t_flush values(1)")
+	tk.MustExec("set global tidb_enable_resource_control='on'")
+	tk.MustExec("create resource group rg_flush RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='24h' action KILL)")
+	tk.MustExec("set resource group rg_flush")
+	runawayQuery := "select * from test.t_flush"
+	// Seed one watch record through SQL path so the loop can consume it from manager cache/system table.
+	tk.MustQuery(fmt.Sprintf("query watch add resource group rg_flush action KILL sql text exact to '%s'", runawayQuery))
+
+	tryInterval := 100 * time.Millisecond
+	maxWaitDuration := 10 * time.Second
+	tk.EventuallyMustQueryAndCheck(
+		"select SQL_NO_CACHE resource_group_name, watch_text, action, watch from information_schema.runaway_watches where resource_group_name = 'rg_flush'",
+		nil,
+		testkit.Rows(fmt.Sprintf("rg_flush %s Kill Exact", runawayQuery)),
+		maxWaitDuration,
+		tryInterval,
+	)
+
+	// Ensure runaway record table starts empty, then trigger one watched query.
+	tk.MustQuery("select SQL_NO_CACHE count(*) from mysql.tidb_runaway_queries").Check(testkit.Rows("0"))
+	tk.MustGetErrCode(runawayQuery, mysql.ErrResourceGroupQueryRunawayQuarantine)
+
+	// Verify record Add/Flush for runaway-record flusher and quarantine-record flusher.
+	tk.EventuallyMustQueryAndCheck(
+		"select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries where resource_group_name = 'rg_flush'",
+		nil,
+		testkit.Rows(fmt.Sprintf("rg_flush %s watch", runawayQuery)),
+		maxWaitDuration,
+		tryInterval,
+	)
+	tk.EventuallyMustQueryAndCheck(
+		"select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch where resource_group_name = 'rg_flush'",
+		nil,
+		testkit.Rows(fmt.Sprintf("rg_flush %s", runawayQuery)),
+		maxWaitDuration,
+		tryInterval,
+	)
+
+	idStr := tk.MustQuery(
+		"select SQL_NO_CACHE id from mysql.tidb_runaway_watch where resource_group_name = 'rg_flush' and watch_text = '" + runawayQuery + "'",
+	).Rows()[0][0].(string)
+	watchID, err := strconv.ParseInt(idStr, 10, 64)
+	require.NoError(t, err)
+
+	rm := domain.GetDomain(tk.Session()).RunawayManager()
+	require.NotNil(t, rm)
+	// Cover stale-quarantine branch: ID=0 should be skipped.
+	rm.AddWatch(&runaway.QuarantineRecord{
+		ID:                0,
+		ResourceGroupName: "rg_flush",
+		EndTime:           time.Now().UTC().Add(-time.Second),
+		WatchText:         runawayQuery,
+	})
+	// Cover stale-quarantine branch: expired record with valid ID should be flushed as delete.
+	rm.AddWatch(&runaway.QuarantineRecord{
+		ID:                watchID,
+		ResourceGroupName: "rg_flush",
+		EndTime:           time.Now().UTC().Add(-time.Second),
+		WatchText:         runawayQuery,
+	})
+	tk.EventuallyMustQueryAndCheck(
+		"select SQL_NO_CACHE count(*) from mysql.tidb_runaway_watch where id = "+strconv.FormatInt(watchID, 10),
+		nil,
+		testkit.Rows("0"),
+		maxWaitDuration,
+		tryInterval,
+	)
+}
+
 func TestResourceGroupRunawayFlood(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
@@ -499,17 +580,17 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	// wait for the runaway watch to be cleaned up
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, repeats from mysql.tidb_runaway_queries", nil,
 		nil, maxWaitDuration, tryInterval)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush", `return(1)`))
 	// check thrice to make sure the runaway query be regarded as a repeated query.
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.2) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.3) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
-	// using FastRunawayGC to trigger flush
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.4) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
+	// resume the flush to ensure an aggregated record can be queried later.
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush"))
 	// only have one runaway query
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, repeats, match_type from mysql.tidb_runaway_queries", nil,
 		testkit.Rows("rg1 select /*+ resource_group(rg1) */ sleep(0.2) from t 3 identify"), maxWaitDuration, tryInterval)

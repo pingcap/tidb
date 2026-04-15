@@ -16,17 +16,14 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -247,57 +244,6 @@ func CheckSkipColumnPartiion(sctx sessionctx.Context, tblID int64, isIndex int, 
 	return nil
 }
 
-// ExtendedStatsFromStorage reads extended stats from storage.
-func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, tableID int64, loadAll bool) (*statistics.Table, error) {
-	failpoint.Inject("injectExtStatsLoadErr", func() {
-		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
-	})
-	lastVersion := uint64(0)
-	if table.ExtendedStats != nil && !loadAll {
-		lastVersion = table.ExtendedStats.LastUpdateVersion
-	} else {
-		table.ExtendedStats = statistics.NewExtendedStatsColl()
-	}
-	rows, _, err := util.ExecRows(sctx, "select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?, %?) and version > %?",
-		tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsDeleted, lastVersion)
-	if err != nil || len(rows) == 0 {
-		return table, nil
-	}
-	for _, row := range rows {
-		lastVersion = max(lastVersion, row.GetUint64(5))
-		name := row.GetString(0)
-		status := uint8(row.GetInt64(1))
-		if status == statistics.ExtendedStatsDeleted || status == statistics.ExtendedStatsInited {
-			delete(table.ExtendedStats.Stats, name)
-		} else {
-			item := &statistics.ExtendedStatsItem{
-				Tp: uint8(row.GetInt64(2)),
-			}
-			colIDs := row.GetString(3)
-			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
-			if err != nil {
-				statslogutil.StatsLogger().Error("decode column IDs failed", zap.String("column_ids", colIDs), zap.Error(err))
-				return nil, err
-			}
-			statsStr := row.GetString(4)
-			if item.Tp == ast.StatsTypeCardinality || item.Tp == ast.StatsTypeCorrelation {
-				if statsStr != "" {
-					item.ScalarVals, err = strconv.ParseFloat(statsStr, 64)
-					if err != nil {
-						statslogutil.StatsLogger().Error("parse scalar stats failed", zap.String("stats", statsStr), zap.Error(err))
-						return nil, err
-					}
-				}
-			} else {
-				item.StringVals = statsStr
-			}
-			table.ExtendedStats.Stats[name] = item
-		}
-	}
-	table.ExtendedStats.LastUpdateVersion = lastVersion
-	return table, nil
-}
-
 func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
@@ -306,17 +252,18 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	statsVer := row.GetInt64(7)
 	idx := table.GetIdx(histID)
 
+	// All the objects in the table share the same stats version.
+	// Update here before processing, so it's set even if we return early.
+	if statsVer != statistics.Version0 {
+		table.StatsVer = int(statsVer)
+		table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
+	}
+
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
 			continue
 		}
 		table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
-		// All the objects in the table shares the same stats version.
-		// Update here.
-		if statsVer != statistics.Version0 {
-			table.StatsVer = int(statsVer)
-			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
-		}
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
 		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
@@ -396,17 +343,21 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	correlation := row.GetFloat64(8)
 	col := table.GetCol(histID)
 
+	// All the objects in the table share the same stats version.
+	// Update here before processing, so it's set even if we return early.
+	if statsVer != statistics.Version0 {
+		table.StatsVer = int(statsVer)
+		table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
+	}
+
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
 			continue
 		}
-		table.ColAndIdxExistenceMap.InsertCol(histID, statsVer != statistics.Version0 || distinct > 0 || nullCount > 0)
-		// All the objects in the table shares the same stats version.
-		// Update here.
-		if statsVer != statistics.Version0 {
-			table.StatsVer = int(statsVer)
-			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
-		}
+
+		// Column stats can be synthesized when adding a column with default values, which keeps statsVer at 0 but
+		// still records NDV/null counts, so mark them as existing whenever any value is present.
+		table.ColAndIdxExistenceMap.InsertCol(histID, statistics.IsColumnAnalyzedOrSynthesized(statsVer, distinct, nullCount))
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
@@ -563,27 +514,34 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		}
 	}
 	// If DROP STATS executes, we need to reset the stats version to 0.
-	if table.StatsVer != statistics.Version0 {
+	// Only reset if we actually have columns/indices in the table. If all stats were skipped
+	// due to lazy loading, we should keep the StatsVer that was set from the storage row.
+	if statistics.IsAnalyzed(int64(table.StatsVer)) {
+		hasStats := false
 		allZero := true
 		table.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
-			if c.StatsVer != statistics.Version0 {
+			hasStats = true
+			if statistics.IsAnalyzed(c.StatsVer) {
 				allZero = false
 				return true
 			}
 			return false
 		})
 		table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
-			if idx.StatsVer != statistics.Version0 {
+			hasStats = true
+			if statistics.IsAnalyzed(idx.StatsVer) {
 				allZero = false
 				return true
 			}
 			return false
 		})
-		if allZero {
+		// Only reset if we have stats in memory and they're all Version0.
+		// If all stats were skipped due to lazy loading, keep the StatsVer from storage.
+		if hasStats && allZero {
 			table.StatsVer = statistics.Version0
 		}
 	}
-	return ExtendedStatsFromStorage(sctx, table.CopyAs(statistics.ExtendedStatsWritable), tableID, loadAll)
+	return table, nil
 }
 
 // LoadHistogram will load histogram from storage.
@@ -875,7 +833,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		return nil
 	}
 	tbl = tbl.CopyAs(statistics.IndexMapWritable)
-	if idxHist.StatsVer != statistics.Version0 {
+	if statistics.IsAnalyzed(idxHist.StatsVer) {
 		tbl.StatsVer = int(idxHist.StatsVer)
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}

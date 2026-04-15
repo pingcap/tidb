@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
 
@@ -23,7 +24,7 @@ type globalMetadata struct {
 	afterConnBuffer bytes.Buffer
 	snapshot        string
 
-	storage storage.ExternalStorage
+	storage storeapi.Storage
 }
 
 const (
@@ -35,7 +36,7 @@ const (
 	gtidSetFieldIndex = 4
 )
 
-func newGlobalMetadata(tctx *tcontext.Context, s storage.ExternalStorage, snapshot string) *globalMetadata {
+func newGlobalMetadata(tctx *tcontext.Context, s storeapi.Storage, snapshot string) *globalMetadata {
 	return &globalMetadata{
 		tctx:     tctx,
 		storage:  s,
@@ -68,13 +69,7 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverInfo version.S
 func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Buffer, serverInfo version.ServerInfo, afterConn bool, snapshot string) error { // revive:disable-line:flag-parameter
 	serverType := serverInfo.ServerType
 	writeMasterStatusHeader := func() {
-		if serverInfo.ServerVersion == nil {
-			buffer.WriteString("SHOW MASTER STATUS:")
-		} else if serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
-			buffer.WriteString("SHOW MASTER STATUS:")
-		} else {
-			buffer.WriteString("SHOW BINARY LOG STATUS:")
-		}
+		buffer.WriteString("SHOW MASTER STATUS:")
 		if afterConn {
 			buffer.WriteString(" /* AFTER CONNECTION POOL ESTABLISHED */")
 		}
@@ -203,13 +198,14 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 				switch col {
 				case "connection_name":
 					connName = data[i].String
-				case "exec_master_log_pos":
+				case "exec_master_log_pos", "exec_source_log_pos":
 					pos = data[i].String
-				case "relay_master_log_file":
+				case "relay_master_log_file", "relay_source_log_file":
 					logFile = data[i].String
-				case "master_host":
+				case "master_host", "source_host":
 					host = data[i].String
-				case "executed_gtid_set":
+				case "executed_gtid_set", // MySQL
+					"gtid_io_pos": // MariaDB
 					gtidSet = data[i].String
 				}
 			}
@@ -227,7 +223,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 
 func (m *globalMetadata) writeGlobalMetaData() error {
 	// keep consistent with mydumper. Never compress metadata
-	fileWriter, tearDown, err := buildFileWriter(m.tctx, m.storage, metadataPath, storage.NoCompression)
+	fileWriter, tearDown, err := buildFileWriter(m.tctx, m.storage, metadataPath, compressedio.NoCompression)
 	if err != nil {
 		return err
 	}

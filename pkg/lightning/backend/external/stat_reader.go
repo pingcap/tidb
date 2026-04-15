@@ -18,14 +18,14 @@ import (
 	"context"
 	"encoding/binary"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 type statsReader struct {
 	byteReader *byteReader
 }
 
-func newStatsReader(ctx context.Context, store storage.ExternalStorage, name string, bufSize int) (*statsReader, error) {
+func newStatsReader(ctx context.Context, store storeapi.Storage, name string, bufSize int) (*statsReader, error) {
 	sr, err := openStoreReaderAndSeek(ctx, store, name, 0, 250*1024)
 	if err != nil {
 		return nil, err

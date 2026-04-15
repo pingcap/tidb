@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
@@ -1591,10 +1593,10 @@ func createStoreAndPrepareDB(t *testing.T) kv.Storage {
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test(id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));`)
 	tk.MustExec(fmt.Sprintf("create database if not exists %s;", mysql.SystemDB))
-	tk.MustExec(session.CreateUserTable)
-	tk.MustExec(session.CreateDBTable)
-	tk.MustExec(session.CreateTablesPrivTable)
-	tk.MustExec(session.CreateColumnsPrivTable)
+	tk.MustExec(metadef.CreateUserTable)
+	tk.MustExec(metadef.CreateDBTable)
+	tk.MustExec(metadef.CreateTablesPrivTable)
+	tk.MustExec(metadef.CreateColumnsPrivTable)
 	return store
 }
 
@@ -2230,6 +2232,7 @@ func TestGrantOptionWithSEMv2(t *testing.T) {
 	rootTk.MustExec("CREATE USER varuser2")
 	rootTk.MustExec("CREATE USER varuser3")
 	rootTk.MustExec("CREATE USER varuser4")
+	rootTk.MustExec("CREATE USER varuser5")
 	rootTk.MustExec("CREATE USER grantee")
 
 	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, FILE ON *.* TO varuser1")
@@ -2237,9 +2240,12 @@ func TestGrantOptionWithSEMv2(t *testing.T) {
 	rootTk.MustExec("GRANT RESTRICTED_PRIV_ADMIN ON *.* TO varuser3")
 	rootTk.MustExec("GRANT RESTRICTED_PRIV_ADMIN ON *.* TO varuser4")
 	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, FILE ON *.* TO varuser4 WITH GRANT OPTION")
+	rootTk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN, DROP ON *.* TO varuser5 WITH GRANT OPTION")
 
-	// SYSTEM_VARIABLES_ADMIN is not restricted, FILE is restricted.
+	// SYSTEM_VARIABLES_ADMIN is not restricted, FILE and Drop are restricted.
 	defer sem.SwitchToSEMForTest(t, sem.V2)()
+	semv2.AddRestrictedPrivilegesForTest("Drop")
+	defer semv2.RemoveRestrictedPrivilegesForTest("Drop")
 	// try to grant SYSTEM_VARIABLES_ADMIN and FILE privilege to grantee with different user
 	tk1 := testkit.NewTestKit(t, store)
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "varuser1", Hostname: "%"}, nil, nil, nil))
@@ -2268,6 +2274,12 @@ func TestGrantOptionWithSEMv2(t *testing.T) {
 	require.NoError(t, err)
 	err = tk4.ExecToErr("GRANT FILE ON *.* TO grantee")
 	require.NoError(t, err)
+
+	// Test grant drop
+	tk5 := testkit.NewTestKit(t, store)
+	require.NoError(t, tk5.Session().Auth(&auth.UserIdentity{Username: "varuser5", Hostname: "%"}, nil, nil, nil))
+	err = tk5.ExecToErr("GRANT drop ON *.* TO grantee")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the RESTRICTED_PRIV_ADMIN privilege(s) for this operation")
 }
 
 func testProtectUserAndRoleWithRestrictedPrivileges(t *testing.T, semVer string) {

@@ -111,6 +111,7 @@ func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstor
 
 type dagContext struct {
 	*evalContext
+	keyspaceID    uint32
 	dbReader      *dbreader.DBReader
 	lockStore     *lockstore.MemStore
 	resolvedLocks []uint64
@@ -138,7 +139,7 @@ func ExecutorListsToTree(exec []*tipb.Executor) *tipb.Executor {
 		case tipb.ExecType_TypeIndexLookUp:
 			parent.IndexLookup.Children = append(parent.IndexLookup.Children, child)
 		default:
-			panic("unsupported dag executor type")
+			panic("unsupported dag parent executor type: " + parent.Tp.String())
 		}
 	}
 
@@ -433,6 +434,9 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		keyRanges:     req.Ranges,
 		startTS:       req.StartTs,
 		resolvedLocks: req.Context.ResolvedLocks,
+	}
+	if reqCtx := req.Context; reqCtx != nil {
+		ctx.keyspaceID = reqCtx.KeyspaceId
 	}
 	return ctx, dagReq, err
 }

@@ -23,8 +23,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -160,7 +160,7 @@ func TestFileChunkProcess(t *testing.T) {
 		require.EqualValues(t, 6, checksumIndexKVCnt)
 		require.EqualValues(t, 3, collector.Rows.Load())
 		require.EqualValues(t, len(sourceData), collector.ReadBytes.Load())
-		require.EqualValues(t, int64(348), collector.Bytes.Load())
+		require.EqualValues(t, int64(348), collector.ProcessedCnt.Load())
 		require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
 		require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
 		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)

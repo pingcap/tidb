@@ -49,7 +49,7 @@ func batchCheckTemporaryUniqueKey(
 		return nil
 	}
 
-	batchVals, err := txn.BatchGet(context.Background(), originIdxKeys)
+	batchVals, err := kv.BatchGetValue(context.Background(), txn, originIdxKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}

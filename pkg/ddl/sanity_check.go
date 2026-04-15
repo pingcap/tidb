@@ -189,22 +189,6 @@ func (ctx *delRangeCntCtx) deduplicateIdxCnt(indexIDs []int64) int {
 	return cnt
 }
 
-// checkInvolvingSchemaInfoInTest check all DDLs should set InvolvingSchemaInfo
-// to make sure DDL execution in order. It's only check during the
-// test environment, so it would panic directly.
-func (*executor) checkInvolvingSchemaInfoInTest(job *model.Job) {
-	if !intest.EnableInternalCheck {
-		return
-	}
-	// all DDLs should set InvolvingSchemaInfo to make sure DDL execution in order.
-	for _, info := range job.GetInvolvingSchemaInfo() {
-		if (info.Database == model.InvolvingNone || info.Table == model.InvolvingNone) &&
-			info.Policy == model.InvolvingNone && info.ResourceGroup == model.InvolvingNone {
-			panic(fmt.Sprintf("job ID %d, type %s", job.ID, job.Type))
-		}
-	}
-}
-
 // checkHistoryJobInTest does some sanity check to make sure something is correct after DDL complete.
 // It's only check during the test environment, so it would panic directly.
 // These checks may be controlled by configuration in the future.

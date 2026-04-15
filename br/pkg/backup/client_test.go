@@ -19,18 +19,21 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
 )
@@ -45,7 +48,7 @@ type testBackup struct {
 	backupClient *backup.Client
 
 	cluster *mock.Cluster
-	storage storage.ExternalStorage
+	storage storeapi.Storage
 }
 
 // locks used to solve race when mock then behaviour when store drops
@@ -116,13 +119,15 @@ func createBackupSuite(t *testing.T) *testBackup {
 	s.mockCluster = mockCluster
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
+	gcMgr := gc.NewManager(s.mockPDClient, tikv.NullspaceID)
+	mockMgr.SetGcManager(gcMgr)
 	mockMgr.SetPDClient(s.mockPDClient)
 	s.backupClient = backup.NewBackupClient(s.ctx, mockMgr)
 
 	s.cluster, err = mock.NewCluster()
 	require.NoError(t, err)
 	base := t.TempDir()
-	s.storage, err = storage.NewLocalStorage(base)
+	s.storage, err = objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	require.NoError(t, s.cluster.Start())
 
@@ -184,10 +189,18 @@ func TestGetTS(t *testing.T) {
 	require.Regexp(t, ".*GC safepoint [0-9]+ exceed TS [0-9]+.*", err.Error())
 
 	// timeago and backupts both exists, use backupts
-	backupts := oracle.ComposeTS(p+10, l)
+	p2, l2, err := s.mockPDClient.GetTS(s.ctx)
+	require.NoError(t, err)
+	backupts := oracle.ComposeTS(p2, l2)
 	ts, err = s.backupClient.GetTS(s.ctx, time.Minute, backupts)
 	require.NoError(t, err)
 	require.Equal(t, backupts, ts)
+
+	// backupts in the future should be rejected
+	futureTS := oracle.ComposeTS(time.Now().UnixMilli()+60*1000, 0) // 1 minute in the future
+	_, err = s.backupClient.GetTS(s.ctx, 0, futureTS)
+	require.Error(t, err)
+	require.Regexp(t, ".*must not be later than current timestamp.*", err.Error())
 }
 
 func TestGetHistoryDDLJobs(t *testing.T) {

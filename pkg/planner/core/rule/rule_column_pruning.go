@@ -35,19 +35,26 @@ func (*ColumnPruner) Optimize(_ context.Context, lp base.LogicalPlan) (base.Logi
 		return nil, planChanged, err
 	}
 	intest.AssertFunc(func() bool {
-		return noZeroColumnLayOut(lp)
-	}, "After column pruning, some operator got zero row output. Please fix it.")
+		return noUnexpectedZeroColumnSchema(lp)
+	}, "After column pruning, some operator got an unexpected zero-column output schema. Please fix it.")
 	return lp, planChanged, nil
 }
 
-func noZeroColumnLayOut(p base.LogicalPlan) bool {
+// noUnexpectedZeroColumnSchema checks the post-pruning invariant that a logical
+// operator should not expose an empty output schema.
+//
+// Two cases are exempt:
+//  1. Some operators reuse their first child's schema object instead of owning a
+//     separate schema, so an empty schema check on the node itself is not useful.
+//  2. LogicalTableDual can legitimately end up with zero output columns.
+func noUnexpectedZeroColumnSchema(p base.LogicalPlan) bool {
 	for _, child := range p.Children() {
-		if success := noZeroColumnLayOut(child); !success {
+		if success := noUnexpectedZeroColumnSchema(child); !success {
 			return false
 		}
 	}
 	if p.Schema().Len() == 0 {
-		// The p don't hold its schema. So we don't need check itself.
+		// This node reuses its first child's schema object rather than owning one.
 		if len(p.Children()) > 0 && p.Schema() == p.Children()[0].Schema() {
 			return true
 		}

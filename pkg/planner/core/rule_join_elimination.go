@@ -18,6 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -47,6 +49,35 @@ func appendUniqueCorrelatedCols(target []*expression.Column, corCols []*expressi
 	return target
 }
 
+// buildOuterJoinNullExtendedProjection rewrites an outer join whose inner child is guaranteed
+// to produce zero rows into a projection on top of the outer child.
+// Columns from the original inner side are replaced with typed NULLs.
+func buildOuterJoinNullExtendedProjection(
+	join *logicalop.LogicalJoin,
+	outerPlan base.LogicalPlan,
+) base.LogicalPlan {
+	exprs := make([]expression.Expression, 0, join.Schema().Len())
+	allFromOuter := true
+	for _, col := range join.Schema().Columns {
+		if outerPlan.Schema().Contains(col) {
+			exprs = append(exprs, col.Clone())
+			continue
+		}
+		allFromOuter = false
+		retType := col.RetType.Clone()
+		retType.DelFlag(mysql.NotNullFlag)
+		exprs = append(exprs, expression.NewNullWithFieldType(retType))
+	}
+	if allFromOuter {
+		return outerPlan
+	}
+	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(join.SCtx(), join.QueryBlockOffset())
+	proj.SetSchema(join.Schema().Clone())
+	proj.SetOutputNames(join.OutputNames().Shallow())
+	proj.SetChildren(outerPlan)
+	return proj
+}
+
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
 //  1. outer join elimination: For example left outer join, if the parent doesn't use the
 //     columns from right table and the join key of right table(the inner table) is a unique
@@ -67,6 +98,9 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 
 	outerPlan := p.Children()[1^innerChildIdx]
 	innerPlan := p.Children()[innerChildIdx]
+	if innerDual, ok := innerPlan.(*logicalop.LogicalTableDual); ok && innerDual.RowCount == 0 {
+		return buildOuterJoinNullExtendedProjection(p, outerPlan), true, nil
+	}
 
 	// in case of count(*) FROM R LOJ S, the parentCols is empty, but
 	// still need to proceed to check whether we can eliminate outer join.
@@ -96,15 +130,15 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 		}
 	}
 	// outer join elimination without duplicate agnostic aggregate functions
-	innerJoinKeys := o.extractInnerJoinKeys(p, innerChildIdx)
-	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys)
+	innerJoinKeys, innerNullEQKeys := o.extractInnerJoinKeys(p, innerChildIdx)
+	contain, err := o.isInnerJoinKeysContainUniqueKey(innerPlan, innerJoinKeys, innerNullEQKeys)
 	if err != nil {
 		return p, false, err
 	}
 	if contain {
 		return outerPlan, true, nil
 	}
-	contain, err = o.isInnerJoinKeysContainIndex(innerPlan, innerJoinKeys)
+	contain, err = o.isInnerJoinKeysContainIndex(innerPlan, innerJoinKeys, innerNullEQKeys)
 	if err != nil {
 		return p, false, err
 	}
@@ -115,17 +149,25 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 	return p, false, nil
 }
 
-// extract join keys as a schema for inner child of a outer join
-func (*OuterJoinEliminator) extractInnerJoinKeys(join *logicalop.LogicalJoin, innerChildIdx int) *expression.Schema {
+// extract join keys as a schema for inner child of a outer join, and record which inner join keys use NullEQ (<=>).
+func (*OuterJoinEliminator) extractInnerJoinKeys(join *logicalop.LogicalJoin, innerChildIdx int) (*expression.Schema, intset.FastIntSet) {
 	joinKeys := make([]*expression.Column, 0, len(join.EqualConditions))
+	innerNullEQKeys := intset.NewFastIntSet()
 	for _, eqCond := range join.EqualConditions {
-		joinKeys = append(joinKeys, eqCond.GetArgs()[innerChildIdx].(*expression.Column))
+		innerKey := eqCond.GetArgs()[innerChildIdx].(*expression.Column)
+		joinKeys = append(joinKeys, innerKey)
+		if eqCond.FuncName.L == ast.NullEQ {
+			innerNullEQKeys.Insert(int(innerKey.UniqueID))
+		}
 	}
-	return expression.NewSchema(joinKeys...)
+	return expression.NewSchema(joinKeys...), innerNullEQKeys
 }
 
 // check whether one of unique keys sets is contained by inner join keys
-func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
+func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.LogicalPlan, joinKeys *expression.Schema, innerNullEQKeys intset.FastIntSet) (bool, error) {
+	if isSelectionPartitionedRowNumberWindowOneUnique(innerPlan, joinKeys) {
+		return true, nil
+	}
 	for _, keyInfo := range innerPlan.Schema().PKOrUK {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
@@ -138,11 +180,99 @@ func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.Logic
 			return true, nil
 		}
 	}
+	for _, keyInfo := range innerPlan.Schema().NullableUK {
+		joinKeysContainKeyInfo := true
+		for _, col := range keyInfo {
+			if !joinKeys.Contains(col) {
+				joinKeysContainKeyInfo = false
+				break
+			}
+			if innerNullEQKeys.Has(int(col.UniqueID)) {
+				joinKeysContainKeyInfo = false
+				break
+			}
+		}
+		if joinKeysContainKeyInfo {
+			return true, nil
+		}
+	}
 	return false, nil
 }
 
+// isSelectionPartitionedRowNumberWindowOneUnique recognizes Selection(Window(row_number))
+// shapes where the filter keeps at most one row for each partition key, so the
+// inner side is unique on the join keys for outer join elimination.
+func isSelectionPartitionedRowNumberWindowOneUnique(innerPlan base.LogicalPlan, joinKeys *expression.Schema) bool {
+	sel, ok := innerPlan.(*logicalop.LogicalSelection)
+	if !ok || len(sel.Conditions) == 0 {
+		return false
+	}
+
+	window, ok := sel.Children()[0].(*logicalop.LogicalWindow)
+	if !ok || len(window.WindowFuncDescs) != 1 || window.WindowFuncDescs[0].Name != "row_number" {
+		return false
+	}
+	if window.Frame == nil || window.Frame.Start == nil || window.Frame.End == nil {
+		return false
+	}
+	if window.Frame.Type != ast.Rows || window.Frame.Start.Type != ast.CurrentRow || window.Frame.End.Type != ast.CurrentRow {
+		return false
+	}
+
+	windowColumns := window.GetWindowResultColumns()
+	if len(windowColumns) != 1 || !hasRowNumberUpperBoundOne(sel.Conditions, windowColumns[0]) {
+		return false
+	}
+
+	for _, partitionCol := range window.GetPartitionByCols() {
+		if !joinKeys.Contains(partitionCol) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasRowNumberUpperBoundOne matches predicates that keep the row_number() result
+// column at or below 1, either through an equality to 1 or through simple upper
+// bounds recognized by expression.FindUpperBound.
+func hasRowNumberUpperBoundOne(conditions []expression.Expression, rowNumberCol *expression.Column) bool {
+	for _, cond := range conditions {
+		if isColEqConst(cond, rowNumberCol, 1) {
+			return true
+		}
+		if col, upperBound := expression.FindUpperBound(cond); col != nil && col.EqualColumn(rowNumberCol) && upperBound <= 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func isColEqConst(expr expression.Expression, targetCol *expression.Column, value int64) bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.EQ || len(sf.GetArgs()) != 2 {
+		return false
+	}
+	if col, ok := sf.GetArgs()[0].(*expression.Column); ok && col.EqualColumn(targetCol) {
+		constant, ok := sf.GetArgs()[1].(*expression.Constant)
+		if !ok {
+			return false
+		}
+		constantValue, ok := constant.Value.GetValue().(int64)
+		return ok && constantValue == value
+	}
+	if col, ok := sf.GetArgs()[1].(*expression.Column); ok && col.EqualColumn(targetCol) {
+		constant, ok := sf.GetArgs()[0].(*expression.Constant)
+		if !ok {
+			return false
+		}
+		constantValue, ok := constant.Value.GetValue().(int64)
+		return ok && constantValue == value
+	}
+	return false
+}
+
 // check whether one of index sets is contained by inner join index
-func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
+func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPlan, joinKeys *expression.Schema, innerNullEQKeys intset.FastIntSet) (bool, error) {
 	ds, ok := innerPlan.(*logicalop.DataSource)
 	if !ok {
 		return false, nil
@@ -154,6 +284,10 @@ func (*OuterJoinEliminator) isInnerJoinKeysContainIndex(innerPlan base.LogicalPl
 		joinKeysContainIndex := true
 		for _, idxCol := range path.IdxCols {
 			if !joinKeys.Contains(idxCol) {
+				joinKeysContainIndex = false
+				break
+			}
+			if !mysql.HasNotNullFlag(idxCol.RetType.GetFlag()) && innerNullEQKeys.Has(int(idxCol.UniqueID)) {
 				joinKeysContainIndex = false
 				break
 			}
@@ -234,6 +368,26 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 			for _, byItem := range aggDesc.OrderByItems {
 				parentCols = append(parentCols, expression.ExtractColumns(byItem.Expr)...)
 			}
+		}
+	case *logicalop.LogicalJoin:
+		// Besides output columns, a join's own conditions are also required by children.
+		// If we only pass output schema columns to children, we may incorrectly eliminate
+		// a child outer join whose columns are still referenced by this join's predicates.
+		parentCols = append(parentCols[:0], p.Schema().Columns...)
+		for _, eqCond := range x.EqualConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(eqCond)...)
+		}
+		for _, leftCond := range x.LeftConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(leftCond)...)
+		}
+		for _, rightCond := range x.RightConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(rightCond)...)
+		}
+		for _, otherCond := range x.OtherConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(otherCond)...)
+		}
+		for _, naeqCond := range x.NAEQConditions {
+			parentCols = append(parentCols, expression.ExtractColumns(naeqCond)...)
 		}
 	default:
 		parentCols = append(parentCols[:0], p.Schema().Columns...)

@@ -634,6 +634,41 @@ func TestBuildPagingTasks(t *testing.T) {
 	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
 }
 
+func TestBuildCopTaskDoesNotCancelBoCtx(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{}
+	req.Paging.Enable = true
+	req.Paging.MinPagingSize = paging.MinPagingSize
+	req.MaxExecutionTime = 10000
+	_, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	require.NoError(t, err)
+	contextDone := false
+	select {
+	case <-bo.GetCtx().Done():
+		contextDone = true
+	default:
+	}
+	require.False(t, contextDone, "buildCopTasks should not cancel bo context")
+}
+
 func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)

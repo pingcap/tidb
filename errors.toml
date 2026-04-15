@@ -201,6 +201,11 @@ error = '''
 pd not fully scattered
 '''
 
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
 failed to wait region split
@@ -209,6 +214,11 @@ failed to wait region split
 ["BR:PD:ErrPDUpdateFailed"]
 error = '''
 failed to update PD
+'''
+
+["BR:PiTR:ErrCheckpointWatchRestart"]
+error = '''
+checkpoint watch needs restart
 '''
 
 ["BR:PiTR:ErrInvalidTaskInfo"]
@@ -329,6 +339,11 @@ stream task already exists
 ["BR:Stream:ErrStreamLogTaskHasNoStorage"]
 error = '''
 stream task has no storage
+'''
+
+["Import:ErrCastValue"]
+error = '''
+Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
 '''
 
 ["Ingest:EpochNotMatch"]
@@ -1611,6 +1626,16 @@ error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
 '''
 
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
+["ddl:8267"]
+error = '''
+%s is forbidden
+'''
+
 ["ddl:8270"]
 error = '''
 Invalid engine attribute format: %s
@@ -1971,6 +1996,11 @@ error = '''
 Unsupported option %s for %s
 '''
 
+["executor:8167"]
+error = '''
+Duplicate key conflict found. Please resolve conflicts in the input dataset, or set on_duplicate_key to a strategy that can handle conflicts, for example 'capture'
+'''
+
 ["executor:8170"]
 error = '''
 Job ID %d doesn't exist
@@ -2294,6 +2324,16 @@ Resource group '%-.192s' already exists
 ["meta:8249"]
 error = '''
 Unknown resource group '%-.192s'
+'''
+
+["meta:8268"]
+error = '''
+masking policy already exists
+'''
+
+["meta:8269"]
+error = '''
+masking policy doesn't exist
 '''
 
 ["planner:1044"]
@@ -2669,6 +2709,11 @@ Argument %s of GROUPING function is not in GROUP BY
 ["planner:3637"]
 error = '''
 Variable '%s' might not be affected by SET_VAR hint.
+'''
+
+["planner:3809"]
+error = '''
+Invalid use of LATERAL: %s
 '''
 
 ["planner:8006"]

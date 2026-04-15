@@ -102,7 +102,7 @@ func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testk
 	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 }
 
 // nolint:unused
@@ -126,7 +126,7 @@ func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit
 	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 }
 
 func TestAnalyzeVirtualCol(t *testing.T) {
@@ -253,7 +253,6 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 	))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
 }
@@ -291,7 +290,7 @@ func TestAnalyzeMetricsCounters(t *testing.T) {
 	tk.MustExec("create table t_metrics_auto(a int)")
 	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
 	tk.MustExec("insert into t_metrics_auto values (1)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 
 	origMinCnt := statistics.AutoAnalyzeMinCnt

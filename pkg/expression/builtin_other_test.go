@@ -339,6 +339,7 @@ func TestInFunc(t *testing.T) {
 	chk1 := chunk.NewChunkWithCapacity(nil, 1)
 	chk1.SetNumVirtualRows(1)
 	chk2 := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeTiny)}, 1)
+	require.True(t, fn.vectorized() && fn.isChildrenVectorized())
 	err = vecEvalType(ctx, fn, types.ETInt, chk1, chk2.Column(0))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), chk2.Column(0).GetInt64(0))

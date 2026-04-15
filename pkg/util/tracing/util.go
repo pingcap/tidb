@@ -128,12 +128,6 @@ func GetSink(ctx context.Context) any {
 // ExtractTraceID returns the trace identifier from ctx if present.
 // It delegates to client-go's TraceIDFromContext implementation.
 func ExtractTraceID(ctx context.Context) []byte {
-	return extractTraceID(ctx)
-}
-
-// extractTraceID returns the trace identifier from ctx if present.
-// It delegates to client-go's TraceIDFromContext implementation.
-func extractTraceID(ctx context.Context) []byte {
 	return clienttrace.TraceIDFromContext(ctx)
 }
 
@@ -260,7 +254,7 @@ const (
 // AllCategories can be used to enable every known trace category.
 const AllCategories = traceCategorySentinel - 1
 
-const defaultEnabledCategories = AllCategories &^ (TiKVWriteDetails | TiKVReadDetails)
+const defaultEnabledCategories = 0
 
 func init() {
 	enabledCategories.Store(uint64(defaultEnabledCategories))

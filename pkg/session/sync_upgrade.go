@@ -22,11 +22,10 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
-	dist_store "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
+	dist_store "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -130,14 +129,6 @@ func IsUpgradingClusterState(s sessionctx.Context) (bool, error) {
 	}
 
 	return stateInfo.State == serverstate.StateUpgrading, nil
-}
-
-func printClusterState(s sessionapi.Session, ver int64) {
-	// After SupportUpgradeHTTPOpVer version, the upgrade by paused user DDL can be notified through the HTTP API.
-	// We check the global state see if we are upgrading by paused the user DDL.
-	if ver >= SupportUpgradeHTTPOpVer {
-		isUpgradingClusterStateWithRetry(s, ver, currentBootstrapVersion, time.Duration(internalSQLTimeout)*time.Second)
-	}
 }
 
 func isUpgradingClusterStateWithRetry(s sessionctx.Context, oldVer, newVer int64, timeout time.Duration) {

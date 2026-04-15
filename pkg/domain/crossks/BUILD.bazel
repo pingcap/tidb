@@ -49,7 +49,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
-        "//pkg/disttask/framework/storage",
+        "//pkg/dxf/framework/storage",
         "//pkg/executor/importer",
         "//pkg/infoschema",
         "//pkg/keyspace",

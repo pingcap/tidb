@@ -140,6 +140,9 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(e.InnerCtx.HashIsNullEQ) != len(e.InnerCtx.HashCols) {
+		return errors.New("index lookup hash join: hash null-eq flags length must match hash cols length")
+	}
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
@@ -649,8 +652,8 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(task *indexHash
 			}
 			row := chk.GetRow(rowIdx)
 			hashColIdx := iw.outerCtx.HashCols
-			for _, i := range hashColIdx {
-				if row.IsNull(i) {
+			for i, colIdx := range hashColIdx {
+				if row.IsNull(colIdx) && !iw.HashIsNullEQ[i] {
 					continue OUTER
 				}
 			}
@@ -716,17 +719,17 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
 	iw.lookup.WorkerWg.Add(1)
+	var buildHashTableErr error
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
 		func() {
 			iw.buildHashTableForOuterResult(task, h)
 		},
 		func(r any) {
-			var err error
 			if r != nil {
-				err = errors.Errorf("%v", r)
+				buildHashTableErr = errors.Errorf("%v", r)
 			}
-			iw.handleHashJoinInnerWorkerPanic(resultCh, err)
+			iw.handleHashJoinInnerWorkerPanic(resultCh, buildHashTableErr)
 		},
 	)
 	lookUpContents, err := iw.constructLookupContent(task.lookUpJoinTask)
@@ -742,6 +745,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	if err != nil {
 		return err
+	}
+
+	if buildHashTableErr != nil {
+		return buildHashTableErr
 	}
 
 	if !task.keepOuterOrder {
@@ -813,6 +820,11 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 }
 
 func (iw *indexHashJoinInnerWorker) getMatchedOuterRows(innerRow chunk.Row, task *indexHashJoinTask, h hash.Hash64, buf []byte) (matchedRows []chunk.Row, matchedRowPtr []chunk.RowPtr, err error) {
+	for i, colIdx := range iw.HashCols {
+		if innerRow.IsNull(colIdx) && !iw.HashIsNullEQ[i] {
+			return nil, nil, nil
+		}
+	}
 	h.Reset()
 	err = codec.HashChunkRow(iw.ctx.GetSessionVars().StmtCtx.TypeCtx(), h, innerRow, iw.HashTypes, iw.HashCols, buf)
 	if err != nil {

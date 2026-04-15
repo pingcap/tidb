@@ -518,13 +518,14 @@ type IndexLookUpExecutor struct {
 
 	indexPaging bool
 
-	corColInIdxSide bool
-	corColInTblSide bool
-	corColInAccess  bool
-	idxPlans        []base.PhysicalPlan
-	tblPlans        []base.PhysicalPlan
-	idxCols         []*expression.Column
-	colLens         []int
+	corColInIdxSide       bool
+	corColInTblSide       bool
+	corColInAccess        bool
+	idxPlans              []base.PhysicalPlan
+	idxPlanUnNatureOrders map[int]int
+	tblPlans              []base.PhysicalPlan
+	idxCols               []*expression.Column
+	colLens               []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
 	PushedLimit *physicalop.PushedDownLimit
 
@@ -702,7 +703,11 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 
 	var err error
 	if e.corColInIdxSide {
-		e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
+		if e.indexLookUpPushDown {
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExecForUnNatureOrderPlans(e.buildPBCtx, e.idxPlans, e.idxPlanUnNatureOrders)
+		} else {
+			e.dagPB.Executors, err = builder.ConstructListBasedDistExec(e.buildPBCtx, e.idxPlans)
+		}
 		if err != nil {
 			return err
 		}
@@ -742,7 +747,9 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {
 	if e.indexLookUpPushDown {
-		// For index lookup push down, partition table is not supported
+		// For index lookup push down, needPartitionHandle should always return false because
+		// global index or keep order for partition table is not supported now.
+		intest.Assert(!e.index.Global && !e.keepOrder)
 		return false, nil
 	}
 
@@ -821,8 +828,21 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		e.byItems = nil
 	}
 	var tps []*types.FieldType
+	tblScanIdxForRewritePartitionID := -1
 	if e.indexLookUpPushDown {
 		tps = e.RetFieldTypes()
+		if e.partitionTableMode {
+			for idx, executor := range e.dagPB.Executors {
+				if executor.Tp == tipb.ExecType_TypeTableScan {
+					tblScanIdxForRewritePartitionID = idx
+					break
+				}
+			}
+			if tblScanIdxForRewritePartitionID < 0 {
+				intest.Assert(false)
+				return errors.New("cannot find table scan executor in for partition index lookup push down")
+			}
+		}
 	} else {
 		tps = e.getRetTpsForIndexReader()
 	}
@@ -844,7 +864,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		for _, kvRange := range kvRanges {
+		for idx, kvRange := range kvRanges {
 			// check if executor is closed
 			finished := false
 			select {
@@ -855,6 +875,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			if finished {
 				break
 			}
+
+			if tblScanIdxForRewritePartitionID >= 0 {
+				// We should set the TblScan's TableID to the partition physical ID to make sure
+				// the push-down index lookup can encode the table handle key correctly.
+				e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[idx].GetPhysicalID()
+			}
+
 			var builder distsql.RequestBuilder
 			builder.SetDAGRequest(e.dagPB).
 				SetStartTS(e.startTS).
@@ -994,10 +1021,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	if e.stats != nil {
 		defer func() {
 			e.stmtRuntimeStatsColl.RegisterStats(e.ID(), e.stats)
-			var indexScanCopTasks int32
-			if copStats := e.stmtRuntimeStatsColl.GetCopStats(e.getIndexPlanRootID()); copStats != nil {
-				indexScanCopTasks = copStats.GetTasks()
-			}
+			indexScanCopTasks, _ := e.stmtRuntimeStatsColl.GetCopCountAndRows(e.getIndexPlanRootID())
 			if e.indexLookUpPushDown {
 				metrics.IndexLookUpExecutorWithPushDownEnabledRowNumber.Observe(float64(e.stats.indexScanBasicStats.GetActRows()))
 				metrics.IndexLookUpIndexScanCopTasksWithPushDownEnabled.Add(float64(indexScanCopTasks))
@@ -1246,7 +1270,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 	// can grow the number of workers when needed.
 	rateLimit := make(chan struct{}, idxlookupAllowPendingTasks+1)
 	for i := 0; i < len(results); {
-		result := results[i]
+		curResultIdx := i
+		result := results[curResultIdx]
 		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
 			break
 		}
@@ -1293,7 +1318,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			}
 			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
 			if w.idxLookup.partitionTableMode {
-				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[i]
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 			}
 			taskID++
 		}
@@ -1648,17 +1673,17 @@ func (e *IndexLookUpRunTimeStats) String() string {
 	tableTaskNum := atomic.LoadInt64(&e.TableTaskNum)
 	concurrency := e.Concurrency
 	if indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task: {total_time: %s, fetch_handle: %s, build: %s, wait: %s}",
+		fmt.Fprintf(&buf, "index_task: {total_time: %s, fetch_handle: %s, build: %s, wait: %s}",
 			execdetails.FormatDuration(time.Duration(fetchHandle)),
 			execdetails.FormatDuration(time.Duration(indexScan)),
 			execdetails.FormatDuration(time.Duration(fetchHandle-indexScan-taskWait)),
-			execdetails.FormatDuration(time.Duration(taskWait))))
+			execdetails.FormatDuration(time.Duration(taskWait)))
 	}
 	if tableScan != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf(" table_task: {total_time: %v, num: %d, concurrency: %d}", execdetails.FormatDuration(time.Duration(tableScan)), tableTaskNum, concurrency))
+		fmt.Fprintf(&buf, " table_task: {total_time: %v, num: %d, concurrency: %d}", execdetails.FormatDuration(time.Duration(tableScan)), tableTaskNum, concurrency)
 	}
 	if e.NextWaitIndexScan > 0 || e.NextWaitTableLookUpBuild > 0 || e.NextWaitTableLookUpResp > 0 {
 		if buf.Len() > 0 {

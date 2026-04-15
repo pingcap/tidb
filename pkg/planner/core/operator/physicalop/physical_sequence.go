@@ -54,7 +54,7 @@ func (p *PhysicalSequence) MemoryUsage() (sum int64) {
 
 // ExplainID overrides the ExplainID.
 func (p *PhysicalSequence) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}

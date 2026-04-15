@@ -24,10 +24,10 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
@@ -46,7 +46,7 @@ func TestSchemaImporter(t *testing.T) {
 	})
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	store, err := storage.NewLocalStorage(tempDir)
+	store, err := objstore.NewLocalStorage(tempDir)
 	require.NoError(t, err)
 	logger := log.Logger{Logger: zap.NewExample()}
 	importer := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 4)
@@ -186,6 +186,48 @@ func TestSchemaImporter(t *testing.T) {
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameT2)))
 	})
 
+	t.Run("table: ignore drop table in schema file", func(t *testing.T) {
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
+		fileName := "test01.t1-schema.sql"
+		require.NoError(t, os.WriteFile(
+			path.Join(tempDir, fileName),
+			[]byte("DROP TABLE t1; CREATE TABLE t1(a int);"),
+			0o644,
+		))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test01", Tables: []*MDTableMeta{
+				{DB: "test01", Name: "t1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
+			}},
+		}
+		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		require.NoError(t, importer.Run(ctx, dbMetas))
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
+	})
+
+	t.Run("table: ignore drop database in schema file", func(t *testing.T) {
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
+		fileName := "test01.t1-schema.sql"
+		require.NoError(t, os.WriteFile(
+			path.Join(tempDir, fileName),
+			[]byte("DROP DATABASE test01; CREATE TABLE t1(a int);"),
+			0o644,
+		))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test01", Tables: []*MDTableMeta{
+				{DB: "test01", Name: "t1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileName}}},
+			}},
+		}
+		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").
+			WillReturnResult(sqlmock.NewResult(0, 0))
+		require.NoError(t, importer.Run(ctx, dbMetas))
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
+	})
+
 	t.Run("view: get existing schema err", func(t *testing.T) {
 		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01").AddRow("test02"))
@@ -247,7 +289,7 @@ func TestSchemaImporterManyTables(t *testing.T) {
 	})
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	store, err := storage.NewLocalStorage(tempDir)
+	store, err := objstore.NewLocalStorage(tempDir)
 	require.NoError(t, err)
 	logger := log.Logger{Logger: zap.NewExample()}
 	importer := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 8)

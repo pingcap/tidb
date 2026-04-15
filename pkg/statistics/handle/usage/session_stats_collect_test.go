@@ -17,6 +17,7 @@ package usage_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -49,7 +50,9 @@ func TestPredicateUsage_FirstTouchCreatesRow(t *testing.T) {
 
 	// verify last_used_at is NOT NULL for (tableID, colAID)
 	rows := tk.MustQuery(
-		fmt.Sprintf("select last_used_at from mysql.column_stats_usage where table_id=%d and column_id=%d", tableID, colAID),
+		"select last_used_at from mysql.column_stats_usage where table_id=? and column_id=?",
+		tableID,
+		colAID,
 	).Rows()
 	require.Len(t, rows, 1)
 	require.NotEqual(t, "<nil>", rows[0][0])
@@ -74,7 +77,9 @@ func TestPredicateUsage_NoBumpWithinThrottle(t *testing.T) {
 	colAID := tbl.Meta().Columns[0].ID
 
 	ts1 := tk.MustQuery(
-		fmt.Sprintf("select last_used_at from mysql.column_stats_usage where table_id=%d and column_id=%d", tableID, colAID),
+		"select last_used_at from mysql.column_stats_usage where table_id=? and column_id=?",
+		tableID,
+		colAID,
 	).Rows()[0][0].(string)
 
 	// touch again shortly and dump; throttled path should skip bump
@@ -82,7 +87,9 @@ func TestPredicateUsage_NoBumpWithinThrottle(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
 
 	ts2 := tk.MustQuery(
-		fmt.Sprintf("select last_used_at from mysql.column_stats_usage where table_id=%d and column_id=%d", tableID, colAID),
+		"select last_used_at from mysql.column_stats_usage where table_id=? and column_id=?",
+		tableID,
+		colAID,
 	).Rows()[0][0].(string)
 	require.Equal(t, ts1, ts2)
 }
@@ -106,10 +113,12 @@ func TestPredicateUsage_BumpAfterOldStoredValue(t *testing.T) {
 	colAID := tbl.Meta().Columns[0].ID
 
 	// set an ancient last_used_at so the next usage exceeds throttle interval
-	tk.MustExec(fmt.Sprintf(
-		"update mysql.column_stats_usage set last_used_at = timestamp '2000-01-01 00:00:00' where table_id=%d and column_id=%d",
-		tableID, colAID,
-	))
+	tk.MustExec(
+		"update mysql.column_stats_usage set last_used_at = cast(? as datetime) where table_id=? and column_id=?",
+		"2000-01-01 00:00:00",
+		tableID,
+		colAID,
+	)
 
 	// touch again and dump; should bump to a recent timestamp
 	tk.MustQuery("select * from t where a > 0").Check(testkit.Rows())
@@ -117,7 +126,9 @@ func TestPredicateUsage_BumpAfterOldStoredValue(t *testing.T) {
 
 	// verify last_used_at changed from the ancient value
 	got := tk.MustQuery(
-		fmt.Sprintf("select last_used_at from mysql.column_stats_usage where table_id=%d and column_id=%d", tableID, colAID),
+		"select last_used_at from mysql.column_stats_usage where table_id=? and column_id=?",
+		tableID,
+		colAID,
 	).Rows()[0][0].(string)
 	require.NotEqual(t, "2000-01-01 00:00:00", got)
 }
@@ -243,10 +254,9 @@ func TestDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 	totalUpdated := 0
 	for _, tid := range tableIDs {
 		row := tk.MustQuery(
-			fmt.Sprintf(
-				"select count(*) from mysql.column_stats_usage where table_id=%d and CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') = timestamp '%s'",
-				tid, bumpTSUTC,
-			),
+			"select count(*) from mysql.column_stats_usage where table_id=? and CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') = cast(? as datetime)",
+			tid,
+			bumpTSUTC,
 		).Rows()[0][0].(string)
 		var c int
 		_, _ = fmt.Sscanf(row, "%d", &c)
@@ -259,4 +269,135 @@ func TestDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 	colAvg, colMinVal, colMaxVal := calculateStats(tc.data)
 	tc.mu.Unlock()
 	t.Logf("DumpColStatsUsage concurrent: goroutines=%d tables=%d cols/table=%d per-g: avg=%s min=%s max=%s; updated=%d/%d; batches=%d per-batch: avg=%s min=%s max=%s", goroutines, tableCount, numCols, avg, minVal, maxVal, totalUpdated, tableCount*numCols, batches, colAvg, colMinVal, colMaxVal)
+}
+
+func TestDumpStatsDeltaPersistsInitTime(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t")
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+
+	origMaxDuration := usage.GetDumpStatsMaxDurationForTest()
+	origRatio := usage.DumpStatsDeltaRatio
+	usage.SetDumpStatsMaxDurationForTest(50 * time.Millisecond)
+	usage.DumpStatsDeltaRatio = 0.5
+	t.Cleanup(func() {
+		usage.SetDumpStatsMaxDurationForTest(origMaxDuration)
+		usage.DumpStatsDeltaRatio = origRatio
+	})
+
+	tk.MustExec("insert into t values (11)")
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+	tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).
+		Check(testkit.Rows("0"))
+
+	time.Sleep(usage.GetDumpStatsMaxDurationForTest() + 100*time.Millisecond)
+
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+	tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).
+		Check(testkit.Rows("1"))
+}
+
+func TestDumpStatsDeltaMergeKeepsEarliestInitTime(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Test setup:
+	// 1) Create/analyze t and t_lock so stats_meta has baseline rows.
+	// 2) Lock t_lock's stats_meta row with FOR UPDATE to block the first DumpStatsDeltaToKV.
+	// 3) While blocked, write to t again and run a second dump to produce a later InitTime.
+	// 4) Release the lock, wait past dumpStatsMaxDuration, then dump and verify the earlier InitTime triggers flushing.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t_lock")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t_lock (a int)")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
+	tk.MustExec("insert into t_lock values (1)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t_lock")
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+	lockTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_lock"))
+	require.NoError(t, err)
+	lockTableID := lockTbl.Meta().ID
+
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustQuery("select count(*) from mysql.stats_meta where table_id = ?", lockTableID).
+		Check(testkit.Rows("1"))
+
+	origMaxDuration := usage.GetDumpStatsMaxDurationForTest()
+	origRatio := usage.DumpStatsDeltaRatio
+	usage.SetDumpStatsMaxDurationForTest(100 * time.Millisecond)
+	usage.DumpStatsDeltaRatio = 0.5
+	t.Cleanup(func() {
+		usage.SetDumpStatsMaxDurationForTest(origMaxDuration)
+		usage.DumpStatsDeltaRatio = origRatio
+	})
+
+	baseRows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+	require.Len(t, baseRows, 1)
+	baseCount, err := strconv.Atoi(baseRows[0][0].(string))
+	require.NoError(t, err)
+
+	tk.MustExec("insert into t values (11)")
+	tk.MustExec("insert into t_lock values (2),(3)")
+
+	tkLock := testkit.NewTestKit(t, store)
+	tkLock.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tkLock.MustExec("begin")
+	tkLock.MustQuery("select * from mysql.stats_meta where table_id = ? for update", lockTableID)
+
+	dump1Err := make(chan error, 1)
+	dump1Start := time.Now()
+	go func() {
+		dump1Err <- dom.StatsHandle().DumpStatsDeltaToKV(false)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case err := <-dump1Err:
+		t.Fatalf("first dump finished early: %v", err)
+	default:
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	tk.MustExec("insert into t values (12)")
+
+	dump2Start := time.Now()
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+
+	afterSecond := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+	require.Len(t, afterSecond, 1)
+	afterSecondCount, err := strconv.Atoi(afterSecond[0][0].(string))
+	require.NoError(t, err)
+	require.Equal(t, baseCount, afterSecondCount)
+
+	tkLock.MustExec("rollback")
+	require.NoError(t, <-dump1Err)
+
+	target := dump1Start.Add(usage.GetDumpStatsMaxDurationForTest() + 10*time.Millisecond)
+	if wait := time.Until(target); wait > 0 {
+		time.Sleep(wait)
+	}
+	require.True(t, time.Since(dump2Start) < usage.GetDumpStatsMaxDurationForTest())
+
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+	finalRows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+	require.Len(t, finalRows, 1)
+	finalCount, err := strconv.Atoi(finalRows[0][0].(string))
+	require.NoError(t, err)
+	require.Equal(t, baseCount+2, finalCount)
 }

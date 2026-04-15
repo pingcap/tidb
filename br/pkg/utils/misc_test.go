@@ -32,34 +32,46 @@ func TestIsTypeCompatible(t *testing.T) {
 		src := types.NewFieldType(mysql.TypeInt24)
 		src.AddFlag(mysql.UnsignedFlag)
 		target := types.NewFieldType(mysql.TypeInt24)
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 
 		src.DelFlag(mysql.UnsignedFlag)
 		target.AddFlag(mysql.UnsignedFlag)
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq = IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		// different not null flag
 		src := types.NewFieldType(mysql.TypeInt24)
 		src.AddFlag(mysql.NotNullFlag)
 		target := types.NewFieldType(mysql.TypeInt24)
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 
 		src.DelFlag(mysql.NotNullFlag)
 		target.AddFlag(mysql.NotNullFlag)
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq = IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		// different evaluation type
 		src := types.NewFieldType(mysql.TypeInt24)
 		target := types.NewFieldType(mysql.TypeFloat)
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		// src flen > target
 		src := types.NewFieldType(mysql.TypeInt24)
 		target := types.NewFieldType(mysql.TypeTiny)
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		// src flen > target
@@ -67,7 +79,9 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetFlen(100)
 		target := types.NewFieldType(mysql.TypeVarchar)
 		target.SetFlag(99)
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		// src decimal > target
@@ -75,7 +89,9 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetDecimal(5)
 		target := types.NewFieldType(mysql.TypeNewDecimal)
 		target.SetDecimal(4)
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		// src has more elements
@@ -83,7 +99,9 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetElems([]string{"a", "b"})
 		target := types.NewFieldType(mysql.TypeEnum)
 		target.SetElems([]string{"a"})
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		// incompatible enum
@@ -91,7 +109,9 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetElems([]string{"a", "b"})
 		target := types.NewFieldType(mysql.TypeEnum)
 		target.SetElems([]string{"a", "c", "d"})
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		// incompatible charset
@@ -99,7 +119,9 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetCharset("gbk")
 		target := types.NewFieldType(mysql.TypeVarchar)
 		target.SetCharset("utf8")
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.False(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		// incompatible collation
@@ -109,7 +131,9 @@ func TestIsTypeCompatible(t *testing.T) {
 		target := types.NewFieldType(mysql.TypeVarchar)
 		target.SetCharset("utf8")
 		target.SetCollate("utf8_general_ci")
-		require.False(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.True(t, typeEq)
+		require.False(t, collateEq)
 	}
 	{
 		src := types.NewFieldType(mysql.TypeVarchar)
@@ -120,25 +144,33 @@ func TestIsTypeCompatible(t *testing.T) {
 		target.SetFlen(11)
 		target.SetCharset("utf8")
 		target.SetCollate("utf8_bin")
-		require.True(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.True(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		src := types.NewFieldType(mysql.TypeBlob)
 		target := types.NewFieldType(mysql.TypeLongBlob)
-		require.True(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.True(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		src := types.NewFieldType(mysql.TypeEnum)
 		src.SetElems([]string{"a", "b"})
 		target := types.NewFieldType(mysql.TypeEnum)
 		target.SetElems([]string{"a", "b", "c"})
-		require.True(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.True(t, typeEq)
+		require.True(t, collateEq)
 	}
 	{
 		src := types.NewFieldType(mysql.TypeTimestamp)
 		target := types.NewFieldType(mysql.TypeTimestamp)
 		target.SetDecimal(3)
-		require.True(t, IsTypeCompatible(*src, *target))
+		typeEq, collateEq := IsTypeCompatible(*src, *target)
+		require.True(t, typeEq)
+		require.True(t, collateEq)
 	}
 }
 

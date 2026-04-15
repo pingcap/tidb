@@ -552,31 +552,54 @@ func TestTestHandler(t *testing.T) {
 }
 
 func TestServerInfo(t *testing.T) {
+	originalCfg := *config.GetGlobalConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ForceInitStats = false
+	})
+	defer config.StoreGlobalConfig(&originalCfg)
+
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
-	resp, err := ts.FetchStatus("/info")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	decoder := json.NewDecoder(resp.Body)
-
-	info := tikvhandler.ServerInfo{}
-	err = decoder.Decode(&info)
-	require.NoError(t, err)
 
 	cfg := config.GetGlobalConfig()
-	require.True(t, info.IsOwner)
+	store := ts.server.NewTikvHandlerTool().Store.(kv.Storage)
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	d := do.DDL()
+
+	fetchInfo := func() (tikvhandler.ServerInfo, error) {
+		resp, err := ts.FetchStatus("/info")
+		if err != nil {
+			return tikvhandler.ServerInfo{}, err
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+		if resp.StatusCode != http.StatusOK {
+			return tikvhandler.ServerInfo{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+
+		info := tikvhandler.ServerInfo{}
+		err = json.NewDecoder(resp.Body).Decode(&info)
+		return info, err
+	}
+
+	var info tikvhandler.ServerInfo
+	require.Eventually(t, func() bool {
+		current, err := fetchInfo()
+		if err != nil {
+			return false
+		}
+		info = current
+		return info.IsOwner
+	}, 3*time.Second, 50*time.Millisecond)
+
 	require.Equal(t, cfg.AdvertiseAddress, info.IP)
 	require.Equal(t, cfg.Status.StatusPort, info.StatusPort)
 	require.Equal(t, cfg.Lease, info.Lease)
 	require.Equal(t, mysql.ServerVersion, info.Version)
 	require.Equal(t, versioninfo.TiDBGitHash, info.GitHash)
-
-	store := ts.server.NewTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	d := do.DDL()
 	require.Equal(t, d.GetID(), info.ID)
 }
 
@@ -641,9 +664,9 @@ func TestTTL(t *testing.T) {
 	dbt.MustExec("create table t1(t timestamp) TTL=`t` + interval 1 day")
 
 	getJobCnt := func(status string) int {
-		selectSQL := "select count(1) from mysql.tidb_ttl_job_history"
+		selectSQL := "select count(1) from mysql.tidb_ttl_job_history where table_schema = 'test_ttl' and table_name = 't1'"
 		if status != "" {
-			selectSQL += " where status = '" + status + "'"
+			selectSQL += " and status = '" + status + "'"
 		}
 
 		rs, err := db.Query(selectSQL)
@@ -670,6 +693,7 @@ func TestTTL(t *testing.T) {
 			if cnt == 0 {
 				return
 			}
+			time.Sleep(200 * time.Millisecond)
 		}
 		require.Fail(t, "timeout for waiting job finished")
 	}
@@ -696,12 +720,12 @@ func TestTTL(t *testing.T) {
 		return obj, nil
 	}
 
-	expectedJobCnt := 1
+	baseJobCnt := getJobCnt("")
+	expectedJobCnt := baseJobCnt + 1
 	obj, err := doTrigger("test_ttl", "t1")
-	require.NoError(t, err)
 	if err != nil {
 		// if error returns, may be a job is running, we should skip it and have a next try when it stopped
-		require.Equal(t, expectedJobCnt, getJobCnt(""))
+		require.Equal(t, baseJobCnt, getJobCnt(""))
 		waitAllJobsFinish()
 		obj, err = doTrigger("test_ttl", "t1")
 		require.NoError(t, err)
@@ -710,7 +734,9 @@ func TestTTL(t *testing.T) {
 
 	_, ok := obj["table_result"]
 	require.True(t, ok)
-	require.Equal(t, expectedJobCnt, getJobCnt(""))
+	require.Eventually(t, func() bool {
+		return getJobCnt("") == expectedJobCnt
+	}, 10*time.Second, 200*time.Millisecond)
 
 	// error case, table not exist
 	obj, err = doTrigger("test_ttl", "t2")

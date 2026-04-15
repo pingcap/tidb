@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -81,11 +80,11 @@ func NewCMSketch(d, w int32) *CMSketch {
 
 // topNHelper wraps some variables used when building cmsketch with top n.
 type topNHelper struct {
-	sorted        []dataCnt
-	sampleSize    uint64
-	onlyOnceItems uint64
-	sumTopN       uint64
-	actualNumTop  uint32
+	sorted         []dataCnt
+	sampleSize     uint64
+	singletonItems uint64
+	sumTopN        uint64
+	actualNumTop   uint32
 }
 
 func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
@@ -93,11 +92,11 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	for i := range sample {
 		counter[hack.String(sample[i])]++
 	}
-	sorted, onlyOnceItems := make([]dataCnt, 0, len(counter)), uint64(0)
+	sorted, singletonItems := make([]dataCnt, 0, len(counter)), uint64(0)
 	for key, cnt := range counter {
 		sorted = append(sorted, dataCnt{hack.Slice(string(key)), cnt})
 		if cnt == 1 {
-			onlyOnceItems++
+			singletonItems++
 		}
 	}
 	slices.SortStableFunc(sorted, func(i, j dataCnt) int { return -cmp.Compare(i.cnt, j.cnt) })
@@ -133,7 +132,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		sumTopN += sorted[actualNumTop].cnt
 	}
 
-	return &topNHelper{sorted, uint64(len(sample)), onlyOnceItems, sumTopN, actualNumTop}
+	return &topNHelper{sorted, uint64(len(sample)), singletonItems, sumTopN, actualNumTop}
 }
 
 // NewCMSketchAndTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
@@ -166,7 +165,7 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 	c.defaultValue = defaultVal
 	for i := range helper.sorted {
 		data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
-		// If the value only occurred once in the sample, we assumes that there is no difference with
+		// If the value is a singleton in the sample, we assumes that there is no difference with
 		// value that does not occurred in the sample.
 		rowCount := defaultVal
 		if cnt > 1 {
@@ -179,11 +178,11 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 
 func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) uint64 {
 	sampleNDV := uint64(len(helper.sorted))
-	if rowCount <= (helper.sampleSize-helper.onlyOnceItems)*scaleRatio {
+	if rowCount <= (helper.sampleSize-helper.singletonItems)*scaleRatio {
 		return 1
 	}
-	estimateRemainingCount := rowCount - (helper.sampleSize-helper.onlyOnceItems)*scaleRatio
-	return estimateRemainingCount / max(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
+	estimateRemainingCount := rowCount - (helper.sampleSize-helper.singletonItems)*scaleRatio
+	return estimateRemainingCount / max(1, estimateNDV-sampleNDV+helper.singletonItems)
 }
 
 // MemoryUsage returns the total memory usage of a CMSketch.
@@ -258,23 +257,10 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 }
 
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (result uint64) {
+func (c *CMSketch) queryHashValue(_ planctx.PlanContext, h1, h2 uint64) (result uint64) {
 	vals := make([]uint32, c.depth)
 	originVals := make([]uint32, c.depth)
 	minValue := uint32(math.MaxUint32)
-	useDefaultValue := false
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx,
-				"Origin Values", originVals,
-				"Values", vals,
-				"Use default value", useDefaultValue,
-				"Result", result,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
 	// We want that when res is 0 before the noise is eliminated, the default value is not used.
 	// So we need a temp value to distinguish before and after eliminating noise.
 	temp := uint32(1)
@@ -300,7 +286,6 @@ func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (resu
 	}
 	res = res - temp
 	if c.considerDefVal(uint64(res)) {
-		useDefaultValue = true
 		return c.defaultValue
 	}
 	return uint64(res)
@@ -631,21 +616,11 @@ type TopNMeta struct {
 
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *TopN) QueryTopN(sctx planctx.PlanContext, d []byte) (result uint64, found bool) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Found", found)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+func (c *TopN) QueryTopN(_ planctx.PlanContext, d []byte) (result uint64, found bool) {
 	if c == nil {
 		return 0, false
 	}
 	idx := c.FindTopN(d)
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.RecordAnyValuesWithNames(sctx, "FindTopN idx", idx)
-	}
 	if idx < 0 {
 		return 0, false
 	}
@@ -695,14 +670,7 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 
 // BetweenCount estimates the row count for interval [l, r).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint64) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+func (c *TopN) BetweenCount(_ planctx.PlanContext, l, r []byte) (result uint64) {
 	if c == nil {
 		return 0
 	}
@@ -711,9 +679,6 @@ func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint6
 	ret := uint64(0)
 	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count
-	}
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugTraceTopNRange(sctx, c, lIdx, rIdx)
 	}
 	return ret
 }

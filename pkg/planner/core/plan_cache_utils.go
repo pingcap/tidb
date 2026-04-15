@@ -22,7 +22,6 @@ import (
 	"hash"
 	"math"
 	"slices"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -138,6 +138,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	hasUsePlanCacheHint := hint.ContainTableHintInStmtNode(paramStmt, hint.HintUsePlanCache)
 
 	var (
 		cacheable bool
@@ -191,10 +192,10 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	// Collect information for metadata lock.
-	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	tbls := make([]table.Table, 0, len(vars.StmtCtx.MDLRelatedTableIDs))
-	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.MDLRelatedTableIDs))
-	for id := range vars.StmtCtx.MDLRelatedTableIDs {
+	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
+	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
+	for id := range vars.StmtCtx.RelatedTableIDs {
 		tbl, ok := is.TableByID(ctx, id)
 		if !ok {
 			logutil.BgLogger().Error("table not found in info schema", zap.Int64("tableID", id))
@@ -222,6 +223,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		HasUsePlanCacheHint: hasUsePlanCacheHint,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
@@ -238,8 +240,60 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	return preparedObj, p, paramCount, nil
 }
 
+// tableIDSlicePool is a pool for int64 slices used in hashInt64Uint64Map.
+var tableIDSlicePool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
+
 func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
-	keys := make([]int64, 0, len(m))
+	n := len(m)
+
+	// Fast path for common cases (covers most scenarios)
+	if n == 0 {
+		return b
+	}
+	if n == 1 {
+		// Single table: no need for allocation or sorting
+		for k, v := range m {
+			b = codec.EncodeInt(b, k)
+			b = codec.EncodeUint(b, v)
+			return b
+		}
+	}
+	if n == 2 {
+		// Two tables: direct comparison without array allocation
+		var k1, k2 int64
+		var v1, v2 uint64
+		i := 0
+		for k, v := range m {
+			if i == 0 {
+				k1, v1 = k, v
+			} else {
+				k2, v2 = k, v
+			}
+			i++
+		}
+		// Ensure sorted order
+		if k1 > k2 {
+			k1, k2 = k2, k1
+			v1, v2 = v2, v1
+		}
+		b = codec.EncodeInt(b, k1)
+		b = codec.EncodeUint(b, v1)
+		b = codec.EncodeInt(b, k2)
+		b = codec.EncodeUint(b, v2)
+		return b
+	}
+
+	// Slow path for multiple tables
+	keys := tableIDSlicePool.Get()[:0]
+	defer tableIDSlicePool.Put(keys)
+
+	// Ensure sufficient capacity
+	if cap(keys) < n {
+		keys = make([]int64, 0, n)
+	}
+
 	for k := range m {
 		keys = append(keys, k)
 	}
@@ -258,7 +312,22 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
-	binding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	return newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
+}
+
+func newPlanCacheKeyWithMatchedBinding(
+	sctx sessionctx.Context,
+	stmt *PlanCacheStmt,
+	matchedBinding *bindinfo.Binding,
+	bindingMatched bool,
+) (key, binding string, cacheable bool, reason string, err error) {
+	if !bindingMatched && stmt.PreparedAst != nil {
+		matchedBinding, bindingMatched, _ = bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	}
+	if bindingMatched && matchedBinding != nil {
+		// Record the matched binding SQL so the plan cache key reflects the effective hints.
+		binding = matchedBinding.BindSQL
+	}
 
 	// In rc or for update read, we need the latest schema version to decide whether we need to
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
@@ -285,6 +354,13 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	if stmt.SchemaVersion == 0 && !intest.InTest {
 		return "", "", false, "", errors.New("Schema version uninitialized")
 	}
+	if stmt.hasSubquery && !vars.EnablePlanCacheForSubquery {
+		return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
+	}
+	if len(stmt.limits) > 0 && !vars.EnablePlanCacheForParamLimit {
+		return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
+	}
+
 	stmtDB := stmt.StmtDB
 	if stmtDB == "" {
 		stmtDB = vars.CurrentDB
@@ -305,11 +381,37 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the user might switch the prune mode dynamically
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 
-	hash := make([]byte, 0, len(stmt.StmtText)*2) // TODO: a Pool for this
-	hash = append(hash, hack.Slice(userName)...)
-	hash = append(hash, hack.Slice(hostName)...)
-	hash = append(hash, hack.Slice(stmtDB)...)
-	hash = append(hash, hack.Slice(stmt.StmtText)...)
+	// precalculate the length of the hash buffer, note each time add an element to the buffer, need
+	// to update hashLen accordingly
+	// basic informations
+	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
+	// schemaVersion + relateVersion + pruneMode
+	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
+	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
+	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
+	if len(stmt.limits) > 0 {
+		// '|' + each limit count/offset takes 8 bytes + '|'
+		hashLen += 2 + len(stmt.limits)*2*8
+	}
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+		// statsVerHash: skipped when a binding is matched and PlanCacheSkipStatsOnBinding is on,
+		// because a binding pins the plan via hints so stats changes cannot alter the chosen plan.
+		hashLen += 8
+	}
+	// dirty tables
+	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
+	// txn status
+	hashLen += 6
+
+	hash := make([]byte, 0, hashLen)
+	// hashInitCap is not used, just for test purposes
+	hashInitCap := cap(hash)
+	hash = append(hash, userName...)
+	hash = append(hash, hostName...)
+	hash = append(hash, stmtDB...)
+	hash = append(hash, stmt.StmtText...)
 	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
 	hash = append(hash, pruneMode...)
@@ -319,6 +421,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)
@@ -330,33 +433,23 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = append(hash, kv.TiFlash.Name()...)
 	}
 	hash = codec.EncodeInt(hash, int64(vars.SelectLimit))
-	hash = append(hash, hack.Slice(binding)...)
-	hash = append(hash, hack.Slice(connCharset)...)
-	hash = append(hash, hack.Slice(connCollation)...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vars.InRestrictedSQL))...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vardef.RestrictedReadOnly.Load()))...)
-	hash = append(hash, hack.Slice(strconv.FormatBool(vardef.VarTiDBSuperReadOnly.Load()))...)
+	hash = append(hash, binding...)
+	hash = append(hash, connCharset...)
+	hash = append(hash, connCollation...)
+	hash = append(hash, bool2Byte(vars.InRestrictedSQL))
+	hash = append(hash, bool2Byte(vardef.RestrictedReadOnly.Load()))
+	hash = append(hash, bool2Byte(vardef.VarTiDBSuperReadOnly.Load()))
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 
 	// whether this query has sub-query
-	if stmt.hasSubquery {
-		if !vars.EnablePlanCacheForSubquery {
-			return "", "", false, "the switch 'tidb_enable_plan_cache_for_subquery' is off", nil
-		}
-		hash = append(hash, '1')
-	} else {
-		hash = append(hash, '0')
-	}
+	hash = append(hash, bool2Byte(stmt.hasSubquery))
 
 	// this variable might affect the plan
 	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {
-		if !vars.EnablePlanCacheForParamLimit {
-			return "", "", false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off", nil
-		}
 		hash = append(hash, '|')
 		for _, node := range stmt.limits {
 			for _, valNode := range []ast.ExprNode{node.Count, node.Offset} {
@@ -378,8 +471,9 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = append(hash, '|')
 	}
 
-	// stats ver can affect cached plan
-	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats {
+	// stats ver can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
+	// is enabled — a binding pins the plan via hints, so stats changes cannot alter the chosen plan.
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
 		var statsVerHash uint64
 		for _, t := range stmt.tables {
 			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
@@ -390,7 +484,11 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// handle dirty tables
 	dirtyTables := vars.StmtCtx.TblInfo2UnionScan
 	if len(dirtyTables) > 0 {
-		dirtyTableIDs := make([]int64, 0, len(dirtyTables)) // TODO: a Pool for this
+		// Get int64 slice from pool
+		dirtyTableIDs := dirtyTableIDsPool.Get()[:0]
+		if cap(dirtyTableIDs) < len(dirtyTables) {
+			dirtyTableIDs = make([]int64, 0, len(dirtyTables))
+		}
 		for t, dirty := range dirtyTables {
 			if !dirty {
 				continue
@@ -401,6 +499,8 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		for _, id := range dirtyTableIDs {
 			hash = codec.EncodeInt(hash, id)
 		}
+		// Return slice to pool
+		dirtyTableIDsPool.Put(dirtyTableIDs)
 	}
 
 	// txn status
@@ -411,7 +511,13 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
 
-	return string(hash), binding, true, "", nil
+	if intest.InTest {
+		if cap(hash) != hashInitCap {
+			panic("unexpected hash buffer realloc in NewPlanCacheKey")
+		}
+	}
+
+	return string(hack.String(hash)), binding, true, "", nil
 }
 
 func bool2Byte(flag bool) byte {
@@ -522,6 +628,11 @@ var planCacheHasherPool = sync.Pool{
 		return sha256.New()
 	},
 }
+
+// dirtyTableIDsPool is a pool for int64 slices used in NewPlanCacheKey.
+var dirtyTableIDsPool = zeropool.New[[]int64](func() []int64 {
+	return make([]int64, 0, 8)
+})
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(
@@ -640,6 +751,8 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	// HasUsePlanCacheHint indicates whether this stmt contains the use_plan_cache() hint.
+	HasUsePlanCacheHint bool
 
 	limits      []*ast.Limit
 	hasSubquery bool
@@ -652,6 +765,7 @@ type PlanCacheStmt struct {
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(context.Context, sessionctx.Context) (uint64, error)
 
+	// BindingInfo caches normalization results for binding matching across executions.
 	BindingInfo bindinfo.BindingMatchInfo
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:

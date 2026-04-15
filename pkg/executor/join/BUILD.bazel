@@ -103,6 +103,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//pkg/config",
         "//pkg/domain",
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/testutil",
@@ -119,7 +120,6 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/codec",
         "//pkg/util/disk",
-        "//pkg/util/hack",
         "//pkg/util/memory",
         "//pkg/util/mock",
         "//pkg/util/sqlkiller",
