@@ -349,3 +349,100 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 	}
 	return v.Leave(n)
 }
+
+
+// DedupFlushObjects removes duplicate or shadowed scoped objects for FLUSH STATS_DELTA.
+func (n *FlushStmt) DedupFlushObjects() {
+	n.FlushObjects = dedupStatsObjects(n.FlushObjects)
+}
+
+func dedupStatsObjects(objects []*StatsObject) []*StatsObject {
+	if len(objects) == 0 {
+		return objects
+	}
+
+	dbSeen := make(map[string]struct{})
+	tableSeen := make(map[string]struct{})
+	result := make([]*StatsObject, 0, len(objects))
+
+	for _, obj := range objects {
+		switch obj.StatsObjectScope {
+		// Global scope supersedes everything else. Keep the first global target only.
+		case StatsObjectScopeGlobal:
+			return []*StatsObject{obj}
+		case StatsObjectScopeDatabase:
+			dbKey := obj.DBName.L
+			if _, exists := dbSeen[dbKey]; exists {
+				continue
+			}
+			dbSeen[dbKey] = struct{}{}
+
+			// Remove tables from the same database that might have been added earlier.
+			filtered := result[:0]
+			for _, existing := range result {
+				if existing.StatsObjectScope == StatsObjectScopeTable {
+					existingDBKey := existing.DBName.L
+					if existingDBKey != "" && existingDBKey == dbKey {
+						tblKey := existingDBKey + "." + existing.TableName.L
+						delete(tableSeen, tblKey)
+						continue
+					}
+				}
+				filtered = append(filtered, existing)
+			}
+			result = append(filtered, obj)
+		case StatsObjectScopeTable:
+			dbKey := obj.DBName.L
+			if dbKey != "" {
+				if _, exists := dbSeen[dbKey]; exists {
+					continue
+				}
+			}
+			tblKey := dbKey + "." + obj.TableName.L
+			if _, exists := tableSeen[tblKey]; exists {
+				continue
+			}
+			tableSeen[tblKey] = struct{}{}
+			result = append(result, obj)
+		}
+	}
+
+	return result
+}
+
+type StatsObjectScopeType int
+
+const (
+	// StatsObjectScopeTable is the scope of a table.
+	StatsObjectScopeTable StatsObjectScopeType = iota + 1
+	// StatsObjectScopeDatabase is the scope of a database.
+	StatsObjectScopeDatabase
+	// StatsObjectScopeGlobal is the scope of all databases.
+	StatsObjectScopeGlobal
+)
+
+type StatsObject struct {
+	StatsObjectScope StatsObjectScopeType
+	DBName           model.CIStr
+	TableName        model.CIStr
+}
+
+func (o *StatsObject) Restore(ctx *format.RestoreCtx) error {
+	switch o.StatsObjectScope {
+	case StatsObjectScopeTable:
+		if o.DBName.O != "" {
+			ctx.WriteName(o.DBName.O)
+			ctx.WritePlain(".")
+		}
+		ctx.WriteName(o.TableName.O)
+	case StatsObjectScopeDatabase:
+		ctx.WriteName(o.DBName.O)
+		ctx.WritePlain(".*")
+	case StatsObjectScopeGlobal:
+		ctx.WritePlain("*.*")
+	default:
+		// This should never happen.
+		return errors.Errorf("invalid stats object scope: %d", o.StatsObjectScope)
+	}
+	return nil
+}

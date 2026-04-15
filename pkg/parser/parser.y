@@ -1286,6 +1286,8 @@ import (
 	Priority                               "Statement priority"
 	PriorityOpt                            "Statement priority option"
 	PrivElem                               "Privilege element"
+	StatsObject                            "Stats object"
+	StatsObjectList                        "Stats object list"
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
@@ -12212,11 +12214,12 @@ FlushOption:
 			Tp: ast.FlushClientErrorsSummary,
 		}
 	}
-|	"STATS_DELTA" ClusterOpt
+|	"STATS_DELTA" StatsObjectList ClusterOpt
 	{
 		$$ = &ast.FlushStmt{
-			Tp:        ast.FlushStatsDelta,
-			IsCluster: $2.(bool),
+			Tp:           ast.FlushStatsDelta,
+			FlushObjects: $2.([]*ast.StatsObject),
+			IsCluster:    $3.(bool),
 		}
 	}
 
@@ -15403,6 +15406,46 @@ UnlockStatsStmt:
 		x.PartitionNames = $6.([]model.CIStr)
 		$$ = &ast.UnlockStatsStmt{
 			Tables: []*ast.TableName{x},
+		}
+	}
+
+StatsObjectList:
+	StatsObject
+	{
+		$$ = []*ast.StatsObject{$1.(*ast.StatsObject)}
+	}
+|	StatsObjectList ',' StatsObject
+	{
+		$$ = append($1.([]*ast.StatsObject), $3.(*ast.StatsObject))
+	}
+
+StatsObject:
+	'*' '.' '*'
+	{
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeGlobal,
+		}
+	}
+|	Identifier '.' '*'
+	{
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeDatabase,
+			DBName:           model.NewCIStr($1),
+		}
+	}
+|	Identifier '.' Identifier
+	{
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
+			DBName:           model.NewCIStr($1),
+			TableName:        model.NewCIStr($3),
+		}
+	}
+|	Identifier
+	{
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
+			TableName:        model.NewCIStr($1),
 		}
 	}
 
