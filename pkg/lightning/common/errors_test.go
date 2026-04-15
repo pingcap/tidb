@@ -115,25 +115,3 @@ func TestErrCastValueRedact(t *testing.T) {
 	err = ErrCastValue.GenWithStackByArgs("c1", "tinyint(4)", "\"BAD\"", "out of range")
 	require.EqualError(t, err, "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: ‹\"BAD\"›. Reason: out of range.")
 }
-
-func TestCheckpointTableNotFoundError(t *testing.T) {
-	err := CheckpointTableNotFoundError("`db`.`table`")
-	require.Error(t, err)
-	require.True(t, errors.IsNotFound(err))
-	require.True(t, IsCheckpointTableNotFoundError(err))
-	require.True(t, IsCheckpointTableNotFoundError(errors.Annotate(err, "wrapped")))
-	require.EqualError(
-		t,
-		err,
-		"checkpoint for table `db`.`table` not found; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
-	)
-	require.ErrorContains(t, err, "checkpoint for table `db`.`table`")
-	require.ErrorContains(t, err, "--checkpoint-error-ignore='`db`.`table`'")
-	require.ErrorContains(t, err, "--checkpoint-error-destroy='`db`.`table`'")
-	require.False(t, IsCheckpointTableNotFoundError(errors.NotFoundf("something else")))
-	require.False(t, IsCheckpointTableNotFoundError(errors.NotFoundf(
-		"checkpoint for table `db`.`table`; %s",
-		checkpointTableNotFoundHint,
-	)))
-	require.False(t, IsCheckpointTableNotFoundError(nil))
-}

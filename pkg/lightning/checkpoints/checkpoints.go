@@ -85,6 +85,27 @@ const (
 	columnTableName = "table_name"
 )
 
+const checkpointTableNotFoundHint = "valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'"
+
+var (
+	// ErrCheckpointTableNotFoundIdentity is the stable identity for table-scoped
+	// checkpoint operations when the checkpoint row does not exist.
+	ErrCheckpointTableNotFoundIdentity = errors.Normalize(
+		"checkpoint for table %s not found; "+checkpointTableNotFoundHint,
+		errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointTableNotFound"),
+	)
+)
+
+// CheckpointTableNotFoundError returns a user-facing error for missing table checkpoints.
+func CheckpointTableNotFoundError(tableName string) error {
+	return ErrCheckpointTableNotFoundIdentity.GenWithStackByArgs(tableName)
+}
+
+// IsCheckpointTableNotFoundError reports whether err was produced by CheckpointTableNotFoundError.
+func IsCheckpointTableNotFoundError(err error) bool {
+	return err != nil && ErrCheckpointTableNotFoundIdentity.Equal(err)
+}
+
 // some frequently used SQL statement templates.
 // shared by MySQLCheckpointsDB and GlueCheckpointsDB
 const (
@@ -616,11 +637,11 @@ type DB interface {
 	GetLocalStoringTables(ctx context.Context) (map[string][]int32, error)
 	// IgnoreErrorCheckpoint resets failed checkpoints so import can resume.
 	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// common.CheckpointTableNotFoundError when the target checkpoint does not exist.
+	// CheckpointTableNotFoundError when the target checkpoint does not exist.
 	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
 	// DestroyErrorCheckpoint removes failed checkpoints and returns removed tables.
 	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// common.CheckpointTableNotFoundError when the target checkpoint does not exist.
+	// CheckpointTableNotFoundError when the target checkpoint does not exist.
 	DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error)
 	DumpTables(ctx context.Context, csv io.Writer) error
 	DumpEngines(ctx context.Context, csv io.Writer) error
@@ -1697,7 +1718,7 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 					return errors.Trace(e)
 				}
 				if !found {
-					return common.CheckpointTableNotFoundError(tableName)
+					return CheckpointTableNotFoundError(tableName)
 				}
 			}
 		}
@@ -1787,7 +1808,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 				return errors.Trace(e)
 			}
 			if !found {
-				return common.CheckpointTableNotFoundError(tableName)
+				return CheckpointTableNotFoundError(tableName)
 			}
 		}
 
@@ -1988,7 +2009,7 @@ func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTa
 
 	tableModel, ok := cpdb.checkpoints.Checkpoints[targetTableName]
 	if !ok {
-		return common.CheckpointTableNotFoundError(targetTableName)
+		return CheckpointTableNotFoundError(targetTableName)
 	}
 	if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
 		tableModel.Status = uint32(CheckpointStatusLoaded)
@@ -2032,7 +2053,7 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 	} else {
 		tableModel, ok := cpdb.checkpoints.Checkpoints[targetTableName]
 		if !ok {
-			return nil, common.CheckpointTableNotFoundError(targetTableName)
+			return nil, CheckpointTableNotFoundError(targetTableName)
 		}
 		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) {
 			var minEngineID, maxEngineID int32 = math.MaxInt32, math.MinInt32

@@ -27,6 +27,7 @@ import (
 
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -83,11 +84,11 @@ type CheckpointManager interface {
 	Remove(ctx context.Context, tableName string) error
 	// IgnoreError resets failed checkpoints to Pending.
 	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// common.CheckpointTableNotFoundError when the target checkpoint does not exist.
+	// checkpoints.CheckpointTableNotFoundError when the target checkpoint does not exist.
 	IgnoreError(ctx context.Context, tableName string) error
 	// DestroyError removes the checkpoint for a specific table if it is in Failed state.
 	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// common.CheckpointTableNotFoundError when the target checkpoint does not exist.
+	// checkpoints.CheckpointTableNotFoundError when the target checkpoint does not exist.
 	// It returns the list of checkpoints that were removed.
 	DestroyError(ctx context.Context, tableName string) ([]*TableCheckpoint, error)
 	// DumpTables dumps the table checkpoints to a writer.
@@ -267,7 +268,7 @@ func (m *FileCheckpointManager) IgnoreError(ctx context.Context, tableName strin
 	} else {
 		cp, ok := m.checkpoints[tableName]
 		if !ok {
-			return common.CheckpointTableNotFoundError(tableName)
+			return checkpoints.CheckpointTableNotFoundError(tableName)
 		}
 		if cp.Status == CheckpointStatusFailed {
 			cp.Status = CheckpointStatusPending
@@ -294,7 +295,7 @@ func (m *FileCheckpointManager) DestroyError(ctx context.Context, tableName stri
 	} else {
 		cp, ok := m.checkpoints[tableName]
 		if !ok {
-			return nil, common.CheckpointTableNotFoundError(tableName)
+			return nil, checkpoints.CheckpointTableNotFoundError(tableName)
 		}
 		if cp.Status == CheckpointStatusFailed {
 			destroyed = append(destroyed, cp)
@@ -498,7 +499,7 @@ func (m *MySQLCheckpointManager) ensureTableCheckpointExists(ctx context.Context
 		return errors.Trace(err)
 	}
 	if cp == nil {
-		return common.CheckpointTableNotFoundError(tableName)
+		return checkpoints.CheckpointTableNotFoundError(tableName)
 	}
 	return nil
 }

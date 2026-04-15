@@ -61,11 +61,8 @@ var (
 	ErrUnknownCheckpointDriver = errors.Normalize("unknown checkpoint driver '%s'", errors.RFCCodeText("Lightning:Checkpoint:ErrUnknownCheckpointDriver"))
 	ErrInvalidCheckpoint       = errors.Normalize("invalid checkpoint", errors.RFCCodeText("Lightning:Checkpoint:ErrInvalidCheckpoint"))
 	ErrCheckpointNotFound      = errors.Normalize("checkpoint not found", errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointNotFound"))
-	// ErrCheckpointTableNotFoundIdentity is the stable identity for table-scoped
-	// checkpoint operations when the checkpoint row does not exist.
-	ErrCheckpointTableNotFoundIdentity = errors.Normalize("checkpoint table not found", errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointTableNotFound"))
-	ErrInitCheckpoint                  = errors.Normalize("init checkpoint error", errors.RFCCodeText("Lightning:Checkpoint:ErrInitCheckpoint"))
-	ErrCleanCheckpoint                 = errors.Normalize("clean checkpoint error", errors.RFCCodeText("Lightning:Checkpoint:ErrCleanCheckpoint"))
+	ErrInitCheckpoint          = errors.Normalize("init checkpoint error", errors.RFCCodeText("Lightning:Checkpoint:ErrInitCheckpoint"))
+	ErrCleanCheckpoint         = errors.Normalize("clean checkpoint error", errors.RFCCodeText("Lightning:Checkpoint:ErrCleanCheckpoint"))
 
 	ErrMetaMgrUnknown = errors.Normalize("unknown error occur on meta manager", errors.RFCCodeText("Lightning:MetaMgr:ErrMetaMgrUnknown"))
 
@@ -107,32 +104,6 @@ var (
 	ErrFoundDataConflictRecords  = errors.Normalize("found data conflict records in table %s, primary key is '%s', row data is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundDataConflictRecords"))
 	ErrFoundIndexConflictRecords = errors.Normalize("found index conflict records in table %s, index name is '%s', unique key is '%s', primary key is '%s'", errors.RFCCodeText("Lightning:Restore:ErrFoundIndexConflictRecords"))
 )
-
-const checkpointTableNotFoundHint = "valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'"
-
-var checkpointTableNotFoundSentinel = ErrCheckpointTableNotFoundIdentity.FastGenByArgs()
-
-type checkpointTableNotFoundError struct {
-	tableName string
-}
-
-func (e *checkpointTableNotFoundError) Error() string {
-	return fmt.Sprintf("checkpoint for table %s not found; %s", e.tableName, checkpointTableNotFoundHint)
-}
-
-func (*checkpointTableNotFoundError) Cause() error {
-	return checkpointTableNotFoundSentinel
-}
-
-// CheckpointTableNotFoundError returns a user-facing error for missing table checkpoints.
-func CheckpointTableNotFoundError(tableName string) error {
-	return errors.Trace(&checkpointTableNotFoundError{tableName: tableName})
-}
-
-// IsCheckpointTableNotFoundError reports whether err was produced by CheckpointTableNotFoundError.
-func IsCheckpointTableNotFoundError(err error) bool {
-	return err != nil && errors.ErrorEqual(err, checkpointTableNotFoundSentinel)
-}
 
 type withStack struct {
 	error

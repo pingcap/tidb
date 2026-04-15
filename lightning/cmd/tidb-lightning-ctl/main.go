@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/lightning/pkg/importer"
 	"github.com/pingcap/tidb/lightning/pkg/server"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
@@ -46,7 +47,7 @@ func formatFatalError(err error) string {
 	// the user-facing "checkpoint table not found" guidance error.
 	// If users later need this stack for troubleshooting, we can add a `-v` option
 	// to print verbose output (including stack traces) for this path too.
-	if common.IsCheckpointTableNotFoundError(err) {
+	if checkpoints.IsCheckpointTableNotFoundError(err) {
 		return err.Error()
 	}
 	return errors.ErrorStack(err)
