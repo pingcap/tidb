@@ -494,11 +494,11 @@ const (
 	// Add the default value management for `tidb_analyze_distsql_scan_concurrency`.
 	// If the cluster is upgraded from a version that has no such variable, we set it to the global.tidb_distsql_scan_concurrency value.
 	version258 = 258
-  
-  // version259 
-  // increases resource group name related columns from varchar(32) to varchar(64)
+
+	// version259
+	// increases resource group name related columns from varchar(32) to varchar(64)
 	// for MySQL compatibility.
-  version259 = 259
+	version259 = 259
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -695,7 +695,7 @@ var (
 		{version: version256, fn: upgradeToVer256},
 		{version: version257, fn: upgradeToVer257},
 		{version: version258, fn: upgradeToVer258},
-    {version: version259, fn: upgradeToVer259},
+		{version: version259, fn: upgradeToVer259},
 	}
 )
 
