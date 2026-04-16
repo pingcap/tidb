@@ -728,6 +728,9 @@ func (b *Builder) applyDropSchema(diff *model.SchemaDiff) []int64 {
 		return nil
 	}
 	b.infoSchema.delSchema(di)
+	if b.infoSchema.routineMap != nil {
+		delete(b.infoSchema.routineMap, di.Name.L)
+	}
 
 	// Copy the sortedTables that contain the table we are going to drop.
 	tableIDs := make([]int64, 0, len(di.Deprecated.Tables))
@@ -975,6 +978,17 @@ func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	return b.infoSchema
 }
 
+func cloneRoutineMap(src map[string]map[string]*model.ProcedureInfo) map[string]map[string]*model.ProcedureInfo {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]map[string]*model.ProcedureInfo, len(src))
+	for schemaName, routines := range src {
+		dst[schemaName] = maps.Clone(routines)
+	}
+	return dst
+}
+
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	// Do not mix infoschema v1 and infoschema v2 building, this can simplify the logic.
@@ -997,6 +1011,7 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
+	b.infoSchema.routineMap = cloneRoutineMap(oldIS.routineMap)
 	b.infoSchema.triggerTableMap = maps.Clone(oldIS.triggerTableMap)
 
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
@@ -1039,10 +1054,6 @@ func (b *Builder) sortAllTablesByID() {
 			return cmp.Compare(a.Meta().ID, b.Meta().ID)
 		})
 	}
-}
-
-func (b *Builder) reloadRoutines() error {
-	return nil
 }
 
 func (b *Builder) reloadLoadableFunctions() error {

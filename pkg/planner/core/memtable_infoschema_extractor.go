@@ -68,6 +68,8 @@ const (
 	TableID          = "table_id"
 	SequenceSchema   = "sequence_schema"
 	SequenceName     = "sequence_name"
+	SpecificSchema   = "specific_schema"
+	SpecificName     = "specific_name"
 	ColumnName       = "column_name"
 	DDLStateName     = "state"
 	TriggerSchema    = "trigger_schema"
@@ -83,6 +85,8 @@ var patternMatchable = map[string]struct{}{
 	ConstraintSchema: {},
 	SequenceSchema:   {},
 	SequenceName:     {},
+	SpecificSchema:   {},
+	SpecificName:     {},
 	ColumnName:       {},
 	TriggerSchema:    {},
 }
@@ -613,6 +617,38 @@ func NewInfoSchemaSequenceExtractor() *InfoSchemaSequenceExtractor {
 	}
 	e.colNames = []string{SequenceSchema, SequenceName}
 	return e
+}
+
+// InfoSchemaParametersExtractor is the predicate extractor for information_schema.parameters.
+type InfoSchemaParametersExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// NewInfoSchemaParametersExtractor creates a new InfoSchemaParametersExtractor.
+func NewInfoSchemaParametersExtractor() *InfoSchemaParametersExtractor {
+	e := &InfoSchemaParametersExtractor{}
+	e.extractableColumns = extractableCols{
+		schema: SpecificSchema,
+		table:  SpecificName,
+	}
+	e.colNames = []string{SpecificSchema, SpecificName}
+	return e
+}
+
+// ListSpecificNames lists routine names extracted from exact predicates.
+func (e *InfoSchemaParametersExtractor) ListSpecificNames() []pmodel.CIStr {
+	names := e.getSchemaObjectNames(SpecificName)
+	return filterSchemaObjectByRegexp(e.GetBase(), SpecificName, names, extractStrCIStr)
+}
+
+// HasSpecificSchema returns true if the schema matches the extracted predicates.
+func (e *InfoSchemaParametersExtractor) HasSpecificSchema(name string) bool {
+	return !e.filter(SpecificSchema, name)
+}
+
+// HasSpecificName returns true if the routine name matches the extracted predicates.
+func (e *InfoSchemaParametersExtractor) HasSpecificName(name string) bool {
+	return !e.filter(SpecificName, name)
 }
 
 // InfoSchemaTableTriggersExtractor is the predicate extractor for information_schema.triggers.

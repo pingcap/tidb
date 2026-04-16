@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -92,6 +93,10 @@ import (
 )
 
 var lowerPrimaryKeyName = strings.ToLower(mysql.PrimaryKeyName)
+
+var parseOneStmtForRoutine = func(p *parser.Parser, sql, charset, collation string) (ast.StmtNode, error) {
+	return p.ParseOneStmt(sql, charset, collation)
+}
 
 type memtableRetriever struct {
 	dummyCloser
@@ -240,6 +245,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
 		case infoschema.TableRoutines:
 			err = e.setDataForRoutines(ctx, sctx)
+		case infoschema.TableParameters:
+			err = e.setDataForParameters(ctx, sctx)
 		case infoschema.TableColumnPrivileges:
 			err = e.setDataFromColumnPrivileges(ctx, sctx)
 		case infoschema.TableTablePrivileges:
@@ -1076,8 +1083,8 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 func (e *memtableRetriever) setDataForRoutines(ctx context.Context, sctx sessionctx.Context) error {
 	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnProcedure)
-	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `select route_schema,name,type,definition_utf8,parameter_str,is_deterministic,sql_data_access,security_type,definer,sql_mode,
-	character_set_client,connection_collation,schema_collation,created,last_altered,comment,options,external_language from mysql.routines;`)
+	sql, args := infoschema.BuildRoutineMetadataSQL(infoschema.RoutineMetadataFilter{})
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, args...)
 	if err != nil {
 		return err
 	}
@@ -1089,39 +1096,273 @@ func (e *memtableRetriever) setDataForRoutines(ctx context.Context, sctx session
 		if chunkRow.Len() != 18 {
 			continue
 		}
-		routineType := chunkRow.GetEnum(2)
-		switch routineType.String() {
-		case "PROCEDURE", "FUNCTION":
-		default:
-			return errors.Errorf("Not support %s", routineType.String())
+		routine, err := infoschema.DecodeRoutineMetadataRow(chunkRow)
+		if err != nil {
+			return err
 		}
-		routeSchema := chunkRow.GetString(0)
-		name := chunkRow.GetString(1)
-		definitionUtf8 := chunkRow.GetString(3)
-		isDeterministic := chunkRow.GetInt64(5)
-		sqlDataAccess := chunkRow.GetEnum(6)
-		securityType := chunkRow.GetEnum(7)
-		definer := chunkRow.GetString(8)
-		sqlMode := chunkRow.GetSet(9)
-		characterSetClient := chunkRow.GetString(10)
-		connectionCollation := chunkRow.GetString(11)
-		schemaCollation := chunkRow.GetString(12)
-		created := chunkRow.GetTime(13)
-		lastAltered := chunkRow.GetTime(14)
-		comment := chunkRow.GetString(15)
-		externalLanguage := chunkRow.GetString(17)
 		deterministicStatus := "NO"
-		if isDeterministic == 1 {
+		if routine.IsDeterministic == 1 {
 			deterministicStatus = "YES"
 		}
-		row := types.MakeDatums(name, "def", routeSchema, name, routineType.String(), "", nil, nil, nil, nil, nil, nil, nil, nil, "SQL",
-			definitionUtf8, nil, externalLanguage, "SQL", deterministicStatus, sqlDataAccess.String(), nil, securityType.String(), created,
-			lastAltered, sqlMode.String(), comment, definer, characterSetClient, connectionCollation, schemaCollation)
+		row := types.MakeDatums(routine.Name.O, "def", routine.Schema.O, routine.Name.O, routine.Type, "", nil, nil, nil, nil, nil, nil, nil, nil, "SQL",
+			routine.DefinitionUTF8, nil, routine.ExternalLanguage, "SQL", deterministicStatus, routine.SQLDataAccess, nil, routine.SecurityType, routine.Created,
+			routine.LastAltered, routine.SQLMode, routine.Comment, routine.Definer, routine.CharacterSetClient, routine.CollationConnection, routine.SchemaCollation)
 		rows = append(rows, row)
 	}
 
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataForParameters(ctx context.Context, sctx sessionctx.Context) error {
+	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnProcedure)
+	filter := infoschema.RoutineMetadataFilter{}
+	var extractor *plannercore.InfoSchemaParametersExtractor
+	if ex, ok := e.extractor.(*plannercore.InfoSchemaParametersExtractor); ok {
+		extractor = ex
+		if ex.SkipRequest {
+			return nil
+		}
+
+		if schemaPredicates := ex.GetBase().ColPredicates[plannercore.SpecificSchema]; len(schemaPredicates) > 0 {
+			filter.Schemas = make([]string, 0, len(schemaPredicates))
+			schemaPredicates.IterateWith(func(schema string) {
+				filter.Schemas = append(filter.Schemas, schema)
+			})
+		}
+		if names := ex.ListSpecificNames(); len(names) > 0 {
+			filter.Names = make([]string, 0, len(names))
+			for _, name := range names {
+				filter.Names = append(filter.Names, name.O)
+			}
+		}
+	}
+	sql, args := infoschema.BuildRoutineMetadataSQL(filter)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, args...)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+
+	rows := make([][]types.Datum, 0, len(chunkRows)*2)
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 18 {
+			continue
+		}
+		routine, err := infoschema.DecodeRoutineMetadataRow(chunkRow)
+		if err != nil {
+			return err
+		}
+		if extractor != nil &&
+			(!extractor.HasSpecificSchema(routine.Schema.O) || !extractor.HasSpecificName(routine.Name.O)) {
+			continue
+		}
+		routineRows, buildErr := buildRoutineParameterRows(routine.Schema, routine.ProcedureInfo)
+		if buildErr != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+				"failed to build information_schema.parameters rows for routine `%s`.`%s` (%s): %v",
+				routine.Schema.O,
+				routine.Name.O,
+				routine.Type,
+				buildErr,
+			))
+			logutil.BgLogger().Warn("failed to build information_schema.parameters rows for routine",
+				zap.String("schema", routine.Schema.O),
+				zap.String("routine", routine.Name.O),
+				zap.String("routineType", routine.Type),
+				zap.Error(buildErr))
+			continue
+		}
+		rows = append(rows, routineRows...)
+	}
+
+	e.rows = rows
+	return nil
+}
+
+func buildRoutineParameterRows(schema pmodel.CIStr, routine *model.ProcedureInfo) ([][]types.Datum, error) {
+	stmt, err := parseRoutineDefinition(routine)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([][]types.Datum, 0, len(stmt.ProcedureParam)+1)
+	if strings.EqualFold(routine.Type, "FUNCTION") && stmt.FunctionInfo.RetType != nil {
+		rows = append(rows, buildParameterRow(schema.O, routine.Name.O, 0, nil, nil, stmt.FunctionInfo.RetType, routine.Type))
+	}
+	for idx, param := range stmt.ProcedureParam {
+		mode := "IN"
+		switch param.Paramstatus {
+		case ast.MODE_OUT:
+			mode = "OUT"
+		case ast.MODE_INOUT:
+			mode = "INOUT"
+		}
+		rows = append(rows, buildParameterRow(schema.O, routine.Name.O, idx+1, mode, param.ParamName, param.ParamType, routine.Type))
+	}
+	return rows, nil
+}
+
+func parseRoutineDefinition(routine *model.ProcedureInfo) (*ast.CreateProcedureInfo, error) {
+	sqlMode, err := mysql.GetSQLMode(routine.SQLMode)
+	if err != nil {
+		return nil, err
+	}
+
+	p := parser.New()
+	p.SetSQLMode(sqlMode)
+
+	var sqlBuilder strings.Builder
+	if strings.EqualFold(routine.Type, "FUNCTION") {
+		sqlBuilder.WriteString("create function p(")
+	} else {
+		sqlBuilder.WriteString("create procedure p(")
+	}
+	sqlBuilder.WriteString(routine.ParameterStr)
+	sqlBuilder.WriteString(") ")
+	sqlBuilder.WriteString(routine.DefinitionUTF8)
+
+	stmt, err := parseOneStmtForRoutine(p, sqlBuilder.String(), routine.CharacterSetClient, routine.CollationConnection)
+	if err != nil {
+		return nil, err
+	}
+	createRoutine, ok := stmt.(*ast.CreateProcedureInfo)
+	if !ok {
+		return nil, errors.Errorf("unexpected statement type %T", stmt)
+	}
+	return createRoutine, nil
+}
+
+func buildParameterRow(
+	specificSchema string,
+	specificName string,
+	ordinalPosition int,
+	parameterMode any,
+	parameterName any,
+	ft *types.FieldType,
+	routineType string,
+) []types.Datum {
+	dataType, charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision, charsetName, collationName, dtdIdentifier :=
+		getRoutineParameterTypeMetadata(ft)
+
+	return types.MakeDatums(
+		infoschema.CatalogVal, // SPECIFIC_CATALOG
+		specificSchema,        // SPECIFIC_SCHEMA
+		specificName,          // SPECIFIC_NAME
+		stringifyInfoSchemaValue(ordinalPosition), // ORDINAL_POSITION
+		parameterMode,                               // PARAMETER_MODE
+		parameterName,                               // PARAMETER_NAME
+		dataType,                                    // DATA_TYPE
+		stringifyInfoSchemaValue(charMaxLen),        // CHARACTER_MAXIMUM_LENGTH
+		stringifyInfoSchemaValue(charOctLen),        // CHARACTER_OCTET_LENGTH
+		stringifyInfoSchemaValue(numericPrecision),  // NUMERIC_PRECISION
+		stringifyInfoSchemaValue(numericScale),      // NUMERIC_SCALE
+		stringifyInfoSchemaValue(datetimePrecision), // DATETIME_PRECISION
+		charsetName,                                 // CHARACTER_SET_NAME
+		collationName,                               // COLLATION_NAME
+		dtdIdentifier,                               // DTD_IDENTIFIER
+		routineType,                                 // ROUTINE_TYPE
+	)
+}
+
+func stringifyInfoSchemaValue(v any) any {
+	switch x := v.(type) {
+	case nil:
+		return nil
+	case int:
+		return strconv.Itoa(x)
+	case int64:
+		return strconv.FormatInt(x, 10)
+	case uint64:
+		return strconv.FormatUint(x, 10)
+	default:
+		return v
+	}
+}
+
+func getRoutineParameterTypeMetadata(ft *types.FieldType) (
+	dataType string,
+	charMaxLen any,
+	charOctLen any,
+	numericPrecision any,
+	numericScale any,
+	datetimePrecision any,
+	charsetName any,
+	collationName any,
+	dtdIdentifier string,
+) {
+	colType := ft.GetType()
+	if colType == mysql.TypeVarString {
+		colType = mysql.TypeVarchar
+	}
+	dataType = types.TypeToStr(colType, ft.GetCharset())
+
+	colLen, decimal := ft.GetFlen(), ft.GetDecimal()
+	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
+	if decimal == types.UnspecifiedLength {
+		decimal = defaultDecimal
+	}
+	if colLen == types.UnspecifiedLength {
+		colLen = defaultFlen
+	}
+
+	switch ft.GetType() {
+	case mysql.TypeSet:
+		colLen = 0
+		for _, ele := range ft.GetElems() {
+			colLen += len(ele)
+		}
+		if len(ft.GetElems()) != 0 {
+			colLen += len(ft.GetElems()) - 1
+		}
+		charMaxLen = colLen
+		charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+	case mysql.TypeEnum:
+		colLen = 0
+		for _, ele := range ft.GetElems() {
+			if len(ele) > colLen {
+				colLen = len(ele)
+			}
+		}
+		charMaxLen = colLen
+		charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+	case mysql.TypeNull:
+		charMaxLen = 0
+		charOctLen = 0
+	default:
+		if types.IsString(ft.GetType()) {
+			charMaxLen = colLen
+			charOctLen = calcCharOctLength(colLen, ft.GetCharset())
+		} else if types.IsTypeFractionable(ft.GetType()) {
+			datetimePrecision = decimal
+		} else if types.IsTypeNumeric(ft.GetType()) {
+			numericPrecision = colLen
+			if ft.GetType() != mysql.TypeFloat && ft.GetType() != mysql.TypeDouble {
+				numericScale = decimal
+			} else if decimal != -1 {
+				numericScale = decimal
+			}
+		}
+	}
+
+	if types.IsString(ft.GetType()) || ft.GetType() == mysql.TypeEnum || ft.GetType() == mysql.TypeSet {
+		charsetName = ft.GetCharset()
+		collationName = ft.GetCollate()
+	}
+	dtdIdentifier = restoreRoutineFieldType(ft)
+	return
+}
+
+func restoreRoutineFieldType(ft *types.FieldType) string {
+	var buf bytes.Buffer
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	if err := ast.RestoreRoutineFieldType(restoreCtx, ft); err != nil {
+		return ft.InfoSchemaStr()
+	}
+	return buf.String()
 }
 
 func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {

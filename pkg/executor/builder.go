@@ -2455,6 +2455,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
 			strings.ToLower(infoschema.TableRoutines),
+			strings.ToLower(infoschema.TableParameters),
 			strings.ToLower(infoschema.TableColumnPrivileges),
 			strings.ToLower(infoschema.TableTablePrivileges),
 			strings.ToLower(infoschema.TableSchemaPrivileges),

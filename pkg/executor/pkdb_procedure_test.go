@@ -2644,6 +2644,120 @@ func TestProcedureComment(t *testing.T) {
 	tk.MustQuery("select routine_comment from information_schema.routines").Check(testkit.Rows("114"))
 }
 
+func TestInformationSchemaParametersForStoredRoutines(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("set names latin1")
+	tk.MustExec("set @@collation_connection = 'latin1_bin'")
+	tk.MustExec("create procedure proc_meta(in p_in int, out p_out decimal(10,0), inout p_inout varchar(20)) begin select 1; end;")
+	tk.MustExec("create function func_meta(p_id bigint, p_label varchar(10)) returns decimal(8,2) begin return 1.23; end;")
+	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
+
+	tk.MustQuery(`
+		select specific_name,
+		       ordinal_position,
+		       ifnull(parameter_mode, ''),
+		       ifnull(parameter_name, ''),
+		       data_type,
+		       ifnull(character_set_name, ''),
+		       ifnull(collation_name, ''),
+		       dtd_identifier,
+		       routine_type
+		from information_schema.parameters
+		where specific_schema = 'test'
+		  and specific_name in ('proc_meta', 'func_meta')
+		order by specific_name, ordinal_position
+	`).Check(testkit.Rows(
+		"func_meta 0   decimal   decimal(8,2) FUNCTION",
+		"func_meta 1 IN p_id bigint   bigint(20) FUNCTION",
+		"func_meta 2 IN p_label varchar latin1 latin1_bin varchar(10) CHARACTER SET latin1 COLLATE latin1_bin FUNCTION",
+		"proc_meta 1 IN p_in int   int(11) PROCEDURE",
+		"proc_meta 2 OUT p_out decimal   decimal(10,0) PROCEDURE",
+		"proc_meta 3 INOUT p_inout varchar latin1 latin1_bin varchar(20) CHARACTER SET latin1 COLLATE latin1_bin PROCEDURE",
+	))
+}
+
+func TestInformationSchemaParametersWarnsOnRoutineParseFailure(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("create procedure proc_bad(in p_label varchar(20)) begin select 1; end;")
+	tk.MustExec(`update mysql.routines
+		set parameter_str = 'in p_label varchar('
+		where route_schema = 'test' and name = 'proc_bad' and type = 'PROCEDURE'`)
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
+
+	tk.MustQuery(`
+		select specific_name, ordinal_position
+		from information_schema.parameters
+		where specific_schema = 'test' and specific_name = 'proc_bad'
+	`).Check(testkit.Rows())
+
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.NotEmpty(t, warnings)
+	found := false
+	for _, warn := range warnings {
+		msg := warn.Err.Error()
+		if strings.Contains(msg, "failed to build information_schema.parameters rows for routine") &&
+			strings.Contains(msg, "test") &&
+			strings.Contains(msg, "proc_bad") &&
+			strings.Contains(msg, "PROCEDURE") {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "warnings: %+v", warnings)
+}
+
+func TestInformationSchemaParametersPredicateRegressions(t *testing.T) {
+	t.Run("specific_name_like", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.InProcedure()
+		tk.MustExec("use test")
+
+		tk.MustExec("create procedure proc_match(in p1 int) begin select 1; end;")
+		tk.MustExec("create procedure x_other(in p1 int) begin select 1; end;")
+		tk.MustExec("create function func_match(p1 int) returns int begin return p1; end;")
+
+		tk.MustQuery(`
+			select specific_name, ordinal_position
+			from information_schema.parameters
+			where specific_schema = 'test'
+			  and specific_name like 'proc_%'
+			order by specific_name, ordinal_position
+		`).Check(testkit.Rows(
+			"proc_match 1",
+		))
+	})
+
+	t.Run("mixed_case_schema", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.InProcedure()
+
+		tk.MustExec("drop database if exists TeStMixed")
+		tk.MustExec("create database TeStMixed")
+		tk.MustExec("use TeStMixed")
+		tk.MustExec("create procedure proc_case(in p1 int) begin select 1; end;")
+
+		tk.MustQuery(`
+			select specific_schema, specific_name, ordinal_position
+			from information_schema.parameters
+			where specific_schema = 'TeStMixed'
+			  and specific_name = 'proc_case'
+			order by ordinal_position
+		`).Check(testkit.Rows(
+			"TeStMixed proc_case 1",
+		))
+	})
+}
+
 func TestProcedureTranscation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
