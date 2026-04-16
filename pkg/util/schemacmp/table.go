@@ -270,19 +270,8 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 		}
 	}
 
-	// Some TableInfo may omit Collate while Charset is set; preserve charset/collation semantics.
-	collate := ti.Collate
-	if collate == "" && ti.Charset != "" {
-		if defaultCollate, err := pcharset.GetDefaultCollation(ti.Charset); err == nil {
-			collate = defaultCollate
-		} else {
-			// Fall back to charset-only if the default collation isn't known.
-			collate = ti.Charset
-		}
-	}
-
 	return Tuple{
-		Collation(collate),
+		Collation(ti.Collate),
 		Map(columns),
 		Map(indices),
 		// TODO ForeignKeys?
