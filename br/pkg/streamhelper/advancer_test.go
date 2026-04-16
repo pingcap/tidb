@@ -551,7 +551,6 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	adv2 := streamhelper.NewCheckpointAdvancer(env)
 	adv2.UpdateCheckPointLagLimit(time.Minute)
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	adv2.OnStart(ctx2)
 
 	for range 5 {
 		c.advanceClusterTimeBy(2 * time.Minute)
@@ -568,6 +567,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	// stop advancer1, and advancer2 should take over
 	cancel1()
 	log.Info("advancer1 owner canceled, and advancer2 become owner")
+	adv2.OnStart(ctx2)
 	adv2.OnBecomeOwner(ctx2)
 	require.NoError(t, adv2.OnTick(ctx2))
 
