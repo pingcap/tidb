@@ -320,7 +320,7 @@ func TestDiscardPendingSnapshotReportsPartialMarkerDeletion(t *testing.T) {
 			MarkerPaths: []string{firstMarker, secondMarker},
 			State:       repo.PendingBackupStateStale,
 		},
-		repo.WithMutationProgress(nil, func(count int) {
+		repo.WithMutationDeletedProgress(func(count int) {
 			deletedCallbacks.Add(int64(count))
 		}),
 	)

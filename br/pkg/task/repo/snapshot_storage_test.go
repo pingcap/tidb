@@ -159,12 +159,13 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 	})
 	require.NoError(t, metaWriter.FlushBackupMeta(ctx))
 
-	resolved, backupMeta, err := LoadSnapshotBackupMeta(ctx, &SnapshotStorageRef{
-		Layout:      repo.LayoutRepoV1,
+	resolved := &SnapshotStorageRef{
 		BackupID:    backupID,
 		RootBackend: rootBackend,
 		RootStorage: storage,
-	}, &cipherInfo)
+	}
+	require.NoError(t, resolved.Validate(ctx))
+	backupMeta, err := resolved.LoadBackupMeta(ctx, &cipherInfo)
 	require.NoError(t, err)
 	require.Equal(t, backupID, resolved.BackupID)
 	require.Equal(t, uint64(42), backupMeta.ClusterId)
@@ -195,7 +196,7 @@ func TestPrepareRepoV1SnapshotBackupOnPendingNoneStartsNew(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, repo.BackupID(0x1111), resolved.BackupID)
-	require.Contains(t, resolved.MetadataStorage.URI(), repo.SnapshotMetadataDir(repo.BackupID(0x1111)))
+	require.Contains(t, resolved.MetadataStorage().URI(), repo.SnapshotMetadataDir(repo.BackupID(0x1111)))
 }
 
 func TestPrepareRepoV1SnapshotBackupResumePendingBackup(t *testing.T) {
@@ -232,7 +233,7 @@ func TestPrepareRepoV1SnapshotBackupResumePendingBackup(t *testing.T) {
 	require.Equal(t, backupID, resolved.BackupID)
 	require.Equal(t, repo.PendingFile(cfgHash, backupID), resolved.PendingMarkerPath)
 	require.True(t, resolved.ResumeFromCheckpoint)
-	require.Contains(t, resolved.MetadataStorage.URI(), repo.SnapshotMetadataDir(backupID))
+	require.Contains(t, resolved.MetadataStorage().URI(), repo.SnapshotMetadataDir(backupID))
 }
 
 func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *testing.T) {
@@ -263,14 +264,13 @@ func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *test
 			storage := objstore.NewMemStorage()
 			prepared := &PreparedRepoV1SnapshotBackup{
 				SnapshotStorageRef: SnapshotStorageRef{
-					Layout:          repo.LayoutRepoV1,
-					BackupID:        repo.BackupID(0x1234),
-					MetadataStorage: storage,
+					BackupID:    repo.BackupID(0x1234),
+					RootStorage: storage,
 				},
 				ResumeFromCheckpoint: true,
 			}
 			cfgHash := []byte("hash")
-			require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, storage, tc.metadata))
+			require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, prepared.MetadataStorage(), tc.metadata))
 
 			err := ActivateSnapshotBackupResume(ctx, &backup.Client{}, prepared, cfgHash)
 			if tc.requireErr == "" {

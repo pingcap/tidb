@@ -31,6 +31,7 @@ import (
 	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	gozap "go.uber.org/zap"
 )
 
@@ -58,11 +59,9 @@ type Config struct {
 }
 
 type SnapshotStorageRef struct {
-	Layout          repo.Layout
-	BackupID        repo.BackupID
-	RootBackend     *backuppb.StorageBackend
-	RootStorage     storeapi.Storage
-	MetadataStorage storeapi.Storage
+	BackupID    repo.BackupID
+	RootBackend *backuppb.StorageBackend
+	RootStorage storeapi.Storage
 }
 
 type PreparedRepoV1SnapshotBackup struct {
@@ -153,18 +152,16 @@ func PrepareRepoV1SnapshotBackup(
 
 	prepared := &PreparedRepoV1SnapshotBackup{
 		SnapshotStorageRef: SnapshotStorageRef{
-			Layout:          repo.LayoutRepoV1,
-			BackupID:        attempt.backupID,
-			RootBackend:     rootBackend,
-			RootStorage:     rootStorage,
-			MetadataStorage: repo.NewPrefixedStorage(rootStorage, repo.SnapshotMetadataDir(attempt.backupID)),
+			BackupID:    attempt.backupID,
+			RootBackend: rootBackend,
+			RootStorage: rootStorage,
 		},
 		PendingMarkerPath:    repo.PendingFile(params.ConfigHash, attempt.backupID),
 		ResumeFromCheckpoint: attempt.resumeFromCheckpoint,
 	}
 	log.Info("created repo-v1 snapshot backup storage",
 		gozap.String("backup-id", attempt.backupID.String()),
-		gozap.String("metadata-uri", prepared.MetadataStorage.URI()),
+		gozap.String("metadata-uri", prepared.MetadataStorage().URI()),
 		gozap.Bool("resumed?", attempt.resumeFromCheckpoint))
 	return prepared, nil
 }
@@ -178,7 +175,7 @@ func ActivateSnapshotBackupResume(
 	if prepared == nil || !prepared.ResumeFromCheckpoint {
 		return nil
 	}
-	if err := client.LoadCheckpointMetadataFromStorage(ctx, prepared.MetadataStorage); err != nil {
+	if err := client.LoadCheckpointMetadataFromStorage(ctx, prepared.MetadataStorage()); err != nil {
 		return errors.Annotatef(err, "load repo-v1 checkpoint metadata for backup %s", prepared.BackupID)
 	}
 	checkpointMeta := client.GetCheckpointMetadata()
@@ -255,57 +252,34 @@ func formatRepoV1BackupIDs(ids []repo.BackupID) string {
 	return strings.Join(items, ", ")
 }
 
-func openSnapshotStorageForRestore(
-	ctx context.Context,
-	resolved *SnapshotStorageRef,
-) (*SnapshotStorageRef, error) {
-	if resolved.MetadataStorage == nil {
-		resolved.MetadataStorage = resolved.RootStorage
+// MetadataStorage returns the metadata storage derived from the snapshot reference.
+func (ref *SnapshotStorageRef) MetadataStorage() storeapi.Storage {
+	if ref.BackupID.IsZero() {
+		return ref.RootStorage
 	}
-	if !resolved.Layout.IsRepoV1() {
-		return resolved, nil
-	}
-	if err := validateRepoV1Backend(resolved.RootBackend); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if _, err := repo.LoadRepoMeta(ctx, resolved.RootStorage); err != nil {
-		return nil, errors.Annotate(err, "load repo-v1 metadata")
-	}
-	resolved.MetadataStorage = repo.NewPrefixedStorage(resolved.RootStorage, repo.SnapshotMetadataDir(resolved.BackupID))
-	return resolved, nil
+	return repo.NewPrefixedStorage(ref.RootStorage, repo.SnapshotMetadataDir(ref.BackupID))
 }
 
-func LoadSnapshotBackupMeta(
+// Validate checks repo-specific invariants for the snapshot reference.
+func (ref *SnapshotStorageRef) Validate(ctx context.Context) error {
+	if ref.BackupID.IsZero() {
+		return nil
+	}
+	if err := validateRepoV1Backend(ref.RootBackend); err != nil {
+		return errors.Trace(err)
+	}
+	if _, err := repo.LoadRepoMeta(ctx, ref.RootStorage); err != nil {
+		return errors.Annotate(err, "load repo-v1 metadata")
+	}
+	return nil
+}
+
+// LoadBackupMeta loads backup metadata from the derived metadata storage.
+func (ref *SnapshotStorageRef) LoadBackupMeta(
 	ctx context.Context,
-	resolved *SnapshotStorageRef,
 	cipherInfo *backuppb.CipherInfo,
-) (*SnapshotStorageRef, *backuppb.BackupMeta, error) {
-	resolved, err := openSnapshotStorageForRestore(ctx, resolved)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, resolved.MetadataStorage, cipherInfo)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	return resolved, backupMeta, nil
-}
-
-func ResolveSnapshotBackupMeta(
-	ctx context.Context,
-	cfg Config,
-	ref repo.SnapshotRef,
 ) (*backuppb.BackupMeta, error) {
-	rootBackend, rootStorage, err := taskcommon.GetStorage(ctx, cfg.Storage, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	_, backupMeta, err := LoadSnapshotBackupMeta(ctx, &SnapshotStorageRef{
-		Layout:      ref.Layout,
-		BackupID:    ref.BackupID,
-		RootBackend: rootBackend,
-		RootStorage: rootStorage,
-	}, &cfg.CipherInfo)
+	backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, ref.MetadataStorage(), cipherInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -319,7 +293,7 @@ func ResolveSnapshotBackupMeta(
 //     durable, so it should be cleaned up together with any transient checkpoint
 //     files.
 func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHash []byte) ([]repo.BackupID, error) {
-	pendingBackups, err := repo.ListPendingBackupsForConfigHash(ctx, rootStorage, cfgHash)
+	pendingBackups, err := repo.SnapshotOpsExtension(rootStorage).ListPendingBackupsForConfigHash(ctx, cfgHash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -454,8 +428,12 @@ func prepareRepoV1LocalBackendForStore(storeID uint64, request backuppb.BackupRe
 			storeID,
 		)
 	}
-	if err := os.MkdirAll(backend.GetLocal().Path, 0o750); err != nil {
-		return errors.Annotatef(err, "prepare repo-v1 local backend path for store %d", storeID)
+	// Unit tests only rewrite the local backend path and then inspect it locally, so create
+	// the directory eagerly instead of waiting for the backup writer to materialize it.
+	if intest.InTest {
+		if err := os.MkdirAll(backend.GetLocal().Path, 0o750); err != nil {
+			return errors.Annotatef(err, "prepare repo-v1 local backend path for store %d", storeID)
+		}
 	}
 	return nil
 }

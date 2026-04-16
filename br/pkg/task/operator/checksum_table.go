@@ -14,7 +14,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/repo"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
 	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
@@ -150,17 +149,20 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to open backup storage")
 	}
-	resolved, backupMeta, err := taskrepo.LoadSnapshotBackupMeta(ctx, &taskrepo.SnapshotStorageRef{
-		Layout:      c.cfg.Layout,
+	resolved := &taskrepo.SnapshotStorageRef{
 		BackupID:    c.cfg.BackupID,
 		RootBackend: rootBackend,
 		RootStorage: rootStorage,
-	}, &c.cfg.CipherInfo)
+	}
+	if err := resolved.Validate(ctx); err != nil {
+		return nil, errors.Annotate(err, "failed to init backupmeta storage")
+	}
+	backupMeta, err := resolved.LoadBackupMeta(ctx, &c.cfg.CipherInfo)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to load backupmeta")
 	}
 
-	metaReader := metautil.NewMetaReader(backupMeta, resolved.MetadataStorage, &c.cfg.CipherInfo)
+	metaReader := metautil.NewMetaReader(backupMeta, resolved.MetadataStorage(), &c.cfg.CipherInfo)
 
 	tblCh := make(chan *metautil.Table, 1024)
 	errCh := make(chan error, 1)

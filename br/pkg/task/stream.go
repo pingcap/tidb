@@ -1999,17 +1999,25 @@ func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, uint64, error) {
-	backupMeta, err := taskrepo.ResolveSnapshotBackupMeta(
+	rootBackend, rootStorage, err := taskcommon.GetStorage(
 		ctx,
-		taskrepo.Config{
-			BackendOptions: cfg.BackendOptions,
-			Storage:        cfg.FullBackupStorage,
-			CipherInfo:     cfg.CipherInfo,
-			NoCreds:        cfg.NoCreds,
-			SendCreds:      cfg.SendCreds,
-		},
-		taskrepo.SnapshotRef(cfg.Layout, cfg.BackupID),
+		cfg.FullBackupStorage,
+		cfg.BackendOptions,
+		cfg.NoCreds,
+		cfg.SendCreds,
 	)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	ref := &taskrepo.SnapshotStorageRef{
+		BackupID:    cfg.BackupID,
+		RootBackend: rootBackend,
+		RootStorage: rootStorage,
+	}
+	if err := ref.Validate(ctx); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	backupMeta, err := ref.LoadBackupMeta(ctx, &cfg.CipherInfo)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}

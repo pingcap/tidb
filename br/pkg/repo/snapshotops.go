@@ -36,9 +36,12 @@ import (
 type PendingBackupState string
 
 const (
-	PendingBackupStateStale      PendingBackupState = "stale"
+	// PendingBackupStateStale means the backup already has completed metadata and only stale pending markers remain.
+	PendingBackupStateStale PendingBackupState = "stale"
+	// PendingBackupStateUnfinished means the backup has checkpoint metadata but no completed backup metadata yet.
 	PendingBackupStateUnfinished PendingBackupState = "unfinished"
-	PendingBackupStateTransient  PendingBackupState = "transient"
+	// PendingBackupStateTransient means only pending markers are visible and the state may disappear after transient cleanup.
+	PendingBackupStateTransient PendingBackupState = "transient"
 )
 
 type PendingBackup struct {
@@ -74,11 +77,18 @@ type snapshotMutationOptions struct {
 	onDelete   func(int)
 }
 
-// WithMutationProgress reports discovered and deleted object counts while a repo
-// snapshot mutation runs. Callbacks receive the delta for the current event.
-func WithMutationProgress(onDiscover func(int), onDelete func(int)) SnapshotMutationOption {
+// WithMutationDiscoveredProgress reports discovered object counts while a repo
+// snapshot mutation runs. The callback receives the delta for the current event.
+func WithMutationDiscoveredProgress(onDiscover func(int)) SnapshotMutationOption {
 	return func(opts *snapshotMutationOptions) {
 		opts.onDiscover = onDiscover
+	}
+}
+
+// WithMutationDeletedProgress reports deleted object counts while a repo
+// snapshot mutation runs. The callback receives the delta for the current event.
+func WithMutationDeletedProgress(onDelete func(int)) SnapshotMutationOption {
+	return func(opts *snapshotMutationOptions) {
 		opts.onDelete = onDelete
 	}
 }
@@ -112,30 +122,29 @@ func SnapshotOpsExtension(storage storeapi.Storage) SnapshotOps {
 }
 
 func (ops SnapshotOps) ListPendingBackups(ctx context.Context) ([]PendingBackup, error) {
-	return listPendingBackups(ctx, ops.Storage, &storeapi.WalkOption{SubDir: pendingRootDir})
+	return listPendingBackups(ctx, ops.Storage, WalkPendingMarkers(ctx, ops.Storage))
 }
 
-func ListPendingBackupsForConfigHash(
+func (ops SnapshotOps) ListPendingBackupsForConfigHash(
 	ctx context.Context,
-	storage storeapi.Storage,
 	configHash []byte,
 ) ([]PendingBackup, error) {
-	return listPendingBackups(ctx, storage, &storeapi.WalkOption{SubDir: PendingDir(configHash)})
+	return listPendingBackups(
+		ctx,
+		ops.Storage,
+		walkPendingMarkers(ctx, ops.Storage, &storeapi.WalkOption{SubDir: PendingDir(configHash)}),
+	)
 }
 
 func listPendingBackups(
 	ctx context.Context,
 	storage storeapi.Storage,
-	walkOpt *storeapi.WalkOption,
+	markers TrySeq[PendingMarker],
 ) ([]PendingBackup, error) {
 	grouped := make(map[BackupID]*PendingBackup)
-	err := storage.WalkDir(ctx, walkOpt, func(filePath string, _ int64) error {
-		marker, ok, err := ParsePendingMarkerPath(filePath)
+	for err, marker := range markers {
 		if err != nil {
-			return errors.Annotatef(err, "walk pending snapshot markers")
-		}
-		if !ok {
-			return nil
+			return nil, errors.Annotate(err, "walk pending snapshot markers")
 		}
 		entry, ok := grouped[marker.BackupID]
 		if !ok {
@@ -143,16 +152,13 @@ func listPendingBackups(
 			grouped[marker.BackupID] = entry
 		}
 		entry.MarkerPaths = append(entry.MarkerPaths, marker.Path)
-		return nil
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	backups := make([]PendingBackup, 0, len(grouped))
+	ops := SnapshotOps{Storage: storage}
 	for _, entry := range grouped {
 		slices.Sort(entry.MarkerPaths)
-		state, err := inspectPendingBackupState(ctx, storage, entry.BackupID)
+		state, err := ops.inspectPendingBackupState(ctx, entry.BackupID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -166,12 +172,11 @@ func listPendingBackups(
 	return backups, nil
 }
 
-func inspectPendingBackupState(
+func (ops SnapshotOps) inspectPendingBackupState(
 	ctx context.Context,
-	storage storeapi.Storage,
 	backupID BackupID,
 ) (PendingBackupState, error) {
-	metadataStorage := NewPrefixedStorage(storage, SnapshotMetadataDir(backupID))
+	metadataStorage := NewPrefixedStorage(ops.Storage, SnapshotMetadataDir(backupID))
 	hasBackupMeta, err := metadataStorage.FileExists(ctx, metautil.MetaFile)
 	if err != nil {
 		return "", errors.Annotatef(err, "check %s for pending backup %s", metautil.MetaFile, backupID)

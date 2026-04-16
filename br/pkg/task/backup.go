@@ -513,7 +513,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if err != nil {
 			return errors.Trace(err)
 		}
-		client.SetMetadataStorage(preparedStorage.MetadataStorage)
+		client.SetMetadataStorage(preparedStorage.MetadataStorage())
 		perStoreBackupAdapters = append(perStoreBackupAdapters, preparedStorage)
 		if err := taskrepo.ActivateSnapshotBackupResume(ctx, client, preparedStorage, cfgHash); err != nil {
 			return errors.Trace(err)

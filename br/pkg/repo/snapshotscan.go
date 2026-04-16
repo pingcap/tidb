@@ -69,10 +69,18 @@ func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]
 }
 
 func WalkPendingMarkers(ctx context.Context, storage storeapi.Storage) TrySeq[PendingMarker] {
+	return walkPendingMarkers(ctx, storage, &storeapi.WalkOption{SubDir: pendingRootDir})
+}
+
+func walkPendingMarkers(
+	ctx context.Context,
+	storage storeapi.Storage,
+	opt *storeapi.WalkOption,
+) TrySeq[PendingMarker] {
 	return walkParsedSeq(
 		ctx,
 		storage,
-		&storeapi.WalkOption{SubDir: pendingRootDir},
+		opt,
 		ParsePendingMarkerPath,
 	)
 }

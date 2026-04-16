@@ -1248,17 +1248,20 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	resolvedStorage, backupMeta, err := taskrepo.LoadSnapshotBackupMeta(ctx, &taskrepo.SnapshotStorageRef{
-		Layout:      cfg.Layout,
+	resolvedStorage := &taskrepo.SnapshotStorageRef{
 		BackupID:    cfg.BackupID,
 		RootBackend: u,
 		RootStorage: s,
-	}, &cfg.Config.CipherInfo)
+	}
+	if err := resolvedStorage.Validate(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	u = resolvedStorage.RootBackend
-	s = resolvedStorage.MetadataStorage
+	s = resolvedStorage.MetadataStorage()
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
@@ -2802,12 +2805,15 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			if err != nil {
 				return errors.Trace(err)
 			}
-			_, backupMeta, err := taskrepo.LoadSnapshotBackupMeta(ctx, &taskrepo.SnapshotStorageRef{
-				Layout:      cfg.Layout,
+			resolvedStorage := &taskrepo.SnapshotStorageRef{
 				BackupID:    cfg.BackupID,
 				RootBackend: u,
 				RootStorage: s,
-			}, &cfg.Config.CipherInfo)
+			}
+			if err := resolvedStorage.Validate(ctx); err != nil {
+				return errors.Trace(err)
+			}
+			backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
