@@ -30,6 +30,10 @@ type vectorSearchIndexMatch struct {
 	IsTiCIHybridIndex bool
 }
 
+func hasTiCIHybridVectorIndex(indexInfo *model.IndexInfo) bool {
+	return indexInfo != nil && indexInfo.IsTiCIIndex() && indexInfo.HasHybridVectorComponent()
+}
+
 func buildVectorIndexExtra(
 	indexInfo *model.IndexInfo,
 	queryType tipb.ANNQueryType,
@@ -97,6 +101,9 @@ func findVectorSearchIndexMatch(
 		}
 		colInfo := tableInfo.Columns[indexInfo.Columns[0].Offset]
 		if colInfo.ID != vsInfo.Column.ID || indexInfo.VectorInfo.DistanceMetric != distanceMetric {
+			return nil
+		}
+		if indexInfo.VectorInfo.Dimension != uint64(vsInfo.Vec.Len()) {
 			return nil
 		}
 		return &vectorSearchIndexMatch{

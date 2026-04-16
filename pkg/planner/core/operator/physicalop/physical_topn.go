@@ -303,7 +303,7 @@ func appendVectorSearchTopN(
 
 func hasTiCIHybridVectorPath(ds *logicalop.DataSource) bool {
 	for _, path := range ds.PossibleAccessPaths {
-		if path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0 {
+		if path.Index != nil && path.Index.HasHybridVectorComponent() {
 			return true
 		}
 	}

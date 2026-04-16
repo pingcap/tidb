@@ -1033,6 +1033,7 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 
 	if len(param.Vector) > 0 {
 		info.Vector = make([]*model.HybridVectorSpec, 0, len(param.Vector))
+		seenVectorMetricOnColumn := make(map[int]map[model.DistanceMetric]struct{}, len(param.Vector))
 		for i, spec := range param.Vector {
 			if len(spec.Columns) == 0 {
 				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(fmt.Sprintf("HYBRID index vector component %d must specify columns", i+1))
@@ -1068,6 +1069,19 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 				return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen(
 					fmt.Sprintf("HYBRID index vector component %d has unsupported distance metric '%s', only L2 and COSINE are supported", i+1, component.IndexInfo.DistanceMetric))
 			}
+			if err := checkDuplicateVectorMetricOnColumn(tblInfo, colInfo, dm); err != nil {
+				return nil, err
+			}
+			if seenMetricOnColumn, ok := seenVectorMetricOnColumn[colInfo.Offset]; ok {
+				if _, duplicated := seenMetricOnColumn[dm]; duplicated {
+					return nil, dbterror.ErrDupKeyName.GenWithStack(
+						fmt.Sprintf("HYBRID index vector component %d duplicates distance metric %s on column %s", i+1, dm, colInfo.Name))
+				}
+			} else {
+				seenMetricOnColumn = make(map[model.DistanceMetric]struct{}, len(model.IndexableDistanceMetricToFnName))
+				seenVectorMetricOnColumn[colInfo.Offset] = seenMetricOnColumn
+			}
+			seenVectorMetricOnColumn[colInfo.Offset][dm] = struct{}{}
 			// Materialize dimension from column definition if not specified.
 			if component.IndexInfo.Dimension == nil {
 				if colInfo.FieldType.GetFlen() <= 0 {
@@ -1223,6 +1237,36 @@ func buildHybridShardingSpec(spec *hybridShardingSpec, resolveColumn func(string
 	return &model.HybridShardingSpec{Columns: columns}, nil
 }
 
+func checkDuplicateVectorMetricOnColumn(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, distanceMetric model.DistanceMetric) error {
+	for _, idx := range tblInfo.Indices {
+		if idx.VectorInfo != nil {
+			if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol != nil && idx.VectorInfo.DistanceMetric == distanceMetric {
+				return dbterror.ErrDupKeyName.GenWithStack(
+					fmt.Sprintf("vector index %s with distance metric %s already exists on column %s",
+						idx.Name, distanceMetric, colInfo.Name))
+			}
+		}
+		if idx.HybridInfo == nil {
+			continue
+		}
+		for _, vecSpec := range idx.HybridInfo.Vector {
+			if vecSpec == nil || vecSpec.IndexInfo == nil || len(vecSpec.Columns) != 1 {
+				continue
+			}
+			if vecSpec.Columns[0].Offset != colInfo.Offset {
+				continue
+			}
+			if model.DistanceMetric(vecSpec.IndexInfo.DistanceMetric) != distanceMetric {
+				continue
+			}
+			return dbterror.ErrDupKeyName.GenWithStack(
+				fmt.Sprintf("vector index %s with distance metric %s already exists on column %s",
+					idx.Name, distanceMetric, colInfo.Name))
+		}
+	}
+	return nil
+}
+
 func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
 	tblInfo *model.TableInfo) (*model.VectorIndexInfo, string, error) {
 	if len(indexPartSpecifications) != 1 {
@@ -1247,19 +1291,8 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 		return nil, "", infoschema.ErrColumnNotExists.GenWithStackByArgs(colExpr.Name.Name, tblInfo.Name)
 	}
 
-	// check duplicated function on the same column
-	for _, idx := range tblInfo.Indices {
-		if idx.VectorInfo == nil {
-			continue
-		}
-		if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
-			continue
-		}
-		if idx.VectorInfo.DistanceMetric == distanceMetric {
-			return nil, "", dbterror.ErrDupKeyName.GenWithStack(
-				fmt.Sprintf("vector index %s function %s already exist on column %s",
-					idx.Name, f.FnName, colInfo.Name))
-		}
+	if err := checkDuplicateVectorMetricOnColumn(tblInfo, colInfo, distanceMetric); err != nil {
+		return nil, "", err
 	}
 	if colInfo.FieldType.GetFlen() <= 0 {
 		return nil, "", errors.Errorf("add vector index can only be defined on fixed-dimension vector columns")

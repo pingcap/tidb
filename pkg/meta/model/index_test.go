@@ -69,3 +69,14 @@ func TestIsIndexPrefixCovered(t *testing.T) {
 	require.Equal(t, true, IsIndexPrefixCovered(tbl, i1, ast.NewCIStr("c_4"), ast.NewCIStr("c_2")))
 	require.Equal(t, false, IsIndexPrefixCovered(tbl, i0, ast.NewCIStr("c_2")))
 }
+
+func TestHasHybridVectorComponent(t *testing.T) {
+	require.False(t, (*IndexInfo)(nil).HasHybridVectorComponent())
+	require.False(t, (&IndexInfo{}).HasHybridVectorComponent())
+	require.False(t, (&IndexInfo{HybridInfo: &HybridIndexInfo{}}).HasHybridVectorComponent())
+	require.True(t, (&IndexInfo{
+		HybridInfo: &HybridIndexInfo{
+			Vector: []*HybridVectorSpec{{}},
+		},
+	}).HasHybridVectorComponent())
+}

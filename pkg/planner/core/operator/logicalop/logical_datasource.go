@@ -866,7 +866,7 @@ func (ds *DataSource) CleanUnusedTiCIIndexes() {
 		}
 		// Keep hybrid indexes with vector components — they are matched via
 		// VectorProp during physical optimization, not via AccessConds.
-		if path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0 {
+		if path.Index.HasHybridVectorComponent() {
 			return false
 		}
 		return true

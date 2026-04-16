@@ -281,6 +281,43 @@ func TestConvertToIndexScanRejectsTiCIVectorPathWithDimensionMismatch(t *testing
 	require.True(t, task.Invalid())
 }
 
+func TestCompareCandidatesSkipsTiCIVectorSearchCandidates(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	prop := property.NewPhysicalProperty(property.CopSingleReadTaskType, nil, false, 0, false)
+	prop.VectorProp.VSInfo = &expression.VSInfo{
+		DistanceFnName: ast.NewCIStr(ast.VecL2Distance),
+		Vec:            types.MustCreateVectorFloat32([]float32{1, 2, 3}),
+		Column:         &expression.Column{ID: 1},
+	}
+
+	vectorCandidate := &candidatePath{
+		path: &util.AccessPath{
+			Index: &model.IndexInfo{
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{}},
+				},
+			},
+			IsSingleScan: true,
+		},
+		matchPropResult: property.PropMatched,
+	}
+	tableCandidate := &candidatePath{
+		path: &util.AccessPath{
+			IsIntHandlePath: true,
+			IsSingleScan:    true,
+		},
+		matchPropResult: property.PropNotMatched,
+	}
+
+	result, missingStats := compareCandidates(ctx.GetPlanCtx(), nil, prop, vectorCandidate, tableCandidate, false)
+	require.Zero(t, result)
+	require.False(t, missingStats)
+}
+
 func TestMatchPropertyUsesSharedVectorSearchMatch(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer func() {
@@ -318,6 +355,22 @@ func TestMatchPropertyUsesSharedVectorSearchMatch(t *testing.T) {
 			},
 		}
 		require.Equal(t, property.PropMatched, matchProperty(ds, path, prop))
+	})
+
+	t.Run("standalone dimension mismatch", func(t *testing.T) {
+		path := &util.AccessPath{
+			Index: &model.IndexInfo{
+				VectorInfo: &model.VectorIndexInfo{
+					Dimension:      4,
+					DistanceMetric: model.DistanceMetricL2,
+				},
+				Columns: []*model.IndexColumn{{
+					Name:   ast.NewCIStr("v"),
+					Offset: 0,
+				}},
+			},
+		}
+		require.Equal(t, property.PropNotMatched, matchProperty(ds, path, prop))
 	})
 
 	t.Run("hybrid vector index", func(t *testing.T) {

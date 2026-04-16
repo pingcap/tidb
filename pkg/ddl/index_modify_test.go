@@ -2268,11 +2268,26 @@ func TestHybridIndexVectorValidation(t *testing.T) {
 		"sharding_key":{"columns":["b"]}
 	}'`, "does not match column")
 
+	// Repeated vector metrics on the same column inside one HYBRID index should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[
+			{"columns":["v1"], "index_info":{"distance_metric":"L2"}},
+			{"columns":["v1"], "index_info":{"distance_metric":"L2"}}
+		],
+		"sharding_key":{"columns":["b"]}
+	}'`, "duplicates distance metric")
+
 	// Valid L2 metric should succeed (dimension auto-materialized from column).
 	tk.MustExec(`create columnar index idx_l2 on t(b, v1) using hybrid parameter '{
 		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"L2"}}],
 		"sharding_key":{"columns":["b"]}
 	}'`)
+
+	// Reusing the same metric on the same column across existing indexes should also be rejected.
+	tk.MustContainErrMsg(`create columnar index idx_dup_l2 on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "already exists on column")
 	tk.MustExec("drop index idx_l2 on t")
 
 	// Valid COSINE metric should succeed (dimension auto-materialized from column).

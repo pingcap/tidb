@@ -768,6 +768,12 @@ func compareBool(l, r bool) int {
 	return 1
 }
 
+func isTiCIVectorSearchCandidate(candidate *candidatePath, prop *property.PhysicalProperty) bool {
+	return prop != nil && prop.VectorProp.VSInfo != nil &&
+		candidate != nil && candidate.matchPropResult.Matched() &&
+		candidate.path != nil && hasTiCIHybridVectorIndex(candidate.path.Index)
+}
+
 func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 	result := compareBool(lhs.path.IsSingleScan, rhs.path.IsSingleScan)
 	if result == 0 && !lhs.path.IsSingleScan {
@@ -831,9 +837,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
 	}
-	// TiCI index can not be compared currently.
+	// TiCI special access paths do not participate in skyline pruning yet.
 	if lhs.path.FtsQueryInfo != nil || rhs.path.FtsQueryInfo != nil ||
-		lhs.path.TiCIVectorQueryInfo != nil || rhs.path.TiCIVectorQueryInfo != nil {
+		lhs.path.TiCIVectorQueryInfo != nil || rhs.path.TiCIVectorQueryInfo != nil ||
+		isTiCIVectorSearchCandidate(lhs, prop) || isTiCIVectorSearchCandidate(rhs, prop) {
 		return 0, false
 	}
 	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
@@ -1567,8 +1574,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				}
 			}
 
-			isHybridTiCIVectorPath := path.Index != nil && path.Index.IsTiCIIndex() &&
-				path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0
+			isHybridTiCIVectorPath := hasTiCIHybridVectorIndex(path.Index)
 			allowPlainSingleScanKeep := path.IsSingleScan &&
 				!(isHybridTiCIVectorPath && path.FtsQueryInfo == nil && prop.VectorProp.VSInfo == nil)
 
@@ -1579,7 +1585,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
 			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || allowPlainSingleScanKeep || matchPartialOrderIndex || path.FtsQueryInfo != nil ||
-				(prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.HybridInfo != nil && len(path.Index.HybridInfo.Vector) > 0)
+				(prop.VectorProp.VSInfo != nil && hasTiCIHybridVectorIndex(path.Index))
 			if !keepIndex {
 				// If none of the above conditions are met, this index will be directly pruned here.
 				continue

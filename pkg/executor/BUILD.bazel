@@ -337,6 +337,7 @@ go_test(
     name = "executor_test",
     timeout = "moderate",
     srcs = [
+        "adapter_internal_test.go",
         "adapter_test.go",
         "analyze_test.go",
         "analyze_utils_test.go",
