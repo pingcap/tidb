@@ -100,7 +100,7 @@ func TestCharsetJoin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4", join.Unwrap())
 
-	join, err = Charset("latin1").Join(Charset("utf8"))
+	join, err = Charset("latin1").Join(Charset("utf8mb3"))
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4", join.Unwrap())
 }
@@ -110,7 +110,7 @@ func TestCollationJoin(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4_bin", join.Unwrap())
 
-	join, err = Collation("latin1_bin").Join(Collation("utf8_bin"))
+	join, err = Collation("latin1_general_cs").Join(Collation("utf8_general_cs"))
 	require.NoError(t, err)
-	require.Equal(t, "utf8mb4_bin", join.Unwrap())
+	require.Equal(t, "utf8mb4_general_cs", join.Unwrap())
 }
