@@ -655,3 +655,18 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	require.Len(t, rangeCnts, 2)                // It should have two rounds for loading table ranges.
 	require.Less(t, rangeCnts[1], rangeCnts[0]) // Verify if the checkpoint is progressing.
 }
+
+func TestIssue37611(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a char(5), b char(6) as (concat(a, a)), index idx(b));")
+	tk.MustExec("set @@sql_mode='';")
+	tk.MustExec("insert into t (a) values ('aaa');")
+	tk.MustExec("insert into t (a) values ('aaaa');")
+	tk.MustGetErrCode("alter table t modify b char(10) as (concat(a, a));", errno.ErrUnsupportedOnGeneratedColumn)
+	tk.MustExec("set @@sql_mode=default;")
+	tk.MustQuery("select * from t ignore index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
+	tk.MustQuery("select * from t force index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
+}
