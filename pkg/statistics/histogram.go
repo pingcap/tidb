@@ -1808,14 +1808,8 @@ func MergePartTopNAndHistToGlobal(
 	for _, e := range topNSlice {
 		totCount -= int64(e.repeatCount)
 	}
-	// Identify leftover TopN-origin entries, decode their Datums, and
-	// adjust totCount. These will be merge-walked into Pass 2 alongside
-	// the histogram refs — no separate Phase 6 needed.
-	type leftoverEntry struct {
-		datum      types.Datum
-		topNOrigin int64
-	}
-	var leftovers []leftoverEntry
+	// Adjust totCount for leftover TopN-origin values (values in partition
+	// TopN but not in global TopN — their rows need to enter the histogram).
 	{
 		for i := 0; i < len(allTopN); {
 			key := allTopN[i].encoded
@@ -1824,27 +1818,18 @@ func MergePartTopNAndHistToGlobal(
 				topNCount += allTopN[i].count
 				i++
 			}
-			if _, inGlobal := globalTopNMap[hack.String(key)]; inGlobal {
-				continue
-			}
-			topNOrigin := int64(topNCount)
-			if topNOrigin > 0 {
-				totCount += topNOrigin
-				d, err := topNMetaToDatum(TopNMeta{Encoded: key}, tp, isIndex, tz)
-				if err != nil {
-					return nil, nil, err
-				}
-				leftovers = append(leftovers, leftoverEntry{datum: d, topNOrigin: topNOrigin})
+			if _, inGlobal := globalTopNMap[hack.String(key)]; !inGlobal {
+				totCount += int64(topNCount)
 			}
 		}
 	}
-	// leftovers are sorted (from allTopN which is sorted by encoded key,
-	// and codec encoding is order-preserving).
 
 	// ---------------------------------------------------------------
 	// Pass 2: Build equi-depth global histogram by merge-walking
-	// sorted refs and leftover TopN entries together. Both are in the
-	// same sort order. Single pass, no Phase 6, no mergeByUpperBound.
+	// sorted refs and allTopN together. Both are sorted in the same
+	// order. TopN entries in globalTopNMap are skipped (their rows are
+	// in the TopN); others are injected into the histogram at their
+	// sorted position. Single pass, no bucket4Merging.
 	// ---------------------------------------------------------------
 	var globalHist *Histogram
 	if firstHist != nil {
@@ -1854,7 +1839,7 @@ func MergePartTopNAndHistToGlobal(
 		globalHist = NewHistogram(0, 0, totNull, 0, types.NewFieldType(mysql.TypeNull), 0, totColSize)
 	}
 
-	if totCount > 0 && (len(refs) > 0 || len(leftovers) > 0) {
+	if totCount > 0 && (len(refs) > 0 || len(allTopN) > 0) {
 		var (
 			cumCount     int64
 			prevCumCount int64
@@ -1933,34 +1918,56 @@ func MergePartTopNAndHistToGlobal(
 			}
 		}
 
-		ri, li := 0, 0 // ref index, leftover index
-		for ri < len(refs) || li < len(leftovers) {
+		ri, ti2 := 0, 0 // ref index, allTopN index for Pass 2
+		for ri < len(refs) || ti2 < len(allTopN) {
 			// Determine which source comes next in sort order.
-			var mergeOrd int // -1: ref first, 0: both equal, 1: leftover first
+			var mergeOrd int // -1: ref first, 0: both equal, 1: topN first
 			if ri >= len(refs) {
 				mergeOrd = 1
-			} else if li >= len(leftovers) {
+			} else if ti2 >= len(allTopN) {
 				mergeOrd = -1
 			} else {
-				refUp := hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx))
-				mergeOrd, _ = leftovers[li].datum.Compare(sc.TypeCtx(), refUp, collate.GetBinaryCollator())
+				d, err := topNMetaToDatum(TopNMeta{Encoded: allTopN[ti2].encoded}, tp, isIndex, tz)
+				if err != nil {
+					return nil, nil, err
+				}
+				mergeOrd, err = d.Compare(sc.TypeCtx(),
+					hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx)),
+					collate.GetBinaryCollator())
+				if err != nil {
+					return nil, nil, err
+				}
 			}
 
 			if mergeOrd >= 0 {
-				// Process leftover group (single value, single entry).
-				lo := leftovers[li]
-				li++
-				if mergeOrd > 0 {
-					// Leftover comes before next ref — standalone group.
-					startNewGroup(&lo.datum)
-					addToBucket(&lo.datum, lo.topNOrigin, lo.topNOrigin)
-					emitGroup()
-					continue
+				// Process TopN group: all consecutive entries with same key.
+				key := allTopN[ti2].encoded
+				var topNCount int64
+				for ti2 < len(allTopN) && bytes.Equal(allTopN[ti2].encoded, key) {
+					topNCount += int64(allTopN[ti2].count)
+					ti2++
 				}
-				// mergeOrd == 0: leftover coincides with ref group, handled below.
-				startNewGroup(&lo.datum)
-				addToBucket(&lo.datum, lo.topNOrigin, lo.topNOrigin)
-				// Fall through to also process the ref group at this value.
+				// Skip values that made global TopN (their rows are in TopN).
+				_, inGlobal := globalTopNMap[hack.String(key)]
+				if !inGlobal && topNCount > 0 {
+					d, err := topNMetaToDatum(TopNMeta{Encoded: key}, tp, isIndex, tz)
+					if err != nil {
+						return nil, nil, err
+					}
+					if mergeOrd > 0 {
+						// TopN value comes before next ref — standalone group.
+						startNewGroup(&d)
+						addToBucket(&d, topNCount, topNCount)
+						emitGroup()
+						continue
+					}
+					// mergeOrd == 0: coincides with ref group.
+					startNewGroup(&d)
+					addToBucket(&d, topNCount, topNCount)
+					// Fall through to also process the ref group.
+				} else if mergeOrd > 0 {
+					continue // global TopN value with no ref group — skip entirely
+				}
 			}
 
 			if mergeOrd <= 0 {
