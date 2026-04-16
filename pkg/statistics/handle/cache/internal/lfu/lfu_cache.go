@@ -91,10 +91,10 @@ func adjustMemCost(totalMemCost int64) (result int64, err error) {
 // Get implements statsCacheInner.
 //
 // Expected key states:
-// 1. Put writes resultKeySet synchronously, then writes Ristretto asynchronously.
-//    During this lag window, resultKeySet is newer than the primary cache.
-// 2. onEvict/onReject may keep only a stripped table in resultKeySet.
-// 3. Del removes the key from both caches.
+//  1. Put writes resultKeySet synchronously, then writes Ristretto asynchronously.
+//     During this lag window, resultKeySet is newer than the primary cache.
+//  2. onEvict/onReject may keep only a stripped table in resultKeySet.
+//  3. Del removes the key from both caches.
 func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	result, ok := s.resultKeySet.Get(tid)
 	if !ok {
