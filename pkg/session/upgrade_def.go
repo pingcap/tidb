@@ -2117,11 +2117,11 @@ func upgradeToVer258(s sessionapi.Session, _ int64) {
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
 }
 
-// upgradeToVer258 widens resource group name related columns from varchar(32) to
+// upgradeToVer259 widens resource group name related columns from varchar(32) to
 // varchar(64) for MySQL compatibility. The corresponding CREATE TABLE definitions
 // in metadef/system_tables_def.go are updated in the same change so that new
 // clusters are created with varchar(64) from the start.
-func upgradeToVer258(s sessionapi.Session, _ int64) {
+func upgradeToVer259(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `resource_group_name` VARCHAR(64) NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch MODIFY COLUMN `resource_group_name` VARCHAR(64) NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch MODIFY COLUMN `switch_group_name` VARCHAR(64) DEFAULT ''")
