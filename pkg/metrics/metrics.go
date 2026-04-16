@@ -542,10 +542,22 @@ func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
 		Filter: func(node any) (collect bool, walkChildren bool) {
 			// Only collect socket and leaf subchannel info, which are more useful for troubleshooting network issues.
 			switch n := node.(type) {
+			case *grpc_channelz_v1.Channel:
+				if isInternalChannelzTarget(n.GetData().GetTarget()) {
+					return false, false
+				}
+				return false, true
+
 			case *grpc_channelz_v1.Socket:
+				if isInternalChannelzSocket(n) {
+					return false, false
+				}
 				return true, false
 
 			case *grpc_channelz_v1.Subchannel:
+				if isInternalChannelzTarget(n.GetData().GetTarget()) {
+					return false, false
+				}
 				isLeaf := len(n.GetSocketRef()) > 0 &&
 					len(n.GetChannelRef()) == 0 &&
 					len(n.GetSubchannelRef()) == 0
@@ -560,6 +572,14 @@ func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
 			}
 		},
 	}
+}
+
+func isInternalChannelzTarget(target string) bool {
+	return target == "bufnet" || target == "passthrough:///bufnet"
+}
+
+func isInternalChannelzSocket(socket *grpc_channelz_v1.Socket) bool {
+	return socket.GetRemote() == nil && socket.GetRemoteName() == ""
 }
 
 func cleanupGrpcChannelzCollectorForTest() {

@@ -15,6 +15,7 @@
 package metrics
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -136,6 +137,15 @@ func TestGrpcChannelzCollectorGather(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, findMetricFamily(families, "tidb_grpc_channelz_fetch_errors_total"))
+	for _, family := range families {
+		for _, metric := range family.GetMetric() {
+			require.False(t, metricHasLabelValue(metric, "target", "bufnet"))
+			require.False(t, metricHasLabelValue(metric, "target", "passthrough:///bufnet"))
+			if strings.HasPrefix(family.GetName(), "tidb_grpc_channelz_socket_") {
+				require.False(t, metricHasLabelValue(metric, "remote", ""))
+			}
+		}
+	}
 }
 
 func findMetricFamily(families []*dto.MetricFamily, name string) *dto.MetricFamily {
@@ -145,4 +155,13 @@ func findMetricFamily(families []*dto.MetricFamily, name string) *dto.MetricFami
 		}
 	}
 	return nil
+}
+
+func metricHasLabelValue(metric *dto.Metric, name string, value string) bool {
+	for _, label := range metric.GetLabel() {
+		if label.GetName() == name && label.GetValue() == value {
+			return true
+		}
+	}
+	return false
 }
