@@ -459,6 +459,17 @@ func (rm *Manager) doSync() error {
 	for _, r := range records {
 		rm.AddWatch(r)
 	}
+	// On the first sync (startup), skip the historical watch_done full-table
+	// scan. The in-memory watch list was empty before loading from the watch
+	// table above, and records already moved to watch_done are absent from the
+	// watch table (handleRunawayWatchDone moves them atomically in a single
+	// transaction), so scanning historical watch_done rows would only produce
+	// no-op removeWatch calls. The overlap window covers concurrent moves that
+	// commit between the watch snapshot and the done scan.
+	if rm.runawaySyncer.deletionWatchReader.CheckPoint.Equal(NullTime) {
+		rm.runawaySyncer.deletionWatchReader.CheckPoint =
+			rm.runawaySyncer.newWatchReader.UpperBound.Add(-watchSyncOverlap)
+	}
 	if !rm.runawaySyncer.checkWatchDoneTableExist() {
 		return nil
 	}
