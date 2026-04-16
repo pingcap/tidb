@@ -1400,7 +1400,7 @@ func TestTiFlashAvailableAfterAddPartition(t *testing.T) {
 func TestTiFlashAvailableAfterDownOneStore(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	tk := testkit.NewTestKitWithSession(t, s.store, testkit.NewSession(t, s.store))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
