@@ -1313,7 +1313,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 
 var bucket4MergingPool = sync.Pool{
 	New: func() any {
-		return newBucket4Meging()
+		return newBucket4Merging()
 	},
 }
 
@@ -1338,9 +1338,9 @@ type bucket4Merging struct {
 	disjointNDV int64
 }
 
-// newBucket4Meging creates a new bucket4Merging.
+// newBucket4Merging creates a new bucket4Merging.
 // but we create it from bucket4MergingPool as soon as possible to reduce the cost of GC.
-func newBucket4Meging() *bucket4Merging {
+func newBucket4Merging() *bucket4Merging {
 	return &bucket4Merging{
 		lower: new(types.Datum),
 		upper: new(types.Datum),
