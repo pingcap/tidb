@@ -1497,7 +1497,6 @@ func TestModifyColumnLoadTableRangeError(t *testing.T) {
 	tk.MustExec("drop database if exists modifycol;")
 	tk.MustExec("create database modifycol;")
 	tk.MustExec("use modifycol;")
-	tk.MustExec(`set global tidb_enable_dist_task=off;`)
 
 	// Use a type conversion that definitely requires reorg.
 	tk.MustExec("create table t (a int primary key, b int, c int);")
