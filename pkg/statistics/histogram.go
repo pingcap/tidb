@@ -1704,11 +1704,6 @@ func MergePartTopNAndHistToGlobal(
 	topNHeap := generic.NewBoundedMinHeap(int(numTopN), func(a, b heapEntry) int {
 		return cmp.Compare(a.totalCount, b.totalCount)
 	})
-	// Track repeatFromHist for totCount adjustment. Only populated for
-	// values that have histogram Repeat (small map: unique upper bounds
-	// with Repeat that also appeared in the merge walk).
-	repeatFromHist := make(map[hack.MutableString]uint64)
-
 	ti, hi := 0, 0
 	for ti < len(allTopN) || hi < len(refs) {
 		if err := killer.HandleSignal(); err != nil {
@@ -1777,9 +1772,6 @@ func MergePartTopNAndHistToGlobal(
 
 		if entry.totalCount > 0 {
 			topNHeap.Add(entry)
-			if entry.repeatCount > 0 {
-				repeatFromHist[hack.String(entry.encoded)] = entry.repeatCount
-			}
 		}
 	}
 
@@ -1812,13 +1804,9 @@ func MergePartTopNAndHistToGlobal(
 	}
 
 	// Adjust totCount: subtract histogram-Repeat for global TopN values
-	// (moved to TopN), add TopN-origin for leftover values.
-	// Leftover TopN-origin values are TopN entries not in globalTopN
-	// whose topNOrigin > 0 (identified by re-walking allTopN).
-	if globalTopN != nil {
-		for _, val := range globalTopN.TopN {
-			totCount -= int64(repeatFromHist[hack.String(val.Encoded)])
-		}
+	// (moved to TopN). Read repeatCount directly from the heap output.
+	for _, e := range topNSlice {
+		totCount -= int64(e.repeatCount)
 	}
 	// Identify leftover TopN-origin entries and adjust totCount.
 	type leftoverEntry struct {
