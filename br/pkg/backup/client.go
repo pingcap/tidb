@@ -89,31 +89,6 @@ type PerStoreBackupAdapter interface {
 	RewriteStoreResponseFiles(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error)
 }
 
-// BackupRangesOption customizes Client.BackupRanges.
-type BackupRangesOption func(*backupRangesOptions)
-
-type backupRangesOptions struct {
-	perStoreBackupAdapters []PerStoreBackupAdapter
-}
-
-// WithPerStoreBackupAdapter registers a per-store request/response adapter for BackupRanges.
-func WithPerStoreBackupAdapter(adapter PerStoreBackupAdapter) BackupRangesOption {
-	return func(opts *backupRangesOptions) {
-		if adapter != nil {
-			opts.perStoreBackupAdapters = append(opts.perStoreBackupAdapters, adapter)
-		}
-	}
-}
-
-func applyBackupRangesOptions(opts []BackupRangesOption) backupRangesOptions {
-	var options backupRangesOptions
-	for _, opt := range opts {
-		if opt != nil {
-			opt(&options)
-		}
-	}
-	return options
-}
 
 type MainBackupLoop struct {
 	BackupSender
@@ -1241,7 +1216,6 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Key
 }
 
 // BackupRanges makes a backup of the given key ranges.
-// Use BackupRangesOption values to customize per-store request/response adaptation.
 func (bc *Client) BackupRanges(
 	ctx context.Context,
 	ranges []rtree.KeyRange,
@@ -1251,7 +1225,7 @@ func (bc *Client) BackupRanges(
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
-	opts ...BackupRangesOption,
+	perStoreBackupAdapters []PerStoreBackupAdapter,
 ) (map[int64]*metautil.ChecksumStats, error) {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
@@ -1265,8 +1239,6 @@ func (bc *Client) BackupRanges(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-
-	options := applyBackupRangesOptions(opts)
 
 	globalProgressTree, err := bc.BuildProgressRangeTree(ctx, ranges, metaWriter, progressCallBack)
 	if err != nil {
@@ -1284,7 +1256,7 @@ func (bc *Client) BackupRanges(
 		ReplicaReadLabel:       replicaReadLabel,
 		StateNotifier:          stateNotifier,
 		Limiter:                NewResourceMemoryLimiter(rangeLimit),
-		PerStoreBackupAdapters: options.perStoreBackupAdapters,
+		PerStoreBackupAdapters: perStoreBackupAdapters,
 		ProgressCallBack:       progressCallBack,
 		// always use reset connection here.
 		// because we need to reset connection when store state changed.

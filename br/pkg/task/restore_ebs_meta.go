@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/spf13/cobra"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -96,7 +97,7 @@ type restoreEBSMetaHelper struct {
 
 // we don't call close of fields on failure, outer logic should call helper.close.
 func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
-	_, externStorage, err := GetStorage(ctx, h.cfg.Config.Storage, &h.cfg.Config)
+	_, externStorage, err := taskcommon.GetStorage(ctx, h.cfg.Config.Storage, h.cfg.Config.BackendOptions, h.cfg.Config.NoCreds, h.cfg.Config.SendCreds)
 	if err != nil {
 		return errors.Trace(err)
 	}

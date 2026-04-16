@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/repo"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -145,22 +146,21 @@ func (c *checksumTableCtx) getTables(ctx context.Context) (res []tableInDB, err 
 }
 
 func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil.Table, err error) {
-	_, metadataStorage, backupMeta, err := taskrepo.ResolveSnapshotBackupMeta(
-		ctx,
-		taskrepo.Config{
-			BackendOptions: c.cfg.BackendOptions,
-			Storage:        c.cfg.Storage,
-			CipherInfo:     c.cfg.CipherInfo,
-			NoCreds:        c.cfg.NoCreds,
-			SendCreds:      c.cfg.SendCreds,
-		},
-		repo.SnapshotRef{Layout: c.cfg.Layout, BackupID: c.cfg.BackupID},
-	)
+	rootBackend, rootStorage, err := taskcommon.GetStorage(ctx, c.cfg.Storage, c.cfg.BackendOptions, c.cfg.NoCreds, c.cfg.SendCreds)
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to open backup storage")
+	}
+	resolved, backupMeta, err := taskrepo.LoadSnapshotBackupMeta(ctx, &taskrepo.SnapshotStorageRef{
+		Layout:      c.cfg.Layout,
+		BackupID:    c.cfg.BackupID,
+		RootBackend: rootBackend,
+		RootStorage: rootStorage,
+	}, &c.cfg.CipherInfo)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to load backupmeta")
 	}
 
-	metaReader := metautil.NewMetaReader(backupMeta, metadataStorage, &c.cfg.CipherInfo)
+	metaReader := metautil.NewMetaReader(backupMeta, resolved.MetadataStorage, &c.cfg.CipherInfo)
 
 	tblCh := make(chan *metautil.Table, 1024)
 	errCh := make(chan error, 1)
@@ -192,7 +192,7 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 
 func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, restoredTS uint64, clusterID uint64) ([]*backup.PitrDBMap, error) {
 	if len(c.cfg.Storage) > 0 {
-		_, stg, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
+		_, stg, err := taskcommon.GetStorage(ctx, c.cfg.Storage, c.cfg.Config.BackendOptions, c.cfg.Config.NoCreds, c.cfg.Config.SendCreds)
 		if err != nil {
 			return nil, errors.Annotate(err, "failed to create storage")
 		}

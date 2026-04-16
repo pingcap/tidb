@@ -17,7 +17,6 @@ import (
 
 	gcs "cloud.google.com/go/storage"
 	"github.com/docker/go-units"
-	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -26,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/metautil"
+	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -861,60 +860,11 @@ func NewMgr(ctx context.Context,
 	)
 }
 
-// GetStorage gets the storage backend from the config.
-func GetStorage(
-	ctx context.Context,
-	storageName string,
-	cfg *Config,
-) (*backuppb.StorageBackend, storeapi.Storage, error) {
-	u, err := objstore.ParseBackend(storageName, &cfg.BackendOptions)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	s, err := objstore.New(ctx, u, storageOpts(cfg))
-	if err != nil {
-		return nil, nil, errors.Annotate(err, "create storage failed")
-	}
-	return u, s, nil
-}
-
 func storageOpts(cfg *Config) *storeapi.Options {
 	return &storeapi.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
-}
-
-func decodeBackupMeta(metaData []byte, cfg *Config) (*backuppb.BackupMeta, error) {
-	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
-	var iv []byte
-	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
-		iv = metaData[:metautil.CrypterIvLen]
-	}
-	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
-	if err != nil {
-		return nil, errors.Annotate(err, "decrypt failed with wrong key")
-	}
-
-	backupMeta := &backuppb.BackupMeta{}
-	if err = proto.Unmarshal(decryptBackupMeta, backupMeta); err != nil {
-		return nil, errors.Annotate(err,
-			"parse backupmeta failed because of wrong aes cipher")
-	}
-	return backupMeta, nil
-}
-
-func ReadBackupMetaFromStorage(
-	ctx context.Context,
-	fileName string,
-	storage storeapi.Storage,
-	cfg *Config,
-) (*backuppb.BackupMeta, error) {
-	metaData, err := storage.ReadFile(ctx, fileName)
-	if err != nil {
-		return nil, errors.Annotate(err, "load backupmeta failed")
-	}
-	return decodeBackupMeta(metaData, cfg)
 }
 
 // ReadBackupMeta reads the backupmeta file from the storage.
@@ -923,7 +873,7 @@ func ReadBackupMeta(
 	fileName string,
 	cfg *Config,
 ) (*backuppb.StorageBackend, storeapi.Storage, *backuppb.BackupMeta, error) {
-	u, s, err := GetStorage(ctx, cfg.Storage, cfg)
+	u, s, err := taskcommon.GetStorage(ctx, cfg.Storage, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -950,7 +900,7 @@ func ReadBackupMeta(
 		u.GetGcs().Prefix = oldPrefix
 	}
 
-	backupMeta, err := decodeBackupMeta(metaData, cfg)
+	backupMeta, err := taskcommon.DecodeBackupMeta(metaData, &cfg.CipherInfo)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}

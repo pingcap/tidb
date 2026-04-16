@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
+	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -301,7 +302,7 @@ func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storeapi.Sto
 			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
 		},
 	}
-	_, storage, err := GetStorage(ctx, cfg.Storage, &cfg)
+	_, storage, err := taskcommon.GetStorage(ctx, cfg.Storage, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
 	require.NoError(t, err)
 	_, err = repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)

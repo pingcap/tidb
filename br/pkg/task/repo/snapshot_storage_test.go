@@ -159,7 +159,12 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 	})
 	require.NoError(t, metaWriter.FlushBackupMeta(ctx))
 
-	resolved, backupMeta, err := LoadSnapshotBackupMeta(ctx, repo.LayoutRepoV1, backupID, rootBackend, storage, &cipherInfo)
+	resolved, backupMeta, err := LoadSnapshotBackupMeta(ctx, &SnapshotStorageRef{
+		Layout:      repo.LayoutRepoV1,
+		BackupID:    backupID,
+		RootBackend: rootBackend,
+		RootStorage: storage,
+	}, &cipherInfo)
 	require.NoError(t, err)
 	require.Equal(t, backupID, resolved.BackupID)
 	require.Equal(t, uint64(42), backupMeta.ClusterId)

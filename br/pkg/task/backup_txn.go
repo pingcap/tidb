@@ -205,7 +205,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 
 	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	_, err = client.BackupRanges(ctx, backupRanges, req, 1, backup.RangesSentThreshold, nil, metaWriter, progressCallBack)
+	_, err = client.BackupRanges(ctx, backupRanges, req, 1, backup.RangesSentThreshold, nil, metaWriter, progressCallBack, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

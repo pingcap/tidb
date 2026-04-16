@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
+	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/tikv/client-go/v2/oracle"
@@ -156,7 +157,7 @@ func RunRepoSnapshotGet(
 				return nil, errors.Trace(err)
 			}
 			metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(cfg.BackupID))
-			backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo)
+			backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -398,7 +399,7 @@ func collectRepoSnapshotDeletePreview(
 ) repoSnapshotDeletePreview {
 	preview := repoSnapshotDeletePreview{}
 	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
-	if backupMeta, err := ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo); err == nil {
+	if backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo); err == nil {
 		preview.HasBasic = true
 		preview.Basic = convertRepoSnapshotBasicView(*backupMeta)
 	}
@@ -563,7 +564,7 @@ func runRepoSnapshotDynamicProgressTask[T any](
 }
 
 func openSnapshotRepoStorage(ctx context.Context, cfg *Config) (storeapi.Storage, error) {
-	_, storage, err := GetStorage(ctx, cfg.Storage, cfg)
+	_, storage, err := taskcommon.GetStorage(ctx, cfg.Storage, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

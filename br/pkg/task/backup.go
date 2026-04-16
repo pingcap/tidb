@@ -487,7 +487,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	var (
 		preparedStorage           *taskrepo.PreparedRepoV1SnapshotBackup
-		backupRangeOpts           []backup.BackupRangesOption
+		perStoreBackupAdapters    []backup.PerStoreBackupAdapter
 		removePendingMarkerOnExit bool
 	)
 	if cfg.SnapshotBackupOptions.IsRepoV1() {
@@ -514,8 +514,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			return errors.Trace(err)
 		}
 		client.SetMetadataStorage(preparedStorage.MetadataStorage)
-		backupRangeOpts = append(backupRangeOpts, backup.WithPerStoreBackupAdapter(preparedStorage))
-		if err := activateSnapshotBackupResume(ctx, client, preparedStorage, cfgHash); err != nil {
+		perStoreBackupAdapters = append(perStoreBackupAdapters, preparedStorage)
+		if err := taskrepo.ActivateSnapshotBackupResume(ctx, client, preparedStorage, cfgHash); err != nil {
 			return errors.Trace(err)
 		}
 		defer func() {
@@ -786,7 +786,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		cfg.ReplicaReadLabel,
 		metawriter,
 		progressCallBack,
-		backupRangeOpts...,
+		perStoreBackupAdapters,
 	)
 	if err != nil {
 		return errors.Trace(err)
@@ -848,15 +848,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
-}
-
-func activateSnapshotBackupResume(
-	ctx context.Context,
-	client *backup.Client,
-	prepared *taskrepo.PreparedRepoV1SnapshotBackup,
-	cfgHash []byte,
-) error {
-	return taskrepo.ActivateSnapshotBackupResume(ctx, client, prepared, cfgHash)
 }
 
 func getProgressCountOfRanges(
