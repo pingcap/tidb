@@ -32,7 +32,7 @@ func TestCharsetCompare(t *testing.T) {
 	require.Equal(t, 0, cmp)
 
 	_, err = Charset("uTF8").Compare(Charset("GBK"))
-	require.ErrorContains(t, err, "incompatible mysql charset (utf8 vs gbk)")
+	require.ErrorContains(t, err, "incompatible charset (utf8 vs gbk)")
 
 	cmp, err = Charset("latin1").Compare(Charset("utf8mb4"))
 	require.NoError(t, err)
@@ -43,10 +43,10 @@ func TestCharsetCompare(t *testing.T) {
 	require.Equal(t, 1, cmp)
 
 	_, err = Charset("other1").Compare(Charset("other2"))
-	require.ErrorContains(t, err, "incompatible mysql charset (other1 vs other2)")
+	require.ErrorContains(t, err, "incompatible charset (other1 vs other2)")
 
 	_, err = Charset("other1").Compare(Charset("utf8"))
-	require.ErrorContains(t, err, "incompatible mysql charset (other1 vs utf8)")
+	require.ErrorContains(t, err, "incompatible charset (other1 vs utf8)")
 }
 
 func TestCollationCompare(t *testing.T) {
@@ -54,6 +54,15 @@ func TestCollationCompare(t *testing.T) {
 	cmp, err := Collation("UTF8_BIN").Compare(Collation("utf8_bin"))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
+
+	// Collations without a suffix (no underscore) should also compare correctly.
+	cmp, err = Collation("binary").Compare(Collation("BINARY"))
+	require.NoError(t, err)
+	require.Equal(t, 0, cmp)
+
+	// binary collation is different with other charset's _bin collation
+	cmp, err = Collation("binary").Compare(Collation("utf8mb4_bin"))
+	require.ErrorContains(t, err, "incompatible collation (binary vs utf8mb4_bin)")
 
 	cmp, err = Collation("UTF8MB3_BIN").Compare(Collation("utf8_bin"))
 	require.NoError(t, err)
@@ -65,21 +74,21 @@ func TestCollationCompare(t *testing.T) {
 
 	_, err = Collation("UTF8_BIN").Compare(Collation("GBK_BIN"))
 	// note the error message is charset because collation suffix is the same
-	require.ErrorContains(t, err, "incompatible mysql charset (utf8 vs gbk)")
+	require.ErrorContains(t, err, "incompatible charset (utf8 vs gbk)")
 
 	cmp, err = Collation("utf8mb4_general_ci").Compare(Collation("utf8_general_ci"))
 	require.NoError(t, err)
 	require.Equal(t, 1, cmp)
 
 	_, err = Collation("utf8mb4_general_ci").Compare(Collation("utf8mb4_0900_ai_ci"))
-	require.ErrorContains(t, err, "incompatible mysql collation (utf8mb4_general_ci vs utf8mb4_0900_ai_ci)")
+	require.ErrorContains(t, err, "incompatible collation (utf8mb4_general_ci vs utf8mb4_0900_ai_ci)")
 
 	_, err = Collation("other_cs_bin").Compare(Collation("other_cs_ci"))
-	require.ErrorContains(t, err, "incompatible mysql collation (other_cs_bin vs other_cs_ci)")
+	require.ErrorContains(t, err, "incompatible collation (other_cs_bin vs other_cs_ci)")
 
 	// special fallback cases, where collation is not set and charset is known to TiDB
 	_, err = Collation("unknowCS").Compare(Collation("unknowCS2"))
-	require.ErrorContains(t, err, "incompatible mysql charset (unknowcs vs unknowcs2)")
+	require.ErrorContains(t, err, "incompatible charset (unknowcs vs unknowcs2)")
 
 	cmp, err = Collation("unknowCS").Compare(Collation("unknowCS"))
 	require.NoError(t, err)

@@ -93,11 +93,8 @@ type collationLattice struct {
 //
 // Other collations are only comparable when identical.
 func Collation(co string) collationLattice {
-	normalized := strings.ToLower(co)
-
-	charsetName, suffix, _ := strings.Cut(normalized, "_")
-
-	return collationLattice{charset: Charset(charsetName), suffix: suffix}
+	charsetName, suffix, _ := strings.Cut(co, "_")
+	return collationLattice{charset: Charset(charsetName), suffix: strings.ToLower(suffix)}
 }
 
 func (a collationLattice) Unwrap() any {

@@ -37,9 +37,9 @@ const (
 	// ErrMsgIncompatibleType is the error message for incompatible type.
 	ErrMsgIncompatibleType = "incompatible mysql type (%v vs %v)"
 	// ErrMsgIncompatibleCharset is the error message for incompatible charset.
-	ErrMsgIncompatibleCharset = "incompatible mysql charset (%v vs %v)"
+	ErrMsgIncompatibleCharset = "incompatible charset (%v vs %v)"
 	// ErrMsgIncompatibleCollation is the error message for incompatible collation.
-	ErrMsgIncompatibleCollation = "incompatible mysql collation (%v vs %v)"
+	ErrMsgIncompatibleCollation = "incompatible collation (%v vs %v)"
 	// ErrMsgAtTupleIndex is the error message for at tuple index.
 	ErrMsgAtTupleIndex = "at tuple index %d: %v"
 	// ErrMsgAtMapKey is the error message for at map key.

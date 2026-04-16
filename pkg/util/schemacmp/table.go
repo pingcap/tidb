@@ -270,6 +270,7 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 		}
 	}
 
+	// Some TableInfo may omit Collate while Charset is set; preserve charset/collation semantics.
 	collate := ti.Collate
 	if collate == "" && ti.Charset != "" {
 		if defaultCollate, err := pcharset.GetDefaultCollation(ti.Charset); err == nil {
@@ -338,7 +339,8 @@ func restoreTableInfoFromUnwrapped(ctx *format.RestoreCtx, table []any, tableNam
 		cs, _, hasSuffix := strings.Cut(collate, "_")
 		ctx.WriteKeyWord(" CHARSET ")
 		ctx.WriteKeyWord(cs)
-		if hasSuffix {
+		// MySQL's collation name is "<charset>_<suffix>" or "binary".
+		if hasSuffix || collate == pcharset.CharsetBin {
 			ctx.WriteKeyWord(" COLLATE ")
 			ctx.WriteKeyWord(collate)
 		}
