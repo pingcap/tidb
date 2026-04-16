@@ -78,10 +78,6 @@ type referredForeignKeyItem struct {
 	tomb           bool
 }
 
-func (si *schemaItem) Name() string {
-	return si.dbInfo.Name.L
-}
-
 // versionAndTimestamp is the tuple of schema version and timestamp.
 type versionAndTimestamp struct {
 	schemaVersion int64
@@ -217,15 +213,23 @@ const btreeDegree = 16
 
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
+	byNameCmp := compareByName
+	tableInfoRecidentCmp := compareTableInfoItem
+	schemaMapCmp := compareSchemaItem
+	if model.GetLowerCaseTableNames() == 0 {
+		byNameCmp = compareByNameCI
+		tableInfoRecidentCmp = compareTableInfoItemCI
+		schemaMapCmp = compareSchemaItemCI
+	}
 	ret := &Data{
 		tableCache: newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
 	}
 	ret.byID.Store(btree.NewG[*tableItem](btreeDegree, compareByID))
-	ret.byName.Store(btree.NewG[*tableItem](btreeDegree, compareByName))
-	ret.schemaMap.Store(btree.NewG[schemaItem](btreeDegree, compareSchemaItem))
+	ret.byName.Store(btree.NewG[*tableItem](btreeDegree, byNameCmp))
+	ret.schemaMap.Store(btree.NewG[schemaItem](btreeDegree, schemaMapCmp))
 	ret.schemaID2Name.Store(btree.NewG[schemaIDName](btreeDegree, compareSchemaByID))
 	ret.pid2tid.Store(btree.NewG[partitionItem](btreeDegree, comparePartitionItem))
-	ret.tableInfoResident.Store(btree.NewG[tableInfoItem](btreeDegree, compareTableInfoItem))
+	ret.tableInfoResident.Store(btree.NewG[tableInfoItem](btreeDegree, tableInfoRecidentCmp))
 	ret.tableCache.SetStatusHook(newSieveStatusHookImpl())
 	ret.referredForeignKeys.Store(btree.NewG[*referredForeignKeyItem](btreeDegree, compareReferredForeignKeyItem))
 	return ret
@@ -262,7 +266,7 @@ func (isd *Data) add(item tableItem, tbl table.Table) {
 }
 
 func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
-	isd.specials.LoadOrStore(di.Name.L, tables)
+	isd.specials.LoadOrStore(di.NameAsID(), tables)
 }
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
@@ -323,9 +327,9 @@ func (isd *Data) getTableReferredForeignKeys(schema, table string, schemaMetaVer
 // hasForeignKeyReference checks if a specific foreign key reference already exists
 func (isd *Data) hasForeignKeyReference(refs []*model.ReferredFKInfo, schema, table, fkName pmodel.CIStr) bool {
 	for _, ref := range refs {
-		if ref.ChildSchema.L == schema.L &&
-			ref.ChildTable.L == table.L &&
-			ref.ChildFKName.L == fkName.L {
+		if model.NameEqual(ref.ChildSchema, schema) &&
+			model.NameEqual(ref.ChildTable, table) &&
+			model.NameEqual(ref.ChildFKName, fkName) {
 			return true
 		}
 	}
@@ -339,8 +343,8 @@ func (isd *Data) addReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.Table
 		}
 
 		// Get current foreign key references for the table
-		refSchema, refTable := fk.RefSchema.L, fk.RefTable.L
-		existingRefs := isd.getTableReferredForeignKeys(fk.RefSchema.L, fk.RefTable.L, schemaMetaVersion)
+		refSchema, refTable := model.NameAsID(fk.RefSchema), model.NameAsID(fk.RefTable)
+		existingRefs := isd.getTableReferredForeignKeys(refSchema, refTable, schemaMetaVersion)
 
 		// Skip if this specific foreign key reference already exists
 		if isd.hasForeignKeyReference(existingRefs, schema, tbInfo.Name, fk.Name) {
@@ -357,13 +361,15 @@ func (isd *Data) addReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.Table
 			ChildFKName: fk.Name,
 		})
 		sort.Slice(newRefs, func(i, j int) bool {
-			if newRefs[i].ChildSchema.L != newRefs[j].ChildSchema.L {
-				return newRefs[i].ChildSchema.L < newRefs[j].ChildSchema.L
+			leftSchema, rightSchema := model.NameAsID(newRefs[i].ChildSchema), model.NameAsID(newRefs[j].ChildSchema)
+			if leftSchema != rightSchema {
+				return leftSchema < rightSchema
 			}
-			if newRefs[i].ChildTable.L != newRefs[j].ChildTable.L {
-				return newRefs[i].ChildTable.L < newRefs[j].ChildTable.L
+			leftTable, rightTable := model.NameAsID(newRefs[i].ChildTable), model.NameAsID(newRefs[j].ChildTable)
+			if leftTable != rightTable {
+				return leftTable < rightTable
 			}
-			return newRefs[i].ChildFKName.L < newRefs[j].ChildFKName.L
+			return model.NameAsID(newRefs[i].ChildFKName) < model.NameAsID(newRefs[j].ChildFKName)
 		})
 		btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
 			dbName:         refSchema,
@@ -381,7 +387,7 @@ func (isd *Data) deleteReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.Ta
 		}
 
 		// Get current foreign key references for the table
-		refSchema, refTable := fk.RefSchema.L, fk.RefTable.L
+		refSchema, refTable := model.NameAsID(fk.RefSchema), model.NameAsID(fk.RefTable)
 		existingRefs := isd.getTableReferredForeignKeys(refSchema, refTable, schemaMetaVersion)
 
 		// Skip if this specific foreign key reference doesn't exist
@@ -404,9 +410,9 @@ func (isd *Data) deleteReferredForeignKeys(schema pmodel.CIStr, tbInfo *model.Ta
 			// clone existingRefs to avoid modifying the original slice
 			tmpRefs := append([]*model.ReferredFKInfo(nil), existingRefs...)
 			newRefs := slices.DeleteFunc(tmpRefs, func(ref *model.ReferredFKInfo) bool {
-				return ref.ChildSchema.L == schema.L &&
-					ref.ChildTable.L == tbInfo.Name.L &&
-					ref.ChildFKName.L == fk.Name.L
+				return model.NameEqual(ref.ChildSchema, schema) &&
+					model.NameEqual(ref.ChildTable, tbInfo.Name) &&
+					model.NameEqual(ref.ChildFKName, fk.Name)
 			})
 
 			btreeSet(&isd.referredForeignKeys, &referredForeignKeyItem{
@@ -645,7 +651,7 @@ func resetSchemaMapBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[schemaItem]],
 	items := make([]schemaItem, 0, bt.Len())
 	items = append(items, pivot)
 	bt.DescendLessOrEqual(pivot, func(item schemaItem) bool {
-		if pivot.Name() == item.Name() {
+		if model.NameEqual(pivot.dbInfo.Name, item.dbInfo.Name) {
 			return true // skip MVCC version
 		}
 		pivot = item
@@ -780,11 +786,46 @@ func compareByName(a, b *tableItem) bool {
 	return a.schemaVersion < b.schemaVersion
 }
 
+func compareByNameCI(a, b *tableItem) bool {
+	if a.dbName.O < b.dbName.O {
+		return true
+	}
+	if a.dbName.O > b.dbName.O {
+		return false
+	}
+
+	if a.tableName.O < b.tableName.O {
+		return true
+	}
+	if a.tableName.O > b.tableName.O {
+		return false
+	}
+
+	return a.schemaVersion < b.schemaVersion
+}
+
 func compareTableInfoItem(a, b tableInfoItem) bool {
 	if a.dbName.L < b.dbName.L {
 		return true
 	}
 	if a.dbName.L > b.dbName.L {
+		return false
+	}
+
+	if a.tableID < b.tableID {
+		return true
+	}
+	if a.tableID > b.tableID {
+		return false
+	}
+	return a.schemaVersion < b.schemaVersion
+}
+
+func compareTableInfoItemCI(a, b tableInfoItem) bool {
+	if a.dbName.O < b.dbName.O {
+		return true
+	}
+	if a.dbName.O > b.dbName.O {
 		return false
 	}
 
@@ -808,10 +849,20 @@ func comparePartitionItem(a, b partitionItem) bool {
 }
 
 func compareSchemaItem(a, b schemaItem) bool {
-	if a.Name() < b.Name() {
+	if a.dbInfo.Name.L < b.dbInfo.Name.L {
 		return true
 	}
-	if a.Name() > b.Name() {
+	if a.dbInfo.Name.L > b.dbInfo.Name.L {
+		return false
+	}
+	return a.schemaVersion < b.schemaVersion
+}
+
+func compareSchemaItemCI(a, b schemaItem) bool {
+	if a.dbInfo.Name.O < b.dbInfo.Name.O {
+		return true
+	}
+	if a.dbInfo.Name.O > b.dbInfo.Name.O {
 		return false
 	}
 	return a.schemaVersion < b.schemaVersion
@@ -923,9 +974,9 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	}
 
 	if autoid.IsMemSchemaID(id) {
-		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
+		if raw, exist := is.Data.specials.Load(model.NameAsID(itm.dbName)); exist {
 			schTbls := raw.(*schemaTables)
-			val, ok = schTbls.tables[itm.tableName.L]
+			val, ok = schTbls.tables[model.NameAsID(itm.tableName)]
 			return
 		}
 		return nil, false
@@ -1012,9 +1063,9 @@ func (is *infoschemaV2) TableIsCached(id int64) (ok bool) {
 	}
 
 	if autoid.IsMemSchemaID(id) {
-		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
+		if raw, exist := is.Data.specials.Load(model.NameAsID(itm.dbName)); exist {
 			schTbls := raw.(*schemaTables)
-			_, ok = schTbls.tables[itm.tableName.L]
+			_, ok = schTbls.tables[model.NameAsID(itm.tableName)]
 			return ok
 		}
 		return false
@@ -1065,17 +1116,35 @@ func (h *tableByNameHelper) onItem(item *tableItem) bool {
 	return true
 }
 
+func (h *tableByNameHelper) onItemCI(item *tableItem) bool {
+	if item.dbName.O != h.end.dbName.O || item.tableName.O != h.end.tableName.O {
+		h.found = false
+		return false
+	}
+	if item.schemaVersion <= h.schemaVersion {
+		if !item.tomb { // If the item is a tomb record, the database is dropped.
+			h.found = true
+			h.res = item
+		}
+		return false
+	}
+	return true
+}
+
 // TableByName implements the InfoSchema interface.
 // When schema cache miss, it will fetch the TableInfo from TikV and refill cache.
 func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CIStr) (t table.Table, err error) {
 	if IsSpecialDB(schema.L) {
-		if raw, ok := is.specials.Load(schema.L); ok {
+		if raw, ok := is.specials.Load(model.NameAsID(schema)); ok {
 			tbNames := raw.(*schemaTables)
-			if t, ok = tbNames.tables[tbl.L]; ok {
+			if t, ok = tbNames.tables[model.NameAsID(tbl)]; ok {
 				return
 			}
 		}
-		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
+		return nil, ErrTableNotExists.FastGenByArgs(
+			pmodel.NewCIStr(model.NameAsID(schema)),
+			tbl,
+		)
 	}
 
 	is.keepAlive()
@@ -1083,10 +1152,17 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CISt
 	var h tableByNameHelper
 	h.end = tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}
 	h.schemaVersion = is.infoSchema.schemaMetaVersion
-	is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
+	onItem := h.onItem
+	if model.GetLowerCaseTableNames() == 0 {
+		onItem = h.onItemCI
+	}
+	is.byName.Load().DescendLessOrEqual(&h.end, onItem)
 
 	if !h.found {
-		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
+		return nil, ErrTableNotExists.FastGenByArgs(
+			pmodel.NewCIStr(model.NameAsID(schema)),
+			tbl,
+		)
 	}
 	itm := h.res
 
@@ -1147,7 +1223,7 @@ func (is *infoschemaV2) keepAlive() {
 // SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {
-		raw, ok := is.Data.specials.Load(schema.L)
+		raw, ok := is.Data.specials.Load(model.NameAsID(schema))
 		if ok {
 			schTbls := raw.(*schemaTables)
 			tables := make([]table.Table, 0, len(schTbls.tables))
@@ -1194,7 +1270,7 @@ retry:
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableNameInfo, error) {
 	if IsSpecialDB(schema.L) {
-		raw, ok := is.Data.specials.Load(schema.L)
+		raw, ok := is.Data.specials.Load(model.NameAsID(schema))
 		if ok {
 			schTbls := raw.(*schemaTables)
 			ret := make([]*model.TableNameInfo, 0, len(schTbls.tables))
@@ -1213,7 +1289,7 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema pmode
 	// So the data is taken out first and then dedup in Descend order.
 	var tableItems []*tableItem
 	is.byName.Load().AscendGreaterOrEqual(&tableItem{dbName: schema}, func(item *tableItem) bool {
-		if item.dbName.L != schema.L {
+		if model.NameAsID(item.dbName) != model.NameAsID(schema) {
 			return false
 		}
 		if is.infoSchema.schemaMetaVersion >= item.schemaVersion {
@@ -1251,7 +1327,7 @@ func (is *infoschemaV2) FindTableInfoByPartitionID(
 
 func (is *infoschemaV2) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok bool) {
 	if IsSpecialDB(schema.L) {
-		raw, ok := is.Data.specials.Load(schema.L)
+		raw, ok := is.Data.specials.Load(model.NameAsID(schema))
 		if !ok {
 			return nil, false
 		}
@@ -1265,7 +1341,7 @@ func (is *infoschemaV2) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok
 		dbInfo:        &dbInfo,
 		schemaVersion: math.MaxInt64,
 	}, func(item schemaItem) bool {
-		if item.Name() != schema.L {
+		if !model.NameEqual(item.dbInfo.Name, schema) {
 			ok = false
 			return false
 		}
@@ -1446,9 +1522,9 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 }
 
 // GetTableReferredForeignKeys implements InfoSchema.GetTableReferredForeignKeys
-func (is *infoschemaV2) GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo {
+func (is *infoschemaV2) GetTableReferredForeignKeys(schema, table pmodel.CIStr) []*model.ReferredFKInfo {
 	is.keepAlive()
-	return is.Data.getTableReferredForeignKeys(schema, table, is.infoSchema.schemaMetaVersion)
+	return is.Data.getTableReferredForeignKeys(model.NameAsID(schema), model.NameAsID(table), is.infoSchema.schemaMetaVersion)
 }
 
 func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts uint64, schemaVersion int64) (table.Table, error) {
@@ -1614,7 +1690,7 @@ func oldSchemaInfo(b *Builder, diff *model.SchemaDiff) (*model.DBInfo, bool) {
 
 	oldRoDBInfo, ok := b.infoSchema.SchemaByID(diff.OldSchemaID)
 	if ok {
-		oldRoDBInfo = b.getSchemaAndCopyIfNecessary(oldRoDBInfo.Name.L)
+		oldRoDBInfo = b.getSchemaAndCopyIfNecessary(oldRoDBInfo.NameAsID())
 	}
 	return oldRoDBInfo, ok
 }
@@ -1698,6 +1774,8 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 		return nil
 	}
 	tblInfo := table.Meta()
+
+	b.infoSchema.deleteTriggers(dbInfo.Name, tblInfo)
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
 	b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
@@ -1820,10 +1898,10 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.
 		}
 
 		if currDB == "" {
-			currDB = item.dbName.L
+			currDB = model.NameAsID(item.dbName)
 			res = infoschemacontext.TableInfoResult{DBName: item.dbName}
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
-		} else if currDB == item.dbName.L {
+		} else if currDB == model.NameAsID(item.dbName) {
 			res.TableInfos = append(res.TableInfos, item.tableInfo)
 		} else {
 			ret = append(ret, res)

@@ -204,6 +204,9 @@ const (
 	InsertFunc      = "insert_func"
 	Instr           = "instr"
 	LabelAceesible  = "label_accessible"
+	Seclabel        = "seclabel"
+	SeclabelToChar  = "seclabel_to_char"
+	LBACDominates   = "lbac_dominates"
 	Lcase           = "lcase"
 	Left            = "left"
 	Length          = "length"
@@ -272,6 +275,7 @@ const (
 	FormatNanoTime       = "format_nano_time"
 	CurrentResourceGroup = "current_resource_group"
 	DataOperationAudit   = "data_operation_audit"
+	ColumnDecryption     = "column_decryption"
 
 	// control functions
 	If     = "if"
@@ -357,6 +361,10 @@ const (
 	JSONDepth         = "json_depth"
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
+
+	// PingKaiDB Enterprise Edit functions
+	ArrayElementAt = "array_element"
+	ExtractValue   = "extractvalue"
 
 	// vector functions (tidb extension)
 	VecDims                 = "vec_dims"

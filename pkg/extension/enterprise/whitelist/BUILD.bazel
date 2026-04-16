@@ -31,10 +31,11 @@ go_test(
     srcs = ["pkdb_whitelist_test.go"],
     embed = [":whitelist"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 7,
     deps = [
         "//pkg/server",
         "//pkg/testkit",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],

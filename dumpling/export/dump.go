@@ -312,6 +312,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 	})
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
+	am := newAccessMeta(conf, d.extStore)
+	err = am.getUserGrants(metaConn)
+	if err != nil {
+		return err
+	}
+
 	if conf.SQL == "" {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
 			return err
@@ -333,6 +339,12 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	summary.SetSuccessStatus(true)
 	m.recordFinishTime(time.Now())
+	am.setDumpEndTime()
+	err = am.writeAccessMeta(d.tctx)
+	if err != nil {
+		tctx.L().Error("write access meta fail, " + err.Error())
+		return err
+	}
 	return nil
 }
 

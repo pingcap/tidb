@@ -43,6 +43,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -61,7 +62,7 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
 
 	tbInfo.State = model.StateNone
-	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name.L)
+	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -376,10 +377,12 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	tbInfo.State = model.StateNone
 
 	metaMut := jobCtx.metaMut
-	oldTableID, err := findTableIDByName(jobCtx.infoCache, metaMut, schemaID, tbInfo.Name.L)
+
+	oldTableID, err := findTableIDByName(jobCtx.infoCache, metaMut, schemaID, tbInfo.Name)
 	if err == nil && oldTableID > 0 {
 		err = infoschema.ErrTableExists
 	}
+
 	if infoschema.ErrTableNotExists.Equal(err) {
 		err = nil
 	}
@@ -431,7 +434,7 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	}
 }
 
-func findTableIDByName(infoCache *infoschema.InfoCache, t *meta.Mutator, schemaID int64, tableName string) (int64, error) {
+func findTableIDByName(infoCache *infoschema.InfoCache, t *meta.Mutator, schemaID int64, tableName pmodel.CIStr) (int64, error) {
 	// Try to use memory schema info to check first.
 	currVer, err := t.GetSchemaVersion()
 	if err != nil {
@@ -445,19 +448,19 @@ func findTableIDByName(infoCache *infoschema.InfoCache, t *meta.Mutator, schemaI
 	return findTableIDFromStore(t, schemaID, tableName)
 }
 
-func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) (int64, error) {
+func findTableIDFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName pmodel.CIStr) (int64, error) {
 	schema, ok := is.SchemaByID(schemaID)
 	if !ok {
 		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
 	}
-	tbl, err := is.TableByName(context.Background(), schema.Name, pmodel.NewCIStr(tableName))
+	tbl, err := is.TableByName(context.Background(), schema.Name, tableName)
 	if err != nil {
 		return 0, err
 	}
 	return tbl.Meta().ID, nil
 }
 
-func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName string) (int64, error) {
+func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName pmodel.CIStr) (int64, error) {
 	tbls, err := t.ListSimpleTables(schemaID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
@@ -466,7 +469,7 @@ func findTableIDFromStore(t *meta.Mutator, schemaID int64, tableName string) (in
 		return 0, errors.Trace(err)
 	}
 	for _, tbl := range tbls {
-		if tbl.Name.L == tableName {
+		if model.NameEqual(tbl.Name, tableName) {
 			return tbl.ID, nil
 		}
 	}
@@ -864,6 +867,10 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 
+	if err = validateSecurityLabelColumn(tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if _, err = validateCommentLength(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), ctx.GetSQLMode(), tbInfo.Name.L, &tbInfo.Comment, dbterror.ErrTooLongTableComment); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -885,6 +892,23 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCh
 	}
 
 	return tbInfo, nil
+}
+
+func validateSecurityLabelColumn(tbInfo *model.TableInfo) error {
+	if !variable.EnableLBAC.Load() {
+		return nil
+	}
+
+	hasLabelColumn := false
+	for _, col := range tbInfo.Columns {
+		if col.FieldType.IsSecurityLabel() {
+			if hasLabelColumn {
+				return lbac.ErrMultipleSecurityLabelColumns
+			}
+			hasLabelColumn = true
+		}
+	}
+	return nil
 }
 
 func setTableAutoRandomBits(ctx *metabuild.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
@@ -1030,12 +1054,21 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionSecurityPolicy:
+			policy := pmodel.NewCIStr(op.StrValue)
+			tbInfo.SecurityPolicy = &policy
 		case ast.TableOptionAffinity:
 			affinity, err := model.NewTableAffinityInfoWithLevel(op.StrValue)
 			if err != nil {
 				return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", op.StrValue)))
 			}
 			tbInfo.Affinity = affinity
+		case ast.TableOptionEncryption:
+			enableEncryption := strings.ToUpper(op.StrValue) == "Y"
+			if enableEncryption && !variable.EnableEAL.Load() {
+				return errEALIsOff
+			}
+			tbInfo.Encryption = enableEncryption
 		}
 	}
 	shardingBits := shardingBits(tbInfo)

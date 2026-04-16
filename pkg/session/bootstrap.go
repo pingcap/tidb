@@ -184,10 +184,10 @@ const (
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
-	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
+	// TODO: MySQL puts global_variables table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
 	// Maybe we will put it back to INFORMATION_SCHEMA.
-	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.GLOBAL_VARIABLES(
+	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.global_variables(
 		VARIABLE_NAME  VARCHAR(64) NOT NULL PRIMARY KEY,
 		VARIABLE_VALUE VARCHAR(16383) DEFAULT NULL);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
@@ -472,13 +472,13 @@ const (
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
 			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.query")) as query,
 			session_id,
-			cluster_tidb_trx.start_time,
+			CLUSTER_TIDB_TRX.start_time,
 			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
 		FROM mysql.tidb_ddl_job,
 			mysql.tidb_mdl_info,
-			information_schema.cluster_tidb_trx
+			INFORMATION_SCHEMA.CLUSTER_TIDB_TRX
 		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
-			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), '),') != 0
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(CLUSTER_TIDB_TRX.related_table_ids, ',', '|'), '),') != 0
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -767,7 +767,7 @@ const (
 			table_schema as object_schema,
 			table_name as object_name,
 			index_name
-		FROM information_schema.cluster_tidb_index_usage
+		FROM INFORMATION_SCHEMA.CLUSTER_TIDB_INDEX_USAGE
 		WHERE
 			table_schema not in ('sys', 'mysql', 'INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA') and
 			index_name != 'PRIMARY'
@@ -843,6 +843,15 @@ const (
 		KEY Grantor (Grantor)
 	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='Procedure privileges'`
 
+	// CreateFuncTable stores loadable user-defined functions (UDFs).
+	CreateFuncTable = `CREATE TABLE IF NOT EXISTS mysql.func (
+		name char(64) NOT NULL DEFAULT '',
+		ret tinyint NOT NULL DEFAULT '0',
+		dl char(128) NOT NULL DEFAULT '',
+		type enum('function','aggregate') NOT NULL,
+		PRIMARY KEY (name)
+	) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='User defined functions'`
+
 	// CreateLSPolicies is used to create table tidb_ls_policies.
 	CreateLSPolicies = `CREATE TABLE IF NOT EXISTS mysql.tidb_ls_policies(
 		policy_name varchar(64) NOT NULL,
@@ -901,6 +910,45 @@ const (
 		enabled     TINYINT(4),
 		PRIMARY KEY(filter_name, user)
 	);`
+
+	// CreateSecurityLabelComponentsTable stores security label component definitions.
+	CreateSecurityLabelComponentsTable = `CREATE TABLE IF NOT EXISTS mysql.security_label_components (
+		name VARCHAR(64) NOT NULL PRIMARY KEY,
+		type ENUM('ARRAY', 'SET', 'TREE') NOT NULL,
+		component_values JSON NOT NULL
+	) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
+
+	// CreateSecurityPoliciesTable stores security policies.
+	CreateSecurityPoliciesTable = `CREATE TABLE IF NOT EXISTS mysql.security_policies (
+		name VARCHAR(64) NOT NULL PRIMARY KEY,
+		component_names JSON NOT NULL COMMENT 'Array of component names used in this policy',
+		write_control ENUM('RESTRICT', 'OVERRIDE') NOT NULL DEFAULT 'RESTRICT' COMMENT 'Write control for unauthorized labels'
+	) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
+
+	// CreateSecurityLabelsTable stores security labels.
+	CreateSecurityLabelsTable = `CREATE TABLE IF NOT EXISTS mysql.security_labels (
+		name VARCHAR(64) NOT NULL PRIMARY KEY,
+		policy_name VARCHAR(64) NOT NULL,
+		components JSON NOT NULL COMMENT 'Map of component_name -> value'
+	) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
+
+	// CreateUserSecurityLabelsTable stores user security label grants.
+	CreateUserSecurityLabelsTable = `CREATE TABLE IF NOT EXISTS mysql.user_security_labels (
+		user_name VARCHAR(32) NOT NULL,
+		host VARCHAR(255) NOT NULL DEFAULT '%',
+		label_name VARCHAR(64) NOT NULL,
+		access_types ENUM('READ', 'WRITE', 'ALL') NOT NULL COMMENT 'Access type (READ, WRITE, ALL)',
+		PRIMARY KEY (user_name, host, label_name)
+	) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
+
+	// CreateUserExemptionsTable stores user exemption grants.
+	CreateUserExemptionsTable = `CREATE TABLE IF NOT EXISTS mysql.user_exemptions (
+		user_name VARCHAR(32) NOT NULL,
+		host VARCHAR(255) NOT NULL DEFAULT '%',
+		policy_name VARCHAR(64) NOT NULL,
+		rule VARCHAR(255) NOT NULL,
+		PRIMARY KEY (user_name, host, policy_name, rule)
+	) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -964,6 +1012,14 @@ const (
 	eeversion10 = 10
 	// eeversion11 alters table mysql.login_history renaming column `host` to `server_host` and adding a new column `user_host`
 	eeversion11 = 11
+	// reserve for solves the problem that the `mysql.login_history` table is created by open-source TiDB.
+	eeversion12 = 12
+	// eeversion13 adds the table mysql.func for UDFs.
+	eeversion13 = 13
+	// eeversion14 add LBAC metadata tables.
+	eeversion14 = 14
+	// eeversion15 adds the support for lower_case_table_names in EE.
+	eeversion15 = 15
 )
 
 const (
@@ -994,6 +1050,8 @@ const (
 	tidbDefOOMAction = "default_oom_action"
 	// The variable name in mysql.tidb table and it records the current DDLTableVersion
 	tidbDDLTableVersion = "ddl_table_version"
+	// The variable name in mysql.tidb table and it records the lower_case_table_names value.
+	lowerCaseTableNames = "lower_case_table_names"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1393,7 +1451,7 @@ var currentBootstrapVersion int64 = version223
 
 // currentEEBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentEEBootstrapVersion int64 = eeversion11
+var currentEEBootstrapVersion int64 = eeversion15
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1587,6 +1645,10 @@ var (
 		upgradeToEEVer9,
 		upgradeToEEVer10,
 		upgradeToEEVer11,
+		upgradeToEEVer12,
+		upgradeToEEVer13,
+		upgradeToEEVer14,
+		upgradeToEEVer15,
 	}
 )
 
@@ -2182,6 +2244,13 @@ func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
 	}
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
 		mysql.SystemDB, mysql.TiDBTable, TidbNewCollationEnabled, b, comment, b,
+	)
+}
+
+func writeLowerCaseTableNamesParameter(s sessiontypes.Session, val int) {
+	comment := "lower_case_table_names value. Do not edit it."
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
+		mysql.SystemDB, mysql.TiDBTable, lowerCaseTableNames, val, comment, val,
 	)
 }
 
@@ -3579,6 +3648,38 @@ func upgradeToEEVer11(s sessiontypes.Session, ver int64) {
 	mustExecute(s, "ALTER TABLE `mysql`.`login_history` ADD INDEX IF NOT EXISTS idx_user(User, User_host, Result, Time)")
 }
 
+func upgradeToEEVer12(s sessiontypes.Session, ver int64) {
+	if ver >= eeversion12 {
+		return
+	}
+}
+
+func upgradeToEEVer13(s sessiontypes.Session, ver int64) {
+	if ver >= eeversion13 {
+		return
+	}
+	doReentrantDDL(s, CreateFuncTable)
+}
+
+func upgradeToEEVer14(s sessiontypes.Session, ver int64) {
+	if ver >= eeversion14 {
+		return
+	}
+	doReentrantDDL(s, CreateSecurityLabelComponentsTable)
+	doReentrantDDL(s, CreateSecurityPoliciesTable)
+	doReentrantDDL(s, CreateSecurityLabelsTable)
+	doReentrantDDL(s, CreateUserSecurityLabelsTable)
+	doReentrantDDL(s, CreateUserExemptionsTable)
+}
+
+func upgradeToEEVer15(s sessiontypes.Session, ver int64) {
+	if ver >= eeversion15 {
+		return
+	}
+	// Forbid updating lower_case_table_names for existing clusters.
+	writeLowerCaseTableNamesParameter(s, 2)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3767,6 +3868,14 @@ func doDDLWorks(s sessiontypes.Session) {
 	// Create audit tables
 	mustExecute(s, CreateFilterTableSQL)
 	mustExecute(s, CreateFilterRuleTableSQL)
+	// Create mysql.func for loadable UDFs.
+	mustExecute(s, CreateFuncTable)
+	// Create LBAC metadata tables.
+	mustExecute(s, CreateSecurityLabelComponentsTable)
+	mustExecute(s, CreateSecurityPoliciesTable)
+	mustExecute(s, CreateSecurityLabelsTable)
+	mustExecute(s, CreateUserSecurityLabelsTable)
+	mustExecute(s, CreateUserExemptionsTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -3864,6 +3973,8 @@ func doDMLWorks(s sessiontypes.Session) {
 	writeSystemTZ(s)
 
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
+
+	writeLowerCaseTableNamesParameter(s, config.GetGlobalConfig().LowerCaseTableNamesOnFirstBootstrap)
 
 	writeStmtSummaryVars(s)
 

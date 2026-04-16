@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -283,10 +284,15 @@ type immutable struct {
 	columnsPriv  []columnsPrivRecord
 	defaultRoles []defaultRoleRecord
 
-	globalPriv  []globalPrivRecord
-	dynamicPriv []dynamicPrivRecord
-	roleGraph   map[string]roleGraphEdgesTable
-	routinePriv []routinePrivRecord
+	globalPriv         []globalPrivRecord
+	dynamicPriv        []dynamicPrivRecord
+	roleGraph          map[string]roleGraphEdgesTable
+	routinePriv        []routinePrivRecord
+	lbacComponents     []lbac.Component
+	lbacPolicies       []lbac.Policy
+	lbacLabels         []lbac.Label
+	lbacUserLabels     []lbac.UserLabel
+	lbacUserExemptions []lbac.UserExemption
 }
 
 type extended struct {
@@ -297,6 +303,7 @@ type extended struct {
 	TablesPrivMap  map[string][]tablesPrivRecord  // Accelerate TablesPriv searching
 	ColumnsPrivMap map[string][]columnsPrivRecord // Accelerate ColumnsPriv searching
 	RoutinePrivMap map[string][]routinePrivRecord
+	lbac           *lbac.SecurityLabelCache
 }
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
@@ -433,7 +440,16 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 		}
 		logutil.BgLogger().Warn("mysql.procs_priv missing")
 	}
+	err = p.LoadLBAC(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("load lbac tables fail", zap.Error(err))
+	}
 	return nil
+}
+
+// GetSecurityLabelCache returns the in-memory LBAC metadata cache.
+func (p *MySQLPrivilege) GetSecurityLabelCache() *lbac.SecurityLabelCache {
+	return p.lbac
 }
 
 func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) error {
@@ -554,6 +570,59 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 
 	ret.roleGraph = diff.roleGraph
 
+	ret.lbacComponents = make([]lbac.Component, 0, len(p.lbacComponents)+len(diff.lbacComponents))
+	ret.lbacComponents = append(ret.lbacComponents, p.lbacComponents...)
+	ret.lbacComponents = append(ret.lbacComponents, diff.lbacComponents...)
+	if len(ret.lbacComponents) > 0 {
+		slices.SortStableFunc(ret.lbacComponents, compareLBACComponent)
+		ret.lbacComponents = dedupSortedKeepLast(ret.lbacComponents, func(x, y lbac.Component) bool {
+			return x.Name == y.Name
+		})
+	}
+
+	ret.lbacPolicies = make([]lbac.Policy, 0, len(p.lbacPolicies)+len(diff.lbacPolicies))
+	ret.lbacPolicies = append(ret.lbacPolicies, p.lbacPolicies...)
+	ret.lbacPolicies = append(ret.lbacPolicies, diff.lbacPolicies...)
+	if len(ret.lbacPolicies) > 0 {
+		slices.SortStableFunc(ret.lbacPolicies, compareLBACPolicy)
+		ret.lbacPolicies = dedupSortedKeepLast(ret.lbacPolicies, func(x, y lbac.Policy) bool {
+			return x.Name == y.Name
+		})
+	}
+
+	ret.lbacLabels = make([]lbac.Label, 0, len(p.lbacLabels)+len(diff.lbacLabels))
+	ret.lbacLabels = append(ret.lbacLabels, p.lbacLabels...)
+	ret.lbacLabels = append(ret.lbacLabels, diff.lbacLabels...)
+	if len(ret.lbacLabels) > 0 {
+		slices.SortStableFunc(ret.lbacLabels, compareLBACLabel)
+		ret.lbacLabels = dedupSortedKeepLast(ret.lbacLabels, func(x, y lbac.Label) bool {
+			return x.Name == y.Name
+		})
+	}
+
+	ret.lbacUserLabels = make([]lbac.UserLabel, 0, len(p.lbacUserLabels)+len(diff.lbacUserLabels))
+	ret.lbacUserLabels = append(ret.lbacUserLabels, p.lbacUserLabels...)
+	ret.lbacUserLabels = append(ret.lbacUserLabels, diff.lbacUserLabels...)
+	if len(ret.lbacUserLabels) > 0 {
+		slices.SortStableFunc(ret.lbacUserLabels, compareLBACUserLabel)
+		ret.lbacUserLabels = dedupSortedKeepLast(ret.lbacUserLabels, func(x, y lbac.UserLabel) bool {
+			return x.UserName == y.UserName && x.Host == y.Host && x.LabelName == y.LabelName
+		})
+	}
+
+	ret.lbacUserExemptions = make([]lbac.UserExemption, 0, len(p.lbacUserExemptions)+len(diff.lbacUserExemptions))
+	ret.lbacUserExemptions = append(ret.lbacUserExemptions, p.lbacUserExemptions...)
+	ret.lbacUserExemptions = append(ret.lbacUserExemptions, diff.lbacUserExemptions...)
+	if len(ret.lbacUserExemptions) > 0 {
+		slices.SortStableFunc(ret.lbacUserExemptions, compareLBACUserExemption)
+		ret.lbacUserExemptions = dedupSortedKeepLast(ret.lbacUserExemptions, func(x, y lbac.UserExemption) bool {
+			return x.UserName == y.UserName && x.Host == y.Host && x.PolicyName == y.PolicyName && x.Rule == y.Rule
+		})
+	}
+
+	if variable.EnableLBAC.Load() {
+		ret.buildLBACCache()
+	}
 	return &ret
 }
 
@@ -1791,7 +1860,61 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), user, host)
 		gs = append(gs, s)
 	}
+	if lbacGrants := p.getLBACGrants(user, host, sqlMode); len(lbacGrants) > 0 {
+		gs = append(gs, lbacGrants...)
+	}
 	return gs
+}
+
+func (p *MySQLPrivilege) getLBACGrants(user, host string, sqlMode mysql.SQLMode) []string {
+	if host == "" {
+		host = "%"
+	}
+	if len(p.lbacUserLabels) == 0 && len(p.lbacUserExemptions) == 0 {
+		return nil
+	}
+	var grants []string
+	if cache := p.lbac; cache != nil && len(cache.Labels) > 0 {
+		var labelGrants []string
+		for _, record := range p.lbacUserLabels {
+			if record.UserName != user || record.Host != host {
+				continue
+			}
+			label := cache.Labels[strings.ToLower(record.LabelName)]
+			if label == nil {
+				continue
+			}
+			accessType := record.AccessType.String()
+			if accessType == "" {
+				continue
+			}
+			policyName := stringutil.Escape(label.PolicyName, sqlMode)
+			labelName := stringutil.Escape(label.Name, sqlMode)
+			labelGrants = append(labelGrants, fmt.Sprintf("GRANT SECURITY LABEL %s.%s TO USER '%s'@'%s' FOR %s ACCESS", policyName, labelName, user, host, accessType))
+		}
+		if len(labelGrants) > 0 {
+			slices.Sort(labelGrants)
+			grants = append(grants, labelGrants...)
+		}
+	}
+
+	var exemptionGrants []string
+	for _, record := range p.lbacUserExemptions {
+		if record.UserName != user || record.Host != host {
+			continue
+		}
+		rule := strings.ToUpper(record.Rule)
+		if rule == "" {
+			continue
+		}
+		policyName := stringutil.Escape(record.PolicyName, sqlMode)
+		exemptionGrants = append(exemptionGrants, fmt.Sprintf("GRANT EXEMPTION ON RULE %s FOR %s TO USER '%s'@'%s'", rule, policyName, user, host))
+	}
+	if len(exemptionGrants) > 0 {
+		slices.Sort(exemptionGrants)
+		grants = append(grants, exemptionGrants...)
+	}
+	return grants
 }
 
 type columnStr = string

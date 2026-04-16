@@ -32,12 +32,14 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -76,7 +78,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: SystemTimeZone, Value: "CST"},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
-	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 8.0 compatible"},
+	{Scope: ScopeGlobal | ScopeSession, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 8.0 compatible", GetSession: func(s *SessionVars) (string, error) {
+		comment := "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL compatible"
+		comment += s.LogHistory
+		return comment, nil
+	}},
 	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
 	{Scope: ScopeNone, Name: DataDir, Value: "/usr/local/mysql/data/"},
 	{Scope: ScopeNone, Name: Socket, Value: ""},
@@ -1125,12 +1131,12 @@ var defaultSysVars = []*SysVar{
 		},
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			choice := strings.ToUpper(normalizedValue)
-			if choice != model.AllColumns.String() && choice != model.PredicateColumns.String() {
+			if choice != pmodel.AllColumns.String() && choice != pmodel.PredicateColumns.String() {
 				return "", errors.Errorf(
 					"invalid value for %s, it should be either '%s' or '%s'",
 					TiDBAnalyzeColumnOptions,
-					model.AllColumns.String(),
-					model.PredicateColumns.String(),
+					pmodel.AllColumns.String(),
+					pmodel.PredicateColumns.String(),
 				)
 			}
 			return normalizedValue, nil
@@ -2608,6 +2614,10 @@ var defaultSysVars = []*SysVar{
 		s.TrackAggregateMemoryUsage = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableSelectedPartitionStats, Value: BoolToOnOff(DefTiDBOptEnableSelectedPartitionStats), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableSelectedPartitionStats = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMultiStatementMode, Value: Off, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}, SetSession: func(s *SessionVars, val string) error {
 		s.MultiStatementMode = TiDBOptOnOffWarn(val)
 		return nil
@@ -3549,6 +3559,12 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLabelSecurity.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableLBAC, Value: BoolToOnOff(DefTiDBEnableLBAC), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+		EnableLBAC.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(EnableLBAC.Load()), nil
+	}},
 	{Scope: ScopeGlobal, Name: SPCacheSize, Value: strconv.Itoa(DefStoredProgramCacheSize), Type: TypeInt, MinValue: 0, MaxValue: 524288, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
@@ -3798,6 +3814,34 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: PKDBEnableWhitelist, Value: BoolToOnOff(DefPKDBEnableWhitelist), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableWhitelist.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableWhitelist.Load()), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: PKDBExtraDataType, Value: BoolToOnOff(DefPKDBExtraDataType), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			enabled := TiDBOptOn(val)
+			parsertypes.EnableExtraDataType.Store(enabled)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(parsertypes.EnableExtraDataType.Load()), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: PKDBEnableEAL, Value: BoolToOnOff(DefPKDBEnableEAL), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableEAL.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableEAL.Load()), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: LowerCaseTableNames, Value: "2", Type: TypeInt, MinValue: 0, MaxValue: 2, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return strconv.Itoa(model.GetLowerCaseTableNames()), nil
+	}},
 }
 
 func maskEmbedAPIKey(key string) string {

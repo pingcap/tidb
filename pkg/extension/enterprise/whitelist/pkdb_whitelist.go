@@ -30,6 +30,7 @@ type access uint8
 
 const (
 	// unKnowPermission indicates the access privilege is unknown.
+	// default action is accept
 	unKnowPermission access = iota
 	// accept indicates the access privilege is accept.
 	confirmed
@@ -45,15 +46,17 @@ type accessItem struct {
 
 // ConnectionController is used to control the connection privilege.
 type ConnectionController struct {
-	items []*accessItem
+	whitelistItems []*accessItem
+	blacklistItems []*accessItem
 }
 
 func (av *ConnectionController) validate(c *variable.ConnectionInfo) {
-	// if whitelist is empty, all ip can connect
-	if len(av.items) == 0 {
+	// if both whitelist and blacklist are empty, all ip can connect
+	if len(av.whitelistItems) == 0 && len(av.blacklistItems) == 0 {
 		c.IPInWhiteList = true
 		return
 	}
+
 	// get host ip
 	c.IPInWhiteList = false
 	hostIP, err := net.LookupIP(c.Host)
@@ -62,7 +65,29 @@ func (av *ConnectionController) validate(c *variable.ConnectionInfo) {
 		return
 	}
 
-	for _, item := range av.items {
+	// First check blacklist
+	for _, item := range av.blacklistItems {
+		for _, ipList := range item.ipList {
+			if ipList.Contains(hostIP[0]) {
+				switch item.access {
+				case confirmed, unKnowPermission:
+					logutil.BgLogger().Error("ip is in blacklist with access not denied", zap.String("ip", hostIP[0].String()), zap.Uint8("access", uint8(item.access)))
+					return
+				case denied:
+					return
+				}
+			}
+		}
+	}
+
+	// blacklist mode: if ip is not in blacklist, accept (ignore whitelist if any).
+	if len(av.blacklistItems) != 0 {
+		c.IPInWhiteList = true
+		return
+	}
+
+	// Then check whitelist
+	for _, item := range av.whitelistItems {
 		for _, ipList := range item.ipList {
 			if ipList.Contains(hostIP[0]) {
 				switch item.access {
@@ -70,6 +95,7 @@ func (av *ConnectionController) validate(c *variable.ConnectionInfo) {
 					c.IPInWhiteList = true
 					return
 				case denied:
+					logutil.BgLogger().Error("ip is in whitelist with access denied", zap.String("ip", hostIP[0].String()), zap.Uint8("access", uint8(item.access)))
 					return
 				}
 			}
@@ -124,7 +150,7 @@ func extractAccessItemFromRow(rowFromTable chunk.Row) *accessItem {
 		logutil.BgLogger().Warn("invalidate action type, use default action accept", zap.String("action", rowFromTable.GetString(3)))
 	}
 	if len(item.ipList) > 0 {
-		logutil.BgLogger().Info("load access items", zap.String("ipList", strings.Join(ipAddress, ",")), zap.String("action", rowFromTable.GetEnum(3).String()))
+		logutil.BgLogger().Info("load access items", zap.String("ipList", strings.Join(ipAddr4Log, ",")), zap.String("action", rowFromTable.GetEnum(3).String()))
 		return &item
 	}
 	return nil

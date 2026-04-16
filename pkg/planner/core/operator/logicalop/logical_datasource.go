@@ -78,7 +78,9 @@ type DataSource struct {
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
 	PhysicalTableID int64
-	PartitionNames  []pmodel.CIStr
+	// StaticPrunedPartitionIDs records the partitions selected by static pruning while keeping the datasource dynamic.
+	StaticPrunedPartitionIDs []int64
+	PartitionNames           []pmodel.CIStr
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.

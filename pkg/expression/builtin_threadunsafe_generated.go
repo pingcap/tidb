@@ -362,6 +362,11 @@ func (s *builtinGetProcedureTimeVarSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinGetProcedureDurationVarSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinRegexpLikeFuncSig) SafeToShareAcrossSession() bool {
 	return false
 }

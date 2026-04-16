@@ -11,10 +11,39 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
+
+type staticPrivManager struct {
+	privilege.Manager
+	allow bool
+}
+
+func (m *staticPrivManager) RequestVerification([]*auth.RoleIdentity, string, string, string, mysql.PrivilegeType) bool {
+	return m.allow
+}
+
+type udfPrivManager struct {
+	privilege.Manager
+	allowInsert bool
+	allowDelete bool
+}
+
+func (m *udfPrivManager) RequestVerification(_ []*auth.RoleIdentity, db, table, _ string, priv mysql.PrivilegeType) bool {
+	if strings.EqualFold(db, mysql.SystemDB) && strings.EqualFold(table, "func") {
+		switch priv {
+		case mysql.InsertPriv:
+			return m.allowInsert
+		case mysql.DeletePriv:
+			return m.allowDelete
+		}
+	}
+	return true
+}
 
 func TestCreateShowDropProcedure(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -34,19 +63,19 @@ func TestCreateShowDropProcedure(t *testing.T) {
 	// in/out/inout
 	tk.MustExec("create procedure if not exists sp_test1(id int) begin select@b; end;")
 	tk.MustQuery("show create procedure sp_test1").Check(testkit.Rows("sp_test1 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION " +
-		" CREATE PROCEDURE `sp_test1`(id int)\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+		" CREATE PROCEDURE `sp_test1`(`id` int(11))\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("create procedure if not exists sp_test2(in id int) begin select@b; end;")
 	tk.MustQuery("show create procedure sp_test2").Check(testkit.Rows("sp_test2 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION " +
-		" CREATE PROCEDURE `sp_test2`(in id int)\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+		" CREATE PROCEDURE `sp_test2`(IN `id` int(11))\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("create procedure if not exists sp_test3(out id int) begin select@b; end;")
 	tk.MustQuery("show create procedure sp_test3").Check(testkit.Rows("sp_test3 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION " +
-		" CREATE PROCEDURE `sp_test3`(out id int)\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+		" CREATE PROCEDURE `sp_test3`(OUT `id` int(11))\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("create procedure if not exists sp_test4(inout id int) begin select@b; end;")
 	tk.MustQuery("show create procedure sp_test4").Check(testkit.Rows("sp_test4 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION " +
-		" CREATE PROCEDURE `sp_test4`(inout id int)\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+		" CREATE PROCEDURE `sp_test4`(INOUT `id` int(11))\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("create procedure if not exists sp_test5(id int,in id1 int,out id2 varchar(100),inout id3 int) begin select@b; end;")
 	tk.MustQuery("show create procedure sp_test5").Check(testkit.Rows("sp_test5 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION " +
-		" CREATE PROCEDURE `sp_test5`(id int,in id1 int,out id2 varchar(100),inout id3 int)\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+		" CREATE PROCEDURE `sp_test5`(`id` int(11), IN `id1` int(11), OUT `id2` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin, INOUT `id3` int(11))\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	// Duplicate input parameter name.
 	tk.MustGetErrCode("create procedure sp_test6(in id int, out id int) begin select @a; end;", 1330)
 	// parameter does not exist.
@@ -108,15 +137,15 @@ func TestCreateShowDropProcedure(t *testing.T) {
 	res := []string{
 		" CREATE PROCEDURE `proc_1`()\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
 		" CREATE PROCEDURE `proc_2`()\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
-		" CREATE PROCEDURE `proc_3`(in id int,inout id2 int,out id3 int)\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
-		" CREATE PROCEDURE `proc_4`(in id bigint,in id2 varchar(100),in id3 decimal(30,2))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
-		" CREATE PROCEDURE `proc_5`(in id double,in id2 float,out id3 char(10),in id4 binary)\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
-		" CREATE PROCEDURE `proc_6`(in id VARBINARY(30),in id2 BLOB,out id3 TEXT,in id4 ENUM('1','2'))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
-		" CREATE PROCEDURE `proc_7`(in id SET('1','2'))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
-		" CREATE PROCEDURE `proc_8`(in id SET('1','2'))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select a.id,a.username,a.password,a.age,a.sex from user a where a.id > 10 and a.id < 50;" +
+		" CREATE PROCEDURE `proc_3`(IN `id` int(11), INOUT `id2` int(11), OUT `id3` int(11))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
+		" CREATE PROCEDURE `proc_4`(IN `id` bigint(20), IN `id2` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin, IN `id3` decimal(30,2))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
+		" CREATE PROCEDURE `proc_5`(IN `id` double, IN `id2` float, OUT `id3` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin, IN `id4` binary(1))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
+		" CREATE PROCEDURE `proc_6`(IN `id` varbinary(30), IN `id2` blob, OUT `id3` text CHARACTER SET utf8mb4 COLLATE utf8mb4_bin, IN `id4` enum('1','2'))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
+		" CREATE PROCEDURE `proc_7`(IN `id` set('1','2'))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select s;SELECT * FROM `t1`;SELECT * FROM `t2`;INSERT INTO `t1` VALUES (111);END",
+		" CREATE PROCEDURE `proc_8`(IN `id` set('1','2'))\nbegin declare s varchar(100) DEFAULT FROM_UNIXTIME(1447430881);select a.id,a.username,a.password,a.age,a.sex from user a where a.id > 10 and a.id < 50;" +
 			"select us.subject,count(us.user_id),sum(us.score),avg(us.score),max(us.score),min(us.score) from user_score us where us.score > 90 group by us.subject;END",
-		" CREATE PROCEDURE `proc_9`(in id SET('1','2'))\nbegin select *,rank() over (partition by subject order by score desc) as ranking from user_score;select *,rank() over (partition by subject order by score desc) as ranking from user_score;end",
-		" CREATE PROCEDURE `proc_10`(in id SET('1','2'))\nbegin select us.*,sum(us.score) over (order by us.id) as current_sum," +
+		" CREATE PROCEDURE `proc_9`(IN `id` set('1','2'))\nbegin select *,rank() over (partition by subject order by score desc) as ranking from user_score;select *,rank() over (partition by subject order by score desc) as ranking from user_score;end",
+		" CREATE PROCEDURE `proc_10`(IN `id` set('1','2'))\nbegin select us.*,sum(us.score) over (order by us.id) as current_sum," +
 			"avg(us.score) over (order by us.id) as current_avg,count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max,min(us.score) over (order by us.id) as current_min from user_score us;" +
 			"select us.*,sum(us.score) over (order by us.id) as current_sum, avg(us.score) over (order by us.id) as current_avg,count(us.score) over (order by us.id) as current_count,max(us.score) over (order by us.id) as current_max," +
 			"min(us.score) over (order by us.id) as current_min,u.username ,ua.address,CONCAT(u.username, \"-\" ,ua.address) as userinfo from user_score us left join user u on u.id = us.user_id left join user_address ua on ua.id = us.user_id; end",
@@ -154,13 +183,13 @@ func TestCreateShowDropProcedure(t *testing.T) {
 	}
 
 	tk.MustExec("create procedure sP_test1(id int) begin select@b; end;")
-	tk.MustQuery("show create procedure sp_test1").Check(testkit.Rows("sP_test1 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `sP_test1`(id int)\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show create procedure sp_test1").Check(testkit.Rows("sP_test1 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE PROCEDURE `sP_test1`(`id` int(11))\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("drop procedure sp_test1")
 	tk.MustGetErrCode("drop procedure proc_1", 1305)
 	tk.MustExec("drop procedure if exists proc_1")
 	tk.MustExec("set @@sql_mode = 'ANSI_QUOTES'")
 	tk.MustExec("create procedure sP_test2(id int) begin select@b; end;")
-	tk.MustQuery("show create procedure sp_test2").Check(testkit.Rows("sP_test2 ANSI_QUOTES  CREATE PROCEDURE `sP_test2`(id int)\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show create procedure sp_test2").Check(testkit.Rows("sP_test2 ANSI_QUOTES  CREATE PROCEDURE `sP_test2`(`id` int(11))\nbegin select@b; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 }
 
 func TestProcedureSwitch(t *testing.T) {
@@ -173,13 +202,59 @@ func TestProcedureSwitch(t *testing.T) {
 	tk.MustExec("create table t1 (id int)")
 	tk.MustGetErrCode("set tidb_enable_procedure = OFF ", 1229)
 	tk.MustExec("set global tidb_enable_procedure = OFF")
-	tk.MustGetErrMsg("create procedure t1() begin insert into t1 value(@a); end", "if enterprise edition, please set global tidb_enable_procedure = ON")
+	tk.MustGetErrMsg("create procedure t1() begin insert into t1 value(@a); end", "[executor:8810]Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`")
+	tk.MustGetErrMsg("create function f1() returns int return 1", "[executor:8810]Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`")
 	tk.MustGetErrCode("call t1", 1305)
 	tk.MustExec("set global tidb_enable_procedure = ON")
+	tk.MustExec("create function f1() returns int return 1")
 	tk.MustExec("create procedure t1() begin insert into t1 value(@a); end")
 	tk.MustExec("set global tidb_enable_procedure = OFF")
-	tk.MustGetErrMsg("call t1", "if enterprise edition, please set global tidb_enable_procedure = ON")
+	tk.MustGetErrMsg("call t1", "[executor:8810]Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`")
+	tk.MustGetErrMsg("select f1()", "[executor:8810]Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`")
 }
+
+func TestStoredFunctionCallDoesNotLeakStateBetweenCalls(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tk.MustExec("create function f(v int) returns int begin declare x int default 0; set x = x + v; return x; end")
+	tk.MustQuery("select f(id) from t order by id").Check(testkit.Rows("1", "2", "3"))
+}
+
+func TestStoredFunctionCursorDrainsAllChunks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size = 2")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
+	tk.MustExec(`create function f_cnt() returns int
+begin
+	declare v int default 0;
+	declare cnt int default 0;
+	declare v_done boolean default false;
+
+	declare c cursor for select id from t order by id;
+	declare continue handler for not found set v_done=true;
+
+	open c;
+	repeat
+		fetch c into v;
+		if v_done = false then
+			set cnt = cnt + 1;
+		end if;
+		until v_done = true
+	end repeat;
+	close c;
+	return cnt;
+end`)
+	tk.MustQuery("select f_cnt()").Check(testkit.Rows("5"))
+}
+
 func TestBaseCall(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -846,8 +921,9 @@ func TestCallInOutParam(t *testing.T) {
 	tk.Res[0].Check(testkit.Rows("a,b"))
 	tk.ClearProcedureRes()
 	// timestamp
-	tk.MustExec("create PROCEDURE var8(in sp1 timestamp,out sp2  timestamp) begin select sp1; set sp2 = sp1; end;")
-	tk.MustExec("set timestamp = 1675499582;call var8(now(),@a)")
+	tk.MustExec("create PROCEDURE var8(in sp1 timestamp, out sp2  timestamp) begin select sp1; set sp2 = sp1; end;")
+	tk.MustExec("set timestamp = 1675499582;")
+	tk.MustExec("call var8(now(),@a);")
 	tk.Res[0].Check(tk.MustQuery("select now()").Rows())
 	tk.ClearProcedureRes()
 	//tk.MustQuery("select @a").Check(testkit.Rows("2023-02-04 16:33:02"))
@@ -904,16 +980,16 @@ func TestCallVarParam(t *testing.T) {
 	sql = `create PROCEDURE var8() begin declare id bit;set id = 0; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var8")
-	tk.Res[0].Check(testkit.Rows("0"))
+	tk.Res[0].Check(testkit.Rows("\x00"))
 	tk.ClearProcedureRes()
 	// variables cover
 	sql = `create PROCEDURE var9() begin declare id bit;set id = 0; select id;
 	begin declare id int;set id = 1; select id;  end; select id; end;`
 	tk.MustExec(sql)
 	tk.MustExec("call var9")
-	tk.Res[0].Check(testkit.Rows("0"))
+	tk.Res[0].Check(testkit.Rows("\x00"))
 	tk.Res[1].Check(testkit.Rows("1"))
-	tk.Res[2].Check(testkit.Rows("0"))
+	tk.Res[2].Check(testkit.Rows("\x00"))
 	tk.ClearProcedureRes()
 	sql = `create PROCEDURE var10() begin declare id1 varchar(10);declare id2 varchar(10);set id1 = 'ss';select id1; set id2 = 'ss';select id2; begin
 	declare id1 varchar(10);declare id2 varchar(10);set id1 = 1; set id2 = 2; select id1; select id2;  end; select id1; select id2; end;`
@@ -1288,7 +1364,7 @@ func TestCallWhileSQL(t *testing.T) {
 	tk.MustExec("call poc_test1(10,100)")
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("110"))
 	tk.MustQuery("show create procedure poc_test1").Check(testkit.Rows("poc_test1 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  " +
-		"CREATE PROCEDURE `poc_test1`(start int,num int)\nbegin declare id int default start; while id < start + num  do  set id = id + 1; insert into t1 value(id,id); end while; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+		"CREATE PROCEDURE `poc_test1`(`start` int(11), `num` int(11))\nbegin declare id int default start; while id < start + num  do  set id = id + 1; insert into t1 value(id,id); end while; end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec(`create procedure poc_test2(start int,num int)begin declare id int default start; while id < start + num  do  set id = id + 1;begin select count(*) from t1 limit 1;if id > 10 then delete from t1 limit 3;end if; end; insert into t1 value(id,id); end while; end;`)
 	tk.MustExec("call poc_test2(110,10)")
 	require.Equal(t, len(tk.Res), 10)
@@ -2344,7 +2420,7 @@ func TestCaseWhenThen(t *testing.T) {
 	require.Equal(t, len(tk.Res), 1)
 	tk.Res[0].Check(testkit.Rows("3"))
 	tk.ClearProcedureRes()
-	tk.ExecToErr("call t1(4)", 1339)
+	tk.MustGetErrCode("call t1(4)", 1339)
 	require.Equal(t, len(tk.Res), 0)
 	tk.ClearProcedureRes()
 
@@ -2390,7 +2466,7 @@ func TestCaseWhenThen(t *testing.T) {
 	when id = 2 then select 2;
 	when id = 3 then select 3;
 	end case;end`)
-	tk.ExecToErr("call t4(-1)", 1339)
+	tk.MustGetErrCode("call t4(-1)", 1339)
 	tk.ClearProcedureRes()
 
 	tk.MustExec(`create procedure t5(id int) begin
@@ -2998,9 +3074,9 @@ func TestProcedureSQLSecurity(t *testing.T) {
 	tk.MustExec("create procedure test.t1(id int) sql security definer begin select * from t1;end")
 	tk.MustExec("set timestamp = 1688554595")
 	tk.MustExec("create procedure test.t2(id int) sql security INVOKER begin select * from t1;end")
-	tk.MustQuery("show create procedure test.t2").Check(testkit.Rows("t2 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE DEFINER=`root`@`%` PROCEDURE `t2`(id int)\nSQL SECURITY INVOKER \nbegin select * from t1;end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show create procedure test.t2").Check(testkit.Rows("t2 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE DEFINER=`root`@`%` PROCEDURE `t2`(`id` int(11))\nSQL SECURITY INVOKER \nbegin select * from t1;end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("alter procedure t2 comment '2222'")
-	tk.MustQuery("show create procedure test.t2").Check(testkit.Rows("t2 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE DEFINER=`root`@`%` PROCEDURE `t2`(id int)\nCOMMENT '2222' \nSQL SECURITY INVOKER \nbegin select * from t1;end utf8mb4 utf8mb4_bin utf8mb4_bin"))
+	tk.MustQuery("show create procedure test.t2").Check(testkit.Rows("t2 ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  CREATE DEFINER=`root`@`%` PROCEDURE `t2`(`id` int(11))\nCOMMENT '2222' \nSQL SECURITY INVOKER \nbegin select * from t1;end utf8mb4 utf8mb4_bin utf8mb4_bin"))
 	tk.MustExec("grant execute on *.* to test")
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
 	tk2.MustExec("call test.t1(1)")

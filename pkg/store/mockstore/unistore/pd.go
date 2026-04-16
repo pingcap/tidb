@@ -32,6 +32,7 @@ import (
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/pkdb"
 	"google.golang.org/grpc"
 )
 
@@ -40,6 +41,7 @@ var _ pd.Client = new(pdClient)
 type pdClient struct {
 	*us.MockPD
 	pd.ResourceManagerClient
+	pkdb.LogReplClient
 
 	serviceSafePoints map[string]uint64
 	gcSafePointMu     sync.Mutex

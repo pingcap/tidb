@@ -799,6 +799,10 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
+	err = queryLoginHistoryTable(ctx, conn)
+	if err != nil {
+		logutil.Logger(ctx).Warn("faild to query login record", zap.Error(err))
+	}
 	sessionVars := conn.ctx.GetSessionVars()
 	sessionVars.ConnectionInfo = conn.connectInfo()
 	conn.onExtensionConnEvent(extension.ConnHandshakeAccepted, nil)

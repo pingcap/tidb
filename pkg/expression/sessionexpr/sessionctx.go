@@ -28,11 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
+	lbac "github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -149,6 +152,25 @@ func (ctx *ExprContext) IntoStatic() *exprstatic.ExprContext {
 	return exprstatic.MakeExprContextStatic(ctx)
 }
 
+// LoadStoredFunction loads stored function info by schema and function name.
+func (ctx *ExprContext) LoadStoredFunction(schema, funcName string) (*exprctx.StoredFuncInfo, error) {
+	if schema == "" {
+		return nil, plannererrors.ErrNoDB
+	}
+	sc := ctx.sctx.GetSessionVars().StmtCtx
+	sc.UserFuncCtx.Lock()
+	defer sc.UserFuncCtx.Unlock()
+
+	if sc.UserFuncCtx.StoredFuncName == nil {
+		return nil, exeerrors.ErrSpDoesNotExist.FastGenByArgs("FUNCTION", schema+"."+funcName)
+	}
+	retType, ok := sc.UserFuncCtx.StoredFuncName[[2]string{schema, funcName}]
+	if !ok || retType == nil {
+		return nil, exeerrors.ErrSpDoesNotExist.FastGenByArgs("FUNCTION", schema+"."+funcName)
+	}
+	return &exprctx.StoredFuncInfo{RetType: retType}, nil
+}
+
 // EvalContext implements the `expression.EvalContext` interface to provide evaluation context in session.
 type EvalContext struct {
 	sctx  sessionctx.Context
@@ -161,6 +183,7 @@ func NewEvalContext(sctx sessionctx.Context) *EvalContext {
 	// set all optional properties
 	ctx.setOptionalProp(currentUserProp(sctx))
 	ctx.setOptionalProp(expropt.NewSessionVarsProvider(sctx))
+	ctx.setOptionalProp(stmtCleanupProp(sctx))
 	ctx.setOptionalProp(infoSchemaProp(sctx))
 	ctx.setOptionalProp(expropt.KVStorePropProvider(sctx.GetStore))
 	ctx.setOptionalProp(sqlExecutorProp(sctx))
@@ -245,6 +268,11 @@ func (ctx *EvalContext) CurrentDB() string {
 	return ctx.sctx.GetSessionVars().CurrentDB
 }
 
+// CurrentDBCI returns the current database name
+func (ctx *EvalContext) CurrentDBCI() model.CIStr {
+	return ctx.sctx.GetSessionVars().CurrentDBCI
+}
+
 // CurrentTime returns the current time
 func (ctx *EvalContext) CurrentTime() (time.Time, error) {
 	return getStmtTimestamp(ctx.sctx)
@@ -300,6 +328,15 @@ func (ctx *EvalContext) RequestDynamicVerification(privName string, grantable bo
 		return true
 	}
 	return checker.RequestDynamicVerification(ctx.sctx.GetSessionVars().ActiveRoles, privName, grantable)
+}
+
+// GetSecurityLabelCache returns the LBAC metadata cache if available.
+func (ctx *EvalContext) GetSecurityLabelCache() *lbac.SecurityLabelCache {
+	checker := privilege.GetPrivilegeManager(ctx.sctx)
+	if checker == nil {
+		return nil
+	}
+	return checker.GetSecurityLabelCache()
 }
 
 // GetParamValue returns the value of the parameter by index.
@@ -370,6 +407,13 @@ func infoSchemaProp(sctx sessionctx.Context) expropt.InfoSchemaPropProvider {
 func sqlExecutorProp(sctx sessionctx.Context) expropt.SQLExecutorPropProvider {
 	return func() (expropt.SQLExecutor, error) {
 		return sctx.GetRestrictedSQLExecutor(), nil
+	}
+}
+
+func stmtCleanupProp(sctx sessionctx.Context) expropt.StmtCleanupPropProvider {
+	return func(cleanup func()) {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		stmtCtx.RegisterUDFCleanup(cleanup)
 	}
 }
 

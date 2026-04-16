@@ -442,6 +442,33 @@ func (*Checker) CreateSequence(_ sessionctx.Context, _ *ast.CreateSequenceStmt) 
 	panic("implement me")
 }
 
+// CreateTrigger implements the DDL interface.
+func (*Checker) CreateTrigger(_ sessionctx.Context, _ *ast.CreateTriggerStmt) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+// DropTrigger implements the DDL interface.
+func (*Checker) DropTrigger(_ sessionctx.Context, _ *ast.DropTriggerStmt) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+// CreateProcedure implements the DDL interface.
+func (d *Checker) CreateProcedure(ctx sessionctx.Context, stmt *ast.CreateProcedureInfo) error {
+	return d.realExecutor.CreateProcedure(ctx, stmt)
+}
+
+// DropProcedure implements the DDL interface.
+func (d *Checker) DropProcedure(ctx sessionctx.Context, stmt *ast.DropProcedureStmt) error {
+	return d.realExecutor.DropProcedure(ctx, stmt)
+}
+
+// AlterProcedure implements the DDL interface.
+func (d *Checker) AlterProcedure(ctx sessionctx.Context, stmt *ast.AlterProcedureStmt) error {
+	return d.realExecutor.AlterProcedure(ctx, stmt)
+}
+
 // DropSequence implements the DDL interface.
 func (*Checker) DropSequence(_ sessionctx.Context, _ *ast.DropSequenceStmt) (err error) {
 	//TODO implement me

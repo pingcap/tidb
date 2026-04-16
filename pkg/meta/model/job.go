@@ -120,6 +120,11 @@ const (
 	ActionDropTableGroup         ActionType = 80
 	ActionAlterTableGroup        ActionType = 81
 	ActionModifyEngineAttribute  ActionType = 82
+	ActionCreateTrigger          ActionType = 83
+	ActionDropTrigger            ActionType = 84
+	ActionCreateProcedure        ActionType = 85
+	ActionDropProcedure          ActionType = 86
+	ActionAlterProcedure         ActionType = 87
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -200,6 +205,11 @@ var ActionMap = map[ActionType]string{
 	ActionDropTableGroup:                "drop tablegroup",
 	ActionAlterTableGroup:               "alter tablegroup",
 	ActionModifyEngineAttribute:         "modify engine attribute",
+	ActionCreateTrigger:                 "create trigger",
+	ActionDropTrigger:                   "drop trigger",
+	ActionCreateProcedure:               "create procedure",
+	ActionDropProcedure:                 "drop procedure",
+	ActionAlterProcedure:                "alter procedure",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -366,6 +376,9 @@ type Job struct {
 	// It's only used by modify column and not the accurate value.
 	NeedReorg bool `json:"-"`
 
+	FullSchemaName model.CIStr `json:"full_schema_name"`
+	FullTableName  model.CIStr `json:"full_table_name"`
+
 	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
 	args []any
@@ -445,6 +458,22 @@ type Job struct {
 
 	// SessionVars store session variables
 	SessionVars map[string]string `json:"session_vars,omitempty"`
+}
+
+// GetSchemaName returns the schema name of the job.
+func (job *Job) GetSchemaName() model.CIStr {
+	if len(job.FullSchemaName.L) > 0 && len(job.FullSchemaName.O) > 0 {
+		return job.FullSchemaName
+	}
+	return model.NewCIStr(job.SchemaName)
+}
+
+// GetTableName returns the table name of the job.
+func (job *Job) GetTableName() model.CIStr {
+	if len(job.FullTableName.L) > 0 && len(job.FullTableName.O) > 0 {
+		return job.FullTableName
+	}
+	return model.NewCIStr(job.TableName)
 }
 
 // FinishTableJob is called when a job is finished.
@@ -1396,7 +1425,7 @@ type TraceInfo struct {
 	SessionAlias string `json:"session_alias"`
 }
 
-// JobW is a wrapper of model.Job, it contains the job and the binary representation
+// JobW is a wrapper of Job, it contains the job and the binary representation
 // of the job.
 type JobW struct {
 	*Job

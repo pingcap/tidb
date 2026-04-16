@@ -928,10 +928,9 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 		return nil
 	}
 
-	// If use label security, it will add label_access filter to select the right rows.
-	// It can't use FastPlan any more.
-	// todo: It should check whether the table has been binded a label policy.
-	if variable.EnableLabelSecurity.Load() {
+	// If label security / LBAC is enabled, the planner may add row filters, so we can't use FastPlan.
+	// TODO: It should check whether the table has been bound to a policy.
+	if variable.EnableLabelSecurity.Load() || variable.EnableLBAC.Load() {
 		return nil
 	}
 

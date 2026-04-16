@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -181,6 +182,27 @@ func TestCreateTableAsSelect(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// tk.MustQuery("select id, b, json_extract(jdata, '$.id') from t16").Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
 
+	// Case 17: Create table as select with GROUP_CONCAT oversized string metadata
+	tk.MustExec("create table t_gc_src (id varchar(32), name varchar(32));")
+	tk.MustExec("insert into t_gc_src values " +
+		"('1', 'abcdefghij')," +
+		"('1', 'mnopqrstu')," +
+		"('2', 'zzzzzzzzz')," +
+		"('2', 'yyyyyyyyy');")
+	tk.MustExec("create table t_gc as " +
+		"select id, group_concat(name order by name separator '') as name " +
+		"from (" +
+		"    select id, substring(name, 1, 7) as name " +
+		"    from t_gc_src " +
+		"    where length(name) > 8" +
+		") t " +
+		"group by id;")
+	tk.MustQuery("select * from t_gc order by id").Check(testkit.Rows("1 abcdefgmnopqrs", "2 yyyyyyyzzzzzzz"))
+	tk.MustQuery("show create table t_gc").Check(testkit.Rows("t_gc CREATE TABLE `t_gc` (\n" +
+		"  `id` varchar(32) DEFAULT NULL,\n" +
+		"  `name` longtext DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
 	// Case 17: Create table with default value
 
 	// tk.MustExec("create table t200 (id INT NOT NULL DEFAULT 100, name VARCHAR(50) DEFAULT 'unknown', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);")
@@ -190,6 +212,85 @@ func TestCreateTableAsSelect(t *testing.T) {
 	// 	"  `name` varchar(50) DEFAULT 'unknown',\n" +
 	// 	"  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP\n" +
 	// 	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestCreateTableAsSelectNoWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	defer config.RestoreFunc()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableCreateTableAsSelect = true
+	})
+
+	originValue := parsertypes.TiDBStrictIntegerDisplayWidth
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() {
+		parsertypes.TiDBStrictIntegerDisplayWidth = originValue
+	}()
+
+	tk.MustExec("create table t1 (id int, b int)")
+	tk.MustExec("create table t2 as select * from t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `id` int DEFAULT NULL,\n" +
+		"  `b` int DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("create table t3 as select count(*) as c from t1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `c` bigint NOT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestCreateTableAsSelectWithStoredFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+
+	defer config.RestoreFunc()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableCreateTableAsSelect = true
+	})
+
+	tk.MustExec("create database BG00DSCB00")
+	tk.MustExec("use BG00DSCB00")
+	tk.MustExec("create table src(id2 varchar(36), extend_1 varchar(400))")
+	tk.MustExec("insert into src values ('row1', 'ABCDEFGFXZZ')")
+	tk.MustExec(`create function instr_n(str varchar(1000), sub varchar(255), start_pos int, occurrence int)
+returns int
+deterministic
+begin
+	declare pos int default 0;
+	declare i int default 1;
+	declare search_start int default start_pos;
+	if occurrence <= 0 then
+		return 0;
+	end if;
+	while i <= occurrence do
+		set pos = locate(sub, str, search_start);
+		if pos = 0 then
+			return 0;
+		end if;
+		set search_start = pos + length(sub);
+		set i = i + 1;
+	end while;
+	return pos;
+end`)
+
+	tk.MustExec("create table t_sf_u as " +
+		"select id2, substring(extend_1, 1, 7) as extend_fx " +
+		"from BG00DSCB00.src " +
+		"where length(extend_1) > 8 and instr_n(extend_1, 'FX', 1, 1) > 0")
+	tk.MustQuery("select * from t_sf_u").Check(testkit.Rows("row1 ABCDEFG"))
+
+	tk.MustExec("create table t_sf_q as " +
+		"select id2, substring(extend_1, 1, 7) as extend_fx " +
+		"from BG00DSCB00.src " +
+		"where length(extend_1) > 8 and BG00DSCB00.instr_n(extend_1, 'FX', 1, 1) > 0")
+	tk.MustQuery("select * from t_sf_q").Check(testkit.Rows("row1 ABCDEFG"))
 }
 
 func TestCreateTableAsSelectPrivilege(t *testing.T) {

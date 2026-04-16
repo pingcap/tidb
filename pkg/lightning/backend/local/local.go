@@ -1961,7 +1961,7 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		return 0, 0, err
 	}
 	for _, store := range stores {
-		if store.StatusAddress == "" || engine.IsTiFlash(store) {
+		if store.StatusAddress == "" || engine.IsTiFlash(store) || engine.IsReplicator(store) {
 			continue
 		}
 		serverInfo := infoschema.ServerInfo{

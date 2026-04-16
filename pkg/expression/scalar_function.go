@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -201,41 +200,74 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 // newFunctionImpl creates a new scalar function or constant.
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
-func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
+func newFunctionImpl(ctx BuildContext, fold int, schema, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
+	defer func() {
+		if err == nil && ret != nil && checkOrInit != nil {
+			if sf, ok := ret.(*ScalarFunction); ok {
+				ret, err = checkOrInit(sf)
+			}
+		}
+	}()
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
-	switch funcName {
-	case ast.Cast:
-		return BuildCastFunction(ctx, args[0], retType), nil
-	case ast.GetVar:
-		return BuildGetVarFunction(ctx, args[0], retType)
-	case ast.GetProcedureVar:
-		return BuildGetProcedureVarFunction(ctx, args[0], retType)
-	case InternalFuncFromBinary:
-		return BuildFromBinaryFunction(ctx, args[0], retType, false), nil
-	case InternalFuncToBinary:
-		return BuildToBinaryFunction(ctx, args[0]), nil
-	case ast.Sysdate:
-		if ctx.GetSysdateIsNow() {
-			funcName = ast.Now
+	var (
+		fc functionClass
+		ok bool
+	)
+
+	// When schema is specified, it should resolve stored function first to match MySQL compatibility.
+	if schema != "" {
+		info, err := ctx.LoadStoredFunction(schema, funcName)
+		if err != nil {
+			return nil, err
+		}
+		fc = &StoredFuncClass{
+			Name:    [2]string{schema, funcName},
+			RetType: info.RetType,
 		}
 	}
-	fc, ok := funcs[funcName]
-	if !ok {
-		if extFunc, exist := extensionFuncs.Load(funcName); exist {
-			fc = extFunc.(functionClass)
-			ok = true
+	if fc == nil {
+		switch funcName {
+		case ast.Cast:
+			return BuildCastFunction(ctx, args[0], retType), nil
+		case ast.GetVar:
+			return BuildGetVarFunction(ctx, args[0], retType)
+		case ast.GetProcedureVar:
+			return BuildGetProcedureVarFunction(ctx, args[0], retType)
+		case InternalFuncFromBinary:
+			return BuildFromBinaryFunction(ctx, args[0], retType, false), nil
+		case InternalFuncToBinary:
+			return BuildToBinaryFunction(ctx, args[0]), nil
+		case ast.Sysdate:
+			if ctx.GetSysdateIsNow() {
+				funcName = ast.Now
+			}
+		}
+		fc, ok = funcs[funcName]
+		if !ok {
+			if extFunc, exist := extensionFuncs.Load(funcName); exist {
+				fc = extFunc.(functionClass)
+				ok = true
+			}
+		}
+		if !ok {
+			if extFunc, exist := loadableFuncs.Load(funcName); exist {
+				fc = extFunc.(*loadableFuncClass)
+			} else {
+				schema = ctx.GetEvalCtx().CurrentDB()
+				info, err := ctx.LoadStoredFunction(schema, funcName)
+				if err != nil {
+					return nil, err
+				}
+				fc = &StoredFuncClass{
+					Name:    [2]string{schema, funcName},
+					RetType: info.RetType,
+				}
+			}
 		}
 	}
 
-	if !ok {
-		db := ctx.GetEvalCtx().CurrentDB()
-		if db == "" {
-			return nil, errors.Trace(plannererrors.ErrNoDB)
-		}
-		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
-	}
 	noopFuncsMode := ctx.GetNoopFuncsMode()
 	if noopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
@@ -311,22 +343,27 @@ func defaultScalarFunctionCheck(function *ScalarFunction) (*ScalarFunction, erro
 
 // NewFunctionWithInit creates a new scalar function with callback init function.
 func NewFunctionWithInit(ctx BuildContext, funcName string, retType *types.FieldType, init ScalarFunctionCallBack, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 1, funcName, retType, init, args...)
+	return newFunctionImpl(ctx, 1, "", funcName, retType, init, args...)
 }
 
 // NewFunction creates a new scalar function or constant via a constant folding.
 func NewFunction(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 1, funcName, retType, defaultScalarFunctionCheck, args...)
+	return newFunctionImpl(ctx, 1, "", funcName, retType, defaultScalarFunctionCheck, args...)
+}
+
+// NewGenericFunction creates a new scalar function or constant via a constant folding with schema.
+func NewGenericFunction(ctx BuildContext, schema, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, 1, schema, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionBase creates a new scalar function with no constant folding.
 func NewFunctionBase(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, 0, funcName, retType, defaultScalarFunctionCheck, args...)
+	return newFunctionImpl(ctx, 0, "", funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionTryFold creates a new scalar function with trying constant folding.
 func NewFunctionTryFold(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, -1, funcName, retType, defaultScalarFunctionCheck, args...)
+	return newFunctionImpl(ctx, -1, "", funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionInternal is similar to NewFunction, but do not return error, should only be used internally.

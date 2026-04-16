@@ -186,6 +186,15 @@ func (ctx *MutateContext) AddTemporaryTableToTxn(tblInfo *model.TableInfo) (tblc
 	return tblctx.TemporaryTableHandler{}, false
 }
 
+// GetTriggerSupport implements the MutateContext interface.
+func (ctx *MutateContext) GetTriggerSupport() (tblctx.TriggerSupport, bool) {
+	sessVars := ctx.vars()
+	if s, ok := sessVars.StmtCtx.TriggerCtx.Exec.(tblctx.TriggerSupport); ok {
+		return s, true
+	}
+	return nil, false
+}
+
 func (ctx *MutateContext) vars() *variable.SessionVars {
 	return ctx.Context.GetSessionVars()
 }

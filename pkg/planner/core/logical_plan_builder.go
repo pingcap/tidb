@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/privilege/lbac"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -1143,11 +1145,13 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 	if cc, ok := expr.(*expression.CorrelatedColumn); ok {
 		correlatedColUniqueID = cc.UniqueID
 	}
+	encryption := containsEncryptedColumn(expr)
 	// for expr projection, we should record the map relationship <hashcode, uniqueID> down.
 	newCol := &expression.Column{
 		UniqueID:              b.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:               expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
 		CorrelatedColUniqueID: correlatedColUniqueID,
+		Encryption:            encryption,
 	}
 	if b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
 		if b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol == nil {
@@ -1157,6 +1161,25 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 	}
 	newCol.SetCoercibility(expr.Coercibility())
 	return newCol, name, nil
+}
+
+// containsEncryptedColumn recursively checks if any column in the expression tree is marked as encrypted.
+// If the expression contains a column_decryption function, that subtree is treated as already decrypted.
+func containsEncryptedColumn(expr expression.Expression) bool {
+	switch e := expr.(type) {
+	case *expression.Column:
+		return e.Encryption
+	case *expression.ScalarFunction:
+		if e.FuncName.L == ast.ColumnDecryption {
+			return false
+		}
+		for _, arg := range e.GetArgs() {
+			if containsEncryptedColumn(arg) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type userVarTypeProcessor struct {
@@ -3852,7 +3875,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		}
 		originalFields = sel.Fields.Fields
 	}
-
 	var gbyExprs []ast.ExprNode
 	if sel.GroupBy != nil {
 		gbyExprs, err = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
@@ -4155,7 +4177,7 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
 // Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
-func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *statistics.Table {
+func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64, partitionIDs []int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
 	var statsTbl *statistics.Table
@@ -4180,7 +4202,30 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 		return statistics.PseudoTable(tblInfo, false, true)
 	}
 
-	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+	if len(partitionIDs) > 0 {
+		usePartitionStats = true
+		selectedPartitionID := partitionIDs[0]
+		singlePartitionSelected := true
+		for _, partitionID := range partitionIDs[1:] {
+			if partitionID != selectedPartitionID {
+				singlePartitionSelected = false
+				break
+			}
+		}
+		if singlePartitionSelected {
+			statsTbl = statsHandle.GetPhysicalTableStats(selectedPartitionID, tblInfo)
+			if statsTbl.Pseudo || !statsTbl.IsInitialized() {
+				// Selected partition stats are only useful when the single-partition stats entry is valid.
+				// If it is pseudo or not initialized yet, fall back to the analyzed global stats instead.
+				usePartitionStats = false
+				statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+			}
+		} else {
+			// Multi-partition selection falls back to the legacy global-stats path. This feature only uses
+			// selected partition stats when the effective partition set is exactly one partition.
+			statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+		}
+	} else if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		statsTbl = statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
 		usePartitionStats = true
@@ -4501,6 +4546,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
+		hasGlobalIndex := slices.ContainsFunc(tableInfo.Indices, func(idx *model.IndexInfo) bool {
+			return idx.Global
+		})
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
 		// otherwise we need to check global stats initialized for each partition table
 		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -4535,6 +4583,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 						b.ctx.GetSessionVars().StmtCtx.AppendWarning(
 							fmt.Errorf("disable dynamic pruning due to %s has no global stats", tableInfo.Name.String()))
 					}
+				} else if b.ctx.GetSessionVars().EnableSelectedPartitionStats && !hasGlobalIndex && len(tn.PartitionNames) == 0 {
+					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 				}
 			}
 		}
@@ -4717,11 +4767,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			NotExplicitUsable: col.State != model.StatePublic,
 		})
 		newCol := &expression.Column{
-			UniqueID: sessionVars.AllocPlanColumnID(),
-			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
-			OrigName: names[i].String(),
-			IsHidden: col.Hidden,
+			UniqueID:   sessionVars.AllocPlanColumnID(),
+			ID:         col.ID,
+			RetType:    col.FieldType.Clone(),
+			OrigName:   names[i].String(),
+			IsHidden:   col.Hidden,
+			Encryption: col.Encryption,
 		}
 		if col.IsPKHandleColumn(tableInfo) {
 			handleCols = util.NewIntHandleCols(newCol)
@@ -4810,10 +4861,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := logicalop.LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
-		if tableInfo.Partition != nil && b.optFlag&rule.FlagPartitionProcessor == 0 {
-			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
-			// Not using old static prune mode
-			// Single TableReader for all partitions, needs the PhysTblID from storage
+		if tableInfo.Partition != nil && sessionVars.StmtCtx.UseDynamicPruneMode {
+			// UnionScan only needs the hidden physical table ID when the execution still uses
+			// dynamic partition pruning. Static pruning already materializes per-partition children.
 			_ = addExtraPhysTblIDColumn4DS(ds)
 		}
 		result = us
@@ -4826,6 +4876,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
 
+	result, err = b.applyLBACRowFilter(result, tableInfo)
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -4975,6 +5029,16 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
 		case infoschema.TableRegions:
 			p.Extractor = &TableRegionsExtractor{}
+		case infoschema.TableTriggers:
+			p.Extractor = NewInfoSchemaTableTriggersExtractor()
+		case infoschema.TableLogReplStatusGlobal:
+			p.Extractor = &LogReplStatusGlobalExtractor{}
+		case infoschema.TableLogReplClusterStatusGlobal:
+			p.Extractor = &LogReplClusterStatusGlobalExtractor{}
+		case infoschema.TableLogReplWorkflowHistoryGlobal:
+			p.Extractor = &LogReplWorkflowHistoryGlobalExtractor{}
+		case infoschema.TableLogReplStatusLocal:
+			p.Extractor = &LogReplStatusLocalExtractor{}
 		}
 	}
 	return p, nil
@@ -5398,14 +5462,12 @@ func pruneAndBuildColPositionInfoForDelete(
 	names []*types.FieldName,
 	tblID2Handle map[int64][]util.HandleCols,
 	tblID2Table map[int64]table.Table,
-	hasFK bool,
+	hasTrigger bool,
 ) (TblColPosInfoSlice, *bitset.BitSet, error) {
 	var nonPruned *bitset.BitSet
-	// If there is foreign key, we can't prune the columns.
-	// Use a very relax check for foreign key cascades and checks.
-	// If there's one table containing foreign keys, all of the tables would not do pruning.
-	// It should be strict in the future or just support pruning column when there is foreign key.
-	if !hasFK {
+	// If there are foreign key checks/cascades or triggers, we can't prune the columns.
+	// Use a relaxed check for the whole statement. We can make this more precise later.
+	if !hasTrigger {
 		nonPruned = bitset.New(uint(len(names)))
 		nonPruned.SetAll()
 	}
@@ -5428,9 +5490,9 @@ func pruneAndBuildColPositionInfoForDelete(
 		cols2PosInfo := &cols2PosInfos[i]
 		tbl := tblID2Table[cols2PosInfo.TblID]
 		tblInfo := tbl.Meta()
-		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
-		// nonPrunedSet will be nil if it's a point get or has foreign keys.
-		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
+		// If it's partitioned, uses triggers/foreign keys, or has LBAC, skip pruning.
+		skipPruning := tblInfo.GetPartitionInfo() != nil || hasTrigger || nonPruned == nil || variable.EnableLBAC.Load()
+		if skipPruning {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
 			if err != nil {
 				return nil, nil, err
@@ -5717,6 +5779,101 @@ func (b *PlanBuilder) buildLabelSecurityInfo(targetPlan base.Plan, tn *ast.Table
 	return nil
 }
 
+func (b *PlanBuilder) applyLBACRowFilter(plan base.LogicalPlan, tableInfo *model.TableInfo) (base.LogicalPlan, error) {
+	if !variable.EnableLBAC.Load() {
+		return plan, nil
+	}
+	if tableInfo.SecurityPolicy == nil || tableInfo.SecurityPolicy.L == "" {
+		return plan, nil
+	}
+	labelColumnID := tableInfo.GetSecurityLabelColumnID()
+	if labelColumnID == 0 {
+		return plan, nil
+	}
+	if b.inUpdateStmt || b.inDeleteStmt {
+		return plan, nil
+	}
+	currentUser := b.ctx.GetSessionVars().User
+	if currentUser == nil {
+		return plan, nil
+	}
+	userName, hostName := auth.GetUserAndHostName(currentUser)
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+	if checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+		return plan, nil
+	}
+
+	cache, err := privilege.GetSecurityLabelCache(b.ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	accessCtx, err := lbac.NewSecurityLabelAccessChecker(cache, userName, hostName, ast.SecurityLabelAccessTypeRead)
+	if err != nil {
+		return nil, err
+	}
+	exempted, err := accessCtx.IsExempted(tableInfo.SecurityPolicy.L)
+	if err != nil {
+		return nil, err
+	}
+	if exempted {
+		return plan, nil
+	}
+	grantLabels, err := accessCtx.RowFilterLabelValues(tableInfo.SecurityPolicy.L)
+	if err != nil {
+		return nil, err
+	}
+	labelColumn := findColumnByID(plan.Schema(), labelColumnID)
+	if labelColumn == nil {
+		return nil, errors.New("security policy label column not found in plan schema")
+	}
+	cond, err := b.buildLBACDominatesPredicate(labelColumn, grantLabels)
+	if err != nil {
+		return nil, err
+	}
+	selection := logicalop.LogicalSelection{Conditions: []expression.Expression{cond}}.Init(b.ctx, b.getSelectOffset())
+	selection.SetChildren(plan)
+	return selection, nil
+}
+
+func findColumnByID(schema *expression.Schema, columnID int64) *expression.Column {
+	if schema == nil {
+		return nil
+	}
+	for _, col := range schema.Columns {
+		if col.ID == columnID {
+			return col
+		}
+	}
+	return nil
+}
+
+func (b *PlanBuilder) buildLBACDominatesPredicate(col *expression.Column, grantLabels [][]byte) (expression.Expression, error) {
+	tp := types.NewFieldType(mysql.TypeTiny)
+	if len(grantLabels) == 0 {
+		return &expression.Constant{Value: types.NewDatum(0), RetType: tp}, nil
+	}
+	labelTp := types.NewFieldType(mysql.TypeLongBlob)
+	labelTp.SetCharset(charset.CharsetBin)
+	labelTp.SetCollate(charset.CollationBin)
+	conds := make([]expression.Expression, 0, len(grantLabels))
+	for _, label := range grantLabels {
+		if len(label) == 0 {
+			continue
+		}
+		arg0 := &expression.Constant{Value: types.NewBytesDatum(label), RetType: labelTp}
+		fn, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.LBACDominates, tp, arg0, col)
+		if err != nil {
+			return nil, err
+		}
+		conds = append(conds, fn)
+	}
+	if len(conds) == 0 {
+		return &expression.Constant{Value: types.NewDatum(0), RetType: tp}, nil
+	}
+	return expression.ComposeDNFCondition(b.ctx.GetExprCtx(), conds...), nil
+}
+
 // GetUpdateColumnsInfo get the update columns info.
 func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []*table.Column {
 	colsInfo := make([]*table.Column, size)
@@ -5845,6 +6002,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		userName, hostName := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
 		authErr := plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", userName, hostName, name.OrigColName.L, name.OrigTblName.L)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, name.DBName.L, name.OrigTblName.L, name.OrigColName.L, authErr)
+		b.appendLBACWriteVisitInfoByName(name.DBName.L, name.OrigTblName.L, name.OrigColName.L)
 	}
 
 	// If columns in set list contains generated columns, raise error.
@@ -6184,7 +6342,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	}
 
 	var nonPruned *bitset.BitSet
-	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(preProjNames, tblID2Handle, tblID2table, len(del.FKCascades) > 0 || len(del.FKChecks) > 0)
+	hasTrigger := len(del.FKCascades) > 0 || len(del.FKChecks) > 0 || hasDeleteTriggers(tblID2table)
+	del.TblColPosInfos, nonPruned, err = pruneAndBuildColPositionInfoForDelete(preProjNames, tblID2Handle, tblID2table, hasTrigger)
 	if err != nil {
 		return nil, err
 	}
@@ -6215,6 +6374,17 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 
 	return del, err
+}
+
+func hasDeleteTriggers(tblID2table map[int64]table.Table) bool {
+	for _, tbl := range tblID2table {
+		for _, trg := range tbl.Meta().Triggers {
+			if trg.Event == ast.TriggerEventDelete {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]util.HandleCols, schema *expression.Schema) (map[int64][]util.HandleCols, error) {
@@ -7743,7 +7913,7 @@ func (b *PlanBuilder) getUserLabelAndTablePolicy(userName string, dbName string,
 	if err != nil {
 		return "", "", "", err
 	}
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabeSecurity)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabelSecurity)
 	defer b.releaseSysSession(internalCtx, sysSession)
 	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
 

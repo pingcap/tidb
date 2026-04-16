@@ -16,7 +16,6 @@ package importer
 
 import (
 	"context"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -99,9 +98,6 @@ func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
 	row := make([]types.Datum, 0, len(en.insertColumns))
 	setVar := func(name string, col *types.Datum) {
-		// User variable names are not case-sensitive
-		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
-		name = strings.ToLower(name)
 		if col == nil || col.IsNull() {
 			en.SessionCtx.UnsetUserVar(name)
 		} else {

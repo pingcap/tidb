@@ -20,6 +20,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -53,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -136,6 +138,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		varsMutable:        make(map[string]struct{}),
 		varsReadonly:       make(map[string]struct{}),
 		resolveCtx:         node.GetResolveContext(),
+		userDefStoredFuncs: make([][2]string, 0),
 	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -151,7 +154,112 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	if len(v.varsReadonly) > 0 {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("read-only variables are used")
 	}
+	// Check if user defined variables can be replaced by constant values
+	if sctx.GetSessionVars().EnableUDVSubstitute {
+		extractReplaceAbleVarsForUDV(sctx, v.userDefVarsTypeGet, v.userDefVarsTypeSet)
+	}
+	if err := preloadUserStoredFunction(ctx, sctx, v.userDefStoredFuncs); err != nil {
+		return err
+	}
 	return errors.Trace(v.err)
+}
+
+func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, funcNames [][2]string) error {
+	if len(funcNames) == 0 {
+		return nil
+	}
+	sc := sctx.GetSessionVars().StmtCtx
+	sc.UserFuncCtx.Lock()
+	if sc.UserFuncCtx.StoredFuncName == nil {
+		sc.UserFuncCtx.StoredFuncName = make(map[[2]string]*types.FieldType)
+	}
+	sc.UserFuncCtx.Unlock()
+	var (
+		do         *domain.Domain
+		sysSession sessionctx.Context
+		sysRes     pools.Resource
+	)
+	defer func() {
+		if sysSession == nil {
+			return
+		}
+		sysSession.RollbackTxn(ctx)
+		do.SysSessionPool().Put(sysRes)
+	}()
+	// TODO(udf): optimize multiple function loading
+	for _, funcName := range funcNames {
+		schema := funcName[0]
+		name := funcName[1]
+		if schema == "" {
+			schema = sctx.GetSessionVars().CurrentDB
+		}
+		schemaLookup := pmodel.NewCIStr(schema).L
+		key := [2]string{schema, name}
+		sc.UserFuncCtx.Lock()
+		if _, exists := sc.UserFuncCtx.StoredFuncName[key]; exists {
+			sc.UserFuncCtx.Unlock()
+			continue
+		}
+		sc.UserFuncCtx.Unlock()
+		internalExecCtx := ctx
+		if sysSession == nil {
+			do = domain.GetDomain(sctx)
+			se, err := do.SysSessionPool().Get()
+			if err != nil {
+				logutil.BgLogger().Warn("preloadUserStoredFunction: get sys session failed", zap.Error(err))
+				return errors.Trace(err)
+			}
+			sysRes = se
+			sysSession = se.(sessionctx.Context)
+		}
+		internalExecCtx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+		rs, err := sysSession.GetSQLExecutor().ExecuteInternal(
+			internalExecCtx,
+			"SELECT definition_utf8, sql_mode FROM %n.%n WHERE lower(route_schema) = %? AND name = %? AND type = 'FUNCTION'",
+			mysql.SystemDB,
+			mysql.Routines,
+			schemaLookup,
+			name,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rows, err := sqlexec.DrainRecordSet(internalExecCtx, rs, 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = rs.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(rows) == 0 {
+			sc.UserFuncCtx.Lock()
+			sc.UserFuncCtx.StoredFuncName[key] = nil
+			sc.UserFuncCtx.Unlock()
+			return nil // Don't return error here, the function not exist error will be reported during plan building.
+		}
+		definition := rows[0].GetString(0)
+		createFnSQL := "create function p() " + definition
+		sqlModeStr := rows[0].GetSet(1).String()
+		sqlExec := sctx.GetRestrictedSQLExecutor()
+		_, _, err = sqlExec.ExecRestrictedSQL(internalExecCtx, nil, "SET SQL_MODE = '"+sqlModeStr+"'")
+		if err != nil {
+			return errors.Trace(err)
+		}
+		stmt, err := sqlExec.ParseWithParams(internalExecCtx, createFnSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		createFn, ok := stmt.(*ast.CreateProcedureInfo)
+		if !ok || createFn.FunctionInfo.RetType == nil {
+			return errors.Errorf("invalid create function statement")
+		}
+		retType := createFn.FunctionInfo.RetType
+		sc.UserFuncCtx.Lock()
+		sc.UserFuncCtx.StoredFuncName[key] = retType
+		sc.UserFuncCtx.Unlock()
+	}
+	return nil
 }
 
 type preprocessorFlag uint64
@@ -181,6 +289,8 @@ const (
 	// inCreateRoutine is set when visiting routine.
 	// skip table && execute precheck
 	inCreateRoutine
+	// inCreateOrDropTrigger is set when visiting create or drop trigger statement.
+	inCreateOrDropTrigger
 )
 
 // Make linter happy.
@@ -255,6 +365,7 @@ type preprocessor struct {
 	// for udv push down
 	userDefVarsTypeGet map[string]struct{}
 	userDefVarsTypeSet map[string]struct{}
+	userDefStoredFuncs [][2]string
 	resolveCtx         *resolve.Context
 }
 
@@ -395,10 +506,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
-		// not support function right now.
-		if node.Schema.L != "" && p.stmtTp == TypeSelect {
-			p.err = expression.ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", node.Schema.L+"."+node.FnName.L)
-		}
 	case *ast.BRIEStmt:
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
@@ -446,6 +553,11 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkConstraintGrammar(node)
 	case *ast.CreateProcedureInfo:
 		p.flag |= inCreateRoutine
+	case *ast.CreateTriggerStmt:
+		p.flag |= inCreateOrDropTrigger
+		p.checkCreateTriggerGrammar(node)
+	case *ast.DropTriggerStmt:
+		p.flag |= inCreateOrDropTrigger
 	case *ast.VariableExpr:
 		if node.Value != nil {
 			p.varsMutable[node.Name] = struct{}{}
@@ -527,14 +639,14 @@ func bindableStmtType(node ast.StmtNode) byte {
 }
 
 func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
-	currentDB := p.sctx.GetSessionVars().CurrentDB
+	currentDB := p.sctx.GetSessionVars().CurrentDBCI
 	if tn.Schema.String() != "" {
-		currentDB = tn.Schema.L
+		currentDB = tn.Schema
 	}
-	if currentDB == "" {
+	if currentDB.L == "" {
 		return nil, errors.Trace(plannererrors.ErrNoDB)
 	}
-	sName := pmodel.NewCIStr(currentDB)
+	sName := currentDB
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
@@ -679,6 +791,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 		if x.FnName.L == ast.NextVal || x.FnName.L == ast.LastVal || x.FnName.L == ast.SetVal {
 			p.flag &= ^inSequenceFunction
+		}
+		// When schema is specified, it should resolve stored function first to match MySQL compatibility.
+		if x.Schema.L != "" || !expression.IsFunctionSupported(x.FnName.L) {
+			p.userDefStoredFuncs = append(p.userDefStoredFuncs, [2]string{x.Schema.L, x.FnName.L})
 		}
 	case *ast.RepairTableStmt:
 		p.flag &= ^inRepairTable
@@ -1019,6 +1135,20 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 			p.err = dbterror.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
 		}
+	}
+	if len(stmt.Definer.Username) > auth.UserNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Username, "user name", auth.UserNameMaxLength)
+		return
+	}
+	if len(stmt.Definer.Hostname) > auth.HostNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Hostname, "host name", auth.HostNameMaxLength)
+		return
+	}
+}
+
+func (p *preprocessor) checkCreateTriggerGrammar(stmt *ast.CreateTriggerStmt) {
+	if stmt.Definer == nil {
+		return
 	}
 	if len(stmt.Definer.Username) > auth.UserNameMaxLength {
 		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Username, "user name", auth.UserNameMaxLength)
@@ -1759,6 +1889,9 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 		tn.Schema = pmodel.NewCIStr(currentDB)
 	}
+	if p.flag&inCreateOrDropTrigger == inCreateOrDropTrigger {
+		return
+	}
 
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
@@ -1795,7 +1928,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), pmodel.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), tn.Schema, table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -1871,7 +2004,7 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 }
 
 func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
-	if p.flag&inCreateRoutine == inCreateRoutine {
+	if p.flag&inCreateRoutine == inCreateRoutine || p.flag&inCreateOrDropTrigger == inCreateOrDropTrigger {
 		return
 	}
 	prepared, err := GetPreparedStmt(node, p.sctx.GetSessionVars())
@@ -2030,7 +2163,10 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		// This function may return a new table, so we need to check the return value in the `defer` block.
 		if err == nil {
 			if retTbl.Meta().State != model.StatePublic {
-				err = infoschema.ErrTableNotExists.FastGenByArgs(dbName.L, retTbl.Meta().Name.L)
+				err = infoschema.ErrTableNotExists.FastGenByArgs(
+					pmodel.NewCIStr(model.NameAsID(dbName)),
+					retTbl.Meta().Name,
+				)
 				retTbl = nil
 			}
 		}

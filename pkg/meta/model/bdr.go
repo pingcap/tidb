@@ -106,6 +106,11 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionAddColumnarIndex,
 		ActionAlterTableMode,
 		ActionRefreshMeta,
+		ActionCreateTrigger,
+		ActionDropTrigger,
+		ActionCreateProcedure,
+		ActionDropProcedure,
+		ActionAlterProcedure,
 	},
 	UnmanagementDDL: {
 		ActionCreatePlacementPolicy,

@@ -7820,3 +7820,88 @@ func TestTableAffinityOption(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestLBAC(t *testing.T) {
+	table := []testCase{
+		{"CREATE SECURITY LABEL COMPONENT test ARRAY ('a','b','c')", true, "CREATE SECURITY LABEL COMPONENT `test` ARRAY ('a','b','c')"},
+		{"CREATE SECURITY LABEL COMPONENT test SET ('a','b','c')", true, "CREATE SECURITY LABEL COMPONENT `test` SET ('a','b','c')"},
+		{"CREATE SECURITY LABEL COMPONENT test TREE ( 'b' ROOT )", true, "CREATE SECURITY LABEL COMPONENT `test` TREE ('b' ROOT)"},
+		{"CREATE SECURITY LABEL COMPONENT test TREE ( 'b' ROOT, 'l1' under 'b', 'l2' under 'b')", true, "CREATE SECURITY LABEL COMPONENT `test` TREE ('b' ROOT, 'l1' UNDER 'b', 'l2' UNDER 'b')"},
+		{"CREATE SECURITY LABEL COMPONENT test TREE ( 'b' ROOT, 'l1' under 'b', 'l2' under 'b', 'l3' under 'l1')", true, "CREATE SECURITY LABEL COMPONENT `test` TREE ('b' ROOT, 'l1' UNDER 'b', 'l2' UNDER 'b', 'l3' UNDER 'l1')"},
+		{"CREATE SECURITY LABEL COMPONENT test TREE ()", false, ""},
+		{"CREATE SECURITY POLICY my_policy COMPONENTS comp1", true, "CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1`"},
+		{"CREATE SECURITY POLICY my_policy COMPONENTS comp1 WITH LBACRULES", true, "CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1` WITH LBACRULES"},
+		{"CREATE SECURITY POLICY my_policy COMPONENTS comp1, comp2, comp3 WITH LBACRULES", true, "CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1`, `comp2`, `comp3` WITH LBACRULES"},
+		{
+			"CREATE SECURITY POLICY my_policy COMPONENTS comp1, comp2, comp3 WITH LBACRULES OVERRIDE NOT AUTHORIZED WRITE SECURITY LABEL",
+			true,
+			"CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1`, `comp2`, `comp3` WITH LBACRULES OVERRIDE NOT AUTHORIZED WRITE SECURITY LABEL",
+		},
+		{
+			"CREATE SECURITY POLICY my_policy COMPONENTS comp1, comp2, comp3 WITH LBACRULES RESTRICT NOT AUTHORIZED WRITE SECURITY LABEL",
+			true,
+			"CREATE SECURITY POLICY `my_policy` COMPONENTS `comp1`, `comp2`, `comp3` WITH LBACRULES RESTRICT NOT AUTHORIZED WRITE SECURITY LABEL",
+		},
+		{"CREATE SECURITY LABEL my_policy.my_label COMPONENT comp1 'value1'", true, "CREATE SECURITY LABEL `my_policy`.`my_label` COMPONENT `comp1` 'value1'"},
+		{"CREATE SECURITY LABEL my_policy.my_label COMPONENT comp1 'value1' COMPONENT comp2 'value2'", true, "CREATE SECURITY LABEL `my_policy`.`my_label` COMPONENT `comp1` 'value1' COMPONENT `comp2` 'value2'"},
+		{"CREATE SECURITY LABEL my_policy.my_label COMPONENT comp1 'value1', 'value2' COMPONENT comp2 'value3'", true, "CREATE SECURITY LABEL `my_policy`.`my_label` COMPONENT `comp1` 'value1', 'value2' COMPONENT `comp2` 'value3'"},
+		{"CREATE SECURITY LABEL my_policy.my_label COMPONENT comp1 'value1' COMPONENT comp2 'value2' COMPONENT comp3 'value3'", true, "CREATE SECURITY LABEL `my_policy`.`my_label` COMPONENT `comp1` 'value1' COMPONENT `comp2` 'value2' COMPONENT `comp3` 'value3'"},
+		{"DROP SECURITY POLICY my_policy", true, "DROP SECURITY POLICY `my_policy`"},
+		{"DROP SECURITY LABEL my_policy.my_label", true, "DROP SECURITY LABEL `my_policy`.`my_label`"},
+		{"DROP SECURITY LABEL COMPONENT comp1", true, "DROP SECURITY LABEL COMPONENT `comp1`"},
+		{"GRANT SECURITY LABEL my_policy.my_label TO USER alice FOR READ ACCESS", true, "GRANT SECURITY LABEL `my_policy`.`my_label` TO USER `alice`@`%` FOR READ ACCESS"},
+		{"GRANT SECURITY LABEL my_policy.my_label TO USER alice, USER bob FOR READ ACCESS, WRITE ACCESS", true, "GRANT SECURITY LABEL `my_policy`.`my_label` TO USER `alice`@`%`, USER `bob`@`%` FOR READ ACCESS, WRITE ACCESS"},
+		{"GRANT SECURITY LABEL my_policy.my_label TO ROLE admin FOR READ ACCESS", false, ""},
+		{"REVOKE SECURITY LABEL my_policy.my_label FROM USER alice", true, "REVOKE SECURITY LABEL `my_policy`.`my_label` FROM USER `alice`@`%`"},
+		{"REVOKE SECURITY LABEL my_policy.my_label FROM USER alice, USER bob", true, "REVOKE SECURITY LABEL `my_policy`.`my_label` FROM USER `alice`@`%`, USER `bob`@`%`"},
+		{"REVOKE SECURITY LABEL my_policy.my_label FROM GROUP sales_team", false, ""},
+		{"GRANT EXEMPTION ON RULE all FOR policy1 TO USER alice", true, "GRANT EXEMPTION ON RULE ALL FOR `policy1` TO USER `alice`@`%`"},
+		{"GRANT EXEMPTION ON RULE all FOR policy2 TO USER alice, USER bob", true, "GRANT EXEMPTION ON RULE ALL FOR `policy2` TO USER `alice`@`%`, USER `bob`@`%`"},
+		{"GRANT EXEMPTION ON RULE ALL FOR policy3 TO ROLE admin", false, ""},
+		{"REVOKE EXEMPTION ON RULE all FOR policy1 FROM USER alice", true, "REVOKE EXEMPTION ON RULE ALL FOR `policy1` FROM USER `alice`@`%`"},
+		{"REVOKE EXEMPTION ON RULE ALL FOR policy2 FROM USER alice, USER bob", true, "REVOKE EXEMPTION ON RULE ALL FOR `policy2` FROM USER `alice`@`%`, USER `bob`@`%`"},
+		{"REVOKE EXEMPTION ON RULE ALL FOR policy3 FROM GROUP sales_team", false, ""},
+
+		// SECURITY POLICY table option
+		{"CREATE TABLE users (id INT, name VARCHAR(100)) SECURITY POLICY user_access_policy", true, "CREATE TABLE `users` (`id` INT,`name` VARCHAR(100)) SECURITY POLICY `user_access_policy`"},
+		{"CREATE TABLE orders (id INT, user_id INT) ENGINE=InnoDB SECURITY POLICY `order_policy`", true, "CREATE TABLE `orders` (`id` INT,`user_id` INT) ENGINE = InnoDB SECURITY POLICY `order_policy`"},
+		{"CREATE TABLE sensitive_data (id INT, data TEXT) SECURITY POLICY high_security_policy ENCRYPTION='Y'", true, "CREATE TABLE `sensitive_data` (`id` INT,`data` TEXT) SECURITY POLICY `high_security_policy` ENCRYPTION = 'Y'"},
+
+		{"create table t (a int, b varchar(255) SECURED WITH l1)", true, "CREATE TABLE `t` (`a` INT,`b` VARCHAR(255) SECURED WITH `l1`)"},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestStoredRoutines(t *testing.T) {
+	cases := []testCase{
+		{
+			`CREATE FUNCTION func_1(f1 DECIMAL(65, 30)) RETURNS DECIMAL(65,30)
+			SQL SECURITY INVOKER COMMENT 'this is simple'
+			BEGIN
+			RETURN f1;
+			END`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `func_1`(`f1` decimal(65,30)) RETURNS decimal(65,30) SQL SECURITY INVOKER COMMENT 'this is simple' BEGIN RETURN `f1`; END",
+		},
+		{
+			`CREATE FUNCTION fn1(a char) returns int deterministic return 1;`,
+			true,
+			"CREATE DEFINER = CURRENT_USER FUNCTION `fn1`(`a` char) RETURNS int RETURN 1",
+		},
+		{
+			`CREATE PROCEDURE sp6( )
+			BEGIN
+				declare e char default 'b';
+				declare next cursor for SELECT f1 from db_storedproc.t2;
+				declare continue handler for sqlstate '02000' set @x2 = 1;
+				open next;
+				fetch next into e;
+				close next;
+			END`,
+			true,
+			"CREATE DEFINER = CURRENT_USER PROCEDURE `sp6`() BEGIN DECLARE `e` CHAR DEFAULT _UTF8MB4'b';DECLARE NEXT CURSOR FOR SELECT `f1` FROM `db_storedproc`.`t2`;DECLARE CONTINUE HANDLER FOR SQLSTATE '02000' SET @`x2`=1;OPEN NEXT;FETCH NEXT INTO E;CLOSE NEXT; END",
+		},
+	}
+	RunTest(t, cases, false)
+}

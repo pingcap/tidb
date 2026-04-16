@@ -212,6 +212,16 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeRepairTable(x)
 	case *ast.CreateSequenceStmt:
 		err = e.executeCreateSequence(x)
+	case *ast.CreateTriggerStmt:
+		err = e.executeCreateTrigger(x)
+	case *ast.DropTriggerStmt:
+		err = e.executeDropTrigger(x)
+	case *ast.CreateProcedureInfo:
+		err = e.executeCreateProcedure(x)
+	case *ast.DropProcedureStmt:
+		err = e.executeDropProcedure(x)
+	case *ast.AlterProcedureStmt:
+		err = e.executeAlterProcedure(x)
 	case *ast.DropSequenceStmt:
 		err = e.executeDropSequence(x)
 	case *ast.AlterSequenceStmt:
@@ -351,8 +361,13 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 
 	err := e.ddlExecutor.DropSchema(e.Ctx(), s)
 	sessionVars := e.Ctx().GetSessionVars()
-	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
+	currentDB := sessionVars.CurrentDBCI
+	if currentDB.L == "" {
+		currentDB = pmodel.NewCIStr(sessionVars.CurrentDB)
+	}
+	if err == nil && model.NameEqual(currentDB, dbName) {
 		sessionVars.CurrentDB = ""
+		sessionVars.CurrentDBCI = pmodel.CIStr{}
 		err = sessionVars.SetSystemVar(variable.CharsetDatabase, mysql.DefaultCharset)
 		if err != nil {
 			return err
@@ -454,8 +469,8 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
 		AutoIDs:       autoIDs,
-		OldSchemaName: job.SchemaName,
-		OldTableName:  tblInfo.Name.L,
+		OldSchemaName: job.GetSchemaName(),
+		OldTableName:  tblInfo.Name,
 	}
 	// Call DDL RecoverTable.
 	err = e.ddlExecutor.RecoverTable(e.Ctx(), recoverInfo)
@@ -522,9 +537,13 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	if err != nil {
 		return nil, nil, err
 	}
-	schemaName := tableName.Schema.L
+	schemaName := model.NameAsID(tableName.Schema)
 	if schemaName == "" {
-		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+		currentDB := e.Ctx().GetSessionVars().CurrentDBCI
+		if currentDB.L == "" {
+			currentDB = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+		}
+		schemaName = model.NameAsID(currentDB)
 	}
 	if schemaName == "" {
 		return nil, nil, errors.Trace(plannererrors.ErrNoDB)
@@ -618,8 +637,8 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		DropJobID:     job.ID,
 		SnapshotTS:    job.StartTS,
 		AutoIDs:       autoIDs,
-		OldSchemaName: job.SchemaName,
-		OldTableName:  s.Table.Name.L,
+		OldSchemaName: job.GetSchemaName(),
+		OldTableName:  s.Table.Name,
 	}
 	// Call DDL RecoverTable.
 	err = e.ddlExecutor.RecoverTable(e.Ctx(), recoverInfo)
@@ -750,6 +769,26 @@ func (e *DDLExec) executeRepairTable(s *ast.RepairTableStmt) error {
 
 func (e *DDLExec) executeCreateSequence(s *ast.CreateSequenceStmt) error {
 	return e.ddlExecutor.CreateSequence(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeCreateTrigger(s *ast.CreateTriggerStmt) error {
+	return e.ddlExecutor.CreateTrigger(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeDropTrigger(s *ast.DropTriggerStmt) error {
+	return e.ddlExecutor.DropTrigger(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeCreateProcedure(s *ast.CreateProcedureInfo) error {
+	return e.ddlExecutor.CreateProcedure(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeDropProcedure(s *ast.DropProcedureStmt) error {
+	return e.ddlExecutor.DropProcedure(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeAlterProcedure(s *ast.AlterProcedureStmt) error {
+	return e.ddlExecutor.AlterProcedure(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {

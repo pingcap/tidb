@@ -16,6 +16,8 @@ package whitelist
 
 import (
 	"context"
+	"sync"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -23,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/atomic"
-	"sync"
 )
 
 // AccessManager is used to manage client connections
@@ -204,8 +205,20 @@ func (a *AccessManager) refreshConnRef() error {
 
 // ConnControllerWithConfig returns a controller
 func ConnControllerWithConfig(items []*accessItem) (_ *ConnectionController, err error) {
+	// split items into whitelist and blacklist
+	whitelistItems := []*accessItem{}
+	blacklistItems := []*accessItem{}
+	for _, item := range items {
+		if item.access == denied {
+			blacklistItems = append(blacklistItems, item)
+		} else {
+			// if access is confirmed or unKnowPermission, it is a whitelist item
+			whitelistItems = append(whitelistItems, item)
+		}
+	}
 	return &ConnectionController{
-		items: items,
+		whitelistItems: whitelistItems,
+		blacklistItems: blacklistItems,
 	}, nil
 }
 

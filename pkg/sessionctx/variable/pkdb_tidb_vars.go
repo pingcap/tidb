@@ -25,12 +25,21 @@ const (
 	TiDBXEnableIndexLookUpPushDown = "tidbx_enable_index_lookup_push_down"
 	// TiDBXEnableSingleStoreTxn1PC indicates whether to enable single store transaction 1PC optimization.
 	TiDBXEnableSingleStoreTxn1PC = "tidbx_enable_single_store_txn_1pc"
+	// PKDBEnableWhitelist indicates whether to enable the whitelist feature.
+	PKDBEnableWhitelist = "pkdb_whitelist"
+	// PKDBExtraDataType indicates whether to enable extra data types.
+	PKDBExtraDataType = "pkdb_extra_data_type"
+	// PKDBEnableEAL indicates whether to enable the EAL feature.
+	PKDBEnableEAL = "pkdb_eal"
+	// TiDBEnableLBAC is used to enable or disable LBAC enforcement on TiDB.
+	TiDBEnableLBAC = "pkdb_lbac"
 )
 
 // Default TiDB system variable values.
 const (
 	DefTiDBXEnableLocalRPCOpt          = false
 	DefTiDBEnableLabelSecurity         = false
+	DefTiDBEnableLBAC                  = false
 	DefTiDBEnableLoginHistory          = false
 	DefTiDBLoginHistoryRetainDuration  = time.Hour * 24 * 90 // default 90 days.
 	DefStoredProgramCacheSize          = 256
@@ -45,6 +54,9 @@ const (
 	DefTiDBXFastPath                   = false
 	DefTiDBXEnableIndexLookUpPushDown  = false
 	DefTiDBXEnableSingleStoreTxn1PC    = false
+	DefPKDBEnableWhitelist             = false
+	DefPKDBExtraDataType               = false
+	DefPKDBEnableEAL                   = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.
@@ -53,6 +65,7 @@ const UnspecifiedServerID = 0
 // Process global variables.
 var (
 	EnableLabelSecurity = atomic.NewBool(DefTiDBEnableLabelSecurity)
+	EnableLBAC          = atomic.NewBool(DefTiDBEnableLBAC)
 
 	EnableLoginHistory         = atomic.NewBool(DefTiDBEnableLoginHistory)
 	LoginHistoryRetainDuration = atomic.NewDuration(DefTiDBLoginHistoryRetainDuration)
@@ -62,4 +75,6 @@ var (
 	AutomaticSPPrivileges      = atomic.NewBool(true)
 	EnableDutySeparationMode   = atomic.NewBool(DefTiDBEnableDutySeparationMode)
 	EnableFastPath             = atomic.NewBool(DefTiDBXFastPath)
+	EnableWhitelist            = atomic.NewBool(DefPKDBEnableWhitelist)
+	EnableEAL                  = atomic.NewBool(DefPKDBEnableEAL)
 )

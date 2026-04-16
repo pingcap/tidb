@@ -49,6 +49,15 @@ const (
 	TypeTiDBVectorFloat32 byte = 0xe1
 )
 
+const (
+	SubTypeUnspecified         byte = 0
+	SubTypeArray               byte = 1
+	SubTypeXML                 byte = 2
+	SubTypeIntervalYearToMonth byte = 3
+	SubTypeIntervalDayToSecond byte = 4
+	SubTypeSecurityLabel       byte = 5
+)
+
 // Flag information.
 const (
 	NotNullFlag        uint = 1 << 0  /* Field can't be NULL */

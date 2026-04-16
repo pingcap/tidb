@@ -6,13 +6,45 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetCallPlanUsesDefaultPrecisionForZeroWidthDecimalRoutineTypes(t *testing.T) {
+	builder, _ := NewPlanBuilder().Init(MockContext(), nil, &hint.QBHintHandler{})
+	p := parser.New()
+	stmts, _, err := p.ParseSQL(`create function sf_decimal_zerofill(f1 decimal(0) unsigned zerofill)
+returns decimal(0) unsigned zerofill
+begin
+	set f1 = (f1 / 2);
+	return f1;
+end`)
+	require.NoError(t, err)
+
+	call := &ast.CallStmt{
+		IsFunction: true,
+		Procedure: &ast.FuncCallExpr{
+			FnName: pmodel.NewCIStr("sf_decimal_zerofill"),
+			Args:   []ast.ExprNode{nil},
+		},
+	}
+	plan, err := builder.getCallPlan(context.Background(), stmts, call, mysql.DefaultCollationName)
+	require.NoError(t, err)
+
+	require.Equal(t, 10, plan.ProcedureExecPlan.ProcedureParam[0].DeclType.GetFlen())
+	require.Equal(t, 0, plan.ProcedureExecPlan.ProcedureParam[0].DeclType.GetDecimal())
+
+	ret := builder.storedFuncRetType
+	require.NotNil(t, ret)
+	require.Equal(t, 10, ret.GetFlen())
+	require.Equal(t, 0, ret.GetDecimal())
+}
 
 func TestNewVariableVars(t *testing.T) {
 	// variable test
@@ -26,7 +58,8 @@ func TestNewVariableVars(t *testing.T) {
 	resVar := variable.NewProcedureVars("t1", tp)
 	require.Equal(t, *con.Vars[0], *resVar)
 	require.Equal(t, len(builder.procedurePlan.ProcedureCommandList), 1)
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables), UpdateVariables{"t1", "", con, tp})
+	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables),
+		UpdateVariables{baseProcedureExecPlan{}, "t1", "", con, tp})
 	oldPlan := &ProcedurePlan{
 		ProcedureExecPlan: builder.procedurePlan,
 	}
@@ -45,9 +78,12 @@ func TestNewVariableVars(t *testing.T) {
 	resVar3 := variable.NewProcedureVars("t3", tp)
 	require.Equal(t, *con.Vars[2], *resVar3)
 	require.Equal(t, len(builder.procedurePlan.ProcedureCommandList), 3)
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables), UpdateVariables{"t1", "", con, tp})
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[1].(*UpdateVariables), UpdateVariables{"t2", "", con, tp})
-	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[2].(*UpdateVariables), UpdateVariables{"t3", "", con, tp})
+	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[0].(*UpdateVariables),
+		UpdateVariables{baseProcedureExecPlan{}, "t1", "", con, tp})
+	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[1].(*UpdateVariables),
+		UpdateVariables{baseProcedureExecPlan{}, "t2", "", con, tp})
+	require.Equal(t, *builder.procedurePlan.ProcedureCommandList[2].(*UpdateVariables),
+		UpdateVariables{baseProcedureExecPlan{}, "t3", "", con, tp})
 	// support copy
 	oldPlan = &ProcedurePlan{
 		ProcedureExecPlan: builder.procedurePlan,
@@ -870,4 +906,38 @@ func TestProcedureNodePlan(t *testing.T) {
 	newPlan = oldPlan.deepCopy()
 	require.Equal(t, newPlan, oldPlan)
 	builder.procedurePlan.ProcedureCommandList = builder.procedurePlan.ProcedureCommandList[:0]
+}
+
+func TestSetDefaultLengthAndCharsetUsesDefaultPrecisionForZeroWidthNumerics(t *testing.T) {
+	builder, _ := NewPlanBuilder().Init(MockContext(), nil, &hint.QBHintHandler{})
+
+	testCases := []struct {
+		name    string
+		tp      byte
+		flen    int
+		decimal int
+	}{
+		{name: "decimal explicit scale", tp: mysql.TypeNewDecimal, flen: 0, decimal: 0},
+		{name: "decimal implicit scale", tp: mysql.TypeNewDecimal, flen: 0, decimal: types.UnspecifiedLength},
+		{name: "decimal explicit precision implicit scale", tp: mysql.TypeNewDecimal, flen: 64, decimal: types.UnspecifiedLength},
+		{name: "float", tp: mysql.TypeFloat, flen: 0, decimal: types.UnspecifiedLength},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ft := types.NewFieldType(tc.tp)
+			ft.SetFlen(tc.flen)
+			ft.SetDecimal(tc.decimal)
+
+			got, err := builder.setDefaultLengthAndCharset(ft, "")
+			require.NoError(t, err)
+
+			expectedFlen, expectedDecimal := mysql.GetDefaultFieldLengthAndDecimal(tc.tp)
+			if tc.flen > 0 {
+				expectedFlen = tc.flen
+			}
+			require.Equal(t, expectedFlen, got.GetFlen())
+			require.Equal(t, expectedDecimal, got.GetDecimal())
+		})
+	}
 }

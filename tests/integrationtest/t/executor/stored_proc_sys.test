@@ -1,0 +1,355 @@
+# ==============================================================================
+# Test plan section: stored procedure and function tests
+# ==============================================================================
+
+CREATE DATABASE IF NOT EXISTS test_sys;
+USE test_sys;
+
+set global tidb_enable_procedure = ON;
+
+--disable_warnings
+DROP FUNCTION IF EXISTS test_sys.extract_schema_from_file_name;
+DROP FUNCTION IF EXISTS test_sys.extract_table_from_file_name;
+DROP FUNCTION IF EXISTS test_sys.format_bytes;
+DROP FUNCTION IF EXISTS test_sys.format_path;
+DROP FUNCTION IF EXISTS test_sys.format_time;
+DROP FUNCTION IF EXISTS test_sys.list_add;
+DROP FUNCTION IF EXISTS test_sys.list_drop;
+DROP FUNCTION IF EXISTS test_sys.quote_identifier;
+DROP FUNCTION IF EXISTS test_sys.version_major;
+DROP FUNCTION IF EXISTS test_sys.version_minor;
+DROP FUNCTION IF EXISTS test_sys.version_patch;
+DROP PROCEDURE IF EXISTS table_exists;
+--enable_warnings
+
+# ==============================================================================
+# Test extract_schema_from_file_name
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION extract_schema_from_file_name(path VARCHAR(512)) RETURNS varchar(64) CHARSET utf8mb4
+    SQL SECURITY INVOKER
+BEGIN
+    RETURN LEFT(SUBSTRING_INDEX(SUBSTRING_INDEX(REPLACE(path, '\\', '/'), '/', -2), '/', 1), 64);
+END;;
+DELIMITER ;
+
+SELECT extract_schema_from_file_name('/var/lib/mysql/mydb/mytable.ibd');
+SELECT extract_schema_from_file_name('C:\\MySQL\\data\\testdb\\users.ibd');
+SELECT extract_schema_from_file_name('/path/to/schema_name/table.frm');
+SELECT extract_schema_from_file_name(NULL);
+
+DROP FUNCTION extract_schema_from_file_name;
+
+# ==============================================================================
+# Test extract_table_from_file_name
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION extract_table_from_file_name(path VARCHAR(512)) RETURNS varchar(64) CHARSET utf8mb4
+    SQL SECURITY INVOKER
+BEGIN
+    RETURN LEFT(SUBSTRING_INDEX(REPLACE(SUBSTRING_INDEX(REPLACE(path, '\\', '/'), '/', -1), '@0024', '$'), '.', 1), 64);
+END;;
+DELIMITER ;
+
+SELECT extract_table_from_file_name('/var/lib/mysql/mydb/mytable.ibd');
+SELECT extract_table_from_file_name('C:\\MySQL\\data\\testdb\\users.ibd');
+SELECT extract_table_from_file_name('/path/to/schema/table@0024name.frm');
+SELECT extract_table_from_file_name(NULL);
+
+DROP FUNCTION extract_table_from_file_name;
+
+# ==============================================================================
+# Test format_bytes
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION format_bytes(bytes TEXT) RETURNS text CHARSET utf8mb4
+    SQL SECURITY INVOKER
+BEGIN
+  IF (bytes IS NULL) THEN
+    RETURN NULL;
+  ELSE
+    RETURN format_bytes(bytes);
+  END IF;
+END;;
+DELIMITER ;
+
+SELECT format_bytes('1024');
+SELECT format_bytes('1048576');
+SELECT format_bytes(NULL);
+
+DROP FUNCTION format_bytes;
+
+# ==============================================================================
+# Test format_path
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION format_path(in_path VARCHAR(512)) RETURNS varchar(512) CHARSET utf8mb4
+    SQL SECURITY INVOKER
+BEGIN
+  DECLARE v_path VARCHAR(512);
+  DECLARE path_separator CHAR(1) DEFAULT '/';
+  IF @@global.version_compile_os LIKE 'win%' THEN
+    SET path_separator = '\\';
+  END IF;
+  IF in_path LIKE '/private/%' THEN
+    SET v_path = REPLACE(in_path, '/private', '');
+  ELSE
+    SET v_path = in_path;
+  END IF;
+  IF v_path IS NULL THEN
+    RETURN NULL;
+  ELSEIF v_path LIKE CONCAT(@@global.datadir, IF(SUBSTRING(@@global.datadir, -1) = path_separator, '%', CONCAT(path_separator, '%'))) ESCAPE '|' THEN
+    SET v_path = REPLACE(v_path, @@global.datadir, CONCAT('@@datadir', IF(SUBSTRING(@@global.datadir, -1) = path_separator, path_separator, '')));
+  ELSEIF v_path LIKE CONCAT(@@global.tmpdir, IF(SUBSTRING(@@global.tmpdir, -1) = path_separator, '%', CONCAT(path_separator, '%'))) ESCAPE '|' THEN
+    SET v_path = REPLACE(v_path, @@global.tmpdir, CONCAT('@@tmpdir', IF(SUBSTRING(@@global.tmpdir, -1) = path_separator, path_separator, '')));
+  ELSEIF v_path LIKE CONCAT(@@global.basedir, IF(SUBSTRING(@@global.basedir, -1) = path_separator, '%', CONCAT(path_separator, '%'))) ESCAPE '|' THEN
+    SET v_path = REPLACE(v_path, @@global.basedir, CONCAT('@@basedir', IF(SUBSTRING(@@global.basedir, -1) = path_separator, path_separator, '')));
+  END IF;
+  RETURN v_path;
+END;;
+DELIMITER ;
+
+SELECT format_path('/private/var/lib/mysql/data.ibd');
+SELECT format_path('/var/lib/mysql/test.ibd');
+SELECT format_path('/tmp/tidb/test.ibd');
+SELECT format_path(NULL);
+
+DROP FUNCTION format_path;
+
+# ==============================================================================
+# Test format_time
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION format_time(picoseconds TEXT) RETURNS text CHARSET utf8mb4
+    SQL SECURITY INVOKER
+BEGIN
+  IF picoseconds IS NULL THEN RETURN NULL;
+  ELSEIF picoseconds >= 604800000000000000 THEN RETURN CONCAT(ROUND(picoseconds / 604800000000000000, 2), ' w');
+  ELSEIF picoseconds >= 86400000000000000 THEN RETURN CONCAT(ROUND(picoseconds / 86400000000000000, 2), ' d');
+  ELSEIF picoseconds >= 3600000000000000 THEN RETURN CONCAT(ROUND(picoseconds / 3600000000000000, 2), ' h');
+  ELSEIF picoseconds >= 60000000000000 THEN RETURN CONCAT(ROUND(picoseconds / 60000000000000, 2), ' m');
+  ELSEIF picoseconds >= 1000000000000 THEN RETURN CONCAT(ROUND(picoseconds / 1000000000000, 2), ' s');
+  ELSEIF picoseconds >= 1000000000 THEN RETURN CONCAT(ROUND(picoseconds / 1000000000, 2), ' ms');
+  ELSEIF picoseconds >= 1000000 THEN RETURN CONCAT(ROUND(picoseconds / 1000000, 2), ' us');
+  ELSEIF picoseconds >= 1000 THEN RETURN CONCAT(ROUND(picoseconds / 1000, 2), ' ns');
+  ELSE RETURN CONCAT(picoseconds, ' ps');
+  END IF;
+END;;
+DELIMITER ;
+
+SELECT format_time('1000');
+SELECT format_time('1000000');
+SELECT format_time('1000000000');
+SELECT format_time('1000000000000');
+SELECT format_time('60000000000000');
+SELECT format_time('3600000000000000');
+SELECT format_time('86400000000000000');
+SELECT format_time('604800000000000000');
+SELECT format_time(NULL);
+
+DROP FUNCTION format_time;
+
+# ==============================================================================
+# Test list_add
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION list_add(in_list TEXT, in_add_value TEXT) RETURNS text CHARSET utf8mb4
+    SQL SECURITY INVOKER
+BEGIN
+    IF (in_add_value IS NULL) THEN
+        SIGNAL SQLSTATE '02200'
+           SET MESSAGE_TEXT = 'Function sys.list_add: in_add_value input variable should not be NULL',
+               MYSQL_ERRNO = 1138;
+    END IF;
+    IF (in_list IS NULL OR LENGTH(in_list) = 0) THEN
+        RETURN in_add_value;
+    END IF;
+    RETURN (SELECT CONCAT(TRIM(BOTH ',' FROM TRIM(in_list)), ',', in_add_value));
+END;;
+DELIMITER ;
+
+SELECT list_add('a,b,c', 'd');
+SELECT list_add('', 'first');
+SELECT list_add(NULL, 'first');
+SELECT list_add('a,b,c,', 'd');
+SELECT list_add(',a,b,c', 'd');
+
+--error 1138
+SELECT list_add('a,b,c', NULL);
+
+DROP FUNCTION list_add;
+
+# ==============================================================================
+# Test list_drop
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION list_drop(in_list TEXT, in_drop_value TEXT) RETURNS text CHARSET utf8mb4
+    SQL SECURITY INVOKER
+BEGIN
+    IF (in_drop_value IS NULL) THEN
+        SIGNAL SQLSTATE '02200'
+           SET MESSAGE_TEXT = 'Function sys.list_drop: in_drop_value input variable should not be NULL',
+               MYSQL_ERRNO = 1138;
+    END IF;
+    IF (in_list IS NULL OR LENGTH(in_list) = 0) THEN
+        RETURN in_list;
+    END IF;
+    RETURN (SELECT TRIM(BOTH ',' FROM REPLACE(REPLACE(CONCAT(',', in_list), CONCAT(',', in_drop_value), ''), CONCAT(', ', in_drop_value), '')));
+END;;
+DELIMITER ;
+
+SELECT list_drop('a,b,c,d', 'c');
+SELECT list_drop('a, b, c, d', 'c');
+SELECT list_drop('', 'a');
+SELECT list_drop(NULL, 'a');
+SELECT list_drop('a,b,c', 'x');
+
+--error 1138
+SELECT list_drop('a,b,c', NULL);
+
+DROP FUNCTION list_drop;
+
+# ==============================================================================
+# Test quote_identifier
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION quote_identifier(in_identifier TEXT) RETURNS text CHARSET utf8mb4
+    SQL SECURITY INVOKER
+BEGIN
+    RETURN CONCAT('`', REPLACE(in_identifier, '`', '``'), '`');
+END;;
+DELIMITER ;
+
+SELECT quote_identifier('my_table');
+SELECT quote_identifier('my`table');
+SELECT quote_identifier('``already``quoted``');
+SELECT quote_identifier(NULL);
+
+DROP FUNCTION quote_identifier;
+
+# ==============================================================================
+# Test version_major
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION version_major() RETURNS tinyint unsigned
+    SQL SECURITY INVOKER
+BEGIN
+    RETURN SUBSTRING_INDEX(SUBSTRING_INDEX(VERSION(), '-', 1), '.', 1);
+END;;
+DELIMITER ;
+
+SELECT version_major();
+SELECT version_major() >= 5;
+
+DROP FUNCTION version_major;
+
+# ==============================================================================
+# Test version_minor
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION version_minor() RETURNS tinyint unsigned
+    SQL SECURITY INVOKER
+BEGIN
+    RETURN SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(VERSION(), '-', 1), '.', 2), '.', -1);
+END;;
+DELIMITER ;
+
+SELECT version_minor();
+SELECT version_minor() >= 0;
+
+DROP FUNCTION version_minor;
+
+# ==============================================================================
+# Test version_patch
+# ==============================================================================
+
+DELIMITER ;;
+CREATE FUNCTION version_patch() RETURNS tinyint unsigned
+    SQL SECURITY INVOKER
+BEGIN
+    RETURN SUBSTRING_INDEX(SUBSTRING_INDEX(VERSION(), '-', 1), '.', -1);
+END;;
+DELIMITER ;
+
+SELECT version_patch();
+SELECT version_patch() >= 0;
+
+DROP FUNCTION version_patch;
+
+# ==============================================================================
+# Test table_exists
+# ==============================================================================
+
+DELIMITER ;;
+CREATE PROCEDURE table_exists(
+        IN in_db VARCHAR(64), IN in_table VARCHAR(64),
+        OUT out_exists ENUM('', 'BASE TABLE', 'VIEW', 'TEMPORARY')
+    )
+    SQL SECURITY INVOKER
+BEGIN
+    DECLARE v_error BOOLEAN DEFAULT FALSE;
+    DECLARE CONTINUE HANDLER FOR 1050 SET v_error = TRUE;
+    DECLARE CONTINUE HANDLER FOR 1146 SET v_error = TRUE;
+    SET out_exists = '';
+    IF (EXISTS(SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = in_db AND TABLE_NAME = in_table)) THEN
+        SET @sys.tmp.table_exists.SQL = CONCAT('CREATE TEMPORARY TABLE `', in_db, '`.`', in_table, '` (id INT PRIMARY KEY)');
+        PREPARE stmt_create_table FROM @sys.tmp.table_exists.SQL;
+        EXECUTE stmt_create_table;
+        DEALLOCATE PREPARE stmt_create_table;
+        IF (v_error) THEN
+            SET out_exists = 'TEMPORARY';
+        ELSE
+            SET @sys.tmp.table_exists.SQL = CONCAT('DROP TEMPORARY TABLE `', in_db, '`.`', in_table, '`');
+            PREPARE stmt_drop_table FROM @sys.tmp.table_exists.SQL;
+            EXECUTE stmt_drop_table;
+            DEALLOCATE PREPARE stmt_drop_table;
+            SET out_exists = (SELECT TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = in_db AND TABLE_NAME = in_table);
+        END IF;
+    ELSE
+        SET @sys.tmp.table_exists.SQL = CONCAT('SELECT COUNT(*) FROM `', in_db, '`.`', in_table, '`');
+        PREPARE stmt_select FROM @sys.tmp.table_exists.SQL;
+        IF (NOT v_error) THEN
+            DEALLOCATE PREPARE stmt_select;
+            SET out_exists = 'TEMPORARY';
+        END IF;
+    END IF;
+END;;
+DELIMITER ;
+
+CREATE TABLE test_table (id INT);
+CREATE VIEW test_view AS SELECT 1;
+CREATE TEMPORARY TABLE test_temp (id INT);
+
+--disable_warnings ER_UNKNOWN_ERROR ONCE
+CALL table_exists('test_sys', 'test_table', @exists);
+SELECT @exists;
+
+--disable_warnings ER_UNKNOWN_ERROR ONCE
+CALL table_exists('test_sys', 'test_view', @exists);
+SELECT @exists;
+
+--disable_warnings ER_UNKNOWN_ERROR ONCE
+CALL table_exists('test_sys', 'test_temp', @exists);
+SELECT @exists;
+
+--disable_warnings ER_NO_SUCH_TABLE ONCE
+CALL table_exists('test_sys', 'non_existent', @exists);
+SELECT @exists;
+
+DROP TEMPORARY TABLE test_temp;
+DROP VIEW test_view;
+DROP TABLE test_table;
+DROP PROCEDURE table_exists;
+
+# Cleanup
+DROP DATABASE test_sys;

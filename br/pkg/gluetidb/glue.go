@@ -231,8 +231,8 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 	return nil
 }
 
-// CreateDatabase implements glue.Session.
-func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
+// CreateDatabaseOnExistError implements glue.Session.
+func (gs *tidbSession) CreateDatabaseOnExistError(ctx context.Context, schema *model.DBInfo) error {
 	return errors.Trace(executor.BRIECreateDatabase(gs.se, schema, brComment))
 }
 

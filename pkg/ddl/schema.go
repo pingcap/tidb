@@ -330,8 +330,8 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 					DropJobID:     recoverSchemaInfo.DropJobID,
 					SnapshotTS:    recoverSchemaInfo.SnapshotTS,
 					AutoIDs:       autoIDs,
-					OldSchemaName: recoverSchemaInfo.OldSchemaName.L,
-					OldTableName:  tblInfo.Name.L,
+					OldSchemaName: recoverSchemaInfo.OldSchemaName,
+					OldTableName:  tblInfo.Name,
 				})
 			}
 		}

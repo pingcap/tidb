@@ -3772,3 +3772,443 @@ func TestAuditPluginRetrying(t *testing.T) {
 		runExplicitTransactionRetry(db, true)
 	})
 }
+func TestLoginMessagesInVersionComment(t *testing.T) {
+	// The implementation reads the global switch via a process-global atomic variable.
+	// Restore it to avoid impacting other tests in this package.
+	origEnableLoginHistory := variable.EnableLoginHistory.Load()
+	t.Cleanup(func() {
+		variable.EnableLoginHistory.Store(origEnableLoginHistory)
+	})
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	cli := testserverclient.NewTestServerClient()
+	cli.Port = ts.Port
+	cli.WaitUntilServerCanConnect()
+
+	runUser := func(t *testing.T, user string, pwd string, fn func(dbt *testkit.DBTestKit)) {
+		t.Helper()
+		cli.RunTests(t, func(config *mysql.Config) {
+			config.User = user
+			config.Passwd = pwd
+			if user != "root" {
+				config.DBName = ""
+			}
+		}, fn)
+	}
+
+	queryScalar := func(t *testing.T, dbt *testkit.DBTestKit, sql string) string {
+		t.Helper()
+		rows := dbt.MustQuery(sql)
+		records := cli.Rows(t, rows)
+		require.NoError(t, rows.Close())
+		require.Len(t, records, 1, "sql: %s", sql)
+		return records[0]
+	}
+
+	setup := func(t *testing.T, enable bool, insertSQL ...string) {
+		t.Helper()
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			if enable {
+				dbt.MustExec("SET GLOBAL tidb_enable_login_history = 1;")
+			} else {
+				dbt.MustExec("SET GLOBAL tidb_enable_login_history = 0;")
+			}
+			dbt.MustExec("DELETE FROM mysql.login_history;")
+			for _, stmt := range insertSQL {
+				dbt.MustExec(stmt)
+			}
+		})
+	}
+
+	t.Run("Disabled_NoRecords_NoMarkers_NoAutoInsert", func(t *testing.T) {
+		setup(t, false)
+
+		var versionComment string
+		var rowCount string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+			rowCount = queryScalar(t, dbt, "SELECT COUNT(*) FROM mysql.login_history;")
+		})
+
+		require.NotContains(t, versionComment, "[Last Success Login]")
+		require.NotContains(t, versionComment, "[Last Fail Login]")
+		require.Equal(t, "0", rowCount)
+	})
+
+	t.Run("Enabled_EmptyTable_NoMarkers_ButAutoInsert", func(t *testing.T) {
+		setup(t, true)
+
+		var versionComment string
+		var successCount string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+			successCount = queryScalar(t, dbt, "SELECT COUNT(*) FROM mysql.login_history WHERE Result = 'success';")
+		})
+
+		require.NotContains(t, versionComment, "[Last Success Login]")
+		require.NotContains(t, versionComment, "[Last Fail Login]")
+		require.Equal(t, "1", successCount)
+	})
+
+	t.Run("Enabled_WithHistory_ShowsLastSuccessAndFail_ExcludesCurrentLogin", func(t *testing.T) {
+		setup(t, true, `
+INSERT INTO mysql.login_history(Time, Server_host, User, DB, Connection_id, Result, Client_host, Detail) VALUES
+  ('2024-01-01 12:00:00', '10.0.0.1', 'root', '', 2097156, 'success', '1.1.1.1', ''),
+  ('2024-01-01 10:00:00', '10.0.0.9', 'root', '', 2097157, 'success', '9.9.9.9', ''),
+  ('2024-01-01 11:00:00', '10.0.0.2', 'root', '', 2097158, 'fail',    '2.2.2.2', 'denied'),
+  ('2024-01-01 09:00:00', '10.0.0.8', 'root', '', 2097159, 'fail',    '8.8.8.8', 'denied');
+`)
+
+		var versionComment string
+		var currentLoginTime string
+		var successCount string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+			connID := queryScalar(t, dbt, "SELECT CONNECTION_ID();")
+			currentLoginTime = queryScalar(t, dbt, fmt.Sprintf(
+				"SELECT Time FROM mysql.login_history WHERE Connection_id = %s AND Result = 'success';",
+				connID,
+			))
+			successCount = queryScalar(t, dbt, "SELECT COUNT(*) FROM mysql.login_history WHERE Result = 'success';")
+		})
+
+		require.Contains(t, versionComment, "[Last Success Login]")
+		require.Contains(t, versionComment, "[Last Fail Login]")
+		require.Contains(t, versionComment, "2024-01-01 12:00:00")
+		require.Contains(t, versionComment, "root@10.0.0.1")
+		require.Contains(t, versionComment, "1.1.1.1")
+		require.Contains(t, versionComment, "success")
+		require.Contains(t, versionComment, "2024-01-01 11:00:00")
+		require.Contains(t, versionComment, "root@10.0.0.2")
+		require.Contains(t, versionComment, "2.2.2.2")
+		require.Contains(t, versionComment, "fail")
+		require.NotContains(t, versionComment, "2024-01-01 10:00:00")
+		require.NotContains(t, versionComment, "2024-01-01 09:00:00")
+		require.NotContains(t, versionComment, currentLoginTime)
+		require.Equal(t, "3", successCount) // 2 pre-inserted + 1 inserted during this login.
+	})
+
+	const historyUser = "loghistory_user"
+	const historyPass = "loghistory_pass"
+	t.Run("Enabled_WithHistory_ShowsLoginHistoryUser", func(t *testing.T) {
+		setup(t, true,
+			fmt.Sprintf("drop user if exists '%s'@'%%';", historyUser),
+			fmt.Sprintf("create user '%s'@'%%' identified by '%s';", historyUser, historyPass),
+			fmt.Sprintf(`
+INSERT INTO mysql.login_history(Time, Server_host, User, DB, Connection_id, Result, Client_host, Detail) VALUES
+	('2024-01-01 12:00:00', '127.0.0.1', 'root', '', 2097156, 'success', '127.0.0.1', ''),
+	('2024-01-01 11:00:00', '127.0.0.1', 'root', '', 2097157, 'fail', '127.0.0.1', '[privilege:1045]Access denied for user ''root''@''127.0.0.1'' (using password: YES)'),
+	('2024-01-01 10:00:00', '127.0.0.1', '%s', '', 2097158, 'success', '127.0.0.1', ''),
+	('2024-01-01 09:00:00', '127.0.0.1', '%s', '', 2097159, 'fail', '127.0.0.1', '')
+`, historyUser, historyUser))
+		var versionComment string
+		runUser(t, historyUser, historyPass, func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+		})
+		require.Contains(t, versionComment, "[Last Success Login]")
+		require.Contains(t, versionComment, "[Last Fail Login]")
+	})
+
+	t.Run("Enabled_OnlyFail_ShowsFailOnly_ExcludesCurrentSuccess", func(t *testing.T) {
+		setup(t, true, `
+INSERT INTO mysql.login_history(Time, Server_host, User, DB, Connection_id, Result, Client_host, Detail) VALUES
+  ('2024-01-01 11:00:00', '10.0.0.2', 'root', '', 2097158, 'fail', '2.2.2.2', 'denied');
+`)
+
+		var versionComment string
+		var currentLoginTime string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+			connID := queryScalar(t, dbt, "SELECT CONNECTION_ID();")
+			currentLoginTime = queryScalar(t, dbt, fmt.Sprintf(
+				"SELECT Time FROM mysql.login_history WHERE Connection_id = %s AND Result = 'success';",
+				connID,
+			))
+		})
+
+		require.NotContains(t, versionComment, "[Last Success Login]")
+		require.Contains(t, versionComment, "[Last Fail Login]")
+		require.Contains(t, versionComment, "2024-01-01 11:00:00")
+		require.Contains(t, versionComment, "root@10.0.0.2")
+		require.Contains(t, versionComment, "2.2.2.2")
+		require.Contains(t, versionComment, "fail")
+		require.NotContains(t, versionComment, currentLoginTime)
+	})
+
+	t.Run("Disabled_WithExistingRecords_NoMarkers", func(t *testing.T) {
+		setup(t, false, `
+INSERT INTO mysql.login_history(Time, Server_host, User, DB, Connection_id, Result, Client_host, Detail) VALUES
+  ('2024-01-01 12:00:00', '10.0.0.1', 'root', '', 2097156, 'success', '1.1.1.1', ''),
+  ('2024-01-01 11:00:00', '10.0.0.2', 'root', '', 2097157, 'fail', '2.2.2.2', 'denied');
+`)
+
+		var versionComment string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+		})
+
+		require.NotContains(t, versionComment, "[Last Success Login]")
+		require.NotContains(t, versionComment, "[Last Fail Login]")
+	})
+}
+
+func TestXCTableColumnEncryption(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	// Helper function to read rows into a slice of string slices for easier assertion.
+	// avoiding Ambiguity caused by "space-separating the entire line string" (e.g., time type containing spaces)
+	readRowValues := func(t *testing.T, rows *sql.Rows) [][]string {
+		cols, err := rows.Columns()
+		require.NoError(t, err)
+		rawResult := make([]sql.RawBytes, len(cols))
+		dest := make([]any, len(cols))
+		for i := range rawResult {
+			dest[i] = &rawResult[i]
+		}
+
+		result := make([][]string, 0, 2)
+		for rows.Next() {
+			err := rows.Scan(dest...)
+			require.NoError(t, err)
+			row := make([]string, len(cols))
+			for i, raw := range rawResult {
+				if raw == nil {
+					row[i] = "<nil>"
+				} else {
+					row[i] = string(raw)
+				}
+			}
+			result = append(result, row)
+		}
+		require.NoError(t, rows.Err())
+		return result
+	}
+
+	const (
+		cipherSecret       = "cItGwno5I07EgTHgC/itqDWqkibLkHfE7G5zHZtD1fMKd/J8" // "this is secret"
+		cipherSecretConcat = "cItGwno5I07EgTHgC/itqDWqkS/goOG2k4pboJdAh5RsFNYI" // "this is secretx"
+		cipherEnumA        = "TZ0Tj4BtjoKfAjy9lMZr21yystQ="                     // "a"
+		cipherSetXY        = "cY9Wh+ltgwIVpV0sU2wjlftfvSc="                     // "x,y"
+		cipherJSONK1       = "cbVkwFAqDlnqoEOnc5Ao4hj7str/X5Dgj/hqeA=="         // {"k": 1}
+		cipherSecretShort  = "d/542HotNw5I6gEefA/IsZSpxRXQxgXs"                 // "this is secret" truncated to 16 bytes and encrypted
+	)
+
+	// Basic table and column encryption behavior.
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set global pkdb_eal=ON")
+		defer dbt.MustExec("set global pkdb_eal=OFF")
+
+		dbt.MustExec("use test;")
+		dbt.MustExec("drop table if exists t;")
+		dbt.MustExec("create table t (a varchar(255) ENCRYPTION='Y') ENCRYPTION='Y';")
+		dbt.MustExec("insert into t values ('this is secret');")
+
+		rows := dbt.MustQuery("select table_name, create_options from information_schema.tables where table_schema='test' and table_name='t';")
+		ts.CheckRows(t, rows, "t ENCRYPTION='Y'")
+
+		rows = dbt.MustQuery("select * from t;")
+		ts.CheckRows(t, rows, cipherSecret)
+
+		rows = dbt.MustQuery("select lower(a) from t;")
+		ts.CheckRows(t, rows, cipherSecret)
+
+		rows = dbt.MustQuery("select lower(lower(a)) from t;")
+		ts.CheckRows(t, rows, cipherSecret)
+
+		// Test binary protocol with prepared statements.
+		stmt := dbt.MustPrepare("select a from t")
+		rows = dbt.MustQueryPrepared(stmt)
+		ts.CheckRows(t, rows, cipherSecret)
+		require.NoError(t, stmt.Close())
+
+		rows = dbt.MustQuery("select column_decryption(a) from t;")
+		ts.CheckRows(t, rows, "this is secret")
+
+		rows = dbt.MustQuery(fmt.Sprintf("select column_decryption('%s');", cipherSecret))
+		ts.CheckRows(t, rows, "this is secret")
+
+		rows = dbt.MustQuery("select concat(a,'x') from t;")
+		ts.CheckRows(t, rows, cipherSecretConcat)
+
+		rows = dbt.MustQuery("select column_decryption(concat(a,'x')) from t;")
+		ts.CheckRows(t, rows, "this is secretx")
+
+		rows = dbt.MustQuery("select concat(column_decryption(a),'x') from t;")
+		ts.CheckRows(t, rows, "this is secretx")
+
+		rows = dbt.MustQuery("show create table t;")
+		ts.CheckRows(t, rows, "t CREATE TABLE `t` (\n  `a` varchar(255) DEFAULT NULL ENCRYPTION='Y'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ENCRYPTION='Y'")
+	})
+
+	// Full type coverage with string-return decryption checks.
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set global pkdb_eal=ON")
+		defer dbt.MustExec("set global pkdb_eal=OFF")
+
+		dbt.MustExec("use test;")
+		dbt.MustExec("set time_zone = '+00:00';")
+		dbt.MustExec("drop table if exists t_all_types;")
+		dbt.MustExec("create table t_all_types (" +
+			"c_tiny tinyint ENCRYPTION='Y'," +
+			"c_small smallint ENCRYPTION='Y'," +
+			"c_medium mediumint ENCRYPTION='Y'," +
+			"c_int int ENCRYPTION='Y'," +
+			"c_big bigint ENCRYPTION='Y'," +
+			"c_float float ENCRYPTION='Y'," +
+			"c_double double ENCRYPTION='Y'," +
+			"c_decimal decimal(10,2) ENCRYPTION='Y'," +
+			"c_date date ENCRYPTION='Y'," +
+			"c_datetime datetime ENCRYPTION='Y'," +
+			"c_timestamp timestamp ENCRYPTION='Y'," +
+			"c_time time ENCRYPTION='Y'," +
+			"c_year year ENCRYPTION='Y'," +
+			"c_char char(5) ENCRYPTION='Y'," +
+			"c_varchar varchar(20) ENCRYPTION='Y'," +
+			"c_binary binary(4) ENCRYPTION='Y'," +
+			"c_varbinary varbinary(20) ENCRYPTION='Y'," +
+			"c_bit bit(8) ENCRYPTION='Y'," +
+			"c_tinyblob tinyblob ENCRYPTION='Y'," +
+			"c_blob blob ENCRYPTION='Y'," +
+			"c_mediumblob mediumblob ENCRYPTION='Y'," +
+			"c_longblob longblob ENCRYPTION='Y'," +
+			"c_text text ENCRYPTION='Y'," +
+			"c_enum enum('a','b') ENCRYPTION='Y'," +
+			"c_set set('x','y') ENCRYPTION='Y'," +
+			"c_json json ENCRYPTION='Y')")
+		dbt.MustExec("insert into t_all_types values (" +
+			"1,2,3,4,5,1.25,2.5,1234.56," +
+			"'2024-01-02','2024-01-02 03:04:05','2024-01-02 03:04:05','12:34:56',2024," +
+			"'c1234','v12345',x'01020304',x'0A0B0C',b'10101010'," +
+			"x'616263',x'646566',x'676869',x'6A6B6C'," +
+			"'textval','a','x,y',JSON_OBJECT('k', 1))")
+
+		allTypeCols := []string{
+			"c_tiny", "c_small", "c_medium", "c_int", "c_big",
+			"c_float", "c_double", "c_decimal",
+			"c_date", "c_datetime", "c_timestamp", "c_time", "c_year",
+			"c_char", "c_varchar",
+			"c_binary", "c_varbinary", "c_bit",
+			"c_tinyblob", "c_blob", "c_mediumblob", "c_longblob",
+			"c_text", "c_enum", "c_set", "c_json",
+		}
+		allTypeDecryptExprs := []string{
+			"column_decryption(c_tiny)",
+			"column_decryption(c_small)",
+			"column_decryption(c_medium)",
+			"column_decryption(c_int)",
+			"column_decryption(c_big)",
+			"column_decryption(c_float)",
+			"column_decryption(c_double)",
+			"column_decryption(c_decimal)",
+			"column_decryption(c_date)",
+			"replace(column_decryption(c_datetime), ' ', 'T')",
+			"replace(column_decryption(c_timestamp), ' ', 'T')",
+			"column_decryption(c_time)",
+			"column_decryption(c_year)",
+			"column_decryption(c_char)",
+			"column_decryption(c_varchar)",
+			"hex(column_decryption(c_binary))",
+			"hex(column_decryption(c_varbinary))",
+			"hex(column_decryption(c_bit))",
+			"hex(column_decryption(c_tinyblob))",
+			"hex(column_decryption(c_blob))",
+			"hex(column_decryption(c_mediumblob))",
+			"hex(column_decryption(c_longblob))",
+			"column_decryption(c_text)",
+			"column_decryption(c_enum)",
+			"column_decryption(c_set)",
+			"replace(column_decryption(c_json), ' ', '')",
+		}
+		allTypePlainExpected := []string{
+			"1", "2", "3", "4", "5",
+			"1.25", "2.5", "1234.56",
+			"2024-01-02", "2024-01-02T03:04:05", "2024-01-02T03:04:05", "12:34:56", "2024",
+			"c1234", "v12345",
+			"01020304", "0A0B0C", "AA",
+			"616263", "646566", "676869", "6A6B6C",
+			"textval", "a", "x,y", "{\"k\":1}",
+		}
+
+		rows := dbt.MustQuery("select " + strings.Join(allTypeCols, ", ") + " from t_all_types;")
+		cipherRows := readRowValues(t, rows)
+		require.Len(t, cipherRows, 1)
+		cipherValues := cipherRows[0]
+		require.Len(t, cipherValues, len(allTypeCols))
+
+		rows = dbt.MustQuery("select " + strings.Join(allTypeDecryptExprs, ", ") + " from t_all_types;")
+		plainRows := readRowValues(t, rows)
+		require.Len(t, plainRows, 1)
+		plainValues := plainRows[0]
+		require.Equal(t, allTypePlainExpected, plainValues)
+
+		for i, cipherVal := range cipherValues {
+			require.NotEqual(t, allTypePlainExpected[i], cipherVal)
+		}
+
+		stmt := dbt.MustPrepare("select " + strings.Join(allTypeCols, ", ") + " from t_all_types")
+		rows = dbt.MustQueryPrepared(stmt)
+		binaryRows := readRowValues(t, rows)
+		require.Equal(t, cipherRows, binaryRows)
+		require.NoError(t, stmt.Close())
+	})
+
+	// ALTER TABLE add column encryption test.
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set global pkdb_eal=ON")
+		defer dbt.MustExec("set global pkdb_eal=OFF")
+
+		dbt.MustExec("use test;")
+		dbt.MustExec("drop table if exists t_alter;")
+		dbt.MustExec("create table t_alter (id int);")
+		dbt.MustExec("alter table t_alter add column a varchar(10) ENCRYPTION='Y';")
+		dbt.MustExec("insert into t_alter values (1, 'secret');")
+
+		rows := dbt.MustQuery("select a from t_alter;")
+		ts.CheckRows(t, rows, cipherSecretShort)
+
+		rows = dbt.MustQuery("show create table t_alter;")
+		createRows := ts.Rows(t, rows)
+		require.Len(t, createRows, 1)
+		require.Contains(t, createRows[0], "ENCRYPTION='Y'")
+	})
+
+	// ENCRYPTION='N' should not show or encrypt.
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set global pkdb_eal=ON")
+		defer dbt.MustExec("set global pkdb_eal=OFF")
+
+		dbt.MustExec("use test;")
+		dbt.MustExec("drop table if exists t_off;")
+		dbt.MustExec("create table t_off (a varchar(10) ENCRYPTION='N') ENCRYPTION='N';")
+		dbt.MustExec("insert into t_off values ('secret');")
+
+		rows := dbt.MustQuery("show create table t_off;")
+		createRows := ts.Rows(t, rows)
+		require.Len(t, createRows, 1)
+		require.False(t, strings.Contains(createRows[0], "ENCRYPTION='Y'"))
+		require.False(t, strings.Contains(createRows[0], "ENCRYPTION='N'"))
+
+		rows = dbt.MustQuery("select create_options from information_schema.tables where table_schema='test' and table_name='t_off';")
+		ts.CheckRows(t, rows, "")
+
+		rows = dbt.MustQuery("select a from t_off;")
+		ts.CheckRows(t, rows, "secret")
+	})
+
+	// ENCRYPTION='Y' should error when pkdb_eal is OFF.
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set global pkdb_eal=OFF")
+
+		dbt.MustExec("use test;")
+		dbt.MustExec("drop table if exists t_eal_off;")
+
+		_, err := dbt.GetDB().Exec("create table t_eal_off (a varchar(10) ENCRYPTION='Y') ENCRYPTION='Y';")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "pkdb_eal is off")
+
+		dbt.MustExec("create table t_eal_off (a varchar(10));")
+		_, err = dbt.GetDB().Exec("alter table t_eal_off add column b varchar(10) ENCRYPTION='Y';")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "pkdb_eal is off")
+	})
+}

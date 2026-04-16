@@ -1146,6 +1146,31 @@ func (*SchemaTracker) CreateSequence(_ sessionctx.Context, _ *ast.CreateSequence
 	return nil
 }
 
+// CreateTrigger implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) CreateTrigger(_ sessionctx.Context, _ *ast.CreateTriggerStmt) error {
+	return nil
+}
+
+// DropTrigger implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) DropTrigger(_ sessionctx.Context, _ *ast.DropTriggerStmt) error {
+	return nil
+}
+
+// CreateProcedure implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) CreateProcedure(_ sessionctx.Context, _ *ast.CreateProcedureInfo) error {
+	return nil
+}
+
+// DropProcedure implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) DropProcedure(_ sessionctx.Context, _ *ast.DropProcedureStmt) error {
+	return nil
+}
+
+// AlterProcedure implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) AlterProcedure(_ sessionctx.Context, _ *ast.AlterProcedureStmt) error {
+	return nil
+}
+
 // DropSequence implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) DropSequence(_ sessionctx.Context, _ *ast.DropSequenceStmt) (err error) {
 	return nil

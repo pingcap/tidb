@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -84,6 +85,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/automaxprocs/maxprocs"
@@ -413,6 +415,23 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	var err error
 	storage, err := kvstore.New(fullPath)
 	terror.MustNil(err)
+	if tikvStore, ok := storage.(kv.StorageWithPD); ok {
+		// Obtain a fresh TS right after the TiKV store (and PD client) is created.
+		// It's later used as the safePoint parameter for resolve-locks after PD
+		// disables standby mode (enables writes) and TiDB restarts.
+		pdCli := tikvStore.GetPDClient()
+		if pdCli != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			p, l, err := pdCli.GetTS(ctx)
+			if err != nil {
+				log.Warn("failed to get startup ts for log replication resolve-locks", zap.Error(err))
+			} else {
+				ts := oracle.ComposeTS(p, l)
+				pkdbrepl.SetLogReplResolveLocksSafePoint(ts)
+			}
+		}
+	}
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
@@ -781,6 +800,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
 	variable.SetSysVar(variable.TiDBConstraintCheckInPlacePessimistic, variable.BoolToOnOff(cfg.PessimisticTxn.ConstraintCheckInPlacePessimistic))
+	variable.SetSysVar(variable.PKDBEnableWhitelist, variable.BoolToOnOff(cfg.Security.EnableWhiteListPlugin))
 	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}

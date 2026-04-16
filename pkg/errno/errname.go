@@ -1117,7 +1117,10 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMixOfGroupFuncAndFieldsIncompatible: mysql.Message("In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by", nil),
 	ErrUnsupportedSecondArgumentType:       mysql.Message("JSON_OBJECTAGG: unsupported second argument type %v", nil),
 	ErrColumnNotMatched:                    mysql.Message("Load data: unmatched columns", nil),
-	ErrRowLabelUnAccessible:                mysql.Message("This row has a unaccessible label, row label [%s], user lbael [%s]", nil),
+	ErrRowLabelUnAccessible:                mysql.Message("This row has a unaccessible label, row label [%s], user label [%s]", nil),
+	ErrLBACInvalid:                         mysql.Message("%s", nil),
+	ErrLBACNotFound:                        mysql.Message("%s not found", nil),
+	ErrLBACAlreadyExists:                   mysql.Message("%s already exists", nil),
 	ErrLockExpire:                          mysql.Message("TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction", nil),
 	ErrTableOptionUnionUnsupported:         mysql.Message("CREATE/ALTER table with union option is not supported", nil),
 	ErrTableOptionInsertMethodUnsupported:  mysql.Message("CREATE/ALTER table with insert method option is not supported", nil),
@@ -1170,6 +1173,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrTableGroupNotSupported:         mysql.Message("Tablegroup not supported, reason: %-.192s", nil),
 	ErrTableGroupPartitionNumNotMatch: mysql.Message("Tablegroup partitions count not match", nil),
 	ErrDuplicateTable:                 mysql.Message("Duplicate table name '%-.192s'", nil),
+
+	// Enterprise Edit errors.
+	ErrInvalidValueOfType: mysql.Message("Invalid %s value", nil),
+
+	// Enterprise Edit errors.
+	ErrProcedureDisabled: mysql.Message("Stored procedures are disabled. To enable, run `SET GLOBAL tidb_enable_procedure = ON`", nil),
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:           mysql.Message("PD server timeout: %s", nil),

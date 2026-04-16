@@ -76,7 +76,9 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 
 	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
-	// TODO: this part should be removed once we don't support the static pruning mode.
+	// Expand logical-table stats requests to concrete partitions when pruning has already determined the
+	// effective partition set. Today this covers both static partition pruning and selected partition stats
+	// under dynamic pruning.
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
 	if len(histNeededItems) == 0 {
 		return plan, planChanged, nil

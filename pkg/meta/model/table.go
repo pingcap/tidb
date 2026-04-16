@@ -97,6 +97,48 @@ var ExtraHandleName = model.NewCIStr("_tidb_rowid")
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
 
+var (
+	lowerCaseTableNames int32 = 2
+	// NameAsID returns the name according to the lower_case_table_names setting.
+	NameAsID = ciStrLower
+	// NameEqual checks whether two table names are equal according to the lower_case_table_names setting.
+	NameEqual = ciStrEqLower
+)
+
+func ciStrLower(s model.CIStr) string {
+	return s.L
+}
+
+func ciStrOrigin(s model.CIStr) string {
+	return s.O
+}
+
+func ciStrEqLower(a, b model.CIStr) bool {
+	return a.L == b.L
+}
+
+func ciStrEqOrigin(a, b model.CIStr) bool {
+	return a.O == b.O
+}
+
+// SetLowerCaseTableNamesOnBootstrap initialize the lowerCaseTableNames value on bootstrap.
+func SetLowerCaseTableNamesOnBootstrap(val int) {
+	lowerCaseTableNames = int32(val)
+	switch val {
+	case 0:
+		NameAsID = ciStrOrigin
+		NameEqual = ciStrEqOrigin
+	case 1, 2:
+		NameAsID = ciStrLower
+		NameEqual = ciStrEqLower
+	}
+}
+
+// GetLowerCaseTableNames loads the lowerCaseTableNames value.
+func GetLowerCaseTableNames() int {
+	return int(lowerCaseTableNames)
+}
+
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
@@ -177,6 +219,8 @@ type TableInfo struct {
 
 	Sequence *SequenceInfo `json:"sequence"`
 
+	Triggers []*TriggerInfo `json:"triggers,omitempty"`
+
 	// Lock represent the table lock info.
 	Lock *TableLockInfo `json:"Lock"`
 
@@ -201,6 +245,9 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
+	// SecurityPolicy represents the LBAC security policy for this table
+	SecurityPolicy *model.CIStr `json:"security_policy,omitempty"`
+
 	// Affinity stores the affinity info for the table
 	// If it is nil, it means no affinity
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
@@ -218,11 +265,23 @@ type TableInfo struct {
 	StorageClassTier string `json:"storage_class_tier,omitempty"`
 	// StorageClassTransitions is the storage class transition rules of the table level.
 	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
+
+	Encryption bool `json:"encryption,omitempty"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
 func (t *TableInfo) SepAutoInc() bool {
 	return t.Version >= TableInfoVersion5 && t.AutoIDCache == 1
+}
+
+// GetSecurityLabelColumnID returns the row-level security label column ID, or 0 if absent.
+func (t *TableInfo) GetSecurityLabelColumnID() int64 {
+	for _, col := range t.Columns {
+		if col != nil && col.FieldType.IsSecurityLabel() {
+			return col.ID
+		}
+	}
+	return 0
 }
 
 // GetPartitionInfo returns the partition information.
@@ -241,6 +300,10 @@ func (t *TableInfo) GetUpdateTime() time.Time {
 // Clone clones TableInfo.
 func (t *TableInfo) Clone() *TableInfo {
 	nt := *t
+	if t.SecurityPolicy != nil {
+		securityPolicy := *t.SecurityPolicy
+		nt.SecurityPolicy = &securityPolicy
+	}
 	nt.Columns = make([]*ColumnInfo, len(t.Columns))
 	nt.Indices = make([]*IndexInfo, len(t.Indices))
 	nt.ForeignKeys = nil
@@ -265,6 +328,13 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
+	}
+
+	if len(t.Triggers) > 0 {
+		nt.Triggers = make([]*TriggerInfo, len(t.Triggers))
+		for i := range t.Triggers {
+			nt.Triggers[i] = t.Triggers[i].Clone()
+		}
 	}
 
 	if t.Affinity != nil {
@@ -607,6 +677,11 @@ func (t *TableInfo) FindColumnByName(name string) *ColumnInfo {
 	return nil
 }
 
+// NameAsID returns the name according to the lower_case_table_names setting.
+func (t *TableInfo) NameAsID() string {
+	return NameAsID(t.Name)
+}
+
 // FindFKInfoByName finds FKInfo in fks by lowercase name.
 func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 	for _, fk := range fks {
@@ -806,6 +881,37 @@ type SequenceInfo struct {
 	Increment  int64  `json:"sequence_increment"`
 	CacheValue int64  `json:"sequence_cache_value"`
 	Comment    string `json:"sequence_comment"`
+}
+
+// TriggerInfo provides meta data describing a DB trigger.
+type TriggerInfo struct {
+	Name      model.CIStr        `json:"trigger_name"`
+	Timing    ast.TriggerTiming  `json:"timing"`
+	Event     ast.TriggerEvent   `json:"event"`
+	Table     model.CIStr        `json:"table"`
+	Order     ast.TriggerOrder   `json:"order"`
+	CreateSQL string             `json:"create_sql"`
+	Body      string             `json:"body"`
+	Definer   *auth.UserIdentity `json:"definer"`
+	State     SchemaState        `json:"state"`
+	SQLMode   mysql.SQLMode      `json:"sql_mode"`
+
+	CharacterSetClient  string `json:"charset_client"`
+	CollationConnection string `json:"collation_connection"`
+	DatabaseCollation   string `json:"database_collation"`
+	CreatedTimestamp    uint64 `json:"created_timestamp"`
+}
+
+// Clone clones TriggerInfo.
+func (t *TriggerInfo) Clone() *TriggerInfo {
+	nt := *t
+	if t.Definer != nil {
+		nt.Definer = &auth.UserIdentity{
+			Username: t.Definer.Username,
+			Hostname: t.Definer.Hostname,
+		}
+	}
+	return &nt
 }
 
 // ExchangePartitionInfo provides exchange partition info.

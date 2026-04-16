@@ -2481,6 +2481,13 @@ const (
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
 	AdminLBACEnable
+	AdminCreateLogReplication
+	AdminAlterLogReplication
+	AdminPauseLogReplication
+	AdminResumeLogReplication
+	AdminDropLogReplication
+	AdminSwitchOverPrimary
+	AdminActivateStandby
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2606,6 +2613,15 @@ type AdminStmt struct {
 	LimitSimple     LimitSimple
 	BDRRole         BDRRole
 	AlterJobOptions []*AlterJobOption
+
+	// pkdb
+	CreateLogReplication *CreateLogReplication
+	AlterLogReplication  *AlterLogReplication
+	PauseLogReplication  *PauseLogReplication
+	ResumeLogReplication *ResumeLogReplication
+	DropLogReplication   *DropLogReplication
+	SwitchOverPrimary    *SwitchOverPrimary
+	ActivateStandby      *ActivateStandby
 }
 
 // Restore implements Node interface.
@@ -2780,6 +2796,34 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 			if err := option.Restore(ctx); err != nil {
 				return errors.Annotatef(err, "An error occurred while restore AdminStmt.AlterJobOptions[%d]", i)
 			}
+		}
+	case AdminCreateLogReplication:
+		if err := n.CreateLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.CreateLogReplication")
+		}
+	case AdminAlterLogReplication:
+		if err := n.AlterLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.AlterLogReplication")
+		}
+	case AdminPauseLogReplication:
+		if err := n.PauseLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.PauseLogReplication")
+		}
+	case AdminResumeLogReplication:
+		if err := n.ResumeLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.ResumeLogReplication")
+		}
+	case AdminDropLogReplication:
+		if err := n.DropLogReplication.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.DropLogReplication")
+		}
+	case AdminSwitchOverPrimary:
+		if err := n.SwitchOverPrimary.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.SwitchOverPrimary")
+		}
+	case AdminActivateStandby:
+		if err := n.ActivateStandby.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.ActivateStandby")
 		}
 	default:
 		return errors.New("Unsupported AdminStmt type")

@@ -47,25 +47,40 @@ type PessimisticRRTxnContextProvider struct {
 
 // NewPessimisticRRTxnContextProvider returns a new PessimisticRRTxnContextProvider
 func NewPessimisticRRTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) *PessimisticRRTxnContextProvider {
-	provider := &PessimisticRRTxnContextProvider{
-		basePessimisticTxnContextProvider: basePessimisticTxnContextProvider{
-			baseTxnContextProvider: baseTxnContextProvider{
-				sctx:                  sctx,
-				causalConsistencyOnly: causalConsistencyOnly,
-				onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
-					txnCtx.IsPessimistic = true
-					txnCtx.Isolation = ast.RepeatableRead
-				},
-				onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
-					txn.SetOption(kv.Pessimistic, true)
-				},
+	base := basePessimisticTxnContextProvider{
+		baseTxnContextProvider: baseTxnContextProvider{
+			sctx:                  sctx,
+			causalConsistencyOnly: causalConsistencyOnly,
+			onInitializeTxnCtx: func(txnCtx *variable.TransactionContext) {
+				txnCtx.IsPessimistic = true
+				txnCtx.Isolation = ast.RepeatableRead
+			},
+			onTxnActiveFunc: func(txn kv.Transaction, _ sessiontxn.EnterNewTxnType) {
+				txn.SetOption(kv.Pessimistic, true)
 			},
 		},
 	}
+	return newPessimisticRRTxnContextProvider(base)
+}
 
+func newPessimisticRRTxnContextProvider(base basePessimisticTxnContextProvider) *PessimisticRRTxnContextProvider {
+	provider := &PessimisticRRTxnContextProvider{
+		basePessimisticTxnContextProvider: base,
+	}
 	provider.getStmtReadTSFunc = provider.getTxnStartTS
 	provider.getStmtForUpdateTSFunc = provider.getForUpdateTs
+	return provider
+}
 
+// NewPessimisticRRTxnContextProviderFromRC returns a new rr provider from rc.
+func NewPessimisticRRTxnContextProviderFromRC(rc *PessimisticRCTxnContextProvider) sessiontxn.TxnContextProvider {
+	base := rc.basePessimisticTxnContextProvider
+	base.onInitializeTxnCtx = func(txnCtx *variable.TransactionContext) {
+		txnCtx.IsPessimistic = true
+		txnCtx.Isolation = ast.RepeatableRead
+	}
+	base.onInitializeTxnCtx(rc.sctx.GetSessionVars().TxnCtx)
+	provider := newPessimisticRRTxnContextProvider(base)
 	return provider
 }
 

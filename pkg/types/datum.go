@@ -28,6 +28,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/antchfx/xmlquery"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1031,6 +1032,12 @@ func (d *Datum) ConvertTo(ctx Context, target *FieldType) (Datum, error) {
 	}
 	switch target.GetType() { // TODO: implement mysql types convert when "CAST() AS" syntax are supported.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		switch target.GetSubType() {
+		case mysql.SubTypeIntervalYearToMonth:
+			return d.convertToIntervalYearToMonth(target)
+		case mysql.SubTypeIntervalDayToSecond:
+			return d.convertToIntervalDayToSecond(target)
+		}
 		unsigned := mysql.HasUnsignedFlag(target.GetFlag())
 		if unsigned {
 			return d.convertToUint(ctx, target)
@@ -1038,8 +1045,13 @@ func (d *Datum) ConvertTo(ctx Context, target *FieldType) (Datum, error) {
 		return d.convertToInt(ctx, target)
 	case mysql.TypeFloat, mysql.TypeDouble:
 		return d.convertToFloat(ctx, target)
-	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+		return d.convertToString(ctx, target)
+	case mysql.TypeLongBlob:
+		if target.GetSubType() == mysql.SubTypeXML {
+			return d.convertToXML()
+		}
 		return d.convertToString(ctx, target)
 	case mysql.TypeTimestamp:
 		return d.convertToMysqlTimestamp(ctx, target)
@@ -1058,6 +1070,9 @@ func (d *Datum) ConvertTo(ctx Context, target *FieldType) (Datum, error) {
 	case mysql.TypeSet:
 		return d.convertToMysqlSet(ctx, target)
 	case mysql.TypeJSON:
+		if target.GetSubType() == mysql.SubTypeArray {
+			return d.convertToArray()
+		}
 		return d.convertToMysqlJSON(target)
 	case mysql.TypeTiDBVectorFloat32:
 		return d.convertToVectorFloat32(ctx, target)
@@ -1863,6 +1878,126 @@ func (d *Datum) convertToMysqlJSON(_ *FieldType) (ret Datum, err error) {
 		}
 	}
 	return ret, errors.Trace(err)
+}
+
+func (d *Datum) convertToArray() (ret Datum, err error) {
+	switch d.k {
+	case KindMysqlJSON:
+		j := d.GetMysqlJSON()
+		if j.TypeCode != JSONTypeCodeArray {
+			return ret, errors.Trace(ErrInvalidArrayValue)
+		}
+		ret.SetMysqlJSON(j)
+	case KindString, KindBytes:
+		var j BinaryJSON
+		j, err = ParseBinaryJSONFromString(d.GetString())
+		if err != nil {
+			if ErrInvalidJSONText.Equal(err) {
+				err = ErrInvalidArrayValue
+			}
+			return ret, errors.Trace(err)
+		}
+		if j.TypeCode != JSONTypeCodeArray {
+			return ret, errors.Trace(ErrInvalidArrayValue)
+		}
+		ret.SetMysqlJSON(j)
+	default:
+		err = ErrInvalidArrayValue
+	}
+	return ret, errors.Trace(err)
+}
+
+func (d *Datum) convertToXML() (ret Datum, err error) {
+	switch d.k {
+	case KindString, KindBytes:
+		value := d.GetString()
+		_, err = xmlquery.Parse(strings.NewReader(value))
+		if err != nil {
+			return ret, ErrInvalidXMLValue
+		}
+		ret.SetString(value, mysql.DefaultCollationName)
+	default:
+		err = ErrInvalidXMLValue
+	}
+	return ret, errors.Trace(err)
+}
+
+func (d *Datum) convertToIntervalYearToMonth(target *FieldType) (ret Datum, err error) {
+	p := target.GetFlen()
+	if p < 1 {
+		// The stored metadata is inconsistent. Treat it as wrong value.
+		return ret, errors.Trace(ErrInvalidIntervalValue)
+	}
+
+	// Accept the internal int representation as well (total months) because expression evaluation
+	// may pre-cast constants to the column's base integer type.
+	switch d.k {
+	case KindInt64:
+		totalMonths := d.GetInt64()
+		if !validateIntervalYearToMonthTotalMonths(totalMonths, p) {
+			return ret, errors.Trace(ErrInvalidIntervalValue)
+		}
+		ret.SetInt64(totalMonths)
+	case KindUint64:
+		// Interval columns are signed. Accept uint only when it can be represented as int64.
+		u := d.GetUint64()
+		if u > uint64(math.MaxInt64) {
+			return ret, errors.Trace(ErrInvalidIntervalValue)
+		}
+		totalMonths := int64(u)
+		if !validateIntervalYearToMonthTotalMonths(totalMonths, p) {
+			return ret, errors.Trace(ErrInvalidIntervalValue)
+		}
+		ret.SetInt64(totalMonths)
+	case KindString, KindBytes:
+		v, err := convertIntervalYearToMonthStringToInt(d.GetString(), p)
+		if err != nil {
+			return ret, err
+		}
+		ret.SetInt64(v)
+	default:
+		err = ErrInvalidIntervalValue
+	}
+	return ret, err
+}
+
+func (d *Datum) convertToIntervalDayToSecond(target *FieldType) (ret Datum, err error) {
+	p := target.GetFlen()
+	if p < 1 {
+		// The stored metadata is inconsistent. Treat it as wrong value.
+		return ret, errors.Trace(ErrInvalidIntervalValue)
+	}
+
+	// Accept the internal int representation as well (total seconds) because expression evaluation
+	// may pre-cast constants to the column's base integer type.
+	switch d.k {
+	case KindInt64:
+		totalSeconds := d.GetInt64()
+		if !validateIntervalDayToSecondTotalSeconds(totalSeconds, p) {
+			return ret, errors.Trace(ErrInvalidIntervalValue)
+		}
+		ret.SetInt64(totalSeconds)
+	case KindUint64:
+		// Interval columns are signed. Accept uint only when it can be represented as int64.
+		u := d.GetUint64()
+		if u > uint64(math.MaxInt64) {
+			return ret, errors.Trace(ErrInvalidIntervalValue)
+		}
+		totalSeconds := int64(u)
+		if !validateIntervalDayToSecondTotalSeconds(totalSeconds, p) {
+			return ret, errors.Trace(ErrInvalidIntervalValue)
+		}
+		ret.SetInt64(totalSeconds)
+	case KindString, KindBytes:
+		totalSeconds, err := convertIntervalDayToSecondStringToInt(d.GetString(), p)
+		if err != nil {
+			return ret, err
+		}
+		ret.SetInt64(totalSeconds)
+	default:
+		err = ErrInvalidIntervalValue
+	}
+	return ret, err
 }
 
 func (d *Datum) convertToVectorFloat32(_ Context, target *FieldType) (ret Datum, err error) {

@@ -80,6 +80,9 @@ func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (tikvAv
 		if err != nil {
 			return 0, 0, errors.Trace(err)
 		}
+		if engine.IsReplicatorHTTPResp(&store.Store) {
+			continue
+		}
 		if engine.IsTiFlashHTTPResp(&store.Store) {
 			tiflashAvail += uint64(avail)
 		} else {

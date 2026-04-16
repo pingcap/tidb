@@ -787,6 +787,9 @@ var funcs = map[string]functionClass{
 	ast.InsertFunc:      &insertFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
 	ast.Instr:           &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
 	ast.LabelAceesible:  &labelAccessibleFunctionClass{baseFunctionClass{ast.LabelAceesible, 2, 2}},
+	ast.Seclabel:        &seclabelFunctionClass{baseFunctionClass{ast.Seclabel, 2, 2}},
+	ast.SeclabelToChar:  &seclabelToCharFunctionClass{baseFunctionClass{ast.SeclabelToChar, 2, 2}},
+	ast.LBACDominates:   &lbacDominatesFunctionClass{baseFunctionClass{ast.LBACDominates, 2, 2}},
 	ast.Lcase:           &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:            &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
 	ast.Length:          &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},
@@ -973,6 +976,10 @@ var funcs = map[string]functionClass{
 	ast.JSONKeys:          &jsonKeysFunctionClass{baseFunctionClass{ast.JSONKeys, 1, 2}},
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
 
+	// PingKaiDB Enterprise Edit functions
+	ast.ArrayElementAt: &arrayElementFunctionClass{baseFunctionClass{ast.ArrayElementAt, 2, -1}},
+	ast.ExtractValue:   &extractValueFunctionClass{baseFunctionClass{ast.ExtractValue, 2, 2}},
+
 	// vector functions (TiDB extension)
 	ast.VecDims:                 &vecDimsFunctionClass{baseFunctionClass{ast.VecDims, 1, 1}},
 	ast.VecL1Distance:           &vecL1DistanceFunctionClass{baseFunctionClass{ast.VecL1Distance, 2, 2}},
@@ -1002,6 +1009,7 @@ var funcs = map[string]functionClass{
 	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
 	ast.TiDBEncodeSQLDigest:  &tidbEncodeSQLDigestFunctionClass{baseFunctionClass{ast.TiDBEncodeSQLDigest, 1, 1}},
 	ast.DataOperationAudit:   &dataOpAuditFunctionClass{baseFunctionClass{ast.DataOperationAudit, 5, 5}},
+	ast.ColumnDecryption:     &ColumnDecryptionFunctionClass{baseFunctionClass{ast.ColumnDecryption, 1, 1}},
 
 	// TiDB Sequence function.
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},

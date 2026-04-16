@@ -97,7 +97,9 @@ const (
 	tablePlugins    = "PLUGINS"
 	// TableConstraints is the string constant of TABLE_CONSTRAINTS.
 	TableConstraints = "TABLE_CONSTRAINTS"
-	tableTriggers    = "TRIGGERS"
+	// TableTriggers is the string constant of TRIGGERS.
+	TableTriggers = "TRIGGERS"
+	tableTriggers = TableTriggers
 	// TableUserPrivileges is the string constant of infoschema user privilege table.
 	TableUserPrivileges = "USER_PRIVILEGES"
 	// TableSchemaPrivileges provides information about schema privileges
@@ -236,6 +238,14 @@ const (
 	TableTableGroupStatus = "TABLEGROUP_STATUS"
 	// TableRegions is the string constant of table regions.
 	TableRegions = "TABLE_REGIONS"
+	// TableLogReplStatusGlobal is the table to show the global log replication status.
+	TableLogReplStatusGlobal = "LR_STATUS_GLOBAL"
+	// TableLogReplClusterStatusGlobal is the table to show the global log replication cluster status.
+	TableLogReplClusterStatusGlobal = "LR_CLUSTER_STATUS_GLOBAL"
+	// TableLogReplWorkflowHistoryGlobal is the table to show the global workflow history.
+	TableLogReplWorkflowHistoryGlobal = "LR_WORKFLOW_HISTORY_GLOBAL"
+	// TableLogReplStatusLocal is the table to show the local log replication status.
+	TableLogReplStatusLocal = "LR_STATUS_LOCAL"
 )
 
 const (
@@ -2527,6 +2537,10 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTableGroups:                        tablegroupsCols,
 	TableTableGroupStatus:                   tablegroupStatusCols,
 	TableRegions:                            TableRegionsCols,
+	TableLogReplStatusGlobal:                TableLogReplStatusGlobalCols,
+	TableLogReplClusterStatusGlobal:         TableLogReplClusterStatusGlobalCols,
+	TableLogReplWorkflowHistoryGlobal:       TableLogReplWorkflowHistoryGlobalCols,
+	TableLogReplStatusLocal:                 TableLogReplStatusLocalCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

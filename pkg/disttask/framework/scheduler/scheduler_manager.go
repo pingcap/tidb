@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -197,6 +198,7 @@ func (sm *Manager) scheduleTaskLoop() {
 	ticker := time.NewTicker(CheckTaskRunningInterval)
 	defer ticker.Stop()
 	for {
+		pkdbrepl.CheckStandbyBlocking(sm.ctx)
 		select {
 		case <-sm.ctx.Done():
 			sm.logger.Info("schedule task loop exits")
@@ -444,6 +446,7 @@ func (sm *Manager) collectLoop() {
 	ticker := time.NewTicker(defaultCollectMetricsInterval)
 	defer ticker.Stop()
 	for {
+		pkdbrepl.CheckStandbyBlocking(sm.ctx)
 		select {
 		case <-sm.ctx.Done():
 			sm.logger.Info("collect loop exits")

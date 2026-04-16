@@ -220,6 +220,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtDB:              vars.CurrentDB,
 		StmtText:            paramSQL,
 		VisitInfos:          destBuilder.GetVisitInfo(),
+		LBACVisitInfos:      destBuilder.GetLBACVisitInfo(),
 		NormalizedSQL:       normalizedSQL,
 		SQLDigest:           digest,
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
@@ -1090,11 +1091,12 @@ type PointGetExecutorCache struct {
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
-	PreparedAst *ast.Prepared
-	ResolveCtx  *resolve.Context
-	StmtDB      string // which DB the statement will be processed over
-	VisitInfos  []visitInfo
-	Params      []ast.ParamMarkerExpr
+	PreparedAst    *ast.Prepared
+	ResolveCtx     *resolve.Context
+	StmtDB         string // which DB the statement will be processed over
+	VisitInfos     []visitInfo
+	LBACVisitInfos []ColumnVisitInfo
+	Params         []ast.ParamMarkerExpr
 
 	PointGet PointGetExecutorCache
 	StmtPlan CacheStmtPlan

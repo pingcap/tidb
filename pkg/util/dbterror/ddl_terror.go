@@ -447,6 +447,25 @@ var (
 	// ErrNoReferencedRow2 returns when there are rows in child table don't have related foreign key value in refer table.
 	ErrNoReferencedRow2 = ClassDDL.NewStd(mysql.ErrNoReferencedRow2)
 
+	// ErrSpBadreturn returns when a return statement is specified in non-function routine.
+	ErrSpBadreturn = ClassDDL.NewStd(mysql.ErrSpBadreturn)
+	// ErrSpBadstatement returns when there is an unsupported statement in the routine body.
+	ErrSpBadstatement = ClassDDL.NewStd(mysql.ErrSpBadstatement)
+	// ErrTrgAlreadyExists returns when trigger already exists.
+	ErrTrgAlreadyExists = ClassDDL.NewStd(mysql.ErrTrgAlreadyExists)
+	// ErrTrgDoesNotExist returns when trigger does not exist.
+	ErrTrgDoesNotExist = ClassDDL.NewStd(mysql.ErrTrgDoesNotExist)
+	// ErrNoTriggersOnSystemSchema returns when creating trigger on system database.
+	ErrNoTriggersOnSystemSchema = ClassDDL.NewStd(mysql.ErrNoTriggersOnSystemSchema)
+	// ErrTrgCantChangeRow returns when a trigger tries to change a row that is not in the trigger's context.
+	ErrTrgCantChangeRow = ClassDDL.NewStd(mysql.ErrTrgCantChangeRow)
+	// ErrTrgNoSuchRowInTrg returns when there is no such row in trigger.
+	ErrTrgNoSuchRowInTrg = ClassDDL.NewStd(mysql.ErrTrgNoSuchRowInTrg)
+	// ErrTrgOnViewOrTempTable returns when creating trigger on view or temporary table.
+	ErrTrgOnViewOrTempTable = ClassDDL.NewStd(mysql.ErrTrgOnViewOrTempTable)
+	// ErrTrgInWrongSchema returns when trigger and table are in different databases.
+	ErrTrgInWrongSchema = ClassDDL.NewStd(mysql.ErrTrgInWrongSchema)
+
 	// ErrUnsupportedColumnInTTLConfig returns when a column type is not expected in TTL config
 	ErrUnsupportedColumnInTTLConfig = ClassDDL.NewStd(mysql.ErrUnsupportedColumnInTTLConfig)
 	// ErrTTLColumnCannotDrop returns when a column is dropped while referenced by TTL config

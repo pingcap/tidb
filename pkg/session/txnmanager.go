@@ -384,3 +384,54 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 func (m *txnManager) SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error {
 	return m.ctxProvider.SetOptionsBeforeCommit(txn, commitTSChecker)
 }
+
+// ChangeIsolationInTxn is called when the transaction isolation level is changed within the txn.
+func (m *txnManager) ChangeIsolationInTxn() {
+	sessVars := m.sctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	if m.ctxProvider == nil ||
+		txnCtx.IsStaleness ||
+		txnCtx.StaleReadTs > 0 ||
+		sessVars.TxnMode != ast.Pessimistic {
+		return
+	}
+
+	oldIsolationLevel := txnCtx.Isolation
+	newIsolationLevel := sessVars.TakeIsolationLevelOneShotInTxn()
+	if newIsolationLevel == "" || newIsolationLevel == oldIsolationLevel {
+		return
+	}
+
+	var newTxnProvider sessiontxn.TxnContextProvider
+	switch v := m.ctxProvider.(type) {
+	case *isolation.PessimisticRCTxnContextProvider:
+		if newIsolationLevel == ast.RepeatableRead {
+			newTxnProvider = isolation.NewPessimisticRRTxnContextProviderFromRC(v)
+		}
+	case *isolation.PessimisticRRTxnContextProvider:
+		if newIsolationLevel == ast.ReadCommitted {
+			var err error
+			newTxnProvider, err = isolation.NewPessimisticRCTxnContextProviderFromRR(v)
+			if err != nil {
+				logutil.BgLogger().Info("isolation change in txn failed",
+					zap.Uint64("start_ts", txnCtx.StartTS),
+					zap.String("from", oldIsolationLevel),
+					zap.String("to", newIsolationLevel),
+					zap.Error(err))
+			}
+		}
+	default:
+		// just ignore it.
+		return
+	}
+
+	if newTxnProvider == nil {
+		return
+	}
+	m.ctxProvider = newTxnProvider
+	m.recordEvent("isolation change to " + newIsolationLevel)
+	logutil.BgLogger().Info("isolation change within the txn",
+		zap.Uint64("start_ts", txnCtx.StartTS),
+		zap.String("old", oldIsolationLevel),
+		zap.String("new", newIsolationLevel))
+}

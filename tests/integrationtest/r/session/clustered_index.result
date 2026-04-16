@@ -521,13 +521,13 @@ select tidb_pk_type from information_schema.tables where table_schema = 'session
 tidb_pk_type
 CLUSTERED
 create table t (a varchar(255) unique key clustered);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near "clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near "clustered)" 
 create table t (a varchar(255), foreign key (a) reference t1(a) clustered);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "reference t1(a) clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "reference t1(a) clustered)" 
 create table t (a varchar(255), foreign key (a) clustered reference t1(a));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "clustered reference t1(a));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "clustered reference t1(a))" 
 create table t (a varchar(255) clustered);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "clustered)" 
 create table t (a varchar(255), unique key(a) clustered);
 Error 8200 (HY000): CLUSTERED/NONCLUSTERED keyword is only supported for primary key
 create table t (a varchar(255), unique key(a) nonclustered);
@@ -616,13 +616,13 @@ select tidb_pk_type from information_schema.tables where table_schema = 'session
 tidb_pk_type
 CLUSTERED
 create table t (a varchar(255) unique key clustered);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near "clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near "clustered)" 
 create table t (a varchar(255), foreign key (a) reference t1(a) clustered);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "reference t1(a) clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "reference t1(a) clustered)" 
 create table t (a varchar(255), foreign key (a) clustered reference t1(a));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "clustered reference t1(a));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "clustered reference t1(a))" 
 create table t (a varchar(255) clustered);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "clustered)" 
 create table t (a varchar(255), unique key(a) clustered);
 Error 8200 (HY000): CLUSTERED/NONCLUSTERED keyword is only supported for primary key
 create table t (a varchar(255), unique key(a) nonclustered);

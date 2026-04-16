@@ -949,6 +949,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if ctx.GetSessionVars().GetCallProcedure() {
 		plannercore.ResetFlagBySQLMode(sc, vars)
 	}
+	if vars.StmtCtx.TriggerCtx.InTrigger {
+		// Inherit the trigger context.
+		sc.TriggerCtx = vars.StmtCtx.TriggerCtx
+	}
 	sc.SetTimeZone(vars.Location())
 	sc.TaskID = stmtctx.AllocateTaskID()
 	if sc.CTEStorageMap == nil {

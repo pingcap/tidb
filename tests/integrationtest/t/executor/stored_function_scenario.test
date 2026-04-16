@@ -1,0 +1,133 @@
+set global tidb_enable_procedure = ON;
+
+DROP TABLE IF EXISTS salary_adjustment_logs;
+DROP TABLE IF EXISTS employees_622;
+CREATE TABLE employees_622 (
+    employee_id   INT PRIMARY KEY,        
+    first_name    VARCHAR(50),            
+    last_name     VARCHAR(50) NOT NULL,   
+    commission_pct DECIMAL(4, 2),         
+    hire_date     DATE,                   
+    job_id        VARCHAR(10),      
+    salary        DECIMAL(8, 2),    
+    manager_id    INT,              
+    department_id INT              
+);
+CREATE TABLE salary_adjustment_logs (
+    employee_id INT, 
+    salary_old DECIMAL(8,2), 
+    salary_new DECIMAL(8,2), 
+    create_time DATETIME
+);
+
+INSERT INTO employees_622 VALUES 
+(101, 'John', 'Doe', 0.15, '2020-01-01', 'IT_PROG', 5000.00, 100, 60),
+(102, 'Jane', 'Smith', 0.10, '2019-05-01', 'IT_PROG', 6000.00, 100, 60),
+(103, 'Bob', 'Johnson', NULL, '2021-03-15', 'HR_REP', 4000.00, 101, 50),
+(104, 'Alice', 'Lee', 0.12, '2018-11-30', 'IT_PROG', 5500.00, 100, 60),
+(105, 'Tom', 'Wilson', 0.08, '2022-02-20', 'IT_PROG', 4500.00, 100, 60);
+
+DELIMITER $$
+
+CREATE FUNCTION to_date(date_str VARCHAR(20), format_str VARCHAR(20))
+RETURNS DATE
+BEGIN
+    SET format_str = REPLACE(REPLACE(REPLACE(format_str, 
+        'YYYY', '%Y'), 
+        'MM', '%m'), 
+        'DD', '%d');
+    RETURN STR_TO_DATE(date_str, format_str);
+END$$
+
+CREATE PROCEDURE sp_update_hire_date(IN emp_id INT, IN new_hire_date DATE)
+BEGIN
+    UPDATE employees_622 
+    SET hire_date = new_hire_date 
+    WHERE employee_id = emp_id;
+END$$
+
+CREATE FUNCTION fn_get_department_avg_salary(dept_id INT)
+RETURNS DECIMAL(8,2)
+BEGIN
+    DECLARE avg_salary DECIMAL(8,2);
+    SELECT AVG(salary) INTO avg_salary FROM employees_622 WHERE department_id = dept_id;
+    RETURN avg_salary;
+END$$
+
+CREATE PROCEDURE sp_adjust_salary_by_department(IN dept_id INT)
+BEGIN
+    DECLARE avg_sal DECIMAL(8,2);
+    SET avg_sal = fn_get_department_avg_salary(dept_id);
+    UPDATE employees_622 SET salary = salary * 1.1 WHERE department_id = dept_id AND salary < avg_sal;
+END$$
+
+CREATE PROCEDURE sp_get_dept_salary_sum(IN emp_id INT, OUT total_salary DECIMAL(8,2))
+BEGIN
+    SELECT SUM(salary) INTO total_salary 
+    FROM employees_622 
+    WHERE department_id in (
+        select department_id from employees_622 where employee_id = emp_id);
+END$$
+
+CREATE FUNCTION fn_load_employee_salary(emp_id INT)
+RETURNS DECIMAL(8,2)
+BEGIN
+    DECLARE dept_total DECIMAL(8,2);
+
+    CALL sp_get_dept_salary_sum(emp_id, @dept_total);
+    SET dept_total = @dept_total;
+
+    RETURN dept_total;
+END$$
+
+CREATE PROCEDURE sp_log_salary_change(IN emp_id INT)
+BEGIN    
+    INSERT INTO salary_adjustment_logs (employee_id, salary_old, salary_new, create_time) 
+    select employee_id, salary, salary * 1.1, now() from employees_622 where employee_id = emp_id;
+END$$
+
+CREATE PROCEDURE sp_adjust_salary_audit(IN dept_id INT)
+BEGIN
+    DECLARE done integer DEFAULT 0;
+    DECLARE emp_id INT;
+    DECLARE emp_salary DECIMAL(8,2);
+    DECLARE avg_sal DECIMAL(8,2);
+
+    DECLARE cur1 CURSOR FOR 
+        SELECT employee_id, salary 
+        FROM employees_622
+        where department_id = dept_id AND salary < avg_sal;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = 1;
+
+    SET avg_sal = fn_get_department_avg_salary(dept_id);
+
+    OPEN cur1;  
+    data_loop: LOOP
+        FETCH cur1 INTO emp_id, emp_salary;
+
+        IF done THEN     
+            LEAVE data_loop;    
+        END IF; 
+
+        CALL sp_log_salary_change(emp_id);
+
+        UPDATE employees_622 SET salary = salary * 1.1 WHERE employee_id = emp_id;
+
+    END LOOP data_loop;
+    CLOSE cur1;
+END$$
+
+DELIMITER ;
+
+CALL sp_update_hire_date(101, to_date('2024-01-01','YYYY-MM-DD'));
+SELECT * FROM employees_622 WHERE employee_id = 101;
+
+CALL sp_adjust_salary_by_department(60);
+SELECT * FROM employees_622 WHERE department_id = 60;
+
+SELECT fn_load_employee_salary(101) AS department_total_salary;
+
+CALL sp_adjust_salary_audit(60);
+SELECT * FROM employees_622 WHERE department_id = 60;
+--replace_column 4 <create_time>
+SELECT * FROM salary_adjustment_logs;

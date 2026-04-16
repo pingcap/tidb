@@ -1925,3 +1925,88 @@ func (e *TableRegionsExtractor) GetSchemaName() pmodel.CIStr {
 func (e *TableRegionsExtractor) GetTableName() pmodel.CIStr {
 	return e.tableName
 }
+
+// LogReplStatusGlobalExtractor extracts predicates for LR_STATUS_GLOBAL table
+type LogReplStatusGlobalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplStatusGlobalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for log replication status
+	// For now, return all predicates as they cannot be pushed down
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplStatusGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
+}
+
+// LogReplClusterStatusGlobalExtractor extracts predicates for LR_CLUSTER_STATUS_GLOBAL table
+type LogReplClusterStatusGlobalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplClusterStatusGlobalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for cluster status
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplClusterStatusGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
+}
+
+// LogReplWorkflowHistoryGlobalExtractor extracts predicates for LR_WORKFLOW_HISTORY_GLOBAL table
+type LogReplWorkflowHistoryGlobalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplWorkflowHistoryGlobalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for workflow history
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplWorkflowHistoryGlobalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
+}
+
+// LogReplStatusLocalExtractor extracts predicates for LR_STATUS_LOCAL table
+type LogReplStatusLocalExtractor struct {
+	extractHelper
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (*LogReplStatusLocalExtractor) Extract(
+	_ base.PlanContext,
+	_ *expression.Schema,
+	_ []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: Implement predicate push-down for local status
+	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (*LogReplStatusLocalExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	return ""
+}
