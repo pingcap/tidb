@@ -15,6 +15,9 @@
 package join
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -155,6 +158,30 @@ func TestJoinSimplifyCondition(t *testing.T) {
 				"  ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
 				"  │ └─IndexRangeScan cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
 				"  └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"))
+
+		const largeInListThreshold = 10000
+		const largeInListLength = largeInListThreshold + 1
+		var inListBuilder strings.Builder
+		for i := 1; i <= largeInListLength; i++ {
+			if i > 1 {
+				inListBuilder.WriteByte(',')
+			}
+			inListBuilder.WriteString(strconv.Itoa(i))
+		}
+
+		rows := tk.MustQuery("explain format = 'plan_tree' select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 join t2 on t1.a = t2.a " +
+			"where t2.b = 1 or t2.c in (" + inListBuilder.String() + ")").Rows()
+		require.NotEmpty(t, rows)
+
+		// The join hint should keep this query on IndexJoin family, and the large IN-list
+		// predicate should stay at root instead of cop[tikv] on the probe side.
+		plan := fmt.Sprint(rows)
+		require.True(t,
+			strings.Contains(plan, "IndexJoin") || strings.Contains(plan, "IndexHashJoin") || strings.Contains(plan, "IndexMergeJoin"),
+			"expected index join family plan under INL_HASH_JOIN hint")
+		require.Contains(t, plan, "Selection(Probe) root")
+		require.Contains(t, plan, "or(eq(test.t2.b, 1), in(test.t2.c")
+		require.NotContains(t, plan, "Selection(Probe) cop[tikv]  or(eq(test.t2.b, 1), in(test.t2.c")
 	})
 }
 

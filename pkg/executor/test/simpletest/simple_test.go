@@ -546,7 +546,7 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_drop_gstats"), ast.NewCIStr("test_drop_gstats"))
 	require.NoError(t, err)
