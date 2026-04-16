@@ -840,8 +840,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	}
 	idxID := e.getIndexPlanRootID()
 	needMerge := needMergeSort(e.byItems, len(kvRanges))
-	activeWindowSize := e.getIndexScanActiveWindow(len(kvRanges), needMerge)
-	sharedCoprRateLimit := e.getMergeSortSharedCoprRateLimit(needMerge)
+	activeWindowSize := getIndexScanActiveWindow(len(kvRanges), needMerge)
+	sharedCoprRateLimit := getMergeSortSharedCoprRateLimit(needMerge, e.dctx.DistSQLConcurrency)
 	mergeSortIndexScanConcurrency := e.getMergeSortIndexScanConcurrency(needMerge, len(kvRanges))
 	e.idxWorkerWg.Add(1)
 	e.pool.submit(func() {
@@ -945,15 +945,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	return nil
 }
 
-func (e *IndexLookUpExecutor) getIndexScanActiveWindow(totalRanges int, needMerge bool) int {
+func getIndexScanActiveWindow(totalRanges int, needMerge bool) int {
 	const indexScanPrefetchDepth = 1
 	if totalRanges <= 1 {
 		return totalRanges
 	}
 	if needMerge {
 		// Merge-sort requires all participating SelectResults to be visible at once.
-		// In current plans, needMerge usually implies keep-order, but keep this guard
-		// independent to prevent semantic regressions if planner behavior changes.
 		return totalRanges
 	}
 	// For non-merge queries, keep a small prefetch window so only one additional
@@ -965,14 +963,14 @@ func (e *IndexLookUpExecutor) getIndexScanActiveWindow(totalRanges int, needMerg
 	return windowSize
 }
 
-func (e *IndexLookUpExecutor) getMergeSortSharedCoprRateLimit(needMerge bool) *tikvutil.RateLimit {
+func getMergeSortSharedCoprRateLimit(needMerge bool, distSQLConcurrency int) *tikvutil.RateLimit {
 	if !needMerge {
 		return nil
 	}
 	// Keep-order cop iterators historically cap in-flight tasks at 2 * concurrency.
 	// Use a statement-level shared limiter to bound aggregate in-flight cop requests
 	// across all partitions in merge-sort mode.
-	capacity := e.dctx.DistSQLConcurrency
+	capacity := distSQLConcurrency
 	if capacity < 1 {
 		capacity = 1
 	}
