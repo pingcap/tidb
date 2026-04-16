@@ -64,3 +64,95 @@ func TestStmtSummaryMetricLabels(t *testing.T) {
 	require.Equal(t, 5.0, readGaugeValue(t, StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV2)))
 	require.Equal(t, 2.0, readGaugeValue(t, StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV2)))
 }
+
+func TestGrpcChannelzCollectorSingleton(t *testing.T) {
+	cleanupGrpcChannelzCollectorForTest()
+	t.Cleanup(cleanupGrpcChannelzCollectorForTest)
+
+	func() {
+		grpcChannelzCollector.mu.Lock()
+		defer grpcChannelzCollector.mu.Unlock()
+
+		require.NoError(t, initGrpcChannelzCollectorLocked())
+		firstServer := grpcChannelzCollector.server
+		firstListener := grpcChannelzCollector.listener
+		firstConn := grpcChannelzCollector.conn
+		firstCollector := grpcChannelzCollector.collector
+
+		require.NoError(t, initGrpcChannelzCollectorLocked())
+		require.Same(t, firstServer, grpcChannelzCollector.server)
+		require.Same(t, firstListener, grpcChannelzCollector.listener)
+		require.Same(t, firstConn, grpcChannelzCollector.conn)
+		require.True(t, firstCollector == grpcChannelzCollector.collector)
+	}()
+
+	cleanupGrpcChannelzCollectorForTest()
+
+	func() {
+		grpcChannelzCollector.mu.Lock()
+		defer grpcChannelzCollector.mu.Unlock()
+
+		require.Nil(t, grpcChannelzCollector.server)
+		require.Nil(t, grpcChannelzCollector.listener)
+		require.Nil(t, grpcChannelzCollector.conn)
+		require.Nil(t, grpcChannelzCollector.collector)
+		require.False(t, grpcChannelzCollector.registered)
+	}()
+}
+
+func TestSetupChannelzCollectorRegistersOnce(t *testing.T) {
+	cleanupGrpcChannelzCollectorForTest()
+	t.Cleanup(cleanupGrpcChannelzCollectorForTest)
+
+	setupChannelzCollector()
+
+	var firstCollector prometheus.Collector
+	func() {
+		grpcChannelzCollector.mu.Lock()
+		defer grpcChannelzCollector.mu.Unlock()
+
+		firstCollector = grpcChannelzCollector.collector
+		require.NotNil(t, firstCollector)
+		require.True(t, grpcChannelzCollector.registered)
+	}()
+
+	setupChannelzCollector()
+
+	func() {
+		grpcChannelzCollector.mu.Lock()
+		defer grpcChannelzCollector.mu.Unlock()
+
+		require.True(t, firstCollector == grpcChannelzCollector.collector)
+		require.True(t, grpcChannelzCollector.registered)
+	}()
+}
+
+func TestGrpcChannelzCollectorGather(t *testing.T) {
+	cleanupGrpcChannelzCollectorForTest()
+	t.Cleanup(cleanupGrpcChannelzCollectorForTest)
+
+	var collector prometheus.Collector
+	func() {
+		grpcChannelzCollector.mu.Lock()
+		defer grpcChannelzCollector.mu.Unlock()
+
+		require.NoError(t, initGrpcChannelzCollectorLocked())
+		collector = grpcChannelzCollector.collector
+	}()
+
+	registry := prometheus.NewRegistry()
+	require.NoError(t, registry.Register(collector))
+	families, err := registry.Gather()
+	require.NoError(t, err)
+
+	require.NotNil(t, findMetricFamily(families, "tidb_grpc_channelz_fetch_errors_total"))
+}
+
+func findMetricFamily(families []*dto.MetricFamily, name string) *dto.MetricFamily {
+	for _, family := range families {
+		if family.GetName() == name {
+			return family
+		}
+	}
+	return nil
+}

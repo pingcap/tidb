@@ -15,6 +15,8 @@
 package metrics
 
 import (
+	"context"
+	"net"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
@@ -25,7 +27,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
+	tikvcollectors "github.com/tikv/client-go/v2/util/collectors"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/channelz/grpc_channelz_v1"
+	"google.golang.org/grpc/channelz/service"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 )
 
 var (
@@ -394,6 +402,9 @@ func RegisterMetrics() {
 	// StmtSummary
 	prometheus.MustRegister(StmtSummaryWindowRecordCount)
 	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+
+	// Channelz
+	setupChannelzCollector()
 }
 
 // Register registers custom collectors.
@@ -457,4 +468,121 @@ func ToggleSimplifiedMode(simplified bool) {
 			}
 		}
 	}
+}
+
+var grpcChannelzCollector struct {
+	mu sync.Mutex
+
+	listener *bufconn.Listener
+	server   *grpc.Server
+	conn     *grpc.ClientConn
+
+	collector  prometheus.Collector
+	registered bool
+}
+
+func setupChannelzCollector() {
+	grpcChannelzCollector.mu.Lock()
+	defer grpcChannelzCollector.mu.Unlock()
+
+	if err := initGrpcChannelzCollectorLocked(); err != nil {
+		logutil.BgLogger().Error("setup internal channelz collector failed", zap.Error(err))
+		return
+	}
+	if grpcChannelzCollector.registered {
+		return
+	}
+	prometheus.MustRegister(grpcChannelzCollector.collector)
+	grpcChannelzCollector.registered = true
+}
+
+// initGrpcChannelzCollectorLocked initializes the singleton channelz collector.
+// It must be called with grpcChannelzCollector.mu held.
+func initGrpcChannelzCollectorLocked() error {
+	if grpcChannelzCollector.collector != nil {
+		return nil
+	}
+
+	grpcChannelzCollector.listener = bufconn.Listen(1 << 20)
+	grpcChannelzCollector.server = grpc.NewServer()
+	service.RegisterChannelzServiceToServer(grpcChannelzCollector.server)
+	go func(listener *bufconn.Listener, server *grpc.Server) {
+		if err := server.Serve(listener); err != nil {
+			logutil.BgLogger().Warn("internal channelz grpc server stopped", zap.Error(err))
+		}
+	}(grpcChannelzCollector.listener, grpcChannelzCollector.server)
+
+	listener := grpcChannelzCollector.listener
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return listener.DialContext(ctx)
+		}),
+	)
+	if err != nil {
+		stopGrpcChannelzCollectorLocked()
+		return err
+	}
+
+	grpcChannelzCollector.conn = conn
+	grpcChannelzCollector.collector = tikvcollectors.NewChannelzCollector(conn, channelzCollectorOpts())
+	return nil
+}
+
+func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
+	return tikvcollectors.ChannelzCollectorOpts{
+		Namespace:         namespace,
+		DisableLocalLabel: true,
+		Filter: func(node any) (collect bool, walkChildren bool) {
+			// Only collect socket and leaf subchannel info, which are more useful for troubleshooting network issues.
+			switch n := node.(type) {
+			case *grpc_channelz_v1.Socket:
+				return true, false
+
+			case *grpc_channelz_v1.Subchannel:
+				isLeaf := len(n.GetSocketRef()) > 0 &&
+					len(n.GetChannelRef()) == 0 &&
+					len(n.GetSubchannelRef()) == 0
+
+				if isLeaf {
+					return true, true
+				}
+				return false, true
+
+			default:
+				return false, true
+			}
+		},
+	}
+}
+
+func cleanupGrpcChannelzCollectorForTest() {
+	grpcChannelzCollector.mu.Lock()
+	defer grpcChannelzCollector.mu.Unlock()
+
+	stopGrpcChannelzCollectorLocked()
+}
+
+// stopGrpcChannelzCollectorLocked stops and resets the singleton channelz collector.
+// It must be called with grpcChannelzCollector.mu held.
+func stopGrpcChannelzCollectorLocked() {
+	if grpcChannelzCollector.registered && grpcChannelzCollector.collector != nil {
+		prometheus.Unregister(grpcChannelzCollector.collector)
+	}
+	if grpcChannelzCollector.conn != nil {
+		_ = grpcChannelzCollector.conn.Close()
+	}
+	if grpcChannelzCollector.server != nil {
+		grpcChannelzCollector.server.Stop()
+	}
+	if grpcChannelzCollector.listener != nil {
+		_ = grpcChannelzCollector.listener.Close()
+	}
+
+	grpcChannelzCollector.server = nil
+	grpcChannelzCollector.listener = nil
+	grpcChannelzCollector.conn = nil
+	grpcChannelzCollector.collector = nil
+	grpcChannelzCollector.registered = false
 }
