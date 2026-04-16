@@ -199,11 +199,11 @@ func TestTypeCompareJoin(t *testing.T) {
 			join:          typeVarchar10UTF8MB4Bin,
 		},
 		{
-			// latin1 and utf8 are not comparable/joinable.
+			// latin1 and utf8 are not comparable, but their join is utf8mb4.
 			a:            typeVarchar10Latin1Bin,
 			b:            typeVarchar10UTF8Bin,
 			compareError: `at tuple index \d+: incompatible charset.*`,
-			joinError:    `at tuple index \d+: incompatible charset.*`,
+			join:         typeVarchar10UTF8MB4Bin,
 		},
 		{
 			// Only collations with the same suffix can be ordered/joined.

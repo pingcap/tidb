@@ -24,6 +24,12 @@ type charsetLattice struct {
 	value string
 }
 
+var charsetJoinCandidates = []charsetLattice{
+	Charset(tidbcharset.CharsetLatin1),
+	Charset(tidbcharset.CharsetUTF8),
+	Charset(tidbcharset.CharsetUTF8MB4),
+}
+
 // Charset is a lattice for comparing/joining character sets. Currently it
 // supports the ordering: latin1 < utf8mb4 and utf8(utf8mb3) < utf8mb4. Other
 // charsets are only comparable when identical.
@@ -67,13 +73,33 @@ func (a charsetLattice) Join(other Lattice) (Lattice, error) {
 	}
 
 	cmp, err := a.Compare(b)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		if cmp >= 0 {
+			return a, nil
+		}
+		return b, nil
 	}
-	if cmp >= 0 {
-		return a, nil
+
+	// Some pairs are incomparable under Compare() but still have a valid join.
+	// Example: utf8 and latin1 are incomparable, but both are < utf8mb4.
+	for _, candidate := range charsetJoinCandidates {
+		if isCharsetUpperBound(candidate, a, b) {
+			return candidate, nil
+		}
 	}
-	return b, nil
+	return nil, err
+}
+
+func isCharsetUpperBound(candidate, a, b charsetLattice) bool {
+	cmp, err := candidate.Compare(a)
+	if err != nil || cmp < 0 {
+		return false
+	}
+	cmp, err = candidate.Compare(b)
+	if err != nil || cmp < 0 {
+		return false
+	}
+	return true
 }
 
 type collationLattice struct {
@@ -132,11 +158,22 @@ func (a collationLattice) Join(other Lattice) (Lattice, error) {
 	}
 
 	cmp, err := a.Compare(b)
-	if err != nil {
+	if err == nil {
+		if cmp >= 0 {
+			return a, nil
+		}
+		return b, nil
+	}
+
+	// If suffix differs, the join doesn't exist (keep the original error).
+	if a.suffix != b.suffix {
 		return nil, err
 	}
-	if cmp >= 0 {
-		return a, nil
+
+	// When suffix matches, delegate to charset join to handle incomparable-but-joinable pairs.
+	joinCharset, joinErr := a.charset.Join(b.charset)
+	if joinErr != nil {
+		return nil, err
 	}
-	return b, nil
+	return collationLattice{charset: joinCharset.(charsetLattice), suffix: a.suffix}, nil
 }

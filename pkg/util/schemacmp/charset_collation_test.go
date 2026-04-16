@@ -94,3 +94,23 @@ func TestCollationCompare(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }
+
+func TestCharsetJoin(t *testing.T) {
+	join, err := Charset("utf8").Join(Charset("latin1"))
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4", join.Unwrap())
+
+	join, err = Charset("latin1").Join(Charset("utf8"))
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4", join.Unwrap())
+}
+
+func TestCollationJoin(t *testing.T) {
+	join, err := Collation("utf8_bin").Join(Collation("latin1_bin"))
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_bin", join.Unwrap())
+
+	join, err = Collation("latin1_bin").Join(Collation("utf8_bin"))
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_bin", join.Unwrap())
+}
