@@ -896,9 +896,9 @@ func testPreparePlanCache4Function(t *testing.T, tk *testkit.TestKit) {
 
 func testPreparePlanCache4DifferentSystemVars(t *testing.T, tk *testkit.TestKit) {
 	t.Helper()
-	tk.MustExec("set @old_sql_select_limit := @@sql_select_limit, @old_tidb_enable_index_merge := @@tidb_enable_index_merge, @old_tidb_enable_collect_execution_info := @@tidb_enable_collect_execution_info, @old_tidb_enable_parallel_apply := @@tidb_enable_parallel_apply")
+	tk.MustExec("set @old_sql_select_limit := @@sql_select_limit, @old_tidb_enable_index_merge := @@tidb_enable_index_merge, @old_tidb_enable_collect_execution_info := @@tidb_enable_collect_execution_info, @old_tidb_enable_parallel_apply := @@tidb_enable_parallel_apply, @old_tidb_enable_plan_cache_for_subquery := @@tidb_enable_plan_cache_for_subquery, @old_tidb_opt_enable_semi_join_rewrite := @@tidb_opt_enable_semi_join_rewrite")
 	defer func() {
-		tk.MustExec("set @@sql_select_limit = @old_sql_select_limit, @@tidb_enable_index_merge = @old_tidb_enable_index_merge, @@tidb_enable_collect_execution_info = @old_tidb_enable_collect_execution_info, @@tidb_enable_parallel_apply = @old_tidb_enable_parallel_apply")
+		tk.MustExec("set @@sql_select_limit = @old_sql_select_limit, @@tidb_enable_index_merge = @old_tidb_enable_index_merge, @@tidb_enable_collect_execution_info = @old_tidb_enable_collect_execution_info, @@tidb_enable_parallel_apply = @old_tidb_enable_parallel_apply, @@tidb_enable_plan_cache_for_subquery = @old_tidb_enable_plan_cache_for_subquery, @@tidb_opt_enable_semi_join_rewrite = @old_tidb_opt_enable_semi_join_rewrite")
 	}()
 
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
@@ -951,6 +951,29 @@ func testPreparePlanCache4DifferentSystemVars(t *testing.T, tk *testkit.TestKit)
 	require.NotContains(t, fmt.Sprint(applyRow), "Concurrency")
 	tk.MustExec("execute stmt;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_enable_collect_execution_info = 1")
+	tk.MustExec("set @@tidb_enable_plan_cache_for_subquery = 1")
+	tk.MustExec("set @@tidb_opt_enable_semi_join_rewrite = 1")
+	tk.MustExec("drop table if exists test_exists_a, test_exists_b")
+	tk.MustExec("create table test_exists_a (a int primary key)")
+	tk.MustExec("create table test_exists_b (a int primary key)")
+	tk.MustExec("insert into test_exists_a values (1), (2)")
+	tk.MustExec("insert into test_exists_b values (1)")
+	query := "select * from test_exists_a where exists (select 1 from test_exists_b where test_exists_b.a = test_exists_a.a)"
+	rewrittenPlan := tk.MustQuery("explain format='brief' " + query)
+	require.Contains(t, fmt.Sprint(rewrittenPlan.Rows()), "inner join")
+	tk.MustExec("prepare stmt from '" + query + "'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@tidb_opt_enable_semi_join_rewrite = 0")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	semiJoinPlan := tk.MustQuery("explain format='brief' " + query)
+	require.Contains(t, fmt.Sprint(semiJoinPlan.Rows()), "semi join")
 }
 
 func testPreparePC4Binding(t *testing.T, tk *testkit.TestKit) {

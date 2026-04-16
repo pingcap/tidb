@@ -177,12 +177,16 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 	}
 
+	vars.ResetRelevantOptVarsAndFixes(true)
+	defer vars.ResetRelevantOptVarsAndFixes(false)
+
 	var p base.Plan
 	destBuilder, _ := NewPlanBuilder().Init(sctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
 	p, err = destBuilder.Build(ctx, nodeW)
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	relevantOptVarNames, relevantOptFixIDs := collectRelevantOptVarsAndFixes(vars)
 
 	if cacheable && destBuilder.optFlag&rule.FlagPartitionProcessor > 0 {
 		// dynamic prune mode is not used, could be that global statistics not yet available!
@@ -229,6 +233,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
 		Params:              extractor.markers,
+		RelevantOptVarNames: relevantOptVarNames,
+		RelevantOptFixIDs:   relevantOptFixIDs,
 	}
 
 	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
@@ -404,6 +410,11 @@ func newPlanCacheKeyWithMatchedBinding(
 	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
 	// txn status
 	hashLen += 6
+	if len(stmt.RelevantOptVarNames) > 0 || len(stmt.RelevantOptFixIDs) > 0 {
+		hashLen++
+		hashLen += len(stmt.RelevantOptVarNames) * 128
+		hashLen += len(stmt.RelevantOptFixIDs) * 64
+	}
 
 	hash := make([]byte, 0, hashLen)
 	// hashInitCap is not used, just for test purposes
@@ -510,6 +521,7 @@ func newPlanCacheKeyWithMatchedBinding(
 	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
+	hash = appendRelevantOptVarsAndFixes(hash, vars, stmt)
 
 	if intest.InTest {
 		if cap(hash) != hashInitCap {
@@ -525,6 +537,102 @@ func bool2Byte(flag bool) byte {
 		return '1'
 	}
 	return '0'
+}
+
+func collectRelevantOptVarsAndFixes(vars *variable.SessionVars) (varNames []string, fixIDs []uint64) {
+	for varName := range vars.RelevantOptVars {
+		varNames = append(varNames, varName)
+	}
+	slices.Sort(varNames)
+
+	for fixID := range vars.RelevantOptFixes {
+		fixIDs = append(fixIDs, fixID)
+	}
+	slices.Sort(fixIDs)
+	return
+}
+
+func appendRelevantOptVarsAndFixes(hash []byte, vars *variable.SessionVars, stmt *PlanCacheStmt) []byte {
+	if stmt == nil || (len(stmt.RelevantOptVarNames) == 0 && len(stmt.RelevantOptFixIDs) == 0) {
+		return hash
+	}
+	hash = append(hash, '|')
+	for _, varName := range stmt.RelevantOptVarNames {
+		hash = append(hash, varName...)
+		hash = append(hash, '=')
+		hash = appendRelevantOptVarValue(hash, vars, varName)
+		hash = append(hash, ';')
+	}
+	for _, fixID := range stmt.RelevantOptFixIDs {
+		hash = codec.EncodeUint(hash, fixID)
+		hash = append(hash, '=')
+		if fixVal, ok := vars.OptimizerFixControl[fixID]; ok {
+			hash = append(hash, fixVal...)
+		}
+		hash = append(hash, ';')
+	}
+	return hash
+}
+
+func appendRelevantOptVarValue(hash []byte, vars *variable.SessionVars, varName string) []byte {
+	switch varName {
+	case vardef.TiDBOptIndexScanCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.IndexScanCostFactor))
+	case vardef.TiDBOptIndexReaderCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.IndexReaderCostFactor))
+	case vardef.TiDBOptTableReaderCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.TableReaderCostFactor))
+	case vardef.TiDBOptTableFullScanCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.TableFullScanCostFactor))
+	case vardef.TiDBOptTableRangeScanCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.TableRangeScanCostFactor))
+	case vardef.TiDBOptTableRowIDScanCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.TableRowIDScanCostFactor))
+	case vardef.TiDBOptTableTiFlashScanCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.TableTiFlashScanCostFactor))
+	case vardef.TiDBOptIndexLookupCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.IndexLookupCostFactor))
+	case vardef.TiDBOptIndexMergeCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.IndexMergeCostFactor))
+	case vardef.TiDBOptSortCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.SortCostFactor))
+	case vardef.TiDBOptTopNCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.TopNCostFactor))
+	case vardef.TiDBOptLimitCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.LimitCostFactor))
+	case vardef.TiDBOptStreamAggCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.StreamAggCostFactor))
+	case vardef.TiDBOptHashAggCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.HashAggCostFactor))
+	case vardef.TiDBOptMergeJoinCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.MergeJoinCostFactor))
+	case vardef.TiDBOptHashJoinCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.HashJoinCostFactor))
+	case vardef.TiDBOptIndexJoinCostFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.IndexJoinCostFactor))
+	case vardef.TiDBOptOrderingIdxSelRatio:
+		return codec.EncodeUint(hash, math.Float64bits(vars.OptOrderingIdxSelRatio))
+	case vardef.TiDBOptRiskEqSkewRatio:
+		return codec.EncodeUint(hash, math.Float64bits(vars.RiskEqSkewRatio))
+	case vardef.TiDBOptRiskRangeSkewRatio:
+		return codec.EncodeUint(hash, math.Float64bits(vars.RiskRangeSkewRatio))
+	case vardef.TiDBOptRiskGroupNDVSkewRatio:
+		return codec.EncodeUint(hash, math.Float64bits(vars.RiskGroupNDVSkewRatio))
+	case vardef.TiDBOptCartesianJoinOrderThreshold:
+		return codec.EncodeUint(hash, math.Float64bits(vars.CartesianJoinOrderThreshold))
+	case vardef.TiDBOptSelectivityFactor:
+		return codec.EncodeUint(hash, math.Float64bits(vars.SelectivityFactor))
+	case vardef.TiDBOptPreferRangeScan:
+		return append(hash, bool2Byte(vars.GetAllowPreferRangeScan()))
+	case vardef.TiDBOptEnableNoDecorrelateInSelect:
+		return append(hash, bool2Byte(vars.EnableNoDecorrelateInSelect))
+	case vardef.TiDBOptEnableSemiJoinRewrite:
+		return append(hash, bool2Byte(vars.EnableSemiJoinRewrite))
+	case vardef.TiDBOptAlwaysKeepJoinKey:
+		return append(hash, bool2Byte(vars.AlwaysKeepJoinKey))
+	default:
+		return hash
+	}
 }
 
 // PlanCacheValue stores the cached Statement and StmtNode.
@@ -767,6 +875,9 @@ type PlanCacheStmt struct {
 
 	// BindingInfo caches normalization results for binding matching across executions.
 	BindingInfo bindinfo.BindingMatchInfo
+
+	RelevantOptVarNames []string
+	RelevantOptFixIDs   []uint64
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then
