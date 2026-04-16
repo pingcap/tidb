@@ -548,12 +548,6 @@ func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
 				}
 				return false, true
 
-			case *grpc_channelz_v1.Socket:
-				if isInternalChannelzSocket(n) {
-					return false, false
-				}
-				return true, false
-
 			case *grpc_channelz_v1.Subchannel:
 				if isInternalChannelzTarget(n.GetData().GetTarget()) {
 					return false, false
@@ -566,6 +560,12 @@ func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
 					return true, true
 				}
 				return false, true
+
+			case *grpc_channelz_v1.Socket:
+				if isInternalChannelzSocket(n) {
+					return false, false
+				}
+				return true, false
 
 			default:
 				return false, true
