@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -1558,7 +1559,6 @@ func checkPartitionColumnTypeChangeAllowlist(tblInfo *model.TableInfo, col, newC
 		if isAllowedTypeChangeForKeyPartition(col, newCol) {
 			return nil
 		}
-		return partitionTypeChangeNotAllowedErr()
 	case ast.PartitionTypeRange, ast.PartitionTypeList, ast.PartitionTypeHash:
 		if len(pi.Columns) > 0 {
 			if pi.Type == ast.PartitionTypeHash {
@@ -1570,9 +1570,8 @@ func checkPartitionColumnTypeChangeAllowlist(tblInfo *model.TableInfo, col, newC
 			return partitionTypeChangeNotAllowedErr()
 		}
 		return checkTypeChangeForExprBasedPartition(pi.Expr, col, newCol)
-	default:
-		return partitionTypeChangeNotAllowedErr()
 	}
+	return partitionTypeChangeNotAllowedErr()
 }
 
 func checkTypeChangeForExprBasedPartition(partExpr string, col, newCol *model.ColumnInfo) error {
@@ -1625,7 +1624,7 @@ func classifyPartitionExprFuncUsage(fc *ast.FuncCallExpr) partitionExprColumnUsa
 }
 
 func collectPartitionExprColumnUsageKinds(partExpr, targetColumn string) map[partitionExprColumnUsageKind]struct{} {
-	expr, err := parsePartitionExpr(partExpr)
+	expr, err := generatedexpr.ParseExpression(partExpr)
 	if err != nil {
 		return nil
 	}
@@ -1680,27 +1679,10 @@ func collectPartitionExprColumnUsageKindsFromExpr(
 func mergePartitionExprUsageKind(parentKind, funcKind partitionExprColumnUsageKind) partitionExprColumnUsageKind {
 	// Keep unsupported once it appears in parent path or current func.
 	// Example: FLOOR(TO_DAYS(a)) -> "a" stays unsupported.
-	if parentKind == partitionExprColumnUsageKindUnsupported || funcKind == partitionExprColumnUsageKindUnsupported {
-		return partitionExprColumnUsageKindUnsupported
+	if parentKind == partitionExprColumnUsageKindUnsupported {
+		return parentKind
 	}
 	return funcKind
-}
-
-func parsePartitionExpr(partExpr string) (ast.ExprNode, error) {
-	// Parse by building SQL: SELECT <partExpr>.
-	/* #nosec G202: partExpr comes from stored partition metadata and is parsed into AST only. */
-	stmt, _, err := parser.New().ParseSQL("SELECT " + partExpr)
-	if err != nil {
-		return nil, err
-	}
-	if len(stmt) != 1 {
-		return nil, errors.New("unexpected partition expression statement count")
-	}
-	sel, ok := stmt[0].(*ast.SelectStmt)
-	if !ok || sel.Fields == nil || len(sel.Fields.Fields) != 1 {
-		return nil, errors.New("unexpected partition expression AST")
-	}
-	return sel.Fields.Fields[0].Expr, nil
 }
 
 func isAllowedTypeChangeForKeyPartition(col, newCol *model.ColumnInfo) bool {
@@ -1788,8 +1770,7 @@ func isTimeFspExtended(col, newCol *model.ColumnInfo) bool {
 		return false
 	}
 	if col.GetType() != mysql.TypeDuration &&
-		col.GetType() != mysql.TypeDatetime &&
-		col.GetType() != mysql.TypeTimestamp {
+		col.GetType() != mysql.TypeDatetime {
 		return false
 	}
 	return newCol.GetDecimal() > col.GetDecimal()
