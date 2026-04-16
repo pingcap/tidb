@@ -624,7 +624,7 @@ func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stm
 }
 
 // DBName returns the dbName field (used for metadata lock during Execute).
-func (s *PlanCacheStmt) DBName() []ast.CIStr { return s.dbName }
+func (s *PlanCacheStmt) DBName() []model.CIStr { return s.dbName }
 
 // Tbls returns the tbls field (used for metadata lock during Execute).
 func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
@@ -632,7 +632,7 @@ func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
 // SetDBNameAndTbls sets the dbName and tbls fields.
 // Called when rebuilding a PlanCacheStmt from the prepare dedup cache so that
 // each stmt instance has its own slice (planCachePreprocess replaces tbls[i]).
-func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []ast.CIStr, tbls []table.Table) {
+func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []model.CIStr, tbls []table.Table) {
 	s.dbName = dbName
 	s.tbls = tbls
 }
