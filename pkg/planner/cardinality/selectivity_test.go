@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -51,6 +52,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -2176,6 +2178,239 @@ func TestSubsetIdxCardinality(t *testing.T) {
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+// Delay-only repro: a stale async histogram load must not overwrite newer analyze stats.
+func TestSubsetIdxCardinalityStaleAsyncLoadDoesNotOverwriteNewerStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	setupTk := testkit.NewTestKit(t, store)
+	analyzeTk := testkit.NewTestKit(t, store)
+	queryTk := testkit.NewTestKit(t, store)
+
+	for _, tk := range []*testkit.TestKit{setupTk, analyzeTk, queryTk} {
+		tk.MustExec("use test")
+	}
+	queryTk.MustExec("set @@session.tidb_stats_load_sync_wait = 0")
+
+	setupTk.MustExec("drop table if exists t")
+	setupTk.MustExec("create table t(a int, b int, c int, index iabc(a, b, c))")
+	setupTk.MustExec("insert into t values (1, 1, 1), (1, 1, 1), (2, 1, 1), (2, 1, 1), (3, 1, 1), (3, 1, 1), (4, 1, 1), (4, 1, 1), (5, 1, 1), (5, 1, 1)")
+	setupTk.MustExec("insert into t select a + 5, a, a from t")
+	for i := 1; i < 3; i++ {
+		setupTk.MustExec(fmt.Sprintf("insert into t select a + 10 + %v, b + 1, c from t", i))
+	}
+	for range 3 {
+		setupTk.MustExec("insert into t select a, b, c from t")
+	}
+	setupTk.MustExec("flush stats_delta *.*")
+	setupTk.MustExec("analyze table t")
+
+	tblInfo := mustGetTableInfo(t, dom, "test", "t")
+	dom.StatsHandle().Clear()
+	require.NoError(t, dom.StatsHandle().InitStatsLite(context.Background(), tblInfo.ID))
+	clearAsyncLoadQueue(tblInfo.ID)
+	requireTableRealtimeCount(t, dom, tblInfo, 640)
+	requireMetaCount(t, setupTk, tblInfo.ID, 640)
+	require.Empty(t, asyncload.AsyncLoadHistogramNeededItems.AllItems())
+
+	statsBeforeRepro := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	_, colALoadNeeded, colAAnalyzed := statsBeforeRepro.ColumnIsLoadNeeded(tblInfo.Columns[0].ID, true)
+	_, colBLoadNeeded, colBAnalyzed := statsBeforeRepro.ColumnIsLoadNeeded(tblInfo.Columns[1].ID, true)
+	_, colCLoadNeeded, colCAnalyzed := statsBeforeRepro.ColumnIsLoadNeeded(tblInfo.Columns[2].ID, true)
+	_, idxLoadNeeded := statsBeforeRepro.IndexIsLoadNeeded(tblInfo.Indices[0].ID)
+	t.Logf(
+		"stats before repro: count=%d col(a)=%s loadNeeded=%v analyzed=%v col(b)=%s loadNeeded=%v analyzed=%v col(c)=%s loadNeeded=%v analyzed=%v idx(iabc)=%s loadNeeded=%v",
+		statsBeforeRepro.RealtimeCount,
+		columnLoadState(statsBeforeRepro.GetCol(tblInfo.Columns[0].ID)),
+		colALoadNeeded,
+		colAAnalyzed,
+		columnLoadState(statsBeforeRepro.GetCol(tblInfo.Columns[1].ID)),
+		colBLoadNeeded,
+		colBAnalyzed,
+		columnLoadState(statsBeforeRepro.GetCol(tblInfo.Columns[2].ID)),
+		colCLoadNeeded,
+		colCAnalyzed,
+		indexLoadState(statsBeforeRepro.GetIdx(tblInfo.Indices[0].ID)),
+		idxLoadNeeded,
+	)
+	require.True(t, colALoadNeeded)
+	require.True(t, colBLoadNeeded)
+	require.True(t, colCLoadNeeded)
+	require.True(t, idxLoadNeeded)
+
+	setupTk.MustExec("insert into t select a, b + 10, c from t")
+	setupTk.MustExec("flush stats_delta *.*")
+
+	analyzeBlocked := make(chan struct{}, 1)
+	releaseAnalyze := make(chan struct{})
+	var releaseAnalyzeOnce sync.Once
+	releaseAnalyzeNow := func() {
+		releaseAnalyzeOnce.Do(func() {
+			close(releaseAnalyze)
+		})
+	}
+	t.Cleanup(releaseAnalyzeNow)
+
+	type asyncLoadState struct {
+		tableID       int64
+		histID        int64
+		isIndex       bool
+		fullLoad      bool
+		version       uint64
+		realtimeCount int64
+	}
+	asyncBlocked := make(chan asyncLoadState, 1)
+	releaseAsync := make(chan struct{})
+	var releaseAsyncOnce sync.Once
+	releaseAsyncNow := func() {
+		releaseAsyncOnce.Do(func() {
+			close(releaseAsync)
+		})
+	}
+	t.Cleanup(releaseAsyncNow)
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeUpdateStatsCacheAfterAnalyze", func() {
+		select {
+		case analyzeBlocked <- struct{}{}:
+		default:
+		}
+		<-releaseAnalyze
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeUpdateStatsCacheAfterAsyncLoad",
+		func(tableID, histID int64, isIndex, fullLoad bool, version uint64, realtimeCount int64) {
+			if tableID != tblInfo.ID {
+				return
+			}
+			select {
+			case asyncBlocked <- asyncLoadState{
+				tableID:       tableID,
+				histID:        histID,
+				isIndex:       isIndex,
+				fullLoad:      fullLoad,
+				version:       version,
+				realtimeCount: realtimeCount,
+			}:
+			default:
+			}
+			<-releaseAsync
+		},
+	)
+
+	analyzeErrCh := make(chan error, 1)
+	go func() {
+		_, err := analyzeTk.Exec("analyze table t")
+		analyzeErrCh <- err
+	}()
+	waitForSignal(t, analyzeBlocked, "analyze update failpoint")
+
+	requireMetaCount(t, setupTk, tblInfo.ID, 1280)
+	requireTableRealtimeCount(t, dom, tblInfo, 640)
+
+	queryTk.MustQuery("explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1")
+	require.Eventually(t, func() bool {
+		return hasAsyncLoadForTable(tblInfo.ID)
+	}, 5*time.Second, 50*time.Millisecond)
+
+	loadErrCh := make(chan error, 1)
+	go func() {
+		loadErrCh <- dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema())
+	}()
+
+	asyncState := waitForAsyncState(t, asyncBlocked, "async load update failpoint")
+	require.Equal(t, int64(640), asyncState.realtimeCount)
+	require.Equal(t, tblInfo.ID, asyncState.tableID)
+
+	releaseAnalyzeNow()
+	waitForAsyncErr(t, analyzeErrCh, "analyze table t")
+	requireMetaCount(t, setupTk, tblInfo.ID, 1280)
+	requireTableRealtimeCount(t, dom, tblInfo, 1280)
+	require.Contains(t, fmt.Sprint(queryTk.MustQuery("explain format = 'brief' select distinct a from t").Rows()), "IndexFullScan 1280.00")
+
+	releaseAsyncNow()
+	waitForAsyncErr(t, loadErrCh, "LoadNeededHistograms")
+	requireMetaCount(t, setupTk, tblInfo.ID, 1280)
+	requireTableRealtimeCount(t, dom, tblInfo, 1280)
+	require.Contains(t, fmt.Sprint(queryTk.MustQuery("explain format = 'brief' select distinct a from t").Rows()), "IndexFullScan 1280.00")
+}
+
+func mustGetTableInfo(t *testing.T, dom *domain.Domain, schema, table string) *model.TableInfo {
+	t.Helper()
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(schema), ast.NewCIStr(table))
+	require.NoError(t, err)
+	return tbl.Meta()
+}
+
+func requireTableRealtimeCount(t *testing.T, dom *domain.Domain, tblInfo *model.TableInfo, expected int64) {
+	t.Helper()
+	stats := dom.StatsHandle().GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.Equal(t, expected, stats.RealtimeCount)
+}
+
+func requireMetaCount(t *testing.T, tk *testkit.TestKit, tableID, expected int64) {
+	t.Helper()
+	tk.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID)).Check(testkit.Rows(fmt.Sprintf("%d", expected)))
+}
+
+func hasAsyncLoadForTable(tableID int64) bool {
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		if item.TableID == tableID {
+			return true
+		}
+	}
+	return false
+}
+
+func clearAsyncLoadQueue(tableID int64) {
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		if item.TableID == tableID {
+			asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+		}
+	}
+}
+
+func waitForSignal(t *testing.T, ch <-chan struct{}, desc string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", desc)
+	}
+}
+
+func waitForAsyncState[T any](t *testing.T, ch <-chan T, desc string) T {
+	t.Helper()
+	select {
+	case state := <-ch:
+		return state
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", desc)
+		var zero T
+		return zero
+	}
+}
+
+func waitForAsyncErr(t *testing.T, ch <-chan error, desc string) {
+	t.Helper()
+	select {
+	case err := <-ch:
+		require.NoError(t, err, desc)
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", desc)
+	}
+}
+
+func columnLoadState(col *statistics.Column) string {
+	if col == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("initialized=%v allEvicted=%v full=%v", col.IsStatsInitialized(), col.IsAllEvicted(), col.IsFullLoad())
+}
+
+func indexLoadState(idx *statistics.Index) string {
+	if idx == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("initialized=%v allEvicted=%v full=%v", idx.IsStatsInitialized(), idx.IsAllEvicted(), idx.IsFullLoad())
 }
 
 func TestBuiltinInEstWithoutStats(t *testing.T) {

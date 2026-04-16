@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -740,6 +741,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		}
 	}
 	statsTbl.SetCol(col.ID, colHist)
+	failpoint.InjectCall("beforeUpdateStatsCacheAfterAsyncLoad", statsTbl.PhysicalID, col.ID, false, fullLoad, statsTbl.Version, statsTbl.RealtimeCount)
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{statsTbl},
 	})
@@ -838,6 +840,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}
 	tbl.SetIdx(idx.ID, idxHist)
+	failpoint.InjectCall("beforeUpdateStatsCacheAfterAsyncLoad", tbl.PhysicalID, idx.ID, true, true, tbl.Version, tbl.RealtimeCount)
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{tbl},
 	})
