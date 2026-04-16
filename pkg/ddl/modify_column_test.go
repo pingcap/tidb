@@ -1503,7 +1503,8 @@ func TestModifyColumnLoadTableRangeError(t *testing.T) {
 	batchInsert(tk, "t", 0, 100)
 
 	// Simulate transient PD errors (e.g. "All returned regions have no leaders") when splitting table ranges.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/loadTableRangesFromPDNoLeader", "1*return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/loadTableRangesFromPDErr",
+		`1*return("All returned regions have no leaders, limit: 1")`)
 
 	tk.MustExec("alter table t change column b b varchar(16);")
 	tk.MustExec("admin check table t;")
