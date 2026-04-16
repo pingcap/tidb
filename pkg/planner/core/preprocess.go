@@ -164,6 +164,34 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	return errors.Trace(v.err)
 }
 
+func collectUserDefinedStoredFunctions(node ast.Node) [][2]string {
+	if node == nil {
+		return nil
+	}
+	collector := userDefStoredFuncCollector{funcNames: make([][2]string, 0)}
+	node.Accept(&collector)
+	return collector.funcNames
+}
+
+func isUserDefinedStoredFunction(x *ast.FuncCallExpr) bool {
+	return x.Schema.L != "" || !expression.IsFunctionSupported(x.FnName.L)
+}
+
+type userDefStoredFuncCollector struct {
+	funcNames [][2]string
+}
+
+func (*userDefStoredFuncCollector) Enter(in ast.Node) (ast.Node, bool) {
+	return in, false
+}
+
+func (c *userDefStoredFuncCollector) Leave(in ast.Node) (ast.Node, bool) {
+	if x, ok := in.(*ast.FuncCallExpr); ok && isUserDefinedStoredFunction(x) {
+		c.funcNames = append(c.funcNames, [2]string{x.Schema.L, x.FnName.L})
+	}
+	return in, true
+}
+
 func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, funcNames [][2]string) error {
 	if len(funcNames) == 0 {
 		return nil
@@ -783,7 +811,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.flag &= ^inSequenceFunction
 		}
 		// When schema is specified, it should resolve stored function first to match MySQL compatibility.
-		if x.Schema.L != "" || !expression.IsFunctionSupported(x.FnName.L) {
+		if isUserDefinedStoredFunction(x) {
 			p.userDefStoredFuncs = append(p.userDefStoredFuncs, [2]string{x.Schema.L, x.FnName.L})
 		}
 	case *ast.RepairTableStmt:

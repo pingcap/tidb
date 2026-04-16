@@ -225,3 +225,27 @@ end`)
 		"105 4950.00",
 	))
 }
+
+func TestViewQueryWithStoredFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop view if exists v_sf_view_query")
+	tk.MustExec("drop function if exists sf_view_query")
+	tk.MustExec("drop table if exists t_sf_view_query")
+
+	tk.MustExec("create table t_sf_view_query(id int primary key, f2 varchar(100))")
+	tk.MustExec("insert into t_sf_view_query values (1, 'abc')")
+	tk.MustExec(`create function sf_view_query(prm_spell varchar(100)) returns varchar(100)
+begin
+	return concat(prm_spell, '123');
+end`)
+	tk.MustExec("create view v_sf_view_query as select id, sf_view_query(f2) as newf2 from t_sf_view_query")
+
+	tk.MustQuery("select * from v_sf_view_query").Check(testkit.Rows("1 abc123"))
+
+	tk.MustExec("drop function sf_view_query")
+	tk.MustGetErrCode("select * from v_sf_view_query", mysql.ErrViewInvalid)
+}

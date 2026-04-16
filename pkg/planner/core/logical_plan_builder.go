@@ -5089,6 +5089,13 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 	if err != nil {
 		return nil, err
 	}
+	sctx, err := AsSctx(b.ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := preloadUserStoredFunction(ctx, sctx, collectUserDefinedStoredFunctions(selectNode)); err != nil {
+		return nil, err
+	}
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
 
