@@ -1597,14 +1597,19 @@ func MergePartTopNAndHistToGlobal(
 		}
 	}
 
-	// Phase 2: Collect histogram buckets and extract upper-bound Repeat counts
-	// into the TopN counter. This catches values that are in some partitions'
-	// TopN but at histogram upper bounds in other partitions.
+	// Phase 2: Collect histogram buckets with FULL counts (don't subtract
+	// Repeat yet). Also accumulate Repeat values into the TopN counter so
+	// values that are frequent globally but never in any single partition's
+	// TopN can still be identified as global TopN candidates.
+	//
+	// We track the Repeat-origin portion separately in repeatCounter so
+	// Phase 4 knows how much to subtract from histogram buckets (only the
+	// Repeat portion is in both the counter and the buckets — the TopN-
+	// origin portion was never in histogram buckets).
 	var totCount, totNull, totColSize int64
 	buckets := make([]*bucket4Merging, 0, len(hists)*hists[0].Len()/2)
 	tz := sc.TimeZone()
 	tp := hists[0].Tp.GetType()
-	var encodeBuf []byte // reused across iterations to avoid ~2M allocations
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
@@ -1621,22 +1626,18 @@ func MergePartTopNAndHistToGlobal(
 					encoded = hist.Bounds.GetRow(i*2 + 1).GetBytes(0)
 				} else {
 					var err error
-					encodeBuf, err = codec.EncodeKey(tz, encodeBuf[:0], *hist.GetUpper(i))
+					encoded, err = codec.EncodeKey(tz, nil, *hist.GetUpper(i))
 					if err != nil {
 						return nil, nil, err
 					}
-					encoded = encodeBuf
 				}
 				counter[hack.String(encoded)] += uint64(repeat)
-				totCount -= repeat
 			}
-			// Compute non-prefix-sum count for this bucket, excluding the Repeat
-			// that was already moved into the TopN counter.
+			// Keep full bucket count (Repeat included).
 			count := hist.Buckets[i].Count
 			if i != 0 {
 				count -= hist.Buckets[i-1].Count
 			}
-			count -= repeat
 			if count <= 0 {
 				continue
 			}
@@ -1645,6 +1646,7 @@ func MergePartTopNAndHistToGlobal(
 			hist.UpperToDatum(i, b.upper)
 			b.NDV = hist.Buckets[i].NDV
 			b.Count = count
+			b.Repeat = hist.Buckets[i].Repeat // keep Repeat for Phase 4 subtraction
 			buckets = append(buckets, b)
 		}
 	}
@@ -1659,20 +1661,68 @@ func MergePartTopNAndHistToGlobal(
 		data := hack.Slice(string(value))
 		sorted = append(sorted, TopNMeta{Encoded: data, Count: cnt})
 	}
-	globalTopN, leftTopN := GetMergedTopNFromSortedSlice(sorted, numTopN)
+	globalTopN, _ := GetMergedTopNFromSortedSlice(sorted, numTopN)
 
-	// Phase 4: Add leftover TopN entries as histogram buckets.
-	for _, meta := range leftTopN {
-		totCount += int64(meta.Count)
-		d, err := topNMetaToDatum(meta, tp, isIndex, tz)
-		if err != nil {
-			return nil, nil, err
+	// Phase 4: For each global TopN value, subtract its Repeat-origin
+	// portion from histogram buckets (since those counts are in both the
+	// counter and the buckets), and subtract the FULL counter value from
+	// totCount (since all of it moves into the TopN, not the histogram).
+	//
+	// Sort buckets by upper bound first (needed for Phase 5 anyway).
+	err := sortBucketsByUpperBound(sc.TypeCtx(), buckets)
+	if err != nil {
+		return nil, nil, err
+	}
+	if globalTopN != nil {
+		for _, val := range globalTopN.TopN {
+			// Subtract the full TopN count from totCount — all these
+			// rows are accounted for in the TopN, not the histogram.
+			totCount -= int64(val.Count)
+
+			// Subtract each matching bucket's own Repeat. The TopN-
+			// origin portion was never in any histogram bucket.
+			d, err := topNMetaToDatum(TopNMeta{Encoded: val.Encoded, Count: val.Count}, tp, isIndex, tz)
+			if err != nil {
+				return nil, nil, err
+			}
+			for idx := range buckets {
+				cmp, err := buckets[idx].upper.Compare(sc.TypeCtx(), &d, collate.GetBinaryCollator())
+				if err != nil {
+					return nil, nil, err
+				}
+				if cmp == 0 {
+					// Subtract this bucket's own Repeat contribution.
+					// Each bucket stores its original Repeat from Phase 2.
+					sub := buckets[idx].Repeat
+					buckets[idx].Count -= sub
+					if buckets[idx].Count < 0 {
+						buckets[idx].Count = 0
+					}
+					buckets[idx].Repeat = 0
+					continue
+				}
+				if cmp > 0 {
+					break
+				}
+			}
 		}
-		buckets = append(buckets, meta.buildBucket4Merging(&d, analyzeVer))
 	}
 
-	// Phase 5: Build equi-depth global histogram by sorting bucket4Merging
-	// entries by upper bound and cutting at equi-depth thresholds.
+	// Remove zero-count buckets left after subtracting global TopN counts.
+	tail := 0
+	for i := range buckets {
+		if buckets[i].Count > 0 {
+			buckets[tail], buckets[i] = buckets[i], buckets[tail]
+			tail++
+		}
+	}
+	for n := tail; n < len(buckets); n++ {
+		releasebucket4MergingForRecycle(buckets[n])
+	}
+	buckets = buckets[:tail]
+
+	// Phase 5: Build equi-depth global histogram. Buckets are already sorted
+	// from Phase 4's sortBucketsByUpperBound call.
 	globalHist, err := mergeByUpperBound(sc, buckets, totCount, totNull, totColSize,
 		expBucketNumber, isIndex, hists[0].ID, hists[0].LastUpdateVersion, hists[0].Tp)
 	if err != nil {
