@@ -1741,9 +1741,18 @@ func TestResolveLocksNearTxnSafePoint(t *testing.T) {
 }
 
 func TestRunGCJob(t *testing.T) {
+	require.NoError(t, failpoint.Enable("tikvclient/noBuiltInTxnSafePointUpdater", "return"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("tikvclient/noBuiltInTxnSafePointUpdater"))
+	})
+
 	s := createGCWorkerSuite(t)
 
+	originalTxnSafePointSyncWaitTime := txnSafePointSyncWaitTime
 	txnSafePointSyncWaitTime = 0
+	t.Cleanup(func() {
+		txnSafePointSyncWaitTime = originalTxnSafePointSyncWaitTime
+	})
 
 	// Test distributed mode
 	useDistributedGC := s.gcWorker.checkUseDistributedGC()
