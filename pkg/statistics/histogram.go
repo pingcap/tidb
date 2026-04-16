@@ -1933,16 +1933,18 @@ func MergePartTopNAndHistToGlobal(
 	ri, ti2 := 0, 0
 	for ri < len(refs) || ti2 < len(allTopN) {
 		var mergeOrd int
+		var topNDatum types.Datum
 		if ri >= len(refs) {
 			mergeOrd = 1
 		} else if ti2 >= len(allTopN) {
 			mergeOrd = -1
 		} else {
-			d, err := topNMetaToDatum(TopNMeta{Encoded: allTopN[ti2].encoded}, tp, isIndex, tz)
+			var err error
+			topNDatum, err = topNMetaToDatum(TopNMeta{Encoded: allTopN[ti2].encoded}, tp, isIndex, tz)
 			if err != nil {
 				return nil, nil, err
 			}
-			mergeOrd, err = d.Compare(sc.TypeCtx(),
+			mergeOrd, err = topNDatum.Compare(sc.TypeCtx(),
 				hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx)),
 				collate.GetBinaryCollator())
 			if err != nil {
@@ -1960,18 +1962,22 @@ func MergePartTopNAndHistToGlobal(
 			}
 			_, inGlobal := globalTopNMap[hack.String(key)]
 			if !inGlobal && topNCount > 0 {
-				d, err := topNMetaToDatum(TopNMeta{Encoded: key}, tp, isIndex, tz)
-				if err != nil {
-					return nil, nil, err
+				// topNDatum was set by the Compare above, except when
+				// refs are exhausted (ri >= len(refs)) — decode then.
+				if ri >= len(refs) {
+					var err error
+					topNDatum, err = topNMetaToDatum(TopNMeta{Encoded: key}, tp, isIndex, tz)
+					if err != nil {
+						return nil, nil, err
+					}
 				}
+				startNewGroup(&topNDatum)
+				addToBucket(&topNDatum, topNCount, topNCount)
 				if mergeOrd > 0 {
-					startNewGroup(&d)
-					addToBucket(&d, topNCount, topNCount)
 					emitGroup()
 					continue
 				}
-				startNewGroup(&d)
-				addToBucket(&d, topNCount, topNCount)
+				// mergeOrd == 0: ref group follows.
 			} else if mergeOrd > 0 {
 				continue
 			}
