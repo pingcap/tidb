@@ -833,8 +833,8 @@ i	n
 1	150.00
 drop tables t1, t2;
 CREATE TABLE t1 (
-conn_id INT,
-trigger_conn_id INT
+conn_id BIGINT UNSIGNED,
+trigger_conn_id BIGINT UNSIGNED
 );
 CREATE TRIGGER t1_bi BEFORE INSERT ON t1 FOR EACH ROW
 SET NEW.trigger_conn_id = CONNECTION_ID();
