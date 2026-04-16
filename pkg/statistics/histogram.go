@@ -1853,57 +1853,19 @@ func MergePartTopNAndHistToGlobal(
 	// Linear scan over ~100 globalTopN entries. Datums aren't hashable so
 	// we can't do a direct map lookup without encoding (which allocates).
 	// Called once per unique upper-bound group (~256), not per bucket.
-	// Build a lookup for checking if an upper bound is a global TopN value.
-	// For index histograms: bounds are already encoded bytes — use globalTopNMap directly.
-	// For column histograms: decode globalTopN values to Datums for comparison.
-	type datumKey struct {
-		kind  byte
-		i64   int64
-		bytes string // for KindBytes/KindString
-	}
-	var globalTopNDatumSet map[datumKey]struct{}
-	if !isIndex {
-		globalTopNDatumSet = make(map[datumKey]struct{}, len(globalTopNMap))
-		for _, info := range globalTopNMap {
-			d := &info.datum
-			var dk datumKey
-			dk.kind = d.Kind()
-			switch d.Kind() {
-			case types.KindInt64:
-				dk.i64 = d.GetInt64()
-			case types.KindUint64:
-				dk.i64 = int64(d.GetUint64())
-			case types.KindBytes, types.KindString:
-				dk.bytes = string(d.GetBytes())
-			default:
-				// For other types, fall back to string representation.
-				dk.bytes = fmt.Sprintf("%v", d.GetValue())
-			}
-			globalTopNDatumSet[dk] = struct{}{}
-		}
-	}
-	datumToKey := func(d *types.Datum) datumKey {
-		var dk datumKey
-		dk.kind = d.Kind()
-		switch d.Kind() {
-		case types.KindInt64:
-			dk.i64 = d.GetInt64()
-		case types.KindUint64:
-			dk.i64 = int64(d.GetUint64())
-		case types.KindBytes, types.KindString:
-			dk.bytes = string(d.GetBytes())
-		default:
-			dk.bytes = fmt.Sprintf("%v", d.GetValue())
-		}
-		return dk
-	}
+	// Check if an upper bound is a global TopN value by encoding to the
+	// same key format as globalTopNMap. For index histograms the bounds
+	// are already encoded; for columns we call codec.EncodeKey (~256
+	// times, once per unique upper-bound group — trivial cost).
+	var encodeBuf []byte
 	isGlobalTopNVal := func(histIdx, bucketIdx int) bool {
 		if isIndex {
 			encoded := hists[histIdx].Bounds.GetRow(bucketIdx*2 + 1).GetBytes(0)
 			_, ok := globalTopNMap[hack.String(encoded)]
 			return ok
 		}
-		_, ok := globalTopNDatumSet[datumToKey(hists[histIdx].GetUpper(bucketIdx))]
+		encodeBuf, _ = codec.EncodeKey(tz, encodeBuf[:0], *hists[histIdx].GetUpper(bucketIdx))
+		_, ok := globalTopNMap[hack.String(encodeBuf)]
 		return ok
 	}
 
