@@ -31,7 +31,6 @@ import (
 	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	gozap "go.uber.org/zap"
 )
 
@@ -286,12 +285,10 @@ func (ref *SnapshotStorageRef) LoadBackupMeta(
 	return backupMeta, nil
 }
 
-// A pending marker can mean three different things when BR starts up:
-//   - final backupmeta already exists: the marker is stale and can be removed.
+// A pending marker can mean two things when BR starts up:
 //   - checkpoint metadata exists: the backup is resumable.
-//   - neither exists: the marker was left behind before checkpoint metadata became
-//     durable, so it should be cleaned up together with any transient checkpoint
-//     files.
+//   - otherwise the backup is not resumable and should be cleaned up together
+//     with any leftover checkpoint files.
 func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHash []byte) ([]repo.BackupID, error) {
 	pendingBackups, err := repo.SnapshotOpsExtension(rootStorage).ListPendingBackupsForConfigHash(ctx, cfgHash)
 	if err != nil {
@@ -302,11 +299,7 @@ func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.St
 		metadataStorage := repo.NewPrefixedStorage(rootStorage, repo.SnapshotMetadataDir(pending.BackupID))
 		switch pending.State {
 		case repo.PendingBackupStateStale:
-			if err := deletePendingMarkers(ctx, rootStorage, pending); err != nil {
-				return nil, errors.Trace(err)
-			}
-		case repo.PendingBackupStateTransient:
-			if err := cleanupTransientPendingBackup(ctx, rootStorage, metadataStorage, pending); err != nil {
+			if err := cleanupNonResumablePendingBackup(ctx, rootStorage, metadataStorage, pending); err != nil {
 				return nil, errors.Trace(err)
 			}
 		case repo.PendingBackupStateUnfinished:
@@ -318,27 +311,18 @@ func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.St
 	return resumable, nil
 }
 
-func deletePendingMarkers(ctx context.Context, rootStorage storeapi.Storage, pending repo.PendingBackup) error {
-	for _, markerPath := range pending.MarkerPaths {
-		if err := rootStorage.DeleteFile(ctx, markerPath); err != nil {
-			return errors.Annotatef(err, "remove stale pending marker for %s", pending.BackupID)
-		}
-	}
-	return nil
-}
-
-func cleanupTransientPendingBackup(
+func cleanupNonResumablePendingBackup(
 	ctx context.Context,
 	rootStorage storeapi.Storage,
 	metadataStorage storeapi.Storage,
 	pending repo.PendingBackup,
 ) error {
 	if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, metadataStorage); removeErr != nil {
-		return errors.Annotatef(removeErr, "remove transient checkpoint state for %s", pending.BackupID)
+		return errors.Annotatef(removeErr, "remove checkpoint state for stale pending backup %s", pending.BackupID)
 	}
 	for _, markerPath := range pending.MarkerPaths {
 		if removeErr := rootStorage.DeleteFile(ctx, markerPath); removeErr != nil {
-			return errors.Annotatef(removeErr, "remove transient pending marker for %s", pending.BackupID)
+			return errors.Annotatef(removeErr, "remove pending marker for stale backup %s", pending.BackupID)
 		}
 	}
 	return nil
@@ -428,12 +412,11 @@ func prepareRepoV1LocalBackendForStore(storeID uint64, request backuppb.BackupRe
 			storeID,
 		)
 	}
-	// Unit tests only rewrite the local backend path and then inspect it locally, so create
-	// the directory eagerly instead of waiting for the backup writer to materialize it.
-	if intest.InTest {
-		if err := os.MkdirAll(backend.GetLocal().Path, 0o750); err != nil {
-			return errors.Annotatef(err, "prepare repo-v1 local backend path for store %d", storeID)
-		}
+	// TiKV fails to open a local backend when the path prefix does not exist.
+	// In production, this assumes the prefix is a mounted network volume so TiKV
+	// can access the directory we create here.
+	if err := os.MkdirAll(backend.GetLocal().Path, 0o750); err != nil {
+		return errors.Annotatef(err, "prepare repo-v1 local backend path for store %d", storeID)
 	}
 	return nil
 }

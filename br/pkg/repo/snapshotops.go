@@ -36,12 +36,10 @@ import (
 type PendingBackupState string
 
 const (
-	// PendingBackupStateStale means the backup already has completed metadata and only stale pending markers remain.
+	// PendingBackupStateStale means the pending backup is not resumable. Completed snapshot metadata/data, if present, are kept.
 	PendingBackupStateStale PendingBackupState = "stale"
 	// PendingBackupStateUnfinished means the backup has checkpoint metadata but no completed backup metadata yet.
 	PendingBackupStateUnfinished PendingBackupState = "unfinished"
-	// PendingBackupStateTransient means only pending markers are visible and the state may disappear after transient cleanup.
-	PendingBackupStateTransient PendingBackupState = "transient"
 )
 
 type PendingBackup struct {
@@ -191,7 +189,7 @@ func (ops SnapshotOps) inspectPendingBackupState(
 	if hasCheckpoint {
 		return PendingBackupStateUnfinished, nil
 	}
-	return PendingBackupStateTransient, nil
+	return PendingBackupStateStale, nil
 }
 
 func (ops SnapshotOps) ListSnapshotOrphans(ctx context.Context) ([]string, error) {
@@ -382,6 +380,9 @@ func (ops SnapshotOps) DiscardPendingSnapshot(
 	switch target.State {
 	case PendingBackupStateStale:
 		result.StalePending = true
+		if err := checkpoint.RemoveCheckpointDataForBackup(ctx, NewPrefixedStorage(ops.Storage, SnapshotMetadataDir(target.BackupID))); err != nil {
+			return result, errors.Annotatef(err, "delete checkpoint files for stale backup %s", target.BackupID)
+		}
 		result.PendingDeleted, err = ops.deleteFilesFromStream(ctx, filePathStream(target.MarkerPaths), opts)
 		if err != nil {
 			return result, errors.Annotatef(err, "delete pending markers for stale backup %s", target.BackupID)
@@ -403,13 +404,7 @@ func (ops SnapshotOps) DiscardPendingSnapshot(
 			return result, errors.Annotatef(err, "delete pending markers for unfinished backup %s", target.BackupID)
 		}
 	default:
-		return nil, errors.Annotatef(
-			berrors.ErrInvalidArgument,
-			"found transient repo-v1 pending backup %s: pending marker exists but neither %s nor %s was found",
-			target.BackupID,
-			metautil.MetaFile,
-			checkpoint.CheckpointMetaPathForBackup,
-		)
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "unknown pending backup state %q", target.State)
 	}
 	return result, nil
 }

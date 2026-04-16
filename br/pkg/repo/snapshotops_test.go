@@ -39,13 +39,13 @@ func TestListPendingBackupsClassifiesStates(t *testing.T) {
 
 	staleID := repo.BackupID(0x1111)
 	unfinishedID := repo.BackupID(0x2222)
-	transientID := repo.BackupID(0x3333)
+	markerOnlyID := repo.BackupID(0x3333)
 
 	createPendingMarker(t, ctx, storage, staleID)
 	createBackupMeta(t, ctx, storage, staleID)
 
 	createPendingCheckpoint(t, ctx, storage, unfinishedID)
-	createPendingMarker(t, ctx, storage, transientID)
+	createPendingMarker(t, ctx, storage, markerOnlyID)
 
 	backups, err := snapshotOps.ListPendingBackups(ctx)
 	require.NoError(t, err)
@@ -54,8 +54,8 @@ func TestListPendingBackupsClassifiesStates(t *testing.T) {
 	require.Equal(t, staleID, backups[0].BackupID)
 	require.Equal(t, repo.PendingBackupStateUnfinished, backups[1].State)
 	require.Equal(t, unfinishedID, backups[1].BackupID)
-	require.Equal(t, repo.PendingBackupStateTransient, backups[2].State)
-	require.Equal(t, transientID, backups[2].BackupID)
+	require.Equal(t, repo.PendingBackupStateStale, backups[2].State)
+	require.Equal(t, markerOnlyID, backups[2].BackupID)
 }
 
 func TestDiscardPendingSnapshotStalePendingRemovesOnlyMarker(t *testing.T) {
@@ -130,10 +130,20 @@ func TestDiscardPendingSnapshotRejectsTransient(t *testing.T) {
 
 	backupID := repo.BackupID(0x3456)
 	createPendingMarker(t, ctx, storage, backupID)
+	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
+	require.NoError(t, metadataStorage.WriteFile(ctx, checkpoint.CheckpointLockPathForBackup, []byte("lock")))
+	require.NoError(t, metadataStorage.WriteFile(ctx, checkpoint.CheckpointDataDirForBackup+"/partial.cpt", []byte("data")))
 
-	_, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(t, ctx, storage, backupID))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "transient repo-v1 pending backup")
+	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(t, ctx, storage, backupID))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.True(t, result.StalePending)
+	require.Equal(t, 1, result.PendingDeleted)
+	require.Zero(t, result.MetadataDeleted)
+	require.Zero(t, result.DataDeleted)
+	requireFileMissing(t, ctx, storage, repo.PendingFile([]byte("hash"), backupID))
+	requireFileMissing(t, ctx, storage, pathJoin(repo.SnapshotMetadataDir(backupID), checkpoint.CheckpointLockPathForBackup))
+	requireFileMissing(t, ctx, storage, pathJoin(repo.SnapshotMetadataDir(backupID), checkpoint.CheckpointDataDirForBackup+"/partial.cpt"))
 }
 
 func TestDeleteSnapshotWithoutMetadataUsesStartAfter(t *testing.T) {

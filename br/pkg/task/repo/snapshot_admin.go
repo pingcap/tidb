@@ -197,10 +197,8 @@ func RunRepoSnapshotDelete(
 				result, err := snapshotOps.DeleteSnapshot(
 					ctx,
 					cfg.BackupID,
-					repo.WithMutationProgress(
-						func(count int) { addTotal(int64(count)) },
-						func(count int) { advance(int64(count)) },
-					),
+					repo.WithMutationDiscoveredProgress(func(count int) { addTotal(int64(count)) }),
+					repo.WithMutationDeletedProgress(func(count int) { advance(int64(count)) }),
 				)
 				if result != nil {
 					deleteResult = result
@@ -250,10 +248,8 @@ func RunRepoSnapshotPendingDiscard(
 				result, err := snapshotOps.DiscardPendingSnapshot(
 					ctx,
 					*target,
-					repo.WithMutationProgress(
-						func(count int) { addTotal(int64(count)) },
-						func(count int) { advance(int64(count)) },
-					),
+					repo.WithMutationDiscoveredProgress(func(count int) { addTotal(int64(count)) }),
+					repo.WithMutationDeletedProgress(func(count int) { advance(int64(count)) }),
 				)
 				if result != nil {
 					discardResult = result
@@ -321,10 +317,8 @@ func RunRepoSnapshotOrphansDelete(
 			func(addTotal func(int64), advance func(int64)) (int, error) {
 				deleted, err := snapshotOps.DeleteSnapshotOrphans(
 					ctx,
-					repo.WithMutationProgress(
-						func(count int) { addTotal(int64(count)) },
-						func(count int) { advance(int64(count)) },
-					),
+					repo.WithMutationDiscoveredProgress(func(count int) { addTotal(int64(count)) }),
+					repo.WithMutationDeletedProgress(func(count int) { advance(int64(count)) }),
 				)
 				deletedCount = deleted
 				return deleted, err
@@ -428,11 +422,11 @@ func confirmRepoSnapshotPendingDiscard(
 	printRepoSnapshotConfirmField(console, "pending-markers", fmt.Sprintf("%d", len(target.MarkerPaths)))
 	switch target.State {
 	case repo.PendingBackupStateStale:
-		console.Println("This only removes stale pending markers; completed snapshot metadata and data files are kept.")
+		console.Println("This removes pending markers and leftover checkpoint files; completed snapshot metadata and data files, if present, are kept.")
 	case repo.PendingBackupStateUnfinished:
 		console.Println("This permanently removes checkpoint/metadata files, data files, and pending markers for the unfinished backup.")
 	default:
-		console.Println("This pending backup is transient and cannot be discarded with this command.")
+		console.Printf("Unknown pending state %q.\n", target.State)
 	}
 	if !console.PromptBool("Continue? ") {
 		return errors.Trace(berrors.ErrOperationAborted)

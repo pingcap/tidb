@@ -108,7 +108,7 @@ func TestCollectResumablePendingBackups(t *testing.T) {
 		require.False(t, exists)
 	})
 
-	t.Run("transient_state_cleaned_without_checkpoint_meta", func(t *testing.T) {
+	t.Run("non_resumable_pending_cleans_checkpoint_debris", func(t *testing.T) {
 		ctx := context.Background()
 		storage := objstore.NewMemStorage()
 		cfgHash := []byte("hash")
