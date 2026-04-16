@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -49,16 +50,15 @@ var statsTables = map[string]map[string]struct{}{
 
 var renameableSysTables = map[string]map[string]struct{}{
 	"mysql": {
-		"bind_info":               {},
-		"user":                    {},
-		"db":                      {},
-		"tables_priv":             {},
-		"columns_priv":            {},
-		"default_roles":           {},
-		"role_edges":              {},
-		"global_priv":             {},
-		"global_grants":           {},
-		sysMaskingPolicyTableName: {}, // column-level masking policies (since v8.5.0)
+		"bind_info":     {},
+		"user":          {},
+		"db":            {},
+		"tables_priv":   {},
+		"columns_priv":  {},
+		"default_roles": {},
+		"role_edges":    {},
+		"global_priv":   {},
+		"global_grants": {},
 	},
 }
 
@@ -283,40 +283,75 @@ func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(co
 	return nil
 }
 
-func rewriteMaskingPolicyTableData(
+func buildCreateMaskingPolicySQL(
+	policyName, dbName, tableName, columnName, expression, status, restrictOn string,
+) string {
+	sql := fmt.Sprintf(
+		"CREATE OR REPLACE MASKING POLICY %s ON %s(%s) AS %s",
+		utils.EncloseName(policyName),
+		utils.EncloseDBAndTable(dbName, tableName),
+		utils.EncloseName(columnName),
+		expression,
+	)
+
+	normalizedRestrictOn := strings.ToUpper(strings.TrimSpace(restrictOn))
+	if normalizedRestrictOn != "" && normalizedRestrictOn != "NONE" {
+		sql = fmt.Sprintf("%s RESTRICT ON (%s)", sql, normalizedRestrictOn)
+	}
+
+	normalizedStatus := strings.ToUpper(strings.TrimSpace(status))
+	if normalizedStatus == "ENABLED" {
+		normalizedStatus = "ENABLE"
+	} else if normalizedStatus == "DISABLED" {
+		normalizedStatus = "DISABLE"
+	}
+	if normalizedStatus != "ENABLE" {
+		normalizedStatus = "DISABLE"
+	}
+	return fmt.Sprintf("%s %s;", sql, normalizedStatus)
+}
+
+func restoreMaskingPoliciesFromTemporaryTable(
 	ctx context.Context,
+	sessionCtx sqlexec.RestrictedSQLExecutor,
 	tempDBName string,
 	execSQL func(context.Context, string) error,
 ) error {
 	tempTable := utils.EncloseDBAndTable(tempDBName, sysMaskingPolicyTableName)
 
-	// Remove policy rows whose target column does not exist in the restored schema.
-	// This avoids leaving stale metadata after partial restores.
-	deleteOrphanRowsSQL := fmt.Sprintf(
-		`DELETE p FROM %s AS p
-LEFT JOIN information_schema.columns AS c
+	// Replay policies as canonical CREATE MASKING POLICY semantics instead of raw row replay.
+	// This lets target cluster bind table_id/column_id with its own IDs.
+	readPoliciesSQL := fmt.Sprintf(
+		`SELECT p.policy_name, p.db_name, p.table_name, p.column_name, p.expression, p.status, p.restrict_on
+FROM %s AS p
+JOIN information_schema.columns AS c
   ON c.table_schema = p.db_name AND c.table_name = p.table_name AND c.column_name = p.column_name
-WHERE c.tidb_column_id IS NULL`,
+ORDER BY p.table_id, p.column_id, p.policy_id`,
 		tempTable,
 	)
-	if err := execSQL(ctx, deleteOrphanRowsSQL); err != nil {
+	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	rows, _, err := sessionCtx.ExecRestrictedSQL(
+		internalCtx,
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		readPoliciesSQL,
+	)
+	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// Rebind table_id / column_id to the target cluster IDs by object name.
-	// Raw IDs from the source backup may differ in the restore target.
-	rebindIDsSQL := fmt.Sprintf(
-		`UPDATE %s AS p
-JOIN information_schema.tables AS t
-  ON t.table_schema = p.db_name AND t.table_name = p.table_name
-JOIN information_schema.columns AS c
-  ON c.table_schema = p.db_name AND c.table_name = p.table_name AND c.column_name = p.column_name
-SET p.table_id = t.tidb_table_id,
-    p.column_id = c.tidb_column_id`,
-		tempTable,
-	)
-	if err := execSQL(ctx, rebindIDsSQL); err != nil {
-		return errors.Trace(err)
+	for _, row := range rows {
+		ddl := buildCreateMaskingPolicySQL(
+			row.GetString(0),
+			row.GetString(1),
+			row.GetString(2),
+			row.GetString(3),
+			row.GetString(4),
+			row.GetString(5),
+			row.GetString(6),
+		)
+		if err := execSQL(ctx, ddl); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -496,9 +531,11 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		}
 	}
 	if dbName == mysql.SystemDB && tableName == sysMaskingPolicyTableName {
-		if err := rewriteMaskingPolicyTableData(ctx, db.TemporaryName.L, execSQL); err != nil {
+		if err := restoreMaskingPoliciesFromTemporaryTable(ctx, rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor(), db.TemporaryName.L, execSQL); err != nil {
 			return err
 		}
+		// Policies are restored by replaying logical DDL semantics. Don't REPLACE source rows physically.
+		return nil
 	}
 
 	if db.ExistingTables[tableName] != nil {

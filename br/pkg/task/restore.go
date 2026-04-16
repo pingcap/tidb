@@ -2392,13 +2392,25 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 		name := restore.UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}
 		tableNames[name] = true
 		for _, job := range allDDLJobs {
-			if job.BinlogInfo.TableInfo != nil {
-				name = restore.UniqueTableName{DB: job.SchemaName, Table: job.BinlogInfo.TableInfo.Name.String()}
-				if tableIDs[job.TableID] || tableNames[name] {
-					ddlJobs = append(ddlJobs, job)
+			jobTableName := ""
+			if job.BinlogInfo != nil && job.BinlogInfo.TableInfo != nil {
+				jobTableName = job.BinlogInfo.TableInfo.Name.String()
+			} else if job.TableName != "" {
+				// Some DDL jobs (for example masking policy DDL) don't persist BinlogInfo.TableInfo.
+				// Fall back to job.TableName so table-scope restore can still replay them.
+				jobTableName = job.TableName
+			}
+			name = restore.UniqueTableName{DB: job.SchemaName, Table: jobTableName}
+			if (job.TableID != 0 && tableIDs[job.TableID]) || (jobTableName != "" && tableNames[name]) {
+				ddlJobs = append(ddlJobs, job)
+				if job.TableID != 0 {
 					tableIDs[job.TableID] = true
-					// For truncate table, the id may be changed
+				}
+				// For truncate table, the id may be changed.
+				if job.BinlogInfo != nil && job.BinlogInfo.TableInfo != nil && job.BinlogInfo.TableInfo.ID != 0 {
 					tableIDs[job.BinlogInfo.TableInfo.ID] = true
+				}
+				if jobTableName != "" {
 					tableNames[name] = true
 				}
 			}

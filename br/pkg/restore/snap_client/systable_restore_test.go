@@ -383,7 +383,7 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 	mse.MustExecute("DROP TABLE __TiDB_BR_Temporary_mysql.columns_priv")
 }
 
-func TestRewriteMaskingPolicyTableData(t *testing.T) {
+func TestRestoreMaskingPoliciesFromTemporaryTable(t *testing.T) {
 	cluster := mc
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, cluster.Storage)
@@ -421,12 +421,14 @@ VALUES
 		_, err := tk.Session().ExecuteInternal(execCtx, sql)
 		return err
 	}
-	err = snapclient.RewriteMaskingPolicyTableData(ctx, "__TiDB_BR_Temporary_mysql", execSQL)
+	err = snapclient.RestoreMaskingPoliciesFromTemporaryTable(ctx, tk.Session().GetRestrictedSQLExecutor(), "__TiDB_BR_Temporary_mysql", execSQL)
 	require.NoError(t, err)
 
-	tk.MustQuery("SELECT COUNT(*) FROM __TiDB_BR_Temporary_mysql.tidb_masking_policy").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT table_id, column_id FROM __TiDB_BR_Temporary_mysql.tidb_masking_policy WHERE policy_name='p_keep'").
+	tk.MustQuery("SHOW MASKING POLICIES FOR " + dbName + ".t").Check(testkit.Rows("p_keep c1 c1 ENABLE CUSTOM NONE"))
+	tk.MustQuery("SELECT table_id, column_id FROM mysql.tidb_masking_policy WHERE policy_name='p_keep' AND db_name='" + dbName + "' AND table_name='t'").
 		Check(testkit.Rows(fmt.Sprintf("%d %d", tableInfo.ID, columnID)))
+	tk.MustQuery("SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE policy_name='p_orphan' AND db_name='" + dbName + "'").
+		Check(testkit.Rows("0"))
 }
 
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:

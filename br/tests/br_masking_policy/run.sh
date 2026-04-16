@@ -65,13 +65,12 @@ if [ "$table_count" != "2" ]; then
 fi
 
 # Verify masking policy metadata behavior for db-scope restore.
-# For `restore db`, filter is `<db>.*`, so mysql system tables are filtered out.
-# Therefore policy metadata should not be attached to the restored table.
+# BR should replay masking policy DDL semantics for restored tables.
 echo "Checking masking policy after restore..."
 policy_output_after=$(run_sql "SHOW MASKING POLICIES FOR ${DB}.t;")
 policy_count_after=$(printf '%s\n' "$policy_output_after" | grep -c "test_policy" || true)
-if [ "$policy_count_after" != "0" ]; then
-    echo "TEST: [$TEST_NAME] failed! Expected 0 masking policies after db-scope restore, got $policy_count_after"
+if [ "$policy_count_after" != "1" ]; then
+    echo "TEST: [$TEST_NAME] failed! Expected 1 masking policy after db-scope restore, got $policy_count_after"
     exit 1
 fi
 
@@ -92,8 +91,8 @@ policy_row_count_after=$(printf '%s\n' "$policy_row_count_output_after" | awk -F
     exit 1
 }
 policy_row_count_after=$(printf '%s' "$policy_row_count_after" | tr -d '[:space:]')
-if [ "$policy_row_count_after" != "0" ]; then
-    echo "TEST: [$TEST_NAME] failed! Expected 0 rows in mysql.tidb_masking_policy for restored table_id=${restored_table_id} after db-scope restore, got $policy_row_count_after"
+if [ "$policy_row_count_after" != "1" ]; then
+    echo "TEST: [$TEST_NAME] failed! Expected 1 row in mysql.tidb_masking_policy for restored table_id=${restored_table_id} after db-scope restore, got $policy_row_count_after"
     exit 1
 fi
 

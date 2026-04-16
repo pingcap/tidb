@@ -503,6 +503,7 @@ func TestDB_ExecDDL(t *testing.T) {
 
 func TestDB_ExecDDL2(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
 
 	ctx := context.Background()
 	fieldType := types.NewFieldType(8)
@@ -553,6 +554,14 @@ func TestDB_ExecDDL2(t *testing.T) {
 				TableInfo: &model.TableInfo{},
 			},
 		},
+		{
+			SchemaName: "test_db",
+			TableID:    20000,
+			TableName:  "t1",
+			Type:       model.ActionCreateMaskingPolicy,
+			Query:      "CREATE MASKING POLICY p ON t1(id) AS id;",
+			BinlogInfo: &model.HistoryInfo{},
+		},
 	}
 
 	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
@@ -562,6 +571,7 @@ func TestDB_ExecDDL2(t *testing.T) {
 		err = db.ExecDDL(ctx, ddlJob)
 		assert.NoError(t, err)
 	}
+	tk.MustQuery("SHOW MASKING POLICIES FOR test_db.t1").Check(testkit.Rows("p id id DISABLE CUSTOM NONE"))
 }
 
 func TestCreateTableConsistent(t *testing.T) {

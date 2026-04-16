@@ -157,13 +157,6 @@ func (rc *SnapClient) replaceTables(
 	if err := updateStatsTableSchema(ctx, renamedTables, rc.dom.InfoSchema(), rc.db.Session().Execute); err != nil {
 		return 0, errors.Trace(err)
 	}
-	if tables, ok := renamedTables[mysql.SystemDB]; ok {
-		if _, exists := tables[sysMaskingPolicyTableName]; exists {
-			if err := rewriteMaskingPolicyTableData(ctx, utils.TemporaryDBName(mysql.SystemDB).L, rc.db.Session().Execute); err != nil {
-				return 0, errors.Trace(err)
-			}
-		}
-	}
 
 	if err := rc.moveRenamedTable(ctx, restoreTS, renamedTables); err != nil {
 		return 0, errors.Trace(err)
