@@ -1591,12 +1591,25 @@ func MergePartTopNAndHistToGlobal(
 	if expBucketNumber == 0 {
 		return nil, nil, errors.Errorf("expBucketNumber can not be zero")
 	}
-	if len(hists) == 0 {
+
+	// Find the first non-nil histogram for metadata (ID, Tp, etc.).
+	// If none exist, we can still merge TopN-only data.
+	var firstHist *Histogram
+	for _, h := range hists {
+		if h != nil {
+			firstHist = h
+			break
+		}
+	}
+	if firstHist == nil && len(topNs) == 0 {
 		return nil, nil, nil
 	}
 
 	tz := sc.TimeZone()
-	tp := hists[0].Tp.GetType()
+	var tp byte
+	if firstHist != nil {
+		tp = firstHist.Tp.GetType()
+	}
 
 	// ---------------------------------------------------------------
 	// Pass 1: Determine global TopN via sorted merge of TopN entries
@@ -1668,8 +1681,11 @@ func MergePartTopNAndHistToGlobal(
 	}
 
 	if len(allTopN) == 0 && len(refs) == 0 {
-		return nil, NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion,
-			hists[0].Tp, 0, totColSize), nil
+		if firstHist != nil {
+			return nil, NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
+				firstHist.Tp, 0, totColSize), nil
+		}
+		return nil, nil, nil
 	}
 
 	// 1c. Merge-walk both sorted sequences. For each unique value,
@@ -1814,8 +1830,13 @@ func MergePartTopNAndHistToGlobal(
 	// Refs are already sorted from Pass 1. For buckets matching a
 	// global TopN value, subtract the per-bucket Repeat.
 	// ---------------------------------------------------------------
-	globalHist := NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion,
-		hists[0].Tp, int(expBucketNumber), totColSize)
+	var globalHist *Histogram
+	if firstHist != nil {
+		globalHist = NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
+			firstHist.Tp, int(expBucketNumber), totColSize)
+	} else {
+		globalHist = NewHistogram(0, 0, totNull, 0, types.NewFieldType(mysql.TypeNull), 0, totColSize)
+	}
 
 	if totCount > 0 && len(refs) > 0 {
 		var (
@@ -1965,7 +1986,7 @@ func MergePartTopNAndHistToGlobal(
 		allBuckets := append(histBuckets, extraBuckets...)
 		var err error
 		globalHist, err = mergeByUpperBound(sc, allBuckets, totCount, totNull, totColSize,
-			expBucketNumber, isIndex, hists[0].ID, hists[0].LastUpdateVersion, hists[0].Tp)
+			expBucketNumber, isIndex, globalHist.ID, globalHist.LastUpdateVersion, globalHist.Tp)
 		if err != nil {
 			return nil, nil, err
 		}
