@@ -2,7 +2,7 @@
 
 - Author(s):     [@tiancaiamao](https://github.com/tiancaiamao)
 - PM:            Frank (feature spec owner)
-- Last updated:  2026-02-27
+- Last updated:  2026-04-16
 - Tracking:      FRM-2351
 - Discussion at: https://github.com/pingcap/tidb/issues/65744
 
@@ -245,13 +245,21 @@ Notes:
 
 ![Data Access Authorization Logic](./column-level-masking-2.png)
 
-Administrative privileges:
+Masking policy administration uses dynamic privileges at global scope (`ON *.*`):
 
-- `CREATE MASKING POLICY`
-- `ALTER MASKING POLICY`
-- `DROP MASKING POLICY`
+```sql
+GRANT CREATE MASKING POLICY ON *.* TO 'security_admin'@'%';
+GRANT ALTER MASKING POLICY ON *.* TO 'security_admin'@'%';
+GRANT DROP MASKING POLICY ON *.* TO 'security_admin'@'%';
+```
 
-`ALTER MASKING POLICY` covers:
+| Privilege | Description |
+| --- | --- |
+| `CREATE MASKING POLICY` | Allows creating new policy objects and binding them to columns via `ALTER TABLE ... ADD MASKING POLICY` or `CREATE MASKING POLICY`. |
+| `ALTER MASKING POLICY` | Allows modifying existing masking policy definitions, including `SET EXPRESSION`, `SET RESTRICT ON`, and `ENABLE` / `DISABLE`. |
+| `DROP MASKING POLICY` | Allows permanent removal of masking policies from columns/tables. |
+
+`ALTER MASKING POLICY` includes:
 
 - `SET EXPRESSION`
 - `SET RESTRICT ON`

@@ -62,9 +62,9 @@ GRANT ALTER ON privilege__privileges.mask_t TO mask_creator;
 GRANT ALTER ON privilege__privileges.mask_t TO mask_alter;
 GRANT ALTER ON privilege__privileges.mask_t TO mask_drop;
 GRANT ALTER ON privilege__privileges.mask_t TO mask_none;
-GRANT `CREATE MASKING POLICY` ON *.* TO mask_creator;
-GRANT `ALTER MASKING POLICY` ON *.* TO mask_alter;
-GRANT `DROP MASKING POLICY` ON *.* TO mask_drop;
+GRANT CREATE MASKING POLICY ON *.* TO mask_creator;
+GRANT ALTER MASKING POLICY ON *.* TO mask_alter;
+GRANT DROP MASKING POLICY ON *.* TO mask_drop;
 create masking policy p on mask_t(c) as c;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or CREATE MASKING POLICY privilege(s) for this operation
 alter table mask_t disable masking policy p;

@@ -236,9 +236,9 @@ GRANT ALTER ON privilege__column_masking_policy.t_auth_priv TO cmp_mask_creator;
 GRANT ALTER ON privilege__column_masking_policy.t_auth_priv TO cmp_mask_alter;
 GRANT ALTER ON privilege__column_masking_policy.t_auth_priv TO cmp_mask_drop;
 GRANT ALTER ON privilege__column_masking_policy.t_auth_priv TO cmp_mask_none;
-GRANT `CREATE MASKING POLICY` ON *.* TO cmp_mask_creator;
-GRANT `ALTER MASKING POLICY` ON *.* TO cmp_mask_alter;
-GRANT `DROP MASKING POLICY` ON *.* TO cmp_mask_drop;
+GRANT CREATE MASKING POLICY ON *.* TO cmp_mask_creator;
+GRANT ALTER MASKING POLICY ON *.* TO cmp_mask_alter;
+GRANT DROP MASKING POLICY ON *.* TO cmp_mask_drop;
 
 connect (cmp_mask_none_conn, localhost, cmp_mask_none,, privilege__column_masking_policy);
 connection cmp_mask_none_conn;

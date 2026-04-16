@@ -48,7 +48,7 @@ Execution policy:
 ### 3.2 P0 Scenario Groups
 
 - `P0-DDL`: lifecycle, constraints, unsupported objects/columns, binding stability
-- `P0-AUTH`: dynamic privileges and identity-function semantics
+- `P0-AUTH`: dynamic privileges, GRANT/REVOKE syntax coverage, and identity-function semantics
 - `P0-CORE`: `AT RESULT` correctness in query pipeline
 - `P0-RES`: `RESTRICT ON` deny/allow behavior
 - `P0-FUNC`: masking builtin behavior and boundaries
@@ -59,6 +59,7 @@ Execution policy:
 - Integration:
   - `tests/integrationtest/t/privilege/column_masking_policy.test`
 - Unit:
+  - `pkg/parser/parser_test.go` (GRANT/REVOKE privilege grammar coverage)
   - `pkg/ddl/masking_policy_test.go`
   - `pkg/planner/core/masking_policy_projection_test.go`
   - `pkg/planner/core/masking_policy_restrict_test.go`

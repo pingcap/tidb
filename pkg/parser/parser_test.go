@@ -5139,6 +5139,9 @@ func TestPrivilege(t *testing.T) {
 		{"GRANT EXECUTE ON PROCEDURE mydb.myproc TO 'someuser'@'somehost'", true, "GRANT EXECUTE ON PROCEDURE `mydb`.`myproc` TO `someuser`@`somehost`"},
 		{"GRANT APPLICATION_PASSWORD_ADMIN,AUDIT_ADMIN ON *.* TO 'root'@'localhost'", true, "GRANT APPLICATION_PASSWORD_ADMIN, AUDIT_ADMIN ON *.* TO `root`@`localhost`"},
 		{"GRANT LOAD FROM S3, SELECT INTO S3, INVOKE LAMBDA, INVOKE SAGEMAKER, INVOKE COMPREHEND ON *.* TO 'root'@'localhost'", true, "GRANT LOAD FROM S3, SELECT INTO S3, INVOKE LAMBDA, INVOKE SAGEMAKER, INVOKE COMPREHEND ON *.* TO `root`@`localhost`"},
+		{"GRANT CREATE MASKING POLICY ON *.* TO 'security_admin'@'%'", true, "GRANT CREATE MASKING POLICY ON *.* TO `security_admin`@`%`"},
+		{"GRANT ALTER MASKING POLICY ON *.* TO 'security_admin'@'%'", true, "GRANT ALTER MASKING POLICY ON *.* TO `security_admin`@`%`"},
+		{"GRANT DROP MASKING POLICY ON *.* TO 'security_admin'@'%'", true, "GRANT DROP MASKING POLICY ON *.* TO `security_admin`@`%`"},
 		{"GRANT PROXY ON 'localuser'@'localhost' TO 'externaluser'@'somehost'", true, "GRANT PROXY ON `localuser`@`localhost` TO `externaluser`@`somehost`"},
 		{"GRANT PROXY ON ''@'' TO 'root'@'localhost' WITH GRANT OPTION", true, "GRANT PROXY ON ``@`` TO `root`@`localhost` WITH GRANT OPTION"},
 		{"GRANT PROXY ON 'proxied_user' TO 'proxy_user1', 'proxy_user2'", true, "GRANT PROXY ON `proxied_user`@`%` TO `proxy_user1`@`%`, `proxy_user2`@`%`"},
@@ -5161,6 +5164,9 @@ func TestPrivilege(t *testing.T) {
 		{"REVOKE EXECUTE ON FUNCTION db.func FROM 'user'@'localhost'", true, "REVOKE EXECUTE ON FUNCTION `db`.`func` FROM `user`@`localhost`"},
 		{"REVOKE EXECUTE ON PROCEDURE db.func FROM 'user'@'localhost'", true, "REVOKE EXECUTE ON PROCEDURE `db`.`func` FROM `user`@`localhost`"},
 		{"REVOKE APPLICATION_PASSWORD_ADMIN,AUDIT_ADMIN ON *.* FROM 'root'@'localhost'", true, "REVOKE APPLICATION_PASSWORD_ADMIN, AUDIT_ADMIN ON *.* FROM `root`@`localhost`"},
+		{"REVOKE CREATE MASKING POLICY ON *.* FROM 'security_admin'@'%'", true, "REVOKE CREATE MASKING POLICY ON *.* FROM `security_admin`@`%`"},
+		{"REVOKE ALTER MASKING POLICY ON *.* FROM 'security_admin'@'%'", true, "REVOKE ALTER MASKING POLICY ON *.* FROM `security_admin`@`%`"},
+		{"REVOKE DROP MASKING POLICY ON *.* FROM 'security_admin'@'%'", true, "REVOKE DROP MASKING POLICY ON *.* FROM `security_admin`@`%`"},
 		{"revoke all privileges, grant option from u1", true, "REVOKE ALL, GRANT OPTION ON *.* FROM `u1`@`%`"},                             // special case syntax
 		{"revoke all privileges, grant option from u1, u2, u3", true, "REVOKE ALL, GRANT OPTION ON *.* FROM `u1`@`%`, `u2`@`%`, `u3`@`%`"}, // special case syntax
 	}
