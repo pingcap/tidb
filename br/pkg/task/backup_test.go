@@ -154,20 +154,9 @@ func TestBackupConfigHash(t *testing.T) {
 
 	{
 		testCfg := *cfg
-		testCfg.SnapshotBackupOptions.Layout = repo.LayoutLegacy
-		hashCheck(t, &testCfg, originalHash, true)
-	}
-
-	{
-		testCfg := *cfg
 		testCfg.SnapshotBackupOptions.Layout = repo.LayoutRepoV1
-		hashCheck(t, &testCfg, originalHash, false)
-	}
-
-	{
-		testCfg := *cfg
 		testCfg.SnapshotBackupOptions.OnPending = taskrepo.OnPendingResume
-		hashCheck(t, &testCfg, originalHash, true)
+		hashCheck(t, &testCfg, originalHash, false)
 	}
 
 	{

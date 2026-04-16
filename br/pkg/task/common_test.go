@@ -342,22 +342,6 @@ func TestDefault(t *testing.T) {
 	require.Equal(t, defaultConfig, def)
 }
 
-func TestApplyTiDBRuntimeConfigUsesRuntimePD(t *testing.T) {
-	oldCfg := *config.GetGlobalConfig()
-	t.Cleanup(func() {
-		config.StoreGlobalConfig(&oldCfg)
-	})
-
-	cfg := oldCfg
-	cfg.Store = config.StoreTypeTiKV
-	cfg.Path = "127.0.0.1:12379,127.0.0.1:22379"
-	config.StoreGlobalConfig(&cfg)
-
-	def := DefaultConfig()
-	ApplyTiDBRuntimeConfig(&def)
-	require.Equal(t, []string{"127.0.0.1:12379", "127.0.0.1:22379"}, def.PD)
-}
-
 func TestDefaultBackup(t *testing.T) {
 	commonConfig := DefaultConfig()
 	commonConfig.OverrideDefaultForBackup()

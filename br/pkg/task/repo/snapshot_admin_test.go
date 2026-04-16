@@ -51,44 +51,6 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 		meta.BackupResult = "succeeded"
 		meta.BackupSize = 4096
 		meta.Mode = backuppb.BackupMode_FILE
-	})
-
-	result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
-		Config:   cfg,
-		BackupID: backupID,
-	})
-	require.NoError(t, err)
-
-	var basic repoSnapshotBasicView
-	require.NoError(t, json.Unmarshal(result, &basic))
-	require.Equal(t, repoSnapshotBasicView{
-		ClusterID:      4663,
-		ClusterVersion: "v8.5.0",
-		BRVersion:      "br-test",
-		StartVersion:   100,
-		EndVersion:     200,
-		IsTxnKV:        true,
-		BackupResult:   "succeeded",
-		Mode:           int32(backuppb.BackupMode_FILE),
-	}, repoSnapshotBasicView{
-		ClusterID:      basic.ClusterID,
-		ClusterVersion: basic.ClusterVersion,
-		BRVersion:      basic.BRVersion,
-		StartVersion:   basic.StartVersion,
-		EndVersion:     basic.EndVersion,
-		IsTxnKV:        basic.IsTxnKV,
-		BackupResult:   basic.BackupResult,
-		Mode:           basic.Mode,
-	})
-	require.Greater(t, basic.BackupSize, uint64(0))
-}
-
-func TestRunRepoSnapshotGetTablesViewSorted(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	backupID := repo.BackupID(0x1238)
-	createBackupMeta(t, ctx, storage, backupID, func(meta *backuppb.BackupMeta) {
 		meta.Schemas = []*backuppb.Schema{
 			newSchemaForView(t, 2, 22, "zeta", "t2", 22, 220, 2),
 			newSchemaForView(t, 1, 11, "alpha", "t1", 11, 110, 1),
@@ -96,126 +58,106 @@ func TestRunRepoSnapshotGetTablesViewSorted(t *testing.T) {
 		}
 	})
 
-	result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
-		Config:   cfg,
-		BackupID: backupID,
-		View:     "tables",
+	t.Run("basic", func(t *testing.T) {
+		result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
+			Config:   cfg,
+			BackupID: backupID,
+		})
+		require.NoError(t, err)
+
+		var basic repoSnapshotBasicView
+		require.NoError(t, json.Unmarshal(result, &basic))
+		require.Equal(t, repoSnapshotBasicView{
+			ClusterID:      4663,
+			ClusterVersion: "v8.5.0",
+			BRVersion:      "br-test",
+			StartVersion:   100,
+			EndVersion:     200,
+			IsTxnKV:        true,
+			BackupResult:   "succeeded",
+			Mode:           int32(backuppb.BackupMode_FILE),
+		}, repoSnapshotBasicView{
+			ClusterID:      basic.ClusterID,
+			ClusterVersion: basic.ClusterVersion,
+			BRVersion:      basic.BRVersion,
+			StartVersion:   basic.StartVersion,
+			EndVersion:     basic.EndVersion,
+			IsTxnKV:        basic.IsTxnKV,
+			BackupResult:   basic.BackupResult,
+			Mode:           basic.Mode,
+		})
+		require.Greater(t, basic.BackupSize, uint64(0))
 	})
-	require.NoError(t, err)
 
-	var tables []repoSnapshotTableView
-	require.NoError(t, json.Unmarshal(result, &tables))
-	require.Equal(t, []repoSnapshotTableView{
-		{DBName: "alpha", TableName: "t0", KVCount: 10, KVSize: 100, TiFlashReplica: 0},
-		{DBName: "alpha", TableName: "t1", KVCount: 11, KVSize: 110, TiFlashReplica: 1},
-		{DBName: "zeta", TableName: "t2", KVCount: 22, KVSize: 220, TiFlashReplica: 2},
-	}, tables)
-}
+	t.Run("tables", func(t *testing.T) {
+		result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
+			Config:   cfg,
+			BackupID: backupID,
+			View:     "tables",
+		})
+		require.NoError(t, err)
 
-func TestRunRepoSnapshotGetFilesViewSorted(t *testing.T) {
-	files := []*backuppb.File{
-		newFileForView(t, "backup/data/z.sst", "6f", "7f", "write", 128, 12, 1200, "bb"),
-		newFileForView(t, "backup/data/a.sst", "0a", "1a", "write", 64, 6, 600, "aa"),
-		newFileForView(t, "backup/data/a.sst", "00", "09", "default", 32, 3, 300, "ab"),
-	}
-	expected := []repoSnapshotFileView{
-		convertRepoSnapshotFileView(files[2]),
-		convertRepoSnapshotFileView(files[1]),
-		convertRepoSnapshotFileView(files[0]),
-	}
+		var tables []repoSnapshotTableView
+		require.NoError(t, json.Unmarshal(result, &tables))
+		require.Equal(t, []repoSnapshotTableView{
+			{DBName: "alpha", TableName: "t0", KVCount: 10, KVSize: 100, TiFlashReplica: 0},
+			{DBName: "alpha", TableName: "t1", KVCount: 11, KVSize: 110, TiFlashReplica: 1},
+			{DBName: "zeta", TableName: "t2", KVCount: 22, KVSize: 220, TiFlashReplica: 2},
+		}, tables)
+	})
 
-	for _, useV2 := range []bool{false, true} {
-		t.Run(fmt.Sprintf("v%d", map[bool]int{false: 1, true: 2}[useV2]), func(t *testing.T) {
-			ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-			defer storage.Close()
-
-			backupID := repo.BackupID(0x1235)
-			createBackupMetaWithFiles(t, ctx, storage, backupID, useV2, files)
-
+	t.Run("files", func(t *testing.T) {
+		files := []*backuppb.File{
+			newFileForView(t, "backup/data/z.sst", "6f", "7f", "write", 128, 12, 1200, "bb"),
+			newFileForView(t, "backup/data/a.sst", "0a", "1a", "write", 64, 6, 600, "aa"),
+			newFileForView(t, "backup/data/a.sst", "00", "09", "default", 32, 3, 300, "ab"),
+		}
+		expectedFiles := []repoSnapshotFileView{
+			convertRepoSnapshotFileView(files[2]),
+			convertRepoSnapshotFileView(files[1]),
+			convertRepoSnapshotFileView(files[0]),
+		}
+		for i, useV2 := range []bool{false, true} {
+			filesBackupID := backupID + repo.BackupID(i+1)
+			createBackupMetaWithFiles(t, ctx, storage, filesBackupID, useV2, files)
 			result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
 				Config:   cfg,
-				BackupID: backupID,
+				BackupID: filesBackupID,
 				View:     "files",
 			})
 			require.NoError(t, err)
 
 			var got []repoSnapshotFileView
 			require.NoError(t, json.Unmarshal(result, &got))
-			require.Equal(t, expected, got)
+			require.Equal(t, expectedFiles, got)
+		}
+	})
+
+	t.Run("invalid_view", func(t *testing.T) {
+		_, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
+			Config:   cfg,
+			BackupID: backupID,
+			View:     "unknown",
 		})
-	}
-}
-
-func TestRunRepoSnapshotGetInvalidView(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	backupID := repo.BackupID(0x1239)
-	createBackupMeta(t, ctx, storage, backupID)
-
-	_, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
-		Config:   cfg,
-		BackupID: backupID,
-		View:     "unknown",
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported snapshot metadata view")
-}
-
-func TestRunRepoSnapshotGetRejectsInvalidMetaWindow(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	backupID := repo.BackupID(0x1241)
-	createBackupMeta(t, ctx, storage, backupID, func(meta *backuppb.BackupMeta) {
-		meta.StartVersion = 200
-		meta.EndVersion = 100
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unsupported snapshot metadata view")
 	})
 
-	_, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
-		Config:   cfg,
-		BackupID: backupID,
+	t.Run("invalid_meta_window", func(t *testing.T) {
+		invalidBackupID := repo.BackupID(0x1241)
+		createBackupMeta(t, ctx, storage, invalidBackupID, func(meta *backuppb.BackupMeta) {
+			meta.StartVersion = 200
+			meta.EndVersion = 100
+		})
+
+		_, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
+			Config:   cfg,
+			BackupID: invalidBackupID,
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "start version")
+		require.Contains(t, err.Error(), "end version")
 	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "start version")
-	require.Contains(t, err.Error(), "end version")
-}
-
-func TestRunRepoSnapshotPendingDiscardRejectsAmbiguousWithoutBackupID(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	createPendingCheckpoint(t, ctx, storage, repo.BackupID(0x101))
-	createPendingCheckpoint(t, ctx, storage, repo.BackupID(0x102))
-
-	_, err := RunRepoSnapshotPendingDiscard(ctx, nil, RepoSnapshotPendingDiscardConfig{Config: cfg})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "backup id is required")
-}
-
-func TestRunRepoSnapshotDeleteWithConsoleProgressIsBestEffort(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
-
-	backupID := repo.BackupID(0x2001)
-	createBackupMeta(t, ctx, storage, backupID)
-	createPendingMarker(t, ctx, storage, backupID)
-	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, backupID)+"/a.sst", []byte("a")))
-
-	console := &repoSnapshotTestConsole{waitErr: context.Canceled}
-	result, err := RunRepoSnapshotDelete(ctx, console, RepoSnapshotDeleteConfig{
-		Config:   cfg,
-		BackupID: backupID,
-	})
-	require.NoError(t, err)
-	require.Equal(t, &RepoSnapshotDeleteResult{
-		BackupID:        backupID,
-		MetadataDeleted: 1,
-		DataDeleted:     1,
-		PendingDeleted:  1,
-	}, result)
-	requireRepoSnapshotProgress(t, console, "Deleting snapshot backup...", 3, 3)
-	requireRepoSnapshotExtraField(t, console, "deleted", "3 files")
 }
 
 func TestRunRepoSnapshotDeleteConfirmationAbortKeepsFiles(t *testing.T) {
@@ -251,82 +193,102 @@ func TestRunRepoSnapshotDeleteConfirmationAbortKeepsFiles(t *testing.T) {
 }
 
 func TestRunRepoSnapshotPendingDiscardConfirmationAbortKeepsFiles(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
+	t.Run("ambiguous_requires_backup_id", func(t *testing.T) {
+		ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+		defer storage.Close()
 
-	backupID := repo.BackupID(0x4102)
-	dataPath := repo.SnapshotStoreDataPrefix(1, backupID) + "/a.sst"
-	pendingPath := repo.PendingFile([]byte("hash"), backupID)
-	createPendingCheckpoint(t, ctx, storage, backupID)
-	require.NoError(t, storage.WriteFile(ctx, dataPath, []byte("a")))
+		createPendingCheckpoint(t, ctx, storage, repo.BackupID(0x101))
+		createPendingCheckpoint(t, ctx, storage, repo.BackupID(0x102))
 
-	console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
-	result, err := RunRepoSnapshotPendingDiscard(ctx, console, RepoSnapshotPendingDiscardConfig{
-		Config:   cfg,
-		BackupID: backupID,
+		_, err := RunRepoSnapshotPendingDiscard(ctx, nil, RepoSnapshotPendingDiscardConfig{Config: cfg})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "backup id is required")
 	})
-	require.Nil(t, result)
-	require.Error(t, err)
-	require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
-	require.Empty(t, console.progressBars)
-	require.Equal(t, []string{"Continue? "}, console.prompts)
-	require.Contains(t, console.output.String(), backupID.String())
-	require.Contains(t, console.output.String(), "state: unfinished")
-	require.Contains(t, console.output.String(), "pending-markers: 1")
-	requireRepoSnapshotFileExists(t, ctx, repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID)), checkpoint.CheckpointMetaPathForBackup)
-	requireRepoSnapshotFileExists(t, ctx, storage, pendingPath)
-	requireRepoSnapshotFileExists(t, ctx, storage, dataPath)
-}
 
-func TestRunRepoSnapshotOrphansDeleteConfirmationAbortKeepsFiles(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
+	t.Run("confirmation_abort_keeps_files", func(t *testing.T) {
+		ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+		defer storage.Close()
 
-	completedID := repo.BackupID(0x4103)
-	orphanID := repo.BackupID(0x4104)
-	orphanPathA := repo.SnapshotStoreDataPrefix(1, orphanID) + "/a.sst"
-	orphanPathB := repo.SnapshotStoreDataPrefix(2, orphanID) + "/b.sst"
-	createBackupMeta(t, ctx, storage, completedID)
-	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
-	require.NoError(t, storage.WriteFile(ctx, orphanPathA, []byte("a")))
-	require.NoError(t, storage.WriteFile(ctx, orphanPathB, []byte("b")))
+		backupID := repo.BackupID(0x4102)
+		dataPath := repo.SnapshotStoreDataPrefix(1, backupID) + "/a.sst"
+		pendingPath := repo.PendingFile([]byte("hash"), backupID)
+		createPendingCheckpoint(t, ctx, storage, backupID)
+		require.NoError(t, storage.WriteFile(ctx, dataPath, []byte("a")))
 
-	console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
-	deleted, err := RunRepoSnapshotOrphansDelete(ctx, console, RepoSnapshotOrphansConfig{Config: cfg})
-	require.Zero(t, deleted)
-	require.Error(t, err)
-	require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
-	require.Empty(t, console.progressBars)
-	require.Equal(t, []string{"Continue? "}, console.prompts)
-	require.Contains(t, console.output.String(), "About to delete 2 orphan snapshot object")
-	require.Contains(t, console.output.String(), orphanPathA)
-	requireRepoSnapshotFileExists(t, ctx, storage, orphanPathA)
-	requireRepoSnapshotFileExists(t, ctx, storage, orphanPathB)
+		console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
+		result, err := RunRepoSnapshotPendingDiscard(ctx, console, RepoSnapshotPendingDiscardConfig{
+			Config:   cfg,
+			BackupID: backupID,
+		})
+		require.Nil(t, result)
+		require.Error(t, err)
+		require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
+		require.Empty(t, console.progressBars)
+		require.Equal(t, []string{"Continue? "}, console.prompts)
+		require.Contains(t, console.output.String(), backupID.String())
+		require.Contains(t, console.output.String(), "state: unfinished")
+		require.Contains(t, console.output.String(), "pending-markers: 1")
+		requireRepoSnapshotFileExists(t, ctx, repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID)), checkpoint.CheckpointMetaPathForBackup)
+		requireRepoSnapshotFileExists(t, ctx, storage, pendingPath)
+		requireRepoSnapshotFileExists(t, ctx, storage, dataPath)
+	})
 }
 
 func TestRunRepoSnapshotOrphansDeleteConfirmationSamplesOnly(t *testing.T) {
-	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-	defer storage.Close()
+	t.Run("exact_count_abort_keeps_files", func(t *testing.T) {
+		ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+		defer storage.Close()
 
-	completedID := repo.BackupID(0x4105)
-	orphanID := repo.BackupID(0x4106)
-	createBackupMeta(t, ctx, storage, completedID)
-	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
-	for i := 0; i < repoSnapshotPromptSampleLimit+2; i++ {
-		path := fmt.Sprintf("%s/%02d.sst", repo.SnapshotStoreDataPrefix(1, orphanID), i)
-		require.NoError(t, storage.WriteFile(ctx, path, []byte("orphan")))
-	}
+		completedID := repo.BackupID(0x4103)
+		orphanID := repo.BackupID(0x4104)
+		orphanPathA := repo.SnapshotStoreDataPrefix(1, orphanID) + "/a.sst"
+		orphanPathB := repo.SnapshotStoreDataPrefix(2, orphanID) + "/b.sst"
+		createBackupMeta(t, ctx, storage, completedID)
+		require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
+		require.NoError(t, storage.WriteFile(ctx, orphanPathA, []byte("a")))
+		require.NoError(t, storage.WriteFile(ctx, orphanPathB, []byte("b")))
 
-	console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
-	deleted, err := RunRepoSnapshotOrphansDelete(ctx, console, RepoSnapshotOrphansConfig{Config: cfg})
-	require.Zero(t, deleted)
-	require.Error(t, err)
-	require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
-	require.Empty(t, console.progressBars)
-	require.Equal(t, []string{"Continue? "}, console.prompts)
-	require.Contains(t, console.output.String(), "The exact count is not precomputed before confirmation")
-	require.Equal(t, repoSnapshotPromptSampleLimit, bytes.Count(console.output.Bytes(), []byte("  - ")))
-	require.Contains(t, console.output.String(), "... more orphan objects may exist")
+		console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
+		deleted, err := RunRepoSnapshotOrphansDelete(ctx, console, RepoSnapshotOrphansConfig{Config: cfg})
+		require.Zero(t, deleted)
+		require.Error(t, err)
+		require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
+		require.Empty(t, console.progressBars)
+		require.Equal(t, []string{"Continue? "}, console.prompts)
+		require.Contains(t, console.output.String(), "About to delete 2 orphan snapshot object")
+		require.Contains(t, console.output.String(), orphanPathA)
+		requireRepoSnapshotFileExists(t, ctx, storage, orphanPathA)
+		requireRepoSnapshotFileExists(t, ctx, storage, orphanPathB)
+	})
+
+	t.Run("sample_limit_abort_keeps_files", func(t *testing.T) {
+		ctx, cfg, storage := newRepoSnapshotTestEnv(t)
+		defer storage.Close()
+
+		completedID := repo.BackupID(0x4105)
+		orphanID := repo.BackupID(0x4106)
+		createBackupMeta(t, ctx, storage, completedID)
+		require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
+		for i := 0; i < repoSnapshotPromptSampleLimit+2; i++ {
+			path := fmt.Sprintf("%s/%02d.sst", repo.SnapshotStoreDataPrefix(1, orphanID), i)
+			require.NoError(t, storage.WriteFile(ctx, path, []byte("orphan")))
+		}
+
+		console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
+		deleted, err := RunRepoSnapshotOrphansDelete(ctx, console, RepoSnapshotOrphansConfig{Config: cfg})
+		require.Zero(t, deleted)
+		require.Error(t, err)
+		require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
+		require.Empty(t, console.progressBars)
+		require.Equal(t, []string{"Continue? "}, console.prompts)
+		require.Contains(t, console.output.String(), "The exact count is not precomputed before confirmation")
+		require.Equal(t, repoSnapshotPromptSampleLimit, bytes.Count(console.output.Bytes(), []byte("  - ")))
+		require.Contains(t, console.output.String(), "... more orphan objects may exist")
+		for i := 0; i < repoSnapshotPromptSampleLimit+2; i++ {
+			path := fmt.Sprintf("%s/%02d.sst", repo.SnapshotStoreDataPrefix(1, orphanID), i)
+			requireRepoSnapshotFileExists(t, ctx, storage, path)
+		}
+	})
 }
 
 func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storeapi.Storage) {

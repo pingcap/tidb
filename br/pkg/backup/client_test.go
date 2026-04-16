@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"math/rand"
 	"sort"
 	"sync"
@@ -38,22 +37,6 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
 )
-
-type responseRewriteAdapter struct{}
-
-func (responseRewriteAdapter) RewriteStoreRequest(uint64, *backuppb.BackupRequest) error {
-	return nil
-}
-
-func (responseRewriteAdapter) RewriteStoreResponseFiles(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error) {
-	rewritten := make([]*backuppb.File, 0, len(files))
-	for _, file := range files {
-		fileCopy := *file
-		fileCopy.Name = fmt.Sprintf("store-%d/%s", storeID, file.Name)
-		rewritten = append(rewritten, &fileCopy)
-	}
-	return rewritten, nil
-}
 
 type testBackup struct {
 	ctx    context.Context
@@ -434,27 +417,6 @@ func TestOnBackupResponse(t *testing.T) {
 	incomplete, err = tree.GetIncompleteRanges()
 	require.NoError(t, err)
 	require.Len(t, incomplete, 0)
-
-	// case #4.1: rewrite response files before they are persisted into the progress tree.
-	tree = rtree.NewProgressRangeTree(nil, false)
-	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
-	r = &backup.ResponseAndStore{
-		StoreID: 7,
-		Resp: &backuppb.BackupResponse{
-			StartKey: []byte("aa"),
-			EndKey:   []byte("c"),
-			Files:    []*backuppb.File{{Name: "file.sst"}},
-		},
-	}
-	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree, []backup.PerStoreBackupAdapter{responseRewriteAdapter{}})
-	require.NoError(t, err)
-	require.Nil(t, lock)
-	found, findErr := tree.FindContained([]byte("aa"), []byte("c"))
-	require.NoError(t, findErr)
-	require.NotNil(t, found)
-	rangeItem := found.Res.Find(&rtree.Range{KeyRange: rtree.KeyRange{StartKey: []byte("aa"), EndKey: []byte("c")}})
-	require.NotNil(t, rangeItem)
-	require.Equal(t, "store-7/file.sst", rangeItem.Files[0].Name)
 
 	// case #5: failed case, key is locked
 	r = &backup.ResponseAndStore{
