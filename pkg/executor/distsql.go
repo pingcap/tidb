@@ -901,7 +901,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			if len(results) == 0 {
 				return true
 			}
-			if needMergeSort(e.byItems, len(results)) {
+			if needMerge {
 				// e.Schema() is not the output schema for indexReader, and by-items related columns
 				// are put at first in `buildIndexReq`, so use nil schema here.
 				ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
