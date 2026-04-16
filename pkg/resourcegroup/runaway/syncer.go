@@ -240,33 +240,67 @@ func (s *syncer) getNewWatchDoneRecords() ([]*QuarantineRecord, error) {
 }
 
 // scanNewRecordsInRange performs a time-windowed scan over reader's table using
-// the `[CheckPoint, UpperBound)` range produced by genSelectStmt. On a non-empty
-// scan it advances CheckPoint depending on whether the SQL LIMIT was reached:
+// the `[CheckPoint, UpperBound)` range produced by genSelectStmt, then advances
+// CheckPoint based on the decoded row count:
 //
-//   - Full batch (raw row count == watchSyncBatchLimit): CheckPoint moves to
-//     the last row's key-column time, so the next 1-second sync cycle continues
-//     from there. De-duplication in AddWatch/removeWatch handles repeated rows.
-//   - Partial batch: CheckPoint moves to `UpperBound - watchSyncOverlap`,
-//     keeping a small re-scan window for rows that become visible slightly later.
+//   - Full batch (len(records) == watchSyncBatchLimit): more rows may remain
+//     in the window. CheckPoint moves to the last row's key-column time so
+//     the next 1-second sync cycle continues from there. De-duplication in
+//     AddWatch/removeWatch handles the row re-read at the `>=` boundary.
+//   - Partial batch (0 < len(records) < watchSyncBatchLimit): the window is
+//     drained. CheckPoint moves to `UpperBound - watchSyncOverlap` so rows
+//     that become visible slightly later are still re-inspected.
 //
+// This branch is on the *decoded* count, not the raw SQL count, because in
+// production every runaway watch row is written by TiDB code with canonical
+// timestamps — start_time/end_time/done_time never fail to decode, so
+// decoded == raw. The decoder's `continue`-on-bad-row is a safety net for
+// schema evolution / external corruption, not a normal code path; letting
+// such a row short-circuit the full-batch check on the (never-observed)
+// tail-corruption edge case is an accepted simplification over plumbing a
+// separate raw-count return value through.
+//
+// This method is the only writer of reader.lastScanKeyTime; point-query
+// paths (getWatchRecordByID / getWatchRecordByGroup) go through
+// readQuarantineRecords, which deliberately leaves scan state untouched so
+// manual RemoveRunawayWatch calls can't perturb checkpoint advancement.
 func (s *syncer) scanNewRecordsInRange(reader *systemTableReader) ([]*QuarantineRecord, error) {
 	// Capture UpperBound before reading so the checkpoint advances
 	// deterministically from it rather than from a post-decode `time.Now()`.
 	reader.UpperBound = time.Now().UTC()
-	records, err := s.readQuarantineRecords(reader, reader.genSelectStmt)
+	sql, params := reader.genSelectStmt()
+	rows, err := ExecRCRestrictedSQL(s.sysSessionPool, sql, params)
 	if err != nil {
 		return nil, err
+	}
+	records := make([]*QuarantineRecord, 0, len(rows))
+	for _, r := range rows {
+		rec, ok := decodeQuarantineRecord(r, reader.RecordColumns)
+		if !ok {
+			continue
+		}
+		if t, e := r.GetTime(reader.KeyColIdx).GoTime(time.UTC); e == nil {
+			reader.lastScanKeyTime = t
+		}
+		records = append(records, rec)
 	}
 	if len(records) >= watchSyncBatchLimit {
 		// Batch full — more rows may remain in the window. Advance
 		// CheckPoint to the last row's key-column time so the next cycle
-		// resumes from there (with >=, the boundary row will be re-read
+		// resumes from there (with `>=`, the boundary row will be re-read
 		// and de-duplicated).
 		//
-		// If lastScanKeyTime equals CheckPoint, all rows in the batch share
-		// the same key-column timestamp (microsecond-precision collision).
-		// Fall through to the UpperBound-based advancement to avoid a
-		// livelock that re-reads the same page every cycle.
+		// If lastScanKeyTime is not strictly after CheckPoint, all rows in
+		// the batch share the same key-column timestamp (microsecond-
+		// precision collision on insert). Fall through to the UpperBound-
+		// based advancement to avoid a livelock that re-reads the same page
+		// every cycle.
+		//
+		// TODO: this same-key fallback can silently skip rows whose key is
+		// >= UpperBound - watchSyncOverlap but wasn't returned in the batch.
+		// Microsecond precision plus an insert rate high enough to pack 2k+
+		// rows into a single microsecond is not realistic today, so the
+		// trade-off is acceptable for now; revisit if it ever becomes one.
 		if reader.lastScanKeyTime.After(reader.CheckPoint) {
 			reader.CheckPoint = reader.lastScanKeyTime
 		} else {
@@ -279,47 +313,57 @@ func (s *syncer) scanNewRecordsInRange(reader *systemTableReader) ([]*Quarantine
 }
 
 // readQuarantineRecords runs sqlGenFn against reader's table and decodes each
-// row into a QuarantineRecord via reader.RecordColumns. Rows whose start_time
-// or end_time cannot be decoded are skipped rather than failing the whole scan.
+// row into a QuarantineRecord via reader.RecordColumns. It is the point-query
+// entry point (by ID / by resource group) and deliberately does NOT mutate
+// reader.lastScanKeyTime or any other scan state — only scanNewRecordsInRange
+// advances the sync cursor.
 func (s *syncer) readQuarantineRecords(
 	reader *systemTableReader,
-	sqlGenFn func() (string, []any),
+	genFn sqlGenFn,
 ) ([]*QuarantineRecord, error) {
-	rows, err := reader.Read(s.sysSessionPool, sqlGenFn)
+	sql, params := genFn()
+	rows, err := ExecRCRestrictedSQL(s.sysSessionPool, sql, params)
 	if err != nil {
 		return nil, err
 	}
-	cols := reader.RecordColumns
 	ret := make([]*QuarantineRecord, 0, len(rows))
 	for _, r := range rows {
-		startTime, err := r.GetTime(cols.StartTime).GoTime(time.UTC)
-		if err != nil {
-			continue
+		if rec, ok := decodeQuarantineRecord(r, reader.RecordColumns); ok {
+			ret = append(ret, rec)
 		}
-		var endTime time.Time
-		if !r.IsNull(cols.EndTime) {
-			endTime, err = r.GetTime(cols.EndTime).GoTime(time.UTC)
-			if err != nil {
-				continue
-			}
-		}
-		if t, e := r.GetTime(reader.KeyColIdx).GoTime(time.UTC); e == nil {
-			reader.lastScanKeyTime = t
-		}
-		ret = append(ret, &QuarantineRecord{
-			ID:                r.GetInt64(cols.ID),
-			ResourceGroupName: r.GetString(cols.ResourceGroupName),
-			StartTime:         startTime,
-			EndTime:           endTime,
-			Watch:             rmpb.RunawayWatchType(r.GetInt64(cols.Watch)),
-			WatchText:         r.GetString(cols.WatchText),
-			Source:            r.GetString(cols.Source),
-			Action:            rmpb.RunawayAction(r.GetInt64(cols.Action)),
-			SwitchGroupName:   r.GetString(cols.SwitchGroupName),
-			ExceedCause:       r.GetString(cols.ExceedCause),
-		})
 	}
 	return ret, nil
+}
+
+// decodeQuarantineRecord decodes one raw chunk.Row into a QuarantineRecord
+// according to cols. Rows whose start_time or end_time fail to parse are
+// rejected (returns nil, false). In production these columns are always
+// written by TiDB code, so this guard never fires; it keeps the sync loop
+// robust against schema evolution or externally inserted corrupt rows.
+func decodeQuarantineRecord(r chunk.Row, cols quarantineColumns) (*QuarantineRecord, bool) {
+	startTime, err := r.GetTime(cols.StartTime).GoTime(time.UTC)
+	if err != nil {
+		return nil, false
+	}
+	var endTime time.Time
+	if !r.IsNull(cols.EndTime) {
+		endTime, err = r.GetTime(cols.EndTime).GoTime(time.UTC)
+		if err != nil {
+			return nil, false
+		}
+	}
+	return &QuarantineRecord{
+		ID:                r.GetInt64(cols.ID),
+		ResourceGroupName: r.GetString(cols.ResourceGroupName),
+		StartTime:         startTime,
+		EndTime:           endTime,
+		Watch:             rmpb.RunawayWatchType(r.GetInt64(cols.Watch)),
+		WatchText:         r.GetString(cols.WatchText),
+		Source:            r.GetString(cols.Source),
+		Action:            rmpb.RunawayAction(r.GetInt64(cols.Action)),
+		SwitchGroupName:   r.GetString(cols.SwitchGroupName),
+		ExceedCause:       r.GetString(cols.ExceedCause),
+	}, true
 }
 
 // systemTableReader reads `tidb_runaway_watch` or `tidb_runaway_watch_done`.
@@ -333,13 +377,21 @@ type systemTableReader struct {
 	RecordColumns quarantineColumns
 	CheckPoint    time.Time
 	UpperBound    time.Time
-	// lastScanKeyTime is the key-column time of the last raw row returned by
-	// the most recent readQuarantineRecords call. It is used by
-	// scanNewRecordsInRange to advance CheckPoint when a batch is full.
+	// lastScanKeyTime is the key-column time of the last valid row produced
+	// by the most recent scanNewRecordsInRange call. It is consulted when a
+	// batch is full to advance CheckPoint. Only scanNewRecordsInRange writes
+	// to it; point-query paths (readQuarantineRecords) leave it alone so
+	// manual Remove* operations cannot perturb sync-cursor advancement.
 	lastScanKeyTime time.Time
 }
 
-func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
+// sqlGenFn returns the SQL statement and parameters for one read issued by the
+// syncer. Callers that want the paginated window scan use
+// systemTableReader.genSelectStmt directly as a method value; point-query
+// callers (by ID / by resource group) build a closure via genSelectBy*Stmt.
+type sqlGenFn func() (string, []any)
+
+func (r *systemTableReader) genSelectByIDStmt(id int64) sqlGenFn {
 	return func() (string, []any) {
 		var builder strings.Builder
 		params := make([]any, 0, 1)
@@ -351,7 +403,7 @@ func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
 	}
 }
 
-func (r *systemTableReader) genSelectByGroupStmt(groupName string) func() (string, []any) {
+func (r *systemTableReader) genSelectByGroupStmt(groupName string) sqlGenFn {
 	return func() (string, []any) {
 		var builder strings.Builder
 		params := make([]any, 0, 1)
@@ -377,9 +429,4 @@ func (r *systemTableReader) genSelectStmt() (string, []any) {
 	builder.WriteString(" limit %?")
 	params = append(params, r.CheckPoint, r.UpperBound, watchSyncBatchLimit)
 	return builder.String(), params
-}
-
-func (*systemTableReader) Read(sysSessionPool util.SessionPool, genFn func() (string, []any)) ([]chunk.Row, error) {
-	sql, params := genFn()
-	return ExecRCRestrictedSQL(sysSessionPool, sql, params)
 }

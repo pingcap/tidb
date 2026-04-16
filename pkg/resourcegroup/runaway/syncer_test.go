@@ -525,3 +525,45 @@ func TestScanInvalidTail(t *testing.T) {
 		})
 	}
 }
+
+// TestPointQueryPreservesScanState guards the invariant that
+// getWatchRecordByID / getWatchRecordByGroup leave scan-cursor state
+// (lastScanKeyTime, CheckPoint, UpperBound) untouched, so manual
+// RemoveRunawayWatch* calls between sync ticks can't perturb the cursor.
+func TestPointQueryPreservesScanState(t *testing.T) {
+	startTime := time.Date(2026, 4, 14, 10, 0, 0, 123000000, time.UTC)
+	endTime := startTime.Add(5 * time.Minute)
+	initialCheckpoint := time.Date(2026, 4, 14, 9, 59, 0, 0, time.UTC)
+	initialUpperBound := time.Date(2026, 4, 14, 9, 59, 30, 0, time.UTC)
+	initialLastScanKey := time.Date(2026, 4, 14, 9, 58, 45, 0, time.UTC)
+
+	newReader := func() *systemTableReader {
+		r := newTestWatchReader(initialCheckpoint)
+		r.UpperBound = initialUpperBound
+		r.lastScanKeyTime = initialLastScanKey
+		return r
+	}
+
+	cases := []struct {
+		name string
+		call func(*syncer) ([]*QuarantineRecord, error)
+	}{
+		{"by_id", func(s *syncer) ([]*QuarantineRecord, error) { return s.getWatchRecordByID(30005) }},
+		{"by_group", func(s *syncer) ([]*QuarantineRecord, error) { return s.getWatchRecordByGroup("rg_bulk") }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			session := newStubRestrictedSession([]chunk.Row{newWatchRow(30005, "rg_bulk", startTime, &endTime)})
+			reader := newReader()
+			s := &syncer{sysSessionPool: &stubSessionPool{resource: session}, newWatchReader: reader}
+
+			records, err := tc.call(s)
+			require.NoError(t, err)
+			require.Len(t, records, 1)
+
+			require.True(t, reader.CheckPoint.Equal(initialCheckpoint), "point query must not advance CheckPoint")
+			require.True(t, reader.UpperBound.Equal(initialUpperBound), "point query must not rewrite UpperBound")
+			require.True(t, reader.lastScanKeyTime.Equal(initialLastScanKey), "point query must not touch lastScanKeyTime")
+		})
+	}
+}
