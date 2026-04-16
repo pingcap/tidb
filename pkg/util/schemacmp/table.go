@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pcharset "github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -323,17 +322,15 @@ func restoreTableInfoFromUnwrapped(ctx *format.RestoreCtx, table []any, tableNam
 	}
 
 	ctx.WritePlain(")")
+
 	collate := table[tableInfoTupleIndexCollate].(string)
-	if collate != "" {
-		cs, _, hasSuffix := strings.Cut(collate, "_")
-		ctx.WriteKeyWord(" CHARSET ")
-		ctx.WriteKeyWord(cs)
-		// MySQL's collation name is "<charset>_<suffix>" or "binary".
-		if hasSuffix || collate == pcharset.CharsetBin {
-			ctx.WriteKeyWord(" COLLATE ")
-			ctx.WriteKeyWord(collate)
-		}
-	}
+	// MySQL's collation name is "<charset>_<suffix>" or "binary".
+	cs, _, _ := strings.Cut(collate, "_")
+	ctx.WriteKeyWord(" CHARSET ")
+	ctx.WriteKeyWord(cs)
+	ctx.WriteKeyWord(" COLLATE ")
+	ctx.WriteKeyWord(collate)
+
 	if bits := table[tableInfoTupleIndexShardRowIDBits].(uint64); bits > 0 {
 		ctx.WriteKeyWord(" SHARD_ROW_ID_BITS ")
 		ctx.WritePlainf("%d", bits)
