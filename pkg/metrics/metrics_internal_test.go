@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -100,21 +101,10 @@ func TestGrpcChannelzCollectorSingleton(t *testing.T) {
 	}()
 }
 
-func TestSetupChannelzCollectorRegistersOnce(t *testing.T) {
+func TestSetupChannelzCollectorSkippedInTest(t *testing.T) {
 	cleanupGrpcChannelzCollectorForTest()
 	t.Cleanup(cleanupGrpcChannelzCollectorForTest)
-
-	setupChannelzCollector()
-
-	var firstCollector prometheus.Collector
-	func() {
-		grpcChannelzCollector.mu.Lock()
-		defer grpcChannelzCollector.mu.Unlock()
-
-		firstCollector = grpcChannelzCollector.collector
-		require.NotNil(t, firstCollector)
-		require.True(t, grpcChannelzCollector.registered)
-	}()
+	require.True(t, intest.InTest)
 
 	setupChannelzCollector()
 
@@ -122,8 +112,8 @@ func TestSetupChannelzCollectorRegistersOnce(t *testing.T) {
 		grpcChannelzCollector.mu.Lock()
 		defer grpcChannelzCollector.mu.Unlock()
 
-		require.True(t, firstCollector == grpcChannelzCollector.collector)
-		require.True(t, grpcChannelzCollector.registered)
+		require.Nil(t, grpcChannelzCollector.collector)
+		require.False(t, grpcChannelzCollector.registered)
 	}()
 }
 

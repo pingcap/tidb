@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/ingestmetric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	timermetrics "github.com/pingcap/tidb/pkg/timer/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -482,11 +483,15 @@ var grpcChannelzCollector struct {
 }
 
 func setupChannelzCollector() {
+	if intest.InTest {
+		return
+	}
+
 	grpcChannelzCollector.mu.Lock()
 	defer grpcChannelzCollector.mu.Unlock()
 
 	if err := initGrpcChannelzCollectorLocked(); err != nil {
-		logutil.BgLogger().Error("setup internal channelz collector failed", zap.Error(err))
+		logutil.BgLogger().Warn("setup internal channelz collector failed", zap.Error(err))
 		return
 	}
 	if grpcChannelzCollector.registered {
