@@ -79,6 +79,76 @@ func (s *stubRestrictedSession) ExecRestrictedSQL(_ context.Context, _ []sqlexec
 	return s.rows, nil, s.err
 }
 
+// makeWatchRows generates n watch rows with start_time starting from baseTime,
+// incremented by step per row. step=0 gives identical timestamps.
+func makeWatchRows(n int, baseTime time.Time, step time.Duration) []chunk.Row {
+	rows := make([]chunk.Row, n)
+	for i := range rows {
+		st := baseTime.Add(time.Duration(i) * step)
+		rows[i] = newWatchRow(int64(i+1), "rg", st, nil)
+	}
+	return rows
+}
+
+// makeWatchDoneRows generates n watch_done rows with done_time starting from
+// baseDoneTime, incremented by step per row. start_time is fixed.
+func makeWatchDoneRows(n int, baseDoneTime time.Time, step time.Duration) []chunk.Row {
+	fixedStart := baseDoneTime.Add(-time.Hour)
+	rows := make([]chunk.Row, n)
+	for i := range rows {
+		dt := baseDoneTime.Add(time.Duration(i) * step)
+		rows[i] = newWatchDoneRow(int64(i+1), int64(i+1), "rg", fixedStart, nil, dt)
+	}
+	return rows
+}
+
+func newInvalidWatchDoneRow(doneID int64) chunk.Row {
+	return buildRow(
+		types.NewIntDatum(doneID),
+		types.NewIntDatum(doneID),
+		types.NewStringDatum("rg"),
+		types.NewTimeDatum(types.ZeroDatetime),
+		types.NewDatum(nil),
+		types.NewIntDatum(1),
+		types.NewStringDatum("select 1"),
+		types.NewStringDatum("manual"),
+		types.NewIntDatum(2),
+		types.NewStringDatum("rg_dst"),
+		types.NewStringDatum("watch-rule"),
+		timeDatum(time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)),
+	)
+}
+
+// scanTestCase parameterizes watch vs watch_done so each test function
+// covers one code path without duplicating the two-table variant.
+type scanTestCase struct {
+	name        string
+	makeReader  func(time.Time) *systemTableReader
+	makeRows    func(int, time.Time, time.Duration) []chunk.Row
+	makeInvalid func(int64) chunk.Row
+	setup       func(*syncer, *systemTableReader)
+	scan        func(*syncer) ([]*QuarantineRecord, error)
+}
+
+var scanCases = []scanTestCase{
+	{
+		name:        "watch",
+		makeReader:  newTestWatchReader,
+		makeRows:    makeWatchRows,
+		makeInvalid: func(id int64) chunk.Row { return newInvalidWatchRow(id, "rg") },
+		setup:       func(s *syncer, r *systemTableReader) { s.newWatchReader = r },
+		scan:        func(s *syncer) ([]*QuarantineRecord, error) { return s.getNewWatchRecords() },
+	},
+	{
+		name:        "watch_done",
+		makeReader:  newTestWatchDoneReader,
+		makeRows:    makeWatchDoneRows,
+		makeInvalid: newInvalidWatchDoneRow,
+		setup:       func(s *syncer, r *systemTableReader) { s.deletionWatchReader = r },
+		scan:        func(s *syncer) ([]*QuarantineRecord, error) { return s.getNewWatchDoneRecords() },
+	},
+}
+
 func newTestWatchReader(checkpoint time.Time) *systemTableReader {
 	return &systemTableReader{
 		TableName:     getRunawayWatchTableName(),
@@ -331,4 +401,127 @@ func TestWatchDoneHoldCheckpoint(t *testing.T) {
 		require.Nil(t, records)
 		require.True(t, reader.CheckPoint.Equal(initialCheckpoint))
 	})
+}
+
+func TestScanFullBatch(t *testing.T) {
+	baseTime := time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC)
+	initialCP := baseTime.Add(-time.Minute)
+
+	for _, tc := range scanCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := tc.makeRows(watchSyncBatchLimit, baseTime, time.Microsecond)
+			session := newStubRestrictedSession(rows)
+			reader := tc.makeReader(initialCP)
+			s := &syncer{sysSessionPool: &stubSessionPool{resource: session}}
+			tc.setup(s, reader)
+
+			before := time.Now().UTC()
+			records, err := tc.scan(s)
+			after := time.Now().UTC()
+
+			require.NoError(t, err)
+			require.Len(t, records, watchSyncBatchLimit)
+
+			lastKeyTime := baseTime.Add(time.Duration(watchSyncBatchLimit-1) * time.Microsecond)
+			require.True(t, reader.CheckPoint.Equal(lastKeyTime),
+				"full batch: checkpoint must be last row's key time, got %v want %v", reader.CheckPoint, lastKeyTime)
+			require.True(t, reader.lastScanKeyTime.Equal(lastKeyTime))
+			// Must differ from the partial-batch path.
+			require.False(t, reader.CheckPoint.Equal(reader.UpperBound.Add(-watchSyncOverlap)))
+			require.False(t, reader.UpperBound.Before(before))
+			require.False(t, reader.UpperBound.After(after))
+		})
+	}
+}
+
+func TestScanFullBatchSameKey(t *testing.T) {
+	baseTime := time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC)
+
+	for _, tc := range scanCases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := tc.makeRows(watchSyncBatchLimit, baseTime, 0)
+			session := newStubRestrictedSession(rows)
+			reader := tc.makeReader(baseTime) // CheckPoint == all rows' key time
+			s := &syncer{sysSessionPool: &stubSessionPool{resource: session}}
+			tc.setup(s, reader)
+
+			records, err := tc.scan(s)
+
+			require.NoError(t, err)
+			require.Len(t, records, watchSyncBatchLimit)
+			require.True(t, reader.lastScanKeyTime.Equal(baseTime))
+			// Livelock guard: must fall back to UpperBound - overlap.
+			require.True(t, reader.CheckPoint.Equal(reader.UpperBound.Add(-watchSyncOverlap)),
+				"same-key full batch: checkpoint must fall back to UpperBound-overlap")
+		})
+	}
+}
+
+func TestScanPagination(t *testing.T) {
+	baseTime := time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC)
+	initialCP := baseTime.Add(-time.Minute)
+	page2Count := 500
+
+	for _, tc := range scanCases {
+		t.Run(tc.name, func(t *testing.T) {
+			page1 := tc.makeRows(watchSyncBatchLimit, baseTime, time.Microsecond)
+			page2Start := baseTime.Add(time.Duration(watchSyncBatchLimit) * time.Microsecond)
+			page2 := tc.makeRows(page2Count, page2Start, time.Microsecond)
+
+			session := newStubRestrictedSession(page1)
+			reader := tc.makeReader(initialCP)
+			s := &syncer{sysSessionPool: &stubSessionPool{resource: session}}
+			tc.setup(s, reader)
+
+			// Page 1: full batch.
+			records1, err := tc.scan(s)
+			require.NoError(t, err)
+			require.Len(t, records1, watchSyncBatchLimit)
+			cp1 := reader.CheckPoint
+			lastPage1Key := baseTime.Add(time.Duration(watchSyncBatchLimit-1) * time.Microsecond)
+			require.True(t, cp1.Equal(lastPage1Key))
+
+			// Page 2: partial batch.
+			session.rows = page2
+			records2, err := tc.scan(s)
+			require.NoError(t, err)
+			require.Len(t, records2, page2Count)
+			cp2 := reader.CheckPoint
+
+			require.True(t, cp2.After(cp1), "checkpoint must advance monotonically")
+			require.True(t, cp2.Equal(reader.UpperBound.Add(-watchSyncOverlap)))
+		})
+	}
+}
+
+func TestScanInvalidTail(t *testing.T) {
+	baseTime := time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC)
+	initialCP := baseTime.Add(-time.Minute)
+	validCount := watchSyncBatchLimit - 2
+
+	for _, tc := range scanCases {
+		t.Run(tc.name, func(t *testing.T) {
+			valid := tc.makeRows(validCount, baseTime, time.Microsecond)
+			rows := append(valid,
+				tc.makeInvalid(int64(validCount+1)),
+				tc.makeInvalid(int64(validCount+2)),
+			)
+			require.Len(t, rows, watchSyncBatchLimit) // raw rows hit LIMIT
+
+			session := newStubRestrictedSession(rows)
+			reader := tc.makeReader(initialCP)
+			s := &syncer{sysSessionPool: &stubSessionPool{resource: session}}
+			tc.setup(s, reader)
+
+			records, err := tc.scan(s)
+
+			require.NoError(t, err)
+			require.Len(t, records, validCount) // invalid rows dropped
+			// len(records) < watchSyncBatchLimit → partial-batch path.
+			require.True(t, reader.CheckPoint.Equal(reader.UpperBound.Add(-watchSyncOverlap)))
+			// lastScanKeyTime reflects the last *valid* row.
+			lastValidKey := baseTime.Add(time.Duration(validCount-1) * time.Microsecond)
+			require.True(t, reader.lastScanKeyTime.Equal(lastValidKey))
+		})
+	}
 }
