@@ -1604,6 +1604,7 @@ func MergePartTopNAndHistToGlobal(
 	buckets := make([]*bucket4Merging, 0, len(hists)*hists[0].Len()/2)
 	tz := sc.TimeZone()
 	tp := hists[0].Tp.GetType()
+	var encodeBuf []byte // reused across iterations to avoid ~2M allocations
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
@@ -1620,10 +1621,11 @@ func MergePartTopNAndHistToGlobal(
 					encoded = hist.Bounds.GetRow(i*2 + 1).GetBytes(0)
 				} else {
 					var err error
-					encoded, err = codec.EncodeKey(tz, nil, *hist.GetUpper(i))
+					encodeBuf, err = codec.EncodeKey(tz, encodeBuf[:0], *hist.GetUpper(i))
 					if err != nil {
 						return nil, nil, err
 					}
+					encoded = encodeBuf
 				}
 				counter[hack.String(encoded)] += uint64(repeat)
 				totCount -= repeat
