@@ -17,6 +17,7 @@ package statistics
 import (
 	"bytes"
 	"cmp"
+	"container/heap"
 	"fmt"
 	"math"
 	"slices"
@@ -1561,10 +1562,54 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum, analyzeVer int) *bucket4M
 }
 
 // bucketRef is a lightweight pointer to a partition histogram bucket.
-// 4 bytes vs ~400 bytes for bucket4Merging (with copied Datum bounds).
 type bucketRef struct {
 	histIdx   uint16
 	bucketIdx uint16
+}
+
+// bucketMergeEntry is one partition's current head in the k-way merge.
+// The upper bound Datum is cached at insertion time — comparisons during
+// heap sift use the cached value, avoiding repeated Chunk indirection.
+type bucketMergeEntry struct {
+	upper     types.Datum // cached upper bound (extracted once per bucket)
+	sc        *stmtctx.StatementContext
+	hists     []*Histogram // shared reference to all histograms
+	histIdx   uint16
+	bucketIdx uint16
+}
+
+// bucketMergeHeap implements container/heap for k-way merging of
+// pre-sorted partition histograms. Each entry is one partition's
+// current (smallest unprocessed) bucket.
+type bucketMergeHeap []bucketMergeEntry
+
+func (h bucketMergeHeap) Len() int { return len(h) }
+func (h bucketMergeHeap) Less(i, j int) bool {
+	res, _ := h[i].upper.Compare(h[i].sc.TypeCtx(), &h[j].upper, collate.GetBinaryCollator())
+	if res != 0 {
+		return res < 0
+	}
+	// Secondary sort by lower bound for deterministic ordering.
+	li := h[i].hists[h[i].histIdx].GetLower(int(h[i].bucketIdx))
+	lj := h[j].hists[h[j].histIdx].GetLower(int(h[j].bucketIdx))
+	res, _ = li.Compare(h[i].sc.TypeCtx(), lj, collate.GetBinaryCollator())
+	return res < 0
+}
+func (h bucketMergeHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *bucketMergeHeap) Push(x any)   { *h = append(*h, x.(bucketMergeEntry)) }
+func (h *bucketMergeHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
+func (h *bucketMergeHeap) init() { heap.Init(h) }
+func (h *bucketMergeHeap) peek() *bucketMergeEntry {
+	if len(*h) == 0 {
+		return nil
+	}
+	return &(*h)[0]
 }
 
 // topNEntry is a flattened TopN value from one partition, used for sorting.
@@ -1643,7 +1688,11 @@ func MergePartTopNAndHistToGlobal(
 		return bytes.Compare(a.encoded, b.encoded)
 	})
 
-	// 1b. Build + sort bucket refs by upper bound.
+	// 1b. Collect partition metadata and build a k-way merge heap.
+	// Each partition's histogram is already sorted by upper bound.
+	// The heap holds one entry per non-empty partition, with the
+	// current bucket's upper bound cached — O(1) per comparison
+	// instead of the O(indirection) of the previous sort approach.
 	var totCount, totNull, totColSize int64
 	totalBuckets := 0
 	for _, hist := range hists {
@@ -1656,7 +1705,8 @@ func MergePartTopNAndHistToGlobal(
 		}
 	}
 
-	refs := make([]bucketRef, 0, totalBuckets)
+	// Initialize the merge heap with each partition's first non-empty bucket.
+	mergeHeap := make(bucketMergeHeap, 0, len(hists))
 	for hi, hist := range hists {
 		for bi := range hist.Len() {
 			count := hist.Buckets[bi].Count
@@ -1664,36 +1714,20 @@ func MergePartTopNAndHistToGlobal(
 				count -= hist.Buckets[bi-1].Count
 			}
 			if count > 0 {
-				refs = append(refs, bucketRef{uint16(hi), uint16(bi)})
+				mergeHeap = append(mergeHeap, bucketMergeEntry{
+					histIdx:   uint16(hi),
+					bucketIdx: uint16(bi),
+					upper:     *hist.GetUpper(bi),
+					sc:        sc,
+					hists:     hists,
+				})
+				break
 			}
 		}
 	}
+	mergeHeap.init()
 
-	var sortErr error
-	slices.SortFunc(refs, func(a, b bucketRef) int {
-		ua := hists[a.histIdx].GetUpper(int(a.bucketIdx))
-		ub := hists[b.histIdx].GetUpper(int(b.bucketIdx))
-		res, err := ua.Compare(sc.TypeCtx(), ub, collate.GetBinaryCollator())
-		if err != nil {
-			sortErr = err
-		}
-		if res != 0 {
-			return res
-		}
-		// Secondary sort by lower bound for deterministic ordering.
-		la := hists[a.histIdx].GetLower(int(a.bucketIdx))
-		lb := hists[b.histIdx].GetLower(int(b.bucketIdx))
-		res, err = la.Compare(sc.TypeCtx(), lb, collate.GetBinaryCollator())
-		if err != nil {
-			sortErr = err
-		}
-		return res
-	})
-	if sortErr != nil {
-		return nil, nil, sortErr
-	}
-
-	if len(allTopN) == 0 && len(refs) == 0 {
+	if len(allTopN) == 0 && mergeHeap.Len() == 0 {
 		if firstHist != nil {
 			return nil, NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
 				firstHist.Tp, 0, totColSize), nil
@@ -1716,8 +1750,42 @@ func MergePartTopNAndHistToGlobal(
 	topNHeap := generic.NewBoundedMinHeap(int(numTopN), func(a, b heapEntry) int {
 		return cmp.Compare(a.totalCount, b.totalCount)
 	})
-	ti, hi := 0, 0
-	for ti < len(allTopN) || hi < len(refs) {
+	// sortedRefs collects bucket references in sorted order as the heap
+	// produces them. Reused by Pass 2 without rebuilding the heap.
+	sortedRefs := make([]bucketRef, 0, totalBuckets)
+
+	// nextBucket pops the heap's min entry, saves it to sortedRefs,
+	// advances that partition to its next non-empty bucket, and pushes
+	// the new head back.
+	nextBucket := func() (bucketMergeEntry, bool) {
+		if mergeHeap.Len() == 0 {
+			return bucketMergeEntry{}, false
+		}
+		entry := heap.Pop(&mergeHeap).(bucketMergeEntry)
+		sortedRefs = append(sortedRefs, bucketRef{entry.histIdx, entry.bucketIdx})
+		// Advance this partition to the next non-empty bucket.
+		h := hists[entry.histIdx]
+		for bi := int(entry.bucketIdx) + 1; bi < h.Len(); bi++ {
+			count := h.Buckets[bi].Count
+			if bi > 0 {
+				count -= h.Buckets[bi-1].Count
+			}
+			if count > 0 {
+				heap.Push(&mergeHeap, bucketMergeEntry{
+					histIdx:   entry.histIdx,
+					bucketIdx: uint16(bi),
+					upper:     *h.GetUpper(bi),
+					sc:        sc,
+					hists:     hists,
+				})
+				break
+			}
+		}
+		return entry, true
+	}
+
+	ti := 0
+	for ti < len(allTopN) || mergeHeap.Len() > 0 {
 		if err := killer.HandleSignal(); err != nil {
 			return nil, nil, err
 		}
@@ -1727,7 +1795,7 @@ func MergePartTopNAndHistToGlobal(
 
 		if ti >= len(allTopN) {
 			mergeOrd = 1
-		} else if hi >= len(refs) {
+		} else if mergeHeap.Len() == 0 {
 			mergeOrd = -1
 		} else {
 			d, err := topNMetaToDatum(TopNMeta{Encoded: allTopN[ti].encoded}, tp, isIndex, tz)
@@ -1735,7 +1803,7 @@ func MergePartTopNAndHistToGlobal(
 				return nil, nil, err
 			}
 			mergeOrd, err = d.Compare(sc.TypeCtx(),
-				hists[refs[hi].histIdx].GetUpper(int(refs[hi].bucketIdx)),
+				&mergeHeap.peek().upper,
 				collate.GetBinaryCollator())
 			if err != nil {
 				return nil, nil, err
@@ -1752,11 +1820,13 @@ func MergePartTopNAndHistToGlobal(
 			}
 		}
 		if mergeOrd >= 0 {
-			startHi := hi
-			for hi < len(refs) {
-				if hi > startHi {
-					c, err := hists[refs[hi].histIdx].GetUpper(int(refs[hi].bucketIdx)).Compare(
-						sc.TypeCtx(), hists[refs[startHi].histIdx].GetUpper(int(refs[startHi].bucketIdx)),
+			// Pop all buckets with the same upper bound (from different
+			// partitions). The heap groups them naturally.
+			first := true
+			var groupUpper types.Datum
+			for mergeHeap.Len() > 0 {
+				if !first {
+					c, err := mergeHeap.peek().upper.Compare(sc.TypeCtx(), &groupUpper,
 						collate.GetBinaryCollator())
 					if err != nil {
 						return nil, nil, err
@@ -1765,22 +1835,25 @@ func MergePartTopNAndHistToGlobal(
 						break
 					}
 				}
-				repeat := hists[refs[hi].histIdx].Buckets[refs[hi].bucketIdx].Repeat
+				bkt, _ := nextBucket()
+				if first {
+					groupUpper = bkt.upper
+					first = false
+				}
+				repeat := hists[bkt.histIdx].Buckets[bkt.bucketIdx].Repeat
 				entry.repeatCount += uint64(repeat)
 				entry.totalCount += uint64(repeat)
 				if entry.encoded == nil {
 					if isIndex {
-						entry.encoded = hists[refs[hi].histIdx].Bounds.GetRow(int(refs[hi].bucketIdx)*2 + 1).GetBytes(0)
+						entry.encoded = hists[bkt.histIdx].Bounds.GetRow(int(bkt.bucketIdx)*2 + 1).GetBytes(0)
 					} else {
 						var err error
-						entry.encoded, err = codec.EncodeKey(tz, nil,
-							*hists[refs[hi].histIdx].GetUpper(int(refs[hi].bucketIdx)))
+						entry.encoded, err = codec.EncodeKey(tz, nil, bkt.upper)
 						if err != nil {
 							return nil, nil, err
 						}
 					}
 				}
-				hi++
 			}
 		}
 
@@ -1846,7 +1919,7 @@ func MergePartTopNAndHistToGlobal(
 		globalHist = NewHistogram(0, 0, totNull, 0, types.NewFieldType(mysql.TypeNull), 0, totColSize)
 	}
 
-	if totCount <= 0 || (len(refs) == 0 && len(allTopN) == 0) {
+	if totCount <= 0 || (len(sortedRefs) == 0 && len(allTopN) == 0) {
 		return globalTopN, globalHist, nil
 	}
 
@@ -1930,11 +2003,13 @@ func MergePartTopNAndHistToGlobal(
 		}
 	}
 
+	// Pass 2 iterates sortedRefs (produced in sorted order by Pass 1's
+	// k-way merge) and merge-walks with allTopN.
 	ri, ti2 := 0, 0
-	for ri < len(refs) || ti2 < len(allTopN) {
+	for ri < len(sortedRefs) || ti2 < len(allTopN) {
 		var mergeOrd int
 		var topNDatum types.Datum
-		if ri >= len(refs) {
+		if ri >= len(sortedRefs) {
 			mergeOrd = 1
 		} else if ti2 >= len(allTopN) {
 			mergeOrd = -1
@@ -1945,7 +2020,7 @@ func MergePartTopNAndHistToGlobal(
 				return nil, nil, err
 			}
 			mergeOrd, err = topNDatum.Compare(sc.TypeCtx(),
-				hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx)),
+				hists[sortedRefs[ri].histIdx].GetUpper(int(sortedRefs[ri].bucketIdx)),
 				collate.GetBinaryCollator())
 			if err != nil {
 				return nil, nil, err
@@ -1962,9 +2037,7 @@ func MergePartTopNAndHistToGlobal(
 			}
 			_, inGlobal := globalTopNMap[hack.String(key)]
 			if !inGlobal && topNCount > 0 {
-				// topNDatum was set by the Compare above, except when
-				// refs are exhausted (ri >= len(refs)) — decode then.
-				if ri >= len(refs) {
+				if ri >= len(sortedRefs) {
 					var err error
 					topNDatum, err = topNMetaToDatum(TopNMeta{Encoded: key}, tp, isIndex, tz)
 					if err != nil {
@@ -1977,7 +2050,6 @@ func MergePartTopNAndHistToGlobal(
 					emitGroup()
 					continue
 				}
-				// mergeOrd == 0: ref group follows.
 			} else if mergeOrd > 0 {
 				continue
 			}
@@ -1985,14 +2057,14 @@ func MergePartTopNAndHistToGlobal(
 
 		if mergeOrd <= 0 {
 			if mergeOrd < 0 {
-				startNewGroup(hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx)))
+				startNewGroup(hists[sortedRefs[ri].histIdx].GetUpper(int(sortedRefs[ri].bucketIdx)))
 			}
-			topNMatch := isGlobalTopNVal(int(refs[ri].histIdx), int(refs[ri].bucketIdx))
+			topNMatch := isGlobalTopNVal(int(sortedRefs[ri].histIdx), int(sortedRefs[ri].bucketIdx))
 
 			j := ri + 1
-			for j < len(refs) {
-				c, err := hists[refs[j].histIdx].GetUpper(int(refs[j].bucketIdx)).Compare(
-					sc.TypeCtx(), hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx)),
+			for j < len(sortedRefs) {
+				c, err := hists[sortedRefs[j].histIdx].GetUpper(int(sortedRefs[j].bucketIdx)).Compare(
+					sc.TypeCtx(), hists[sortedRefs[ri].histIdx].GetUpper(int(sortedRefs[ri].bucketIdx)),
 					collate.GetBinaryCollator())
 				if err != nil {
 					return nil, nil, err
@@ -2004,14 +2076,13 @@ func MergePartTopNAndHistToGlobal(
 			}
 
 			for k := ri; k < j; k++ {
-				h := hists[refs[k].histIdx]
-				bkt := h.Buckets[refs[k].bucketIdx]
+				h := hists[sortedRefs[k].histIdx]
+				bkt := h.Buckets[sortedRefs[k].bucketIdx]
 				count := bkt.Count
-				if refs[k].bucketIdx > 0 {
-					count -= h.Buckets[refs[k].bucketIdx-1].Count
+				if sortedRefs[k].bucketIdx > 0 {
+					count -= h.Buckets[sortedRefs[k].bucketIdx-1].Count
 				}
 				repeat := bkt.Repeat
-
 				if topNMatch {
 					count -= repeat
 					repeat = 0
@@ -2019,8 +2090,7 @@ func MergePartTopNAndHistToGlobal(
 						continue
 					}
 				}
-
-				addToBucket(h.GetLower(int(refs[k].bucketIdx)), count, repeat)
+				addToBucket(h.GetLower(int(sortedRefs[k].bucketIdx)), count, repeat)
 			}
 
 			ri = j
