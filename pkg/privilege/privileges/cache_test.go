@@ -175,7 +175,7 @@ func TestMatchColumns(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use mysql;")
-	tk.MustExec("truncate table columns_priv")
+	tk.MustExec("delete from columns_priv")
 	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c1", "2017-01-04 16:33:42.235831", "Insert,Update")`)
 	tk.MustExec(`INSERT INTO mysql.columns_priv VALUES ("%", "db", "user", "table", "c2", "2017-01-04 16:33:42.235831", "Select")`)
 
