@@ -1502,11 +1502,8 @@ func TestModifyColumnLoadTableRangeError(t *testing.T) {
 	tk.MustExec("create table t (a int primary key, b int, c int);")
 	batchInsert(tk, "t", 0, 100)
 
-	// Simulate transient PD errors (e.g. "regions have no leader") when splitting table ranges.
-	// We also disable the internal retry in loadTableRanges to make the error visible to the DDL job logic,
-	// otherwise it will be retried and recovered inside loadTableRanges.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/loadTableRangesNoRetry", "return")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/validateAndFillRangesErr", "1*return")
+	// Simulate transient PD errors (e.g. "All returned regions have no leaders") when splitting table ranges.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/loadTableRangesFromPDNoLeader", "1*return")
 
 	tk.MustExec("alter table t change column b b varchar(16);")
 	tk.MustExec("admin check table t;")

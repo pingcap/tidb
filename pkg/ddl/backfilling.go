@@ -525,6 +525,9 @@ func loadTableRanges(
 			zap.Int64("physicalTableID", pid),
 			zap.String("start key", hex.EncodeToString(startKey)),
 			zap.String("end key", hex.EncodeToString(endKey)))
+		failpoint.Inject("loadTableRangesFromPDNoLeader", func() {
+			failpoint.Return(false, errors.New("All returned regions have no leaders, limit: 1"))
+		})
 		rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
 		if err != nil {
 			return false, errors.Trace(err)
