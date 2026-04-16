@@ -1808,14 +1808,15 @@ func MergePartTopNAndHistToGlobal(
 	for _, e := range topNSlice {
 		totCount -= int64(e.repeatCount)
 	}
-	// Identify leftover TopN-origin entries and adjust totCount.
+	// Identify leftover TopN-origin entries, decode their Datums, and
+	// adjust totCount. These will be merge-walked into Pass 2 alongside
+	// the histogram refs — no separate Phase 6 needed.
 	type leftoverEntry struct {
-		encoded    []byte
+		datum      types.Datum
 		topNOrigin int64
 	}
 	var leftovers []leftoverEntry
 	{
-		// Walk allTopN (already sorted) to find unique values not in globalTopN.
 		for i := 0; i < len(allTopN); {
 			key := allTopN[i].encoded
 			var topNCount uint64
@@ -1829,15 +1830,21 @@ func MergePartTopNAndHistToGlobal(
 			topNOrigin := int64(topNCount)
 			if topNOrigin > 0 {
 				totCount += topNOrigin
-				leftovers = append(leftovers, leftoverEntry{encoded: key, topNOrigin: topNOrigin})
+				d, err := topNMetaToDatum(TopNMeta{Encoded: key}, tp, isIndex, tz)
+				if err != nil {
+					return nil, nil, err
+				}
+				leftovers = append(leftovers, leftoverEntry{datum: d, topNOrigin: topNOrigin})
 			}
 		}
 	}
+	// leftovers are sorted (from allTopN which is sorted by encoded key,
+	// and codec encoding is order-preserving).
 
 	// ---------------------------------------------------------------
-	// Pass 2: Build equi-depth global histogram from sorted refs.
-	// Refs are already sorted from Pass 1. For buckets matching a
-	// global TopN value, subtract the per-bucket Repeat.
+	// Pass 2: Build equi-depth global histogram by merge-walking
+	// sorted refs and leftover TopN entries together. Both are in the
+	// same sort order. Single pass, no Phase 6, no mergeByUpperBound.
 	// ---------------------------------------------------------------
 	var globalHist *Histogram
 	if firstHist != nil {
@@ -1847,7 +1854,7 @@ func MergePartTopNAndHistToGlobal(
 		globalHist = NewHistogram(0, 0, totNull, 0, types.NewFieldType(mysql.TypeNull), 0, totColSize)
 	}
 
-	if totCount > 0 && len(refs) > 0 {
+	if totCount > 0 && (len(refs) > 0 || len(leftovers) > 0) {
 		var (
 			cumCount     int64
 			prevCumCount int64
@@ -1862,106 +1869,147 @@ func MergePartTopNAndHistToGlobal(
 
 		isGlobalTopNVal := func(upper *types.Datum) bool {
 			for _, info := range globalTopNMap {
-				cmp, err := upper.Compare(sc.TypeCtx(), &info.datum, collate.GetBinaryCollator())
-				if err == nil && cmp == 0 {
+				c, err := upper.Compare(sc.TypeCtx(), &info.datum, collate.GetBinaryCollator())
+				if err == nil && c == 0 {
 					return true
 				}
 			}
 			return false
 		}
 
-		i := 0
-		for i < len(refs) {
-			j := i + 1
-			for j < len(refs) {
-				cmp, err := hists[refs[j].histIdx].GetUpper(int(refs[j].bucketIdx)).Compare(
-					sc.TypeCtx(), hists[refs[i].histIdx].GetUpper(int(refs[i].bucketIdx)),
-					collate.GetBinaryCollator())
-				if err != nil {
-					return nil, nil, err
-				}
-				if cmp != 0 {
-					break
-				}
-				j++
+		// emitGroup is called after processing a group of values at the
+		// same upper bound. It handles equi-depth threshold cutting.
+		emitGroup := func() {
+			if cumCount <= prevCumCount {
+				return
 			}
+			threshold := totCount * bucketIdx / expBucketNumber
+			if cumCount >= threshold && bucketIdx < expBucketNumber {
+				cutUpper := lastUpper
+				cutCount := cumCount
+				cutRepeat := lastRepeat
+				if prevUpper != nil && prevCumCount < threshold &&
+					(threshold-prevCumCount) < (cumCount-threshold) {
+					cutUpper = prevUpper
+					cutCount = prevCumCount
+					cutRepeat = prevRepeat
+				}
+				if bucketLower != nil {
+					globalHist.AppendBucketWithNDV(bucketLower, cutUpper, cutCount, cutRepeat, 0)
+					bucketIdx++
+					lowerFloor = cutUpper
+					bucketLower = nil
+				}
+			}
+		}
 
+		// startNewGroup saves previous state and resets group accumulators.
+		startNewGroup := func(upper *types.Datum) {
 			prevCumCount = cumCount
 			prevUpper = lastUpper
 			prevRepeat = lastRepeat
 			lastRepeat = 0
-			lastUpper = hists[refs[i].histIdx].GetUpper(int(refs[i].bucketIdx)).Clone()
-			topNMatch := isGlobalTopNVal(hists[refs[i].histIdx].GetUpper(int(refs[i].bucketIdx)))
-
-			groupHasCount := false
-			for k := i; k < j; k++ {
-				h := hists[refs[k].histIdx]
-				bkt := h.Buckets[refs[k].bucketIdx]
-				count := bkt.Count
-				if refs[k].bucketIdx > 0 {
-					count -= h.Buckets[refs[k].bucketIdx-1].Count
-				}
-				repeat := bkt.Repeat
-
-				if topNMatch {
-					count -= repeat
-					repeat = 0
-					if count <= 0 {
-						continue
-					}
-				}
-
-				groupHasCount = true
-				cumCount += count
-				lastRepeat += repeat
-
-				lower := h.GetLower(int(refs[k].bucketIdx))
-				if lowerFloor != nil {
-					cmp, err := lower.Compare(sc.TypeCtx(), lowerFloor, collate.GetBinaryCollator())
-					if err != nil {
-						return nil, nil, err
-					}
-					if cmp < 0 {
-						lower = lowerFloor
-					}
-				}
-				if bucketLower == nil {
-					bucketLower = lower.Clone()
-				} else {
-					cmp, err := lower.Compare(sc.TypeCtx(), bucketLower, collate.GetBinaryCollator())
-					if err != nil {
-						return nil, nil, err
-					}
-					if cmp < 0 {
-						bucketLower = lower.Clone()
-					}
-				}
-			}
-
-			if groupHasCount || cumCount > prevCumCount {
-				threshold := totCount * bucketIdx / expBucketNumber
-				if cumCount >= threshold && bucketIdx < expBucketNumber {
-					cutUpper := lastUpper
-					cutCount := cumCount
-					cutRepeat := lastRepeat
-					if prevUpper != nil && prevCumCount < threshold &&
-						(threshold-prevCumCount) < (cumCount-threshold) {
-						cutUpper = prevUpper
-						cutCount = prevCumCount
-						cutRepeat = prevRepeat
-					}
-					if bucketLower != nil {
-						globalHist.AppendBucketWithNDV(bucketLower, cutUpper, cutCount, cutRepeat, 0)
-						bucketIdx++
-						lowerFloor = cutUpper
-						bucketLower = nil
-					}
-				}
-			}
-
-			i = j
+			lastUpper = upper.Clone()
 		}
 
+		// addToBucket tracks lower bound for the current global bucket.
+		addToBucket := func(lower *types.Datum, count, repeat int64) {
+			cumCount += count
+			lastRepeat += repeat
+			lo := lower
+			if lowerFloor != nil {
+				c, _ := lo.Compare(sc.TypeCtx(), lowerFloor, collate.GetBinaryCollator())
+				if c < 0 {
+					lo = lowerFloor
+				}
+			}
+			if bucketLower == nil {
+				bucketLower = lo.Clone()
+			} else {
+				c, _ := lo.Compare(sc.TypeCtx(), bucketLower, collate.GetBinaryCollator())
+				if c < 0 {
+					bucketLower = lo.Clone()
+				}
+			}
+		}
+
+		ri, li := 0, 0 // ref index, leftover index
+		for ri < len(refs) || li < len(leftovers) {
+			// Determine which source comes next in sort order.
+			var mergeOrd int // -1: ref first, 0: both equal, 1: leftover first
+			if ri >= len(refs) {
+				mergeOrd = 1
+			} else if li >= len(leftovers) {
+				mergeOrd = -1
+			} else {
+				refUp := hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx))
+				mergeOrd, _ = leftovers[li].datum.Compare(sc.TypeCtx(), refUp, collate.GetBinaryCollator())
+			}
+
+			if mergeOrd >= 0 {
+				// Process leftover group (single value, single entry).
+				lo := leftovers[li]
+				li++
+				if mergeOrd > 0 {
+					// Leftover comes before next ref — standalone group.
+					startNewGroup(&lo.datum)
+					addToBucket(&lo.datum, lo.topNOrigin, lo.topNOrigin)
+					emitGroup()
+					continue
+				}
+				// mergeOrd == 0: leftover coincides with ref group, handled below.
+				startNewGroup(&lo.datum)
+				addToBucket(&lo.datum, lo.topNOrigin, lo.topNOrigin)
+				// Fall through to also process the ref group at this value.
+			}
+
+			if mergeOrd <= 0 {
+				// Process ref group: all consecutive refs with same upper bound.
+				if mergeOrd < 0 {
+					startNewGroup(hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx)))
+				}
+				topNMatch := isGlobalTopNVal(hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx)))
+
+				j := ri + 1
+				for j < len(refs) {
+					c, err := hists[refs[j].histIdx].GetUpper(int(refs[j].bucketIdx)).Compare(
+						sc.TypeCtx(), hists[refs[ri].histIdx].GetUpper(int(refs[ri].bucketIdx)),
+						collate.GetBinaryCollator())
+					if err != nil {
+						return nil, nil, err
+					}
+					if c != 0 {
+						break
+					}
+					j++
+				}
+
+				for k := ri; k < j; k++ {
+					h := hists[refs[k].histIdx]
+					bkt := h.Buckets[refs[k].bucketIdx]
+					count := bkt.Count
+					if refs[k].bucketIdx > 0 {
+						count -= h.Buckets[refs[k].bucketIdx-1].Count
+					}
+					repeat := bkt.Repeat
+
+					if topNMatch {
+						count -= repeat
+						repeat = 0
+						if count <= 0 {
+							continue
+						}
+					}
+
+					addToBucket(h.GetLower(int(refs[k].bucketIdx)), count, repeat)
+				}
+
+				ri = j
+				emitGroup()
+			}
+		}
+
+		// Final bucket.
 		if bucketLower != nil && lastUpper != nil {
 			globalHist.AppendBucketWithNDV(bucketLower, lastUpper, cumCount, lastRepeat, 0)
 		}
@@ -1973,146 +2021,7 @@ func MergePartTopNAndHistToGlobal(
 		}
 	}
 
-	// ---------------------------------------------------------------
-	// Phase 6: Add leftover TopN-origin entries to the histogram.
-	// These are TopN values not in global TopN whose rows are not in
-	// any histogram bucket (they were in partition TopN only).
-	// ---------------------------------------------------------------
-	var extraBuckets []*bucket4Merging
-	for _, lo := range leftovers {
-		d, err := topNMetaToDatum(TopNMeta{Encoded: lo.encoded}, tp, isIndex, tz)
-		if err != nil {
-			return nil, nil, err
-		}
-		b := newbucket4MergingForRecycle()
-		d.Copy(b.lower)
-		d.Copy(b.upper)
-		b.Count = lo.topNOrigin
-		b.Repeat = lo.topNOrigin
-		extraBuckets = append(extraBuckets, b)
-	}
-	if len(extraBuckets) > 0 {
-		histBuckets := globalHist.buildBucket4Merging()
-		allBuckets := append(histBuckets, extraBuckets...)
-		var err error
-		globalHist, err = mergeByUpperBound(sc, allBuckets, totCount, totNull, totColSize,
-			expBucketNumber, isIndex, globalHist.ID, globalHist.LastUpdateVersion, globalHist.Tp)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
 	return globalTopN, globalHist, nil
-}
-
-// mergeByUpperBound is used for the small re-merge in Phase 6 (leftover
-// TopN entries + ~256-bucket global histogram). Works with bucket4Merging.
-func mergeByUpperBound(
-	sc *stmtctx.StatementContext,
-	buckets []*bucket4Merging,
-	totCount, totNull, totColSize, expBucketNumber int64,
-	isIndex bool,
-	histID int64,
-	lastUpdateVersion uint64,
-	tp *types.FieldType,
-) (*Histogram, error) {
-	if len(buckets) == 0 || totCount == 0 {
-		return NewHistogram(histID, 0, totNull, lastUpdateVersion, tp, 0, totColSize), nil
-	}
-
-	if err := sortBucketsByUpperBound(sc.TypeCtx(), buckets); err != nil {
-		return nil, err
-	}
-
-	globalHist := NewHistogram(histID, 0, totNull, lastUpdateVersion, tp, int(expBucketNumber), totColSize)
-	var (
-		cumCount     int64
-		prevCumCount int64
-		bucketIdx    int64        = 1
-		bucketLower  *types.Datum
-		lowerFloor   *types.Datum
-		lastUpper    *types.Datum
-		lastRepeat   int64
-		prevUpper    *types.Datum
-		prevRepeat   int64
-	)
-
-	i := 0
-	for i < len(buckets) {
-		j := i + 1
-		for j < len(buckets) {
-			cmp, err := buckets[j].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
-			if err != nil {
-				return nil, err
-			}
-			if cmp != 0 {
-				break
-			}
-			j++
-		}
-
-		prevCumCount = cumCount
-		prevUpper = lastUpper
-		prevRepeat = lastRepeat
-		lastRepeat = 0
-		lastUpper = buckets[i].upper.Clone()
-
-		for k := i; k < j; k++ {
-			cumCount += buckets[k].Count
-			lastRepeat += buckets[k].Repeat
-			lower := buckets[k].lower.Clone()
-			if lowerFloor != nil {
-				cmp, err := lower.Compare(sc.TypeCtx(), lowerFloor, collate.GetBinaryCollator())
-				if err != nil {
-					return nil, err
-				}
-				if cmp < 0 {
-					lower = lowerFloor.Clone()
-				}
-			}
-			if bucketLower == nil {
-				bucketLower = lower
-			} else {
-				cmp, err := lower.Compare(sc.TypeCtx(), bucketLower, collate.GetBinaryCollator())
-				if err != nil {
-					return nil, err
-				}
-				if cmp < 0 {
-					bucketLower = lower
-				}
-			}
-			releasebucket4MergingForRecycle(buckets[k])
-		}
-
-		threshold := totCount * bucketIdx / expBucketNumber
-		if cumCount >= threshold && bucketIdx < expBucketNumber {
-			cutUpper := lastUpper
-			cutCount := cumCount
-			cutRepeat := lastRepeat
-			if prevUpper != nil && prevCumCount < threshold &&
-				(threshold-prevCumCount) < (cumCount-threshold) {
-				cutUpper = prevUpper
-				cutCount = prevCumCount
-				cutRepeat = prevRepeat
-			}
-			globalHist.AppendBucketWithNDV(bucketLower, cutUpper, cutCount, cutRepeat, 0)
-			bucketIdx++
-			lowerFloor = cutUpper
-			bucketLower = nil
-		}
-
-		i = j
-	}
-
-	if bucketLower != nil && lastUpper != nil {
-		globalHist.AppendBucketWithNDV(bucketLower, lastUpper, cumCount, lastRepeat, 0)
-	}
-	if !isIndex {
-		for i := range globalHist.Buckets {
-			globalHist.Buckets[i].NDV = 0
-		}
-	}
-	return globalHist, nil
 }
 
 // mergeHistBucketsToGlobalHist merges sorted buckets into a single global histogram.
