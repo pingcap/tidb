@@ -365,16 +365,25 @@ type StepSummary struct {
 	RowCnt int64 `json:"input-rows,omitempty"`
 }
 
-// Summary records the amount of data needed to be processed in each step of the import job.
-// And this information will be saved into tidb_import_jobs table after the job is finished.
+// Summary records the amount of data to be processed in each import job step.
+// This information will be saved into tidb_import_jobs table after the job is finished.
 type Summary struct {
-	// EncodeSummary stores the bytes and rows needed to be processed in encode step.
-	// Same for other summaries.
+	// EncodeSummary stores source bytes and row counts for the encode step.
 	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
 
+	// MergeSummary stores merged bytes and row counts for the merge step.
 	MergeSummary StepSummary `json:"merge-summary,omitempty"`
 
+	// IngestSummary stores bytes and row counts for the ingest step.
 	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
+
+	// CollectConflictsSummary stores conflict KV pair counts for the
+	// collect-conflicts step. RowCnt is used as the counter.
+	CollectConflictsSummary StepSummary `json:"collect-conflicts-summary,omitempty"`
+
+	// ResolveConflictsSummary stores conflict KV pair counts for the
+	// resolve-conflicts step. RowCnt is used as the counter.
+	ResolveConflictsSummary StepSummary `json:"resolve-conflicts-summary,omitempty"`
 
 	// ImportedRows is the number of rows imported into TiKV.
 	// conflicted rows are excluded from this count if using global-sort.

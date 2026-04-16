@@ -1465,8 +1465,17 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
-		{"flush stats_delta", true, "FLUSH STATS_DELTA"},
-		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA CLUSTER"},
+		{"flush stats_delta", false, ""},
+		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA `cluster`"},
+		{"flush stats_delta cluster cluster", true, "FLUSH STATS_DELTA `cluster` CLUSTER"},
+		{"flush stats_delta *.*", true, "FLUSH STATS_DELTA *.*"},
+		{"flush stats_delta *.* cluster", true, "FLUSH STATS_DELTA *.* CLUSTER"},
+		{"flush stats_delta db1.*", true, "FLUSH STATS_DELTA `db1`.*"},
+		{"flush stats_delta db1.* cluster", true, "FLUSH STATS_DELTA `db1`.* CLUSTER"},
+		{"flush stats_delta db1.t1", true, "FLUSH STATS_DELTA `db1`.`t1`"},
+		{"flush stats_delta db1.t1 cluster", true, "FLUSH STATS_DELTA `db1`.`t1` CLUSTER"},
+		{"flush stats_delta db1.t1, db2.*", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.*"},
+		{"flush stats_delta db1.t1, db2.* cluster", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.* CLUSTER"},
 
 		// for call statement
 		{"call ", false, ""},
@@ -6318,6 +6327,8 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t index a predicate columns", false, ""},
 		{"analyze table t with 10 samplerate", true, "ANALYZE TABLE `t` WITH 10 SAMPLERATE"},
 		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
+		{"analyze table t with 0.05 ndvrate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE"},
+		{"analyze table t with 0.05 ndvrate 0.00001 samplerate", true, "ANALYZE TABLE `t` WITH 0.05 NDVRATE, 0.00001 SAMPLERATE"},
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}

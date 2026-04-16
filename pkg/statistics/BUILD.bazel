@@ -67,6 +67,7 @@ go_test(
         "bench_daily_test.go",
         "builder_test.go",
         "cmsketch_test.go",
+        "estimate_test.go",
         "fmsketch_test.go",
         "histogram_bench_test.go",
         "histogram_test.go",
@@ -80,7 +81,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
-    shard_count = 43,
+    shard_count = 44,
     deps = [
         "//pkg/config",
         "//pkg/meta/model",

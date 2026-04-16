@@ -424,7 +424,7 @@ func TestFlushStatsDelta(t *testing.T) {
 
 	// Insert some rows to generate stats delta
 	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
 	require.Len(t, rows, 1, "stats_meta should have entry for the table")
 	modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
@@ -433,7 +433,7 @@ func TestFlushStatsDelta(t *testing.T) {
 
 	// Insert 2 more rows and flush again
 	tk.MustExec("insert into t values (6,6), (7,7)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	rows = tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
 	require.Len(t, rows, 1, "stats_meta should have entry for the table")
 	modifyCnt, err = strconv.ParseInt(rows[0][0].(string), 10, 64)
