@@ -344,7 +344,6 @@ replace (
 
 replace (
 	github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260415090129-0899813016f7
-	github.com/pingcap/tipb => git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334
 	github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260415124818-8dac51c06b6c
 	github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260415100754-cdf993cfd9de
 )

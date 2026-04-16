@@ -834,8 +834,6 @@ git.pingcap.net/pingkai/semver v0.0.0-20260320082102-7fbb8a3de855 h1:MQRzfLahKSS
 git.pingcap.net/pingkai/semver v0.0.0-20260320082102-7fbb8a3de855/go.mod h1:ovzDCvyE6yzeKg1jepY3GCZ5YnjbW0QccFQUZJdXKcQ=
 git.pingcap.net/pingkai/tigateway v0.0.0-20260122130635-3c63f1ad0439 h1:iYslUh2fH/TMtk+svm4Vl9jqRwMoP2lLQxxUQRFNNm0=
 git.pingcap.net/pingkai/tigateway v0.0.0-20260122130635-3c63f1ad0439/go.mod h1:q1yK+uRvv3HECNC4wT6P5GUXFT6E4zKlC7/gxlCDmy4=
-git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334 h1:UnaqteJZbNqYb5CqLy6hFsU7A2msfPTMC+cnv/klfiI=
-git.pingcap.net/pingkai/tipb v0.0.0-20251126083016-e6803ab73334/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
 git.sr.ht/~sbinet/gg v0.3.1/go.mod h1:KGYtlADtqsqANL9ueOFkWymvzUvLMQllU5Ixo+8v3pc=
 gitee.com/Trisia/gotlcp v1.3.18 h1:eVa41lAeNHsiT6uR/zWlY3dlqXVJ2aEqJ4qsQjfqAK8=
 gitee.com/Trisia/gotlcp v1.3.18/go.mod h1:neIy4hVQh598WBn2DwMlBuOE8E+SlW6z4GEfUfvww0o=
@@ -1549,6 +1547,8 @@ github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9 h1:qG9BSvlWFEE5otQGa
 github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9/go.mod h1:ORfBOFp1eteu2odzsyaxI+b8TzJwgjwyQcGhI+9SfEA=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5 h1:T4pXRhBflzDeAhmOQHNPRRogMYxP13V7BkYw3ZsoSfE=
 github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5/go.mod h1:rlimy0GcTvjiJqvD5mXTRr8O2eNZPBrcUgiWVYp9530=
+github.com/pingcap/tipb v0.0.0-20250928030846-9fd33ded6f2c h1:tddMjEiXU0d1VlJ+yHwim4gINeHmFR9CCkitatuby2c=
+github.com/pingcap/tipb v0.0.0-20250928030846-9fd33ded6f2c/go.mod h1:RM8iRcMalzOthG2XJxnNBniM4xFGb/lDwHUwqkaVzt4=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c/go.mod h1:7rwL4CYBLnjLxUqIJNnCWiEdr3bn6IUYi15bNlnbCCU=
 github.com/pkg/diff v0.0.0-20210226163009-20ebb0f2a09e/go.mod h1:pJLUxLENpZxwdsKMEsNbx1VGcRFpLqf3715MtcvvzbA=
