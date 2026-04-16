@@ -1732,6 +1732,8 @@ func MergePartTopNAndHistToGlobal(
 
 		if mergeOrd <= 0 {
 			entry.encoded = allTopN[ti].encoded
+			entry.totalCount += allTopN[ti].count
+			ti++
 			for ti < len(allTopN) && bytes.Equal(allTopN[ti].encoded, entry.encoded) {
 				entry.totalCount += allTopN[ti].count
 				ti++
@@ -1813,7 +1815,8 @@ func MergePartTopNAndHistToGlobal(
 	// partition TopN instead), so they need to enter the global histogram.
 	for i := 0; i < len(allTopN); {
 		key := allTopN[i].encoded
-		var topNCount uint64
+		topNCount := allTopN[i].count
+		i++
 		for i < len(allTopN) && bytes.Equal(allTopN[i].encoded, key) {
 			topNCount += allTopN[i].count
 			i++
@@ -1938,7 +1941,8 @@ func MergePartTopNAndHistToGlobal(
 
 		if mergeOrd >= 0 {
 			key := allTopN[ti2].encoded
-			var topNCount int64
+			topNCount := int64(allTopN[ti2].count)
+			ti2++
 			for ti2 < len(allTopN) && bytes.Equal(allTopN[ti2].encoded, key) {
 				topNCount += int64(allTopN[ti2].count)
 				ti2++
