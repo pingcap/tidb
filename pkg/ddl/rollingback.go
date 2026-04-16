@@ -96,7 +96,7 @@ func convertAddIdxJob2RollbackJob(
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
-func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
+func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occurredErr error) (ver int64, err error) {
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
@@ -120,7 +120,7 @@ func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, oc
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}
-	return convertAddIdxJob2RollbackJob(jobCtx, job, tblInfo, indexesInfo, occuredErr)
+	return convertAddIdxJob2RollbackJob(jobCtx, job, tblInfo, indexesInfo, occurredErr)
 }
 
 // rollingbackModifyColumn change the modifying-column job into rolling back state.
