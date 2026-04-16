@@ -1808,19 +1808,18 @@ func MergePartTopNAndHistToGlobal(
 	for _, e := range topNSlice {
 		totCount -= int64(e.repeatCount)
 	}
-	// Adjust totCount for leftover TopN-origin values (values in partition
-	// TopN but not in global TopN — their rows need to enter the histogram).
-	{
-		for i := 0; i < len(allTopN); {
-			key := allTopN[i].encoded
-			var topNCount uint64
-			for i < len(allTopN) && bytes.Equal(allTopN[i].encoded, key) {
-				topNCount += allTopN[i].count
-				i++
-			}
-			if _, inGlobal := globalTopNMap[hack.String(key)]; !inGlobal {
-				totCount += int64(topNCount)
-			}
+	// Add TopN-origin counts for values that didn't make global TopN.
+	// Their rows were excluded from partition histograms (put into
+	// partition TopN instead), so they need to enter the global histogram.
+	for i := 0; i < len(allTopN); {
+		key := allTopN[i].encoded
+		var topNCount uint64
+		for i < len(allTopN) && bytes.Equal(allTopN[i].encoded, key) {
+			topNCount += allTopN[i].count
+			i++
+		}
+		if _, inGlobal := globalTopNMap[hack.String(key)]; !inGlobal {
+			totCount += int64(topNCount)
 		}
 	}
 
