@@ -669,6 +669,7 @@ func TestIssue37611(t *testing.T) {
 	tk.MustExec("set @@sql_mode=default;")
 	tk.MustQuery("select * from t ignore index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
 	tk.MustQuery("select * from t force index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
+	tk.MustGetErrCode("alter table t change column b c char(10) as (concat(a, a));", errno.ErrUnsupportedOnGeneratedColumn)
 
 	tk.MustExec("create table t2(a char(5), b char(6) as (concat(a, a)) stored, index idx(b));")
 	tk.MustGetErrCode("alter table t2 modify b char(10) as (concat(a, a)) stored;", errno.ErrUnsupportedOnGeneratedColumn)

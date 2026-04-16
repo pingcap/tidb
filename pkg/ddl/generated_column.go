@@ -392,7 +392,7 @@ func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
 	isIndexed := false
 	for _, idx := range tbl.Indices() {
 		for _, col := range idx.Meta().Columns {
-			if col.Name.L == newCol.Name.L {
+			if col.Name.L == oldCol.Name.L || col.Name.L == newCol.Name.L {
 				isIndexed = true
 				break
 			}
