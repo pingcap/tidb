@@ -1089,6 +1089,7 @@ func (local *Backend) prepareAndSendJob(
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		needSplit = true
 	})
+	failpoint.InjectCall("adjustNeedSplit", &needSplit)
 	if needSplit {
 		var err error
 		logger := log.Wrap(tidblogutil.Logger(ctx)).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")

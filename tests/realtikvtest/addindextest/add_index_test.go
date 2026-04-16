@@ -17,6 +17,7 @@ package addindextest
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -35,7 +36,24 @@ func init() {
 	})
 }
 
+func alwaysSplitAndReduceBackoff(t *testing.T) {
+	t.Helper()
+	// by split all the time, we can nearly avoid all region job re-queues caused
+	// by EpochNotMatch or other errors, and can make those cases faster.
+	// we also reduce the retry backoff to make the test faster when region job
+	// is re-queued, as CI ENV might be slow and cause more re-queues.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/adjustNeedSplit",
+		func(needSplit *bool) {
+			*needSplit = true
+		})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/adjustRegionJobRetryBackoff",
+		func(seconds *time.Duration) {
+			*seconds = time.Second
+		})
+}
+
 func TestCreateNonUniqueIndex(t *testing.T) {
+	alwaysSplitAndReduceBackoff(t)
 	testutil.ReduceCheckInterval(t)
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13, 16, 19, 22, 25},
@@ -47,6 +65,7 @@ func TestCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
+	alwaysSplitAndReduceBackoff(t)
 	testutil.ReduceCheckInterval(t)
 	var colIDs [][]int = [][]int{
 		{1, 6, 7, 8, 11, 13, 15, 16, 18, 19, 22, 26},
@@ -58,18 +77,21 @@ func TestCreateUniqueIndex(t *testing.T) {
 }
 
 func TestCreatePrimaryKey(t *testing.T) {
+	alwaysSplitAndReduceBackoff(t)
 	testutil.ReduceCheckInterval(t)
 	ctx := testutils.InitTest(t)
 	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
 }
 
 func TestCreateGenColIndex(t *testing.T) {
+	alwaysSplitAndReduceBackoff(t)
 	testutil.ReduceCheckInterval(t)
 	ctx := testutils.InitTest(t)
 	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
 }
 
 func TestCreateMultiColsIndex(t *testing.T) {
+	alwaysSplitAndReduceBackoff(t)
 	testutil.ReduceCheckInterval(t)
 	var coliIDs = [][]int{
 		{1, 4, 7},
