@@ -278,6 +278,14 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, true, v.TiDBOptEnableAdvancedJoinReorder)
 
+	require.Equal(t, vardef.DefTiDBOptGreedyJoinSeedByCost, v.TiDBOptGreedyJoinSeedByCost)
+	err = v.SetSystemVar(vardef.TiDBOptGreedyJoinSeedByCost, "ON")
+	require.NoError(t, err)
+	require.Equal(t, true, v.TiDBOptGreedyJoinSeedByCost)
+	err = v.SetSystemVar(vardef.TiDBOptGreedyJoinSeedByCost, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.TiDBOptGreedyJoinSeedByCost)
+
 	err = v.SetSystemVar(vardef.TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)
 	val, err = v.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBLowResolutionTSO)

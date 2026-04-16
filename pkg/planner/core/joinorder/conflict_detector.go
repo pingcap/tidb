@@ -578,6 +578,55 @@ func (r *CheckConnectionResult) NoEQEdge() bool {
 	return !r.hasEQCond
 }
 
+// HasJoinCondition reports whether the connection is backed by at least one
+// real join predicate instead of a pure cartesian edge.
+func (r *CheckConnectionResult) HasJoinCondition() bool {
+	if r == nil || r.node1 == nil || r.node2 == nil {
+		return false
+	}
+	if r.edgeHasJoinCondition(r.appliedNonInnerEdge) {
+		return true
+	}
+	for _, e := range r.appliedInnerEdges {
+		if r.edgeHasJoinCondition(e) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *CheckConnectionResult) edgeHasJoinCondition(e *edge) bool {
+	if e == nil {
+		return false
+	}
+	if len(e.eqConds) > 0 {
+		return true
+	}
+	// Degenerate one-sided predicates still form edges so CD-C can preserve
+	// correctness constraints, but seed-by-cost should only treat predicates
+	// that reference both candidate sides as real join conditions.
+	for _, cond := range e.nonEQConds {
+		if ExprConnectsBothSides(cond, r.node1.p.Schema(), r.node2.p.Schema()) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExprConnectsBothSides reports whether cond references both the left and right
+// schemas instead of being a one-sided predicate.
+func ExprConnectsBothSides(cond expression.Expression, leftSchema, rightSchema *expression.Schema) bool {
+	if cond == nil || leftSchema == nil || rightSchema == nil {
+		return false
+	}
+	mergedSchema := expression.MergeSchema(leftSchema, rightSchema)
+	if !expression.ExprFromSchema(cond, mergedSchema) {
+		return false
+	}
+	return !expression.ExprFromSchema(cond, leftSchema) &&
+		!expression.ExprFromSchema(cond, rightSchema)
+}
+
 // CheckConnection tests whether any edge can validly connect node1 and node2.
 // It's corresponding to the pseudocode for APPLICABLE(b/c) in the paper(Figure-9).
 // The basic idea is: It collects all applicable inner edges (there can be many) and at most one
@@ -724,7 +773,10 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	}, nil
 }
 
-func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []*expression.ScalarFunction) (newLeft base.LogicalPlan, newRight base.LogicalPlan, alignedEQConds []*expression.ScalarFunction, err error) {
+// AlignEQCondsWithoutMutation aligns eqConds to the provided left/right plans
+// and injects helper projections on temporary plan clones when type coercion
+// makes a swapped key cease to be a plain column reference.
+func AlignEQCondsWithoutMutation(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []*expression.ScalarFunction) (newLeft base.LogicalPlan, newRight base.LogicalPlan, alignedEQConds []*expression.ScalarFunction, err error) {
 	if len(eqConds) == 0 {
 		return left, right, nil, nil
 	}
@@ -749,10 +801,10 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 				lCol := swapped.GetArgs()[0]
 				rCol := swapped.GetArgs()[1]
 				if !isCol0 {
-					left, lCol = logicalop.InjectExpr(left, swapped.GetArgs()[0])
+					left, lCol = logicalop.InjectExprAvoidingMutation(left, swapped.GetArgs()[0])
 				}
 				if !isCol1 {
-					right, rCol = logicalop.InjectExpr(right, swapped.GetArgs()[1])
+					right, rCol = logicalop.InjectExprAvoidingMutation(right, swapped.GetArgs()[1])
 				}
 				swapped = expression.NewFunctionInternal(ctx.GetExprCtx(), cond.FuncName.L, cond.GetStaticType(),
 					lCol, rCol).(*expression.ScalarFunction)
@@ -770,13 +822,13 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	var alignedEQConds []*expression.ScalarFunction
 	var err error
 
-	checkResult.node1.p, checkResult.node2.p, alignedEQConds, err = alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
+	// Keep aligned helper projections local to this join construction. During
+	// seed scoring, the caller may discard this candidate and continue probing
+	// other pairs, so mutating checkResult.node{1,2}.p here would leak state.
+	left, right, alignedEQConds, err := AlignEQCondsWithoutMutation(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
 	if err != nil {
 		return nil, err
 	}
-
-	left := checkResult.node1.p
-	right := checkResult.node2.p
 
 	join, err := newCartesianJoin(ctx, e.joinType, left, right, vertexHints)
 	if err != nil {
@@ -899,15 +951,20 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 	var alignedEQConds []*expression.ScalarFunction
 	newEqConds := make([]*expression.ScalarFunction, 0, 8)
 	newOtherConds := make([]expression.Expression, 0, 8)
+	// Reuse the locally aligned plans across all edges of this candidate join,
+	// but do not write them back into checkResult.node{1,2}.p for the same
+	// reason as makeNonInnerJoin() above.
+	left := checkResult.node1.p
+	right := checkResult.node2.p
 	for _, e := range checkResult.appliedInnerEdges {
-		checkResult.node1.p, checkResult.node2.p, alignedEQConds, err = alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
+		left, right, alignedEQConds, err = AlignEQCondsWithoutMutation(ctx, left, right, e.eqConds)
 		if err != nil {
 			return nil, err
 		}
 		newEqConds = append(newEqConds, alignedEQConds...)
 		newOtherConds = append(newOtherConds, e.nonEQConds...)
 	}
-	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
+	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, left, right, vertexHints)
 	if err != nil {
 		return nil, err
 	}

@@ -688,3 +688,22 @@ func InjectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPla
 	}
 	return proj, proj.AppendExpr(expr)
 }
+
+// InjectExprAvoidingMutation injects expr without mutating an existing projection in place.
+// This is used by speculative join-order probing, where helper projections may be
+// needed temporarily for key alignment but must not leak back into the original leaf.
+func InjectExprAvoidingMutation(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		return InjectExpr(p, expr)
+	}
+	proj = proj.LogicalProjectionShallowRef()
+	// ShallowRef keeps BaseLogicalPlan.self and the stats cache from the original
+	// projection. Fix both so RecursiveDeriveStats() and later costing operate on
+	// the speculative clone with its appended helper column.
+	proj.SetSelf(proj)
+	proj.ExprsShallowRef()
+	proj.SetSchema(p.Schema().Clone())
+	proj.SetStats(nil)
+	return proj, proj.AppendExpr(expr)
+}

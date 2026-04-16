@@ -82,3 +82,154 @@ explain format = 'plan_tree' select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3
         inner join t4 on sub1.id=t4.id
     ) sub2
     inner join t5 on sub2.id=t5.id;
+
+# Greedy join reorder can pick the smallest base table as the seed even when
+# the cheapest first join should start from a different pair.
+drop table if exists t_seed1, t_seed2, t_seed3;
+create table t_seed1(id int not null primary key, col1 int not null, key idx_col1(col1));
+create table t_seed2(id int not null primary key, col2 int not null);
+create table t_seed3(id int not null primary key, col1 int not null, key idx_col1(col1));
+insert into t_seed1 values
+    (1, 1), (2, 2), (3, 3), (4, 4),
+    (5, 5), (6, 6), (7, 7), (8, 8),
+    (9, 9), (10, 10), (11, 11), (12, 12),
+    (13, 13), (14, 14), (15, 15), (16, 16);
+insert into t_seed2 values (1, 1);
+insert into t_seed3 values (1, 1), (2, 2);
+analyze table t_seed1, t_seed2, t_seed3;
+set @@tidb_enable_outer_join_reorder = 1;
+set @@tidb_opt_greedy_join_seed_by_cost = 0;
+explain format = 'plan_tree' select * from
+    (select t_seed1.id, t_seed1.col1 from t_seed1 left join t_seed2 on t_seed1.col1 = t_seed2.col2) tt
+    join t_seed3 on t_seed3.col1 = tt.col1;
+set @@tidb_opt_greedy_join_seed_by_cost = 1;
+explain format = 'plan_tree' select * from
+    (select t_seed1.id, t_seed1.col1 from t_seed1 left join t_seed2 on t_seed1.col1 = t_seed2.col2) tt
+    join t_seed3 on t_seed3.col1 = tt.col1;
+set @@tidb_opt_enable_advanced_join_reorder = 0;
+explain format = 'plan_tree' select * from
+    (select t_seed1.id, t_seed1.col1 from t_seed1 left join t_seed2 on t_seed1.col1 = t_seed2.col2) tt
+    join t_seed3 on t_seed3.col1 = tt.col1;
+set @@tidb_opt_enable_advanced_join_reorder = 1;
+set @@tidb_opt_greedy_join_seed_by_cost = 0;
+
+# LEADING should only lock the hinted component. A later disconnected component
+# should still be allowed to reseed by cost in both greedy implementations.
+drop table if exists t_lead1, t_lead2;
+create table t_lead1(id int not null primary key, a int not null, key idx_a(a));
+create table t_lead2(id int not null primary key, a int not null, key idx_a(a));
+insert into t_lead1 values (1, 1), (2, 2);
+insert into t_lead2 values (1, 1), (2, 2);
+analyze table t_lead1, t_lead2;
+set @@tidb_opt_join_reorder_threshold = 2;
+set @@tidb_enable_outer_join_reorder = 1;
+set @@tidb_opt_enable_advanced_join_reorder = 1;
+set @@tidb_opt_greedy_join_seed_by_cost = 0;
+explain format = 'plan_tree' select /*+ leading(t_lead1, t_lead2) */ * from
+    (t_lead1 join t_lead2 on t_lead1.a = t_lead2.a),
+    (t_seed1 left join t_seed2 on t_seed1.col1 = t_seed2.col2 join t_seed3 on t_seed3.col1 = t_seed1.col1);
+set @@tidb_opt_greedy_join_seed_by_cost = 1;
+explain format = 'plan_tree' select /*+ leading(t_lead1, t_lead2) */ * from
+    (t_lead1 join t_lead2 on t_lead1.a = t_lead2.a),
+    (t_seed1 left join t_seed2 on t_seed1.col1 = t_seed2.col2 join t_seed3 on t_seed3.col1 = t_seed1.col1);
+set @@tidb_opt_enable_advanced_join_reorder = 0;
+set @@tidb_opt_greedy_join_seed_by_cost = 0;
+explain format = 'plan_tree' select /*+ leading(t_lead1, t_lead2) */ * from
+    (t_lead1 join t_lead2 on t_lead1.a = t_lead2.a),
+    (t_seed1 left join t_seed2 on t_seed1.col1 = t_seed2.col2 join t_seed3 on t_seed3.col1 = t_seed1.col1);
+set @@tidb_opt_greedy_join_seed_by_cost = 1;
+explain format = 'plan_tree' select /*+ leading(t_lead1, t_lead2) */ * from
+    (t_lead1 join t_lead2 on t_lead1.a = t_lead2.a),
+    (t_seed1 left join t_seed2 on t_seed1.col1 = t_seed2.col2 join t_seed3 on t_seed3.col1 = t_seed1.col1);
+set @@tidb_opt_enable_advanced_join_reorder = 1;
+set @@tidb_opt_greedy_join_seed_by_cost = 0;
+
+# Seed-by-cost should only change the first join inside the current connected component,
+# not pull a cheaper seed pair from a later disconnected component.
+drop table if exists t_cc1, t_cc2, t_cc3, t_cc4;
+create table t_cc1(id int not null primary key, a int not null);
+create table t_cc2(id int not null primary key, a int not null, key idx_a(a));
+create table t_cc3(id int not null primary key, a int not null, key idx_a(a));
+create table t_cc4(id int not null primary key, a int not null, key idx_a(a));
+insert into t_cc1 values (1, 1);
+insert into t_cc2 values (1, 1);
+insert into t_cc2 select id + 1, a + 1 from t_cc2;
+insert into t_cc2 select id + 2, a + 2 from t_cc2;
+insert into t_cc2 select id + 4, a + 4 from t_cc2;
+insert into t_cc2 select id + 8, a + 8 from t_cc2;
+insert into t_cc2 select id + 16, a + 16 from t_cc2;
+insert into t_cc2 select id + 32, a + 32 from t_cc2;
+insert into t_cc2 select id + 64, a + 64 from t_cc2;
+insert into t_cc2 select id + 128, a + 128 from t_cc2;
+insert into t_cc2 select id + 256, a + 256 from t_cc2;
+insert into t_cc2 select id + 512, a + 512 from t_cc2;
+delete from t_cc2 where id > 1000;
+insert into t_cc3 values
+    (1, 1), (2, 2), (3, 3), (4, 4), (5, 5),
+    (6, 6), (7, 7), (8, 8), (9, 9), (10, 10);
+insert into t_cc4 select * from t_cc3;
+analyze table t_cc1, t_cc2, t_cc3, t_cc4;
+set @@tidb_opt_join_reorder_threshold = 2;
+set @@tidb_opt_cartesian_join_order_threshold = 0;
+set @@tidb_opt_enable_advanced_join_reorder = 1;
+set @@tidb_opt_greedy_join_seed_by_cost = 0;
+explain format = 'plan_tree' select * from
+    (t_cc1 join t_cc2 on t_cc1.a = t_cc2.a),
+    (t_cc3 join t_cc4 on t_cc3.a = t_cc4.a);
+set @@tidb_opt_greedy_join_seed_by_cost = 1;
+explain format = 'plan_tree' select * from
+    (t_cc1 join t_cc2 on t_cc1.a = t_cc2.a),
+    (t_cc3 join t_cc4 on t_cc3.a = t_cc4.a);
+set @@tidb_opt_enable_advanced_join_reorder = 0;
+set @@tidb_opt_greedy_join_seed_by_cost = 0;
+explain format = 'plan_tree' select * from
+    (t_cc1 join t_cc2 on t_cc1.a = t_cc2.a),
+    (t_cc3 join t_cc4 on t_cc3.a = t_cc4.a);
+set @@tidb_opt_greedy_join_seed_by_cost = 1;
+explain format = 'plan_tree' select * from
+    (t_cc1 join t_cc2 on t_cc1.a = t_cc2.a),
+    (t_cc3 join t_cc4 on t_cc3.a = t_cc4.a);
+
+# Seed-by-cost should not seed a connected component from a pure cartesian pair.
+drop table if exists t_pen1, t_pen2, t_pen3;
+create table t_pen1(a int, b int, c int);
+create table t_pen2(a int, b int, c int);
+create table t_pen3(a int, b int, c int);
+insert into t_pen1 values (1, 1, 1);
+insert into t_pen3 values (1, 1, 1);
+analyze table t_pen1, t_pen2, t_pen3;
+set @@tidb_opt_join_reorder_threshold = 2;
+set @@tidb_opt_cartesian_join_order_threshold = 100;
+set @@tidb_opt_greedy_join_seed_by_cost = 1;
+set @@tidb_opt_enable_advanced_join_reorder = 0;
+explain format = 'plan_tree' select * from t_pen1, t_pen2, t_pen3 where t_pen1.a = t_pen2.a and t_pen2.b = t_pen3.b;
+set @@tidb_opt_enable_advanced_join_reorder = 1;
+explain format = 'plan_tree' select * from t_pen1, t_pen2, t_pen3 where t_pen1.a = t_pen2.a and t_pen2.b = t_pen3.b;
+set @@tidb_opt_join_reorder_threshold = 0;
+set @@tidb_opt_cartesian_join_order_threshold = 0;
+set @@tidb_opt_greedy_join_seed_by_cost = 0;
+
+# Seed-by-cost probing should work through a derived projection leaf that also
+# participates in a casted join key. This keeps an end-to-end coverage point for
+# the shape exercised by the side-effect regression tests.
+drop table if exists t_probe_base, t_probe_eq, t_probe_cast;
+create table t_probe_base(id int not null primary key, payload int not null);
+create table t_probe_eq(sid varchar(20) not null, key idx_sid(sid));
+create table t_probe_cast(id int not null, key idx_id(id));
+insert into t_probe_base values (1, 1), (2, 2), (3, 3), (4, 4);
+insert into t_probe_eq values ('1');
+insert into t_probe_cast values (1), (2), (3), (4), (5), (6), (7), (8);
+analyze table t_probe_base, t_probe_eq, t_probe_cast;
+set @@tidb_opt_join_reorder_threshold = 0;
+set @@tidb_opt_enable_advanced_join_reorder = 0;
+set @@tidb_opt_greedy_join_seed_by_cost = 1;
+explain format = 'brief' select * from
+    (select cast(id as char) as sid, payload from t_probe_base) d
+    join t_probe_eq on d.sid = t_probe_eq.sid
+    join t_probe_cast on t_probe_cast.id = d.sid;
+set @@tidb_opt_enable_advanced_join_reorder = 1;
+explain format = 'brief' select * from
+    (select cast(id as char) as sid, payload from t_probe_base) d
+    join t_probe_eq on d.sid = t_probe_eq.sid
+    join t_probe_cast on t_probe_cast.id = d.sid;
+set @@tidb_opt_greedy_join_seed_by_cost = 0;

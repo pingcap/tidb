@@ -668,6 +668,12 @@ const (
 	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
 	TiDBOptEnableAdvancedJoinReorder = "tidb_opt_enable_advanced_join_reorder"
 
+	// TiDBOptGreedyJoinSeedByCost controls whether greedy join reorder
+	// picks the first join in a connected component by the cheapest join cost
+	// instead of the smallest base-node cumulative cost. It is kept opt-in so
+	// existing workloads preserve their historical plan shapes by default.
+	TiDBOptGreedyJoinSeedByCost = "tidb_opt_greedy_join_seed_by_cost"
+
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
 	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
@@ -1545,6 +1551,7 @@ const (
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true
+	DefTiDBOptGreedyJoinSeedByCost          = false
 	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false

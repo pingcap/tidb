@@ -1264,6 +1264,10 @@ type SessionVars struct {
 	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
 	TiDBOptEnableAdvancedJoinReorder bool
 
+	// TiDBOptGreedyJoinSeedByCost controls whether greedy join reorder
+	// picks the first join by join cost instead of the smallest base node.
+	TiDBOptGreedyJoinSeedByCost bool
+
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
 	TiDBOptJoinReorderThroughSel bool

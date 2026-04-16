@@ -2612,6 +2612,10 @@ var defaultSysVars = []*SysVar{
 		s.TiDBOptEnableAdvancedJoinReorder = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptGreedyJoinSeedByCost, Value: BoolToOnOff(vardef.DefTiDBOptGreedyJoinSeedByCost), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiDBOptGreedyJoinSeedByCost = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughSel), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.TiDBOptJoinReorderThroughSel = TiDBOptOn(val)
 		return nil

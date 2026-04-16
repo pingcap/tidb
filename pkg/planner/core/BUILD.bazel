@@ -217,6 +217,7 @@ go_test(
         "find_best_task_test.go",
         "hint_test.go",
         "integration_test.go",
+        "join_reorder_side_effect_test.go",
         "lateral_join_test.go",
         "logical_plans_test.go",
         "main_test.go",

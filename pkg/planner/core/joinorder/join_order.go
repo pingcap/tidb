@@ -586,7 +586,10 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	var disableCartesian = cartesianFactor <= 0
 	allowNoEQ := !disableCartesian && j.group.allInnerJoin
-	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ); err != nil {
+	// LEADING should lock the hinted component's first seed choice, but it
+	// should not disable seed-by-cost for later disconnected components.
+	seedByCost := j.ctx.GetSessionVars().TiDBOptGreedyJoinSeedByCost
+	if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ, seedByCost, nodeWithHint); err != nil {
 		return nil, err
 	}
 
@@ -602,7 +605,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		if cartesianFactor <= 0 {
 			cartesianFactor = 1
 		}
-		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true); err != nil {
+		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true, seedByCost, nodeWithHint); err != nil {
 			return nil, err
 		}
 		if len(nodes) != befLen {
@@ -638,13 +641,26 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	return root.p, nil
 }
 
-func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
+func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool, startByCost bool, lockedSeedNode *Node) ([]*Node, error) {
 	// Outer loop: keep trying while we have multiple nodes and made progress in the last iteration.
 	// This handles cases where conflict rules block some joins until other joins are completed.
 	for len(nodes) > 1 {
 		madeProgress := false
 		var curJoinIdx int
 		for curJoinIdx < len(nodes)-1 {
+			if startByCost && nodes[curJoinIdx].bitSet.Len() == 1 && nodes[curJoinIdx] != lockedSeedNode {
+				// Only reseed while this position still holds a single untouched leaf.
+				// Once it becomes a merged node, the first greedy choice is already fixed.
+				var seeded bool
+				var err error
+				nodes, seeded, err = seedGreedyJoinComponentByCost(detector, nodes, curJoinIdx, vertexHints, cartesianFactor, allowNoEQ)
+				if err != nil {
+					return nil, err
+				}
+				if seeded {
+					madeProgress = true
+				}
+			}
 			var bestNode *Node
 			var bestIdx int
 			curJoinTree := nodes[curJoinIdx]
@@ -692,6 +708,114 @@ func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHin
 		}
 	}
 	return nodes, nil
+}
+
+// seedGreedyJoinComponentByCost replaces the first untouched leaf at `start`
+// with the cheapest valid leaf-leaf join in the current connected component.
+// This changes only the initial seed; later expansion still follows the normal
+// greedy "attach the best next node" logic.
+func seedGreedyJoinComponentByCost(
+	detector *ConflictDetector,
+	nodes []*Node,
+	start int,
+	vertexHints map[int]*JoinMethodHint,
+	cartesianFactor float64,
+	allowNoEQ bool,
+) ([]*Node, bool, error) {
+	if start >= len(nodes)-1 || nodes[start].bitSet.Len() != 1 {
+		return nodes, false, nil
+	}
+
+	componentIdxs, err := collectGreedySeedComponentIndices(detector, nodes, start)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(componentIdxs) < 2 {
+		return nodes, false, nil
+	}
+
+	var (
+		bestNode     *Node
+		bestLeftIdx  int
+		bestRightIdx int
+	)
+	for leftPos := range len(componentIdxs) - 1 {
+		leftIdx := componentIdxs[leftPos]
+		for rightPos := leftPos + 1; rightPos < len(componentIdxs); rightPos++ {
+			rightIdx := componentIdxs[rightPos]
+			checkResult, newNode, err := checkConnectionAndMakeJoin(detector, nodes[leftIdx], nodes[rightIdx], vertexHints, allowNoEQ)
+			if err != nil {
+				return nil, false, err
+			}
+			if newNode == nil {
+				continue
+			}
+			if checkResult.NoEQEdge() {
+				if !allowNoEQ {
+					continue
+				}
+				// Reseeding should stay within the current connected component, but
+				// it should not start from a pure cartesian pair when a real join
+				// predicate is available elsewhere in that component.
+				if !checkResult.HasJoinCondition() {
+					continue
+				}
+				newNode.cumCost, err = applyCartesianFactor(newNode.cumCost, cartesianFactor)
+				if err != nil {
+					return nil, false, err
+				}
+			}
+			// The cartesian/no-EQ penalty has already been folded into cumCost above,
+			// so compare the penalized cost directly and avoid double counting it.
+			if bestNode == nil || newNode.cumCost < bestNode.cumCost {
+				bestNode = newNode
+				bestLeftIdx = leftIdx
+				bestRightIdx = rightIdx
+			}
+		}
+	}
+	if bestNode == nil {
+		return nodes, false, nil
+	}
+
+	// Keep earlier finished components intact and rewrite only the current
+	// connected component by collapsing the chosen seed pair into one node.
+	newNodes := make([]*Node, 0, len(nodes)-1)
+	newNodes = append(newNodes, nodes[:start]...)
+	newNodes = append(newNodes, bestNode)
+	for idx := start; idx < len(nodes); idx++ {
+		if idx == bestLeftIdx || idx == bestRightIdx {
+			continue
+		}
+		newNodes = append(newNodes, nodes[idx])
+	}
+	return newNodes, true, nil
+}
+
+func collectGreedySeedComponentIndices(detector *ConflictDetector, nodes []*Node, start int) ([]int, error) {
+	// Expand only inside the connected component that starts at `start`. Pure
+	// cartesian edges are excluded here so seed-by-cost can only reseed within
+	// the current join group instead of pulling in a later disconnected group.
+	componentIdxs := []int{start}
+	seen := make([]bool, len(nodes))
+	seen[start] = true
+	for head := 0; head < len(componentIdxs); head++ {
+		leftIdx := componentIdxs[head]
+		for rightIdx := start; rightIdx < len(nodes); rightIdx++ {
+			if seen[rightIdx] || nodes[rightIdx].bitSet.Len() != 1 {
+				continue
+			}
+			checkResult, err := detector.CheckConnection(nodes[leftIdx], nodes[rightIdx])
+			if err != nil {
+				return nil, err
+			}
+			if checkResult.Connected() && checkResult.HasJoinCondition() {
+				seen[rightIdx] = true
+				componentIdxs = append(componentIdxs, rightIdx)
+			}
+		}
+	}
+	return componentIdxs, nil
 }
 
 func collectUsedEdges(nodes []*Node) map[uint64]struct{} {

@@ -283,6 +283,29 @@ type JoinReOrderSolver struct {
 type jrNode struct {
 	p       base.LogicalPlan
 	cumCost float64
+	// leafCnt tracks how many original join-group leaf nodes are represented by
+	// this subtree. The cost-based seed heuristic only compares untouched leaves.
+	leafCnt int
+}
+
+type legacyJoinProbeResult struct {
+	leftPlan              base.LogicalPlan
+	rightPlan             base.LogicalPlan
+	joinType              *joinTypeWithExtMsg
+	eqEdges               []*expression.ScalarFunction
+	hasOtherJoinCondition bool
+}
+
+func (r *legacyJoinProbeResult) HasEQEdge() bool {
+	return r != nil && len(r.eqEdges) > 0
+}
+
+func (r *legacyJoinProbeResult) HasJoinCondition() bool {
+	return r != nil && (r.HasEQEdge() || r.hasOtherJoinCondition)
+}
+
+func (r *legacyJoinProbeResult) IsCartesian() bool {
+	return r != nil && !r.HasJoinCondition()
 }
 
 type joinTypeWithExtMsg struct {
@@ -467,11 +490,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 		})
 	}
 	joiner := func(left, right base.LogicalPlan) (base.LogicalPlan, bool, error) {
-		currentJoin, ok := s.connectJoinNodes(left, right, hasOuterJoin)
-		if !ok {
-			return nil, false, nil
-		}
-		return currentJoin, true, nil
+		return s.connectJoinNodes(left, right, hasOuterJoin)
 	}
 	warn := func() {
 		s.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
@@ -494,20 +513,20 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, nextNode base.LogicalPlan,
 	hasOuterJoin bool,
-) (base.LogicalPlan, bool) {
-	lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nextNode)
-	if hasOuterJoin && len(usedEdges) == 0 {
+) (base.LogicalPlan, bool, error) {
+	probe := s.probeConnection(currentJoin, nextNode)
+	if hasOuterJoin && !probe.HasJoinCondition() {
 		// If the joinGroups contain an outer join, we disable cartesian product.
 		// For non-equality conditions, only allow them when they do not reference
 		// null-extended columns from any outer join in the current group.
-		if !s.hasOtherJoinCondition(lNode, rNode) {
-			return nil, false
-		}
+		return nil, false, nil
 	}
-	var rem []expression.Expression
-	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
+	currentJoin, rem, err := s.buildJoinFromProbe(probe)
+	if err != nil {
+		return nil, false, err
+	}
 	s.otherConds = rem
-	return currentJoin, true
+	return currentJoin, true, nil
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
@@ -522,6 +541,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []b
 		joinGroup = append(joinGroup, &jrNode{
 			p:       node,
 			cumCost: cost,
+			leafCnt: 1,
 		})
 	}
 	return joinGroup, nil
@@ -536,44 +556,31 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalP
 	return cost
 }
 
-// checkConnection used to check whether two nodes have equal conditions or not.
-func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan base.LogicalPlan) (leftNode, rightNode base.LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) {
-	joinType = &joinTypeWithExtMsg{JoinType: base.InnerJoin}
-	leftNode, rightNode = leftPlan, rightPlan
+// probeConnection inspects whether two subplans are connected by eq edges or
+// real cross-side non-equality predicates. It does not build joins or inject
+// helper expressions into plan trees.
+func (s *baseSingleGroupJoinOrderSolver) probeConnection(leftPlan, rightPlan base.LogicalPlan) *legacyJoinProbeResult {
+	result := &legacyJoinProbeResult{
+		leftPlan:  leftPlan,
+		rightPlan: rightPlan,
+		joinType:  &joinTypeWithExtMsg{JoinType: base.InnerJoin},
+	}
 	for idx, edge := range s.eqEdges {
 		lCol, rCol := expression.ExtractColumnsFromColOpCol(edge)
 		if leftPlan.Schema().Contains(lCol) && rightPlan.Schema().Contains(rCol) {
-			joinType = s.joinTypes[idx]
-			usedEdges = append(usedEdges, edge)
+			result.joinType = s.joinTypes[idx]
+			result.eqEdges = append(result.eqEdges, edge)
 		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
-			joinType = s.joinTypes[idx]
-			if joinType.JoinType != base.InnerJoin {
-				rightNode, leftNode = leftPlan, rightPlan
-				usedEdges = append(usedEdges, edge)
-			} else {
-				funcName := edge.FuncName.L
-				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
-
-				// after creating the new EQCondition function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
-				// which breaks the assumption that join eq keys must be `col=col`, to handle this, inject 2 projections.
-				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
-				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
-				if !isCol0 || !isCol1 {
-					if !isCol0 {
-						leftPlan, rCol = logicalop.InjectExpr(leftPlan, newSf.GetArgs()[0])
-					}
-					if !isCol1 {
-						rightPlan, lCol = logicalop.InjectExpr(rightPlan, newSf.GetArgs()[1])
-					}
-					leftNode, rightNode = leftPlan, rightPlan
-					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(),
-						rCol, lCol).(*expression.ScalarFunction)
-				}
-				usedEdges = append(usedEdges, newSf)
+			result.joinType = s.joinTypes[idx]
+			if result.joinType.JoinType != base.InnerJoin {
+				result.leftPlan = rightPlan
+				result.rightPlan = leftPlan
 			}
+			result.eqEdges = append(result.eqEdges, edge)
 		}
 	}
-	return
+	result.hasOtherJoinCondition = s.hasOtherJoinCondition(result.leftPlan, result.rightPlan)
+	return result
 }
 
 // hasOtherJoinCondition checks whether there are non-equality join conditions
@@ -584,12 +591,8 @@ func (s *baseSingleGroupJoinOrderSolver) hasOtherJoinCondition(leftPlan, rightPl
 	if len(s.otherConds) == 0 {
 		return false
 	}
-	mergedSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 	for _, cond := range s.otherConds {
-		if !expression.ExprFromSchema(cond, mergedSchema) {
-			continue
-		}
-		if expression.ExprFromSchema(cond, leftPlan.Schema()) || expression.ExprFromSchema(cond, rightPlan.Schema()) {
+		if !joinorder.ExprConnectsBothSides(cond, leftPlan.Schema(), rightPlan.Schema()) {
 			continue
 		}
 		if s.nullExtendedCols != nil && expression.ExprReferenceSchema(cond, s.nullExtendedCols) {
@@ -598,6 +601,19 @@ func (s *baseSingleGroupJoinOrderSolver) hasOtherJoinCondition(leftPlan, rightPl
 		return true
 	}
 	return false
+}
+
+func (s *baseSingleGroupJoinOrderSolver) buildJoinFromProbe(probe *legacyJoinProbeResult) (base.LogicalPlan, []expression.Expression, error) {
+	leftPlan := probe.leftPlan
+	rightPlan := probe.rightPlan
+	eqEdges := probe.eqEdges
+	var err error
+	leftPlan, rightPlan, eqEdges, err = joinorder.AlignEQCondsWithoutMutation(s.ctx, leftPlan, rightPlan, eqEdges)
+	if err != nil {
+		return nil, nil, err
+	}
+	join, remainOtherConds := s.makeJoin(leftPlan, rightPlan, eqEdges, probe.joinType)
+	return join, remainOtherConds, nil
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.

@@ -31,11 +31,25 @@ go_library(
 go_test(
     name = "joinorder_test",
     timeout = "short",
-    srcs = ["bitset_bench_test.go"],
+    srcs = [
+        "bitset_bench_test.go",
+        "join_order_side_effect_test.go",
+    ],
     embed = [":joinorder"],
     flaky = True,
+    shard_count = 2,
     deps = [
+        "//pkg/domain",
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/property",
+        "//pkg/planner/util/coretestsdk",
+        "//pkg/types",
         "//pkg/util/intset",
         "@com_github_bits_and_blooms_bitset//:bitset",
+        "@com_github_stretchr_testify//require",
     ],
 )
