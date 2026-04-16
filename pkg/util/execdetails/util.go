@@ -53,6 +53,37 @@ func ContextWithMissingExecDetailsInitialized(ctx context.Context) context.Conte
 	return ctx
 }
 
+// ContextWithInheritedRUV2Details reuses statement-level RUDetails and RUv2 metrics
+// from source when ctx does not already carry them.
+func ContextWithInheritedRUV2Details(ctx, source context.Context) context.Context {
+	if source == nil {
+		return ctx
+	}
+	if ctx.Value(util.RUDetailsCtxKey) == nil {
+		if ruDetails, _ := source.Value(util.RUDetailsCtxKey).(*util.RUDetails); ruDetails != nil {
+			ctx = context.WithValue(ctx, util.RUDetailsCtxKey, ruDetails)
+		}
+	}
+	if ctx.Value(RUV2MetricsCtxKey) == nil {
+		if metrics := RUV2MetricsFromContext(source); metrics != nil {
+			ctx = context.WithValue(ctx, RUV2MetricsCtxKey, metrics)
+		}
+	}
+	return ctx
+}
+
+// SyncRUV2MetricsFromContext drains any raw RUv2 counters in ctx's RUDetails into
+// the statement-level RUv2 metrics and returns the metrics object.
+func SyncRUV2MetricsFromContext(ctx context.Context) *RUV2Metrics {
+	metrics := RUV2MetricsFromContext(ctx)
+	if metrics == nil {
+		return nil
+	}
+	ruDetails, _ := ctx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	return metrics
+}
+
 // GetExecDetailsFromContext gets stmt execution, execution and resource usage details from context.
 func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails, tikvExecDetail util.ExecDetails, ruDetails *util.RUDetails) {
 	stmtDetailRaw := ctx.Value(StmtExecDetailKey)

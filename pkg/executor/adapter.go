@@ -185,7 +185,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if len(a.traceID) > 0 {
 		ctx = tikvtrace.ContextWithTraceID(ctx, a.traceID)
 	}
-	ctx = inheritStmtRUDetailsContext(ctx, a.stmt)
+	ctx = inheritStmtRUV2Context(ctx, a.stmt)
 
 	err = a.stmt.next(ctx, a.executor, req)
 	syncRUV2MetricsAfterExec(a.stmt)
@@ -206,16 +206,11 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func inheritStmtRUDetailsContext(ctx context.Context, stmt *ExecStmt) context.Context {
+func inheritStmtRUV2Context(ctx context.Context, stmt *ExecStmt) context.Context {
 	if stmt == nil || stmt.GoCtx == nil {
 		return ctx
 	}
-	if ctx.Value(util.RUDetailsCtxKey) == nil {
-		if detail := stmt.GoCtx.Value(util.RUDetailsCtxKey); detail != nil {
-			ctx = context.WithValue(ctx, util.RUDetailsCtxKey, detail)
-		}
-	}
-	return ctx
+	return execdetails.ContextWithInheritedRUV2Details(ctx, stmt.GoCtx)
 }
 
 func syncRUV2MetricsAfterExec(stmt *ExecStmt) {
@@ -285,7 +280,7 @@ func (a *recordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
 	if !ok {
 		return nil, false, nil
 	}
-	return staticrecordset.New(a.Fields(), e, a.stmt.GetTextToLog(false)), true, nil
+	return staticrecordset.New(a.Fields(), e, a.stmt.GetTextToLog(false), a.stmt.GoCtx), true, nil
 }
 
 // GetExecutor4Test exports the internal executor for test purpose.
