@@ -1560,12 +1560,6 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum, analyzeVer int) *bucket4M
 	return res
 }
 
-// MergePartTopNAndHistToGlobal merges partition-level TopN lists and histograms
-// into a single global TopN and histogram in one combined pass. It sums TopN
-// counts across partitions and extracts Repeat counts from histogram bucket
-// upper bounds into the TopN counter, catching the "spread value" scenario
-// (values in some partitions' TopN and at histogram upper bounds in others)
-// without the O(P^2) per-partition histogram lookups of the separate merge path.
 // bucketRef is a lightweight pointer to a partition histogram bucket.
 // 4 bytes vs ~400 bytes for bucket4Merging (with copied Datum bounds).
 type bucketRef struct {
@@ -1579,6 +1573,24 @@ type topNEntry struct {
 	count   uint64
 }
 
+// MergePartTopNAndHistToGlobal merges partition-level TopN lists and
+// histograms into a single global TopN and histogram via two sorted
+// merge-walks:
+//
+// Pass 1: sorted TopN entries + sorted histogram bucket refs → bounded
+// min-heap selects the global TopN. Histogram upper-bound Repeat counts
+// are included so values frequent across partitions but never in any
+// single partition's TopN can still be identified ("spread value" case).
+//
+// Pass 2: merge-walk the same sorted refs + leftover TopN entries →
+// equi-depth global histogram. Values that made global TopN have their
+// per-bucket Repeat subtracted; leftover TopN values are injected at
+// their sorted position.
+//
+// Memory: ~8 MB pointer array + ~4 KB heap on 8000-partition tables,
+// vs ~1.4 GB of bucket4Merging in the previous implementation.
+// Time: O((N+T) log(N+T)) for the sorts + O(N+T) for the walks,
+// where N = total histogram buckets, T = total TopN entries.
 func MergePartTopNAndHistToGlobal(
 	topNs []*TopN,
 	hists []*Histogram,
@@ -1850,13 +1862,10 @@ func MergePartTopNAndHistToGlobal(
 		prevRepeat   int64
 	)
 
-	// Linear scan over ~100 globalTopN entries. Datums aren't hashable so
-	// we can't do a direct map lookup without encoding (which allocates).
-	// Called once per unique upper-bound group (~256), not per bucket.
 	// Check if an upper bound is a global TopN value by encoding to the
 	// same key format as globalTopNMap. For index histograms the bounds
-	// are already encoded; for columns we call codec.EncodeKey (~256
-	// times, once per unique upper-bound group — trivial cost).
+	// are already encoded; for columns we call codec.EncodeKey with a
+	// reusable buffer (~256 calls, once per unique upper-bound group).
 	var encodeBuf []byte
 	isGlobalTopNVal := func(histIdx, bucketIdx int) bool {
 		if isIndex {
