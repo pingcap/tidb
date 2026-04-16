@@ -65,6 +65,7 @@ import (
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -838,10 +839,19 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		tps = e.getRetTpsForIndexReader()
 	}
 	idxID := e.getIndexPlanRootID()
+	needMerge := needMergeSort(e.byItems, len(kvRanges))
+	activeWindowSize := e.getIndexScanActiveWindow(len(kvRanges), needMerge)
+	sharedCoprRateLimit := e.getMergeSortSharedCoprRateLimit(needMerge)
+	mergeSortIndexScanConcurrency := e.getMergeSortIndexScanConcurrency(needMerge, len(kvRanges))
 	e.idxWorkerWg.Add(1)
 	e.pool.submit(func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexTask").End()
 		growWorkerStack16K()
+		defer func() {
+			close(e.resultCh)
+			e.idxWorkerWg.Done()
+		}()
+
 		worker := &indexWorker{
 			idxLookup:       e,
 			finished:        e.finished,
@@ -853,98 +863,202 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			PushedLimit:     e.PushedLimit,
 		}
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
-
-		results := make([]distsql.SelectResult, 0, len(kvRanges))
-		for idx, kvRange := range kvRanges {
-			// check if executor is closed
-			finished := false
-			select {
-			case <-e.finished:
-				finished = true
-			default:
-			}
-			if finished {
-				break
-			}
-
-			if tblScanIdxForRewritePartitionID >= 0 {
-				// We should set the TblScan's TableID to the partition physical ID to make sure
-				// the push-down index lookup can encode the table handle key correctly.
-				e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[idx].GetPhysicalID()
-			}
-
-			var builder distsql.RequestBuilder
-			builder.SetDAGRequest(e.dagPB).
-				SetStartTS(e.startTS).
-				SetDesc(e.desc).
-				SetKeepOrder(e.keepOrder).
-				SetTxnScope(e.txnScope).
-				SetReadReplicaScope(e.readReplicaScope).
-				SetIsStaleness(e.isStaleness).
-				SetFromSessionVars(e.dctx).
-				SetFromInfoSchema(e.infoSchema).
-				SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
-				SetMemTracker(tracker).
-				SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
-
-			if e.indexLookUpPushDown {
-				// Paging and Cop-cache is not supported in index lookup push down.
-				builder.Request.Paging.Enable = false
-				builder.Request.Cacheable = false
-			}
-
-			if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(worker.batchSize) {
-				// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
-				// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
-				builder.Request.Paging.MinPagingSize = uint64(worker.batchSize)
-				if builder.Request.Paging.MaxPagingSize < uint64(worker.batchSize) {
-					builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
-				}
-			}
-
-			// init kvReq, result and worker for this partition
-			// The key ranges should be ordered.
-			slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {
-				return bytes.Compare(i.StartKey, j.StartKey)
-			})
-			kvReq, err := builder.SetKeyRanges(kvRange).Build()
-			if err != nil {
-				worker.syncErr(err)
-				break
-			}
-			result, err := distsql.SelectWithRuntimeStats(ctx, e.dctx, kvReq, tps, getPhysicalPlanIDs(e.idxPlans), idxID)
-			if err != nil {
-				worker.syncErr(err)
-				break
-			}
-			results = append(results, result)
-		}
-		if needMergeSort(e.byItems, len(results)) {
-			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
-			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
-			results = []distsql.SelectResult{ssr}
-		}
-		ctx1, cancel := context.WithCancel(ctx)
-		// this error is synced in fetchHandles(), don't sync it again
-		var selResultList selectResultList
 		indexTypes := e.getRetTpsForIndexReader()
-		if e.indexLookUpPushDown {
-			var err error
-			if selResultList, err = newSelectResultRowIterList(results, [][]*types.FieldType{indexTypes}); err != nil {
-				cancel()
+
+		buildResults := func(start, end int) ([]distsql.SelectResult, bool, error) {
+			results := make([]distsql.SelectResult, 0, end-start)
+			for idx := start; idx < end; idx++ {
+				select {
+				case <-e.finished:
+					return results, true, nil
+				default:
+				}
+				result, err := e.buildIndexSelectResultForRange(
+					ctx,
+					idx,
+					kvRanges[idx],
+					tblScanIdxForRewritePartitionID,
+					tps,
+					idxID,
+					tracker,
+					len(kvRanges),
+					worker.batchSize,
+					mergeSortIndexScanConcurrency,
+					sharedCoprRateLimit,
+				)
+				if err != nil {
+					for _, r := range results {
+						_ = r.Close()
+					}
+					return nil, false, err
+				}
+				results = append(results, result)
+			}
+			return results, false, nil
+		}
+
+		runFetchRound := func(baseRangeIdx int, results []distsql.SelectResult) bool {
+			if len(results) == 0 {
+				return true
+			}
+			if needMergeSort(e.byItems, len(results)) {
+				// e.Schema() is not the output schema for indexReader, and by-items related columns
+				// are put at first in `buildIndexReq`, so use nil schema here.
+				ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
+				results = []distsql.SelectResult{ssr}
+			}
+
+			ctx1, cancel := context.WithCancel(ctx)
+			var selResultList selectResultList
+			if e.indexLookUpPushDown {
+				var err error
+				selResultList, err = newSelectResultRowIterList(results, [][]*types.FieldType{indexTypes})
+				if err != nil {
+					cancel()
+					worker.syncErr(err)
+					return false
+				}
+			} else {
+				selResultList = newSelectResultList(results)
+			}
+			err := worker.fetchHandles(ctx1, selResultList, baseRangeIdx, indexTypes)
+			cancel()
+			selResultList.Close()
+			return err == nil
+		}
+
+		for start := 0; start < len(kvRanges); start += activeWindowSize {
+			end := min(start+activeWindowSize, len(kvRanges))
+			results, finished, err := buildResults(start, end)
+			if err != nil {
 				worker.syncErr(err)
 				return
 			}
-		} else {
-			selResultList = newSelectResultList(results)
+			if !runFetchRound(start, results) {
+				return
+			}
+			if finished {
+				return
+			}
 		}
-		_ = worker.fetchHandles(ctx1, selResultList, indexTypes)
-		cancel()
-		selResultList.Close()
-		close(e.resultCh)
-		e.idxWorkerWg.Done()
 	})
 	return nil
+}
+
+func (e *IndexLookUpExecutor) getIndexScanActiveWindow(totalRanges int, needMerge bool) int {
+	const indexScanPrefetchDepth = 1
+	if totalRanges <= 1 {
+		return totalRanges
+	}
+	if needMerge {
+		// Merge-sort requires all participating SelectResults to be visible at once.
+		// In current plans, needMerge usually implies keep-order, but keep this guard
+		// independent to prevent semantic regressions if planner behavior changes.
+		return totalRanges
+	}
+	// For non-merge queries, keep a small prefetch window so only one additional
+	// partition can be in-flight while fetching current partition handles.
+	windowSize := 1 + indexScanPrefetchDepth
+	if windowSize > totalRanges {
+		windowSize = totalRanges
+	}
+	return windowSize
+}
+
+func (e *IndexLookUpExecutor) getMergeSortSharedCoprRateLimit(needMerge bool) *tikvutil.RateLimit {
+	if !needMerge {
+		return nil
+	}
+	// Keep-order cop iterators historically cap in-flight tasks at 2 * concurrency.
+	// Use a statement-level shared limiter to bound aggregate in-flight cop requests
+	// across all partitions in merge-sort mode.
+	capacity := e.dctx.DistSQLConcurrency
+	if capacity < 1 {
+		capacity = 1
+	}
+	return tikvutil.NewRateLimit(2 * capacity)
+}
+
+func (e *IndexLookUpExecutor) getMergeSortIndexScanConcurrency(needMerge bool, totalRanges int) int {
+	if !needMerge || totalRanges <= 0 {
+		return 0
+	}
+	// Keep merge-sort per-range concurrency proportional to the shared cop send-rate
+	// budget so we cap goroutine fan-out while still leaving room for skewed ranges.
+	base := e.dctx.DistSQLConcurrency
+	if base < 1 {
+		base = 1
+	}
+	sharedBudget := 4 * base
+	perRangeConcurrency := sharedBudget / totalRanges
+	if perRangeConcurrency < 1 {
+		perRangeConcurrency = 1
+	}
+	if perRangeConcurrency > base {
+		perRangeConcurrency = base
+	}
+	return perRangeConcurrency
+}
+
+func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
+	ctx context.Context,
+	rangeIdx int,
+	kvRange []kv.KeyRange,
+	tblScanIdxForRewritePartitionID int,
+	tps []*types.FieldType,
+	idxID int,
+	tracker *memory.Tracker,
+	totalRanges int,
+	batchSize int,
+	indexScanConcurrency int,
+	sharedCoprRateLimit *tikvutil.RateLimit,
+) (distsql.SelectResult, error) {
+	if tblScanIdxForRewritePartitionID >= 0 {
+		// We should set the TblScan's TableID to the partition physical ID to make sure
+		// the push-down index lookup can encode the table handle key correctly.
+		e.dagPB.Executors[tblScanIdxForRewritePartitionID].TblScan.TableId = e.prunedPartitions[rangeIdx].GetPhysicalID()
+	}
+
+	var builder distsql.RequestBuilder
+	builder.SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
+		SetIsStaleness(e.isStaleness).
+		SetConcurrency(indexScanConcurrency).
+		SetFromSessionVars(e.dctx).
+		SetFromInfoSchema(e.infoSchema).
+		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(totalRanges))).
+		SetMemTracker(tracker).
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
+		SetCoprSharedRateLimit(sharedCoprRateLimit)
+
+	if e.indexLookUpPushDown {
+		// Paging and Cop-cache is not supported in index lookup push down.
+		builder.Request.Paging.Enable = false
+		builder.Request.Cacheable = false
+	}
+
+	if builder.Request.Paging.Enable && builder.Request.Paging.MinPagingSize < uint64(batchSize) {
+		// when paging enabled and Paging.MinPagingSize less than initBatchSize, change Paging.MinPagingSize to
+		// initBatchSize to avoid redundant paging RPC, see more detail in https://github.com/pingcap/tidb/issues/53827
+		builder.Request.Paging.MinPagingSize = uint64(batchSize)
+		if builder.Request.Paging.MaxPagingSize < uint64(batchSize) {
+			builder.Request.Paging.MaxPagingSize = uint64(batchSize)
+		}
+	}
+
+	// The key ranges should be ordered.
+	slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {
+		return bytes.Compare(i.StartKey, j.StartKey)
+	})
+	kvReq, err := builder.SetKeyRanges(kvRange).Build()
+	if err != nil {
+		return nil, err
+	}
+	return distsql.SelectWithRuntimeStats(ctx, e.dctx, kvReq, tps, getPhysicalPlanIDs(e.idxPlans), idxID)
 }
 
 // calculateBatchSize calculates a suitable initial batch size.
@@ -1227,7 +1341,7 @@ func (l selectResultList) Close() {
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are submitted to the pool and processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList, indexTps []*types.FieldType) (err error) {
+func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList, baseRangeIdx int, indexTypes []*types.FieldType) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -1241,9 +1355,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 	var chk *chunk.Chunk
 	if !w.idxLookup.indexLookUpPushDown {
 		// chk is only used by non-indexLookUpPushDown mode for mem-reuse
-		chk = w.idxLookup.AllocPool.Alloc(indexTps, w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
+		chk = w.idxLookup.AllocPool.Alloc(indexTypes, w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
 	}
-	handleOffsets, err := w.getHandleOffsets(len(indexTps))
+	handleOffsets, err := w.getHandleOffsets(len(indexTypes))
 	if err != nil {
 		w.syncErr(err)
 		return err
@@ -1304,7 +1418,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			}
 			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
 			if w.idxLookup.partitionTableMode {
-				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[baseRangeIdx+curResultIdx]
 			}
 			taskID++
 		}

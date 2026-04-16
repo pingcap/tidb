@@ -583,6 +583,9 @@ type Request struct {
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
 	Concurrency int
+	// CoprSharedRateLimit, if not nil, is used as the shared send-rate limiter for
+	// all cop iterators created from this request.
+	CoprSharedRateLimit *util.RateLimit
 	// IsolationLevel is the isolation level, default is SI.
 	IsolationLevel IsoLevel
 	// Priority is the priority of this KV request, its value may be PriorityNormal/PriorityLow/PriorityHigh.
