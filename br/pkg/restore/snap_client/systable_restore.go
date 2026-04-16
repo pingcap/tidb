@@ -27,7 +27,8 @@ import (
 )
 
 const (
-	sysUserTableName = "user"
+	sysUserTableName          = "user"
+	sysMaskingPolicyTableName = "tidb_masking_policy"
 )
 
 var statsTables = map[string]map[string]struct{}{
@@ -48,16 +49,16 @@ var statsTables = map[string]map[string]struct{}{
 
 var renameableSysTables = map[string]map[string]struct{}{
 	"mysql": {
-		"bind_info":           {},
-		"user":                {},
-		"db":                  {},
-		"tables_priv":         {},
-		"columns_priv":        {},
-		"default_roles":       {},
-		"role_edges":          {},
-		"global_priv":         {},
-		"global_grants":       {},
-		"tidb_masking_policy": {}, // column-level masking policies (since v8.5.0)
+		"bind_info":               {},
+		"user":                    {},
+		"db":                      {},
+		"tables_priv":             {},
+		"columns_priv":            {},
+		"default_roles":           {},
+		"role_edges":              {},
+		"global_priv":             {},
+		"global_grants":           {},
+		sysMaskingPolicyTableName: {}, // column-level masking policies (since v8.5.0)
 	},
 }
 
@@ -282,6 +283,44 @@ func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(co
 	return nil
 }
 
+func rewriteMaskingPolicyTableData(
+	ctx context.Context,
+	tempDBName string,
+	execSQL func(context.Context, string) error,
+) error {
+	tempTable := utils.EncloseDBAndTable(tempDBName, sysMaskingPolicyTableName)
+
+	// Remove policy rows whose target column does not exist in the restored schema.
+	// This avoids leaving stale metadata after partial restores.
+	deleteOrphanRowsSQL := fmt.Sprintf(
+		`DELETE p FROM %s AS p
+LEFT JOIN information_schema.columns AS c
+  ON c.table_schema = p.db_name AND c.table_name = p.table_name AND c.column_name = p.column_name
+WHERE c.tidb_column_id IS NULL`,
+		tempTable,
+	)
+	if err := execSQL(ctx, deleteOrphanRowsSQL); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Rebind table_id / column_id to the target cluster IDs by object name.
+	// Raw IDs from the source backup may differ in the restore target.
+	rebindIDsSQL := fmt.Sprintf(
+		`UPDATE %s AS p
+JOIN information_schema.tables AS t
+  ON t.table_schema = p.db_name AND t.table_name = p.table_name
+JOIN information_schema.columns AS c
+  ON c.table_schema = p.db_name AND c.table_name = p.table_name AND c.column_name = p.column_name
+SET p.table_id = t.tidb_table_id,
+    p.column_id = c.tidb_column_id`,
+		tempTable,
+	)
+	if err := execSQL(ctx, rebindIDsSQL); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
 func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter, loadSysTablePhysical bool) (rerr error) {
@@ -453,6 +492,11 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 	// resource group.
 	if dbName == mysql.SystemDB && tableName == sysUserTableName {
 		if err := removeUserResourceGroup(ctx, db.TemporaryName.L, execSQL); err != nil {
+			return err
+		}
+	}
+	if dbName == mysql.SystemDB && tableName == sysMaskingPolicyTableName {
+		if err := rewriteMaskingPolicyTableData(ctx, db.TemporaryName.L, execSQL); err != nil {
 			return err
 		}
 	}

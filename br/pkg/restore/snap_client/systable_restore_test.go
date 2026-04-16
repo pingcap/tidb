@@ -33,6 +33,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -380,6 +381,52 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 		require.NoError(t, err)
 	}
 	mse.MustExecute("DROP TABLE __TiDB_BR_Temporary_mysql.columns_priv")
+}
+
+func TestRewriteMaskingPolicyTableData(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+	tk := testkit.NewTestKit(t, cluster.Storage)
+
+	const dbName = "test_masking_policy_rewrite"
+	tk.MustExec("DROP DATABASE IF EXISTS " + dbName)
+	tk.MustExec("CREATE DATABASE " + dbName)
+	defer tk.MustExec("DROP DATABASE IF EXISTS " + dbName)
+
+	tk.MustExec("CREATE TABLE " + dbName + ".t (id INT PRIMARY KEY, c1 INT, c2 DECIMAL(10,2))")
+	tableInfo, err := restore.GetTableSchema(cluster.Domain, pmodel.NewCIStr(dbName), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+
+	columnID := int64(0)
+	for _, col := range tableInfo.Columns {
+		if col.Name.L == "c1" {
+			columnID = col.ID
+			break
+		}
+	}
+	require.NotZero(t, columnID)
+
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS __TiDB_BR_Temporary_mysql")
+	tk.MustExec("DROP TABLE IF EXISTS __TiDB_BR_Temporary_mysql.tidb_masking_policy")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.tidb_masking_policy LIKE mysql.tidb_masking_policy")
+	defer tk.MustExec("DROP TABLE IF EXISTS __TiDB_BR_Temporary_mysql.tidb_masking_policy")
+
+	tk.MustExec(fmt.Sprintf(`INSERT INTO __TiDB_BR_Temporary_mysql.tidb_masking_policy
+(policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
+VALUES
+('p_keep', '%s', 't', 101, 'c1', 201, 'c1', 'ENABLE', 'CUSTOM', 'NONE', NOW(6), NOW(6), 'root@%%'),
+('p_orphan', '%s', 't_missing', 102, 'c1', 202, 'c1', 'ENABLE', 'CUSTOM', 'NONE', NOW(6), NOW(6), 'root@%%')`, dbName, dbName))
+
+	execSQL := func(execCtx context.Context, sql string) error {
+		_, err := tk.Session().ExecuteInternal(execCtx, sql)
+		return err
+	}
+	err = snapclient.RewriteMaskingPolicyTableData(ctx, "__TiDB_BR_Temporary_mysql", execSQL)
+	require.NoError(t, err)
+
+	tk.MustQuery("SELECT COUNT(*) FROM __TiDB_BR_Temporary_mysql.tidb_masking_policy").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT table_id, column_id FROM __TiDB_BR_Temporary_mysql.tidb_masking_policy WHERE policy_name='p_keep'").
+		Check(testkit.Rows(fmt.Sprintf("%d %d", tableInfo.ID, columnID)))
 }
 
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:

@@ -45,6 +45,7 @@ var (
 	GetSortedPhysicalTables       = getSortedPhysicalTables
 	GetMinUserTableID             = getMinUserTableID
 	NotifyUpdateAllUsersPrivilege = notifyUpdateAllUsersPrivilege
+	RewriteMaskingPolicyTableData = rewriteMaskingPolicyTableData
 	GetSchemaVersionFromStatsMeta = getSchemaVersionFromStatsMeta
 	UpdateStatsMetaSchema         = updateStatsMetaSchema
 )
