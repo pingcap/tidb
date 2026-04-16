@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -649,4 +651,77 @@ func TestIndexLookUpPushDownCopTask(t *testing.T) {
 	localIndexLookUpRow := r.Rows()[2]
 	require.Contains(t, localIndexLookUpRow[0], "LocalIndexLookUp", r.String())
 	require.Equal(t, "3", localIndexLookUpRow[2], r.String())
+}
+
+func TestPartitionIndexLookUpMergeSharedLimiterBound(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=4")
+	tk.MustExec("set @@tidb_session_alias='test_partition_merge_shared_limiter'")
+
+	tk.MustExec("drop table if exists t_shared_limiter")
+	tk.MustExec("create table t_shared_limiter(a int, b int, c int, key idx_a(a)) partition by hash(a) partitions 16")
+	values := make([]string, 0, 512)
+	for i := range 512 {
+		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i%97, i%89))
+	}
+	tk.MustExec("insert into t_shared_limiter values " + strings.Join(values, ","))
+
+	sql := "select /*+ use_index(t_shared_limiter, idx_a) */ b, c from t_shared_limiter where a >= 0 order by a"
+	plan := tk.MustQuery("explain format = 'brief' " + sql).String()
+	require.Contains(t, plan, "IndexLookUp")
+
+	isIndexScanReq := func(req *tikvrpc.Request) bool {
+		copReq, ok := req.Req.(*coprocessor.Request)
+		if !ok || copReq.ConnectionAlias != "test_partition_merge_shared_limiter" {
+			return false
+		}
+		dagReq := &tipb.DAGRequest{}
+		if err := dagReq.Unmarshal(copReq.Data); err != nil {
+			return false
+		}
+		hasIndexScan := false
+		for _, exec := range dagReq.Executors {
+			switch exec.Tp {
+			case tipb.ExecType_TypeIndexScan:
+				hasIndexScan = true
+			case tipb.ExecType_TypeTableScan, tipb.ExecType_TypePartitionTableScan:
+				return false
+			}
+		}
+		return hasIndexScan
+	}
+
+	var active int64
+	var maxActive int64
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(req *tikvrpc.Request) {
+		if !isIndexScanReq(req) {
+			return
+		}
+		cur := atomic.AddInt64(&active, 1)
+		for {
+			old := atomic.LoadInt64(&maxActive)
+			if cur <= old || atomic.CompareAndSwapInt64(&maxActive, old, cur) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt64(&active, -1)
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"))
+	}()
+	// Force disable cop lite worker so all cop requests go through the regular sender path
+	// and are consistently governed by the shared send-rate limiter.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker"))
+	}()
+
+	rows := tk.MustQuery(sql).Rows()
+	require.Len(t, rows, 512)
+	require.GreaterOrEqual(t, atomic.LoadInt64(&maxActive), int64(1))
+	require.LessOrEqual(t, atomic.LoadInt64(&maxActive), int64(8))
 }

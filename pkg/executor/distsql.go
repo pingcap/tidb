@@ -967,9 +967,8 @@ func getMergeSortSharedCoprRateLimit(needMerge bool, distSQLConcurrency int) *ti
 	if !needMerge {
 		return nil
 	}
-	// Keep-order cop iterators historically cap in-flight tasks at 2 * concurrency.
-	// Use a statement-level shared limiter to bound aggregate in-flight cop requests
-	// across all partitions in merge-sort mode.
+	// Use a shared limiter to bound aggregate in-flight cop requests across
+	// all partitions in merge-sort mode.
 	capacity := distSQLConcurrency
 	if capacity < 1 {
 		capacity = 1
@@ -989,8 +988,8 @@ func (e *IndexLookUpExecutor) getMergeSortIndexScanConcurrency(needMerge bool, t
 	}
 	sharedBudget := 4 * base
 	perRangeConcurrency := sharedBudget / totalRanges
-	if perRangeConcurrency < 1 {
-		perRangeConcurrency = 1
+	if perRangeConcurrency < 2 {
+		perRangeConcurrency = 2
 	}
 	if perRangeConcurrency > base {
 		perRangeConcurrency = base
