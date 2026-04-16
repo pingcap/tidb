@@ -61,7 +61,7 @@ func TestCollationCompare(t *testing.T) {
 	require.Equal(t, 0, cmp)
 
 	// binary collation is different with other charset's _bin collation
-	cmp, err = Collation("binary").Compare(Collation("utf8mb4_bin"))
+	_, err = Collation("binary").Compare(Collation("utf8mb4_bin"))
 	require.ErrorContains(t, err, "incompatible collation (binary vs utf8mb4_bin)")
 
 	cmp, err = Collation("UTF8MB3_BIN").Compare(Collation("utf8_bin"))
