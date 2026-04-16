@@ -943,27 +943,33 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, int64(ver139), ver)
 	}
+	checkUpgraded := func() {
+		s := CreateSessionAndSetID(t, store)
+		defer s.Close()
+		ver, err := GetBootstrapVersion(s)
+		require.NoError(t, err)
+		require.Less(t, int64(ver139), ver)
+	}
 
 	// drop column task_key and then upgrade
 	s := CreateSessionAndSetID(t, store)
 	MustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
 	resetTo139(s)
+	s.Close()
 	do.Close()
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err := GetBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
-	dom.Close()
+	checkUpgraded()
 
-	// upgrade with column task_key exists
+	// Create the reset session while the current domain is still alive; sessions
+	// bound to a closed domain can fail schema validation on commit.
 	s = CreateSessionAndSetID(t, store)
 	resetTo139(s)
+	s.Close()
+	dom.Close()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = GetBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
+	checkUpgraded()
 	dom.Close()
 }
 
