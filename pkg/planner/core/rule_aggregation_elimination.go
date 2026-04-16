@@ -177,7 +177,14 @@ func rewriteExpr(ctx expression.BuildContext, aggFunc *aggregation.AggFuncDesc) 
 			return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 		}
 		return true, rewriteCount(ctx, aggFunc.Args, aggFunc.RetTp)
-	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncGroupConcat:
+	case ast.AggFuncMax, ast.AggFuncMin:
+		// MAX/MIN over binary literals preserve string-like aggregation semantics.
+		// Rewriting them to a projection changes downstream cast and warning behavior.
+		if expression.IsBinaryLiteral(aggFunc.Args[0]) {
+			return false, nil
+		}
+		return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncGroupConcat:
 		return true, wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		return true, rewriteBitFunc(ctx, aggFunc.Name, aggFunc.Args[0], aggFunc.RetTp)

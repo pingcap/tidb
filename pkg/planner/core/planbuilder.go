@@ -4838,7 +4838,7 @@ func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt
 
 	currentDB := ctx.GetSessionVars().CurrentDB
 	for _, obj := range rs.RefreshObjects {
-		if obj.RefreshObjectScope != ast.RefreshObjectScopeTable {
+		if obj.StatsObjectScope != ast.StatsObjectScopeTable {
 			continue
 		}
 		if obj.DBName.L != "" {
@@ -4854,7 +4854,7 @@ func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt
 
 func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.RefreshStatsStmt) {
 	if len(rs.RefreshObjects) == 0 {
-		intest.Assert(len(rs.RefreshObjects) > 0, "RefreshStatsStmt.RefreshObjects should not be empty")
+		intest.Assert(len(rs.RefreshObjects) > 0, "RefreshObjects should not be empty")
 		return
 	}
 
@@ -4868,8 +4868,8 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 
 	user := b.ctx.GetSessionVars().User
 	for _, obj := range rs.RefreshObjects {
-		switch obj.RefreshObjectScope {
-		case ast.RefreshObjectScopeGlobal:
+		switch obj.StatsObjectScope {
+		case ast.StatsObjectScopeGlobal:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs("SELECT")
@@ -4878,13 +4878,13 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, "", "", "", err)
 			return
-		case ast.RefreshObjectScopeDatabase:
+		case ast.StatsObjectScopeDatabase:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, obj.DBName.O)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, "", "", err)
-		case ast.RefreshObjectScopeTable:
+		case ast.StatsObjectScopeTable:
 			dbName := obj.DBName.L
 			var err error
 			if user != nil {

@@ -70,12 +70,12 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 			require.Equal(t, formula, c.scanFormula)
 		}
 
-		tk.MustQuery("explain format = 'brief' select a from t where a=1").Check(testkit.Rows(
-			`IndexReader 10.00 root  index:IndexRangeScan`, // use idx_ab automatically since it has the smallest row-size in all access paths.
-			`└─IndexRangeScan 10.00 cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
-		tk.MustQuery("explain format = 'brief' select a, b, c from t where a=1").Check(testkit.Rows(
-			`IndexReader 10.00 root  index:IndexRangeScan`, // use idx_abc automatically
-			`└─IndexRangeScan 10.00 cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
+		tk.MustQuery("explain format = 'plan_tree' select a from t where a=1").Check(testkit.Rows(
+			`IndexReader root  index:IndexRangeScan`, // use idx_ab automatically since it has the smallest row-size in all access paths.
+			`└─IndexRangeScan cop[tikv] table:t, index:ab(a, b) range:[1,1], keep order:false, stats:pseudo`))
+		tk.MustQuery("explain format = 'plan_tree' select a, b, c from t where a=1").Check(testkit.Rows(
+			`IndexReader root  index:IndexRangeScan`, // use idx_abc automatically
+			`└─IndexRangeScan cop[tikv] table:t, index:abc(a, b, c) range:[1,1], keep order:false, stats:pseudo`))
 	})
 }
 

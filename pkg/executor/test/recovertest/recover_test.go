@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package recovertest
 
 import (
 	"context"
@@ -56,7 +56,7 @@ func TestRecoverTable(t *testing.T) {
 	tk.MustExec("drop table if exists t_recover")
 	tk.MustExec("create table t_recover (a int);")
 
-	timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
@@ -167,7 +167,7 @@ func TestFlashbackTable(t *testing.T) {
 	tk.MustExec("drop table if exists t_flashback")
 	tk.MustExec("create table t_flashback (a int);")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	// Set GC safe point
@@ -283,7 +283,7 @@ func TestRecoverTempTable(t *testing.T) {
 	tk.MustExec("drop table if exists tmp2_recover")
 	tk.MustExec("create temporary table tmp2_recover (a int);")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
@@ -305,7 +305,7 @@ func TestRecoverTableMeetError(t *testing.T) {
 	tk.MustExec("drop table if exists t_recover")
 	tk.MustExec("create table t_recover (a int);")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
@@ -329,7 +329,7 @@ func TestRecoverTablePrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	// Set GC safe point
@@ -380,7 +380,7 @@ func TestRecoverClusterMeetError(t *testing.T) {
 	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(30*time.Second)), "cannot set flashback timestamp to future time")
 	tk.MustContainErrMsg(fmt.Sprintf("flashback cluster to timestamp '%s'", time.Now().Add(0-30*time.Second)), "can not get 'tikv_gc_safe_point'")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	// Set GC safe point.
@@ -422,7 +422,7 @@ func TestFlashbackWithSafeTs(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	// Set GC safe point.
@@ -483,7 +483,7 @@ func TestFlashbackTSOWithSafeTs(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/changeFlashbackGetMinSafeTimeTimeout", `return(0)`))
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	// Set GC safe point.
@@ -543,7 +543,7 @@ func TestFlashbackRetryGetMinSafeTime(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`))
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	// Set GC safe point.
@@ -584,7 +584,7 @@ func TestFlashbackSchema(t *testing.T) {
 	tk.MustExec("drop table if exists t_flashback")
 	tk.MustExec("create table t_flashback (a int)")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	// if GC safe point is not exists in mysql.tidb
@@ -669,7 +669,7 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	tk.MustExec("create database if not exists many_tables")
 	tk.MustExec("use many_tables")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	// Set GC safe point
@@ -697,8 +697,8 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	tk.MustQuery("select count(*) from many_tables.t_0_0").Check(testkit.Rows("0"))
 }
 
-// MockGC is used to make GC work in the test environment.
-func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
+// mockGC is used to make GC work in the test environment.
+func mockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	originGC := ddlutil.IsEmulatorGCEnable()
 	resetGC := func() {
 		if originGC {
@@ -725,7 +725,7 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := mockGC(tk)
 	defer resetGC()
 
 	// Set GC safe point.
