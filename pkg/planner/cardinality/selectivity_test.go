@@ -2163,6 +2163,17 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	require.True(t, stat.GetCol(tblInfo.Columns[2].ID).IsFullLoad())
 	require.True(t, stat.GetIdx(tblInfo.Indices[0].ID).IsFullLoad())
 	require.False(t, hasAsyncLoadForTable())
+	for _, sql := range input {
+		if !strings.HasPrefix(sql, "explain") {
+			continue
+		}
+		// Prewarm every recorded explain once to avoid first-run plan drift in checks.
+		testKit.MustQuery(sql).Rows()
+		if hasAsyncLoadForTable() {
+			require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		}
+		require.False(t, hasAsyncLoadForTable())
+	}
 	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]
@@ -2175,6 +2186,10 @@ func TestSubsetIdxCardinality(t *testing.T) {
 			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
 		})
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+		if hasAsyncLoadForTable() {
+			require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		}
+		require.False(t, hasAsyncLoadForTable())
 	}
 }
 
