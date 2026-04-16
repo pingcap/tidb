@@ -166,42 +166,24 @@ func TestModifyColumnPartitionedTableGlobalIndexConsistency(t *testing.T) {
 	tk.MustQuery("select count(*) from t_global_idx").Check(testkit.Rows("5"))
 }
 
-func newPartitionTestKit(t *testing.T, store kv.Storage) *testkit.TestKit {
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	return tk
-}
-
-func preparePartitionAlterCase(tk *testkit.TestKit, tableName, createSQL string, setupSQLs ...string) {
-	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
-	tk.MustExec(createSQL)
-	for _, sql := range setupSQLs {
-		tk.MustExec(sql)
-	}
-}
-
 func adminCheckPartitionTable(tk *testkit.TestKit, tableName string) {
 	tk.MustExec("set session tidb_enable_fast_table_check = off")
 	tk.MustExec(fmt.Sprintf("admin check table %s", tableName))
 }
 
 type partitionAlterSuccessCase struct {
-	name       string
-	tableName  string
-	createSQL  string
-	sessionSQL []string
-	setupSQLs  []string
-	alterSQL   string
-	checkSQL   string
-	checkRows  []string
+	name      string
+	tableName string
+	preSQLs   []string
+	alterSQL  string
+	checkSQL  string
+	checkRows []string
 }
 
 type partitionAlterRejectCase struct {
 	name         string
 	tableName    string
-	createSQL    string
-	sessionSQL   []string
-	setupSQLs    []string
+	preSQLs      []string
 	alterSQL     string
 	errCode      int
 	postAlterSQL []string
@@ -210,20 +192,18 @@ type partitionAlterRejectCase struct {
 }
 
 type partitionAlterVerifyCase struct {
-	name       string
-	tableName  string
-	createSQL  string
-	sessionSQL []string
-	setupSQLs  []string
-	alterSQL   string
-	errCode    int
-	verify     func(t *testing.T, tk *testkit.TestKit)
+	name      string
+	tableName string
+	preSQLs   []string
+	alterSQL  string
+	errCode   int
+	verify    func(t *testing.T, tk *testkit.TestKit)
 }
 
 func runPartitionAlterSuccessCase(t *testing.T, store kv.Storage, tc partitionAlterSuccessCase) {
-	tk := newPartitionTestKit(t, store)
-	preparePartitionAlterCase(tk, tc.tableName, tc.createSQL, tc.setupSQLs...)
-	for _, sql := range tc.sessionSQL {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, sql := range tc.preSQLs {
 		tk.MustExec(sql)
 	}
 	tk.MustExec(tc.alterSQL)
@@ -234,9 +214,9 @@ func runPartitionAlterSuccessCase(t *testing.T, store kv.Storage, tc partitionAl
 }
 
 func runPartitionAlterRejectCase(t *testing.T, store kv.Storage, tc partitionAlterRejectCase) {
-	tk := newPartitionTestKit(t, store)
-	preparePartitionAlterCase(tk, tc.tableName, tc.createSQL, tc.setupSQLs...)
-	for _, sql := range tc.sessionSQL {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, sql := range tc.preSQLs {
 		tk.MustExec(sql)
 	}
 	tk.MustGetErrCode(tc.alterSQL, tc.errCode)
@@ -249,9 +229,9 @@ func runPartitionAlterRejectCase(t *testing.T, store kv.Storage, tc partitionAlt
 }
 
 func runPartitionAlterVerifyCase(t *testing.T, store kv.Storage, tc partitionAlterVerifyCase) {
-	tk := newPartitionTestKit(t, store)
-	preparePartitionAlterCase(tk, tc.tableName, tc.createSQL, tc.setupSQLs...)
-	for _, sql := range tc.sessionSQL {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, sql := range tc.preSQLs {
 		tk.MustExec(sql)
 	}
 	if tc.errCode != 0 {
@@ -324,11 +304,14 @@ func TestModifyColumnPartitionedTableKeyPartitionAllowlist(t *testing.T) {
 		{
 			name:      "int widening",
 			tableName: "t_key_wl_int",
-			createSQL: `create table t_key_wl_int (
-				a tinyint,
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_int values (1,10),(2,20),(3,30)`},
+			preSQLs: []string{
+				`drop table if exists t_key_wl_int`,
+				`create table t_key_wl_int (
+					a tinyint,
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_int values (1,10),(2,20),(3,30)`,
+			},
 			alterSQL:  `alter table t_key_wl_int modify column a int`,
 			checkSQL:  `select count(*) from t_key_wl_int`,
 			checkRows: []string{"3"},
@@ -336,11 +319,14 @@ func TestModifyColumnPartitionedTableKeyPartitionAllowlist(t *testing.T) {
 		{
 			name:      "int widening by change column",
 			tableName: "t_key_wl_change",
-			createSQL: `create table t_key_wl_change (
-				a tinyint,
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_change values (1,10),(2,20),(3,30)`},
+			preSQLs: []string{
+				`drop table if exists t_key_wl_change`,
+				`create table t_key_wl_change (
+					a tinyint,
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_change values (1,10),(2,20),(3,30)`,
+			},
 			alterSQL:  `alter table t_key_wl_change change column a a int`,
 			checkSQL:  `select count(*) from t_key_wl_change`,
 			checkRows: []string{"3"},
@@ -348,11 +334,14 @@ func TestModifyColumnPartitionedTableKeyPartitionAllowlist(t *testing.T) {
 		{
 			name:      "string widening",
 			tableName: "t_key_wl_str",
-			createSQL: `create table t_key_wl_str (
-				a varchar(8),
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_str values ('a',1),('bbb',2),('cccc',3)`},
+			preSQLs: []string{
+				`drop table if exists t_key_wl_str`,
+				`create table t_key_wl_str (
+					a varchar(8),
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_str values ('a',1),('bbb',2),('cccc',3)`,
+			},
 			alterSQL:  `alter table t_key_wl_str modify column a varchar(32)`,
 			checkSQL:  `select count(*) from t_key_wl_str where a in ('a','bbb','cccc')`,
 			checkRows: []string{"3"},
@@ -360,14 +349,32 @@ func TestModifyColumnPartitionedTableKeyPartitionAllowlist(t *testing.T) {
 		{
 			name:      "enum tail append",
 			tableName: "t_key_wl_enum",
-			createSQL: `create table t_key_wl_enum (
-				a enum('x','y'),
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_enum values ('x',1),('y',2)`},
+			preSQLs: []string{
+				`drop table if exists t_key_wl_enum`,
+				`create table t_key_wl_enum (
+					a enum('x','y'),
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_enum values ('x',1),('y',2)`,
+			},
 			alterSQL:  `alter table t_key_wl_enum modify column a enum('x','y','z')`,
-			checkSQL:  `select count(*) from t_key_wl_enum where a in ('x','y')`,
-			checkRows: []string{"2"},
+			checkSQL:  `select a from t_key_wl_enum order by b`,
+			checkRows: []string{"x", "y"},
+		},
+		{
+			name:      "set tail append",
+			tableName: "t_key_wl_set",
+			preSQLs: []string{
+				`drop table if exists t_key_wl_set`,
+				`create table t_key_wl_set (
+					a set('x','y'),
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_set values ('x',1),('y',2),('x,y',3)`,
+			},
+			alterSQL:  `alter table t_key_wl_set modify column a set('x','y','z')`,
+			checkSQL:  `select a from t_key_wl_set order by b`,
+			checkRows: []string{"x", "y", "x,y"},
 		},
 	}
 	for _, tc := range successCases {
@@ -380,68 +387,105 @@ func TestModifyColumnPartitionedTableKeyPartitionAllowlist(t *testing.T) {
 		{
 			name:      "rename by change column rejected",
 			tableName: "t_key_wl_change_rename",
-			createSQL: `create table t_key_wl_change_rename (
-				a tinyint,
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_change_rename values (1,10),(2,20),(3,30)`},
-			alterSQL:  `alter table t_key_wl_change_rename change column a a2 int`,
-			errCode:   errno.ErrDependentByPartitionFunctional,
+			preSQLs: []string{
+				`drop table if exists t_key_wl_change_rename`,
+				`create table t_key_wl_change_rename (
+					a tinyint,
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_change_rename values (1,10),(2,20),(3,30)`,
+			},
+			alterSQL: `alter table t_key_wl_change_rename change column a a2 int`,
+			errCode:  errno.ErrDependentByPartitionFunctional,
 		},
 		{
 			name:      "string collation change rejected",
 			tableName: "t_key_wl_str_collate",
-			createSQL: `create table t_key_wl_str_collate (
-				a varchar(8) character set utf8mb4 collate utf8mb4_bin,
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_str_collate values ('a',1),('bbb',2),('cccc',3)`},
-			alterSQL:  `alter table t_key_wl_str_collate modify column a varchar(32) character set utf8mb4 collate utf8mb4_general_ci`,
-			errCode:   errno.ErrUnsupportedDDLOperation,
+			preSQLs: []string{
+				`drop table if exists t_key_wl_str_collate`,
+				`create table t_key_wl_str_collate (
+					a varchar(8) character set utf8mb4 collate utf8mb4_bin,
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_str_collate values ('a',1),('bbb',2),('cccc',3)`,
+			},
+			alterSQL: `alter table t_key_wl_str_collate modify column a varchar(32) character set utf8mb4 collate utf8mb4_general_ci`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
 		{
 			name:      "float to double rejected",
 			tableName: "t_key_wl_float",
-			createSQL: `create table t_key_wl_float (
-				a float,
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_float values (1.25,1),(2.5,2),(3.75,3)`},
-			alterSQL:  `alter table t_key_wl_float modify column a double`,
-			errCode:   errno.ErrUnsupportedDDLOperation,
+			preSQLs: []string{
+				`drop table if exists t_key_wl_float`,
+				`create table t_key_wl_float (
+					a float,
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_float values (1.25,1),(2.5,2),(3.75,3)`,
+			},
+			alterSQL: `alter table t_key_wl_float modify column a double`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
+		},
+		{
+			name:      "enum reorder rejected",
+			tableName: "t_key_wl_enum_reorder",
+			preSQLs: []string{
+				`drop table if exists t_key_wl_enum_reorder`,
+				`create table t_key_wl_enum_reorder (
+					a enum('x','y'),
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_enum_reorder values ('x',1),('y',2)`,
+			},
+			alterSQL: `alter table t_key_wl_enum_reorder modify column a enum('y','x','z')`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
+			checkSQL: `select a, a+0 from t_key_wl_enum_reorder order by b`,
+			checkRows: []string{
+				"x 1",
+				"y 2",
+			},
 		},
 		{
 			name:      "decimal scale widening rejected",
 			tableName: "t_key_wl_decimal",
-			createSQL: `create table t_key_wl_decimal (
-				a decimal(10,2),
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_decimal values (1.23,1),(2.34,2),(3.45,3)`},
-			alterSQL:  `alter table t_key_wl_decimal modify column a decimal(10,4)`,
-			errCode:   errno.ErrUnsupportedDDLOperation,
+			preSQLs: []string{
+				`drop table if exists t_key_wl_decimal`,
+				`create table t_key_wl_decimal (
+					a decimal(10,2),
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_decimal values (1.23,1),(2.34,2),(3.45,3)`,
+			},
+			alterSQL: `alter table t_key_wl_decimal modify column a decimal(10,4)`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
 		{
 			name:      "datetime fsp rejected",
 			tableName: "t_key_wl_dt",
-			createSQL: `create table t_key_wl_dt (
-				a datetime,
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_dt values ('2024-01-01 00:00:00',1),('2024-01-02 00:00:00',2)`},
-			alterSQL:  `alter table t_key_wl_dt modify column a datetime(3)`,
-			errCode:   errno.ErrUnsupportedDDLOperation,
+			preSQLs: []string{
+				`drop table if exists t_key_wl_dt`,
+				`create table t_key_wl_dt (
+					a datetime,
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_dt values ('2024-01-01 00:00:00',1),('2024-01-02 00:00:00',2)`,
+			},
+			alterSQL: `alter table t_key_wl_dt modify column a datetime(3)`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
 		{
 			name:      "binary length rejected",
 			tableName: "t_key_wl_bin",
-			createSQL: `create table t_key_wl_bin (
-				a binary(2),
-				b int
-			) partition by key(a) partitions 3`,
-			setupSQLs: []string{`insert into t_key_wl_bin values ('aa',1),('bb',2)`},
-			alterSQL:  `alter table t_key_wl_bin modify column a binary(3)`,
-			errCode:   errno.ErrUnsupportedDDLOperation,
+			preSQLs: []string{
+				`drop table if exists t_key_wl_bin`,
+				`create table t_key_wl_bin (
+					a binary(2),
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_bin values ('aa',1),('bb',2)`,
+			},
+			alterSQL: `alter table t_key_wl_bin modify column a binary(3)`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
 	}
 	for _, tc := range rejectCases {
@@ -458,27 +502,33 @@ func TestModifyColumnPartitionedTableRangeListColumnsAllowlist(t *testing.T) {
 		{
 			name:      "range columns int widening",
 			tableName: "t_range_cols_wl_int",
-			createSQL: `create table t_range_cols_wl_int (
-				a tinyint,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (maxvalue)
-			)`,
-			setupSQLs: []string{`insert into t_range_cols_wl_int values (1,1),(11,11)`},
-			alterSQL:  `alter table t_range_cols_wl_int modify column a int`,
+			preSQLs: []string{
+				`drop table if exists t_range_cols_wl_int`,
+				`create table t_range_cols_wl_int (
+					a tinyint,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue)
+				)`,
+				`insert into t_range_cols_wl_int values (1,1),(11,11)`,
+			},
+			alterSQL: `alter table t_range_cols_wl_int modify column a int`,
 		},
 		{
 			name:      "range columns datetime fsp",
 			tableName: "t_range_cols_wl_dt",
-			createSQL: `create table t_range_cols_wl_dt (
-				a datetime,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than ('2024-01-10 00:00:00'),
-				partition p1 values less than (maxvalue)
-			)`,
-			setupSQLs: []string{`insert into t_range_cols_wl_dt values ('2024-01-01 00:00:00',1),('2024-02-01 00:00:00',2)`},
+			preSQLs: []string{
+				`drop table if exists t_range_cols_wl_dt`,
+				`create table t_range_cols_wl_dt (
+					a datetime,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than ('2024-01-10 00:00:00'),
+					partition p1 values less than (maxvalue)
+				)`,
+				`insert into t_range_cols_wl_dt values ('2024-01-01 00:00:00',1),('2024-02-01 00:00:00',2)`,
+			},
 			alterSQL:  `alter table t_range_cols_wl_dt modify column a datetime(3)`,
 			checkSQL:  `select count(*) from t_range_cols_wl_dt where a < '2024-01-10'`,
 			checkRows: []string{"1"},
@@ -486,15 +536,18 @@ func TestModifyColumnPartitionedTableRangeListColumnsAllowlist(t *testing.T) {
 		{
 			name:      "list columns varbinary extension",
 			tableName: "t_list_cols_wl_varbin",
-			createSQL: `create table t_list_cols_wl_varbin (
-				a varbinary(2),
-				b int
-			) partition by list columns(a) (
-				partition p0 values in ('a'),
-				partition p1 values in ('b')
-			)`,
-			setupSQLs: []string{`insert into t_list_cols_wl_varbin values ('a',1),('b',2)`},
-			alterSQL:  `alter table t_list_cols_wl_varbin modify column a varbinary(4)`,
+			preSQLs: []string{
+				`drop table if exists t_list_cols_wl_varbin`,
+				`create table t_list_cols_wl_varbin (
+					a varbinary(2),
+					b int
+				) partition by list columns(a) (
+					partition p0 values in ('a'),
+					partition p1 values in ('b')
+				)`,
+				`insert into t_list_cols_wl_varbin values ('a',1),('b',2)`,
+			},
+			alterSQL: `alter table t_list_cols_wl_varbin modify column a varbinary(4)`,
 		},
 	}
 	for _, tc := range successCases {
@@ -507,17 +560,20 @@ func TestModifyColumnPartitionedTableRangeListColumnsAllowlist(t *testing.T) {
 		{
 			name:      "list columns varchar shrink under empty sql_mode rejected",
 			tableName: "t_list_cols_wl_varchar_shrink",
-			createSQL: `create table t_list_cols_wl_varchar_shrink (
-				a varchar(6),
-				b int
-			) partition by list columns(a) (
-				partition p0 values in ('123456'),
-				partition p1 values in ('654321')
-			)`,
-			sessionSQL: []string{`set session sql_mode = ''`},
-			setupSQLs:  []string{`insert into t_list_cols_wl_varchar_shrink values ('123456',1),('654321',2)`},
-			alterSQL:   `alter table t_list_cols_wl_varchar_shrink modify column a varchar(5)`,
-			errCode:    errno.ErrUnsupportedDDLOperation,
+			preSQLs: []string{
+				`drop table if exists t_list_cols_wl_varchar_shrink`,
+				`create table t_list_cols_wl_varchar_shrink (
+					a varchar(6),
+					b int
+				) partition by list columns(a) (
+					partition p0 values in ('123456'),
+					partition p1 values in ('654321')
+				)`,
+				`insert into t_list_cols_wl_varchar_shrink values ('123456',1),('654321',2)`,
+				`set session sql_mode = ''`,
+			},
+			alterSQL: `alter table t_list_cols_wl_varchar_shrink modify column a varchar(5)`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
 			postAlterSQL: []string{
 				`set session tidb_enable_fast_table_check = off`,
 				`admin check table t_list_cols_wl_varchar_shrink`,
@@ -528,16 +584,19 @@ func TestModifyColumnPartitionedTableRangeListColumnsAllowlist(t *testing.T) {
 		{
 			name:      "list columns binary extension rejected",
 			tableName: "t_list_cols_wl_bin",
-			createSQL: `create table t_list_cols_wl_bin (
-				a binary(2),
-				b int
-			) partition by list columns(a) (
-				partition p0 values in ('aa'),
-				partition p1 values in ('bb')
-			)`,
-			setupSQLs: []string{`insert into t_list_cols_wl_bin values ('aa',1),('bb',2)`},
-			alterSQL:  `alter table t_list_cols_wl_bin modify column a binary(3)`,
-			errCode:   errno.ErrUnsupportedDDLOperation,
+			preSQLs: []string{
+				`drop table if exists t_list_cols_wl_bin`,
+				`create table t_list_cols_wl_bin (
+					a binary(2),
+					b int
+				) partition by list columns(a) (
+					partition p0 values in ('aa'),
+					partition p1 values in ('bb')
+				)`,
+				`insert into t_list_cols_wl_bin values ('aa',1),('bb',2)`,
+			},
+			alterSQL: `alter table t_list_cols_wl_bin modify column a binary(3)`,
+			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
 	}
 	for _, tc := range rejectCases {
@@ -554,15 +613,18 @@ func TestModifyColumnPartitionedTablePartitionColumnNullability(t *testing.T) {
 		{
 			name:      "range columns not null to null allowed",
 			tableName: "t_range_cols_nullable_ok",
-			createSQL: `create table t_range_cols_nullable_ok (
-				a int not null,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (maxvalue)
-			)`,
-			setupSQLs: []string{`insert into t_range_cols_nullable_ok values (1,1),(11,11)`},
-			alterSQL:  `alter table t_range_cols_nullable_ok modify column a int null`,
+			preSQLs: []string{
+				`drop table if exists t_range_cols_nullable_ok`,
+				`create table t_range_cols_nullable_ok (
+					a int not null,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue)
+				)`,
+				`insert into t_range_cols_nullable_ok values (1,1),(11,11)`,
+			},
+			alterSQL: `alter table t_range_cols_nullable_ok modify column a int null`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				adminCheckPartitionTable(tk, "t_range_cols_nullable_ok")
 				tk.MustExec(`insert into t_range_cols_nullable_ok values (null,100)`)
@@ -572,28 +634,34 @@ func TestModifyColumnPartitionedTablePartitionColumnNullability(t *testing.T) {
 		{
 			name:      "range columns null to not null rejected",
 			tableName: "t_range_cols_nullable_reject",
-			createSQL: `create table t_range_cols_nullable_reject (
-				a int null,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_range_cols_nullable_reject`,
+				`create table t_range_cols_nullable_reject (
+					a int null,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_range_cols_nullable_reject modify column a int not null`,
 			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
 		{
 			name:      "expr not null to null allowed",
 			tableName: "t_expr_nullable_ok",
-			createSQL: `create table t_expr_nullable_ok (
-				a datetime not null,
-				v int
-			) partition by range (to_days(a)) (
-				partition p0 values less than (to_days('2024-01-10')),
-				partition p1 values less than (maxvalue)
-			)`,
-			setupSQLs: []string{`insert into t_expr_nullable_ok values ('2024-01-01 00:00:00',1)`},
-			alterSQL:  `alter table t_expr_nullable_ok modify column a datetime null`,
+			preSQLs: []string{
+				`drop table if exists t_expr_nullable_ok`,
+				`create table t_expr_nullable_ok (
+					a datetime not null,
+					v int
+				) partition by range (to_days(a)) (
+					partition p0 values less than (to_days('2024-01-10')),
+					partition p1 values less than (maxvalue)
+				)`,
+				`insert into t_expr_nullable_ok values ('2024-01-01 00:00:00',1)`,
+			},
+			alterSQL: `alter table t_expr_nullable_ok modify column a datetime null`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				tk.MustExec(`insert into t_expr_nullable_ok values (null,100)`)
 				tk.MustQuery(`select a, v from t_expr_nullable_ok where a is null`).Check(testkit.Rows("<nil> 100"))
@@ -603,13 +671,16 @@ func TestModifyColumnPartitionedTablePartitionColumnNullability(t *testing.T) {
 		{
 			name:      "expr null to not null rejected",
 			tableName: "t_expr_nullable_reject",
-			createSQL: `create table t_expr_nullable_reject (
-				a datetime null,
-				v int
-			) partition by range (to_days(a)) (
-				partition p0 values less than (to_days('2024-01-10')),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_expr_nullable_reject`,
+				`create table t_expr_nullable_reject (
+					a datetime null,
+					v int
+				) partition by range (to_days(a)) (
+					partition p0 values less than (to_days('2024-01-10')),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_expr_nullable_reject modify column a datetime not null`,
 			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
@@ -629,13 +700,16 @@ func TestModifyColumnPartitionedTablePartitionColumnDefaultComment(t *testing.T)
 		{
 			name:      "range columns comment only",
 			tableName: "t_range_cols_comment_only",
-			createSQL: `create table t_range_cols_comment_only (
-				a int not null,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_range_cols_comment_only`,
+				`create table t_range_cols_comment_only (
+					a int not null,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_range_cols_comment_only modify column a int not null comment 'only-comment'`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				checkPartitionColumnMeta(tk, "t_range_cols_comment_only", "a", "<nil> NO only-comment")
@@ -647,13 +721,16 @@ func TestModifyColumnPartitionedTablePartitionColumnDefaultComment(t *testing.T)
 		{
 			name:      "range columns default only",
 			tableName: "t_range_cols_default_only",
-			createSQL: `create table t_range_cols_default_only (
-				a int not null,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_range_cols_default_only`,
+				`create table t_range_cols_default_only (
+					a int not null,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_range_cols_default_only modify column a int not null default 1`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				checkPartitionColumnMeta(tk, "t_range_cols_default_only", "a", "1 NO ")
@@ -665,13 +742,16 @@ func TestModifyColumnPartitionedTablePartitionColumnDefaultComment(t *testing.T)
 		{
 			name:      "range columns default and comment",
 			tableName: "t_range_cols_def_comment",
-			createSQL: `create table t_range_cols_def_comment (
-				a int not null,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_range_cols_def_comment`,
+				`create table t_range_cols_def_comment (
+					a int not null,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_range_cols_def_comment modify column a int not null default 1 comment 'pcol'`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				checkPartitionColumnMeta(tk, "t_range_cols_def_comment", "a", "1 NO pcol")
@@ -683,13 +763,16 @@ func TestModifyColumnPartitionedTablePartitionColumnDefaultComment(t *testing.T)
 		{
 			name:      "range columns default value changed",
 			tableName: "t_range_cols_def_change",
-			createSQL: `create table t_range_cols_def_change (
-				a int not null default 1,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_range_cols_def_change`,
+				`create table t_range_cols_def_change (
+					a int not null default 1,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_range_cols_def_change modify column a int not null default 2`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				checkPartitionColumnMeta(tk, "t_range_cols_def_change", "a", "2 NO ")
@@ -701,13 +784,16 @@ func TestModifyColumnPartitionedTablePartitionColumnDefaultComment(t *testing.T)
 		{
 			name:      "range columns default removed",
 			tableName: "t_range_cols_def_removed",
-			createSQL: `create table t_range_cols_def_removed (
-				a int not null default 1,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_range_cols_def_removed`,
+				`create table t_range_cols_def_removed (
+					a int not null default 1,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_range_cols_def_removed modify column a int not null`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				checkPartitionColumnMeta(tk, "t_range_cols_def_removed", "a", "<nil> NO ")
@@ -719,13 +805,16 @@ func TestModifyColumnPartitionedTablePartitionColumnDefaultComment(t *testing.T)
 		{
 			name:      "expr default and comment",
 			tableName: "t_expr_def_comment",
-			createSQL: `create table t_expr_def_comment (
-				a datetime not null,
-				v int
-			) partition by range (to_days(a)) (
-				partition p0 values less than (to_days('2024-01-10')),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_expr_def_comment`,
+				`create table t_expr_def_comment (
+					a datetime not null,
+					v int
+				) partition by range (to_days(a)) (
+					partition p0 values less than (to_days('2024-01-10')),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_expr_def_comment modify column a datetime not null default '2024-01-01 00:00:00' comment 'expr pcol'`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				checkPartitionColumnMeta(tk, "t_expr_def_comment", "a", "2024-01-01 00:00:00 NO expr pcol")
@@ -737,13 +826,16 @@ func TestModifyColumnPartitionedTablePartitionColumnDefaultComment(t *testing.T)
 		{
 			name:      "null to not null with default and comment rejected",
 			tableName: "t_range_cols_def_reject",
-			createSQL: `create table t_range_cols_def_reject (
-				a int null,
-				b int
-			) partition by range columns(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_range_cols_def_reject`,
+				`create table t_range_cols_def_reject (
+					a int null,
+					b int
+				) partition by range columns(a) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_range_cols_def_reject modify column a int not null default 1 comment 'reject'`,
 			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
@@ -764,12 +856,15 @@ func TestModifyColumnPartitionedTableExpressionAllowlist(t *testing.T) {
 		{
 			name:      "hash no-func int widening",
 			tableName: "t_hash_nofunc_wl",
-			createSQL: `create table t_hash_nofunc_wl (
-				a tinyint,
-				b int
-			) partition by hash(a) partitions 4`,
-			setupSQLs: []string{`insert into t_hash_nofunc_wl values (1,1),(2,2),(3,3),(4,4)`},
-			alterSQL:  `alter table t_hash_nofunc_wl modify column a int`,
+			preSQLs: []string{
+				`drop table if exists t_hash_nofunc_wl`,
+				`create table t_hash_nofunc_wl (
+					a tinyint,
+					b int
+				) partition by hash(a) partitions 4`,
+				`insert into t_hash_nofunc_wl values (1,1),(2,2),(3,3),(4,4)`,
+			},
+			alterSQL: `alter table t_hash_nofunc_wl modify column a int`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				adminCheckPartitionTable(tk, "t_hash_nofunc_wl")
 			},
@@ -777,15 +872,18 @@ func TestModifyColumnPartitionedTableExpressionAllowlist(t *testing.T) {
 		{
 			name:      "unary minus to_days datetime fsp",
 			tableName: "t_expr_unary_minus_todays",
-			createSQL: `create table t_expr_unary_minus_todays (
-				a datetime not null,
-				v int
-			) partition by range (-to_days(a)) (
-				partition p0 values less than (-to_days('2024-06-01')),
-				partition p1 values less than (maxvalue)
-			)`,
-			setupSQLs: []string{`insert into t_expr_unary_minus_todays values ('2024-07-01 00:00:00',1),('2024-03-01 00:00:00',2)`},
-			alterSQL:  `alter table t_expr_unary_minus_todays modify column a datetime(3) not null`,
+			preSQLs: []string{
+				`drop table if exists t_expr_unary_minus_todays`,
+				`create table t_expr_unary_minus_todays (
+					a datetime not null,
+					v int
+				) partition by range (-to_days(a)) (
+					partition p0 values less than (-to_days('2024-06-01')),
+					partition p1 values less than (maxvalue)
+				)`,
+				`insert into t_expr_unary_minus_todays values ('2024-07-01 00:00:00',1),('2024-03-01 00:00:00',2)`,
+			},
+			alterSQL: `alter table t_expr_unary_minus_todays modify column a datetime(3) not null`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				adminCheckPartitionTable(tk, "t_expr_unary_minus_todays")
 				tk.MustQuery(`select count(*) from t_expr_unary_minus_todays`).Check(testkit.Rows("2"))
@@ -794,14 +892,17 @@ func TestModifyColumnPartitionedTableExpressionAllowlist(t *testing.T) {
 		{
 			name:      "to_days and extract on same column",
 			tableName: "t_expr_combo_same_col",
-			createSQL: `create table t_expr_combo_same_col (
-				a datetime not null,
-				v int
-			) partition by range (to_days(a) + extract(day from a)) (
-				partition p0 values less than (to_days('2024-03-01') + extract(day from '2024-03-01')),
-				partition p1 values less than (to_days('2024-06-01') + extract(day from '2024-06-01')),
-				partition pmax values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_expr_combo_same_col`,
+				`create table t_expr_combo_same_col (
+					a datetime not null,
+					v int
+				) partition by range (to_days(a) + extract(day from a)) (
+					partition p0 values less than (to_days('2024-03-01') + extract(day from '2024-03-01')),
+					partition p1 values less than (to_days('2024-06-01') + extract(day from '2024-06-01')),
+					partition pmax values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_expr_combo_same_col modify column a datetime(3) not null`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				adminCheckPartitionTable(tk, "t_expr_combo_same_col")
@@ -810,15 +911,18 @@ func TestModifyColumnPartitionedTableExpressionAllowlist(t *testing.T) {
 		{
 			name:      "to_days and extract on two columns",
 			tableName: "t_expr_combo_two_cols_extract",
-			createSQL: `create table t_expr_combo_two_cols_extract (
-				a datetime not null,
-				b time not null,
-				v int
-			) partition by range (to_days(a) + extract(second from b)) (
-				partition p0 values less than (to_days('2024-03-01') + extract(second from '00:00:30')),
-				partition p1 values less than (to_days('2024-06-01') + extract(second from '00:00:45')),
-				partition pmax values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_expr_combo_two_cols_extract`,
+				`create table t_expr_combo_two_cols_extract (
+					a datetime not null,
+					b time not null,
+					v int
+				) partition by range (to_days(a) + extract(second from b)) (
+					partition p0 values less than (to_days('2024-03-01') + extract(second from '00:00:30')),
+					partition p1 values less than (to_days('2024-06-01') + extract(second from '00:00:45')),
+					partition pmax values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_expr_combo_two_cols_extract modify column a datetime(3) not null, modify column b time(3) not null`,
 			verify: func(t *testing.T, tk *testkit.TestKit) {
 				adminCheckPartitionTable(tk, "t_expr_combo_two_cols_extract")
@@ -835,52 +939,64 @@ func TestModifyColumnPartitionedTableExpressionAllowlist(t *testing.T) {
 		{
 			name:      "unix timestamp rejected",
 			tableName: "t_expr_unix",
-			createSQL: `create table t_expr_unix (
-				ts timestamp
-			) partition by range (floor(unix_timestamp(ts))) (
-				partition p0 values less than (unix_timestamp('2024-01-02 00:00:00')),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_expr_unix`,
+				`create table t_expr_unix (
+					ts timestamp
+				) partition by range (floor(unix_timestamp(ts))) (
+					partition p0 values less than (unix_timestamp('2024-01-02 00:00:00')),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_expr_unix modify column ts timestamp(3)`,
 			errCode:  errno.ErrFieldTypeNotAllowedAsPartitionField,
 		},
 		{
 			name:      "floor to_days rejected",
 			tableName: "t_expr_floor_todays",
-			createSQL: `create table t_expr_floor_todays (
-				dt datetime,
-				v int
-			) partition by range (floor(to_days(dt))) (
-				partition p0 values less than (floor(to_days('2024-01-10'))),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_expr_floor_todays`,
+				`create table t_expr_floor_todays (
+					dt datetime,
+					v int
+				) partition by range (floor(to_days(dt))) (
+					partition p0 values less than (floor(to_days('2024-01-10'))),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_expr_floor_todays modify column dt datetime(3)`,
 			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
 		{
 			name:      "year rejected",
 			tableName: "t_expr_other",
-			createSQL: `create table t_expr_other (
-				dt datetime,
-				v int
-			) partition by range (year(dt)) (
-				partition p0 values less than (2025),
-				partition p1 values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_expr_other`,
+				`create table t_expr_other (
+					dt datetime,
+					v int
+				) partition by range (year(dt)) (
+					partition p0 values less than (2025),
+					partition p1 values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_expr_other modify column dt datetime(3)`,
 			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
 		{
 			name:      "to_days plus year rejected",
 			tableName: "t_expr_combo_other",
-			createSQL: `create table t_expr_combo_other (
-				a datetime not null,
-				v int
-			) partition by range (to_days(a) + year(a)) (
-				partition p0 values less than (to_days('2024-03-01') + 2024),
-				partition p1 values less than (to_days('2024-06-01') + 2024),
-				partition pmax values less than (maxvalue)
-			)`,
+			preSQLs: []string{
+				`drop table if exists t_expr_combo_other`,
+				`create table t_expr_combo_other (
+					a datetime not null,
+					v int
+				) partition by range (to_days(a) + year(a)) (
+					partition p0 values less than (to_days('2024-03-01') + 2024),
+					partition p1 values less than (to_days('2024-06-01') + 2024),
+					partition pmax values less than (maxvalue)
+				)`,
+			},
 			alterSQL: `alter table t_expr_combo_other modify column a datetime(3) not null`,
 			errCode:  errno.ErrUnsupportedDDLOperation,
 		},
@@ -892,15 +1008,18 @@ func TestModifyColumnPartitionedTableExpressionAllowlist(t *testing.T) {
 	}
 
 	t.Run("to_days datetime fsp pruning unchanged", func(t *testing.T) {
-		tk := newPartitionTestKit(t, store)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
 		tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-		preparePartitionAlterCase(tk, "t_expr_todays", `create table t_expr_todays (
+		tk.MustExec(`drop table if exists t_expr_todays`)
+		tk.MustExec(`create table t_expr_todays (
 			dt datetime,
 			v int
 		) partition by range (to_days(dt)) (
 			partition p0 values less than (to_days('2024-01-10')),
 			partition p1 values less than (maxvalue)
-		)`, `insert into t_expr_todays values ('2024-01-01 00:00:00',1),('2024-02-01 00:00:00',2)`)
+		)`)
+		tk.MustExec(`insert into t_expr_todays values ('2024-01-01 00:00:00',1),('2024-02-01 00:00:00',2)`)
 		tk.MustPartition(`select * from t_expr_todays where dt = '2024-01-01 00:00:00'`, "p0")
 		tk.MustExec(`alter table t_expr_todays modify column dt datetime(3)`)
 		tk.MustPartition(`select * from t_expr_todays where dt = '2024-01-01 00:00:00'`, "p0")
@@ -908,15 +1027,18 @@ func TestModifyColumnPartitionedTableExpressionAllowlist(t *testing.T) {
 	})
 
 	t.Run("extract time fsp pruning unchanged", func(t *testing.T) {
-		tk := newPartitionTestKit(t, store)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
 		tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
-		preparePartitionAlterCase(tk, "t_expr_extract", `create table t_expr_extract (
+		tk.MustExec(`drop table if exists t_expr_extract`)
+		tk.MustExec(`create table t_expr_extract (
 			tm time,
 			v int
 		) partition by range (extract(second from tm)) (
 			partition p0 values less than (30),
 			partition p1 values less than (maxvalue)
-		)`, `insert into t_expr_extract values ('00:00:10',1),('00:00:40',2)`)
+		)`)
+		tk.MustExec(`insert into t_expr_extract values ('00:00:10',1),('00:00:40',2)`)
 		tk.MustPartition(`select * from t_expr_extract where tm = '00:00:10'`, "p0")
 		tk.MustExec(`alter table t_expr_extract modify column tm time(3)`)
 		tk.MustPartition(`select * from t_expr_extract where tm = '00:00:10'`, "p0")
@@ -924,8 +1046,10 @@ func TestModifyColumnPartitionedTableExpressionAllowlist(t *testing.T) {
 	})
 
 	t.Run("to_days and unix_timestamp on two columns", func(t *testing.T) {
-		tk := newPartitionTestKit(t, store)
-		preparePartitionAlterCase(tk, "t_expr_combo_two_cols_unix", `create table t_expr_combo_two_cols_unix (
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec(`drop table if exists t_expr_combo_two_cols_unix`)
+		tk.MustExec(`create table t_expr_combo_two_cols_unix (
 			a datetime not null,
 			b timestamp not null,
 			v int
