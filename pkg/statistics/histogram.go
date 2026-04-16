@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -1690,53 +1691,58 @@ func MergePartTopNAndHistToGlobal(
 
 	// 1c. Merge-walk both sorted sequences. For each unique value,
 	// sum TopN counts + histogram Repeat counts and feed into a
-	// priority queue to find the global TopN.
+	// bounded min-heap of size numTopN to find the global TopN.
 	//
-	// TopN encoded keys and histogram upper bounds sort in the same
-	// order (codec.EncodeKey is order-preserving), so a merge-walk
-	// correctly groups matching values.
-	type candidate struct {
+	// O(N log K) where K = numTopN (typically 100), vs O(N log N) for
+	// a full sort. The heap holds ~100 entries (~4 KB) instead of the
+	// full candidates slice (~80 MB on 8000-partition tables).
+	type heapEntry struct {
 		encoded     []byte
 		totalCount  uint64
-		repeatCount uint64 // portion from histogram Repeat (for totCount adjustment)
+		repeatCount uint64
 	}
-	var candidates []candidate
+	topNHeap := generic.NewBoundedMinHeap(int(numTopN), func(a, b heapEntry) int {
+		return cmp.Compare(a.totalCount, b.totalCount)
+	})
+	// Track repeatFromHist for totCount adjustment. Only populated for
+	// values that have histogram Repeat (small map: unique upper bounds
+	// with Repeat that also appeared in the merge walk).
+	repeatFromHist := make(map[hack.MutableString]uint64)
+
 	ti, hi := 0, 0
 	for ti < len(allTopN) || hi < len(refs) {
 		if err := killer.HandleSignal(); err != nil {
 			return nil, nil, err
 		}
 
-		var cand candidate
-		var cmp int
+		var entry heapEntry
+		var mergeOrd int // -1: TopN only, 0: both, 1: refs only
 
 		if ti >= len(allTopN) {
-			cmp = 1 // only refs left
+			mergeOrd = 1
 		} else if hi >= len(refs) {
-			cmp = -1 // only TopN left
+			mergeOrd = -1
 		} else {
-			// Compare current TopN key with current ref upper bound.
 			d, err := topNMetaToDatum(TopNMeta{Encoded: allTopN[ti].encoded}, tp, isIndex, tz)
 			if err != nil {
 				return nil, nil, err
 			}
-			cmp, err = d.Compare(sc.TypeCtx(), hists[refs[hi].histIdx].GetUpper(int(refs[hi].bucketIdx)),
+			mergeOrd, err = d.Compare(sc.TypeCtx(),
+				hists[refs[hi].histIdx].GetUpper(int(refs[hi].bucketIdx)),
 				collate.GetBinaryCollator())
 			if err != nil {
 				return nil, nil, err
 			}
 		}
 
-		if cmp <= 0 {
-			// Process TopN group: all consecutive entries with same key.
-			cand.encoded = allTopN[ti].encoded
-			for ti < len(allTopN) && bytes.Equal(allTopN[ti].encoded, cand.encoded) {
-				cand.totalCount += allTopN[ti].count
+		if mergeOrd <= 0 {
+			entry.encoded = allTopN[ti].encoded
+			for ti < len(allTopN) && bytes.Equal(allTopN[ti].encoded, entry.encoded) {
+				entry.totalCount += allTopN[ti].count
 				ti++
 			}
 		}
-		if cmp >= 0 {
-			// Process ref group: all consecutive refs with same upper bound.
+		if mergeOrd >= 0 {
 			startHi := hi
 			for hi < len(refs) {
 				if hi > startHi {
@@ -1751,15 +1757,15 @@ func MergePartTopNAndHistToGlobal(
 					}
 				}
 				repeat := hists[refs[hi].histIdx].Buckets[refs[hi].bucketIdx].Repeat
-				cand.repeatCount += uint64(repeat)
-				cand.totalCount += uint64(repeat)
-				if cand.encoded == nil {
-					// Value only from histogram (no TopN entry).
-					var err error
+				entry.repeatCount += uint64(repeat)
+				entry.totalCount += uint64(repeat)
+				if entry.encoded == nil {
 					if isIndex {
-						cand.encoded = hists[refs[hi].histIdx].Bounds.GetRow(int(refs[hi].bucketIdx)*2 + 1).GetBytes(0)
+						entry.encoded = hists[refs[hi].histIdx].Bounds.GetRow(int(refs[hi].bucketIdx)*2 + 1).GetBytes(0)
 					} else {
-						cand.encoded, err = codec.EncodeKey(tz, nil, *hists[refs[hi].histIdx].GetUpper(int(refs[hi].bucketIdx)))
+						var err error
+						entry.encoded, err = codec.EncodeKey(tz, nil,
+							*hists[refs[hi].histIdx].GetUpper(int(refs[hi].bucketIdx)))
 						if err != nil {
 							return nil, nil, err
 						}
@@ -1769,23 +1775,25 @@ func MergePartTopNAndHistToGlobal(
 			}
 		}
 
-		if cand.totalCount > 0 {
-			candidates = append(candidates, cand)
+		if entry.totalCount > 0 {
+			topNHeap.Add(entry)
+			if entry.repeatCount > 0 {
+				repeatFromHist[hack.String(entry.encoded)] = entry.repeatCount
+			}
 		}
 	}
 
-	// 1d. Select global TopN from candidates.
-	globalTopN, leftTopN := GetMergedTopNFromSortedSlice(
-		func() []TopNMeta {
-			metas := make([]TopNMeta, len(candidates))
-			for i, c := range candidates {
-				metas[i] = TopNMeta{Encoded: c.encoded, Count: c.totalCount}
-			}
-			return metas
-		}(), numTopN)
+	// 1d. Extract global TopN from the heap.
+	topNSlice := topNHeap.ToSortedSlice()
+	var globalTopN *TopN
+	if len(topNSlice) > 0 {
+		globalTopN = NewTopN(int(numTopN))
+		for _, e := range topNSlice {
+			globalTopN.AppendTopN(e.encoded, e.totalCount)
+		}
+	}
 
-	// Build a map of global TopN encoded keys → decoded Datum for the
-	// histogram walk, and compute totCount adjustments.
+	// Build globalTopN lookup map (encoded key → decoded Datum) for Pass 2.
 	type topNInfo struct {
 		datum types.Datum
 	}
@@ -1803,25 +1811,38 @@ func MergePartTopNAndHistToGlobal(
 		}
 	}
 
-	// Build repeatFromHist lookup for totCount adjustment.
-	repeatFromHist := make(map[hack.MutableString]uint64)
-	for _, c := range candidates {
-		if c.repeatCount > 0 {
-			repeatFromHist[hack.String(c.encoded)] = c.repeatCount
-		}
-	}
-
 	// Adjust totCount: subtract histogram-Repeat for global TopN values
-	// (moved to TopN), add TopN-origin for leftover values (added to hist).
+	// (moved to TopN), add TopN-origin for leftover values.
+	// Leftover TopN-origin values are TopN entries not in globalTopN
+	// whose topNOrigin > 0 (identified by re-walking allTopN).
 	if globalTopN != nil {
 		for _, val := range globalTopN.TopN {
 			totCount -= int64(repeatFromHist[hack.String(val.Encoded)])
 		}
 	}
-	for _, meta := range leftTopN {
-		topNOrigin := int64(meta.Count) - int64(repeatFromHist[hack.String(meta.Encoded)])
-		if topNOrigin > 0 {
-			totCount += topNOrigin
+	// Identify leftover TopN-origin entries and adjust totCount.
+	type leftoverEntry struct {
+		encoded    []byte
+		topNOrigin int64
+	}
+	var leftovers []leftoverEntry
+	{
+		// Walk allTopN (already sorted) to find unique values not in globalTopN.
+		for i := 0; i < len(allTopN); {
+			key := allTopN[i].encoded
+			var topNCount uint64
+			for i < len(allTopN) && bytes.Equal(allTopN[i].encoded, key) {
+				topNCount += allTopN[i].count
+				i++
+			}
+			if _, inGlobal := globalTopNMap[hack.String(key)]; inGlobal {
+				continue
+			}
+			topNOrigin := int64(topNCount)
+			if topNOrigin > 0 {
+				totCount += topNOrigin
+				leftovers = append(leftovers, leftoverEntry{encoded: key, topNOrigin: topNOrigin})
+			}
 		}
 	}
 
@@ -1966,19 +1987,20 @@ func MergePartTopNAndHistToGlobal(
 
 	// ---------------------------------------------------------------
 	// Phase 6: Add leftover TopN-origin entries to the histogram.
+	// These are TopN values not in global TopN whose rows are not in
+	// any histogram bucket (they were in partition TopN only).
 	// ---------------------------------------------------------------
 	var extraBuckets []*bucket4Merging
-	for _, meta := range leftTopN {
-		topNOrigin := int64(meta.Count) - int64(repeatFromHist[hack.String(meta.Encoded)])
-		if topNOrigin <= 0 {
-			continue
-		}
-		d, err := topNMetaToDatum(meta, tp, isIndex, tz)
+	for _, lo := range leftovers {
+		d, err := topNMetaToDatum(TopNMeta{Encoded: lo.encoded}, tp, isIndex, tz)
 		if err != nil {
 			return nil, nil, err
 		}
-		b := meta.buildBucket4Merging(&d, analyzeVer)
-		b.Count = topNOrigin
+		b := newbucket4MergingForRecycle()
+		d.Copy(b.lower)
+		d.Copy(b.upper)
+		b.Count = lo.topNOrigin
+		b.Repeat = lo.topNOrigin
 		extraBuckets = append(extraBuckets, b)
 	}
 	if len(extraBuckets) > 0 {
