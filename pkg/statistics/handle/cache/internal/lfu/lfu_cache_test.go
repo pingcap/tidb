@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/testutil"
@@ -74,8 +75,10 @@ func TestLFUGetReturnsLatestValueWhilePrimaryCacheLags(t *testing.T) {
 		close(putDone)
 	}()
 
+	// beforeLFUCacheSet pauses Put after resultKeySet is updated but before cache.Set.
+	// Verify Get behavior via the API during this lag window.
 	require.Eventually(t, func() bool {
-		tbl, ok := lfu.resultKeySet.Get(1)
+		tbl, ok := lfu.Get(1)
 		return ok && tbl.GetIdx(1) != nil
 	}, time.Second, 10*time.Millisecond)
 
@@ -88,6 +91,26 @@ func TestLFUGetReturnsLatestValueWhilePrimaryCacheLags(t *testing.T) {
 	tbl, ok := lfu.Get(1)
 	require.True(t, ok)
 	require.NotNil(t, tbl.GetIdx(1))
+}
+
+func TestLFUDropMemoryDoesNotOverwriteNewerTable(t *testing.T) {
+	lfu, err := NewLFU(1 << 20)
+	require.NoError(t, err)
+
+	oldTable := testutil.NewMockStatisticsTable(1, 0, false, false, false)
+	newTable := testutil.NewMockStatisticsTable(1, 1, true, true, true)
+	lfu.resultKeySet.AddKeyValue(1, oldTable)
+	lfu.resultKeySet.AddKeyValue(1, newTable)
+
+	lfu.dropMemory(&ristretto.Item{
+		Key:   1,
+		Value: oldTable,
+	})
+
+	got, ok := lfu.Get(1)
+	require.True(t, ok)
+	require.Same(t, newTable, got)
+	require.NotNil(t, got.GetIdx(1))
 }
 
 func TestLFUFreshMemUsage(t *testing.T) {

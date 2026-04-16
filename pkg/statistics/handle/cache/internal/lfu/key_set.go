@@ -60,6 +60,17 @@ func (ks *keySet) AddKeyValue(key int64, value *statistics.Table) {
 	ks.mu.Unlock()
 }
 
+func (ks *keySet) ReplaceIfSamePointer(key int64, expected, value *statistics.Table) bool {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	current, ok := ks.set[key]
+	if !ok || current != expected {
+		return false
+	}
+	ks.set[key] = value
+	return true
+}
+
 func (ks *keySet) Get(key int64) (*statistics.Table, bool) {
 	ks.mu.RLock()
 	value, ok := ks.set[key]

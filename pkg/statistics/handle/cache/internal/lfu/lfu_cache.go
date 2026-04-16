@@ -88,7 +88,13 @@ func adjustMemCost(totalMemCost int64) (result int64, err error) {
 	return totalMemCost, nil
 }
 
-// Get implements statsCacheInner
+// Get implements statsCacheInner.
+//
+// Expected key states:
+// 1. Put writes resultKeySet synchronously, then writes Ristretto asynchronously.
+//    During this lag window, resultKeySet is newer than the primary cache.
+// 2. onEvict/onReject may keep only a stripped table in resultKeySet.
+// 3. Del removes the key from both caches.
 func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	result, ok := s.resultKeySet.Get(tid)
 	if !ok {
@@ -168,9 +174,14 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// We do not need to calculate the cost during onEvict,
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
-	table := item.Value.(*statistics.Table).CopyAs(statistics.AllDataWritable)
+	oldTable := item.Value.(*statistics.Table)
+	table := oldTable.CopyAs(statistics.AllDataWritable)
 	table.DropEvicted()
-	s.resultKeySet.AddKeyValue(int64(item.Key), table)
+	if !s.resultKeySet.ReplaceIfSamePointer(int64(item.Key), oldTable, table) {
+		// A newer table has already replaced this key, so stale eviction/rejection callbacks
+		// must not overwrite it.
+		return
+	}
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
 	// in fact, it is after - before

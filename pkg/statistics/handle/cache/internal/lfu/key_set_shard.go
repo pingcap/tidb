@@ -42,6 +42,10 @@ func (kss *keySetShard) AddKeyValue(key int64, table *statistics.Table) {
 	kss.resultKeySet[key%keySetCnt].AddKeyValue(key, table)
 }
 
+func (kss *keySetShard) ReplaceIfSamePointer(key int64, expected, table *statistics.Table) bool {
+	return kss.resultKeySet[key%keySetCnt].ReplaceIfSamePointer(key, expected, table)
+}
+
 func (kss *keySetShard) Remove(key int64) {
 	kss.resultKeySet[key%keySetCnt].Remove(key)
 }
