@@ -41,6 +41,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
@@ -443,11 +444,11 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
 			FlagStreamStartTS, FlagStreamFullBackupStorage)
 	}
-	if len(cfg.FullBackupStorage) == 0 && (flags.Changed(flagStorageLayout) || flags.Changed(flagBackupID)) {
+	if len(cfg.FullBackupStorage) == 0 && (flags.Changed("storage-layout") || flags.Changed("backup-id")) {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"--%s and --%s require --%s for point restore",
-			flagStorageLayout,
-			flagBackupID,
+			"storage-layout",
+			"backup-id",
 			FlagStreamFullBackupStorage,
 		)
 	}
@@ -536,11 +537,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
 	}
-	cfg.Layout, err = ParseSnapshotStorageLayoutFlag(flags)
+	cfg.Layout, err = taskrepo.ParseSnapshotStorageLayoutFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.BackupID, err = ParseSnapshotBackupIDFlag(flags)
+	cfg.BackupID, err = taskrepo.ParseSnapshotBackupIDFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -560,7 +561,7 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
-	if err := ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
+	if err := taskrepo.ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
 		return err
 	}
 
@@ -1246,7 +1247,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	resolvedStorage, backupMeta, err := loadSnapshotBackupMeta(ctx, cfg.RestoreConfig, u, s)
+	resolvedStorage, backupMeta, err := taskrepo.LoadSnapshotBackupMeta(ctx, cfg.Layout, cfg.BackupID, u, s, &cfg.Config.CipherInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2795,7 +2796,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			if err != nil {
 				return errors.Trace(err)
 			}
-			_, backupMeta, err := loadSnapshotBackupMeta(ctx, cfg, u, s)
+			_, backupMeta, err := taskrepo.LoadSnapshotBackupMeta(ctx, cfg.Layout, cfg.BackupID, u, s, &cfg.Config.CipherInfo)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2819,7 +2820,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 	// create registration info from config to find matching tasks
 	registrationInfo := registry.RegistrationInfo{
-		FilterHashInput:   snapshotRegistrationFilterHashInput(cfg.FilterStr, snapshotRef(cfg.Layout, cfg.BackupID)),
+		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, taskrepo.SnapshotRef(cfg.Layout, cfg.BackupID)),
 		FilterStrings:     cfg.FilterStr,
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,

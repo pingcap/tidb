@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/repo"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -144,10 +145,15 @@ func (c *checksumTableCtx) getTables(ctx context.Context) (res []tableInDB, err 
 }
 
 func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil.Table, err error) {
-	_, metadataStorage, backupMeta, err := task.ResolveSnapshotBackupMeta(
+	_, metadataStorage, backupMeta, err := taskrepo.ResolveSnapshotBackupMeta(
 		ctx,
-		c.cfg.Storage,
-		&c.cfg.Config,
+		taskrepo.Config{
+			BackendOptions: c.cfg.BackendOptions,
+			Storage:        c.cfg.Storage,
+			CipherInfo:     c.cfg.CipherInfo,
+			NoCreds:        c.cfg.NoCreds,
+			SendCreds:      c.cfg.SendCreds,
+		},
 		repo.SnapshotRef{Layout: c.cfg.Layout, BackupID: c.cfg.BackupID},
 	)
 	if err != nil {

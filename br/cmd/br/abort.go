@@ -6,6 +6,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/session"
@@ -73,7 +74,7 @@ func newAbortRestoreFullCommand() *cobra.Command {
 	}
 	// define flags specific to full restore
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
-	task.DefineSnapshotRepoFlags(command.Flags(), true)
+	taskrepo.DefineSnapshotRepoFlags(command.Flags(), true)
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -88,7 +89,7 @@ func newAbortRestoreDBCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
-	task.DefineSnapshotRepoFlags(command.Flags(), true)
+	taskrepo.DefineSnapshotRepoFlags(command.Flags(), true)
 	return command
 }
 
@@ -102,7 +103,7 @@ func newAbortRestoreTableCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
-	task.DefineSnapshotRepoFlags(command.Flags(), true)
+	taskrepo.DefineSnapshotRepoFlags(command.Flags(), true)
 	return command
 }
 
@@ -117,7 +118,7 @@ func newAbortRestorePointCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, true)
 	task.DefineStreamRestoreFlags(command)
-	task.DefineSnapshotRepoFlags(command.Flags(), true)
+	taskrepo.DefineSnapshotRepoFlags(command.Flags(), true)
 	return command
 }
 

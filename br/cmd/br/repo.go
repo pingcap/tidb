@@ -320,7 +320,7 @@ func parseRepoSnapshotConfig(cmd *cobra.Command) (taskrepo.Config, error) {
 }
 
 func parseRepoSnapshotBackupID(cmd *cobra.Command, required bool) (repo.BackupID, error) {
-	backupID, err := task.ParseSnapshotBackupIDFlag(cmd.Flags())
+	backupID, err := taskrepo.ParseSnapshotBackupIDFlag(cmd.Flags())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

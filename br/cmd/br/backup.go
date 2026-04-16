@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
@@ -154,7 +155,7 @@ func newFullBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, acceptAllTables, false)
-	task.DefineSnapshotRepoFlags(command.Flags(), false)
+	taskrepo.DefineSnapshotRepoFlags(command.Flags(), false)
 	task.DefineBackupEBSFlags(command.PersistentFlags())
 	return command
 }
@@ -170,7 +171,7 @@ func newDBBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
-	task.DefineSnapshotRepoFlags(command.Flags(), false)
+	taskrepo.DefineSnapshotRepoFlags(command.Flags(), false)
 	return command
 }
 
@@ -185,7 +186,7 @@ func newTableBackupCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
-	task.DefineSnapshotRepoFlags(command.Flags(), false)
+	taskrepo.DefineSnapshotRepoFlags(command.Flags(), false)
 	return command
 }
 

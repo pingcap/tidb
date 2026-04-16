@@ -18,6 +18,7 @@ import (
 	"context"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -103,6 +104,10 @@ func (s *prefixedStorage) Rename(
 	oldFileName, newFileName string,
 ) error {
 	return s.base.Rename(ctx, s.fullPath(oldFileName), s.fullPath(newFileName))
+}
+
+func (s *prefixedStorage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	return s.base.PresignFile(ctx, s.fullPath(fileName), expire)
 }
 
 func (s *prefixedStorage) Close() {

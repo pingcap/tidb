@@ -55,6 +55,7 @@ import (
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -1997,11 +1998,16 @@ func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, uint64, error) {
-	_, _, backupMeta, err := ResolveSnapshotBackupMeta(
+	_, _, backupMeta, err := taskrepo.ResolveSnapshotBackupMeta(
 		ctx,
-		cfg.FullBackupStorage,
-		&cfg.Config,
-		snapshotRef(cfg.Layout, cfg.BackupID),
+		taskrepo.Config{
+			BackendOptions: cfg.BackendOptions,
+			Storage:        cfg.FullBackupStorage,
+			CipherInfo:     cfg.CipherInfo,
+			NoCreds:        cfg.NoCreds,
+			SendCreds:      cfg.SendCreds,
+		},
+		taskrepo.SnapshotRef(cfg.Layout, cfg.BackupID),
 	)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -2268,7 +2274,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 
 	originalRestoreTS := cfg.RestoreTS
 	registrationInfo := registry.RegistrationInfo{
-		FilterHashInput:   snapshotRegistrationFilterHashInput(cfg.FilterStr, snapshotRef(cfg.Layout, cfg.BackupID)),
+		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, taskrepo.SnapshotRef(cfg.Layout, cfg.BackupID)),
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
 		FilterStrings:     cfg.FilterStr,

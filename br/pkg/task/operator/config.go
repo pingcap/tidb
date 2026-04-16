@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/repo"
 	crrconfig "github.com/pingcap/tidb/br/pkg/stream/crr/config"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/spf13/pflag"
 )
@@ -297,15 +298,15 @@ func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) 
 	if err != nil {
 		return
 	}
-	cfg.Layout, err = task.ParseSnapshotStorageLayoutFlag(flags)
+	cfg.Layout, err = taskrepo.ParseSnapshotStorageLayoutFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.BackupID, err = task.ParseSnapshotBackupIDFlag(flags)
+	cfg.BackupID, err = taskrepo.ParseSnapshotBackupIDFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := task.ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
+	if err := taskrepo.ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
 		return errors.Trace(err)
 	}
 	return cfg.Config.ParseFromFlags(flags)

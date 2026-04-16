@@ -20,7 +20,9 @@ go_library(
         "//pkg/objstore/storeapi",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
         "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

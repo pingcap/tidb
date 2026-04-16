@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -153,19 +154,19 @@ func TestBackupConfigHash(t *testing.T) {
 
 	{
 		testCfg := *cfg
-		testCfg.SnapshotRepoBackupOptions.Layout = repo.LayoutLegacy
+		testCfg.SnapshotBackupOptions.Layout = repo.LayoutLegacy
 		hashCheck(t, &testCfg, originalHash, true)
 	}
 
 	{
 		testCfg := *cfg
-		testCfg.SnapshotRepoBackupOptions.Layout = repo.LayoutRepoV1
+		testCfg.SnapshotBackupOptions.Layout = repo.LayoutRepoV1
 		hashCheck(t, &testCfg, originalHash, false)
 	}
 
 	{
 		testCfg := *cfg
-		testCfg.SnapshotRepoBackupOptions.OnPending = snapshotRepoOnPendingResume
+		testCfg.SnapshotBackupOptions.OnPending = taskrepo.OnPendingResume
 		hashCheck(t, &testCfg, originalHash, true)
 	}
 

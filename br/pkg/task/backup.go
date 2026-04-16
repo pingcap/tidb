@@ -96,7 +96,7 @@ type BackupConfig struct {
 	IgnoreStats      bool          `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool          `json:"use-backupmeta-v2"`
 	UseCheckpoint    bool          `json:"use-checkpoint" toml:"use-checkpoint"`
-	SnapshotRepoBackupOptions
+	taskrepo.SnapshotBackupOptions
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
 	CompressionConfig
@@ -196,7 +196,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.SnapshotRepoBackupOptions, err = parseSnapshotRepoBackupOptionsFromFlags(flags)
+	cfg.SnapshotBackupOptions, err = taskrepo.ParseSnapshotBackupOptionsFromFlags(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -288,7 +288,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 		return errors.Trace(err)
 	}
 
-	if err := validateSnapshotBackupRepoConfig(cfg); err != nil {
+	if err := taskrepo.ValidateSnapshotBackupRepoConfig(cfg.SnapshotBackupOptions.Layout, cfg.UseCheckpoint); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -377,7 +377,7 @@ func (cfg *BackupConfig) Hash() ([]byte, error) {
 		LastBackupTS:  cfg.LastBackupTS,
 		IgnoreStats:   cfg.IgnoreStats,
 		UseCheckpoint: cfg.UseCheckpoint,
-		Layout:        cfg.SnapshotRepoBackupOptions.HashLayoutTag(),
+		Layout:        cfg.SnapshotBackupOptions.HashLayoutTag(),
 
 		BackendOptions: cfg.BackendOptions,
 		Storage:        cfg.Storage,
@@ -443,7 +443,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if cfg.UseCheckpoint {
 		err = version.CheckCheckpointSupport()
 		if err != nil {
-			if cfg.SnapshotRepoBackupOptions.IsRepoV1() {
+			if cfg.SnapshotBackupOptions.IsRepoV1() {
 				return errors.Annotate(err, "repo-v1 snapshot backup requires checkpoint support")
 			}
 			log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
@@ -486,19 +486,19 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 	var (
-		preparedStorage           *preparedRepoV1SnapshotBackup
+		preparedStorage           *taskrepo.PreparedRepoV1SnapshotBackup
 		backupRangeOpts           []backup.BackupRangesOption
 		removePendingMarkerOnExit bool
 	)
-	if cfg.SnapshotRepoBackupOptions.IsRepoV1() {
+	if cfg.SnapshotBackupOptions.IsRepoV1() {
 		if err = client.SetStorage(ctx, u, &opts); err != nil {
 			return errors.Trace(err)
 		}
-		preparedStorage, err = prepareRepoV1SnapshotBackup(ctx, u, client.GetBaseStorage(), snapshotBackupStorageParams{
-			onPending: cfg.SnapshotRepoBackupOptions.OnPending,
-			cfgHash:   cfgHash,
-			createdBy: repoCreatedBy(g.GetVersion()),
-			allocateBackupID: func(ctx context.Context) (repo.BackupID, error) {
+		preparedStorage, err = taskrepo.PrepareRepoV1SnapshotBackup(ctx, u, client.GetBaseStorage(), taskrepo.SnapshotBackupStorageParams{
+			OnPending:  cfg.SnapshotBackupOptions.OnPending,
+			ConfigHash: cfgHash,
+			CreatedBy:  taskrepo.RepoCreatedBy(g.GetVersion()),
+			AllocateBackupID: func(ctx context.Context) (repo.BackupID, error) {
 				backupTS, err := client.GetCurrentTS(ctx)
 				if err != nil {
 					return 0, errors.Annotate(err, "allocate repo-v1 backup id")
@@ -734,7 +734,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if cfg.UseCheckpoint {
 		checkpointBackupID := uint64(0)
 		if preparedStorage != nil {
-			if err = writePendingSnapshot(ctx, preparedStorage.RootStorage, preparedStorage.PendingMarkerPath); err != nil {
+			if err = taskrepo.WritePendingSnapshot(ctx, preparedStorage.RootStorage, preparedStorage.PendingMarkerPath); err != nil {
 				return errors.Trace(err)
 			}
 			checkpointBackupID = uint64(preparedStorage.BackupID)
@@ -853,7 +853,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 func activateSnapshotBackupResume(
 	ctx context.Context,
 	client *backup.Client,
-	prepared *preparedRepoV1SnapshotBackup,
+	prepared *taskrepo.PreparedRepoV1SnapshotBackup,
 	cfgHash []byte,
 ) error {
 	return taskrepo.ActivateSnapshotBackupResume(ctx, client, prepared, cfgHash)

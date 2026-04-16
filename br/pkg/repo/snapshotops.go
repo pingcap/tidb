@@ -214,7 +214,7 @@ func (ops SnapshotOps) WalkSnapshotOrphans(ctx context.Context) TrySeq[string] {
 	}
 
 	if !ops.supportsRepoStartAfter() {
-		log.Warn("WalkSnapshotOrphans: StartAfter is unavaliable in this storage, will full-scan, which may be slow.",
+		log.Warn("WalkSnapshotOrphans: StartAfter is unavailable in this storage, will full-scan, which may be slow.",
 			zap.String("storage", ops.URI()))
 		return ops.walkSnapshotOrphansByFullScan(ctx, completedSet)
 	}

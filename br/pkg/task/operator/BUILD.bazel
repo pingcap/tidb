@@ -33,6 +33,7 @@ go_library(
         "//br/pkg/stream/crr/service",
         "//br/pkg/streamhelper",
         "//br/pkg/task",
+        "//br/pkg/task/repo",
         "//br/pkg/utils",
         "//pkg/domain",
         "//pkg/kv",

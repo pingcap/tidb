@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package task
+package taskrepo
 
 import (
 	"strings"
@@ -24,67 +24,50 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const (
-	flagStorageLayout = "storage-layout"
-	flagBackupID      = "backup-id"
-	flagOnPending     = "on-pending"
-)
+const flagBackupID = "backup-id"
 
-type snapshotRepoOnPendingAction string
-
-const (
-	snapshotRepoOnPendingError  snapshotRepoOnPendingAction = "error"
-	snapshotRepoOnPendingResume snapshotRepoOnPendingAction = "resume"
-	snapshotRepoOnPendingNew    snapshotRepoOnPendingAction = "new"
-)
-
-func (a snapshotRepoOnPendingAction) String() string {
-	if a == "" {
-		return string(snapshotRepoOnPendingError)
-	}
-	return string(a)
-}
-
-// SnapshotRepoBackupOptions groups repo-v1 snapshot backup policy while keeping
+// SnapshotBackupOptions groups repo-v1 snapshot backup policy while keeping
 // the existing flat flag/config surface.
-type SnapshotRepoBackupOptions struct {
-	Layout    repo.Layout                 `json:"storage-layout" toml:"storage-layout"`
-	OnPending snapshotRepoOnPendingAction `json:"on-pending" toml:"on-pending"`
+type SnapshotBackupOptions struct {
+	Layout    repo.Layout     `json:"storage-layout" toml:"storage-layout"`
+	OnPending OnPendingAction `json:"on-pending" toml:"on-pending"`
 }
 
-func (o SnapshotRepoBackupOptions) IsRepoV1() bool {
+func (o SnapshotBackupOptions) IsRepoV1() bool {
 	return o.Layout.IsRepoV1()
 }
 
-func (o SnapshotRepoBackupOptions) HashLayoutTag() string {
+func (o SnapshotBackupOptions) HashLayoutTag() string {
 	if !o.IsRepoV1() {
 		return ""
 	}
 	return o.Layout.String()
 }
 
-func parseSnapshotRepoBackupOptionsFromFlags(flags *pflag.FlagSet) (SnapshotRepoBackupOptions, error) {
+// ParseSnapshotBackupOptionsFromFlags parses the snapshot repo backup-specific flags.
+func ParseSnapshotBackupOptionsFromFlags(flags *pflag.FlagSet) (SnapshotBackupOptions, error) {
 	layout, err := ParseSnapshotStorageLayoutFlag(flags)
 	if err != nil {
-		return SnapshotRepoBackupOptions{}, errors.Trace(err)
+		return SnapshotBackupOptions{}, errors.Trace(err)
 	}
 	onPending, err := parseSnapshotOnPendingFlag(flags)
 	if err != nil {
-		return SnapshotRepoBackupOptions{}, errors.Trace(err)
+		return SnapshotBackupOptions{}, errors.Trace(err)
 	}
-	return SnapshotRepoBackupOptions{
+	return SnapshotBackupOptions{
 		Layout:    layout,
 		OnPending: onPending,
 	}, nil
 }
 
+// DefineSnapshotRepoFlags defines the shared snapshot repo flags.
 func DefineSnapshotRepoFlags(flags *pflag.FlagSet, includeBackupID bool) {
 	flags.String(flagStorageLayout, repo.LayoutLegacy.String(),
 		"snapshot storage layout, one of legacy or repo-v1")
 	if includeBackupID {
 		flags.String(flagBackupID, "", "snapshot backup id in repo-v1 layout")
 	} else {
-		flags.String(flagOnPending, string(snapshotRepoOnPendingError),
+		flags.String(flagOnPending, string(OnPendingError),
 			"how repo-v1 snapshot backup handles matching pending backups, one of error, resume, or new")
 	}
 }
@@ -128,11 +111,13 @@ func ValidateSnapshotRestoreStorage(layout repo.Layout, backupID repo.BackupID) 
 	return nil
 }
 
-func snapshotRef(layout repo.Layout, backupID repo.BackupID) repo.SnapshotRef {
+// SnapshotRef builds a snapshot reference from a storage layout and backup id.
+func SnapshotRef(layout repo.Layout, backupID repo.BackupID) repo.SnapshotRef {
 	return repo.SnapshotRef{Layout: layout, BackupID: backupID}
 }
 
-func snapshotRegistrationFilterHashInput(filterStrings []string, ref repo.SnapshotRef) string {
+// SnapshotRegistrationFilterHashInput builds the restore-registration hash input for a snapshot reference.
+func SnapshotRegistrationFilterHashInput(filterStrings []string, ref repo.SnapshotRef) string {
 	joined := strings.Join(filterStrings, registry.FilterSeparator)
 	if !ref.Layout.IsRepoV1() || ref.BackupID.IsZero() {
 		return joined
@@ -147,22 +132,22 @@ func snapshotRegistrationFilterHashInput(filterStrings []string, ref repo.Snapsh
 	return builder.String()
 }
 
-func parseSnapshotOnPendingFlag(flags *pflag.FlagSet) (snapshotRepoOnPendingAction, error) {
+func parseSnapshotOnPendingFlag(flags *pflag.FlagSet) (OnPendingAction, error) {
 	if flags.Lookup(flagOnPending) == nil {
-		return snapshotRepoOnPendingError, nil
+		return OnPendingError, nil
 	}
 	raw, err := flags.GetString(flagOnPending)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	action := snapshotRepoOnPendingAction(strings.ToLower(strings.TrimSpace(raw)))
+	action := OnPendingAction(strings.ToLower(strings.TrimSpace(raw)))
 	switch action {
-	case "", snapshotRepoOnPendingError:
-		return snapshotRepoOnPendingError, nil
-	case snapshotRepoOnPendingResume:
-		return snapshotRepoOnPendingResume, nil
-	case snapshotRepoOnPendingNew:
-		return snapshotRepoOnPendingNew, nil
+	case "", OnPendingError:
+		return OnPendingError, nil
+	case OnPendingResume:
+		return OnPendingResume, nil
+	case OnPendingNew:
+		return OnPendingNew, nil
 	default:
 		return "", errors.Errorf("unknown on-pending action %q", raw)
 	}
