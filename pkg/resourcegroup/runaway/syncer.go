@@ -46,6 +46,12 @@ const (
 	// wall-clock skew). De-duplication across the overlap is handled by
 	// `AddWatch` in memory.
 	watchSyncOverlap = 3 * watchSyncInterval
+	// watchSyncBatchLimit caps the number of rows returned per scan query.
+	// This prevents unbounded memory usage when the time window spans a
+	// large number of rows (e.g. the very first scan from NullTime).
+	// When the limit is hit, CheckPoint advances to the last row's key
+	// column time so the next 1-second sync cycle continues from there.
+	watchSyncBatchLimit = maxWatchRecordChannelSize * 2
 	// watchTableName is the name of system table which save runaway watch items.
 	runawayWatchTableName = "tidb_runaway_watch"
 	// watchDoneTableName is the name of system table which save done runaway watch items.
@@ -167,6 +173,7 @@ func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache)
 		newWatchReader: &systemTableReader{
 			TableName:     getRunawayWatchTableName(),
 			KeyCol:        "start_time",
+			KeyColIdx:     watchColStartTime,
 			RecordColumns: watchRecordColumns,
 			CheckPoint:    NullTime,
 			UpperBound:    NullTime,
@@ -174,6 +181,7 @@ func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache)
 		deletionWatchReader: &systemTableReader{
 			TableName:     getRunawayWatchDoneTableName(),
 			KeyCol:        "done_time",
+			KeyColIdx:     watchDoneColDoneTime,
 			RecordColumns: watchDoneRecordColumns,
 			CheckPoint:    NullTime,
 			UpperBound:    NullTime,
@@ -233,8 +241,14 @@ func (s *syncer) getNewWatchDoneRecords() ([]*QuarantineRecord, error) {
 
 // scanNewRecordsInRange performs a time-windowed scan over reader's table using
 // the `[CheckPoint, UpperBound)` range produced by genSelectStmt. On a non-empty
-// scan it advances CheckPoint to `UpperBound - watchSyncOverlap`, keeping a
-// small re-scan window for rows that become visible slightly later.
+// scan it advances CheckPoint depending on whether the SQL LIMIT was reached:
+//
+//   - Full batch (raw row count == watchSyncBatchLimit): CheckPoint moves to
+//     the last row's key-column time, so the next 1-second sync cycle continues
+//     from there. De-duplication in AddWatch/removeWatch handles repeated rows.
+//   - Partial batch: CheckPoint moves to `UpperBound - watchSyncOverlap`,
+//     keeping a small re-scan window for rows that become visible slightly later.
+//
 func (s *syncer) scanNewRecordsInRange(reader *systemTableReader) ([]*QuarantineRecord, error) {
 	// Capture UpperBound before reading so the checkpoint advances
 	// deterministically from it rather than from a post-decode `time.Now()`.
@@ -243,7 +257,22 @@ func (s *syncer) scanNewRecordsInRange(reader *systemTableReader) ([]*Quarantine
 	if err != nil {
 		return nil, err
 	}
-	if len(records) > 0 {
+	if len(records) >= watchSyncBatchLimit {
+		// Batch full — more rows may remain in the window. Advance
+		// CheckPoint to the last row's key-column time so the next cycle
+		// resumes from there (with >=, the boundary row will be re-read
+		// and de-duplicated).
+		//
+		// If lastScanKeyTime equals CheckPoint, all rows in the batch share
+		// the same key-column timestamp (microsecond-precision collision).
+		// Fall through to the UpperBound-based advancement to avoid a
+		// livelock that re-reads the same page every cycle.
+		if reader.lastScanKeyTime.After(reader.CheckPoint) {
+			reader.CheckPoint = reader.lastScanKeyTime
+		} else {
+			reader.CheckPoint = reader.UpperBound.Add(-watchSyncOverlap)
+		}
+	} else if len(records) > 0 {
 		reader.CheckPoint = reader.UpperBound.Add(-watchSyncOverlap)
 	}
 	return records, nil
@@ -274,6 +303,9 @@ func (s *syncer) readQuarantineRecords(
 				continue
 			}
 		}
+		if t, e := r.GetTime(reader.KeyColIdx).GoTime(time.UTC); e == nil {
+			reader.lastScanKeyTime = t
+		}
 		ret = append(ret, &QuarantineRecord{
 			ID:                r.GetInt64(cols.ID),
 			ResourceGroupName: r.GetString(cols.ResourceGroupName),
@@ -297,9 +329,14 @@ func (s *syncer) readQuarantineRecords(
 type systemTableReader struct {
 	TableName     string
 	KeyCol        string
+	KeyColIdx     int // column index of KeyCol in SELECT * result, for pagination
 	RecordColumns quarantineColumns
 	CheckPoint    time.Time
 	UpperBound    time.Time
+	// lastScanKeyTime is the key-column time of the last raw row returned by
+	// the most recent readQuarantineRecords call. It is used by
+	// scanNewRecordsInRange to advance CheckPoint when a batch is full.
+	lastScanKeyTime time.Time
 }
 
 func (r *systemTableReader) genSelectByIDStmt(id int64) func() (string, []any) {
@@ -328,7 +365,7 @@ func (r *systemTableReader) genSelectByGroupStmt(groupName string) func() (strin
 
 func (r *systemTableReader) genSelectStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]any, 0, 2)
+	params := make([]any, 0, 3)
 	builder.WriteString("select * from ")
 	builder.WriteString(r.TableName)
 	builder.WriteString(" where ")
@@ -337,7 +374,8 @@ func (r *systemTableReader) genSelectStmt() (string, []any) {
 	builder.WriteString(r.KeyCol)
 	builder.WriteString(" < %? order by ")
 	builder.WriteString(r.KeyCol)
-	params = append(params, r.CheckPoint, r.UpperBound)
+	builder.WriteString(" limit %?")
+	params = append(params, r.CheckPoint, r.UpperBound, watchSyncBatchLimit)
 	return builder.String(), params
 }
 
