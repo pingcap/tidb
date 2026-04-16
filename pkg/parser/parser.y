@@ -14607,7 +14607,25 @@ ExtendedPriv:
 	}
 
 RoleOrPrivElem:
-	PrivElem
+	"CREATE" "MASKING" "POLICY"
+	{
+		$$ = &ast.RoleOrPriv{
+			Symbols: "CREATE MASKING POLICY",
+		}
+	}
+|	"ALTER" "MASKING" "POLICY"
+	{
+		$$ = &ast.RoleOrPriv{
+			Symbols: "ALTER MASKING POLICY",
+		}
+	}
+|	"DROP" "MASKING" "POLICY"
+	{
+		$$ = &ast.RoleOrPriv{
+			Symbols: "DROP MASKING POLICY",
+		}
+	}
+|	PrivElem
 	{
 		$$ = &ast.RoleOrPriv{
 			Node: $1,

@@ -92,9 +92,9 @@ GRANT ALTER ON privilege__privileges.mask_t TO mask_creator;
 GRANT ALTER ON privilege__privileges.mask_t TO mask_alter;
 GRANT ALTER ON privilege__privileges.mask_t TO mask_drop;
 GRANT ALTER ON privilege__privileges.mask_t TO mask_none;
-GRANT `CREATE MASKING POLICY` ON *.* TO mask_creator;
-GRANT `ALTER MASKING POLICY` ON *.* TO mask_alter;
-GRANT `DROP MASKING POLICY` ON *.* TO mask_drop;
+GRANT CREATE MASKING POLICY ON *.* TO mask_creator;
+GRANT ALTER MASKING POLICY ON *.* TO mask_alter;
+GRANT DROP MASKING POLICY ON *.* TO mask_drop;
 
 connect (mask_none, localhost, mask_none,, privilege__privileges);
 connection mask_none;

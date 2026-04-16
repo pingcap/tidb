@@ -159,16 +159,20 @@
   },
   {
     "id": "P0-AUTH-01",
-    "scenario": "Dynamic privilege boundary for CREATE/ALTER/DROP masking policy",
+    "scenario": "Dynamic privilege boundary and GRANT/REVOKE syntax for CREATE/ALTER/DROP masking policy",
     "coverage_cases": [
       {
         "name": "Privilege matrix for masking policy statements",
         "file": "tests/integrationtest/t/privilege/column_masking_policy.test"
+      },
+      {
+        "name": "Parser coverage for unquoted multi-word masking dynamic privileges in GRANT/REVOKE",
+        "file": "pkg/parser/parser_test.go"
       }
     ],
     "rule": {
       "type": "steps_pass",
-      "steps": ["it_column_masking"]
+      "steps": ["ut_parser_privilege", "it_column_masking"]
     }
   },
   {

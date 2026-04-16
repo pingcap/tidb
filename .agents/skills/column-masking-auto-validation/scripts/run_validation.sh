@@ -103,6 +103,7 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
   fi
 
   run_step "ut_failpoint_enable" "make failpoint-enable"
+  run_step "ut_parser_privilege" "pushd pkg/parser >/dev/null && go test -run 'TestPrivilege' -count=1 ./... && popd >/dev/null"
   run_step "ut_ddl" "go test -run 'TestMaskingPolicy' -tags=intest,deadlock ./pkg/ddl"
   run_step "ut_meta" "go test -run 'TestMaskingPolicy' -tags=intest,deadlock ./pkg/meta"
   run_step "ut_planner" "go test -run 'TestMaskingPolicy' -tags=intest,deadlock ./pkg/planner/core"
