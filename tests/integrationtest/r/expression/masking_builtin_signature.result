@@ -4,11 +4,12 @@ CREATE TABLE issue5_test_masking (
 id INT PRIMARY KEY,
 str_col VARCHAR(100),
 date_col DATE,
-datetime_col DATETIME
+datetime_col DATETIME,
+salary DECIMAL(10,2)
 );
 INSERT INTO issue5_test_masking VALUES
-(1, 'sensitive_data_12345', '1990-05-15', '1990-05-15 14:30:00'),
-(2, 'another_secret_98765', '1985-03-20', '1985-03-20 09:15:00');
+(1, 'sensitive_data_12345', '1990-05-15', '1990-05-15 14:30:00', 75000.00),
+(2, 'another_secret_98765', '1985-03-20', '1985-03-20 09:15:00', 85000.00);
 ## enable_query_log
 ## Verify signature: col (string), preserve_left (int), preserve_right (int), mask_char (single char)
 SELECT id, MASK_PARTIAL(str_col, 9, 5, '*') AS masked
@@ -66,13 +67,18 @@ FROM issue5_test_masking
 WHERE id = 1;
 id	masked
 1	1970-01-01
-## Verify signature: col (any type)
+## Verify signature: col (string/date-time/numeric supported types)
 SELECT id, MASK_NULL(str_col) IS NULL AS is_null
 FROM issue5_test_masking
 WHERE id = 1;
 id	is_null
 1	1
 SELECT id, MASK_NULL(date_col) IS NULL AS is_null
+FROM issue5_test_masking
+WHERE id = 2;
+id	is_null
+2	1
+SELECT id, MASK_NULL(salary) IS NULL AS is_null
 FROM issue5_test_masking
 WHERE id = 2;
 id	is_null

@@ -164,6 +164,25 @@ disconnect cmp_query_conn2;
 
 connection default;
 
+# IT-MASK-P0-007B TestColumnMaskPolicyMaskNullOnNumericColumn
+DROP TABLE IF EXISTS privilege__column_masking_policy.employees;
+CREATE TABLE privilege__column_masking_policy.employees (
+  id INT PRIMARY KEY,
+  name VARCHAR(100),
+  email VARCHAR(100),
+  salary DECIMAL(10,2),
+  ssn VARCHAR(11)
+);
+INSERT INTO privilege__column_masking_policy.employees VALUES
+  (1, 'John Doe', 'john.doe@company.com', 75000.00, '123456789'),
+  (2, 'Jane Smith', 'jane.smith@company.com', 85000.00, '987654321');
+CREATE MASKING POLICY p_mask_salary ON privilege__column_masking_policy.employees(salary)
+  AS MASK_NULL(salary) ENABLE;
+SELECT id, salary FROM privilege__column_masking_policy.employees ORDER BY id;
+SELECT id, salary IS NULL AS salary_is_null FROM privilege__column_masking_policy.employees ORDER BY id;
+ALTER TABLE privilege__column_masking_policy.employees DROP MASKING POLICY p_mask_salary;
+DROP TABLE privilege__column_masking_policy.employees;
+
 # IT-MASK-P0-008 TestColumnMaskPolicyUnsupportedTargetsAndColumns
 DROP VIEW IF EXISTS privilege__column_masking_policy.v_mask;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_gen;
@@ -171,7 +190,7 @@ DROP TABLE IF EXISTS privilege__column_masking_policy.t_unsup;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_drop_table;
 CREATE VIEW privilege__column_masking_policy.v_mask AS SELECT c FROM privilege__column_masking_policy.t_lifecycle;
 CREATE TABLE privilege__column_masking_policy.t_gen(a INT, b VARCHAR(20) GENERATED ALWAYS AS (CAST(a AS CHAR)) VIRTUAL);
-CREATE TABLE privilege__column_masking_policy.t_unsup(i INT);
+CREATE TABLE privilege__column_masking_policy.t_unsup(i JSON);
 
 CREATE GLOBAL TEMPORARY TABLE privilege__column_masking_policy.t_tmp(c VARCHAR(20)) ON COMMIT DELETE ROWS;
 --error 8006

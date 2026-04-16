@@ -172,13 +172,13 @@ Default-deny behavior is recommended: users/roles not matching allow conditions 
   - Example: `MASK_PARTIAL(credit_card, 6, 4, '*')` keeps first 6 and last 4 characters
 
 - `MASK_FULL(col, mask_char)` - Masks the entire column value by repeating the specified character
-  - `col`: The column to mask (string, datetime, or numeric types)
+  - `col`: The column to mask (string/date-time/year types)
   - `mask_char`: Single character used for masking (e.g., '*', 'X')
   - For datetime types: returns '1970-01-01' (date) or '1970-01-01 00:00:00' (datetime)
   - Example: `MASK_FULL(ssn, 'X')` returns 'XXXXXXXXX' for a 9-digit SSN
 
 - `MASK_NULL(col)` - Returns NULL for the column value
-  - `col`: The column to mask (any supported type)
+  - `col`: The column to mask (string/date-time/numeric supported types)
   - Example: `MASK_NULL(salary)` always returns NULL
 
 - `MASK_DATE(col, date_literal)` - Replaces the date value with a fixed date literal
@@ -192,6 +192,7 @@ Primary supported scope:
 
 - String-like: `VARCHAR`, `CHAR`, `TEXT` family, `BLOB` family
 - Temporal: `DATE`, `TIME`, `DATETIME`, `TIMESTAMP`, `YEAR`
+- Numeric: integer family, `DECIMAL`, `FLOAT`, `DOUBLE`
 
 For `LONGTEXT` and `BLOB` types, required minimum behavior is:
 
