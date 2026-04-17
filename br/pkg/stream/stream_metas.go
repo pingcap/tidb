@@ -614,6 +614,7 @@ func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out.DestructPrefix = append(out.DestructPrefix, m1.GetDestructPrefix()...)
 	out.DestructPrefix = append(out.DestructPrefix, m2.GetDestructPrefix()...)
 	out.IngestedSstPaths = append(out.IngestedSstPaths, m1.GetIngestedSstPaths()...)
+	out.IngestedSstPaths = append(out.IngestedSstPaths, m2.GetIngestedSstPaths()...)
 	return out
 }
 

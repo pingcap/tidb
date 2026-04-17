@@ -2992,3 +2992,15 @@ func TestGroupedExtFullBackup(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeMigrationsPreservesIngestedSstPaths(t *testing.T) {
+	m1 := mig(mExtFullBackup("base/a", "base/b"))
+	m2 := mig(mExtFullBackup("layer/c", "layer/d"))
+
+	merged := MergeMigrations(m1, m2)
+
+	require.ElementsMatch(t,
+		[]string{"base/a", "base/b", "layer/c", "layer/d"},
+		merged.IngestedSstPaths,
+	)
+}
