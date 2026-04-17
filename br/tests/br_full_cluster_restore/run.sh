@@ -28,6 +28,11 @@ restart_services
 
 unset BR_LOG_TO_TERM
 run_sql_file $CUR/full_data.sql
+run_sql "select * from mysql.global_priv;"
+run_sql_as user3 "123456" "show status like 'Ssl_cipher';"
+cat $TEST_DIR/sql_res.$TEST_NAME.txt
+run_sql_as user3 "123456" "select count(*) from db1.t1" || true
+check_contains "Access denied for user"
 run_br backup full --log-file $br_log_file -s "local://$backup_dir"
 
 run_sql "SELECT user FROM mysql.user WHERE JSON_EXTRACT(user_attributes, '$.resource_group') != '';"
