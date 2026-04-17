@@ -205,6 +205,8 @@ func rebaseLegacyTimestampMicros(micros int64, loc *time.Location) int64 {
 	if loc == nil {
 		loc = time.UTC
 	}
+	// aurora export/snapshot files are using UTC, it can have a faster path
+	// for rebasing.
 	if loc == time.UTC {
 		utc := time.UnixMicro(micros).UTC()
 		// In UTC, rebasing preserves the time-of-day and only shifts the day count
