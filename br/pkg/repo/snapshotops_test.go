@@ -115,9 +115,12 @@ func TestDiscardPendingSnapshotUnfinishedRejectsUnsupportedStorage(t *testing.T)
 	createDataFile(t, ctx, storage, 1, backupID, "a.sst")
 
 	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(t, ctx, storage, backupID))
-	require.Nil(t, result)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "does not support WalkDir StartAfter")
+	require.Equal(t, backupID, result.BackupID)
+	require.Zero(t, result.MetadataDeleted)
+	require.Zero(t, result.DataDeleted)
+	require.Zero(t, result.PendingDeleted)
 	requireFileExists(t, ctx, storage, repo.PendingFile([]byte("hash"), backupID))
 	requireFileExists(t, ctx, storage, pathJoin(repo.SnapshotMetadataDir(backupID), checkpoint.CheckpointMetaPathForBackup))
 	requireFileExists(t, ctx, storage, repo.SnapshotStoreDataPrefix(1, backupID)+"/a.sst")
@@ -136,7 +139,6 @@ func TestDiscardPendingSnapshotRejectsTransient(t *testing.T) {
 
 	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(t, ctx, storage, backupID))
 	require.NoError(t, err)
-	require.NotNil(t, result)
 	require.True(t, result.StalePending)
 	require.Equal(t, 1, result.PendingDeleted)
 	require.Zero(t, result.MetadataDeleted)
@@ -181,9 +183,12 @@ func TestDeleteSnapshotRejectsUnsupportedStorage(t *testing.T) {
 	createPendingMarker(t, ctx, storage, backupID)
 
 	result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
-	require.Nil(t, result)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "does not support WalkDir StartAfter")
+	require.Equal(t, backupID, result.BackupID)
+	require.Zero(t, result.MetadataDeleted)
+	require.Zero(t, result.DataDeleted)
+	require.Zero(t, result.PendingDeleted)
 	requireFileExists(t, ctx, storage, repo.SnapshotMetadataFile(backupID))
 	requireFileExists(t, ctx, storage, repo.SnapshotStoreDataPrefix(1, backupID)+"/a.sst")
 	requireFileExists(t, ctx, storage, repo.PendingFile([]byte("hash"), backupID))
@@ -278,7 +283,7 @@ func TestDeleteSnapshotWaitsForStartedDeletesAfterWalkError(t *testing.T) {
 	storage.failSubDir = pathJoin("_meta", "snapshot", backupID.StorageName())
 	storage.failPath = repo.SnapshotMetadataFile(backupID)
 
-	resultCh := make(chan *repo.SnapshotDeleteResult, 1)
+	resultCh := make(chan repo.SnapshotDeleteResult, 1)
 	errCh := make(chan error, 1)
 	go func() {
 		result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
@@ -305,7 +310,6 @@ func TestDeleteSnapshotWaitsForStartedDeletesAfterWalkError(t *testing.T) {
 	err := <-errCh
 	require.Error(t, err)
 	require.ErrorContains(t, err, "injected walk error")
-	require.NotNil(t, result)
 	require.Equal(t, 1, result.MetadataDeleted)
 }
 
@@ -336,7 +340,6 @@ func TestDiscardPendingSnapshotReportsPartialMarkerDeletion(t *testing.T) {
 	)
 	require.Error(t, err)
 	require.ErrorContains(t, err, secondMarker)
-	require.NotNil(t, result)
 	require.Equal(t, 1, result.PendingDeleted)
 	require.Equal(t, int64(1), deletedCallbacks.Load())
 	require.True(t, result.StalePending)

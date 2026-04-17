@@ -41,7 +41,6 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -697,7 +696,7 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 		zap.String("checkpointStorage", cfg.CheckpointStorage),
 		zap.Bool("hasFullBackupStorage", len(cfg.FullBackupStorage) > 0))
 
-	_, checkpointStorage, err := taskcommon.GetStorage(ctx, cfg.CheckpointStorage, cfg.Config.BackendOptions, cfg.Config.NoCreds, cfg.Config.SendCreds)
+	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -726,7 +725,7 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerSnapshot(
 	if cfg.snapshotCheckpointMetaManager != nil {
 		return nil
 	}
-	_, checkpointStorage, err := taskcommon.GetStorage(ctx, cfg.CheckpointStorage, cfg.Config.BackendOptions, cfg.Config.NoCreds, cfg.Config.SendCreds)
+	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1244,7 +1243,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// reads out information from backup meta file and do requirement checking if needed
-	u, s, err := taskcommon.GetStorage(ctx, cfg.Storage, cfg.Config.BackendOptions, cfg.Config.NoCreds, cfg.Config.SendCreds)
+	u, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2774,7 +2773,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	if cfg.UpstreamClusterID == 0 {
 		if IsStreamRestore(cmdName) {
 			// For PiTR restore, get cluster ID from log storage
-			_, s, err := taskcommon.GetStorage(ctx, cfg.Config.Storage, cfg.Config.BackendOptions, cfg.Config.NoCreds, cfg.Config.SendCreds)
+			_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2801,7 +2800,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			}
 		} else {
 			// For snapshot restore, get cluster ID from backup meta
-			u, s, err := taskcommon.GetStorage(ctx, cfg.Config.Storage, cfg.Config.BackendOptions, cfg.Config.NoCreds, cfg.Config.SendCreds)
+			u, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2837,7 +2836,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 
 	// create registration info from config to find matching tasks
 	registrationInfo := registry.RegistrationInfo{
-		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, taskrepo.SnapshotRef(cfg.Layout, cfg.BackupID)),
+		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, cfg.BackupID),
 		FilterStrings:     cfg.FilterStr,
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,

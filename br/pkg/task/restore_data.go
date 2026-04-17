@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/data"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -60,7 +59,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	// read the backup meta resolved ts and total tikvs from backup storage
 	var resolveTS uint64
-	_, externStorage, err := taskcommon.GetStorage(ctx, cfg.Config.Storage, cfg.Config.BackendOptions, cfg.Config.NoCreds, cfg.Config.SendCreds)
+	_, externStorage, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}

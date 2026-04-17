@@ -96,12 +96,6 @@ func (id BackupID) IsZero() bool {
 	return id == 0
 }
 
-// SnapshotRef identifies one snapshot backup when repo-v1 is in use.
-type SnapshotRef struct {
-	Layout   Layout
-	BackupID BackupID
-}
-
 const (
 	RepoMetaPath = "_meta/repo.json"
 	RootLockPath = metautil.LockFile

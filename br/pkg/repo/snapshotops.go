@@ -24,12 +24,10 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -216,10 +214,10 @@ func (ops SnapshotOps) WalkSnapshotOrphans(ctx context.Context) TrySeq[string] {
 		completedSet[id] = struct{}{}
 	}
 
-	if !ops.supportsRepoStartAfter() {
-		log.Warn("WalkSnapshotOrphans: StartAfter is unavailable in this storage, will full-scan, which may be slow.",
-			zap.String("storage", ops.URI()))
-		return ops.walkSnapshotOrphansByFullScan(ctx, completedSet)
+	if err := ops.requireRepoStartAfter(); err != nil {
+		return func(yield func(error, string) bool) {
+			yield(errors.Trace(err), "")
+		}
 	}
 
 	return func(yield func(error, string) bool) {
@@ -244,23 +242,6 @@ func (ops SnapshotOps) WalkSnapshotOrphans(ctx context.Context) TrySeq[string] {
 				if !yield(nil, dataFile.Path) {
 					return
 				}
-			}
-		}
-	}
-}
-
-func (ops SnapshotOps) walkSnapshotOrphansByFullScan(ctx context.Context, completedSet map[BackupID]struct{}) TrySeq[string] {
-	return func(yield func(error, string) bool) {
-		for err, dataFile := range WalkSnapshotDataFiles(ctx, ops.Storage) {
-			if err != nil {
-				yield(errors.Trace(err), "")
-				return
-			}
-			if _, ok := completedSet[dataFile.BackupID]; ok {
-				continue
-			}
-			if !yield(nil, dataFile.Path) {
-				return
 			}
 		}
 	}
@@ -331,11 +312,11 @@ func (ops SnapshotOps) DeleteSnapshot(
 	ctx context.Context,
 	backupID BackupID,
 	options ...SnapshotMutationOption,
-) (*SnapshotDeleteResult, error) {
+) (SnapshotDeleteResult, error) {
 	opts := collectSnapshotMutationOptions(options)
-	result := &SnapshotDeleteResult{BackupID: backupID}
+	result := SnapshotDeleteResult{BackupID: backupID}
 	if err := ops.requireRepoStartAfter(); err != nil {
-		return nil, errors.Annotatef(err, "delete snapshot %s", backupID)
+		return result, errors.Annotatef(err, "delete snapshot %s", backupID)
 	}
 
 	var err error
@@ -373,10 +354,10 @@ func (ops SnapshotOps) DiscardPendingSnapshot(
 	ctx context.Context,
 	target PendingBackup,
 	options ...SnapshotMutationOption,
-) (*PendingDiscardResult, error) {
+) (PendingDiscardResult, error) {
 	opts := collectSnapshotMutationOptions(options)
 	var err error
-	result := &PendingDiscardResult{BackupID: target.BackupID}
+	result := PendingDiscardResult{BackupID: target.BackupID}
 	switch target.State {
 	case PendingBackupStateStale:
 		result.StalePending = true
@@ -389,7 +370,7 @@ func (ops SnapshotOps) DiscardPendingSnapshot(
 		}
 	case PendingBackupStateUnfinished:
 		if err := ops.requireRepoStartAfter(); err != nil {
-			return nil, errors.Annotatef(err, "discard unfinished pending snapshot %s", target.BackupID)
+			return result, errors.Annotatef(err, "discard unfinished pending snapshot %s", target.BackupID)
 		}
 		result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, SnapshotMetadataDir(target.BackupID), opts)
 		if err != nil {
@@ -404,7 +385,7 @@ func (ops SnapshotOps) DiscardPendingSnapshot(
 			return result, errors.Annotatef(err, "delete pending markers for unfinished backup %s", target.BackupID)
 		}
 	default:
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "unknown pending backup state %q", target.State)
+		return result, errors.Annotatef(berrors.ErrInvalidArgument, "unknown pending backup state %q", target.State)
 	}
 	return result, nil
 }

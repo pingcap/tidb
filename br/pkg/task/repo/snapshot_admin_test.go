@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -37,6 +38,21 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
+
+func decodeRepoSnapshotJSONStream[T any](t *testing.T, payload []byte) []T {
+	t.Helper()
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	items := make([]T, 0)
+	for {
+		var item T
+		err := decoder.Decode(&item)
+		if err == io.EOF {
+			return items
+		}
+		require.NoError(t, err)
+		items = append(items, item)
+	}
+}
 
 func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
@@ -98,9 +114,8 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		var tables []repoSnapshotTableView
-		require.NoError(t, json.Unmarshal(result, &tables))
-		require.Equal(t, []repoSnapshotTableView{
+		tables := decodeRepoSnapshotJSONStream[repoSnapshotTableView](t, result)
+		require.ElementsMatch(t, []repoSnapshotTableView{
 			{DBName: "alpha", TableName: "t0", KVCount: 10, KVSize: 100, TiFlashReplica: 0},
 			{DBName: "alpha", TableName: "t1", KVCount: 11, KVSize: 110, TiFlashReplica: 1},
 			{DBName: "zeta", TableName: "t2", KVCount: 22, KVSize: 220, TiFlashReplica: 2},
@@ -114,9 +129,9 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 			newFileForView(t, "backup/data/a.sst", "00", "09", "default", 32, 3, 300, "ab"),
 		}
 		expectedFiles := []repoSnapshotFileView{
-			convertRepoSnapshotFileView(files[2]),
-			convertRepoSnapshotFileView(files[1]),
 			convertRepoSnapshotFileView(files[0]),
+			convertRepoSnapshotFileView(files[1]),
+			convertRepoSnapshotFileView(files[2]),
 		}
 		for i, useV2 := range []bool{false, true} {
 			filesBackupID := backupID + repo.BackupID(i+1)
@@ -128,9 +143,8 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			var got []repoSnapshotFileView
-			require.NoError(t, json.Unmarshal(result, &got))
-			require.Equal(t, expectedFiles, got)
+			got := decodeRepoSnapshotJSONStream[repoSnapshotFileView](t, result)
+			require.ElementsMatch(t, expectedFiles, got)
 		}
 	})
 
@@ -180,7 +194,7 @@ func TestRunRepoSnapshotDeleteConfirmationAbortKeepsFiles(t *testing.T) {
 		Config:   cfg,
 		BackupID: backupID,
 	})
-	require.Nil(t, result)
+	require.Equal(t, RepoSnapshotDeleteResult{}, result)
 	require.Error(t, err)
 	require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
 	require.Empty(t, console.progressBars)
@@ -221,7 +235,7 @@ func TestRunRepoSnapshotPendingDiscardConfirmationAbortKeepsFiles(t *testing.T) 
 			Config:   cfg,
 			BackupID: backupID,
 		})
-		require.Nil(t, result)
+		require.Equal(t, RepoSnapshotPendingDiscardResult{}, result)
 		require.Error(t, err)
 		require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
 		require.Empty(t, console.progressBars)

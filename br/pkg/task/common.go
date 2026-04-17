@@ -867,13 +867,18 @@ func storageOpts(cfg *Config) *storeapi.Options {
 	}
 }
 
+// GetStorage is a thin wrapper around task/common.GetStorage for task.Config callers.
+func GetStorage(ctx context.Context, storageName string, cfg *Config) (*backuppb.StorageBackend, storeapi.Storage, error) {
+	return taskcommon.GetStorage(ctx, storageName, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
+}
+
 // ReadBackupMeta reads the backupmeta file from the storage.
 func ReadBackupMeta(
 	ctx context.Context,
 	fileName string,
 	cfg *Config,
 ) (*backuppb.StorageBackend, storeapi.Storage, *backuppb.BackupMeta, error) {
-	u, s, err := taskcommon.GetStorage(ctx, cfg.Storage, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
+	u, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}

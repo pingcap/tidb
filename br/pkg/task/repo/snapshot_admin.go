@@ -15,13 +15,13 @@
 package taskrepo
 
 import (
-	"cmp"
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"iter"
-	"slices"
+	"io"
+	"strconv"
 	"strings"
 
 	"github.com/docker/go-units"
@@ -136,9 +136,9 @@ func RunRepoSnapshotList(
 	cfg RepoSnapshotListConfig,
 ) ([]repo.BackupID, error) {
 	console := normalizeRepoSnapshotConsole(consoleGlue)
-	return runRepoSnapshotSpinnerTask(ctx, console, "Listing snapshot backups...", nil, func() ([]repo.BackupID, error) {
-		return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]repo.BackupID, error) {
-			return repo.ListCompletedSnapshotIDs(ctx, storage)
+	return runRepoSnapshotSpinnerTask(ctx, console, "Listing snapshot backups...", nil, func(taskCtx context.Context) ([]repo.BackupID, error) {
+		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storeapi.Storage) ([]repo.BackupID, error) {
+			return repo.ListCompletedSnapshotIDs(taskCtx, storage)
 		})
 	})
 }
@@ -148,61 +148,74 @@ func RunRepoSnapshotGet(
 	consoleGlue glue.ConsoleGlue,
 	cfg RepoSnapshotGetConfig,
 ) ([]byte, error) {
+	var out bytes.Buffer
+	if err := RunRepoSnapshotGetTo(ctx, consoleGlue, cfg, &out); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return out.Bytes(), nil
+}
+
+func RunRepoSnapshotGetTo(
+	ctx context.Context,
+	consoleGlue glue.ConsoleGlue,
+	cfg RepoSnapshotGetConfig,
+	out io.Writer,
+) error {
+	if out == nil {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "output writer is required")
+	}
 	console := normalizeRepoSnapshotConsole(consoleGlue)
 	extraFields := []glue.ExtraField{glue.WithConstExtraField("backup-id", cfg.BackupID.String())}
-	return runRepoSnapshotSpinnerTask(ctx, console, "Loading snapshot metadata...", extraFields, func() ([]byte, error) {
-		return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]byte, error) {
+	_, err := runRepoSnapshotSpinnerTask(ctx, console, "Loading snapshot metadata...", extraFields, func(taskCtx context.Context) (struct{}, error) {
+		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storeapi.Storage) (struct{}, error) {
 			view, err := normalizeRepoSnapshotMetaView(cfg.View)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return struct{}{}, errors.Trace(err)
 			}
 			metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(cfg.BackupID))
-			backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo)
+			backupMeta, err := taskcommon.ReadBackupMetaFromStorage(taskCtx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return struct{}{}, errors.Trace(err)
 			}
 			reader := metautil.NewMetaReader(backupMeta, metadataStorage, &cfg.CipherInfo)
-			return renderRepoSnapshotMetaView(ctx, reader, view)
+			if err := renderRepoSnapshotMetaView(taskCtx, reader, view, out); err != nil {
+				return struct{}{}, errors.Trace(err)
+			}
+			return struct{}{}, nil
 		})
 	})
+	return errors.Trace(err)
 }
 
 func RunRepoSnapshotDelete(
 	ctx context.Context,
 	consoleGlue glue.ConsoleGlue,
 	cfg RepoSnapshotDeleteConfig,
-) (*RepoSnapshotDeleteResult, error) {
+) (RepoSnapshotDeleteResult, error) {
 	console := normalizeRepoSnapshotConsole(consoleGlue)
-	var deleteResult *RepoSnapshotDeleteResult
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotDeleteResult, error) {
+	var deleteResult RepoSnapshotDeleteResult
+	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (RepoSnapshotDeleteResult, error) {
 		if err := confirmRepoSnapshotDelete(ctx, console, storage, &cfg); err != nil {
-			return nil, errors.Trace(err)
+			return RepoSnapshotDeleteResult{}, errors.Trace(err)
 		}
-		extraFields := []glue.ExtraField{
-			glue.WithConstExtraField("backup-id", cfg.BackupID.String()),
-			withDeletedFilesExtraField(func() int {
-				if deleteResult == nil {
-					return 0
-				}
-				return deleteResult.MetadataDeleted + deleteResult.DataDeleted + deleteResult.PendingDeleted
-			}),
-		}
+		extraFields := append(
+			[]glue.ExtraField{glue.WithConstExtraField("backup-id", cfg.BackupID.String())},
+			withSnapshotMutationDeletedExtraFields(func() RepoSnapshotDeleteResult { return deleteResult })...,
+		)
 		return runRepoSnapshotDynamicProgressTask(
 			ctx,
 			console,
 			"Deleting snapshot backup...",
 			extraFields,
-			func(addTotal func(int64), advance func(int64)) (*RepoSnapshotDeleteResult, error) {
+			func(progress repoSnapshotDynamicProgressTaskContext) (RepoSnapshotDeleteResult, error) {
 				snapshotOps := repo.SnapshotOpsExtension(storage)
 				result, err := snapshotOps.DeleteSnapshot(
-					ctx,
+					progress.Context,
 					cfg.BackupID,
-					repo.WithMutationDiscoveredProgress(func(count int) { addTotal(int64(count)) }),
-					repo.WithMutationDeletedProgress(func(count int) { advance(int64(count)) }),
+					repo.WithMutationDiscoveredProgress(func(count int) { progress.AddTotal(int64(count)) }),
+					repo.WithMutationDeletedProgress(func(count int) { progress.Advance(int64(count)) }),
 				)
-				if result != nil {
-					deleteResult = result
-				}
+				deleteResult = result
 				return result, err
 			},
 		)
@@ -213,47 +226,42 @@ func RunRepoSnapshotPendingDiscard(
 	ctx context.Context,
 	consoleGlue glue.ConsoleGlue,
 	cfg RepoSnapshotPendingDiscardConfig,
-) (*RepoSnapshotPendingDiscardResult, error) {
+) (RepoSnapshotPendingDiscardResult, error) {
 	console := normalizeRepoSnapshotConsole(consoleGlue)
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (*RepoSnapshotPendingDiscardResult, error) {
+	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (RepoSnapshotPendingDiscardResult, error) {
 		snapshotOps := repo.SnapshotOpsExtension(storage)
 		pendingBackups, err := snapshotOps.ListPendingBackups(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return RepoSnapshotPendingDiscardResult{}, errors.Trace(err)
 		}
 		target, err := selectPendingBackupForDiscard(cfg.BackupID, pendingBackups)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return RepoSnapshotPendingDiscardResult{}, errors.Trace(err)
 		}
 		if err := confirmRepoSnapshotPendingDiscard(console, &cfg, target); err != nil {
-			return nil, errors.Trace(err)
+			return RepoSnapshotPendingDiscardResult{}, errors.Trace(err)
 		}
-		var discardResult *RepoSnapshotPendingDiscardResult
-		extraFields := []glue.ExtraField{
-			glue.WithConstExtraField("backup-id", target.BackupID.String()),
-			glue.WithConstExtraField("state", target.State),
-			withDeletedFilesExtraField(func() int {
-				if discardResult == nil {
-					return 0
-				}
-				return discardResult.MetadataDeleted + discardResult.DataDeleted + discardResult.PendingDeleted
-			}),
-		}
+		var discardResult RepoSnapshotPendingDiscardResult
+		extraFields := append(
+			[]glue.ExtraField{
+				glue.WithConstExtraField("backup-id", target.BackupID.String()),
+				glue.WithConstExtraField("state", target.State),
+			},
+			withPendingDiscardDeletedExtraFields(func() RepoSnapshotPendingDiscardResult { return discardResult })...,
+		)
 		return runRepoSnapshotDynamicProgressTask(
 			ctx,
 			console,
 			"Discarding pending snapshot backup...",
 			extraFields,
-			func(addTotal func(int64), advance func(int64)) (*RepoSnapshotPendingDiscardResult, error) {
+			func(progress repoSnapshotDynamicProgressTaskContext) (RepoSnapshotPendingDiscardResult, error) {
 				result, err := snapshotOps.DiscardPendingSnapshot(
-					ctx,
+					progress.Context,
 					*target,
-					repo.WithMutationDiscoveredProgress(func(count int) { addTotal(int64(count)) }),
-					repo.WithMutationDeletedProgress(func(count int) { advance(int64(count)) }),
+					repo.WithMutationDiscoveredProgress(func(count int) { progress.AddTotal(int64(count)) }),
+					repo.WithMutationDeletedProgress(func(count int) { progress.Advance(int64(count)) }),
 				)
-				if result != nil {
-					discardResult = result
-				}
+				discardResult = result
 				return result, err
 			},
 		)
@@ -266,31 +274,11 @@ func RunRepoSnapshotOrphansList(
 	cfg RepoSnapshotOrphansConfig,
 ) ([]string, error) {
 	console := normalizeRepoSnapshotConsole(consoleGlue)
-	return runRepoSnapshotSpinnerTask(ctx, console, "Listing orphan snapshot objects...", nil, func() ([]string, error) {
-		return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) ([]string, error) {
-			return repo.SnapshotOpsExtension(storage).ListSnapshotOrphans(ctx)
+	return runRepoSnapshotSpinnerTask(ctx, console, "Listing orphan snapshot objects...", nil, func(taskCtx context.Context) ([]string, error) {
+		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storeapi.Storage) ([]string, error) {
+			return repo.SnapshotOpsExtension(storage).ListSnapshotOrphans(taskCtx)
 		})
 	})
-}
-
-func WalkRepoSnapshotOrphans(
-	ctx context.Context,
-	cfg RepoSnapshotOrphansConfig,
-) iter.Seq2[error, string] {
-	storage, err := openSnapshotRepoStorage(ctx, &cfg.Config)
-	if err != nil {
-		return func(yield func(error, string) bool) {
-			yield(errors.Trace(err), "")
-		}
-	}
-	return func(yield func(error, string) bool) {
-		defer storage.Close()
-		for err, orphanPath := range repo.SnapshotOpsExtension(storage).WalkSnapshotOrphans(ctx) {
-			if !yield(err, orphanPath) {
-				return
-			}
-		}
-	}
 }
 
 func RunRepoSnapshotOrphansDelete(
@@ -313,12 +301,12 @@ func RunRepoSnapshotOrphansDelete(
 			ctx,
 			console,
 			"Deleting orphan snapshot objects...",
-			[]glue.ExtraField{withDeletedFilesExtraField(func() int { return deletedCount })},
-			func(addTotal func(int64), advance func(int64)) (int, error) {
+			[]glue.ExtraField{withDeletedObjectsExtraField("orphan-objects#", func() int { return deletedCount })},
+			func(progress repoSnapshotDynamicProgressTaskContext) (int, error) {
 				deleted, err := snapshotOps.DeleteSnapshotOrphans(
-					ctx,
-					repo.WithMutationDiscoveredProgress(func(count int) { addTotal(int64(count)) }),
-					repo.WithMutationDeletedProgress(func(count int) { advance(int64(count)) }),
+					progress.Context,
+					repo.WithMutationDiscoveredProgress(func(count int) { progress.AddTotal(int64(count)) }),
+					repo.WithMutationDeletedProgress(func(count int) { progress.Advance(int64(count)) }),
 				)
 				deletedCount = deleted
 				return deleted, err
@@ -337,14 +325,34 @@ func normalizeRepoSnapshotConsole(consoleGlue glue.ConsoleGlue) repoSnapshotCons
 	return glue.ConsoleOperations{ConsoleGlue: consoleGlue}
 }
 
-func withDeletedFilesExtraField(count func() int) glue.ExtraField {
-	return glue.WithCallbackExtraField("deleted", func() string {
-		deleted := count()
-		if deleted == 1 {
-			return "1 file"
-		}
-		return fmt.Sprintf("%d files", deleted)
+func withDeletedObjectsExtraField(key string, count func() int) glue.ExtraField {
+	return glue.WithCallbackExtraField(key, func() string {
+		return strconv.Itoa(count())
 	})
+}
+
+func withDeletedCountExtraFields(metadata, data, pending func() int) []glue.ExtraField {
+	return []glue.ExtraField{
+		withDeletedObjectsExtraField("metadata#", metadata),
+		withDeletedObjectsExtraField("data#", data),
+		withDeletedObjectsExtraField("pending#", pending),
+	}
+}
+
+func withSnapshotMutationDeletedExtraFields(result func() RepoSnapshotDeleteResult) []glue.ExtraField {
+	return withDeletedCountExtraFields(
+		func() int { return result().MetadataDeleted },
+		func() int { return result().DataDeleted },
+		func() int { return result().PendingDeleted },
+	)
+}
+
+func withPendingDiscardDeletedExtraFields(result func() RepoSnapshotPendingDiscardResult) []glue.ExtraField {
+	return withDeletedCountExtraFields(
+		func() int { return result().MetadataDeleted },
+		func() int { return result().DataDeleted },
+		func() int { return result().PendingDeleted },
+	)
 }
 
 func shouldConfirmRepoSnapshotMutation(console repoSnapshotConsole, skipPrompt bool) bool {
@@ -513,14 +521,14 @@ func runRepoSnapshotSpinnerTask[T any](
 	console repoSnapshotConsole,
 	title string,
 	extraFields []glue.ExtraField,
-	fn func() (T, error),
+	fn func(context.Context) (T, error),
 ) (T, error) {
 	if console == nil {
-		return fn()
+		return fn(ctx)
 	}
 	progress := console.StartProgressBar(title, glue.OnlyOneTask, append([]glue.ExtraField{glue.WithTimeCost()}, extraFields...)...)
 	defer progress.Close()
-	result, err := fn()
+	result, err := fn(ctx)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
@@ -529,16 +537,26 @@ func runRepoSnapshotSpinnerTask[T any](
 	return result, nil
 }
 
+type repoSnapshotDynamicProgressTaskContext struct {
+	context.Context
+	AddTotal func(int64)
+	Advance  func(int64)
+}
+
 func runRepoSnapshotDynamicProgressTask[T any](
 	ctx context.Context,
 	console repoSnapshotConsole,
 	title string,
 	extraFields []glue.ExtraField,
-	fn func(addTotal func(int64), advance func(int64)) (T, error),
+	fn func(repoSnapshotDynamicProgressTaskContext) (T, error),
 ) (T, error) {
 	progress := console.StartDynamicProgressBar(title, append([]glue.ExtraField{glue.WithTimeCost()}, extraFields...)...)
 	defer progress.Close()
-	advance := func(delta int64) {
+	taskProgress := repoSnapshotDynamicProgressTaskContext{
+		Context:  ctx,
+		AddTotal: progress.AddTotal,
+	}
+	taskProgress.Advance = func(delta int64) {
 		if delta <= 0 {
 			return
 		}
@@ -548,7 +566,7 @@ func runRepoSnapshotDynamicProgressTask[T any](
 		}
 		progress.IncBy(delta)
 	}
-	result, err := fn(progress.AddTotal, advance)
+	result, err := fn(taskProgress)
 	if err != nil {
 		return result, errors.Trace(err)
 	}
@@ -637,35 +655,28 @@ func renderRepoSnapshotMetaView(
 	ctx context.Context,
 	reader *metautil.MetaReader,
 	view repoSnapshotMetaView,
-) ([]byte, error) {
+	out io.Writer,
+) error {
 	basic := reader.GetBasic()
 	if err := validateRepoSnapshotMetaView(basic); err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	switch view {
 	case repoSnapshotMetaViewBasic:
-		return marshalRepoSnapshotView(convertRepoSnapshotBasicView(basic))
+		return writeRepoSnapshotJSONValue(out, convertRepoSnapshotBasicView(basic))
 	case repoSnapshotMetaViewTables:
 		if basic.IsRawKv {
-			return nil, errors.Annotatef(
+			return errors.Annotatef(
 				berrors.ErrInvalidArgument,
 				"snapshot metadata view %q is unavailable for raw backups",
 				view,
 			)
 		}
-		tables, err := collectRepoSnapshotTables(ctx, reader)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return marshalRepoSnapshotView(tables)
+		return streamRepoSnapshotTables(ctx, reader, out)
 	case repoSnapshotMetaViewFiles:
-		files, err := collectRepoSnapshotFiles(ctx, reader)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return marshalRepoSnapshotView(files)
+		return streamRepoSnapshotFiles(ctx, reader, out)
 	default:
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "unknown snapshot metadata view %q", view)
+		return errors.Annotatef(berrors.ErrInvalidArgument, "unknown snapshot metadata view %q", view)
 	}
 }
 
@@ -681,12 +692,18 @@ func validateRepoSnapshotMetaView(meta backuppb.BackupMeta) error {
 	return nil
 }
 
-func marshalRepoSnapshotView(value any) ([]byte, error) {
+func writeRepoSnapshotJSONValue(out io.Writer, value any) error {
 	payload, err := json.Marshal(value)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return append(payload, '\n'), nil
+	if _, err := out.Write(payload); err != nil {
+		return errors.Trace(err)
+	}
+	if _, err := io.WriteString(out, "\n"); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func convertRepoSnapshotBasicView(meta backuppb.BackupMeta) repoSnapshotBasicView {
@@ -707,76 +724,75 @@ func convertRepoSnapshotBasicView(meta backuppb.BackupMeta) repoSnapshotBasicVie
 	}
 }
 
-func collectRepoSnapshotTables(ctx context.Context, reader *metautil.MetaReader) ([]repoSnapshotTableView, error) {
-	out := make(chan *metautil.Table, 16)
-	errc := make(chan error, 1)
+func streamRepoSnapshotTables(ctx context.Context, reader *metautil.MetaReader, out io.Writer) error {
+	readCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	outCh := make(chan *metautil.Table, 16)
+	errCh := make(chan error, 1)
 	go func() {
-		errc <- reader.ReadSchemasFiles(ctx, out, metautil.SkipFiles, metautil.SkipStats)
-		close(out)
+		errCh <- reader.ReadSchemasFiles(readCtx, outCh, metautil.SkipFiles, metautil.SkipStats)
+		close(outCh)
 	}()
 
-	var tables []repoSnapshotTableView
+	var resultErr error
+	doneCh := ctx.Done()
 	for {
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case table, ok := <-out:
+		case <-doneCh:
+			if resultErr == nil {
+				resultErr = errors.Trace(ctx.Err())
+				cancel()
+			}
+			doneCh = nil
+		case table, ok := <-outCh:
 			if !ok {
-				if err := <-errc; err != nil {
-					return nil, errors.Trace(err)
+				if err := <-errCh; err != nil && resultErr == nil {
+					resultErr = errors.Trace(err)
 				}
-				slices.SortFunc(tables, func(a, b repoSnapshotTableView) int {
-					if c := cmp.Compare(a.DBName, b.DBName); c != 0 {
-						return c
-					}
-					if c := cmp.Compare(a.TableName, b.TableName); c != 0 {
-						return c
-					}
-					if c := cmp.Compare(a.KVCount, b.KVCount); c != 0 {
-						return c
-					}
-					if c := cmp.Compare(a.KVSize, b.KVSize); c != 0 {
-						return c
-					}
-					return cmp.Compare(a.TiFlashReplica, b.TiFlashReplica)
-				})
-				return tables, nil
+				return resultErr
 			}
-			tableName := ""
-			if table.Info != nil {
-				tableName = table.Info.Name.String()
+			if resultErr != nil {
+				continue
 			}
-			tables = append(tables, repoSnapshotTableView{
-				DBName:         table.DB.Name.String(),
-				TableName:      tableName,
-				KVCount:        table.TotalKvs,
-				KVSize:         table.TotalBytes,
-				TiFlashReplica: uint64(table.TiFlashReplicas),
-			})
+			if err := writeRepoSnapshotJSONValue(out, convertRepoSnapshotTableView(table)); err != nil {
+				resultErr = errors.Trace(err)
+				cancel()
+			}
 		}
 	}
 }
 
-func collectRepoSnapshotFiles(ctx context.Context, reader *metautil.MetaReader) ([]repoSnapshotFileView, error) {
-	files := make([]repoSnapshotFileView, 0)
-	if err := reader.ReadDataFiles(ctx, func(file *backuppb.File) {
-		files = append(files, convertRepoSnapshotFileView(file))
-	}); err != nil {
-		return nil, errors.Trace(err)
+func streamRepoSnapshotFiles(ctx context.Context, reader *metautil.MetaReader, out io.Writer) error {
+	readCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var resultErr error
+	if err := reader.ReadDataFiles(readCtx, func(file *backuppb.File) {
+		if resultErr != nil {
+			return
+		}
+		if err := writeRepoSnapshotJSONValue(out, convertRepoSnapshotFileView(file)); err != nil {
+			resultErr = errors.Trace(err)
+			cancel()
+		}
+	}); err != nil && resultErr == nil {
+		resultErr = errors.Trace(err)
 	}
-	slices.SortFunc(files, func(a, b repoSnapshotFileView) int {
-		if c := cmp.Compare(a.Name, b.Name); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.CF, b.CF); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.StartKey, b.StartKey); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.EndKey, b.EndKey)
-	})
-	return files, nil
+	return resultErr
+}
+
+func convertRepoSnapshotTableView(table *metautil.Table) repoSnapshotTableView {
+	tableName := ""
+	if table.Info != nil {
+		tableName = table.Info.Name.String()
+	}
+	return repoSnapshotTableView{
+		DBName:         table.DB.Name.String(),
+		TableName:      tableName,
+		KVCount:        table.TotalKvs,
+		KVSize:         table.TotalBytes,
+		TiFlashReplica: uint64(table.TiFlashReplicas),
+	}
 }
 
 func convertRepoSnapshotFileView(file *backuppb.File) repoSnapshotFileView {

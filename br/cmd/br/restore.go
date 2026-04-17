@@ -201,7 +201,7 @@ func newFullRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
-	taskrepo.DefineSnapshotRepoFlags(command.Flags(), true)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -216,7 +216,7 @@ func newDBRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineDatabaseFlags(command)
-	taskrepo.DefineSnapshotRepoFlags(command.Flags(), true)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }
 
@@ -230,7 +230,7 @@ func newTableRestoreCommand() *cobra.Command {
 		},
 	}
 	task.DefineTableFlags(command)
-	taskrepo.DefineSnapshotRepoFlags(command.Flags(), true)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }
 
@@ -273,6 +273,6 @@ func newStreamRestoreCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, true)
 	task.DefineStreamRestoreFlags(command)
-	taskrepo.DefineSnapshotRepoFlags(command.Flags(), true)
+	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command
 }

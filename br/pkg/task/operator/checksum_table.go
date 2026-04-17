@@ -16,7 +16,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/task"
-	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -145,7 +144,7 @@ func (c *checksumTableCtx) getTables(ctx context.Context) (res []tableInDB, err 
 }
 
 func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil.Table, err error) {
-	rootBackend, rootStorage, err := taskcommon.GetStorage(ctx, c.cfg.Storage, c.cfg.BackendOptions, c.cfg.NoCreds, c.cfg.SendCreds)
+	rootBackend, rootStorage, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to open backup storage")
 	}
@@ -194,7 +193,7 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 
 func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, restoredTS uint64, clusterID uint64) ([]*backup.PitrDBMap, error) {
 	if len(c.cfg.Storage) > 0 {
-		_, stg, err := taskcommon.GetStorage(ctx, c.cfg.Storage, c.cfg.Config.BackendOptions, c.cfg.Config.NoCreds, c.cfg.Config.SendCreds)
+		_, stg, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
 		if err != nil {
 			return nil, errors.Annotate(err, "failed to create storage")
 		}

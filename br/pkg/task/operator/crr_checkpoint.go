@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/task"
-	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -64,7 +63,7 @@ func NewCRRCheckpointService(
 		return nil, nil, err
 	}
 
-	_, upstreamStorage, err := taskcommon.GetStorage(ctx, cfg.UpstreamStorage, cfg.Config.BackendOptions, cfg.Config.NoCreds, cfg.Config.SendCreds)
+	_, upstreamStorage, err := task.GetStorage(ctx, cfg.UpstreamStorage, &cfg.Config)
 	if err != nil {
 		closeEtcdClient(etcdCli)
 		mgr.Close()
@@ -73,7 +72,7 @@ func NewCRRCheckpointService(
 
 	var downstreamStorage storeapi.Storage
 	if cfg.DownstreamStorage != "" {
-		_, downstreamStorage, err = taskcommon.GetStorage(ctx, cfg.DownstreamStorage, cfg.Config.BackendOptions, cfg.Config.NoCreds, cfg.Config.SendCreds)
+		_, downstreamStorage, err = task.GetStorage(ctx, cfg.DownstreamStorage, &cfg.Config)
 		if err != nil {
 			upstreamStorage.Close()
 			closeEtcdClient(etcdCli)

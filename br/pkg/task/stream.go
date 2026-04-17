@@ -55,7 +55,6 @@ import (
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -1331,7 +1330,7 @@ func RunStreamRestore(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	_, s, err := taskcommon.GetStorage(ctx, cfg.Config.Storage, cfg.Config.BackendOptions, cfg.Config.NoCreds, cfg.Config.SendCreds)
+	_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1926,7 +1925,7 @@ func getLogInfo(
 	ctx context.Context,
 	cfg *Config,
 ) (backupLogInfo, error) {
-	_, s, err := taskcommon.GetStorage(ctx, cfg.Storage, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
+	_, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
@@ -1999,13 +1998,7 @@ func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, uint64, error) {
-	rootBackend, rootStorage, err := taskcommon.GetStorage(
-		ctx,
-		cfg.FullBackupStorage,
-		cfg.BackendOptions,
-		cfg.NoCreds,
-		cfg.SendCreds,
-	)
+	rootBackend, rootStorage, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -2283,7 +2276,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 
 	originalRestoreTS := cfg.RestoreTS
 	registrationInfo := registry.RegistrationInfo{
-		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, taskrepo.SnapshotRef(cfg.Layout, cfg.BackupID)),
+		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, cfg.BackupID),
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
 		FilterStrings:     cfg.FilterStr,

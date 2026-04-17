@@ -91,7 +91,7 @@ func newRepoSnapshotListCommand() *cobra.Command {
 func newRepoSnapshotGetCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get",
-		Short: "print a stable metadata view from a snapshot backup",
+		Short: "print a metadata view from a snapshot backup",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := parseRepoSnapshotConfig(cmd)
@@ -110,20 +110,15 @@ func newRepoSnapshotGetCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			payload, err := taskrepo.RunRepoSnapshotGet(ctx, tidbGlue, taskrepo.RepoSnapshotGetConfig{
+			return errors.Trace(taskrepo.RunRepoSnapshotGetTo(ctx, nil, taskrepo.RepoSnapshotGetConfig{
 				Config:   cfg,
 				BackupID: backupID,
 				View:     view,
-			})
-			if err != nil {
-				return errors.Trace(err)
-			}
-			_, err = cmd.OutOrStdout().Write(payload)
-			return errors.Trace(err)
+			}, cmd.OutOrStdout()))
 		},
 	}
 	cmd.Flags().String("backup-id", "", "snapshot backup id")
-	cmd.Flags().String("view", "basic", "stable metadata view: basic, tables, or files")
+	cmd.Flags().String("view", "basic", "metadata view: basic, tables, or files")
 	_ = cmd.MarkFlagRequired("s")
 	_ = cmd.MarkFlagRequired("backup-id")
 	return cmd
@@ -162,9 +157,6 @@ func newRepoSnapshotDeleteCommand() *cobra.Command {
 					return errors.Trace(err)
 				}
 				return errors.Trace(err)
-			}
-			if result == nil {
-				result = &taskrepo.RepoSnapshotDeleteResult{}
 			}
 			return printRepoSnapshotMutationResult(cmd, "deleted", backupID, result.BackupID, result.MetadataDeleted, result.DataDeleted, result.PendingDeleted)
 		},
@@ -218,9 +210,6 @@ func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
 					return errors.Trace(err)
 				}
 				return errors.Trace(err)
-			}
-			if result == nil {
-				result = &taskrepo.RepoSnapshotPendingDiscardResult{}
 			}
 			return printRepoSnapshotMutationResult(cmd, "discarded", backupID, result.BackupID, result.MetadataDeleted, result.DataDeleted, result.PendingDeleted)
 		},

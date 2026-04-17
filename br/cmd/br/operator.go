@@ -148,7 +148,7 @@ func newChecksumCommand() *cobra.Command {
 	}
 	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
 	operator.DefineFlagsForChecksumTableConfig(cmd.Flags())
-	taskrepo.DefineSnapshotRepoFlags(cmd.Flags(), true)
+	taskrepo.DefineSnapshotRepoReaderFlags(cmd.Flags())
 	return cmd
 }
 

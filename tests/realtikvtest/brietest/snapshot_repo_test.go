@@ -15,9 +15,11 @@
 package brietest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -298,8 +300,17 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 		View:     "tables",
 	})
 	require.NoError(t, err)
-	var tables []repoSnapshotTableView
-	require.NoError(t, json.Unmarshal(tablesPayload, &tables))
+	decoder := json.NewDecoder(bytes.NewReader(tablesPayload))
+	tables := make([]repoSnapshotTableView, 0, 1)
+	for {
+		var table repoSnapshotTableView
+		err := decoder.Decode(&table)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		tables = append(tables, table)
+	}
 	require.Len(t, tables, 1)
 	require.Equal(t, repoSnapshotTableView{
 		DBName:    suite.dbName,
