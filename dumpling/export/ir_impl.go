@@ -267,6 +267,25 @@ type tableMeta struct {
 	hasImplicitRowID bool
 }
 
+func (tm *tableMeta) ColumnInfos() []*ColumnInfo {
+	columnInfos := make([]*ColumnInfo, 0, len(tm.colTypes))
+	for _, ct := range tm.colTypes {
+		nullable, _ := ct.Nullable()
+		precision, scale, ok := ct.DecimalSize()
+		if !ok {
+			precision, scale = 0, 0
+		}
+		columnInfos = append(columnInfos, &ColumnInfo{
+			Name:      ct.Name(),
+			Type:      ct.DatabaseTypeName(),
+			Nullable:  nullable,
+			Precision: precision,
+			Scale:     scale,
+		})
+	}
+	return columnInfos
+}
+
 func (tm *tableMeta) ColumnTypes() []string {
 	colTypes := make([]string, len(tm.colTypes))
 	for i, ct := range tm.colTypes {

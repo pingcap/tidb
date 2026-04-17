@@ -599,6 +599,8 @@ const (
 	FileFormatSQLText
 	// FileFormatCSV indicates the given file type is csv type
 	FileFormatCSV
+	// FileFormatParquet indicates the given file type is parquet type
+	FileFormatParquet
 )
 
 const (
@@ -606,6 +608,8 @@ const (
 	FileFormatSQLTextString = "sql"
 	// FileFormatCSVString indicates the string/suffix of csv type file
 	FileFormatCSVString = "csv"
+	// FileFormatParquetString indicates the string/suffix of parquet type file
+	FileFormatParquetString = "parquet"
 )
 
 // String implement Stringer.String method.
@@ -615,6 +619,8 @@ func (f FileFormat) String() string {
 		return strings.ToUpper(FileFormatSQLTextString)
 	case FileFormatCSV:
 		return strings.ToUpper(FileFormatCSVString)
+	case FileFormatParquet:
+		return strings.ToUpper(FileFormatParquetString)
 	default:
 		return "unknown"
 	}
@@ -630,6 +636,8 @@ func (f FileFormat) Extension() string {
 		return FileFormatSQLTextString
 	case FileFormatCSV:
 		return FileFormatCSVString
+	case FileFormatParquet:
+		return FileFormatParquetString
 	default:
 		return "unknown_format"
 	}
@@ -649,6 +657,8 @@ func (f FileFormat) WriteInsert(
 		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics)
 	case FileFormatCSV:
 		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics)
+	case FileFormatParquet:
+		return WriteInsertInParquet(pCtx, cfg, meta, tblIR, w, metrics)
 	default:
 		return 0, errors.Errorf("unknown file format")
 	}

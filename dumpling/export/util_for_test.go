@@ -70,6 +70,7 @@ type mockTableIR struct {
 	hasImplicitRowID bool
 	rowErr           error
 	rows             *sql.Rows
+	columnInfos      []*ColumnInfo
 	SQLRowIter
 }
 
@@ -166,6 +167,10 @@ func (m *mockTableIR) EscapeBackSlash() bool {
 	return m.escapeBackSlash
 }
 
+func (m *mockTableIR) ColumnInfos() []*ColumnInfo {
+	return m.columnInfos
+}
+
 func newMockTableIR(databaseName, tableName string, data [][]driver.Value, specialComments, colTypes []string) *mockTableIR {
 	return &mockTableIR{
 		dbName:        databaseName,
@@ -176,5 +181,23 @@ func newMockTableIR(databaseName, tableName string, data [][]driver.Value, speci
 		selectedLen:   len(colTypes),
 		colTypes:      colTypes,
 		SQLRowIter:    nil,
+	}
+}
+
+func newMockTableIRWithColumnInfo(databaseName, tableName string, data [][]driver.Value, specialComments []string, infos []*ColumnInfo) *mockTableIR {
+	colTypes := make([]string, len(infos))
+	for i, info := range infos {
+		colTypes[i] = info.Type
+	}
+	return &mockTableIR{
+		dbName:        databaseName,
+		tblName:       tableName,
+		data:          data,
+		specCmt:       specialComments,
+		selectedField: "*",
+		selectedLen:   len(infos),
+		colTypes:      colTypes,
+		SQLRowIter:    nil,
+		columnInfos:   infos,
 	}
 }

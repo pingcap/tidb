@@ -58,6 +58,8 @@ func NewWriter(
 		sw.fileFmt = FileFormatSQLText
 	case FileFormatCSVString:
 		sw.fileFmt = FileFormatCSV
+	case FileFormatParquetString:
+		sw.fileFmt = FileFormatParquet
 	}
 	return sw
 }
@@ -232,7 +234,11 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
-	fileName, err := namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
+	fileFmtExtension := format.Extension()
+	if format == FileFormatParquet && conf.ParquetCompressType != NoCompression {
+		fileFmtExtension = fmt.Sprintf("%s.%s", conf.ParquetCompressType, fileFmtExtension)
+	}
+	fileName, err := namer.NextName(conf.OutputFileTemplate, fileFmtExtension)
 	if err != nil {
 		return err
 	}

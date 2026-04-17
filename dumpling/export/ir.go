@@ -35,6 +35,15 @@ type TableMeta interface {
 	ShowCreateView() string
 	AvgRowLength() uint64
 	HasImplicitRowID() bool
+	ColumnInfos() []*ColumnInfo
+}
+
+type ColumnInfo struct {
+	Name      string
+	Type      string
+	Nullable  bool
+	Precision int64
+	Scale     int64
 }
 
 // SQLRowIter is the iterator on a collection of sql.Row.
@@ -57,6 +66,7 @@ type RowReceiverStringer interface {
 type Stringer interface {
 	WriteToBuffer(*bytes.Buffer, bool)
 	WriteToBufferInCsv(*bytes.Buffer, bool, *csvOption)
+	GetRawBytes() []sql.RawBytes
 }
 
 // RowReceiver is an interface which represents sql types that support bind address for *sql.Rows
