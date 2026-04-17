@@ -32,13 +32,13 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -47,6 +47,9 @@ import (
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
@@ -69,10 +72,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
-	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -108,6 +111,7 @@ const (
 	maxWriteSpeedOption       = "max_write_speed"
 	checksumTableOption       = "checksum_table"
 	recordErrorsOption        = "record_errors"
+	onDupKeyOption            = "on_duplicate_key"
 	detachedOption            = "detached"
 	// if 'import mode' enabled, TiKV will:
 	//  - set level0_stop_writes_trigger = max(old, 1 << 30)
@@ -146,6 +150,7 @@ var (
 		maxWriteSpeedOption:         true,
 		checksumTableOption:         true,
 		recordErrorsOption:          true,
+		onDupKeyOption:              true,
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
@@ -202,6 +207,17 @@ var (
 	defaultCharacterSet = "utf8mb4"
 	// default field null def
 	defaultFieldNullDef = []string{`\N`}
+)
+
+// OnDupKeyMode controls the behavior when IMPORT INTO finds conflicted rows.
+type OnDupKeyMode string
+
+const (
+	// OnDupKeyModeCapture keeps current behavior, i.e. remove conflicted
+	// rows and capture them for later inspection.
+	OnDupKeyModeCapture OnDupKeyMode = "capture"
+	// OnDupKeyModeError means fail on first conflict.
+	OnDupKeyModeError OnDupKeyMode = "error"
 )
 
 // DataSourceType indicates the data source type of IMPORT INTO.
@@ -286,6 +302,7 @@ type Plan struct {
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
+	OnDupKey              OnDupKeyMode
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
@@ -318,6 +335,18 @@ type Plan struct {
 	Keyspace string
 }
 
+// GetOnDupKeyMode returns the conflict handling mode.
+// For task metadata generated before this option was introduced, the value is
+// empty.
+// Note: currently it's not possible to have other unknown values, so we don't
+// handle that case here.
+func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
+	if p.OnDupKey == "" {
+		return OnDupKeyModeError
+	}
+	return p.OnDupKey
+}
+
 // ASTArgs is the arguments for ast.LoadDataStmt.
 // TODO: remove this struct and use the struct which can be serialized.
 type ASTArgs struct {
@@ -336,19 +365,34 @@ type StepSummary struct {
 	RowCnt int64 `json:"input-rows,omitempty"`
 }
 
-// Summary records the amount of data needed to be processed in each step of the import job.
-// And this information will be saved into tidb_import_jobs table after the job is finished.
+// Summary records the amount of data to be processed in each import job step.
+// This information will be saved into tidb_import_jobs table after the job is finished.
 type Summary struct {
-	// EncodeSummary stores the bytes and rows needed to be processed in encode step.
-	// Same for other summaries.
+	// EncodeSummary stores source bytes and row counts for the encode step.
 	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
 
+	// MergeSummary stores merged bytes and row counts for the merge step.
 	MergeSummary StepSummary `json:"merge-summary,omitempty"`
 
+	// IngestSummary stores bytes and row counts for the ingest step.
 	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
 
+	// CollectConflictsSummary stores conflict KV pair counts for the
+	// collect-conflicts step. RowCnt is used as the counter.
+	CollectConflictsSummary StepSummary `json:"collect-conflicts-summary,omitempty"`
+
+	// ResolveConflictsSummary stores conflict KV pair counts for the
+	// resolve-conflicts step. RowCnt is used as the counter.
+	ResolveConflictsSummary StepSummary `json:"resolve-conflicts-summary,omitempty"`
+
 	// ImportedRows is the number of rows imported into TiKV.
-	ImportedRows int64 `json:"row-count,omitempty"`
+	// conflicted rows are excluded from this count if using global-sort.
+	ImportedRows   int64  `json:"row-count,omitempty"`
+	ConflictRowCnt uint64 `json:"conflict-row-count,omitempty"`
+	// TooManyConflicts indicates there are too many conflicted rows that we
+	// cannot deduplicate during collecting its checksum, so we will skip later
+	// checksum step.
+	TooManyConflicts bool `json:"too-many-conflicts,omitempty"`
 }
 
 // LoadDataController load data controller.
@@ -379,10 +423,12 @@ type LoadDataController struct {
 	InsertColumns []*table.Column
 
 	logger    *zap.Logger
-	dataStore storage.ExternalStorage
+	dataStore storeapi.Storage
 	dataFiles []*mydump.SourceFileMeta
+	// exported for testing.
+	TotalRealSize int64
 	// globalSortStore is used to store sorted data when using global sort.
-	globalSortStore storage.ExternalStorage
+	globalSortStore storeapi.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
 }
@@ -653,6 +699,7 @@ func (p *Plan) initDefaultOptions(ctx context.Context, targetNodeCPUCnt int, sto
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
+	p.OnDupKey = OnDupKeyModeError
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = getDefMaxEngineSize()
@@ -692,14 +739,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	p.specifiedOptions = specifiedOptions
 
-	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
-	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
-	if kerneltype.IsNextGen() && semv1.IsEnabled() {
+	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from select")
 		}
-	}
-	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		// we put the check here, not in planner, to make sure the cloud_storage_uri
 		// won't change in between.
 		if p.IsLocalSort() {
@@ -849,6 +892,19 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 	}
+	if opt, ok := specifiedOptions[onDupKeyOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		mode := OnDupKeyMode(strings.ToLower(v))
+		switch mode {
+		case OnDupKeyModeCapture, OnDupKeyModeError:
+			p.OnDupKey = mode
+		default:
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+	}
 	if opt, ok := specifiedOptions[groupKeyOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil || v == "" || naming.CheckWithMaxLen(v, 256) != nil {
@@ -877,12 +933,11 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		// set cloud storage uri to empty string to force uses local sort when
 		// the global variable is set.
 		if v != "" {
-			b, err := storage.ParseBackend(v, nil)
+			b, err := objstore.ParseBackend(v, nil)
 			if err != nil {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
-			// only support s3 and gcs now.
-			if b.GetS3() == nil && b.GetGcs() == nil {
+			if !isSupportedCloudStorageBackend(b) {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
 		}
@@ -905,6 +960,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[manualRecoveryOption]; ok {
 		p.ManualRecovery = true
+	}
+
+	if _, ok := specifiedOptions[onDupKeyOption]; ok && p.IsLocalSort() {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(onDupKeyOption, "local sort")
 	}
 
 	if kerneltype.IsClassic() {
@@ -950,6 +1009,10 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 	if p.IsGlobalSort() {
 		p.DisableTiKVImportMode = true
 	}
+}
+
+func isSupportedCloudStorageBackend(backend *backuppb.StorageBackend) bool {
+	return backend != nil && (backend.GetS3() != nil || backend.GetGcs() != nil || backend.GetAzureBlobStorage() != nil)
 }
 
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
@@ -1005,8 +1068,8 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	return nil
 }
 
-func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []string) {
-	tableCols := e.Table.VisibleCols()
+func tableVisCols2FieldMappings(tbl table.Table) ([]*FieldMapping, []string) {
+	tableCols := tbl.VisibleCols()
 	mappings := make([]*FieldMapping, 0, len(tableCols))
 	names := make([]string, 0, len(tableCols))
 	for _, v := range tableCols {
@@ -1020,101 +1083,96 @@ func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []st
 	return mappings, names
 }
 
+func buildFieldMappings(
+	tbl table.Table,
+	columnsAndUserVars []*ast.ColumnNameOrUserVar,
+) ([]*FieldMapping, []string) {
+	columns := make([]string, 0, len(columnsAndUserVars))
+	tableCols := tbl.VisibleCols()
+
+	if len(columnsAndUserVars) == 0 {
+		return tableVisCols2FieldMappings(tbl)
+	}
+
+	mappings := make([]*FieldMapping, 0, len(columnsAndUserVars))
+	for _, v := range columnsAndUserVars {
+		var column *table.Column
+		if v.ColumnName != nil {
+			column = table.FindCol(tableCols, v.ColumnName.Name.O)
+			columns = append(columns, v.ColumnName.Name.O)
+		}
+
+		mappings = append(mappings, &FieldMapping{
+			Column:  column,
+			UserVar: v.UserVar,
+		})
+	}
+	return mappings, columns
+}
+
+func reorderColumnsByNames(cols []*table.Column, columnNames []string) ([]*table.Column, error) {
+	if len(cols) != len(columnNames) {
+		return nil, exeerrors.ErrColumnsNotMatched
+	}
+	if columnNames == nil {
+		return cols, nil
+	}
+
+	reorderedColumns := make([]*table.Column, len(cols))
+	mapping := make(map[string]int, len(columnNames))
+	for idx, colName := range columnNames {
+		mapping[strings.ToLower(colName)] = idx
+	}
+	for _, col := range cols {
+		idx := mapping[col.Name.L]
+		reorderedColumns[idx] = col
+	}
+	return reorderedColumns, nil
+}
+
+func buildInsertColumns(
+	tbl table.Table,
+	columnNames []string,
+	columnAssignments []*ast.Assignment,
+) ([]*table.Column, error) {
+	tableCols := tbl.VisibleCols()
+	if len(columnNames) != len(tableCols) {
+		for _, v := range columnAssignments {
+			columnNames = append(columnNames, v.Column.Name.O)
+		}
+	}
+
+	cols, missingColName := table.FindCols(tableCols, columnNames, tbl.Meta().PKIsHandle)
+	if missingColName != "" {
+		return nil, dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
+	}
+
+	reorderedColumns, err := reorderColumnsByNames(cols, columnNames)
+	if err != nil {
+		return nil, err
+	}
+	if err = table.CheckOnce(cols); err != nil {
+		return nil, err
+	}
+	return reorderedColumns, nil
+}
+
 // initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
 // the slice's order is the same as the order of the input fields.
 // Returns a slice of same ordered column names without user defined variable names.
 func (e *LoadDataController) initFieldMappings() []string {
-	columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
-	tableCols := e.Table.VisibleCols()
-
-	if len(e.ColumnsAndUserVars) == 0 {
-		e.FieldMappings, columns = e.tableVisCols2FieldMappings()
-
-		return columns
-	}
-
-	var column *table.Column
-
-	for _, v := range e.ColumnsAndUserVars {
-		if v.ColumnName != nil {
-			column = table.FindCol(tableCols, v.ColumnName.Name.O)
-			columns = append(columns, v.ColumnName.Name.O)
-		} else {
-			column = nil
-		}
-
-		fieldMapping := &FieldMapping{
-			Column:  column,
-			UserVar: v.UserVar,
-		}
-		e.FieldMappings = append(e.FieldMappings, fieldMapping)
-	}
-
+	fieldMappings, columns := buildFieldMappings(e.Table, e.ColumnsAndUserVars)
+	e.FieldMappings = fieldMappings
 	return columns
 }
 
 // initLoadColumns sets columns which the input fields loaded to.
 func (e *LoadDataController) initLoadColumns(columnNames []string) error {
-	var cols []*table.Column
-	var missingColName string
-	var err error
-	tableCols := e.Table.VisibleCols()
-
-	if len(columnNames) != len(tableCols) {
-		for _, v := range e.ColumnAssignments {
-			columnNames = append(columnNames, v.Column.Name.O)
-		}
-	}
-
-	cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
-	if missingColName != "" {
-		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
-	}
-
-	e.InsertColumns = append(e.InsertColumns, cols...)
-
-	// e.InsertColumns is appended according to the original tables' column sequence.
-	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
-	if err = e.reorderColumns(columnNames); err != nil {
-		return err
-	}
-
-	// Check column whether is specified only once.
-	err = table.CheckOnce(cols)
+	insertColumns, err := buildInsertColumns(e.Table, columnNames, e.ColumnAssignments)
 	if err != nil {
 		return err
 	}
-
-	return nil
-}
-
-// reorderColumns reorder the e.InsertColumns according to the order of columnNames
-// Note: We must ensure there must be one-to-one mapping between e.InsertColumns and columnNames in terms of column name.
-func (e *LoadDataController) reorderColumns(columnNames []string) error {
-	cols := e.InsertColumns
-
-	if len(cols) != len(columnNames) {
-		return exeerrors.ErrColumnsNotMatched
-	}
-
-	reorderedColumns := make([]*table.Column, len(cols))
-
-	if columnNames == nil {
-		return nil
-	}
-
-	mapping := make(map[string]int)
-	for idx, colName := range columnNames {
-		mapping[strings.ToLower(colName)] = idx
-	}
-
-	for _, col := range cols {
-		idx := mapping[col.Name.L]
-		reorderedColumns[idx] = col
-	}
-
-	e.InsertColumns = reorderedColumns
-
+	e.InsertColumns = append(e.InsertColumns[:0], insertColumns...)
 	return nil
 }
 
@@ -1124,37 +1182,47 @@ func (e *LoadDataController) GetFieldCount() int {
 }
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
-func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
+func generateCSVConfig(
+	fieldNullDef []string,
+	lineFieldsInfo plannercore.LineFieldsInfo,
+	inImportInto bool,
+	nullValueOptEnclosed bool,
+) *config.CSVConfig {
 	csvConfig := &config.CSVConfig{
-		FieldsTerminatedBy: e.FieldsTerminatedBy,
+		FieldsTerminatedBy: lineFieldsInfo.FieldsTerminatedBy,
 		// ignore optionally enclosed
-		FieldsEnclosedBy:   e.FieldsEnclosedBy,
-		LinesTerminatedBy:  e.LinesTerminatedBy,
+		FieldsEnclosedBy:   lineFieldsInfo.FieldsEnclosedBy,
+		LinesTerminatedBy:  lineFieldsInfo.LinesTerminatedBy,
 		NotNull:            false,
-		FieldNullDefinedBy: e.FieldNullDef,
+		FieldNullDefinedBy: fieldNullDef,
 		Header:             false,
 		TrimLastEmptyField: false,
-		FieldsEscapedBy:    e.FieldsEscapedBy,
-		LinesStartingBy:    e.LinesStartingBy,
+		FieldsEscapedBy:    lineFieldsInfo.FieldsEscapedBy,
+		LinesStartingBy:    lineFieldsInfo.LinesStartingBy,
 	}
-	if !e.InImportInto {
+	if !inImportInto {
 		// for load data
 		csvConfig.AllowEmptyLine = true
-		csvConfig.QuotedNullIsText = !e.NullValueOptEnclosed
+		csvConfig.QuotedNullIsText = !nullValueOptEnclosed
 		csvConfig.UnescapedQuote = true
 	}
 	return csvConfig
 }
 
+// GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
+func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
+	return generateCSVConfig(e.FieldNullDef, e.LineFieldsInfo, e.InImportInto, e.NullValueOptEnclosed)
+}
+
 // InitDataStore initializes the data store.
 func (e *LoadDataController) InitDataStore(ctx context.Context) error {
-	u, err2 := storage.ParseRawURL(e.Path)
+	u, err2 := objstore.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			err2.Error())
 	}
 
-	if storage.IsLocal(u) {
+	if objstore.IsLocal(u) {
 		u.Path = filepath.Dir(e.Path)
 	} else {
 		u.Path = ""
@@ -1186,8 +1254,8 @@ func (e *LoadDataController) Close() {
 }
 
 // GetSortStore gets the sort store.
-func GetSortStore(ctx context.Context, url string) (storage.ExternalStorage, error) {
-	u, err := storage.ParseRawURL(url)
+func GetSortStore(ctx context.Context, url string) (storeapi.Storage, error) {
+	u, err := objstore.ParseRawURL(url)
 	target := "cloud storage"
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err.Error())
@@ -1195,13 +1263,13 @@ func GetSortStore(ctx context.Context, url string) (storage.ExternalStorage, err
 	return initExternalStore(ctx, u, target)
 }
 
-func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
-	b, err2 := storage.ParseBackendFromURL(u, nil)
+func initExternalStore(ctx context.Context, u *url.URL, target string) (storeapi.Storage, error) {
+	b, err2 := objstore.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
-	s, err := storage.NewWithDefaultOpt(ctx, b)
+	s, err := objstore.NewWithDefaultOpt(ctx, b)
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, errors.GetErrStackMsg(err))
 	}
@@ -1213,7 +1281,7 @@ func estimateCompressionRatio(
 	filePath string,
 	fileSize int64,
 	tp mydump.SourceType,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 ) (float64, error) {
 	if tp != mydump.SourceTypeParquet {
 		return 1.0, nil
@@ -1236,17 +1304,103 @@ func estimateCompressionRatio(
 	return compressionRatio, nil
 }
 
+// maxSampledCompressedFiles indicates the max number of files we used to sample
+// compression ratio for each compression type. Consider the extreme case that
+// user data contains all 3 compression types. Then we need to sample about 1,500
+// files. Suppose each file costs 0.5 second (for example, cross region access),
+// we still can finish in one minute with 16 concurrency.
+const maxSampledCompressedFiles = 512
+
+// compressionEstimator estimates compression ratio for different compression types.
+// It uses harmonic mean to get the average compression ratio.
+type compressionEstimator struct {
+	mu      sync.Mutex
+	records map[mydump.Compression][]float64
+	ratio   sync.Map
+}
+
+func newCompressionRecorder() *compressionEstimator {
+	return &compressionEstimator{
+		records: make(map[mydump.Compression][]float64),
+	}
+}
+
+func getHarmonicMean(rs []float64) float64 {
+	if len(rs) == 0 {
+		return 1.0
+	}
+	var (
+		sumInverse float64
+		count      int
+	)
+	for _, r := range rs {
+		if r > 0 {
+			sumInverse += 1.0 / r
+			count++
+		}
+	}
+
+	if count == 0 {
+		return 1.0
+	}
+	return float64(count) / sumInverse
+}
+
+func (r *compressionEstimator) estimate(
+	ctx context.Context,
+	fileMeta mydump.SourceFileMeta,
+	store storeapi.Storage,
+) float64 {
+	compressTp := mydump.ParseCompressionOnFileExtension(fileMeta.Path)
+	if compressTp == mydump.CompressionNone {
+		return 1.0
+	}
+	if v, ok := r.ratio.Load(compressTp); ok {
+		return v.(float64)
+	}
+
+	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
+	if err != nil {
+		logutil.Logger(ctx).Error("fail to calculate data file compress ratio",
+			zap.String("category", "loader"),
+			zap.String("path", fileMeta.Path),
+			zap.Stringer("type", fileMeta.Type), zap.Error(err),
+		)
+		return 1.0
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, ok := r.ratio.Load(compressTp); ok {
+		return compressRatio
+	}
+
+	if r.records[compressTp] == nil {
+		r.records[compressTp] = make([]float64, 0, 256)
+	}
+	if len(r.records[compressTp]) < maxSampledCompressedFiles {
+		r.records[compressTp] = append(r.records[compressTp], compressRatio)
+	}
+	if len(r.records[compressTp]) >= maxSampledCompressedFiles {
+		// Using harmonic mean can better handle outlier values.
+		compressRatio = getHarmonicMean(r.records[compressTp])
+		r.ratio.Store(compressTp, compressRatio)
+	}
+	return compressRatio
+}
+
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
-	u, err2 := storage.ParseRawURL(e.Path)
+	u, err2 := objstore.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			err2.Error())
 	}
 
 	var fileNameKey string
-	if storage.IsLocal(u) {
+	if objstore.IsLocal(u) {
 		// LOAD DATA don't support server file.
 		if !e.InImportInto {
 			return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
@@ -1287,9 +1441,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize        int64
-		sourceType       mydump.SourceType
-		compressionRatio = 1.0
+		sourceType mydump.SourceType
+		// sizeExpansionRatio is the estimated size expansion for parquet format.
+		// For non-parquet format, it's always 1.0.
+		sizeExpansionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1324,10 +1479,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
-		totalSize = size
 	} else {
 		var commonPrefix string
-		if !storage.IsLocal(u) {
+		if !objstore.IsLocal(u) {
 			// for local directory, we're walking the parent directory,
 			// so we don't have a common prefix as cloud storage do.
 			commonPrefix = fileNameKey[:idx]
@@ -1338,7 +1492,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
 
 		allFiles := make([]mydump.RawFile, 0, 16)
-		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+		if err := s.WalkDir(ctx, &storeapi.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				return nil
@@ -1349,6 +1503,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		var err error
 		var processedFiles []*mydump.SourceFileMeta
 		var once sync.Once
+
+		ce := newCompressionRecorder()
+
 		if processedFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
 			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
 				// we have checked in LoadDataExec.Next
@@ -1363,7 +1520,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
-					compressionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
 				})
 				if err2 != nil {
 					return nil, err2
@@ -1375,8 +1532,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Compression: compressTp,
 					Type:        sourceType,
 				}
-				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
+				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
@@ -1385,7 +1542,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		for _, f := range processedFiles {
 			if f != nil {
 				dataFiles = append(dataFiles, f)
-				totalSize += f.FileSize
 			}
 		}
 	}
@@ -1394,9 +1550,20 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err2
 		}
 	}
+	var totalSize, totalRealSize int64
+	for _, dfile := range dataFiles {
+		totalSize += dfile.FileSize
+		realSize := dfile.RealSize
+		failpoint.Inject("amplifyRealSize", func(val failpoint.Value) {
+			factor := int64(val.(int))
+			realSize *= factor
+		})
+		totalRealSize += realSize
+	}
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
+	e.TotalRealSize = totalRealSize
 
 	return nil
 }
@@ -1413,8 +1580,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	if err != nil {
 		return err
 	}
-	totalSize := e.TotalFileSize
-	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	totalSize := e.TotalRealSize
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
 	if numOfIndexGenKV > 0 {
@@ -1424,7 +1590,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		}
 	}
 	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
-	e.ThreadCnt = cal.CalcConcurrency()
+	e.ThreadCnt = cal.CalcRequiredSlots()
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",
@@ -1432,7 +1598,8 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		zap.Int("maxNode", e.MaxNodeCnt),
 		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
 		zap.Int("targetNodeCPU", targetNodeCPUCnt),
-		zap.String("totalFileSize", units.BytesSize(float64(totalSize))),
+		zap.String("totalFileSize", units.BytesSize(float64(e.TotalFileSize))),
+		zap.String("totalRealSize", units.BytesSize(float64(totalSize))),
 		zap.Int("fileCount", len(e.dataFiles)),
 		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
 		zap.Float64("indexSizeRatio", indexSizeRatio),
@@ -1490,7 +1657,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
+				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, compressedio.DecompressConfig{})
 				if err2 != nil {
 					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the INFILE path is correct")
 				}
@@ -1502,9 +1669,14 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 	return result
 }
 
-// GetParser returns a parser for the data file.
-func (e *LoadDataController) GetParser(
+func newLoadDataParser(
 	ctx context.Context,
+	logger *zap.Logger,
+	format string,
+	sqlMode mysql.SQLMode,
+	charset *string,
+	csvConfig *config.CSVConfig,
+	dataStore storeapi.Storage,
 	dataFileInfo LoadDataReaderInfo,
 ) (parser mydump.Parser, err error) {
 	reader, err2 := dataFileInfo.Opener(ctx)
@@ -1513,26 +1685,23 @@ func (e *LoadDataController) GetParser(
 	}
 	defer func() {
 		if err != nil {
-			if err3 := reader.Close(); err3 != nil {
-				e.logger.Warn("failed to close reader", zap.Error(err3))
+			if err3 := reader.Close(); err3 != nil && logger != nil {
+				logger.Warn("failed to close reader", zap.Error(err3))
 			}
 		}
 	}()
-	switch e.Format {
+	switch format {
 	case DataFormatDelimitedData, DataFormatCSV:
 		var charsetConvertor *mydump.CharsetConvertor
-		if e.Charset != nil {
-			charsetConvertor, err = mydump.NewCharsetConvertor(*e.Charset, string(utf8.RuneError))
+		if charset != nil {
+			charsetConvertor, err = mydump.NewCharsetConvertor(*charset, string(utf8.RuneError))
 			if err != nil {
 				return nil, err
 			}
 		}
-		if err != nil {
-			return nil, err
-		}
 		parser, err = mydump.NewCSVParser(
 			ctx,
-			e.GenerateCSVConfig(),
+			csvConfig,
 			reader,
 			LoadDataReadBlockSize,
 			nil,
@@ -1541,7 +1710,7 @@ func (e *LoadDataController) GetParser(
 	case DataFormatSQL:
 		parser = mydump.NewChunkParser(
 			ctx,
-			e.SQLMode,
+			sqlMode,
 			reader,
 			LoadDataReadBlockSize,
 			nil,
@@ -1549,22 +1718,40 @@ func (e *LoadDataController) GetParser(
 	case DataFormatParquet:
 		parser, err = mydump.NewParquetParser(
 			ctx,
-			e.dataStore,
+			dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
 			dataFileInfo.Remote.ParquetMeta,
 		)
+	default:
+		return nil, exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(format)
 	}
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
 	}
 	parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
-
 	return parser, nil
 }
 
+// GetParser returns a parser for the data file.
+func (e *LoadDataController) GetParser(
+	ctx context.Context,
+	dataFileInfo LoadDataReaderInfo,
+) (parser mydump.Parser, err error) {
+	return newLoadDataParser(
+		ctx,
+		e.logger,
+		e.Format,
+		e.SQLMode,
+		e.Charset,
+		e.GenerateCSVConfig(),
+		e.dataStore,
+		dataFileInfo,
+	)
+}
+
 // HandleSkipNRows skips the first N rows of the data file.
-func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
+func HandleSkipNRows(parser mydump.Parser, ignoreLines uint64) error {
 	// handle IGNORE N LINES
 	ignoreOneLineFn := parser.ReadRow
 	if csvParser, ok := parser.(*mydump.CSVParser); ok {
@@ -1574,7 +1761,7 @@ func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
 		}
 	}
 
-	ignoreLineCnt := e.IgnoreLines
+	ignoreLineCnt := ignoreLines
 	for ignoreLineCnt > 0 {
 		err := ignoreOneLineFn()
 		if err != nil {
@@ -1628,16 +1815,22 @@ func (p *Plan) checkNonCSVFormatOptions() error {
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
+func createColAssignExprs(
+	assignments []*ast.Assignment,
+	planCtx planctx.PlanContext,
+	mu *sync.Mutex,
+) (
 	_ []expression.Expression,
 	_ []contextutil.SQLWarn,
 	retErr error,
 ) {
-	e.colAssignMu.Lock()
-	defer e.colAssignMu.Unlock()
-	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	res := make([]expression.Expression, 0, len(assignments))
 	allWarnings := []contextutil.SQLWarn{}
-	for _, assign := range e.ColumnAssignments {
+	for _, assign := range assignments {
 		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(planCtx, assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
@@ -1651,6 +1844,15 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 	return res, allWarnings, nil
 }
 
+// CreateColAssignExprs creates the column assignment expressions using session context.
+func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
+	_ []expression.Expression,
+	_ []contextutil.SQLWarn,
+	retErr error,
+) {
+	return createColAssignExprs(e.ColumnAssignments, planCtx, &e.colAssignMu)
+}
+
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 // This method does not support:
 //   - Subquery
@@ -1658,12 +1860,18 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 //   - Window functions
 //   - Aggregate functions
 //   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
-func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	e.colAssignMu.Lock()
-	defer e.colAssignMu.Unlock()
-	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+func createColAssignSimpleExprs(
+	assignments []*ast.Assignment,
+	ctx expression.BuildContext,
+	mu *sync.Mutex,
+) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	res := make([]expression.Expression, 0, len(assignments))
 	var allWarnings []contextutil.SQLWarn
-	for _, assign := range e.ColumnAssignments {
+	for _, assign := range assignments {
 		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
@@ -1678,13 +1886,18 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
+// CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
+func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
+	return createColAssignSimpleExprs(e.ColumnAssignments, ctx, &e.colAssignMu)
+}
+
 func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.ThreadCnt,
+		WorkerConcurrency:      *atomic.NewInt32(int32(e.ThreadCnt)),
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
@@ -1730,13 +1943,13 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 		return cpu.GetCPUCount(), nil
 	}
 
-	u, err2 := storage.ParseRawURL(path)
+	u, err2 := objstore.ParseRawURL(path)
 	if err2 != nil {
 		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			err2.Error())
 	}
 
-	serverDiskImport := storage.IsLocal(u)
+	serverDiskImport := objstore.IsLocal(u)
 	if serverDiskImport || !vardef.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}

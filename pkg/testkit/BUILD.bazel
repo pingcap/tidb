@@ -4,6 +4,7 @@ go_library(
     name = "testkit",
     srcs = [
         "asynctestkit.go",
+        "db_driver.go",
         "dbtestkit.go",
         "mocksessionmanager.go",
         "mockstore.go",
@@ -71,8 +72,12 @@ go_library(
 go_test(
     name = "testkit_test",
     timeout = "short",
-    srcs = ["testkit_test.go"],
+    srcs = [
+        "db_driver_test.go",
+        "testkit_test.go",
+    ],
     embed = [":testkit"],
     flaky = True,
+    shard_count = 2,
     deps = ["@com_github_stretchr_testify//require"],
 )

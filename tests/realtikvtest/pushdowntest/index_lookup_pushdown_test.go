@@ -204,6 +204,39 @@ func TestRealTiKVIndexLookUpPushDown(t *testing.T) {
 	v.RunSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, r.Intn(50)+1)
 }
 
+// TestCorrelatedIndexLookUpPushDownPreservesParentIdx tests the indexlookup push down on correlated subquery,
+// and make sure the parent index is preserved in the plan after push down.
+// See issue: https://github.com/pingcap/tidb/issues/67546
+func TestCorrelatedIndexLookUpPushDownPreservesParentIdx(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table touter (a int, b int, key idx_a(a))")
+	tk.MustExec("create table tinner (a int, b int, key idx_a(a))")
+	tk.MustExec("insert into touter values (20,1),(24,5),(23,9)")
+	tk.MustExec("insert into tinner values (1,1),(3,2),(6,3),(10,4),(12,5),(15,6),(25,7)")
+
+	sql := `select *
+from touter
+where touter.a < (
+	select /*+ INDEX_LOOKUP_PUSHDOWN(tinner, idx_a) */ sum(tinner.b)
+	from tinner use index(idx_a)
+	where tinner.a > touter.b
+)
+order by touter.a, touter.b`
+
+	explainRows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+	foundLocalIndexLookUp := false
+	for _, row := range explainRows {
+		if strings.Contains(row[0].(string), "LocalIndexLookUp") {
+			foundLocalIndexLookUp = true
+			break
+		}
+	}
+	require.True(t, foundLocalIndexLookUp)
+	tk.MustQuery(sql).Check(testkit.Rows("20 1", "24 5"))
+}
+
 func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -232,17 +265,19 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 			"id2 bigint, " +
 			"a bigint, " +
 			"b bigint, " +
-			"primary key(" + primaryKey + "), " +
+			"primary key(" + primaryKey + ") CLUSTERED, " +
 			uniquePrefix + "index " + v.indexName + "(a)" +
 			") charset=" + charset + " collate=" + collation)
 		tk.MustExec("insert into " + v.tableName + " values " +
 			"('abcA', 1, 99, 199), " +
-			"('aBCE', 2, 98, 198), " +
+			"('abCE', 2, 98, 198), " +
 			"('ABdd', 1, 97, 197), " +
-			"('abdc', 2, 96, 196), " +
+			"('aBdc', 2, 96, 196), " +
 			"('Defb', 1, 95, 195), " +
 			"('defa', 2, 94, 194), " +
-			"('efga', 1, 93, 193)",
+			"('efga', 1, 93, 193), " +
+			"('aabb', 1, NULL, 192), " +
+			"('bbaa', 2, NULL, 191)",
 		)
 	}
 
@@ -263,27 +298,26 @@ func TestRealTiKVCommonHandleIndexLookUpPushDown(t *testing.T) {
 				prepareTable(v, unique, charset, collation, "id1, id2")
 				v.RunSelectWithCheck("1", 0, -1)
 				v.RunSelectWithCheck("a > 93 and b < 199", 0, 10)
-				v.RunSelectWithCheck("a > 93 and b < 199 and id1 != 'abd'", 0, 10)
+				v.RunSelectWithCheck("a > 93 and b < 199 and id1 != 'abdc'", 0, 10)
 				// check the TopN push down
-				result := v.RunSelectWithCheck("1 order by id2, id1", 0, 5)
+				result := v.RunSelectWithCheck("a > 0 and id1 not in ('efga', 'ABdd') order by id2, id1", 0, 4)
 				require.Contains(t, result.AnalyzeRows[2][0], "LocalIndexLookUp")
 				require.Contains(t, result.AnalyzeRows[3][0], "TopN")
+				require.Contains(t, result.AnalyzeRows[4][0], "Selection")
 				require.Equal(t, "cop[tikv]", result.AnalyzeRows[3][3])
 				if strings.Contains(collation, "_ci") {
 					require.Equal(t, [][]any{
 						{"abcA", "1", "99", "199"},
-						{"ABdd", "1", "97", "197"},
 						{"Defb", "1", "95", "195"},
-						{"efga", "1", "93", "193"},
-						{"aBCE", "2", "98", "198"},
+						{"abCE", "2", "98", "198"},
+						{"aBdc", "2", "96", "196"},
 					}, result.Rows)
 				} else {
 					require.Equal(t, [][]any{
-						{"ABdd", "1", "97", "197"},
 						{"Defb", "1", "95", "195"},
 						{"abcA", "1", "99", "199"},
-						{"efga", "1", "93", "193"},
-						{"aBCE", "2", "98", "198"},
+						{"aBdc", "2", "96", "196"},
+						{"abCE", "2", "98", "198"},
 					}, result.Rows)
 				}
 			})
@@ -396,5 +430,20 @@ func TestRealTiKVPartitionIndexLookUpPushDown(t *testing.T) {
 			v.primaryRows = []int{1}
 		}
 		v.RunSelectWithCheck("1", 0, -1)
+
+		// test with uncommitted data
+		func() {
+			defer tk.MustExec("rollback")
+			tk.MustExec("begin")
+			tk.MustExec(fmt.Sprintf("insert into %s values ('b2', 22, 2, 202),  ('d3', 123, 4, 203)", tableName))
+			result := v.RunSelectWithCheck("1 order by d", 0, 5)
+			require.Equal(t, [][]any{
+				{"a", "10", "1", "100"},
+				{"b", "20", "2", "200"},
+				{"b2", "22", "2", "202"},
+				{"d3", "123", "4", "203"},
+				{"c", "110", "3", "300"},
+			}, result.Rows)
+		}()
 	}
 }

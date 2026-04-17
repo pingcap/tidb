@@ -430,7 +430,7 @@ table_name
 t
 explain format='plan_tree' select table_name, table_schema from information_schema.tables;
 id	task	access object	operator info
-Projection	root		Column#3, Column#2
+Projection	root		Column, Column
 └─MemTableScan	root	table:TABLES	
 select count(*) from information_schema.tables where table_name = 't';
 count(*)

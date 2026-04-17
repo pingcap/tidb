@@ -339,8 +339,14 @@ func (b *txnBackfillExecutor) close(force bool) {
 	close(b.resultCh)
 }
 
-func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt int) {
+func expectedIngestWorkerCnt(concurrency, avgRowSize int, useGlobalSort bool) (readerCnt, writerCnt int) {
 	workerCnt := concurrency
+	// Testing showed that in a global sort environment,
+	// reader ration does not significantly impact the performance of add indexes.
+	// We disable this ration in global sort for better memory management.
+	if useGlobalSort {
+		return workerCnt, workerCnt
+	}
 	if avgRowSize == 0 {
 		// Statistic data not exist, use default concurrency.
 		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)

@@ -32,7 +32,13 @@ import (
 )
 
 func makeTempDirForBackup(t *testing.T) string {
-	d, err := os.MkdirTemp(os.TempDir(), "briesql-*")
+	baseDir := os.TempDir()
+	if envDir := os.Getenv("BRIETEST_TMPDIR"); envDir != "" {
+		// Ensure the base directory exists
+		require.NoError(t, os.MkdirAll(envDir, 0755))
+		baseDir = envDir
+	}
+	d, err := os.MkdirTemp(baseDir, "briesql-*")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		os.RemoveAll(d)

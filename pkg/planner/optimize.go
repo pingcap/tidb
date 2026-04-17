@@ -33,11 +33,11 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -52,6 +52,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
+const nonPreparedPlanCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
+
+func containUsePlanCacheHintInSQLOrBinding(sctx sessionctx.Context, stmt ast.StmtNode) bool {
+	if hint.ContainTableHintInStmtNode(stmt, hint.HintUsePlanCache) {
+		return true
+	}
+	binding, matched, _ := bindinfo.MatchSQLBinding(sctx, stmt)
+	return matched && binding != nil && binding.Hint != nil && binding.Hint.ContainTableHint(hint.HintUsePlanCache)
+}
+
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
@@ -59,11 +69,17 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	_, isExplain := stmt.(*ast.ExplainStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
 		!isStmtNode ||
-		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
 		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
 		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
+		return nil, nil, false, nil
+	}
+	if sctx.GetSessionVars().PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
+		!containUsePlanCacheHintInSQLOrBinding(sctx, stmt) {
+		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", nonPreparedPlanCacheHintOnlyNoHintReason))
+		}
 		return nil, nil, false, nil
 	}
 
@@ -211,11 +227,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	pctx := sctx.GetPlanCtx()
 	sessVars := sctx.GetSessionVars()
 
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(pctx)
-		defer debugtrace.LeaveContextCommon(pctx)
-	}
-
 	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
 		setVarHintChecker, hypoIndexChecker(ctx, is),
@@ -287,9 +298,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 		originHints := hint.CollectHint(stmtNode)
 		var warns []error
 		if binding != nil && binding.IsBindingEnabled() {
-			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-				core.DebugTraceTryBinding(pctx, binding.Hint)
-			}
 			hint.BindHint(stmtNode, binding.Hint)
 			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(),
 				setVarHintChecker, hypoIndexChecker(ctx, is),
@@ -342,9 +350,6 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 		return nil, nil, err
 	}
 
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
-		core.DebugTraceBestBinding(pctx, chosenBinding.Hint)
-	}
 	// No plan found from the bindings, or the bindings are ignored.
 	if bestPlan == nil {
 		sessVars.StmtCtx.StmtHints = originStmtHints
@@ -451,8 +456,145 @@ var planBuilderPool = sync.Pool{
 	},
 }
 
+type logicalPlanBuildCtx struct {
+	stmtCtxState             stmtctx.LogicalPlanBuildState
+	plannerSelectBlockAsName *[]ast.HintTable
+	mapScalarSubQ            []any
+	mapHashCode2UniqueID     map[string]int
+	rewritePhaseInfo         variable.RewritePhaseInfo
+}
+
+func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx {
+	return logicalPlanBuildCtx{
+		stmtCtxState:             sessVars.StmtCtx.SaveLogicalPlanBuildState(),
+		plannerSelectBlockAsName: sessVars.PlannerSelectBlockAsName.Load(),
+		mapScalarSubQ:            sessVars.MapScalarSubQ,
+		mapHashCode2UniqueID:     sessVars.MapHashCode2UniqueID4ExtendedCol,
+		rewritePhaseInfo:         sessVars.RewritePhaseInfo,
+	}
+}
+
+func restoreLogicalPlanBuildCtx(sessVars *variable.SessionVars, logicalPlanCtx logicalPlanBuildCtx) {
+	sessVars.StmtCtx.RestoreLogicalPlanBuildState(logicalPlanCtx.stmtCtxState)
+	sessVars.PlannerSelectBlockAsName.Store(logicalPlanCtx.plannerSelectBlockAsName)
+	sessVars.MapScalarSubQ = logicalPlanCtx.mapScalarSubQ
+	sessVars.MapHashCode2UniqueID4ExtendedCol = logicalPlanCtx.mapHashCode2UniqueID
+	sessVars.RewritePhaseInfo = logicalPlanCtx.rewritePhaseInfo
+}
+
+func buildAndOptimizeLogicalPlanRound(
+	ctx context.Context,
+	sctx planctx.PlanContext,
+	node *resolve.NodeW,
+	is infoschema.InfoSchema,
+	hintProcessor *hint.QBHintHandler,
+	checked *bool,
+	optimizeStarted *bool,
+	beginOpt *time.Time,
+	needRestoreLogicalPlanCtx bool,
+	bestPlan *base.PhysicalPlan,
+	bestNames *types.NameSlice,
+	bestCost *float64,
+	bestLogicalPlanCtx *logicalPlanBuildCtx,
+	optFlagAdjust func(uint64) uint64,
+) (base.Plan, types.NameSlice, bool, error) {
+	builder := planBuilderPool.Get().(*core.PlanBuilder)
+	defer planBuilderPool.Put(builder.ResetForReuse())
+	// TODO: when buildRound > 1, only emit unused view-hint warnings for the winner build.
+	defer builder.HandleUnusedViewHints()
+
+	builder.Init(sctx, is, hintProcessor)
+
+	// todo: you can customize each round's special builder (like semi join rewrite or not by signal)
+	p, err := buildLogicalPlan(ctx, sctx, node, builder)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	names := p.OutputNames()
+
+	if !*checked {
+		// Keep privilege and lock checks fail-fast. These depend on visitInfo
+		// produced by the logical build, but not on the later cost winner.
+		if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+			visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
+			if err := core.CheckPrivilege(sctx.GetSessionVars().ActiveRoles, pm, visitInfo); err != nil {
+				return nil, nil, false, err
+			}
+		}
+
+		if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
+			return nil, nil, false, err
+		}
+
+		if err := core.CheckTableMode(node); err != nil {
+			return nil, nil, false, err
+		}
+		*checked = true
+	}
+
+	// Handle the non-logical plan statement.
+	logic, isLogicalPlan := p.(base.LogicalPlan)
+	if !isLogicalPlan {
+		return p, names, true, nil
+	}
+
+	core.RecheckCTE(logic)
+
+	// todo: also you can customize each round's special logical opt flag here (like decorrelate rule or not)
+	if !*optimizeStarted {
+		*optimizeStarted = true
+		*beginOpt = time.Now()
+	}
+	optFlag := builder.GetOptFlag()
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans &&
+		optFlag&rule.FlagPushDownTopN > 0 &&
+		optFlag&rule.FlagJoinReOrder > 0 {
+		sctx.GetSessionVars().StmtCtx.MarkAlternativeLogicalPlanOrderAwareJoinReorder()
+	}
+	if optFlagAdjust != nil {
+		optFlag = optFlagAdjust(optFlag)
+	}
+	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	if *bestPlan == nil || cost < *bestCost {
+		*bestCost = cost
+		*bestPlan = finalPlan
+		*bestNames = names
+		if needRestoreLogicalPlanCtx {
+			*bestLogicalPlanCtx = saveLogicalPlanBuildCtx(sctx.GetSessionVars())
+		}
+	}
+	return p, names, false, nil
+}
+
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
+
+func shouldTryNonDecorrelationRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanDecorrelatedApply &&
+		!sessVars.StmtCtx.AlternativeLogicalPlanSameOrderIndexJoin
+}
+
+func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
+}
+
+type flagAdjustFunc func(uint64) uint64
+
+var roundList = [...]flagAdjustFunc{
+	func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+	func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+}
+
+var roundEnabled = [...]func(*variable.SessionVars) bool{
+	shouldTryNonDecorrelationRound,
+	shouldTryOrderAwareReorderRound,
+}
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
@@ -469,58 +611,101 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
 	})
 	sessVars := sctx.GetSessionVars()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
+	var (
+		beginOpt        time.Time
+		optimizeStarted bool
+	)
+	defer func() {
+		if optimizeStarted {
+			sessVars.DurationOptimizer.Total = time.Since(beginOpt)
+		}
+	}()
 
-	// build logical plan
+	// Build the logical plan from the raw AST. The hint processor only keeps
+	// AST-derived metadata; per-build state is allocated inside PlanBuilder.
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
 	node.Node.Accept(hintProcessor)
-	defer hintProcessor.HandleUnusedViewHints()
-	builder := planBuilderPool.Get().(*core.PlanBuilder)
-	defer planBuilderPool.Put(builder.ResetForReuse())
-	builder.Init(sctx, is, hintProcessor)
-	p, err := buildLogicalPlan(ctx, sctx, node, builder)
+
+	// build multi logical plan from raw AST.
+	var (
+		needRestoreLogicalPlanCtx = sessVars.EnableAlternativeLogicalPlans
+		bestCost                  = math.MaxFloat64
+		bestPlan                  base.PhysicalPlan
+		bestNames                 types.NameSlice
+		bestLogicalPlanCtx        logicalPlanBuildCtx
+		checked                   bool
+	)
+	var initialLogicalPlanCtx logicalPlanBuildCtx
+	if needRestoreLogicalPlanCtx {
+		initialLogicalPlanCtx = saveLogicalPlanBuildCtx(sessVars)
+		sessVars.StmtCtx.ResetAlternativeLogicalPlanSignals()
+	}
+
+	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
+		ctx,
+		sctx,
+		node,
+		is,
+		hintProcessor,
+		&checked,
+		&optimizeStarted,
+		&beginOpt,
+		needRestoreLogicalPlanCtx,
+		&bestPlan,
+		&bestNames,
+		&bestCost,
+		&bestLogicalPlanCtx,
+		nil,
+	)
 	if err != nil {
 		return nil, nil, 0, err
 	}
-
-	activeRoles := sessVars.ActiveRoles
-	// Check privilege. Maybe it's better to move this to the Preprocess, but
-	// we need the table information to check privilege, which is collected
-	// into the visitInfo in the logical plan builder.
-	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
-		if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
-			return nil, nil, 0, err
-		}
-	}
-
-	if err := core.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
-		return nil, nil, 0, err
-	}
-
-	if err := core.CheckTableMode(node); err != nil {
-		return nil, nil, 0, err
-	}
-
-	names := p.OutputNames()
-
-	// Handle the non-logical plan statement.
-	logic, isLogicalPlan := p.(base.LogicalPlan)
-	if !isLogicalPlan {
+	if nonLogical {
+		// keep compatible with the old.
 		return p, names, 0, nil
 	}
 
-	core.RecheckCTE(logic)
+	for i, adjust := range roundList {
+		if !roundEnabled[i](sessVars) {
+			continue
+		}
+		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
+		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
+			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
+				failpoint.Return(nil, nil, 0, errors.New("unexpected alternative logical plan round"))
+			}
+		})
 
-	beginOpt := time.Now()
-	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
-	// TODO: capture plan replayer here if it matches sql and plan digest
-
-	sessVars.DurationOptimization = time.Since(beginOpt)
-	return finalPlan, names, cost, err
+		p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+			ctx,
+			sctx,
+			node,
+			is,
+			hintProcessor,
+			&checked,
+			&optimizeStarted,
+			&beginOpt,
+			needRestoreLogicalPlanCtx,
+			&bestPlan,
+			&bestNames,
+			&bestCost,
+			&bestLogicalPlanCtx,
+			adjust,
+		)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+		if nonLogical {
+			return p, names, 0, nil
+		}
+	}
+	if bestPlan == nil {
+		return nil, nil, 0, errors.New("failed to build logical plan")
+	}
+	if needRestoreLogicalPlanCtx {
+		restoreLogicalPlanBuildCtx(sessVars, bestLogicalPlanCtx)
+	}
+	return bestPlan, bestNames, bestCost, nil
 }
 
 // OptimizeExecStmt to handle the "execute" statement

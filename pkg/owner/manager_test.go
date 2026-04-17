@@ -17,6 +17,7 @@ package owner_test
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"runtime"
 	"sync/atomic"
@@ -34,7 +35,6 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/tests/v3/integration"
-	"golang.org/x/exp/rand"
 )
 
 type testInfo struct {
@@ -485,14 +485,35 @@ func TestImmediatelyCancel(t *testing.T) {
 
 func TestAcquireDistributedLock(t *testing.T) {
 	const addrFmt = "http://127.0.0.1:%d"
+
+	getFreePort := func(t *testing.T) int {
+		t.Helper()
+
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, listener.Close())
+		}()
+		addr, ok := listener.Addr().(*net.TCPAddr)
+		require.True(t, ok)
+		return addr.Port
+	}
+
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
-	// rand port in [20000, 60000)
-	randPort := int(rand.Int31n(40000)) + 20000
-	clientAddr := fmt.Sprintf(addrFmt, randPort)
-	lcurl, _ := url.Parse(clientAddr)
+
+	clientPort := getFreePort(t)
+	peerPort := getFreePort(t)
+	for peerPort == clientPort {
+		peerPort = getFreePort(t)
+	}
+
+	clientAddr := fmt.Sprintf(addrFmt, clientPort)
+	lcurl, err := url.Parse(clientAddr)
+	require.NoError(t, err)
 	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
-	lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, randPort+1))
+	lpurl, err := url.Parse(fmt.Sprintf(addrFmt, peerPort))
+	require.NoError(t, err)
 	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
 	cfg.InitialCluster = "default=" + lpurl.String()
 	cfg.Logger = "zap"

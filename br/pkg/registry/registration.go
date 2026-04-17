@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -542,6 +543,7 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 	ctx context.Context,
 	restoreID uint64,
 	tracker *utils.PiTRIdTracker,
+	dbs []*metautil.Database,
 	tables []*metautil.Table,
 ) error {
 	registrations, err := r.GetRegistrationsByMaxID(ctx, restoreID)
@@ -566,7 +568,7 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 		f = filter.CaseInsensitive(f)
 
 		// check if a table is already being restored
-		if err := r.checkForTableConflicts(tracker, tables, regInfo, f, restoreID); err != nil {
+		if err := r.checkForTableConflicts(tracker, dbs, tables, regInfo, f, restoreID); err != nil {
 			return err
 		}
 	}
@@ -582,13 +584,14 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 // match with the given filter, indicating a conflict with an existing restore task
 func (r *Registry) checkForTableConflicts(
 	tracker *utils.PiTRIdTracker,
+	dbs []*metautil.Database,
 	tables []*metautil.Table,
 	regInfo RegistrationInfoWithID,
 	f filter.Filter,
 	curRestoreID uint64,
 ) error {
 	// function to handle conflict when found
-	handleConflict := func(dbName, tableName string) error {
+	handleTableConflict := func(dbName, tableName string) error {
 		log.Warn("table already covered by another restore task",
 			zap.Uint64("existing_restore_id", regInfo.restoreID),
 			zap.Uint64("current_restore_id", curRestoreID),
@@ -605,24 +608,47 @@ func (r *Registry) checkForTableConflicts(
 				"because it is already being restored by task (restoreId: %d, time range: %d->%d, cmd: %s)",
 			dbName, tableName, curRestoreID, regInfo.restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
 	}
+	handleSchemaConflict := func(dbName string) error {
+		log.Warn("schema already covered by another restore task",
+			zap.Uint64("existing_restore_id", regInfo.restoreID),
+			zap.Uint64("current_restore_id", curRestoreID),
+			zap.String("database", dbName),
+			zap.Strings("filter_strings", regInfo.FilterStrings),
+		)
+		return errors.Annotatef(berrors.ErrDatabasesAlreadyExisted,
+			"database %s cannot be restored concurrently by current task with ID %d "+
+				"because it is already being restored by task (restoreId: %d, time range: %d->%d, cmd: %s)",
+			dbName, curRestoreID, regInfo.restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
+	}
 
 	// Use PiTRTableTracker if available for PiTR task
 	if tracker != nil && len(tracker.GetDBNameToTableName()) > 0 {
 		for dbName, tableNames := range tracker.GetDBNameToTableName() {
+			if utils.MatchSchema(f, dbName, regInfo.WithSysTable) {
+				return handleSchemaConflict(dbName)
+			}
 			for tableName := range tableNames {
 				if utils.MatchTable(f, dbName, tableName, regInfo.WithSysTable) {
-					return handleConflict(dbName, tableName)
+					return handleTableConflict(dbName, tableName)
 				}
 			}
 		}
 	} else {
+		// for existing point restore task, we need to check database conflicts with snapshot restore.
+		if regInfo.Cmd == "Point Restore" {
+			for _, db := range dbs {
+				if utils.MatchSchema(f, db.Info.Name.O, regInfo.WithSysTable) {
+					return handleSchemaConflict(db.Info.Name.O)
+				}
+			}
+		}
 		// use tables as this is a snapshot restore task
 		for _, table := range tables {
 			dbName := table.DB.Name.O
 			tableName := table.Info.Name.O
 
 			if utils.MatchTable(f, dbName, tableName, regInfo.WithSysTable) {
-				return handleConflict(dbName, tableName)
+				return handleTableConflict(dbName, tableName)
 			}
 		}
 	}
@@ -652,15 +678,11 @@ func (r *Registry) StopHeartbeatManager() {
 
 // resolveRestoreTS determines which restoredTS to use, handling conflicts with existing tasks
 // when restoredTS is not user-specified. Returns: (resolvedRestoreTS, error)
-func (r *Registry) resolveRestoreTS(ctx context.Context,
-	info RegistrationInfo, isRestoredTSUserSpecified bool) (uint64, error) {
-	// if restoredTS is user-specified, use it directly without any conflict resolution
-	if isRestoredTSUserSpecified {
-		log.Info("restoredTS is user-specified, using it directly",
-			zap.Uint64("restored_ts", info.RestoredTS))
-		return info.RestoredTS, nil
-	}
-
+func (r *Registry) resolveRestoreTS(
+	ctx context.Context,
+	info RegistrationInfo,
+	isRestoredTSUserSpecified bool,
+) (uint64, error) {
 	filterStrings := strings.Join(info.FilterStrings, FilterSeparator)
 
 	// look for tasks with same filter, startTS, cluster, sysTable, cmd
@@ -698,11 +720,11 @@ func (r *Registry) resolveRestoreTS(ctx context.Context,
 
 	// if restoredTS values are different and user explicitly specified it, use current restoredTS
 	if isRestoredTSUserSpecified && existingRestoredTS != info.RestoredTS {
-		log.Info("existing task has different restoredTS than user-specified, using current restoredTS",
-			zap.Uint64("existing_task_id", conflictingTaskID),
+		log.Error("existing task has different restoredTS from user-specified",
 			zap.Uint64("existing_restored_ts", existingRestoredTS),
-			zap.Uint64("current_restored_ts", info.RestoredTS))
-		return info.RestoredTS, nil
+			zap.Uint64("user_specified_restored_ts", info.RestoredTS))
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"existing task has different restoredTS(%d) from user-specified(%d)", existingRestoredTS, info.RestoredTS)
 	}
 
 	// if existing task is paused, reuse its restoredTS
@@ -773,6 +795,11 @@ func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartb
 
 	// check heartbeat every minute for up to 5 minutes
 	ticker := time.NewTicker(time.Minute)
+	failpoint.Inject("is-task-stale-ticker-duration", func(val failpoint.Value) {
+		ticker.Stop()
+		secs := val.(int)
+		ticker = time.NewTicker(time.Second * time.Duration(secs))
+	})
 	defer ticker.Stop()
 
 	selectHeartbeatSQL := fmt.Sprintf(selectTaskHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)

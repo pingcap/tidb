@@ -139,10 +139,11 @@ type tableScanExec struct {
 	ndvs          []int64
 	rowCnt        int64
 
-	chk    *chunk.Chunk
-	result chan scanResult
-	done   chan struct{}
-	wg     util.WaitGroupWrapper
+	chk      *chunk.Chunk
+	result   chan scanResult
+	done     chan struct{}
+	wg       util.WaitGroupWrapper
+	stopOnce sync.Once
 
 	decoder *rowcodec.ChunkDecoder
 	desc    bool
@@ -155,13 +156,13 @@ type tableScanExec struct {
 
 func (e *tableScanExec) SkipValue() bool { return false }
 
-func (e *tableScanExec) Process(key, value []byte) error {
+func (e *tableScanExec) Process(key, value []byte, commitTS uint64) error {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = e.decoder.DecodeToChunk(value, handle, e.chk)
+	err = e.decoder.DecodeToChunk(value, commitTS, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -264,11 +265,14 @@ func (e *tableScanExec) next() (*chunk.Chunk, error) {
 }
 
 func (e *tableScanExec) stop() error {
-	// just in case the channel is not initialized
-	if e.done != nil {
-		close(e.done)
-	}
-	e.wg.Wait()
+	e.stopOnce.Do(func() {
+		// stop() can be called from multiple teardown paths.
+		// Make close/wait idempotent to avoid closing an already-closed channel.
+		if e.done != nil {
+			close(e.done)
+		}
+		e.wg.Wait()
+	})
 	return nil
 }
 
@@ -314,7 +318,7 @@ func (e *indexScanExec) isNewVals(values [][]byte) bool {
 	return false
 }
 
-func (e *indexScanExec) Process(key, value []byte) error {
+func (e *indexScanExec) Process(key, value []byte, _ uint64) error {
 	decodedKey := key
 	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
 		// If the key is in API V2, then ignore the prefix
@@ -949,9 +953,20 @@ func (e *exchSenderExec) toTiPBChunk(chk *chunk.Chunk) ([]tipb.Chunk, error) {
 }
 
 func (e *exchSenderExec) next() (*chunk.Chunk, error) {
+	var mppCtx context.Context
+	if e.mppCtx != nil {
+		mppCtx = e.mppCtx.Ctx
+	}
 	defer func() {
 		for _, tunnel := range e.tunnels {
-			<-tunnel.connectedCh
+			if mppCtx == nil {
+				<-tunnel.connectedCh
+			} else {
+				select {
+				case <-tunnel.connectedCh:
+				case <-mppCtx.Done():
+				}
+			}
 			close(tunnel.ErrCh)
 			close(tunnel.DataCh)
 		}

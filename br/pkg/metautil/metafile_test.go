@@ -10,8 +10,8 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,7 +70,7 @@ func TestWalkMetaFileLeaf(t *testing.T) {
 
 func TestWalkMetaFileInvalid(t *testing.T) {
 	fakeDataDir := t.TempDir()
-	store, err := storage.NewLocalStorage(fakeDataDir)
+	store, err := objstore.NewLocalStorage(fakeDataDir)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -95,7 +95,7 @@ func TestWalkMetaFileInvalid(t *testing.T) {
 
 func TestWalkMetaFile(t *testing.T) {
 	fakeDataDir := t.TempDir()
-	store, err := storage.NewLocalStorage(fakeDataDir)
+	store, err := objstore.NewLocalStorage(fakeDataDir)
 	require.NoError(t, err)
 
 	ctx := context.Background()

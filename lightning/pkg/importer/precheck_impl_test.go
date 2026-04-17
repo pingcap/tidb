@@ -21,14 +21,15 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/lightning/pkg/importer/mock"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/suite"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -375,6 +376,9 @@ func (s *precheckImplSuite) TestLocalDiskPlacementCheckBasic() {
 }
 
 func (s *precheckImplSuite) TestLocalTempKVDirCheckBasic() {
+	if kerneltype.IsNextGen() {
+		s.T().Skip("we only support global sort in nextgen kernel, this is for local-sort")
+	}
 	var (
 		err    error
 		ci     precheck.Checker
@@ -613,7 +617,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 
 	cli := testEtcdCluster.RandClient()
 	brCli := streamhelper.NewMetaDataClient(cli)
-	backend, _ := storage.ParseBackend("noop://", nil)
+	backend, _ := objstore.ParseBackend("noop://", nil)
 	taskInfo, err := streamhelper.NewTaskInfo("br_name").
 		FromTS(1).
 		UntilTS(1000).

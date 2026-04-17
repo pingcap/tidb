@@ -186,6 +186,18 @@ func TestWriteCFValueShortValueOverflow(t *testing.T) {
 	require.True(t, v4.HasShortValue())
 	require.Equal(t, len(v4.GetShortValue()), 255)
 	require.True(t, bytes.Equal(v4.GetShortValue(), largeValue))
+
+	// Test case 5: Edge case with only 1 byte (flag), no vlen byte - should error
+	buff5 := make([]byte, 0, 9)
+	buff5 = append(buff5, WriteTypePut)
+	buff5 = codec.EncodeUvarint(buff5, ts)
+	buff5 = append(buff5, flagShortValuePrefix) // Only flag, no vlen byte following
+
+	v5 := new(RawWriteCFValue)
+	err5 := v5.ParseFrom(buff5)
+	require.Error(t, err5)
+	require.Contains(t, err5.Error(), "insufficient data for short value prefix")
+	require.Contains(t, err5.Error(), "need at least 2 bytes but only have 1")
 }
 
 func TestWriteCFValueWithRollback(t *testing.T) {

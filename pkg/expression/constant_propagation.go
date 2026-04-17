@@ -408,10 +408,9 @@ func (s *propConstSolver) propagateColumnEQ() {
 	allVisited := true
 	for i := range s.conditions {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
-			lCol, lOk := fun.GetArgs()[0].(*Column)
-			rCol, rOk := fun.GetArgs()[1].(*Column)
+			lCol, rCol, ok := IsColOpCol(fun)
 			// TODO: Enable hybrid types in ConstantPropagate.
-			if lOk && rOk && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
+			if ok && lCol.GetType(s.ctx.GetEvalCtx()).GetCollate() == rCol.GetType(s.ctx.GetEvalCtx()).GetCollate() && !lCol.GetType(s.ctx.GetEvalCtx()).Hybrid() && !rCol.GetType(s.ctx.GetEvalCtx()).Hybrid() {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				visited[i] = true

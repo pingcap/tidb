@@ -103,6 +103,12 @@ type DDLReorgMeta struct {
 	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
 }
 
+// ShallowCopy creates a shallow copy of DDLReorgMeta.
+func (dm *DDLReorgMeta) ShallowCopy() *DDLReorgMeta {
+	newMeta := *dm
+	return &newMeta
+}
+
 // GetConcurrency gets the concurrency from DDLReorgMeta.
 func (dm *DDLReorgMeta) GetConcurrency() int {
 	concurrency := dm.Concurrency.Load()

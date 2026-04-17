@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/temptable"
@@ -158,10 +159,12 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnSelectTable(tn)
 	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	expectedTS, err := staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -100*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	expectedIS, err := domain.GetDomain(tk.Session()).GetSnapshotInfoSchema(expectedTS)
+	require.NoError(t, err)
+	require.Equal(t, expectedIS.SchemaMetaVersion(), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	evaluator := processor.GetStalenessTSEvaluatorForPrepare()
 	evaluatorTS, err := evaluator(ctx, tk.Session())
 	require.NoError(t, err)
@@ -217,10 +220,12 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnSelectTable(tn)
 	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	expectedIS, err = domain.GetDomain(tk.Session()).GetSnapshotInfoSchema(expectedTS)
+	require.NoError(t, err)
+	require.Equal(t, expectedIS.SchemaMetaVersion(), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	evaluator = processor.GetStalenessTSEvaluatorForPrepare()
 	evaluatorTS, err = evaluator(ctx, tk.Session())
 	require.NoError(t, err)
@@ -228,6 +233,82 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")
+}
+
+func TestStaleReadSupportDateTimeAndTSO(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	p1 := genStaleReadPoint(t, tk)
+	p2 := genStaleReadPoint(t, tk)
+
+	require.NotEqual(t, p1.ts, p2.ts)
+
+	// Reading AS OF TIMESTAMP 'TSO' should be parsed correctly.
+	processor := createProcessor(t, tk.Session())
+	err := processor.OnSelectTable(astTableWithAsOf(t, fmt.Sprintf("%d", p1.ts)))
+	require.NoError(t, err)
+	require.Equal(t, processor.GetStalenessReadTS(), p1.ts)
+
+	// Reading AS OF TIMESTAMP 'TSO' does not lose precision.
+	processor = createProcessor(t, tk.Session())
+	err = processor.OnSelectTable(astTableWithAsOf(t, fmt.Sprintf("%d", p1.ts+1)))
+	require.NoError(t, err)
+	require.Equal(t, processor.GetStalenessReadTS(), p1.ts+1)
+
+	// Reading AS OF TIMESTAMP 'YYYY-MM-DD HH:MM:SS' should be parsed correctly.
+	processor = createProcessor(t, tk.Session())
+	err = processor.OnSelectTable(astTableWithAsOf(t, p1.dt))
+	require.NoError(t, err)
+	require.Equal(t, processor.GetStalenessReadTS(), p1.ts)
+}
+
+func TestStaleReadCompactDateTime(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	p1 := genStaleReadPoint(t, tk)
+
+	// AS OF TIMESTAMP 'YYYYMMDDHHMMSS' is a valid datetime and is parsed as
+	// 'YYYY-MM-DD HH:MM:SS', not as TSO. This is for backward compatibility.
+	compactDatetime := p1.tm.Format("20060102150405") // Go format for YYYYMMDDHHMMSS
+	// Truncate to seconds since compact format doesn't have subsecond precision
+	expectedTSFromDatetime := oracle.GoTimeToTS(p1.tm.Truncate(time.Second))
+
+	processor := createProcessor(t, tk.Session())
+	err := processor.OnSelectTable(astTableWithAsOf(t, compactDatetime))
+	require.NoError(t, err)
+	// The timestamp should match the datetime interpretation, not the raw integer
+	require.Equal(t, expectedTSFromDatetime, processor.GetStalenessReadTS())
+	// Verify it's NOT treated as a raw TSO (which would be a completely different value)
+	compactAsInt, err := strconv.ParseUint(compactDatetime, 10, 64)
+	require.NoError(t, err)
+	require.NotEqual(t, compactAsInt, processor.GetStalenessReadTS())
+}
+
+func TestStaleReadInvalidExpression(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	// Initialize the test table
+	tk.MustExec("create table if not exists test.t(a bigint)")
+
+	// Test invalid formats that can't be parsed as datetime or TSO.
+	testCases := []struct {
+		input       string
+		expectedErr string
+	}{
+		{"invalid_timestamp", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"},
+		{"not-a-date", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"},
+		{"2024-13-01 00:00:00", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"}, // invalid month
+		{"2024-01-32 00:00:00", "cannot parse AS OF TIMESTAMP expression as datetime or TSO"}, // invalid day
+		{"42", "invalid TSO timestamp: TSO is before 2013-01-01"},                             // small integer, not a valid TSO
+		{"0", "invalid TSO timestamp: TSO is before 2013-01-01"},                              // zero is not a valid TSO
+	}
+
+	for _, tc := range testCases {
+		processor := createProcessor(t, tk.Session())
+		err := processor.OnSelectTable(astTableWithAsOf(t, tc.input))
+		require.Error(t, err, "expected error for invalid format: %s", tc.input)
+		require.Contains(t, err.Error(), tc.expectedErr, "unexpected error message for: %s", tc.input)
+	}
 }
 
 func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
@@ -287,10 +368,12 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnExecutePreparedStmt(nil)
 	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	expectedTS, err := staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -100*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	expectedIS, err := domain.GetDomain(tk.Session()).GetSnapshotInfoSchema(expectedTS)
+	require.NoError(t, err)
+	require.Equal(t, expectedIS.SchemaMetaVersion(), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	// `@@tidb_read_staleness` will be ignored when `as of` or `@@tx_read_ts`
@@ -338,10 +421,12 @@ func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnExecutePreparedStmt(nil)
 	require.True(t, processor.IsStaleness())
-	require.Equal(t, int64(0), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	expectedTS, err = staleread.CalculateTsWithReadStaleness(ctx, tk.Session(), -5*time.Second)
 	require.NoError(t, err)
 	require.Equal(t, expectedTS, processor.GetStalenessReadTS())
+	expectedIS, err = domain.GetDomain(tk.Session()).GetSnapshotInfoSchema(expectedTS)
+	require.NoError(t, err)
+	require.Equal(t, expectedIS.SchemaMetaVersion(), processor.GetStalenessInfoSchema().SchemaMetaVersion())
 	tk.MustExec("set @@tidb_read_staleness=''")
 
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")
@@ -427,4 +512,36 @@ func createProcessor(t *testing.T, se sessionctx.Context) staleread.Processor {
 	require.Nil(t, processor.GetStalenessTSEvaluatorForPrepare())
 	require.Nil(t, processor.GetStalenessInfoSchema())
 	return processor
+}
+
+func TestConsistentCalculateAsOfTsExpr(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.Session().GetSessionVars().TimeZone = time.UTC
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(`select now(3) - interval 1 second`, "", "")
+	require.NoError(t, err)
+	secondTsExpr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+	stmt, err = p.ParseOneStmt(`select now(3) - interval 3 second`, "", "")
+	require.NoError(t, err)
+	threeSecondTsExpr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+
+	se := tk.Session()
+	se.GetSessionVars().StmtCtx = stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+
+	ts1, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), secondTsExpr)
+	require.NoError(t, err)
+
+	time.Sleep(10 * time.Millisecond)
+
+	ts2, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), secondTsExpr)
+	require.NoError(t, err)
+	require.Equal(t, ts1, ts2)
+
+	ts3, err := staleread.CalculateAsOfTsExpr(context.Background(), se.GetPlanCtx(), threeSecondTsExpr)
+	require.NoError(t, err)
+	require.True(t, ts3 < ts1)
+	require.Equal(t, ts1-ts3, uint64(2000<<18))
 }

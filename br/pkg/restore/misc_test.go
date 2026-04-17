@@ -32,9 +32,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
@@ -143,10 +144,10 @@ func TestGetTSWithRetry(t *testing.T) {
 }
 
 func TestParseLogRestoreTableIDsBlocklistFileName(t *testing.T) {
-	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName("RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta")
+	restoreCommitTs, restoreStartTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName("RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta")
 	require.True(t, parsed)
 	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), restoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), snapshotBackupTs)
+	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), restoreStartTs)
 	unparsedFilenames := []string{
 		"KFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta",
 		"RFFFFFFFFFFFFFFFF.SFFFFFFFFFFFFFFFF.meta",
@@ -164,14 +165,14 @@ func TestParseLogRestoreTableIDsBlocklistFileName(t *testing.T) {
 func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, 0xFFFFFCCCFFFFF, []int64{1, 2, 3}, []int64{4})
 	require.NoError(t, err)
-	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
+	restoreCommitTs, restoreStartTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
 	require.True(t, parsed)
 	require.Equal(t, uint64(0xFFFFFCDEFFFFF), restoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFABCFFFF), snapshotBackupTs)
+	require.Equal(t, uint64(0xFFFFFFABCFFFF), restoreStartTs)
 	err = stg.WriteFile(ctx, name, data)
 	require.NoError(t, err)
 	data, err = stg.ReadFile(ctx, name)
@@ -179,17 +180,17 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 	blocklist, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(data)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0xFFFFFCDEFFFFF), blocklist.RestoreCommitTs)
-	require.Equal(t, uint64(0xFFFFFFABCFFFF), blocklist.SnapshotBackupTs)
+	require.Equal(t, uint64(0xFFFFFFABCFFFF), blocklist.RestoreStartTs)
 	require.Equal(t, uint64(0xFFFFFCCCFFFFF), blocklist.RewriteTs)
 	require.Equal(t, []int64{1, 2, 3}, blocklist.TableIds)
 	require.Equal(t, []int64{4}, blocklist.DbIds)
 }
 
 func writeBlocklistFile(
-	ctx context.Context, t *testing.T, s storage.ExternalStorage,
-	restoreCommitTs, snapshotBackupTs, rewriteTs uint64, tableIds, dbIds []int64,
+	ctx context.Context, t *testing.T, s storeapi.Storage,
+	restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64,
 ) {
-	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, rewriteTs, tableIds, dbIds)
+	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, rewriteTs, tableIds, dbIds)
 	require.NoError(t, err)
 	err = s.WriteFile(ctx, name, data)
 	require.NoError(t, err)
@@ -206,7 +207,7 @@ func fakeTrackerID(tableIds []int64) *utils.PiTRIdTracker {
 func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	writeBlocklistFile(ctx, t, stg, 100, 10, 50, []int64{100, 101, 102}, []int64{103})
 	writeBlocklistFile(ctx, t, stg, 200, 20, 60, []int64{200, 201, 202}, []int64{203})
@@ -254,9 +255,9 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	require.Contains(t, err.Error(), "table_100")
 }
 
-func filesCount(ctx context.Context, s storage.ExternalStorage) int {
+func filesCount(ctx context.Context, s storeapi.Storage) int {
 	count := 0
-	s.WalkDir(ctx, &storage.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
+	s.WalkDir(ctx, &storeapi.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
 		count += 1
 		return nil
 	})
@@ -266,7 +267,7 @@ func filesCount(ctx context.Context, s storage.ExternalStorage) int {
 func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	stg, err := storage.NewLocalStorage(base)
+	stg, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	writeBlocklistFile(ctx, t, stg, 100, 10, 50, []int64{100, 101, 102}, []int64{103})
 	writeBlocklistFile(ctx, t, stg, 200, 20, 60, []int64{200, 201, 202}, []int64{203})
@@ -513,4 +514,173 @@ func TestRegionScanner(t *testing.T) {
 		output_i += 1
 	})
 	require.Equal(t, len(output), output_i)
+}
+
+func TestFilteringBoundaryConditions(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	stg, err := objstore.NewLocalStorage(base)
+	require.NoError(t, err)
+
+	// Create a blocklist file with restoreCommitTs=100, restoreStartTs=50
+	writeBlocklistFile(ctx, t, stg, 100, 50, 30, []int64{1, 2, 3}, []int64{10})
+
+	tableNameByTableId := func(tableId int64) string {
+		return fmt.Sprintf("table_%d", tableId)
+	}
+	dbNameByDbId := func(dbId int64) string {
+		return fmt.Sprintf("db_%d", dbId)
+	}
+	checkIDLost := func(id int64) bool {
+		return false
+	}
+	cleanErr := func(rewriteTs uint64) {}
+
+	// Scenario 1: startTs == restoreCommitTs (boundary value)
+	// Expected: should be filtered (no error because blocklist is skipped)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+		ctx, stg, fakeTrackerID([]int64{1, 2, 3}),
+		100, 75, // startTs == restoreCommitTs
+		tableNameByTableId, dbNameByDbId, checkIDLost, checkIDLost, cleanErr)
+	require.NoError(t, err, "should filter when startTs == restoreCommitTs")
+
+	// Scenario 2: startTs == restoreCommitTs - 1
+	// Expected: should NOT be filtered (error because table IDs match)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+		ctx, stg, fakeTrackerID([]int64{1, 2, 3}),
+		99, 75, // startTs == restoreCommitTs - 1
+		tableNameByTableId, dbNameByDbId, checkIDLost, checkIDLost, cleanErr)
+	require.Error(t, err, "should not filter when startTs < restoreCommitTs")
+	require.Contains(t, err.Error(), "table_1")
+
+	// Scenario 3: restoredTs == restoreStartTs (boundary value)
+	// Expected: should NOT be filtered (error because table IDs match)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+		ctx, stg, fakeTrackerID([]int64{1, 2, 3}),
+		80, 50, // restoredTs == restoreStartTs
+		tableNameByTableId, dbNameByDbId, checkIDLost, checkIDLost, cleanErr)
+	require.Error(t, err, "should not filter when restoredTs == restoreStartTs")
+	require.Contains(t, err.Error(), "table_1")
+
+	// Scenario 4: restoredTs == restoreStartTs - 1
+	// Expected: should be filtered (no error because blocklist is skipped)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(
+		ctx, stg, fakeTrackerID([]int64{1, 2, 3}),
+		80, 49, // restoredTs == restoreStartTs - 1
+		tableNameByTableId, dbNameByDbId, checkIDLost, checkIDLost, cleanErr)
+	require.NoError(t, err, "should filter when restoredTs < restoreStartTs")
+}
+
+func TestBlocklistWithEmptyArrays(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	stg, err := objstore.NewLocalStorage(base)
+	require.NoError(t, err)
+
+	testCases := []struct {
+		name     string
+		tableIds []int64
+		dbIds    []int64
+	}{
+		{
+			name:     "empty tables, non-empty dbs",
+			tableIds: []int64{},
+			dbIds:    []int64{1, 2, 3},
+		},
+		{
+			name:     "non-empty tables, empty dbs",
+			tableIds: []int64{100, 200},
+			dbIds:    []int64{},
+		},
+		{
+			name:     "both empty",
+			tableIds: []int64{},
+			dbIds:    []int64{},
+		},
+		{
+			name:     "nil tables, non-empty dbs",
+			tableIds: nil,
+			dbIds:    []int64{1, 2, 3},
+		},
+		{
+			name:     "non-empty tables, nil dbs",
+			tableIds: []int64{100, 200},
+			dbIds:    nil,
+		},
+		{
+			name:     "both nil",
+			tableIds: nil,
+			dbIds:    nil,
+		},
+	}
+
+	for i, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Marshal the blocklist file
+			filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(
+				uint64(100+i), uint64(50+i), uint64(30+i), tc.tableIds, tc.dbIds)
+			require.NoError(t, err)
+			require.NotEmpty(t, filename)
+			require.NotEmpty(t, data)
+
+			// Write to storage
+			err = stg.WriteFile(ctx, filename, data)
+			require.NoError(t, err)
+
+			// Read back from storage
+			readData, err := stg.ReadFile(ctx, filename)
+			require.NoError(t, err)
+
+			// Unmarshal and verify
+			blocklistFile, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(readData)
+			require.NoError(t, err)
+			require.Equal(t, uint64(100+i), blocklistFile.RestoreCommitTs)
+			require.Equal(t, uint64(50+i), blocklistFile.RestoreStartTs)
+			require.Equal(t, uint64(30+i), blocklistFile.RewriteTs)
+
+			// Verify arrays - nil and empty slice should be equivalent after unmarshal
+			// Protobuf converts empty slices to nil during serialization/deserialization
+			if len(tc.tableIds) == 0 {
+				require.Empty(t, blocklistFile.TableIds)
+			} else {
+				require.Equal(t, tc.tableIds, blocklistFile.TableIds)
+			}
+			if len(tc.dbIds) == 0 {
+				require.Empty(t, blocklistFile.DbIds)
+			} else {
+				require.Equal(t, tc.dbIds, blocklistFile.DbIds)
+			}
+		})
+	}
+}
+
+func TestInvalidFilenameFormats(t *testing.T) {
+	invalidFilenames := []string{
+		// Wrong suffix
+		"R000000000000000A_T0000000000000005.txt",
+		"R000000000000000A_T0000000000000005",
+		// Not starting with 'R'
+		"X000000000000000A_T0000000000000005.meta",
+		"_000000000000000A_T0000000000000005.meta",
+		// Timestamp not 16 hex digits
+		"R00000000000000A_T0000000000000005.meta",
+		"R0000000000000000A_T0000000000000005.meta",
+		// Invalid hex characters
+		"R000000000000000G_T0000000000000005.meta",
+		"R000000000000000A_T000000000000000G.meta",
+		// Wrong separator
+		"R000000000000000A-T0000000000000005.meta",
+		"R000000000000000AT0000000000000005.meta",
+		"R000000000000000A__T0000000000000005.meta",
+		// Missing '_T' separator
+		"R000000000000000A0000000000000005.meta",
+		"R000000000000000A_0000000000000005.meta",
+	}
+
+	for _, filename := range invalidFilenames {
+		t.Run(filename, func(t *testing.T) {
+			_, _, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(filename)
+			require.False(t, parsed, "should fail to parse invalid filename: %s", filename)
+		})
+	}
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -94,6 +95,13 @@ type tuneConfig struct {
 	wg *sync.WaitGroup
 }
 
+// Tuner is an interface that provides capacity for tuning
+// the worker pools. It's used to pass worker pool without import cycle
+// caused by generic type.
+type Tuner interface {
+	Tune(numWorkers int32, wait bool)
+}
+
 // WorkerPool is a pool of workers.
 type WorkerPool[T TaskMayPanic, R any] struct {
 	// wctx are the context used for the whole pipeline, and ctx and cancel are derived
@@ -135,6 +143,7 @@ func NewWorkerPool[T TaskMayPanic, R any](
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
+	failpoint.InjectCall("NewWorkerPool", numWorkers)
 
 	p := &WorkerPool[T, R]{
 		name:          name,

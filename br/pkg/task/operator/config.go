@@ -9,8 +9,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	crrconfig "github.com/pingcap/tidb/br/pkg/stream/crr/config"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/spf13/pflag"
 )
 
@@ -20,6 +21,9 @@ const (
 	flagUpstreamClusterID = "upstream-cluster-id"
 	flagChecksumTS        = "checksum-ts"
 	flagStorePatterns     = "stores"
+	flagTaskName          = "task-name"
+	flagUpstreamStorage   = "upstream-storage"
+	flagDownstreamStorage = "downstream-storage"
 	flagTTL               = "ttl"
 	flagSafePoint         = "safepoint"
 	flagStorage           = "storage"
@@ -70,13 +74,13 @@ func (cfg *PauseGcConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 type Base64ifyConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	LoadCerd   bool
 }
 
 func DefineFlagsForBase64ifyConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "The external storage input.")
 	flags.Bool(flagLoadCreds, false, "whether loading the credientials from current environment and marshal them to the base64 string. [!]")
 }
@@ -99,13 +103,13 @@ func (cfg *Base64ifyConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 type ListMigrationConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	JSONOutput bool
 }
 
 func DefineFlagsForListMigrationConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "the external storage input.")
 	flags.Bool(flagJSON, false, "output the result in json format.")
 }
@@ -128,7 +132,7 @@ func (cfg *ListMigrationConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 type MigrateToConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	Recent     bool
 	MigrateTo  int
@@ -139,7 +143,7 @@ type MigrateToConfig struct {
 }
 
 func DefineFlagsForMigrateToConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "the external storage input.")
 	flags.Bool(flagRecent, true, "migrate to the most recent migration and BASE.")
 	flags.Int(flagTo, 0, "migrate all migrations from the BASE to the specified sequence number.")
@@ -219,6 +223,47 @@ func (cfg *ForceFlushConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	}
 
 	return cfg.Config.ParseFromFlags(flags)
+}
+
+type CRRCheckpointConfig struct {
+	task.Config
+	CRRConfig crrconfig.Config
+
+	UpstreamStorage   string
+	DownstreamStorage string
+}
+
+func DefineFlagsForCRRCheckpointConfig(flags *pflag.FlagSet) {
+	crrconfig.DefineFlags(flags)
+	flags.String(flagUpstreamStorage, "", "The upstream log backup storage URI.")
+	flags.String(flagDownstreamStorage, "", "The downstream replicated storage URI. Optional when the upstream storage can confirm object sync directly, such as AWS S3.")
+}
+
+func (cfg *CRRCheckpointConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	if err := cfg.Config.ParseFromFlags(flags); err != nil {
+		return err
+	}
+	if err := cfg.CRRConfig.Parse(flags); err != nil {
+		return err
+	}
+
+	var err error
+	cfg.UpstreamStorage, err = flags.GetString(flagUpstreamStorage)
+	if err != nil {
+		return err
+	}
+	cfg.DownstreamStorage, err = flags.GetString(flagDownstreamStorage)
+	if err != nil {
+		return err
+	}
+
+	if cfg.CRRConfig.TaskName == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagTaskName)
+	}
+	if cfg.UpstreamStorage == "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "missing required flag --%s", flagUpstreamStorage)
+	}
+	return nil
 }
 
 type ChecksumWithRewriteRulesConfig struct {

@@ -19,12 +19,17 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
+	"golang.org/x/sync/errgroup"
 )
 
 func testGetFirstAndLastKey(
@@ -122,51 +127,7 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
 
-func TestSplit(t *testing.T) {
-	cases := []struct {
-		input    []int
-		conc     int
-		expected [][]int
-	}{
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     1,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     2,
-			expected: [][]int{{1, 2, 3}, {4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     0,
-			expected: [][]int{{1, 2, 3, 4, 5}},
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     5,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-		{
-			input:    []int{},
-			conc:     5,
-			expected: nil,
-		},
-		{
-			input:    []int{1, 2, 3, 4, 5},
-			conc:     100,
-			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
-		},
-	}
-
-	for _, c := range cases {
-		got := split(c.input, c.conc)
-		require.Equal(t, c.expected, got)
-	}
-}
-
-func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]KVPair) (dataFiles, statFiles []string) {
+func prepareKVFiles(t *testing.T, store storeapi.Storage, contents [][]KVPair) (dataFiles, statFiles []string) {
 	ctx := context.Background()
 	for i, c := range contents {
 		var summary *WriterSummary
@@ -212,7 +173,7 @@ func TestEngineOnDup(t *testing.T) {
 		{Key: []byte{3}, Value: []byte("sds")},
 	}}
 
-	getEngineFn := func(store storage.ExternalStorage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
+	getEngineFn := func(store storeapi.Storage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
 		return NewExternalEngine(
 			ctx,
 			store, inDataFiles, inStatFiles,
@@ -232,7 +193,7 @@ func TestEngineOnDup(t *testing.T) {
 
 	t.Run("on duplicate ignore", func(t *testing.T) {
 		onDup := engineapi.OnDuplicateKeyIgnore
-		store := storage.NewMemStorage()
+		store := objstore.NewMemStorage()
 		dataFiles, statFiles := prepareKVFiles(t, store, contents)
 		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
 		loadDataCh := make(chan engineapi.DataAndRanges, 4)
@@ -244,7 +205,7 @@ func TestEngineOnDup(t *testing.T) {
 
 	t.Run("on duplicate error", func(t *testing.T) {
 		onDup := engineapi.OnDuplicateKeyError
-		store := storage.NewMemStorage()
+		store := objstore.NewMemStorage()
 		dataFiles, statFiles := prepareKVFiles(t, store, contents)
 		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
 		loadDataCh := make(chan engineapi.DataAndRanges, 4)
@@ -256,7 +217,7 @@ func TestEngineOnDup(t *testing.T) {
 
 	t.Run("on duplicate record or remove, no duplicates", func(t *testing.T) {
 		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
-			store := storage.NewMemStorage()
+			store := objstore.NewMemStorage()
 			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
 				{Key: []byte{4}, Value: []byte("bbb")},
 				{Key: []byte{1}, Value: []byte("aa")},
@@ -292,7 +253,7 @@ func TestEngineOnDup(t *testing.T) {
 		}
 		for _, cont := range [][][]KVPair{contents, contents2} {
 			for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
-				store := storage.NewMemStorage()
+				store := objstore.NewMemStorage()
 				dataFiles, statFiles := prepareKVFiles(t, store, cont)
 				extEngine := getEngineFn(store, od, dataFiles, statFiles)
 				loadDataCh := make(chan engineapi.DataAndRanges, 4)
@@ -329,7 +290,7 @@ func TestEngineOnDup(t *testing.T) {
 
 	t.Run("on duplicate record or remove, all duplicated", func(t *testing.T) {
 		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
-			store := storage.NewMemStorage()
+			store := objstore.NewMemStorage()
 			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
 				{Key: []byte{1}, Value: []byte("aaa")},
 				{Key: []byte{1}, Value: []byte("aaa")},
@@ -362,5 +323,152 @@ func TestEngineOnDup(t *testing.T) {
 				}, dupPairs)
 			}
 		}
+	})
+}
+
+func TestLoadIngestDataMultiBatch(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+	// Create data spread across 4 key ranges, with 2 files to exercise
+	// cross-file offset reuse in the multi-batch path (start > 0).
+	contents := [][]KVPair{
+		{
+			{Key: []byte{1}, Value: []byte("v1")},
+			{Key: []byte{2}, Value: []byte("v2")},
+			{Key: []byte{3}, Value: []byte("v3")},
+			{Key: []byte{4}, Value: []byte("v4")},
+		},
+		{
+			{Key: []byte{5}, Value: []byte("v5")},
+			{Key: []byte{6}, Value: []byte("v6")},
+			{Key: []byte{7}, Value: []byte("v7")},
+			{Key: []byte{8}, Value: []byte("v8")},
+		},
+	}
+	dataFiles, statFiles := prepareKVFiles(t, store, contents)
+
+	// 5 job keys = 4 ranges. With workerConcurrency=2 the loop produces
+	// two batches: keys[0:3] (ranges 1-2) and keys[2:5] (ranges 3-4).
+	jobKeys := [][]byte{{1}, {3}, {5}, {7}, {9}}
+	extEngine := NewExternalEngine(
+		ctx,
+		store, dataFiles, statFiles,
+		[]byte{1}, []byte{9},
+		jobKeys,
+		[][]byte{{1}, {5}, {9}},
+		2, // workerConcurrency — forces 2 batches
+		123,
+		456,
+		8,
+		true,
+		16*units.GiB,
+		engineapi.OnDuplicateKeyError,
+		"/",
+	)
+	t.Cleanup(func() {
+		require.NoError(t, extEngine.Close())
+	})
+
+	loadDataCh := make(chan engineapi.DataAndRanges, 4)
+	require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
+	require.Len(t, loadDataCh, 2, "expected 2 batches from LoadIngestData")
+
+	var allKVs []KVPair
+	for range 2 {
+		dr := <-loadDataCh
+		allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
+	}
+	require.EqualValues(t, []KVPair{
+		{Key: []byte{1}, Value: []byte("v1")},
+		{Key: []byte{2}, Value: []byte("v2")},
+		{Key: []byte{3}, Value: []byte("v3")},
+		{Key: []byte{4}, Value: []byte("v4")},
+		{Key: []byte{5}, Value: []byte("v5")},
+		{Key: []byte{6}, Value: []byte("v6")},
+		{Key: []byte{7}, Value: []byte("v7")},
+		{Key: []byte{8}, Value: []byte("v8")},
+	}, allKVs)
+}
+
+type dummyWorker struct{}
+
+func (w *dummyWorker) Tune(int32, bool) {
+}
+
+func TestChangeEngineConcurrency(t *testing.T) {
+	var (
+		outCh     chan engineapi.DataAndRanges
+		eg        errgroup.Group
+		e         *Engine
+		finished  atomic.Int32
+		updatedCh chan struct{}
+	)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	resetFn := func() {
+		outCh = make(chan engineapi.DataAndRanges, 4)
+		updatedCh = make(chan struct{})
+		eg = errgroup.Group{}
+		finished.Store(0)
+		e = &Engine{
+			jobKeys:           make([][]byte, 64),
+			workerConcurrency: *atomic.NewInt32(4),
+			readyCh:           make(chan struct{}),
+		}
+		e.SetWorkerPool(&dummyWorker{})
+
+		// Load and consume the data
+		eg.Go(func() error {
+			defer close(outCh)
+			return e.LoadIngestData(context.Background(), outCh)
+		})
+		eg.Go(func() error {
+			<-updatedCh
+			for data := range outCh {
+				data.Data.DecRef()
+				finished.Add(1)
+			}
+			return nil
+		})
+	}
+
+	t.Run("reduce concurrency", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+			updatedCh <- struct{}{}
+		})
+
+		resetFn()
+		// Make sure update concurrency is triggered.
+		require.Eventually(t, func() bool {
+			return len(outCh) >= 4
+		}, 5*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 1, 1024))
+		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("increase concurrency", func(t *testing.T) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/afterUpdateWorkerConcurrency", func() {
+			updatedCh <- struct{}{}
+		})
+
+		resetFn()
+		// Make sure update concurrency is triggered.
+		require.Eventually(t, func() bool {
+			return len(outCh) >= 4
+		}, 5*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 8, 1024))
+		require.NoError(t, eg.Wait())
+	})
+
+	t.Run("increase concurrency after loading all data", func(t *testing.T) {
+		resetFn()
+		close(updatedCh)
+		// Wait all the data being processed
+		require.Eventually(t, func() bool {
+			return finished.Load() >= 16
+		}, 3*time.Second, 10*time.Millisecond)
+		require.NoError(t, e.UpdateResource(context.Background(), 8, 1024))
+		require.NoError(t, eg.Wait())
 	})
 }

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -256,9 +257,9 @@ func TestSplitTable(t *testing.T) {
 		},
 	}
 	defer func(originValue int64) {
-		minRegionStepValue = originValue
-	}(minRegionStepValue)
-	minRegionStepValue = 10
+		regionsplit.MinRegionStepValue = originValue
+	}(regionsplit.MinRegionStepValue)
+	regionsplit.MinRegionStepValue = 10
 	// range is 0 ~ 100, and split into 10 region.
 	// So 10 regions range is like below:
 	// region1: [-inf ~ 10)
@@ -386,9 +387,9 @@ func TestClusterIndexSplitTable(t *testing.T) {
 		},
 	}
 	defer func(originValue int64) {
-		minRegionStepValue = originValue
-	}(minRegionStepValue)
-	minRegionStepValue = 3
+		regionsplit.MinRegionStepValue = originValue
+	}(regionsplit.MinRegionStepValue)
+	regionsplit.MinRegionStepValue = 3
 	ctx := mock.NewContext()
 	e := &SplitTableRegionExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),

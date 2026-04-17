@@ -20,7 +20,9 @@ import (
 	"math/rand"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -2297,4 +2300,261 @@ func TestFastAdminCheckWithError(t *testing.T) {
 		key idx6(c1), key idx7(c1), key idx8(c1), key idx9(c1), key idx10(c1))
 	`)
 	tk.MustExecToErr("admin check table admin_test")
+}
+
+func TestFastAdminCheckQuickPassSkipBucketed(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, k int, key(k))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+
+	// If this failpoint is hit, it means we entered the bucketed refinement path.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockFastCheckTableBucketedCalled", "return(true)")
+
+	// Consistent case: should exit from global checksum quick pass and not enter bucketed refinement.
+	tk.MustExec("admin check table t")
+
+	// Inconsistent case: should fall back to bucketed refinement (failpoint triggers).
+	sctx := mock.NewContext()
+	sctx.Store = store
+	ctx := sctx.GetTableCtx()
+	is := domain.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(ctx, txn, types.MakeDatums(1), kv.IntHandle(1))
+	require.NoError(t, err)
+	require.NoError(t, txn.Commit(context.Background()))
+
+	err = tk.ExecToErr("admin check table t")
+	require.Error(t, err)
+	require.EqualError(t, err, "mock fast check table bucketed called")
+}
+
+func TestAdminCheckTableWithEnumAndPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Test 1: Table with enum column and unique index
+	// This scenario can generate PointGet plan
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (id int primary key, status enum('active', 'inactive', 'pending'), unique key uk_status(status))")
+	tk.MustExec("insert into admin_test values (1, 'active'), (2, 'inactive'), (3, 'pending')")
+
+	// Verify that a query with unique index on enum column generates PointGet plan
+	rows := tk.MustQuery("explain select * from admin_test use index(uk_status) where status = 'active'").Rows()
+	hasPointGet := false
+	hasIndexAccess := false
+	for _, row := range rows {
+		planType := fmt.Sprintf("%v", row[0])
+		if strings.Contains(planType, "Point_Get") || strings.Contains(planType, "PointGet") {
+			hasPointGet = true
+			// Verify that access object contains ", index:" to ensure it's using secondary index
+			if len(row) > 3 {
+				accessObject := fmt.Sprintf("%v", row[3])
+				if strings.Contains(accessObject, ", index:") {
+					hasIndexAccess = true
+				}
+			}
+			break
+		}
+	}
+	// This verifies that the scenario actually generates PointGet plan with index access
+	require.True(t, hasPointGet, "Expected PointGet plan for unique index query on enum column")
+	require.True(t, hasIndexAccess, "Expected PointGet plan to use secondary index (access object should contain ', index:')")
+
+	// Fast check mode - this is where verifyIndexSideQuery is called
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+	// This should pass with the fix (would fail without fix when running with --tags=intest)
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_status")
+
+	// Regular check mode - for comparison
+	tk.MustExec("set tidb_enable_fast_table_check = 0")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_status")
+
+	// Test 2: Table with unique index (can also generate PointGet)
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (id int primary key, name varchar(50), unique key uk_name(name))")
+	tk.MustExec("insert into admin_test values (1, 'alice'), (2, 'bob'), (3, 'charlie')")
+
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_name")
+
+	tk.MustExec("set tidb_enable_fast_table_check = 0")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_name")
+
+	// Test 3: Composite unique index with enum (can generate BatchPointGet)
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (id int, type enum('A', 'B', 'C'), value int, unique key uk_composite(id, type))")
+	tk.MustExec("insert into admin_test values (1, 'A', 100), (2, 'B', 200), (3, 'C', 300)")
+
+	// Verify that a query with composite unique index can generate BatchPointGet plan
+	rows = tk.MustQuery("explain select * from admin_test use index(uk_composite) where id in (1, 2) and type = 'A'").Rows()
+	hasBatchPointGet := false
+	for _, row := range rows {
+		planType := fmt.Sprintf("%v", row[0])
+		if strings.Contains(planType, "Batch_Point_Get") || strings.Contains(planType, "BatchPointGet") {
+			hasBatchPointGet = true
+			break
+		}
+	}
+	// This verifies that the scenario can generate BatchPointGet plan
+	// Note: optimizer may choose different plans depending on data, so we don't require.True here
+	// The important thing is that IF BatchPointGet is used, it should be recognized
+	if hasBatchPointGet {
+		t.Logf("BatchPointGet plan detected for composite unique index query")
+	}
+
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_composite")
+
+	tk.MustExec("set tidb_enable_fast_table_check = 0")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_composite")
+
+	// Clean up
+	tk.MustExec("set tidb_enable_fast_table_check = default")
+
+	// Test 4: Direct test to verify PointGet with index access is recognized
+	// This test creates a scenario where a simple query (not aggregation) generates PointGet
+	// to ensure the verifyIndexSideQuery logic works correctly
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (id int primary key, code varchar(10), unique key uk_code(code))")
+	tk.MustExec("insert into admin_test values (1, 'A001'), (2, 'A002'), (3, 'A003')")
+
+	// Verify PointGet plan with index access
+	rows = tk.MustQuery("explain select * from admin_test use index(uk_code) where code = 'A001'").Rows()
+	hasPointGet4 := false
+	hasIndexAccess4 := false
+	for _, row := range rows {
+		planType := fmt.Sprintf("%v", row[0])
+		if strings.Contains(planType, "Point_Get") || strings.Contains(planType, "PointGet") {
+			hasPointGet4 = true
+			if len(row) > 3 {
+				accessObject := fmt.Sprintf("%v", row[3])
+				if strings.Contains(accessObject, ", index:") {
+					hasIndexAccess4 = true
+				}
+			}
+			break
+		}
+	}
+	require.True(t, hasPointGet4, "Expected PointGet plan for unique index query")
+	require.True(t, hasIndexAccess4, "Expected PointGet plan to use secondary index")
+
+	// Test BatchPointGet with index access
+	rows = tk.MustQuery("explain select * from admin_test use index(uk_code) where code in ('A001', 'A002')").Rows()
+	hasBatchPointGet4 := false
+	hasIndexAccess4Batch := false
+	for _, row := range rows {
+		planType := fmt.Sprintf("%v", row[0])
+		if strings.Contains(planType, "Batch_Point_Get") || strings.Contains(planType, "BatchPointGet") {
+			hasBatchPointGet4 = true
+			if len(row) > 3 {
+				accessObject := fmt.Sprintf("%v", row[3])
+				if strings.Contains(accessObject, ", index:") {
+					hasIndexAccess4Batch = true
+				}
+			}
+			break
+		}
+	}
+	require.True(t, hasBatchPointGet4, "Expected BatchPointGet plan for unique index IN query")
+	require.True(t, hasIndexAccess4Batch, "Expected BatchPointGet plan to use secondary index")
+
+	// Run admin check to ensure it works with the fix
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+	tk.MustExec("admin check table admin_test")
+	tk.MustExec("admin check index admin_test uk_code")
+}
+
+func TestFastCheckTableConcurrent(t *testing.T) {
+	// This test verifies that concurrent execution of admin check table works correctly.
+	// Note: The data race in ExecDetails (fixed by using ContextWithInitializedExecDetails
+	// in getCheckSum) cannot be detected in unit tests because mocktikv doesn't trigger
+	// the network traffic writes to ExecDetails that happen in real TiKV environments.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_concurrent")
+	tk.MustExec("create table t_concurrent (id int primary key, val int, key idx_val(val))")
+
+	// Insert enough data to trigger parallel execution in checkIndexWorker
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t_concurrent values (%d, %d)", i, i*10))
+	}
+
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+
+	// Run multiple admin check table concurrently
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tkConcurrent := testkit.NewTestKit(t, store)
+			tkConcurrent.MustExec("use test")
+			tkConcurrent.MustExec("set tidb_enable_fast_table_check = 1")
+			tkConcurrent.MustExec("admin check table t_concurrent")
+		}()
+	}
+	wg.Wait()
+}
+
+func TestFastAdminCheckPropagateSessionVarsToSysSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	const (
+		expectedMemQuotaQuery           = int64(2 * 1024 * 1024 * 1024)
+		expectedDistSQLScanConcurrency  = 7
+		expectedExecutorConcurrency     = 9
+		expectedMaxExecutionTimeMS      = uint64(10 * 60 * 1000)
+		expectedTiKVClientReadTimeoutMS = uint64(10 * 60 * 1000)
+	)
+
+	var called atomic.Bool
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/fastCheckTableAfterInitSessCtx", func(sysVars *variable.SessionVars, _ *error) {
+		called.Store(true)
+		assert.Equal(t, expectedMemQuotaQuery, sysVars.MemQuotaQuery)
+		assert.NotNil(t, sysVars.MemTracker)
+		assert.Equal(t, expectedMemQuotaQuery, sysVars.MemTracker.GetBytesLimit())
+		assert.Equal(t, expectedDistSQLScanConcurrency, sysVars.DistSQLScanConcurrency())
+		assert.Equal(t, expectedExecutorConcurrency, sysVars.ExecutorConcurrency)
+		assert.Equal(t, expectedMaxExecutionTimeMS, sysVars.MaxExecutionTime)
+		assert.Equal(t, expectedTiKVClientReadTimeoutMS, sysVars.TiKVClientReadTimeout)
+	})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, k int, key(k))")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query = %d", expectedMemQuotaQuery))
+	tk.MustExec(fmt.Sprintf("set @@tidb_distsql_scan_concurrency = %d", expectedDistSQLScanConcurrency))
+	tk.MustExec(fmt.Sprintf("set @@tidb_executor_concurrency = %d", expectedExecutorConcurrency))
+	tk.MustExec(fmt.Sprintf("set @@max_execution_time = %d", expectedMaxExecutionTimeMS))
+	tk.MustExec(fmt.Sprintf("set @@tikv_client_read_timeout = %d", expectedTiKVClientReadTimeoutMS))
+
+	tk.MustExec("admin check table t")
+	require.True(t, called.Load(), "failpoint callback not triggered")
 }
