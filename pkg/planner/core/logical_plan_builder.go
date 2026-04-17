@@ -1776,6 +1776,16 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
 	newNames := make([]*types.FieldName, 0, len(fields))
+	var truncateErrLevel *errctx.Level
+	if b.inCTEOutputProjection() && b.ctx.GetSessionVars().SQLMode.HasStrictMode() {
+		// This top-level recursive output projection is one of the planner spots
+		// where TiDB can fold a constant expression before execution. Make it use
+		// the same strict outcome that MySQL later enforces during recursive
+		// materialization; otherwise planner could consume an execution-time
+		// truncation error before the recursive producer runs.
+		level := errctx.LevelError
+		truncateErrLevel = &level
+	}
 	for i, field := range fields {
 		if !field.Auxiliary {
 			oldLen++
@@ -1804,7 +1814,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 			newNames = append(newNames, name)
 			continue
 		}
-		newExpr, np, err := b.rewriteWithPreprocess(ctx, field.Expr, p, mapper, windowMapper, true, nil)
+		newExpr, np, err := b.rewriteWithPreprocessAndTruncateErrLevel(ctx, field.Expr, p, mapper, windowMapper, true, nil, truncateErrLevel)
 		if err != nil {
 			return nil, nil, 0, err
 		}
@@ -4250,6 +4260,10 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
+	if b.buildingCTEOutputProjection {
+		b.cteOutputSelectDepth++
+		defer func() { b.cteOutputSelectDepth-- }()
+	}
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -7761,19 +7775,39 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 		recursive := make([]base.LogicalPlan, 0)
 		tmpAfterSetOptsForRecur := []*ast.SetOprType{nil}
 
+		// expectSeed stays true while we are still scanning the UNION arms that
+		// belong to the seed side. Once we discover the first recursive reference,
+		// the boundary is known and every later arm is part of the recursive member.
 		expectSeed := true
 		for i := 0; i < len(x.SelectList.Selects); i++ {
 			var p base.LogicalPlan
 			var err error
 			originalLen := b.handleHelper.stackTail
+			buildMemberPlan := b.buildForRecursiveDetection
+			if !expectSeed {
+				// After the recursive boundary is known, rebuild under the
+				// materialization scope so projection/cast truncation semantics match
+				// the worktable write path.
+				buildMemberPlan = b.buildForRecursiveMaterialization
+			}
 
 			var afterOpr *ast.SetOprType
 			switch y := x.SelectList.Selects[i].(type) {
 			case *ast.SelectStmt:
-				p, err = b.buildSelect(ctx, y)
+				p, err = buildMemberPlan(func() (base.LogicalPlan, error) {
+					return b.buildSelect(ctx, y)
+				})
 				afterOpr = y.AfterSetOperator
 			case *ast.SetOprSelectList:
-				p, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y, With: y.With})
+				if b.buildingRecursivePartForCTE &&
+					(y.OrderBy != nil || y.Limit != nil) &&
+					!b.buildingLateralSubquery {
+					return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+						"ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)")
+				}
+				p, err = buildMemberPlan(func() (base.LogicalPlan, error) {
+					return b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: y, With: y.With, Limit: y.Limit, OrderBy: y.OrderBy})
+				})
 				afterOpr = y.AfterSetOperator
 			}
 
@@ -7820,10 +7854,15 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 					expectSeed = false
 					cInfo.useRecursive = false
 
-					// Build seed part plan.
+					// Build the full seed prefix under the same materialization scope.
+					// Seed rows are also written into the recursive worktable, so they
+					// must use the same projection/cast truncate semantics as the
+					// recursive member built later.
 					saveSelect := x.SelectList.Selects
 					x.SelectList.Selects = x.SelectList.Selects[:i]
-					p, err = b.buildSetOpr(ctx, x)
+					p, err = b.buildForRecursiveMaterialization(func() (base.LogicalPlan, error) {
+						return b.buildSetOpr(ctx, x)
+					})
 					if err != nil {
 						return err
 					}
@@ -8015,15 +8054,40 @@ func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) ([]*cteI
 	return ctes, nil
 }
 
+// buildProjection4CTEUnion aligns the recursive member's output to the final
+// recursive CTE schema chosen by the seed side. These UNION-alignment casts are
+// another recursive output boundary. Keep the same strict outcome that MySQL
+// later enforces during recursive materialization; otherwise TiDB could fold a
+// constant alignment cast away before execution.
 func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.LogicalPlan, recur base.LogicalPlan) (base.LogicalPlan, error) {
 	if seed.Schema().Len() != recur.Schema().Len() {
 		return nil, plannererrors.ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 	}
-	exprs := make([]expression.Expression, len(seed.Schema().Columns))
 	resSchema := getResultCTESchema(seed.Schema(), b.ctx.GetSessionVars())
+	castCtx := expression.BuildContext(b.ctx.GetExprCtx())
+	if b.ctx.GetSessionVars().SQLMode.HasStrictMode() {
+		castCtx = exprctx.CtxWithHandleTruncateErrLevel(castCtx, errctx.LevelError)
+	}
+	if recurProj, ok := recur.(*logicalop.LogicalProjection); ok {
+		// Keep this special case minimal but explicit: LogicalProjection carries
+		// the real output expressions in `Exprs`, while `Schema()` only describes
+		// the columns produced after that projection. For recursive CTE UNION
+		// alignment we must decide casts from the expressions that will actually
+		// be written into the worktable; otherwise a projection can look already
+		// aligned at the schema level and we would skip the cast that MySQL still
+		// applies at this final materialization boundary.
+		for i, expr := range recurProj.Exprs {
+			if !resSchema.Columns[i].RetType.Equal(expr.GetType(castCtx.GetEvalCtx())) {
+				recurProj.Exprs[i] = expression.BuildCastFunction4Union(castCtx, expr, resSchema.Columns[i].RetType)
+			}
+		}
+		recurProj.SetSchema(resSchema)
+		return recurProj, nil
+	}
+	exprs := make([]expression.Expression, len(seed.Schema().Columns))
 	for i, col := range recur.Schema().Columns {
 		if !resSchema.Columns[i].RetType.Equal(col.RetType) {
-			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), col, resSchema.Columns[i].RetType)
+			exprs[i] = expression.BuildCastFunction4Union(castCtx, col, resSchema.Columns[i].RetType)
 		} else {
 			exprs[i] = col
 		}

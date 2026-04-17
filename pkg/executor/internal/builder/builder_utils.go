@@ -69,7 +69,9 @@ func ConstructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, s
 		collExec := true
 		dagReq.CollectExecutionSummaries = &collExec
 	}
-	dagReq.Flags = sc.PushDownFlags()
+	// Recompute flags from the active scoped ExprCtx so pushed-down execution
+	// sees the same truncate semantics as the local builder/runtime path.
+	dagReq.Flags = sessionctx.GetPushDownFlags(ctx)
 	if ctx.GetSessionVars().GetDivPrecisionIncrement() != vardef.DefDivPrecisionIncrement {
 		var divPrecIncr uint32 = uint32(ctx.GetSessionVars().GetDivPrecisionIncrement())
 		dagReq.DivPrecisionIncrement = &divPrecIncr

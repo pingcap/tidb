@@ -273,6 +273,12 @@ type PlanBuilder struct {
 	// It stores the OutputNames before buildProjection.
 	allNames [][]*types.FieldName
 
+	// When building recursive CTE output materialization, only the top-level
+	// output projection should observe strict truncate semantics. Nested
+	// subqueries under that projection must keep ordinary SELECT behavior.
+	buildingCTEOutputProjection bool
+	cteOutputSelectDepth        int
+
 	// isSampling indicates whether the query is sampling.
 	isSampling bool
 
@@ -432,6 +438,64 @@ func (b *PlanBuilder) pushSelectOffset(offset int) {
 
 func (b *PlanBuilder) popSelectOffset() {
 	b.qbOffset = b.qbOffset[:len(b.qbOffset)-1]
+}
+
+// withCTEOutputProjectionScope marks "the build work inside fn is producing
+// rows for recursive CTE materialization". It resets the per-scope SELECT
+// depth counter, and buildSelect increments that counter while traversing fn so
+// later checks can distinguish the top-level output projection from nested
+// subqueries below it.
+func (b *PlanBuilder) withCTEOutputProjectionScope(fn func() (base.LogicalPlan, error)) (base.LogicalPlan, error) {
+	prevBuilding := b.buildingCTEOutputProjection
+	prevDepth := b.cteOutputSelectDepth
+	// Start a fresh "top-level recursive output projection" scope. The nested
+	// SELECT depth is reset here and rebuilt by buildSelect while traversing fn.
+	b.buildingCTEOutputProjection = true
+	b.cteOutputSelectDepth = 0
+	defer func() {
+		b.buildingCTEOutputProjection = prevBuilding
+		b.cteOutputSelectDepth = prevDepth
+	}()
+	return fn()
+}
+
+// buildForRecursiveMaterialization wraps builds whose result rows will be
+// materialized into the recursive worktable. This is the path where planner
+// must apply MySQL-compatible truncate semantics for recursive CTE output.
+func (b *PlanBuilder) buildForRecursiveMaterialization(fn func() (base.LogicalPlan, error)) (base.LogicalPlan, error) {
+	// This planner scope is intentionally narrower than executor-time recursive
+	// materialization. MySQL's prepare/optimizer mainly folds condition trees
+	// (WHERE/HAVING/JOIN conditions); recursive output truncation is still raised
+	// later during recursive materialization. TiDB may fold recursive output
+	// expressions while planning, so we mark only the top-level output SELECTs
+	// that feed the worktable. Without this scope, planner could fold away an
+	// execution-time truncation error that MySQL still reports.
+	return b.withCTEOutputProjectionScope(fn)
+}
+
+// buildForRecursiveDetection wraps the speculative pass that discovers where
+// the recursive member begins. It intentionally preserves the caller's warning
+// state because this pass may be retried and must not leak duplicate warnings
+// into the real materialization build.
+func (b *PlanBuilder) buildForRecursiveDetection(fn func() (base.LogicalPlan, error)) (base.LogicalPlan, error) {
+	warnings := b.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	// The first pass may intentionally "probe" whether a UNION arm is the
+	// recursive member. Restore warnings so this speculative pass does not leak
+	// duplicates into the real build.
+	defer b.ctx.GetSessionVars().StmtCtx.SetWarnings(warnings)
+	return fn()
+}
+
+// inCTEOutputProjection reports whether the current build position is exactly
+// at the top-level SELECT that produces recursive worktable rows. That is the
+// only planner-time projection where truncation must follow recursive
+// materialization semantics; deeper nested SELECTs keep normal condition
+// folding in planner and rely on executor-time recursive CTE semantics later.
+func (b *PlanBuilder) inCTEOutputProjection() bool {
+	// depth == 1 means "the SELECT currently building the recursive output
+	// rows themselves". Deeper SELECTs are nested subqueries below that output
+	// projection and should keep normal SELECT truncate semantics.
+	return b.buildingCTEOutputProjection && b.cteOutputSelectDepth == 1
 }
 
 // PlanBuilderOpt is used to adjust the plan builder.
