@@ -1322,9 +1322,10 @@ type bucketRef struct {
 // The upper bound Datum is cached at insertion time — comparisons during
 // heap sift use the cached value, avoiding repeated Chunk indirection.
 type bucketMergeEntry struct {
-	upper     types.Datum // cached upper bound (extracted once per bucket)
-	sc        *stmtctx.StatementContext
-	hists     []*Histogram // shared reference to all histograms
+	upper types.Datum // cached, extracted once when entering the heap
+	lower types.Datum // cached, extracted once when entering the heap
+	sc    *stmtctx.StatementContext
+	hists []*Histogram
 	histIdx   uint16
 	bucketIdx uint16
 }
@@ -1341,9 +1342,7 @@ func (h bucketMergeHeap) Less(i, j int) bool {
 		return res < 0
 	}
 	// Secondary sort by lower bound for deterministic ordering.
-	li := h[i].hists[h[i].histIdx].GetLower(int(h[i].bucketIdx))
-	lj := h[j].hists[h[j].histIdx].GetLower(int(h[j].bucketIdx))
-	res, _ = li.Compare(h[i].sc.TypeCtx(), lj, collate.GetBinaryCollator())
+	res, _ = h[i].lower.Compare(h[i].sc.TypeCtx(), &h[j].lower, collate.GetBinaryCollator())
 	return res < 0
 }
 func (h bucketMergeHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
@@ -1475,6 +1474,7 @@ func MergePartTopNAndHistToGlobal(
 					histIdx:   uint16(hi),
 					bucketIdx: uint16(bi),
 					upper:     *hist.GetUpper(bi),
+					lower:     *hist.GetLower(bi),
 					sc:        sc,
 					hists:     hists,
 				})
@@ -1535,6 +1535,7 @@ func MergePartTopNAndHistToGlobal(
 					histIdx:   entry.histIdx,
 					bucketIdx: uint16(bi),
 					upper:     *h.GetUpper(bi),
+					lower:     *h.GetLower(bi),
 					sc:        sc,
 					hists:     hists,
 				})
