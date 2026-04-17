@@ -28,13 +28,22 @@ import (
 
 type setter[T parquet.ColumnTypes] func(T, *types.Datum) error
 
-var zeroMyDecimal = types.MyDecimal{}
+var (
+	zeroMyDecimal = types.MyDecimal{}
+	// Spark's legacy timestamp rebasing only applies to instants before
+	// 1900-01-01T00:00:00Z. Keep the cutoff in Unix microseconds because this
+	// helper rebases microsecond-encoded timestamps and can return newer values
+	// as-is with a cheap comparison. This is a Spark compatibility threshold,
+	// not a Go time package constant.
+	legacyTimestampRebaseCutoffMicros = time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()
+)
 
 const (
 	// maximumDecimalBytes is the maximum byte length allowed to be parsed directly.
 	// It guarantees the value can be stored in MyDecimal wordbuf without overflow.
 	// That is: floor(log256(10^81-1))
 	maximumDecimalBytes = 33
+	microsPerDay        = int64(24 * time.Hour / time.Microsecond)
 )
 
 func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
@@ -190,20 +199,29 @@ func rebaseJulianToGregorianDays(days int) int {
 }
 
 func rebaseLegacyTimestampMicros(micros int64, loc *time.Location) int64 {
-	if micros >= int64(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()) {
+	if micros >= legacyTimestampRebaseCutoffMicros {
 		return micros
 	}
 	if loc == nil {
 		loc = time.UTC
 	}
+	if loc == time.UTC {
+		utc := time.UnixMicro(micros).UTC()
+		// In UTC, rebasing preserves the time-of-day and only shifts the day count
+		// by the Julian/Gregorian calendar difference for that local date.
+		return micros - int64(julianGregorianDayDiff(utc.Year(), utc.Month()))*microsPerDay
+	}
 
 	local := time.UnixMicro(micros).In(loc)
-	localMidnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
-	rebasedDays := rebaseJulianToGregorianDays(int(arrow.Date32FromTime(localMidnight)))
-	rebasedDate := arrow.Date32(rebasedDays).ToTime()
-	y, m, d := rebasedDate.Date()
-	rebasedLocal := time.Date(y, m, d, local.Hour(), local.Minute(), local.Second(), local.Nanosecond(), loc)
-	return rebasedLocal.UTC().UnixMicro()
+	dayDiff := julianGregorianDayDiff(local.Year(), local.Month())
+	year, month, day := local.Date()
+	hour, minute, second := local.Clock()
+	// Re-materialize the rebased wall-clock time in loc. Subtracting fixed 24h
+	// chunks from the UTC instant is not equivalent for locations whose
+	// historical offset changes between the original and rebased date.
+	// day-dayDiff may be 0 or negative for early-month dates; time.Date
+	// intentionally normalizes that into the previous month/year.
+	return time.Date(year, month, day-dayDiff, hour, minute, second, local.Nanosecond(), loc).UnixMicro()
 }
 
 //nolint:all_revive

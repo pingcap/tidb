@@ -65,13 +65,26 @@ var (
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
 
+	// This literal identifies footer metadata written by Spark. Keep it in one
+	// place because Arrow's AppVersion comparison is app-sensitive: LessThan
+	// returns false when the parsed writer app and the cutoff app differ. That
+	// matters here because the cutoffs below are Spark-specific calendar
+	// boundaries; non-Spark writers like parquet-mr, Hive, or Aurora snapshots
+	// should not match them and therefore will not trigger Spark-version-based
+	// rebasing. The same term must be used both when parsing
+	// "org.apache.spark.version" and when constructing the Spark cutoffs below,
+	// otherwise legacy Spark files could be skipped silently.
+	sparkAppName                   = "spark"
 	sparkVersionMetadataKey        = "org.apache.spark.version"
 	sparkTimeZoneMetadataKey       = "org.apache.spark.timeZone"
 	sparkLegacyDateTimeMetadataKey = "org.apache.spark.legacyDateTime"
 	sparkLegacyINT96MetadataKey    = "org.apache.spark.legacyINT96"
-
-	sparkDatetimeRebaseCutoff = metadata.NewAppVersionExplicit("spark", 3, 0, 0)
-	sparkINT96RebaseCutoff    = metadata.NewAppVersionExplicit("spark", 3, 1, 0)
+	// see https://spark.apache.org/docs/3.5.7/sql-data-sources-parquet.html for
+	// the cutoff versions.
+	// Spark 3.0.0 switched to Proleptic Gregorian calendar for DATE and TIMESTAMP,
+	// and Spark 3.1.0 switched to a new INT96 timestamp rebasing.
+	sparkDatetimeRebaseCutoff = metadata.NewAppVersionExplicit(sparkAppName, 3, 0, 0)
+	sparkINT96RebaseCutoff    = metadata.NewAppVersionExplicit(sparkAppName, 3, 1, 0)
 )
 
 func estimateRowSize(row []types.Datum) int {
@@ -225,7 +238,10 @@ type convertedType struct {
 	IsAdjustedToUTC bool
 
 	// sparkRebaseLocation is non-nil when the file footer says the column was
-	// written by a Spark release that used the legacy hybrid calendar.
+	// written by a Spark release that used the legacy hybrid Julian/Gregorian
+	// calendar for ancient DATE/TIMESTAMP values. A nil location means no Spark
+	// legacy rebase is needed, so the values stay on the normal Proleptic
+	// Gregorian path.
 	sparkRebaseLocation *time.Location
 }
 
@@ -249,8 +265,8 @@ func sparkAppVersion(version string) *metadata.AppVersion {
 		return nil
 	}
 
-	appVersion := metadata.NewAppVersion("spark version " + version)
-	if appVersion.App != "spark" {
+	appVersion := metadata.NewAppVersion(sparkAppName + " version " + version)
+	if appVersion.App != sparkAppName {
 		return nil
 	}
 	return appVersion
@@ -266,8 +282,9 @@ func sparkRebaseLocation(
 		return nil
 	}
 
+	kv := fileMeta.KeyValueMetadata()
 	legacy := false
-	if kv := fileMeta.KeyValueMetadata(); kv != nil {
+	if kv != nil {
 		if kv.FindValue(legacyKey) != nil {
 			legacy = true
 		}
@@ -275,21 +292,21 @@ func sparkRebaseLocation(
 
 	if !legacy {
 		version := sparkVersionFromMetadata(fileMeta)
-		if version != nil && version.App == "spark" && version.LessThan(cutoff) {
+		if version != nil && version.App == sparkAppName && version.LessThan(cutoff) {
 			legacy = true
 		}
 	}
 
 	if !legacy {
+		// nil means this file should stay on the normal Proleptic Gregorian read
+		// path, without Spark's legacy hybrid-calendar correction.
 		return nil
 	}
 
-	if fileMeta != nil {
-		if kv := fileMeta.KeyValueMetadata(); kv != nil {
-			if tzName := kv.FindValue(sparkTimeZoneMetadataKey); tzName != nil {
-				if loc, err := time.LoadLocation(*tzName); err == nil {
-					return loc
-				}
+	if kv != nil {
+		if tzName := kv.FindValue(sparkTimeZoneMetadataKey); tzName != nil {
+			if loc, err := time.LoadLocation(*tzName); err == nil {
+				return loc
 			}
 		}
 	}
@@ -297,6 +314,10 @@ func sparkRebaseLocation(
 	if fallback != nil {
 		return fallback
 	}
+	// Spark's timezone footer is optional, but timestamp rebasing still needs a
+	// deterministic location. UTC is the safest last resort because it preserves
+	// the encoded instant without introducing an extra local-time shift, and
+	// DATE rebasing ignores the location entirely.
 	return time.UTC
 }
 

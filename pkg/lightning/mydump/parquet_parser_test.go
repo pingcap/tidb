@@ -420,6 +420,57 @@ func TestParquetVariousTypes(t *testing.T) {
 		}
 	})
 
+	t.Run("legacy_timestamp_rebase_utc", func(t *testing.T) {
+		loadedUTC, err := time.LoadLocation("UTC")
+		require.NoError(t, err)
+
+		legacyMicros := time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC).UnixMicro()
+		expected := time.Date(1582, 10, 4, 12, 34, 56, 789123000, time.UTC).UnixMicro()
+
+		for _, tc := range []struct {
+			name string
+			loc  *time.Location
+		}{
+			{name: "nil", loc: nil},
+			{name: "utc", loc: time.UTC},
+			{name: "loaded_utc", loc: loadedUTC},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				require.Equal(t, expected, rebaseLegacyTimestampMicros(legacyMicros, tc.loc))
+			})
+		}
+
+		modernMicros := time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()
+		require.Equal(t, modernMicros, rebaseLegacyTimestampMicros(modernMicros, time.UTC))
+	})
+
+	t.Run("legacy_timestamp_rebase_non_utc", func(t *testing.T) {
+		minusEight := time.FixedZone("UTC-08", -8*3600)
+
+		testCases := []struct {
+			name     string
+			micros   int64
+			expected int64
+		}{
+			{
+				name:     "same_month",
+				micros:   time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC).UnixMicro(),
+				expected: time.Date(1582, 10, 4, 12, 34, 56, 789123000, time.UTC).UnixMicro(),
+			},
+			{
+				name:     "local_month_boundary",
+				micros:   time.Date(1700, 3, 1, 1, 2, 3, 456789000, time.UTC).UnixMicro(),
+				expected: time.Date(1700, 2, 19, 1, 2, 3, 456789000, time.UTC).UnixMicro(),
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				require.Equal(t, tc.expected, rebaseLegacyTimestampMicros(tc.micros, minusEight))
+			})
+		}
+	})
+
 	t.Run("decimal_with_nulls", func(t *testing.T) {
 		pc := []ParquetColumn{
 			{
