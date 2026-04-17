@@ -233,10 +233,11 @@ func (c *maskNullFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		}
 		return &builtinMaskNullDurationSig{bf}, nil
 	case types.ETInt:
-		if argType.GetType() != mysql.TypeYear {
-			return nil, errIncorrectArgs.GenWithStackByArgs("mask_null")
-		}
 		return &builtinMaskNullIntSig{bf}, nil
+	case types.ETReal:
+		return &builtinMaskNullRealSig{bf}, nil
+	case types.ETDecimal:
+		return &builtinMaskNullDecimalSig{bf}, nil
 	default:
 		return nil, errIncorrectArgs.GenWithStackByArgs("mask_null")
 	}
@@ -336,6 +337,54 @@ func (b *builtinMaskNullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 		return 0, true, nil
 	}
 	return 0, true, nil
+}
+
+type builtinMaskNullRealSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskNullRealSig) Clone() builtinFunc {
+	newSig := &builtinMaskNullRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskNullRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	_, isNull, err := b.args[0].EvalReal(ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	if isNull {
+		return 0, true, nil
+	}
+	return 0, true, nil
+}
+
+type builtinMaskNullDecimalSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskNullDecimalSig) Clone() builtinFunc {
+	newSig := &builtinMaskNullDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskNullDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
+	_, isNull, err := b.args[0].EvalDecimal(ctx, row)
+	if err != nil {
+		return nil, true, err
+	}
+	if isNull {
+		return nil, true, nil
+	}
+	return nil, true, nil
 }
 
 type maskPartialFunctionClass struct {

@@ -270,6 +270,7 @@ Primary supported scope:
 
 - String-like: `VARCHAR`, `CHAR`, `TEXT` family, `BLOB` family
 - Temporal: `DATE`, `TIME`, `DATETIME`, `TIMESTAMP`, `YEAR`
+- Numeric: integer / floating-point / decimal types
 
 For `LONGTEXT` and `BLOB` types, required minimum behavior is:
 

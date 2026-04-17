@@ -174,7 +174,7 @@ DROP TABLE IF EXISTS privilege__column_masking_policy.t_unsup;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_drop_table;
 CREATE VIEW privilege__column_masking_policy.v_mask AS SELECT c FROM privilege__column_masking_policy.t_lifecycle;
 CREATE TABLE privilege__column_masking_policy.t_gen(a INT, b VARCHAR(20) GENERATED ALWAYS AS (CAST(a AS CHAR)) VIRTUAL);
-CREATE TABLE privilege__column_masking_policy.t_unsup(i INT);
+CREATE TABLE privilege__column_masking_policy.t_unsup(j JSON);
 CREATE GLOBAL TEMPORARY TABLE privilege__column_masking_policy.t_tmp(c VARCHAR(20)) ON COMMIT DELETE ROWS;
 CREATE MASKING POLICY p_tmp ON privilege__column_masking_policy.t_tmp(c) AS c;
 Error 8006 (HY000): `masking policy` is unsupported on temporary tables.
@@ -185,7 +185,7 @@ CREATE MASKING POLICY p_system ON mysql.user(User) AS User;
 Error 8200 (HY000): Unsupported masking policy on system table
 CREATE MASKING POLICY p_gen ON privilege__column_masking_policy.t_gen(b) AS b;
 Error 3106 (HY000): 'masking policy on generated column' is not supported for generated columns.
-CREATE MASKING POLICY p_unsup ON privilege__column_masking_policy.t_unsup(i) AS i;
+CREATE MASKING POLICY p_unsup ON privilege__column_masking_policy.t_unsup(j) AS j;
 Error 8200 (HY000): Unsupported masking policy on unsupported column type
 CREATE TABLE privilege__column_masking_policy.t_drop_table(id INT PRIMARY KEY, c VARCHAR(20));
 CREATE MASKING POLICY p_drop_table ON privilege__column_masking_policy.t_drop_table(c) AS c ENABLE;

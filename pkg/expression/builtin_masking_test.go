@@ -88,6 +88,20 @@ func TestMaskNull(t *testing.T) {
 	d, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.KindNull, d.Kind())
+
+	f, err = newFunctionForTest(ctx, ast.MaskNull, primitiveValsToConstants(ctx, []any{123})...)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindNull, d.Kind())
+
+	decType := types.NewFieldType(mysql.TypeNewDecimal)
+	decArg := &Constant{Value: types.NewDecimalDatum(types.NewDecFromStringForTest("85000.00")), RetType: decType}
+	f, err = newFunctionForTest(ctx, ast.MaskNull, decArg)
+	require.NoError(t, err)
+	d, err = f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindNull, d.Kind())
 }
 
 func TestMaskPartial(t *testing.T) {

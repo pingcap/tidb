@@ -8,11 +8,12 @@ CREATE TABLE issue5_test_masking (
   id INT PRIMARY KEY,
   str_col VARCHAR(100),
   date_col DATE,
-  datetime_col DATETIME
+  datetime_col DATETIME,
+  num_col DECIMAL(10,2)
 );
 INSERT INTO issue5_test_masking VALUES
-  (1, 'sensitive_data_12345', '1990-05-15', '1990-05-15 14:30:00'),
-  (2, 'another_secret_98765', '1985-03-20', '1985-03-20 09:15:00');
+  (1, 'sensitive_data_12345', '1990-05-15', '1990-05-15 14:30:00', 75000.00),
+  (2, 'another_secret_98765', '1985-03-20', '1985-03-20 09:15:00', 85000.00);
 --echo ## enable_query_log
 
 # Test MASK_PARTIAL with actual signature: MASK_PARTIAL(col, preserve_left, preserve_right, mask_char)
@@ -99,6 +100,12 @@ WHERE id = 1;
 
 # Test case 2: Mask date to NULL
 SELECT id, MASK_NULL(date_col) IS NULL AS is_null
+FROM issue5_test_masking
+WHERE id = 2;
+# Expected: 1 (true)
+
+# Test case 3: Mask numeric to NULL
+SELECT id, MASK_NULL(num_col) IS NULL AS is_null
 FROM issue5_test_masking
 WHERE id = 2;
 # Expected: 1 (true)

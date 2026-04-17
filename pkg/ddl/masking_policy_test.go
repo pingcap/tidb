@@ -49,6 +49,18 @@ func TestMaskingPolicyDDLBasic(t *testing.T) {
 		Check(testkit.Rows("0"))
 }
 
+func TestMaskingPolicyMaskNullOnNumeric(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_numeric")
+	tk.MustExec("create table t_numeric (id int primary key, salary decimal(10,2))")
+	tk.MustExec("insert into t_numeric values (1, 85000.00)")
+
+	tk.MustExec("create masking policy p_numeric on t_numeric(salary) as mask_null(salary) enable")
+	tk.MustQuery("select salary is null from t_numeric where id = 1").Check(testkit.Rows("1"))
+}
+
 func TestMaskingPolicyCaseExpression(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

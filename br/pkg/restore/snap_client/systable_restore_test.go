@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -421,10 +422,19 @@ VALUES
 		_, err := tk.Session().ExecuteInternal(execCtx, sql)
 		return err
 	}
-	err = snapclient.RestoreMaskingPoliciesFromTemporaryTable(ctx, tk.Session().GetRestrictedSQLExecutor(), "__TiDB_BR_Temporary_mysql", execSQL)
+	allowAllFilter, parseErr := filter.Parse([]string{"*.*"})
+	require.NoError(t, parseErr)
+	err = snapclient.RestoreMaskingPoliciesFromTemporaryTable(
+		ctx,
+		tk.Session().GetRestrictedSQLExecutor(),
+		"__TiDB_BR_Temporary_mysql",
+		true,
+		allowAllFilter,
+		execSQL,
+	)
 	require.NoError(t, err)
 
-	tk.MustQuery("SHOW MASKING POLICIES FOR " + dbName + ".t").Check(testkit.Rows("p_keep c1 c1 ENABLE CUSTOM NONE"))
+	tk.MustQuery("SHOW MASKING POLICIES FOR " + dbName + ".t").Check(testkit.Rows("p_keep c1 `c1` ENABLED CUSTOM NONE"))
 	tk.MustQuery("SELECT table_id, column_id FROM mysql.tidb_masking_policy WHERE policy_name='p_keep' AND db_name='" + dbName + "' AND table_name='t'").
 		Check(testkit.Rows(fmt.Sprintf("%d %d", tableInfo.ID, columnID)))
 	tk.MustQuery("SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE policy_name='p_orphan' AND db_name='" + dbName + "'").

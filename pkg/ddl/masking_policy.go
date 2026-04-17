@@ -310,6 +310,9 @@ func isMaskingPolicySupportedType(ft *types.FieldType) bool {
 	if types.IsTypeBlob(tp) {
 		return true
 	}
+	if types.IsTypeNumeric(tp) {
+		return true
+	}
 	if types.IsTypeTime(tp) || tp == mysql.TypeDuration || tp == mysql.TypeYear {
 		return true
 	}

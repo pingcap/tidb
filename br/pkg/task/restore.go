@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1958,6 +1959,14 @@ func fallbackStatsTables(tables []*metautil.Table) []*metautil.Table {
 	return newTables
 }
 
+func shouldForceRestoreMaskingPolicySchema(cfg *RestoreConfig, dbName string) bool {
+	return cfg.WithSysTable && strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O)
+}
+
+func shouldForceRestoreMaskingPolicyTable(cfg *RestoreConfig, dbName, tableName string) bool {
+	return shouldForceRestoreMaskingPolicySchema(cfg, dbName) && strings.EqualFold(tableName, "tidb_masking_policy")
+}
+
 // filterRestoreFiles filters out dbs and tables.
 func filterRestoreFiles(
 	client *snapclient.SnapClient,
@@ -1972,7 +1981,9 @@ func filterRestoreFiles(
 		if checkpoint.IsCheckpointDB(dbName) {
 			continue
 		}
-		if !loadStatsPhysical && !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
+		if !loadStatsPhysical &&
+			!utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) &&
+			!shouldForceRestoreMaskingPolicySchema(cfg, dbName) {
 			continue
 		}
 		dbMap[db.Info.ID] = db
@@ -1980,10 +1991,10 @@ func filterRestoreFiles(
 			if table.Info == nil {
 				continue
 			}
-			if !(loadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) {
-				if !utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
-					continue
-				}
+			if !shouldForceRestoreMaskingPolicyTable(cfg, dbName, table.Info.Name.O) &&
+				!(loadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) &&
+				!utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
+				continue
 			}
 
 			// Add table to tableMap using table ID as key
