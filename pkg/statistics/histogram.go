@@ -1667,6 +1667,11 @@ func MergePartTopNAndHistToGlobal(
 	var tp byte
 	if firstHist != nil {
 		tp = firstHist.Tp.GetType()
+		statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal start",
+			zap.Int64("histID", firstHist.ID),
+			zap.Bool("isIndex", isIndex),
+			zap.Int("hists", len(hists)),
+			zap.Int("topNs", len(topNs)))
 	}
 
 	// ---------------------------------------------------------------
@@ -1687,6 +1692,8 @@ func MergePartTopNAndHistToGlobal(
 	slices.SortFunc(allTopN, func(a, b topNEntry) int {
 		return bytes.Compare(a.encoded, b.encoded)
 	})
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1a: sorted partition TopN",
+		zap.Int("topNEntries", len(allTopN)))
 
 	// 1b. Collect partition metadata and build a k-way merge heap.
 	// Each partition's histogram is already sorted by upper bound.
@@ -1726,6 +1733,9 @@ func MergePartTopNAndHistToGlobal(
 		}
 	}
 	mergeHeap.init()
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1b: built k-way merge heap",
+		zap.Int("heapSize", mergeHeap.Len()),
+		zap.Int("totalBuckets", totalBuckets))
 
 	if len(allTopN) == 0 && mergeHeap.Len() == 0 {
 		if firstHist != nil {
@@ -1861,6 +1871,8 @@ func MergePartTopNAndHistToGlobal(
 			topNHeap.Add(entry)
 		}
 	}
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1c: merge-walked TopN + buckets",
+		zap.Int("sortedRefs", len(sortedRefs)))
 
 	// 1d. Extract global TopN from the heap.
 	topNSlice := topNHeap.ToSortedSlice()
@@ -1903,6 +1915,13 @@ func MergePartTopNAndHistToGlobal(
 			totCount += int64(e.count)
 		}
 	}
+	globalTopNSize := 0
+	if globalTopN != nil {
+		globalTopNSize = len(globalTopN.TopN)
+	}
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1d: extracted global TopN",
+		zap.Int("globalTopN", globalTopNSize),
+		zap.Int64("totCount", totCount))
 
 	// ---------------------------------------------------------------
 	// Pass 2: Build equi-depth global histogram by merge-walking
@@ -1920,6 +1939,7 @@ func MergePartTopNAndHistToGlobal(
 	}
 
 	if totCount <= 0 || (len(sortedRefs) == 0 && len(allTopN) == 0) {
+		statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 2: empty histogram (early return)")
 		return globalTopN, globalHist, nil
 	}
 
@@ -2107,6 +2127,8 @@ func MergePartTopNAndHistToGlobal(
 			globalHist.Buckets[i].NDV = 0
 		}
 	}
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 2: built global histogram",
+		zap.Int("buckets", len(globalHist.Buckets)))
 
 	return globalTopN, globalHist, nil
 }
