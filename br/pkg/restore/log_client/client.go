@@ -679,25 +679,27 @@ type LockedMigrations struct {
 	ReadLock objstore.RemoteLock
 }
 
-func (rc *LogClient) GetLockedMigrations(ctx context.Context) (*LockedMigrations, error) {
+func (rc *LogClient) GetLockedMigrations(ctx context.Context) (ret *LockedMigrations, retErr error) {
 	ext := stream.MigrationExtension(rc.storage)
 	readLock, err := ext.GetReadLock(ctx, "restore stream")
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if retErr != nil {
+			readLock.UnlockOnCleanUp(ctx)
+		}
+	}()
 
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	ms := migs.ListAll()
-
-	lms := &LockedMigrations{
-		Migs:     ms,
+	return &LockedMigrations{
+		Migs:     migs.ListAll(),
 		ReadLock: readLock,
-	}
-	return lms, nil
+	}, nil
 }
 
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,
