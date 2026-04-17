@@ -65,6 +65,56 @@ import (
 	"go.uber.org/zap"
 )
 
+func normalizeIsolationReadEnginesValue(varName, normalizedValue string) (string, error) {
+	engines := strings.Split(normalizedValue, ",")
+	var formatVal string
+	for i, engine := range engines {
+		engine = strings.TrimSpace(engine)
+		if engine == "" {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(varName, normalizedValue)
+		}
+		if i != 0 {
+			formatVal += ","
+		}
+		switch {
+		case strings.EqualFold(engine, kv.TiKV.Name()):
+			formatVal += kv.TiKV.Name()
+		case strings.EqualFold(engine, kv.TiFlash.Name()):
+			formatVal += kv.TiFlash.Name()
+		case strings.EqualFold(engine, kv.TiDB.Name()):
+			formatVal += kv.TiDB.Name()
+		default:
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(varName, normalizedValue)
+		}
+	}
+	return formatVal, nil
+}
+
+func defaultIsolationReadEnginesValue() string {
+	return strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ",")
+}
+
+func setSessionIsolationReadEngines(s *SessionVars, val string) error {
+	s.IsolationReadEngines = make(map[kv.StoreType]struct{})
+	if val == "" {
+		return nil
+	}
+	for _, engine := range strings.Split(val, ",") {
+		switch engine {
+		case kv.TiKV.Name():
+			s.IsolationReadEngines[kv.TiKV] = struct{}{}
+		case kv.TiFlash.Name():
+			// If the tiflash is removed by the strict SQL mode. The hint should also not take effect.
+			if !s.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+			}
+		case kv.TiDB.Name():
+			s.IsolationReadEngines[kv.TiDB] = struct{}{}
+		}
+	}
+	return nil
+}
+
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
 //
 //	[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
@@ -330,42 +380,10 @@ var defaultSysVars = []*SysVar{
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ","), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		engines := strings.Split(normalizedValue, ",")
-		var formatVal string
-		for i, engine := range engines {
-			engine = strings.TrimSpace(engine)
-			if i != 0 {
-				formatVal += ","
-			}
-			switch {
-			case strings.EqualFold(engine, kv.TiKV.Name()):
-				formatVal += kv.TiKV.Name()
-			case strings.EqualFold(engine, kv.TiFlash.Name()):
-				formatVal += kv.TiFlash.Name()
-			case strings.EqualFold(engine, kv.TiDB.Name()):
-				formatVal += kv.TiDB.Name()
-			default:
-				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBIsolationReadEngines, normalizedValue)
-			}
-		}
-		return formatVal, nil
+	{Scope: ScopeSession, Name: TiDBIsolationReadEngines, Value: defaultIsolationReadEnginesValue(), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return normalizeIsolationReadEnginesValue(TiDBIsolationReadEngines, normalizedValue)
 	}, SetSession: func(s *SessionVars, val string) error {
-		s.IsolationReadEngines = make(map[kv.StoreType]struct{})
-		for _, engine := range strings.Split(val, ",") {
-			switch engine {
-			case kv.TiKV.Name():
-				s.IsolationReadEngines[kv.TiKV] = struct{}{}
-			case kv.TiFlash.Name():
-				// If the tiflash is removed by the strict SQL mode. The hint should also not take effect.
-				if !s.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
-					s.IsolationReadEngines[kv.TiFlash] = struct{}{}
-				}
-			case kv.TiDB.Name():
-				s.IsolationReadEngines[kv.TiDB] = struct{}{}
-			}
-		}
-		return nil
+		return setSessionIsolationReadEngines(s, val)
 	}},
 	{Scope: ScopeSession, Name: TiDBMetricSchemaStep, Value: strconv.Itoa(DefTiDBMetricSchemaStep), Type: TypeUnsigned, skipInit: true, MinValue: 10, MaxValue: 60 * 60 * 60, SetSession: func(s *SessionVars, val string) error {
 		s.MetricSchemaStep = TidbOptInt64(val, DefTiDBMetricSchemaStep)
@@ -2721,6 +2739,12 @@ var defaultSysVars = []*SysVar{
 			normalizedValue = "128"
 		}
 		return normalizedValue, nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMVMaintainIsolationReadEngines, Value: defaultIsolationReadEnginesValue(), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		return normalizeIsolationReadEnginesValue(TiDBMVMaintainIsolationReadEngines, normalizedValue)
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.MVMaintainIsolationReadEngines = val
+		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMViewMaintainImportThreads, Value: strconv.Itoa(DefTiDBMViewMaintainImportThreads), Type: TypeInt, MinValue: 0, MaxValue: MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
 		s.MViewMaintainImportThreads = TidbOptInt(val, DefTiDBMViewMaintainImportThreads)
