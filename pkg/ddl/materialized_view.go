@@ -72,10 +72,11 @@ func applyMViewExecutionSessionVars(
 		sessVars,
 		target,
 		variable.MViewExecutionSessionVarsApplyConfig{
-			MaintainMemQuotaVarName: variable.TiDBMemQuotaQuery,
-			CaptureAppliedVars:      variable.CaptureAppliedMViewExecutionSessionVars,
-			BestEffort:              bestEffort,
-			InjectApplyError:        maybeMockMViewExecutionSessionVarApplyError,
+			MaintainMemQuotaVarName:             variable.TiDBMemQuotaQuery,
+			MaintainIsolationReadEnginesVarName: variable.TiDBIsolationReadEngines,
+			CaptureAppliedVars:                  variable.CaptureAppliedMViewExecutionSessionVars,
+			BestEffort:                          bestEffort,
+			InjectApplyError:                    maybeMockMViewExecutionSessionVarApplyError,
 			OnApplyError: func(name, value string, err error) {
 				logutil.DDLLogger().Warn(
 					"mv execution: failed to apply session var, fallback to current session value",
@@ -118,6 +119,7 @@ func AddMViewExecutionSessionVarsToJob(job *model.Job, sessVars *variable.Sessio
 	}
 	target := variable.CaptureMViewExecutionSessionVars(sessVars)
 	job.AddSessionVars(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(target.MaintainMemQuota, 10))
+	job.AddSessionVars(variable.TiDBMVMaintainIsolationReadEngines, target.IsolationReadEngines)
 	job.AddSessionVars(variable.TiDBMaxTiFlashThreads, strconv.FormatInt(target.TiFlashMaxThreads, 10))
 	job.AddSessionVars(variable.TiDBMaxBytesBeforeTiFlashExternalJoin, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtJoin, 10))
 	job.AddSessionVars(variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, strconv.FormatInt(target.TiFlashMaxBytesBeforeExtAgg, 10))
@@ -139,6 +141,9 @@ func MViewExecutionSessionVarsFromJob(job *model.Job, defaultSessVars *variable.
 
 	if val, ok := job.GetSessionVars(variable.TiDBMVMaintainMemQuota); ok {
 		target.MaintainMemQuota = variable.TidbOptInt64(val, target.MaintainMemQuota)
+	}
+	if val, ok := job.GetSessionVars(variable.TiDBMVMaintainIsolationReadEngines); ok {
+		target.IsolationReadEngines = val
 	}
 	if val, ok := job.GetSessionVars(variable.TiDBMaxTiFlashThreads); ok {
 		target.TiFlashMaxThreads = variable.TidbOptInt64(val, target.TiFlashMaxThreads)

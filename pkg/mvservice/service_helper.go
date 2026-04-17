@@ -440,10 +440,45 @@ func applyMVRefreshSessionVarsFromGlobal(ctx context.Context, sessVars *variable
 	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMViewMaintainImportDiskQuota); ok {
 		target.ImportDiskQuota = val
 	}
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMVMaintainIsolationReadEngines); ok {
+		target.IsolationReadEngines = val
+	}
 	return applyRefreshSessionVars(sessVars, target)
 }
 
-func applyMVMaintainMemQuotaFromGlobal(ctx context.Context, sessVars *variable.SessionVars) (func(), error) {
+type mvMaintenanceSessionVarApplySpec struct {
+	varName        string
+	originValue    string
+	targetValue    string
+	onApplyError   func(error)
+	onRestoreError func(error)
+}
+
+func applyMVMaintenanceSessionVarBestEffort(
+	sessVars *variable.SessionVars,
+	spec mvMaintenanceSessionVarApplySpec,
+) (func(), error) {
+	if sessVars == nil {
+		return nil, errors.New("mv service: session vars is nil")
+	}
+	if spec.originValue == spec.targetValue {
+		return func() {}, nil
+	}
+
+	if err := sessVars.SetSystemVar(spec.varName, spec.targetValue); err != nil {
+		if spec.onApplyError != nil {
+			spec.onApplyError(err)
+		}
+		return func() {}, nil
+	}
+	return func() {
+		if err := sessVars.SetSystemVar(spec.varName, spec.originValue); err != nil && spec.onRestoreError != nil {
+			spec.onRestoreError(err)
+		}
+	}, nil
+}
+
+func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *variable.SessionVars) (func(), error) {
 	if sessVars == nil {
 		return nil, errors.New("mv service: session vars is nil")
 	}
@@ -453,28 +488,71 @@ func applyMVMaintainMemQuotaFromGlobal(ctx context.Context, sessVars *variable.S
 	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMVMaintainMemQuota); ok {
 		targetMaintainMemQuota = variable.TidbOptInt64(val, originMaintainMemQuota)
 	}
-	if originMaintainMemQuota == targetMaintainMemQuota {
-		return func() {}, nil
+	restoreMaintainMemQuota, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMVMaintainMemQuota,
+			originValue: strconv.FormatInt(originMaintainMemQuota, 10),
+			targetValue: strconv.FormatInt(targetMaintainMemQuota, 10),
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply maintenance session var from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMVMaintainMemQuota),
+					zap.Int64("value", targetMaintainMemQuota),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mv_maintain_mem_quota after maintenance",
+					zap.Int64("originMaintainMemQuota", originMaintainMemQuota),
+					zap.Int64("currentMaintainMemQuota", targetMaintainMemQuota),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(targetMaintainMemQuota, 10)); err != nil {
-		logutil.BgLogger().Warn(
-			"mv service: failed to apply maintenance session var from global setting, fallback to current session value",
-			zap.String("var", variable.TiDBMVMaintainMemQuota),
-			zap.Int64("value", targetMaintainMemQuota),
-			zap.Error(err),
-		)
-		return func() {}, nil
+	originIsolationReadEngines := sessVars.MVMaintainIsolationReadEngines
+	targetIsolationReadEngines := originIsolationReadEngines
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMVMaintainIsolationReadEngines); ok {
+		targetIsolationReadEngines = val
+	}
+	restoreIsolationReadEngines, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMVMaintainIsolationReadEngines,
+			originValue: originIsolationReadEngines,
+			targetValue: targetIsolationReadEngines,
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply maintenance isolation read engines from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMVMaintainIsolationReadEngines),
+					zap.String("origin", originIsolationReadEngines),
+					zap.String("target", targetIsolationReadEngines),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mv_maintain_isolation_read_engines after maintenance",
+					zap.String("originIsolationReadEngines", originIsolationReadEngines),
+					zap.String("currentIsolationReadEngines", targetIsolationReadEngines),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		restoreMaintainMemQuota()
+		return nil, err
 	}
 	return func() {
-		if err := sessVars.SetSystemVar(variable.TiDBMVMaintainMemQuota, strconv.FormatInt(originMaintainMemQuota, 10)); err != nil {
-			logutil.BgLogger().Warn(
-				"mv service: failed to restore tidb_mv_maintain_mem_quota after maintenance",
-				zap.Int64("originMaintainMemQuota", originMaintainMemQuota),
-				zap.Int64("currentMaintainMemQuota", targetMaintainMemQuota),
-				zap.Error(err),
-			)
-		}
+		restoreIsolationReadEngines()
+		restoreMaintainMemQuota()
 	}, nil
 }
 
@@ -483,9 +561,10 @@ func applyRefreshSessionVars(sessVars *variable.SessionVars, target variable.MVi
 		sessVars,
 		target,
 		variable.MViewExecutionSessionVarsApplyConfig{
-			MaintainMemQuotaVarName: variable.TiDBMVMaintainMemQuota,
-			CaptureAppliedVars:      variable.CaptureMViewExecutionSessionVars,
-			BestEffort:              true,
+			MaintainMemQuotaVarName:             variable.TiDBMVMaintainMemQuota,
+			MaintainIsolationReadEnginesVarName: variable.TiDBMVMaintainIsolationReadEngines,
+			CaptureAppliedVars:                  variable.CaptureMViewExecutionSessionVars,
+			BestEffort:                          true,
 			OnApplyError: func(name, value string, err error) {
 				logutil.BgLogger().Warn(
 					"mv service: failed to apply refresh session var from global setting, fallback to current session value",
@@ -583,11 +662,11 @@ func (*serviceHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.Sessi
 		return time.Time{}, errors.New("materialized view base table schema name is empty")
 	}
 
-	restoreMaintainMemQuota, err := applyMVMaintainMemQuotaFromGlobal(ctx, sctx.GetSessionVars())
+	restoreMaintainSessionVars, err := applyMVMaintenanceSessionVarsFromGlobal(ctx, sctx.GetSessionVars())
 	if err != nil {
 		return time.Time{}, err
 	}
-	defer restoreMaintainMemQuota()
+	defer restoreMaintainSessionVars()
 
 	if _, err = execRCRestrictedSQLWithSession(ctx, sctx, purgeMVLogSQL, []any{baseSchema, baseTable}); err != nil {
 		if isMVTaskCanceledManually(err) {

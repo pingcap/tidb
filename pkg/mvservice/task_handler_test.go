@@ -132,36 +132,51 @@ func (recordingSessionPool) Close()                         {}
 
 type recordingSessionContext struct {
 	*mock.Context
-	executedSQL                          []string
-	execErrs                             map[string]error
-	executedRestrictedSQL                []string
-	executedRestrictedArg                [][]any
-	restrictedMaintainQuota              []int64
-	restrictedMaxThreads                 []int64
-	restrictedMaxBytesBeforeExternalJoin []int64
-	restrictedMaxBytesBeforeExternalAgg  []int64
-	restrictedMaxBytesBeforeExternalSort []int64
-	restrictedMemQuotaQueryPerNode       []int64
-	restrictedQuerySpillRatio            []float64
-	restrictedStreamCount                []int64
-	restrictedBatchSize                  []uint64
-	restrictedImportThreads              []int
-	restrictedImportDiskQuota            []string
-	restrictedRows                       map[string][]chunk.Row
-	restrictedErrs                       map[string]error
-	restrictedAffectedRows               map[string][]uint64
-	restrictedAffectedPos                map[string]int
+	executedSQL                            []string
+	execErrs                               map[string]error
+	executedRestrictedSQL                  []string
+	executedRestrictedArg                  [][]any
+	restrictedMaintainQuota                []int64
+	restrictedMaintainIsolationReadEngines []string
+	restrictedMaxThreads                   []int64
+	restrictedMaxBytesBeforeExternalJoin   []int64
+	restrictedMaxBytesBeforeExternalAgg    []int64
+	restrictedMaxBytesBeforeExternalSort   []int64
+	restrictedMemQuotaQueryPerNode         []int64
+	restrictedQuerySpillRatio              []float64
+	restrictedStreamCount                  []int64
+	restrictedBatchSize                    []uint64
+	restrictedImportThreads                []int
+	restrictedImportDiskQuota              []string
+	restrictedRows                         map[string][]chunk.Row
+	restrictedErrs                         map[string]error
+	restrictedAffectedRows                 map[string][]uint64
+	restrictedAffectedPos                  map[string]int
 }
 
 type faultyGlobalAccessor struct {
 	*variable.MockGlobalAccessor
-	getErrs map[string]error
-	getVals map[string]string
+	getErrs   map[string]error
+	getVals   map[string]string
+	failAfter map[string]int
+	getCalls  map[string]int
 }
 
 func (a *faultyGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
+	if a.getCalls == nil {
+		a.getCalls = make(map[string]int)
+	}
+	a.getCalls[name]++
+	if okAfter, ok := a.failAfter[name]; ok && a.getCalls[name] > okAfter {
+		if err, ok := a.getErrs[name]; ok {
+			return "", err
+		}
+		return "", errors.New("mock global read failure")
+	}
 	if err, ok := a.getErrs[name]; ok {
-		return "", err
+		if _, delayed := a.failAfter[name]; !delayed {
+			return "", err
+		}
 	}
 	if val, ok := a.getVals[name]; ok {
 		return val, nil
@@ -215,6 +230,7 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	copy(argsCopy, args)
 	s.executedRestrictedArg = append(s.executedRestrictedArg, argsCopy)
 	s.restrictedMaintainQuota = append(s.restrictedMaintainQuota, s.GetSessionVars().MVMaintainMemQuota)
+	s.restrictedMaintainIsolationReadEngines = append(s.restrictedMaintainIsolationReadEngines, s.GetSessionVars().MVMaintainIsolationReadEngines)
 	s.restrictedMaxThreads = append(s.restrictedMaxThreads, s.GetSessionVars().TiFlashMaxThreads)
 	s.restrictedMaxBytesBeforeExternalJoin = append(s.restrictedMaxBytesBeforeExternalJoin, s.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin)
 	s.restrictedMaxBytesBeforeExternalAgg = append(s.restrictedMaxBytesBeforeExternalAgg, s.GetSessionVars().TiFlashMaxBytesBeforeExternalGroupBy)
@@ -2068,7 +2084,10 @@ func TestServerHelperRefreshMVUsesGlobalRefreshSessionVars(t *testing.T) {
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiFlashFineGrainedShuffleBatchSize, "4096"))
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMViewMaintainImportThreads, "12"))
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMViewMaintainImportDiskQuota, "64gib"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainIsolationReadEngines, "tikv"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainIsolationReadEngines, "tidb"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tidb"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxTiFlashThreads, "2"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalJoin, "101"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, "202"))
@@ -2088,6 +2107,7 @@ func TestServerHelperRefreshMVUsesGlobalRefreshSessionVars(t *testing.T) {
 		testSQLFindMVNextTime,
 	}, se.executedRestrictedSQL)
 	require.Equal(t, []int64{536870912, 536870912}, se.restrictedMaintainQuota)
+	require.Equal(t, []string{"tikv", "tikv"}, se.restrictedMaintainIsolationReadEngines)
 	require.Equal(t, []int64{8, 8}, se.restrictedMaxThreads)
 	require.Equal(t, []int64{111, 111}, se.restrictedMaxBytesBeforeExternalJoin)
 	require.Equal(t, []int64{222, 222}, se.restrictedMaxBytesBeforeExternalAgg)
@@ -2109,6 +2129,8 @@ func TestServerHelperRefreshMVUsesGlobalRefreshSessionVars(t *testing.T) {
 	require.Equal(t, uint64(1024), vars.TiFlashFineGrainedShuffleBatchSize)
 	require.Equal(t, 3, vars.MViewMaintainImportThreads)
 	require.Equal(t, "8gib", vars.MViewMaintainImportDiskQuota)
+	require.Equal(t, "tidb", variable.GetIsolationReadEnginesString(vars))
+	require.Equal(t, "tidb", vars.MVMaintainIsolationReadEngines)
 }
 
 func TestServerHelperRefreshMVBestEffortWhenGlobalSessionVarsUnavailable(t *testing.T) {
@@ -2135,10 +2157,15 @@ func TestServerHelperRefreshMVBestEffortWhenGlobalSessionVarsUnavailable(t *test
 	vars.GlobalVarsAccessor = &faultyGlobalAccessor{
 		MockGlobalAccessor: baseAccessor,
 		getErrs: map[string]error{
-			variable.TiDBMaxTiFlashThreads: errors.New("mock global read failure"),
+			variable.TiDBMaxTiFlashThreads:              errors.New("mock global read failure"),
+			variable.TiDBMVMaintainIsolationReadEngines: errors.New("mock global read failure"),
+		},
+		failAfter: map[string]int{
+			variable.TiDBMVMaintainIsolationReadEngines: 1,
 		},
 		getVals: map[string]string{
 			variable.TiDBMVMaintainMemQuota:                   "536870912",
+			variable.TiDBMVMaintainIsolationReadEngines:       "tidb",
 			variable.TiDBMaxBytesBeforeTiFlashExternalJoin:    "111",
 			variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy: "222",
 			variable.TiDBMaxBytesBeforeTiFlashExternalSort:    "333",
@@ -2151,6 +2178,7 @@ func TestServerHelperRefreshMVBestEffortWhenGlobalSessionVarsUnavailable(t *test
 		},
 	}
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tikv"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxTiFlashThreads, "2"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalJoin, "101"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMaxBytesBeforeTiFlashExternalGroupBy, "202"))
@@ -2170,6 +2198,7 @@ func TestServerHelperRefreshMVBestEffortWhenGlobalSessionVarsUnavailable(t *test
 		testSQLFindMVNextTime,
 	}, se.executedRestrictedSQL)
 	require.Equal(t, []int64{536870912, 536870912}, se.restrictedMaintainQuota)
+	require.Equal(t, []string{"tidb", "tidb"}, se.restrictedMaintainIsolationReadEngines)
 	require.Equal(t, []int64{2, 2}, se.restrictedMaxThreads)
 	require.Equal(t, []int64{111, 111}, se.restrictedMaxBytesBeforeExternalJoin)
 	require.Equal(t, []int64{222, 222}, se.restrictedMaxBytesBeforeExternalAgg)
@@ -2191,6 +2220,8 @@ func TestServerHelperRefreshMVBestEffortWhenGlobalSessionVarsUnavailable(t *test
 	require.Equal(t, uint64(1024), vars.TiFlashFineGrainedShuffleBatchSize)
 	require.Equal(t, 3, vars.MViewMaintainImportThreads)
 	require.Equal(t, "8gib", vars.MViewMaintainImportDiskQuota)
+	require.Equal(t, "tikv", variable.GetIsolationReadEnginesString(vars))
+	require.Equal(t, variable.GetSysVar(variable.TiDBMVMaintainIsolationReadEngines).Value, vars.MVMaintainIsolationReadEngines)
 }
 
 func TestServerHelperRefreshMVDeletedWhenNextTimeNotFound(t *testing.T) {
@@ -2281,14 +2312,20 @@ func TestServerHelperPurgeMVLogUsesGlobalMaintainMemQuota(t *testing.T) {
 	mockGlobalAccessor.SessionVars = vars
 	vars.GlobalVarsAccessor = mockGlobalAccessor
 	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainMemQuota, "536870912"))
+	require.NoError(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBMVMaintainIsolationReadEngines, "tikv"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainIsolationReadEngines, "tidb"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tidb"))
 
 	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
 	require.NoError(t, err)
 	require.False(t, nextPurge.IsZero())
 	require.Equal(t, testExpectedPurgeMVLogSQL, se.executedRestrictedSQL)
 	require.Equal(t, []int64{536870912, 536870912}, se.restrictedMaintainQuota)
+	require.Equal(t, []string{"tikv", "tikv"}, se.restrictedMaintainIsolationReadEngines)
 	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
+	require.Equal(t, "tidb", variable.GetIsolationReadEnginesString(vars))
+	require.Equal(t, "tidb", vars.MVMaintainIsolationReadEngines)
 }
 
 func TestServerHelperPurgeMVLogBestEffortWhenGlobalMaintainMemQuotaUnavailable(t *testing.T) {
@@ -2308,17 +2345,28 @@ func TestServerHelperPurgeMVLogBestEffortWhenGlobalMaintainMemQuotaUnavailable(t
 	vars.GlobalVarsAccessor = &faultyGlobalAccessor{
 		MockGlobalAccessor: baseAccessor,
 		getErrs: map[string]error{
-			variable.TiDBMVMaintainMemQuota: errors.New("mock global read failure"),
+			variable.TiDBMVMaintainMemQuota:             errors.New("mock global read failure"),
+			variable.TiDBMVMaintainIsolationReadEngines: errors.New("mock global read failure"),
+		},
+		failAfter: map[string]int{
+			variable.TiDBMVMaintainIsolationReadEngines: 1,
+		},
+		getVals: map[string]string{
+			variable.TiDBMVMaintainIsolationReadEngines: "tidb",
 		},
 	}
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMVMaintainMemQuota, "268435456"))
+	require.NoError(t, vars.SetSystemVar(variable.TiDBIsolationReadEngines, "tikv"))
 
 	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
 	require.NoError(t, err)
 	require.False(t, nextPurge.IsZero())
 	require.Equal(t, testExpectedPurgeMVLogSQL, se.executedRestrictedSQL)
 	require.Equal(t, []int64{268435456, 268435456}, se.restrictedMaintainQuota)
+	require.Equal(t, []string{"tidb", "tidb"}, se.restrictedMaintainIsolationReadEngines)
 	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
+	require.Equal(t, "tikv", variable.GetIsolationReadEnginesString(vars))
+	require.Equal(t, variable.GetSysVar(variable.TiDBMVMaintainIsolationReadEngines).Value, vars.MVMaintainIsolationReadEngines)
 }
 
 func TestPurgeMVLogSkipWhenAutoPurge(t *testing.T) {

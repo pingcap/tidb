@@ -75,6 +75,21 @@ func TestMVMaintainMemQuota(t *testing.T) {
 	tk2.MustQuery("select @@tidb_mv_maintain_mem_quota").Check(testkit.Rows("3221225472"))
 }
 
+func TestMVMaintainIsolationReadEngines(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustQuery("select @@tidb_mv_maintain_isolation_read_engines").Check(testkit.Rows(variable.GetSysVar(variable.TiDBMVMaintainIsolationReadEngines).Value))
+
+	tk.MustExec("set @@session.tidb_mv_maintain_isolation_read_engines = 'tikv'")
+	tk.MustQuery("select @@tidb_mv_maintain_isolation_read_engines").Check(testkit.Rows("tikv"))
+	tk.MustQuery("select @@tidb_isolation_read_engines").Check(testkit.Rows(variable.GetSysVar(variable.TiDBIsolationReadEngines).Value))
+
+	tk.MustExec("set @@global.tidb_mv_maintain_isolation_read_engines = 'tidb'")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@tidb_mv_maintain_isolation_read_engines").Check(testkit.Rows("tidb"))
+}
+
 func TestMViewMaintainImportDiskQuota(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

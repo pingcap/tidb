@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	dto "github.com/prometheus/client_model/go"
@@ -52,6 +53,22 @@ func readAffectedRowsMetricValue(t *testing.T, label string) float64 {
 	pb := &dto.Metric{}
 	require.NoError(t, counter.Write(pb))
 	return pb.GetCounter().GetValue()
+}
+
+func differentIsolationReadEnginesForTest(current string) string {
+	for _, candidate := range []string{
+		"tikv",
+		"tiflash",
+		"tidb",
+		"tikv,tidb",
+		"tikv,tiflash",
+		"tikv,tiflash,tidb",
+	} {
+		if candidate != current {
+			return candidate
+		}
+	}
+	return "tikv"
 }
 
 func TestCreateMaterializedViewLogBasic(t *testing.T) {
@@ -644,6 +661,121 @@ func TestPurgeMaterializedViewLogUsesCurrentSessionMVMaintainMemQuota(t *testing
 	require.True(t, applied)
 	require.Equal(t, int64(268435456), lastAppliedMaintainQuota)
 	require.Equal(t, lastAppliedMaintainQuota, lastAppliedMemQuotaQuery)
+}
+
+func TestPurgeMaterializedViewLogManualSQLFailsWhenApplyMaintenanceMemQuotaFails(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_apply_quota_manual (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_apply_quota_manual (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_apply_quota_manual values (1, 10), (2, 20)")
+
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mockMVMaintenanceMemQuotaApplyError"
+	require.NoError(t, failpoint.Enable(failpointName, "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+
+	err := tk.ExecToErr("purge materialized view log on t_purge_apply_quota_manual")
+	require.ErrorContains(t, err, "mock mv maintenance mem quota apply error")
+}
+
+func TestPurgeMaterializedViewLogInternalSQLFallsBackWhenApplyMaintenanceMemQuotaFails(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_apply_quota_internal (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_apply_quota_internal (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_apply_quota_internal values (1, 10), (2, 20)")
+	tk.MustExec("set @@session.tidb_mem_quota_query = 1073741824")
+	tk.MustExec("set @@session.tidb_mv_maintain_mem_quota = 268435456")
+
+	applied := false
+	gotMemQuotaQuery := int64(0)
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mockMVMaintenanceMemQuotaApplyError"
+	require.NoError(t, failpoint.Enable(failpointName, "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	})
+	appliedFailpointName := "github.com/pingcap/tidb/pkg/executor/mvMaintainMemQuotaAppliedOnPurgeSession"
+	require.NoError(t, failpoint.EnableCall(appliedFailpointName, func(memQuotaQuery int64, maintainMemQuota int64) {
+		applied = true
+		gotMemQuotaQuery = memQuotaQuery
+		require.Equal(t, int64(268435456), maintainMemQuota)
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(appliedFailpointName))
+	})
+
+	mustExecInternal(t, tk, "purge materialized view log on t_purge_apply_quota_internal")
+	require.True(t, applied)
+	require.Equal(t, int64(1073741824), gotMemQuotaQuery)
+}
+func TestPurgeMaterializedViewLogUsesCurrentSessionMVMaintainIsolationReadEngines(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_isolation (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_isolation (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_isolation values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 'tikv,tiflash,tidb'", variable.TiDBIsolationReadEngines))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 'tikv'", variable.TiDBMVMaintainIsolationReadEngines))
+
+	applied := false
+	gotIsolationReadEngines := ""
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mvMaintainIsolationReadEnginesAppliedOnPurgeSession"
+	require.NoError(t, failpoint.EnableCall(failpointName, func(currentIsolationReadEngines string, targetIsolationReadEngines string) {
+		applied = true
+		gotIsolationReadEngines = currentIsolationReadEngines
+		require.Equal(t, "tikv", targetIsolationReadEngines)
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	tk.MustExec("purge materialized view log on t_purge_isolation")
+	require.True(t, applied)
+	require.Equal(t, "tikv", gotIsolationReadEngines)
+	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBIsolationReadEngines)).Check(testkit.Rows("tikv,tiflash,tidb"))
+
+	tk.MustExec("insert into t_purge_isolation values (4, 40)")
+	applied = false
+	gotIsolationReadEngines = ""
+	mustExecInternal(t, tk, "purge materialized view log on t_purge_isolation")
+	require.True(t, applied)
+	require.Equal(t, "tikv", gotIsolationReadEngines)
+	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBIsolationReadEngines)).Check(testkit.Rows("tikv,tiflash,tidb"))
+}
+
+func TestPurgeMaterializedViewLogDefaultMVMaintainIsolationReadEnginesDoesNotInheritCurrentSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_isolation_default (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_isolation_default (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_isolation_default values (1, 10), (2, 20), (3, 30)")
+
+	defaultMaintainIsolationReadEngines := variable.GetSysVar(variable.TiDBMVMaintainIsolationReadEngines).Value
+	currentIsolationReadEngines := differentIsolationReadEnginesForTest(defaultMaintainIsolationReadEngines)
+	tk.MustExec(fmt.Sprintf("set @@session.%s = '%s'", variable.TiDBIsolationReadEngines, currentIsolationReadEngines))
+
+	applied := false
+	gotIsolationReadEngines := ""
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mvMaintainIsolationReadEnginesAppliedOnPurgeSession"
+	require.NoError(t, failpoint.EnableCall(failpointName, func(currentIsolationReadEngines string, targetIsolationReadEngines string) {
+		applied = true
+		gotIsolationReadEngines = currentIsolationReadEngines
+		require.Equal(t, defaultMaintainIsolationReadEngines, targetIsolationReadEngines)
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	tk.MustExec("purge materialized view log on t_purge_isolation_default")
+	require.True(t, applied)
+	require.Equal(t, defaultMaintainIsolationReadEngines, gotIsolationReadEngines)
+	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBIsolationReadEngines)).Check(testkit.Rows(currentIsolationReadEngines))
 }
 
 func TestPurgeMaterializedViewLogPrivilege(t *testing.T) {

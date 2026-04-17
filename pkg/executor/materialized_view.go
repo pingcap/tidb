@@ -1579,12 +1579,23 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	defer e.ReleaseSysSession(releaseCtx, purgeSctx)
 	purgeSessVars := purgeSctx.GetSessionVars()
 	targetMaintainMemQuota := e.Ctx().GetSessionVars().MVMaintainMemQuota
-	restorePurgeMemQuota, err := applyMVMaintenanceMemQuota(purgeSessVars, targetMaintainMemQuota)
+	targetMaintainIsolationReadEngines := e.Ctx().GetSessionVars().MVMaintainIsolationReadEngines
+	restorePurgeMaintenanceVars, err := applyMVMaintenanceSessionVars(
+		purgeSessVars,
+		targetMaintainMemQuota,
+		targetMaintainIsolationReadEngines,
+		isInternalSQL,
+	)
 	if err != nil {
 		return err
 	}
-	defer restorePurgeMemQuota()
+	defer restorePurgeMaintenanceVars()
 	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnPurgeSession", purgeSessVars.MemQuotaQuery, targetMaintainMemQuota)
+	failpoint.InjectCall(
+		"mvMaintainIsolationReadEnginesAppliedOnPurgeSession",
+		variable.GetIsolationReadEnginesString(purgeSessVars),
+		targetMaintainIsolationReadEngines,
+	)
 	sqlExec := purgeSctx.GetSQLExecutor()
 
 	histSctx, err := e.GetSysSession()
@@ -2600,6 +2611,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 	defer restoreRefreshExecutionVars()
 	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnRefreshSession", sessVars.MemQuotaQuery, refreshExecutionVars.MaintainMemQuota)
+	failpoint.InjectCall(
+		"refreshMaterializedViewIsolationReadEnginesApplied",
+		variable.GetIsolationReadEnginesString(sessVars),
+		refreshExecutionVars.IsolationReadEngines,
+	)
 
 	restoreSessVars, err := initRefreshMaterializedViewSession(sessVars, tblInfo.MaterializedView)
 	if err != nil {
@@ -3079,6 +3095,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	defer restoreBuildExecutionVars()
 	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnRefreshOutOfPlaceBuildSession", buildSessVars.MemQuotaQuery, targetExecutionVars.MaintainMemQuota)
 	failpoint.InjectCall(
+		"refreshMaterializedViewOutOfPlaceBuildIsolationReadEnginesApplied",
+		variable.GetIsolationReadEnginesString(buildSessVars),
+		targetExecutionVars.IsolationReadEngines,
+	)
+	failpoint.InjectCall(
 		"refreshMaterializedViewOutOfPlaceBuildTiFlashSessionVarsApplied",
 		buildSessVars.TiFlashMaxThreads,
 		buildSessVars.TiFlashFineGrainedShuffleStreamCount,
@@ -3267,7 +3288,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	return buildReadTSO, nil
 }
 
-func applyMVMaintenanceMemQuota(sessVars *variable.SessionVars, targetMemQuota int64) (func(), error) {
+func applyMVMaintenanceMemQuota(sessVars *variable.SessionVars, targetMemQuota int64, bestEffort bool) (func(), error) {
 	if sessVars == nil {
 		return nil, errors.New("mv maintenance: session vars is nil")
 	}
@@ -3275,8 +3296,25 @@ func applyMVMaintenanceMemQuota(sessVars *variable.SessionVars, targetMemQuota i
 	if originMemQuota == targetMemQuota {
 		return func() {}, nil
 	}
-	if err := sessVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(targetMemQuota, 10)); err != nil {
-		return nil, errors.Annotate(err, "mv maintenance: failed to apply tidb_mv_maintain_mem_quota to tidb_mem_quota_query")
+	var injectedErr error
+	failpoint.Inject("mockMVMaintenanceMemQuotaApplyError", func() {
+		injectedErr = errors.New("mock mv maintenance mem quota apply error")
+	})
+	err := injectedErr
+	if err == nil {
+		err = sessVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(targetMemQuota, 10))
+	}
+	if err != nil {
+		if !bestEffort {
+			return nil, errors.Annotate(err, "mv maintenance: failed to apply tidb_mv_maintain_mem_quota to tidb_mem_quota_query")
+		}
+		logutil.BgLogger().Warn(
+			"mv maintenance: failed to apply tidb_mv_maintain_mem_quota to tidb_mem_quota_query, fallback to current session value",
+			zap.Int64("originMemQuota", originMemQuota),
+			zap.Int64("targetMemQuota", targetMemQuota),
+			zap.Error(err),
+		)
+		return func() {}, nil
 	}
 	return func() {
 		if err := sessVars.SetSystemVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(originMemQuota, 10)); err != nil {
@@ -3290,11 +3328,75 @@ func applyMVMaintenanceMemQuota(sessVars *variable.SessionVars, targetMemQuota i
 	}, nil
 }
 
+func applyMVMaintenanceSessionVars(
+	sessVars *variable.SessionVars,
+	targetMemQuota int64,
+	targetIsolationReadEngines string,
+	bestEffort bool,
+) (func(), error) {
+	restoreMemQuota, err := applyMVMaintenanceMemQuota(sessVars, targetMemQuota, bestEffort)
+	if err != nil {
+		return nil, err
+	}
+	restoreIsolationReadEngines, err := applyMVMaintenanceIsolationReadEngines(sessVars, targetIsolationReadEngines, bestEffort)
+	if err != nil {
+		restoreMemQuota()
+		return nil, err
+	}
+	return func() {
+		restoreIsolationReadEngines()
+		restoreMemQuota()
+	}, nil
+}
+
+func applyMVMaintenanceIsolationReadEngines(
+	sessVars *variable.SessionVars,
+	targetIsolationReadEngines string,
+	bestEffort bool,
+) (func(), error) {
+	if sessVars == nil {
+		return nil, errors.New("mv maintenance: session vars is nil")
+	}
+	originIsolationReadEngines := variable.GetIsolationReadEnginesString(sessVars)
+	if originIsolationReadEngines == targetIsolationReadEngines {
+		return func() {}, nil
+	}
+	if err := sessVars.SetSystemVar(variable.TiDBIsolationReadEngines, targetIsolationReadEngines); err != nil {
+		if !bestEffort {
+			return nil, errors.Annotate(
+				err,
+				"mv maintenance: failed to apply tidb_mv_maintain_isolation_read_engines to tidb_isolation_read_engines",
+			)
+		}
+		logutil.BgLogger().Warn(
+			"mv maintenance: failed to apply tidb_mv_maintain_isolation_read_engines to tidb_isolation_read_engines, fallback to current session value",
+			zap.String("originIsolationReadEngines", originIsolationReadEngines),
+			zap.String("targetIsolationReadEngines", targetIsolationReadEngines),
+			zap.Error(err),
+		)
+		return func() {}, nil
+	}
+	return func() {
+		if err := sessVars.SetSystemVar(variable.TiDBIsolationReadEngines, originIsolationReadEngines); err != nil {
+			logutil.BgLogger().Warn(
+				"mv maintenance: failed to restore tidb_isolation_read_engines after maintenance",
+				zap.String("originIsolationReadEngines", originIsolationReadEngines),
+				zap.String("currentIsolationReadEngines", targetIsolationReadEngines),
+				zap.Error(err),
+			)
+		}
+	}, nil
+}
+
 func captureRefreshExecutionSessionVars(sessVars *variable.SessionVars) variable.MViewExecutionSessionVars {
 	return variable.CaptureMViewExecutionSessionVars(sessVars)
 }
 
-func applyRefreshExecutionSessionVars(sessVars *variable.SessionVars, target variable.MViewExecutionSessionVars, bestEffort bool) (func(), error) {
+func applyRefreshExecutionSessionVars(
+	sessVars *variable.SessionVars,
+	target variable.MViewExecutionSessionVars,
+	bestEffort bool,
+) (func(), error) {
 	var injectedErr error
 	failpoint.Inject("mockRefreshExecutionSessionVarsApplyError", func() {
 		injectedErr = errors.New("mock refresh execution session vars apply error")

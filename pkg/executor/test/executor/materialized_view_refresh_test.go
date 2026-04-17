@@ -275,6 +275,44 @@ func requireCurrentSessionTiFlashSessionVarsRestored(t *testing.T, sessVars *var
 	require.Equal(t, "64gib", sessVars.MViewMaintainImportDiskQuota)
 }
 
+func requireRefreshIsolationReadEnginesApplied(
+	t *testing.T,
+	failpointName string,
+	refresh func(),
+	expectedIsolationReadEngines string,
+) {
+	t.Helper()
+
+	applied := false
+	gotIsolationReadEngines := ""
+	testfailpoint.EnableCall(t, failpointName, func(currentIsolationReadEngines string, targetIsolationReadEngines string) {
+		applied = true
+		gotIsolationReadEngines = currentIsolationReadEngines
+		require.Equal(t, expectedIsolationReadEngines, targetIsolationReadEngines)
+	})
+
+	refresh()
+
+	require.True(t, applied)
+	require.Equal(t, expectedIsolationReadEngines, gotIsolationReadEngines)
+}
+
+func differentIsolationReadEnginesForTest(current string) string {
+	for _, candidate := range []string{
+		"tikv",
+		"tiflash",
+		"tidb",
+		"tikv,tidb",
+		"tikv,tiflash",
+		"tikv,tiflash,tidb",
+	} {
+		if candidate != current {
+			return candidate
+		}
+	}
+	return "tikv"
+}
+
 func requireRowsContainAnyPrefix(t *testing.T, rows [][]any, prefixes ...string) {
 	for _, prefix := range prefixes {
 		for _, row := range rows {
@@ -630,6 +668,63 @@ func TestMaterializedViewRefreshUsesMVMaintainMemQuota(t *testing.T) {
 	require.True(t, buildApplied)
 	require.Equal(t, int64(268435456), lastBuildAppliedMaintainQuota)
 	require.Equal(t, lastBuildAppliedMaintainQuota, lastBuildAppliedMemQuotaQuery)
+}
+
+func TestMaterializedViewRefreshUsesMVMaintainIsolationReadEngines(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_isolation (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_isolation values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_isolation (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_isolation (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_isolation group by a")
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 'tikv,tiflash,tidb'", variable.TiDBIsolationReadEngines))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 'tikv'", variable.TiDBMVMaintainIsolationReadEngines))
+
+	requireRefreshIsolationReadEnginesApplied(
+		t,
+		"github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewIsolationReadEnginesApplied",
+		func() {
+			tk.MustExec("refresh materialized view mv_mv_refresh_isolation complete in place")
+		},
+		"tikv",
+	)
+	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBIsolationReadEngines)).Check(testkit.Rows("tikv,tiflash,tidb"))
+
+	tk.MustExec("insert into t_mv_refresh_isolation values (3, 30)")
+	requireRefreshIsolationReadEnginesApplied(
+		t,
+		"github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewOutOfPlaceBuildIsolationReadEnginesApplied",
+		func() {
+			tk.MustExec("refresh materialized view mv_mv_refresh_isolation complete out of place")
+		},
+		"tikv",
+	)
+	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBIsolationReadEngines)).Check(testkit.Rows("tikv,tiflash,tidb"))
+}
+
+func TestMaterializedViewRefreshDefaultMVMaintainIsolationReadEnginesDoesNotInheritCurrentSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_refresh_isolation_default (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_refresh_isolation_default values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_refresh_isolation_default (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_mv_refresh_isolation_default (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_refresh_isolation_default group by a")
+
+	defaultMaintainIsolationReadEngines := variable.GetSysVar(variable.TiDBMVMaintainIsolationReadEngines).Value
+	currentIsolationReadEngines := differentIsolationReadEnginesForTest(defaultMaintainIsolationReadEngines)
+	tk.MustExec(fmt.Sprintf("set @@session.%s = '%s'", variable.TiDBIsolationReadEngines, currentIsolationReadEngines))
+
+	requireRefreshIsolationReadEnginesApplied(
+		t,
+		"github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewIsolationReadEnginesApplied",
+		func() {
+			tk.MustExec("refresh materialized view mv_mv_refresh_isolation_default complete in place")
+		},
+		defaultMaintainIsolationReadEngines,
+	)
+	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBIsolationReadEngines)).Check(testkit.Rows(currentIsolationReadEngines))
 }
 
 func TestMaterializedViewRefreshManualSQLUsesCurrentSessionTiFlashSessionVars(t *testing.T) {
