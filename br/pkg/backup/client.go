@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -71,6 +72,8 @@ const (
 	UnitRange ProgressUnit = "range"
 	// UnitRegion represents the progress updated counter when a region finished.
 	UnitRegion ProgressUnit = "region"
+
+	sysMaskingPolicyTableName = "tidb_masking_policy"
 )
 
 type MainBackupLoop struct {
@@ -687,15 +690,25 @@ func (bc *Client) BuildBackupRangeAndSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
+	forceMaskingPolicyTable bool,
 ) ([]rtree.KeyRange, *Schemas, []*backuppb.PlacementPolicy, error) {
 	if bc.checkpointMeta == nil {
-		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
+		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup, forceMaskingPolicyTable)
 	}
-	ranges, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
+	ranges, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup, forceMaskingPolicyTable)
 	if schemas != nil {
 		schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
 	}
 	return ranges, schemas, policies, errors.Trace(err)
+}
+
+func shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable bool, dbName string) bool {
+	return forceMaskingPolicyTable && strings.EqualFold(dbName, mysql.SystemDB)
+}
+
+func shouldForceBackupMaskingPolicyTable(forceMaskingPolicyTable bool, dbName, tableName string) bool {
+	return shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable, dbName) &&
+		strings.EqualFold(tableName, sysMaskingPolicyTableName)
 }
 
 // CheckBackupStorageIsLocked checks whether backups is locked.
@@ -729,6 +742,7 @@ func BuildBackupRangeAndInitSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
+	forceMaskingPolicyTable bool,
 ) ([]rtree.KeyRange, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewReader(snapshot)
@@ -760,7 +774,11 @@ func BuildBackupRangeAndInitSchema(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
+		if util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
+			continue
+		}
+		if !tableFilter.MatchSchema(dbInfo.Name.O) &&
+			!shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable, dbInfo.Name.O) {
 			continue
 		}
 
@@ -775,7 +793,8 @@ func BuildBackupRangeAndInitSchema(
 					tableInfo.Version,
 				)
 			}
-			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
+			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) &&
+				!shouldForceBackupMaskingPolicyTable(forceMaskingPolicyTable, dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
 			}
@@ -813,7 +832,7 @@ func BuildBackupRangeAndInitSchema(
 		return nil, nil, nil, nil
 	}
 	return ranges, NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
-		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, fn)
+		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, forceMaskingPolicyTable, fn)
 	}, schemasNum), policies, nil
 }
 
@@ -822,6 +841,7 @@ func BuildBackupSchemas(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
+	forceMaskingPolicyTable bool,
 	fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo),
 ) error {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
@@ -834,7 +854,11 @@ func BuildBackupSchemas(
 
 	for _, dbInfo := range dbs {
 		// skip system databases
-		if !tableFilter.MatchSchema(dbInfo.Name.O) || util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
+		if util.IsMemDB(dbInfo.Name.L) || utils.IsTemplateSysDB(dbInfo.Name) {
+			continue
+		}
+		if !tableFilter.MatchSchema(dbInfo.Name.O) &&
+			!shouldForceBackupMaskingPolicySchema(forceMaskingPolicyTable, dbInfo.Name.O) {
 			continue
 		}
 
@@ -846,7 +870,8 @@ func BuildBackupSchemas(
 
 		hasTable := false
 		err = m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
-			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
+			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) &&
+				!shouldForceBackupMaskingPolicyTable(forceMaskingPolicyTable, dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
 				return nil
 			}
