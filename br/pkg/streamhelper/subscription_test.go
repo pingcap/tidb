@@ -44,6 +44,12 @@ func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
+func waitAtLeastEvents(t *testing.T, sub *streamhelper.FlushSubscriber, expected int) {
+	require.Eventually(t, func() bool {
+		return len(sub.Events()) >= expected
+	}, 30*time.Second, 10*time.Millisecond)
+}
+
 func TestSubBasic(t *testing.T) {
 	req := require.New(t)
 	ctx := context.Background()
@@ -52,14 +58,16 @@ func TestSubBasic(t *testing.T) {
 	installSubscribeSupport(c)
 	sub := streamhelper.NewSubscriber(c, c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
+	const flushRounds = 10
+	expectedEvents := len(c.RegionList()) * flushRounds
 	var cp uint64
-	for range 10 {
+	for range flushRounds {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
-	waitPendingEvents(t, sub)
+	waitAtLeastEvents(t, sub, expectedEvents)
 	sub.Drop()
 	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
 	for k := range sub.Events() {
