@@ -429,6 +429,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/affinity",
         "//pkg/domain/infosync",
+        "//pkg/dxf/framework/proto",
         "//pkg/dxf/importinto",
         "//pkg/errctx",
         "//pkg/errno",

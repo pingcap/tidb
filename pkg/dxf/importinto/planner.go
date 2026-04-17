@@ -732,6 +732,8 @@ func generateCollectConflictsSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]p
 	if err != nil {
 		return nil, err
 	}
+	// For conflict handling steps, RowCnt stores conflict KV pair counts.
+	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {
 		return []planner.PipelineSpec{}, nil
@@ -760,6 +762,8 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([
 	if err != nil {
 		return nil, err
 	}
+	// For conflict handling steps, RowCnt stores conflict KV pair counts.
+	p.summary.RowCnt = totalConflicts(groupConflictInfos)
 	// skip this step if no conflict
 	if len(groupConflictInfos.ConflictInfos) == 0 {
 		return []planner.PipelineSpec{}, nil
@@ -829,4 +833,21 @@ func collectConflictInfos(ctx context.Context, store storeapi.Storage, planCtx p
 		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
 	}
 	return m, nil
+}
+
+func totalConflicts(groupConflictInfos *KVGroupConflictInfos) int64 {
+	if groupConflictInfos == nil {
+		return 0
+	}
+	var total int64
+	for _, conflictInfo := range groupConflictInfos.ConflictInfos {
+		if conflictInfo == nil {
+			continue
+		}
+		if conflictInfo.Count > uint64(math.MaxInt64-total) {
+			return math.MaxInt64
+		}
+		total += int64(conflictInfo.Count)
+	}
+	return total
 }

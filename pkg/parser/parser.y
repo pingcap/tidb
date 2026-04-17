@@ -915,6 +915,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
 	policies                   "POLICIES"
+	raw                        "RAW"
 	region                     "REGION"
 	regions                    "REGIONS"
 	reset                      "RESET"
@@ -1234,6 +1235,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	InstanceOption                         "Instance option"
 	FulltextSearchModifierOpt              "Fulltext modifier"
 	PluginNameList                         "Plugin Name List"
+	ShowImportJobTarget                    "IMPORT JOB target with optional RAW keyword"
+	ShowImportJobsTarget                   "IMPORT JOBS target with optional RAW keyword"
 	TableRefsClause                        "Table references clause"
 	FieldItem                              "Field item for load data clause"
 	FieldItemList                          "Field items for load data clause"
@@ -1338,8 +1341,8 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	Priority                               "Statement priority"
 	PriorityOpt                            "Statement priority option"
 	PrivElem                               "Privilege element"
-	RefreshObject                          "Refresh object"
-	RefreshObjectList                      "Refresh object list"
+	StatsObject                            "Stats object"
+	StatsObjectList                        "Stats object list"
 	RefreshStatsModeOpt                    "Refresh stats mode optional"
 	RefreshStatsMode                       "Refresh stats mode"
 	RefreshStatsClusterOpt                 "Refresh stats cluster option"
@@ -6815,7 +6818,7 @@ PredicateExpr:
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		}
-		// When ESCAPE '' is specified, escape is empty and explicit is true.
+		// When ESCAPE empty string is specified, escape is empty and explicit is true.
 		// This means no escape character should be used (Escape = 0).
 		var escapeChar byte
 		if len(escape) > 0 {
@@ -6839,7 +6842,7 @@ PredicateExpr:
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		}
-		// When ESCAPE '' is specified, escape is empty and explicit is true.
+		// When ESCAPE empty string is specified, escape is empty and explicit is true.
 		// This means no escape character should be used (Escape = 0).
 		var escapeChar byte
 		if len(escape) > 0 {
@@ -6926,7 +6929,7 @@ FieldList:
 		field.Offset = parser.startOffset(&yyS[yypt])
 		if field.Expr != nil {
 			endOffset := parser.yylval.offset
-		parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+			parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
 		$$ = []*ast.SelectField{field}
 	}
@@ -6937,7 +6940,7 @@ FieldList:
 		field.Offset = parser.startOffset(&yyS[yypt])
 		if field.Expr != nil {
 			endOffset := parser.yylval.offset
-		parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+			parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
 		$$ = append(fl, field)
 	}
@@ -7682,6 +7685,7 @@ TiDBKeyword:
 |	"REGIONS"
 |	"REGION"
 |	"RESET"
+|	"RAW"
 |	"DRY"
 |	"RUN"
 
@@ -9809,7 +9813,7 @@ SelectStmtFromDualTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-1].offset - 1
-		parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
+			parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
@@ -9824,7 +9828,7 @@ SelectStmtFromTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-5])
-		parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
+			parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Where = $4.(ast.ExprNode)
@@ -10893,11 +10897,11 @@ SubSelect:
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
 			// See the implementation of yyParse function
-		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -10916,11 +10920,11 @@ SubSelect:
 			endOffset := parser.endOffset(&yyS[yypt])
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
-		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -12250,12 +12254,13 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
-|	"SHOW" "IMPORT" "JOB" Int64Num
+|	"SHOW" ShowImportJobTarget Int64Num
 	{
-		v := $4.(int64)
+		v := $3.(int64)
 		$$ = &ast.ShowStmt{
-			Tp:          ast.ShowImportJobs,
-			ImportJobID: &v,
+			Tp:           ast.ShowImportJobs,
+			ImportJobID:  &v,
+			ImportJobRaw: $2.(bool),
 		}
 	}
 |	"SHOW" "DISTRIBUTION" "JOB" Int64Num
@@ -12621,9 +12626,9 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
 	}
-|	"IMPORT" "JOBS"
+|	ShowImportJobsTarget
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: $1.(bool)}
 	}
 |	"DISTRIBUTION" "JOBS"
 	{
@@ -12646,6 +12651,26 @@ ShowLikeOrWhereOpt:
 |	"WHERE" Expression
 	{
 		$$ = $2
+	}
+
+ShowImportJobTarget:
+	"IMPORT" "JOB"
+	{
+		$$ = false
+	}
+|	"RAW" "IMPORT" "JOB"
+	{
+		$$ = true
+	}
+
+ShowImportJobsTarget:
+	"IMPORT" "JOBS"
+	{
+		$$ = false
+	}
+|	"RAW" "IMPORT" "JOBS"
+	{
+		$$ = true
 	}
 
 GlobalScope:
@@ -12771,11 +12796,12 @@ FlushOption:
 			Tp: ast.FlushClientErrorsSummary,
 		}
 	}
-|	"STATS_DELTA" ClusterOpt
+|	"STATS_DELTA" StatsObjectList ClusterOpt
 	{
 		$$ = &ast.FlushStmt{
-			Tp:        ast.FlushStatsDelta,
-			IsCluster: $2.(bool),
+			Tp:           ast.FlushStatsDelta,
+			FlushObjects: $2.([]*ast.StatsObject),
+			IsCluster:    $3.(bool),
 		}
 	}
 
@@ -16042,10 +16068,10 @@ UnlockStatsStmt:
 	}
 
 RefreshStatsStmt:
-	"REFRESH" "STATS" RefreshObjectList RefreshStatsModeOpt RefreshStatsClusterOpt
+	"REFRESH" "STATS" StatsObjectList RefreshStatsModeOpt RefreshStatsClusterOpt
 	{
 		stmt := &ast.RefreshStatsStmt{
-			RefreshObjects: $3.([]*ast.RefreshObject),
+			RefreshObjects: $3.([]*ast.StatsObject),
 		}
 		if mode, ok := $4.(*ast.RefreshStatsMode); ok {
 			stmt.RefreshMode = mode
@@ -16054,14 +16080,14 @@ RefreshStatsStmt:
 		$$ = stmt
 	}
 
-RefreshObjectList:
-	RefreshObject
+StatsObjectList:
+	StatsObject
 	{
-		$$ = []*ast.RefreshObject{$1.(*ast.RefreshObject)}
+		$$ = []*ast.StatsObject{$1.(*ast.StatsObject)}
 	}
-|	RefreshObjectList ',' RefreshObject
+|	StatsObjectList ',' StatsObject
 	{
-		$$ = append($1.([]*ast.RefreshObject), $3.(*ast.RefreshObject))
+		$$ = append($1.([]*ast.StatsObject), $3.(*ast.StatsObject))
 	}
 
 RefreshStatsModeOpt:
@@ -16095,32 +16121,32 @@ RefreshStatsClusterOpt:
 		$$ = true
 	}
 
-RefreshObject:
+StatsObject:
 	'*' '.' '*'
 	{
-		$$ = &ast.RefreshObject{
-			RefreshObjectScope: ast.RefreshObjectScopeGlobal,
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeGlobal,
 		}
 	}
 |	Identifier '.' '*'
 	{
-		$$ = &ast.RefreshObject{
-			RefreshObjectScope: ast.RefreshObjectScopeDatabase,
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeDatabase,
 			DBName:             ast.NewCIStr($1),
 		}
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.RefreshObject{
-			RefreshObjectScope: ast.RefreshObjectScopeTable,
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
 			DBName:             ast.NewCIStr($1),
 			TableName:          ast.NewCIStr($3),
 		}
 	}
 |	Identifier
 	{
-		$$ = &ast.RefreshObject{
-			RefreshObjectScope: ast.RefreshObjectScopeTable,
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
 			TableName:          ast.NewCIStr($1),
 		}
 	}
@@ -16239,14 +16265,14 @@ CreateMaskingPolicyStmt:
 		}
 		state := $15.(*ast.MaskingPolicyState)
 		$$ = &ast.CreateMaskingPolicyStmt{
-			OrReplace:           $2.(bool),
-			IfNotExists:         $5.(bool),
-			PolicyName:          ast.NewCIStr($6),
-			Table:               $8.(*ast.TableName),
-			Column:              &ast.ColumnName{Name: ast.NewCIStr($10)},
-			Expr:                $13,
-			RestrictOps:         $14.(ast.MaskingPolicyRestrictOps),
-			MaskingPolicyState:  *state,
+			OrReplace:          $2.(bool),
+			IfNotExists:        $5.(bool),
+			PolicyName:         ast.NewCIStr($6),
+			Table:              $8.(*ast.TableName),
+			Column:             &ast.ColumnName{Name: ast.NewCIStr($10)},
+			Expr:               $13,
+			RestrictOps:        $14.(ast.MaskingPolicyRestrictOps),
+			MaskingPolicyState: *state,
 		}
 	}
 
