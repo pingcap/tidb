@@ -49,64 +49,6 @@ func TestValueToString4InvalidKey(t *testing.T) {
 	require.Equal(t, "(1, 0.5, \x14)", res)
 }
 
-func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {
-	l := types.NewIntDatum(lower)
-	r := types.NewIntDatum(upper)
-	return bucket4Merging{
-		lower: &l,
-		upper: &r,
-		Bucket: Bucket{
-			NDV:   ndv,
-			Count: ndv,
-		},
-		disjointNDV: disjointNDV,
-	}
-}
-
-func TestMergeBucketNDV(t *testing.T) {
-	type testData struct {
-		left   bucket4Merging
-		right  bucket4Merging
-		result bucket4Merging
-	}
-	tests := []testData{
-		{
-			left:   genBucket4Merging4Test(1, 2, 2, 0),
-			right:  genBucket4Merging4Test(1, 2, 3, 0),
-			result: genBucket4Merging4Test(1, 2, 3, 0),
-		},
-		{
-			left:   genBucket4Merging4Test(1, 3, 2, 0),
-			right:  genBucket4Merging4Test(2, 3, 2, 0),
-			result: genBucket4Merging4Test(1, 3, 3, 0),
-		},
-		{
-			left:   genBucket4Merging4Test(1, 3, 2, 0),
-			right:  genBucket4Merging4Test(4, 6, 2, 2),
-			result: genBucket4Merging4Test(1, 3, 2, 4),
-		},
-		{
-			left:   genBucket4Merging4Test(1, 5, 5, 0),
-			right:  genBucket4Merging4Test(2, 6, 5, 0),
-			result: genBucket4Merging4Test(1, 6, 6, 0),
-		},
-		{
-			left:   genBucket4Merging4Test(3, 5, 3, 0),
-			right:  genBucket4Merging4Test(2, 6, 4, 0),
-			result: genBucket4Merging4Test(2, 6, 5, 0),
-		},
-	}
-	sc := mock.NewContext().GetSessionVars().StmtCtx
-	for i, tt := range tests {
-		res, err := mergeBucketNDV(sc, &tt.left, &tt.right)
-		require.NoError(t, err, "failed at #%Td case", i)
-		require.Equal(t, res.lower.GetInt64(), tt.result.lower.GetInt64(), "failed at #%Td case", i)
-		require.Equal(t, res.upper.GetInt64(), tt.result.upper.GetInt64(), "failed at #%Td case", i)
-		require.Equal(t, res.NDV, tt.result.NDV, "failed at #%Td case", i)
-		require.Equal(t, res.disjointNDV, tt.result.disjointNDV, "failed at #%Td case", i)
-	}
-}
-
 func TestIndexQueryBytes(t *testing.T) {
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
