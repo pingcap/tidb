@@ -840,7 +840,9 @@ func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *util.AccessPath) 
 	// TODO: enable this fix control switch by default after more test cases are added.
 	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
 		fixControlOK := fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44830, false)
-		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) ||
+			isSafePointGetPath4PlanCacheScenario3(path) ||
+			isSafePointGetPath4PlanCacheScenario4(path)) {
 			return true
 		}
 	}
@@ -914,6 +916,32 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 		}
 	}
 	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario4(path *util.AccessPath) bool {
+	// safe scenario 4: each key column corresponds to a single EQ, except one column that corresponds
+	// to a single IN, like `a=1 and b=2 and c in (3, 4)` --> `[[1, 2, 3], [1, 2, 4]]`
+	if len(path.Ranges) <= 0 || len(path.AccessConds) < 2 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	var inExpr *expression.ScalarFunction
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ:
+		case ast.In:
+			if inExpr != nil {
+				return false
+			}
+			inExpr = f
+		default:
+			return false
+		}
+	}
+	return inExpr != nil && len(path.Ranges) == len(inExpr.GetArgs())-1 // no duplicated values in this in-list for safety.
 }
 
 // parseParamTypes get parameters' types in PREPARE statement

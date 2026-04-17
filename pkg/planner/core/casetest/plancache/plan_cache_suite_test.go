@@ -283,6 +283,40 @@ func TestPreparedPlanCacheWarningRegressions(t *testing.T) {
 	runPreparedPlanCacheForUpdateInTxn(t, tk)
 }
 
+func TestPreparedPlanCacheBatchPointGetEqAndInFixControl(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	fixControl := tk.MustQuery("select @@session.tidb_opt_fix_control").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_fix_control='%v'", fixControl))
+	}()
+
+	tk.MustExec("set @@tidb_opt_fix_control = '44830:ON'")
+	tk.MustExec("drop table if exists t_eq_in_batch_point_get")
+	tk.MustExec("create table t_eq_in_batch_point_get (id int, coin varchar(32), primary key (id, coin))")
+	tk.MustExec("insert into t_eq_in_batch_point_get values (1, '1'), (1, '2'), (2, '1'), (2, '2')")
+
+	// issue:67852
+	tk.MustExec("prepare st from 'select * from t_eq_in_batch_point_get where id=? and coin in (?, ?)'")
+	tk.MustExec("set @a=1, @b='1', @c='2'")
+	tk.MustQuery("execute st using @a, @b, @c").Sort().Check(testkit.Rows("1 1", "1 2"))
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{{"Batch_Point_Get_5"}})
+
+	tk.MustQuery("execute st using @a, @b, @c").Sort().Check(testkit.Rows("1 1", "1 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @a=1, @b='1', @c='1'")
+	tk.MustQuery("execute st using @a, @b, @c").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("deallocate prepare st")
+}
+
 func runPreparedPlanCacheGroupByParamProjection(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tableName := "t_group_by_param"
