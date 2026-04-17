@@ -3076,7 +3076,6 @@ func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
 	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
 }
 
-// Modifying an indexed column on a range-partitioned table should advance reorg progress to the next physical partition in recreate-index stage.
 func TestRemoveKeyPartitioning(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
