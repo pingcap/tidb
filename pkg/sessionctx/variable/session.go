@@ -1882,6 +1882,9 @@ type SessionVars struct {
 
 	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
 	IndexLookUpPushDownPolicy string
+
+	// EnableCachePrepareStmt indicates whether to cache prepare stmt in plan cache.
+	EnableCachePrepareStmt bool
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
@@ -2461,6 +2464,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SkipMissingPartitionStats:        vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
+		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
