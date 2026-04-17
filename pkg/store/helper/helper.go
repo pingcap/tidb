@@ -947,7 +947,10 @@ func IsTiFlashWriteNode(store pd.MetaStore) bool {
 type ColumnarStatusResp struct {
 	Ready            uint `json:"ready"`
 	VectorIndexReady uint `json:"vector-index-ready"`
+	FtsIndexReady    uint `json:"fts-index-ready"`
 	Total            uint `json:"total"`
+	// HasFtsIndexReady reports whether the JSON payload contains "fts-index-ready".
+	HasFtsIndexReady bool `json:"-"`
 }
 
 var columnarStatusNotReadyLogger = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "columnar"))
@@ -981,9 +984,23 @@ func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tab
 	if resp.StatusCode != http.StatusOK {
 		return columnarStatus, errors.Errorf("columnar status http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	err = json.Unmarshal(body, &columnarStatus)
+	type columnarStatusPayload struct {
+		Ready            uint  `json:"ready"`
+		VectorIndexReady uint  `json:"vector-index-ready"`
+		FtsIndexReady    *uint `json:"fts-index-ready"`
+		Total            uint  `json:"total"`
+	}
+	var payload columnarStatusPayload
+	err = json.Unmarshal(body, &payload)
 	if err != nil {
 		return columnarStatus, errors.Wrapf(err, "invalid columnar status response: %s", strings.TrimSpace(string(body)))
+	}
+	columnarStatus.Ready = payload.Ready
+	columnarStatus.VectorIndexReady = payload.VectorIndexReady
+	columnarStatus.Total = payload.Total
+	if payload.FtsIndexReady != nil {
+		columnarStatus.HasFtsIndexReady = true
+		columnarStatus.FtsIndexReady = *payload.FtsIndexReady
 	}
 	if columnarStatus.Ready != columnarStatus.Total {
 		columnarStatusNotReadyLogger().Info("columnar status not ready",
@@ -994,6 +1011,7 @@ func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tab
 			zap.Uint("ready", columnarStatus.Ready),
 			zap.Uint("total", columnarStatus.Total),
 			zap.Uint("vectorIndexReady", columnarStatus.VectorIndexReady),
+			zap.Uint("ftsIndexReady", columnarStatus.FtsIndexReady),
 		)
 	}
 

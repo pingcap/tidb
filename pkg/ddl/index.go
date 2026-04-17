@@ -1071,7 +1071,15 @@ func (w *worker) checkColumnarIndexProcessFromTiKV(_d *jobContext, tbl table.Tab
 		}
 		tikvStores[store.Store.ID] = store
 	}
-	progress, err := infosync.CalculateColumnarIndexProgress(tbl.Meta().ID, indexID, tikvStores)
+	indexInfo := tbl.Meta().FindIndexByID(indexID)
+	if indexInfo == nil {
+		return false, 0, errors.Errorf("could not find indexInfo by %d", indexID)
+	}
+	columnarIndexType := indexInfo.GetColumnarIndexType()
+	if columnarIndexType == pmodel.ColumnarIndexTypeNA {
+		return false, 0, errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.GenWithStackByArgs("Columnar does not support index types."))
+	}
+	progress, err := infosync.CalculateColumnarIndexProgress(tbl.Meta().ID, indexID, columnarIndexType, tikvStores)
 	if err != nil {
 		return false, 0, err
 	}

@@ -19,9 +19,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/goleak"
 )
@@ -324,4 +328,39 @@ func TestInfoSyncerMarshal(t *testing.T) {
 	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
 	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
 	require.Equal(t, info.Labels, decodeInfo.Labels)
+}
+
+func TestCalculateColumnarIndexProgressUsesFullTextReadyCount(t *testing.T) {
+	original := globalInfoSyncer.Load()
+	setGlobalInfoSyncer(&InfoSyncer{tikvCodec: keyspace.CodecV1})
+	t.Cleanup(func() {
+		globalInfoSyncer.Store(original)
+	})
+
+	const (
+		tableID = int64(123)
+		indexID = int64(456)
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/kvengine/columnar_status", r.URL.Path)
+		require.Equal(t, fmt.Sprintf("%d", keyspace.CodecV1.GetKeyspaceID()), r.URL.Query().Get("keyspace_id"))
+		require.Equal(t, "123", r.URL.Query().Get("table_id"))
+		require.Equal(t, "456", r.URL.Query().Get("index_id"))
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"ready":1,"fts-index-ready":1,"total":1}`))
+		require.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+
+	progress, err := CalculateColumnarIndexProgress(tableID, indexID, pmodel.ColumnarIndexTypeFulltext, map[int64]pdhttp.StoreInfo{
+		1: {
+			Store: pdhttp.MetaStore{
+				StatusAddress: strings.TrimPrefix(server.URL, "http://"),
+				StateName:     "Up",
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1.0, progress)
 }
