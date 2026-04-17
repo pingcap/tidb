@@ -120,6 +120,8 @@ const (
 	FlagPiTRBatchCount  = "pitr-batch-count"
 	FlagPiTRBatchSize   = "pitr-batch-size"
 	FlagPiTRConcurrency = "pitr-concurrency"
+	// FlagRetainLatestMVCCVersion controls whether restore keeps only newest MVCC version from compacted SSTs.
+	FlagRetainLatestMVCCVersion = "retain-latest-mvcc-version"
 
 	FlagResetSysUsers = "reset-sys-users"
 
@@ -300,6 +302,8 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
+	// RetainLatestMVCCVersion means restoring compacted SSTs by retaining only newest MVCC versions.
+	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
@@ -411,6 +415,11 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
+	command.Flags().Bool(
+		FlagRetainLatestMVCCVersion,
+		false,
+		"restore compacted SSTs by retaining only the newest MVCC version, and require no user DML log files",
+	)
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -449,6 +458,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RetainLatestMVCCVersion, err = flags.GetBool(FlagRetainLatestMVCCVersion); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

@@ -758,7 +758,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, rc.regionScanConcurrency, false, createCallBacks, closeCallBacks,
 	)
 	if isRawKvMode || isTxnKvMode {
 		mode := Raw
