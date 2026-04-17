@@ -809,10 +809,10 @@ func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
 // so that this PlanCacheStmt owns independent backing arrays. This is required
 // because planCachePreprocess replaces tbls[i] in-place during Execute, and
 // sharing the backing array with a cached template would cause cross-stmt contamination.
- func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []model.CIStr, tbls []table.Table) {
+func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []ast.CIStr, tbls []table.Table) {
 	s.dbName = slices.Clone(dbName)
 	s.tbls = slices.Clone(tbls)
- }
+}
 
 // GetPreparedStmt extract the prepared statement from the execute statement.
 func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCacheStmt, error) {
