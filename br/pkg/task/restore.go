@@ -2773,7 +2773,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			if err != nil {
 				return errors.Trace(err)
 			}
-			logInfo, err := getLogInfoFromStorage(ctx, s, cfg.FromReplicationStorage, cfg.ReplicationStatusSubPrefix)
+			logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, cfg.FromReplicationStorage, cfg.ReplicationStatusSubPrefix)
 			if err != nil {
 				return errors.Trace(err)
 			}

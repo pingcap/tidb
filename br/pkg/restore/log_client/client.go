@@ -219,6 +219,7 @@ type LogClient struct {
 
 	upstreamClusterID uint64
 	restoreID         uint64
+	checkRequirements bool
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -234,6 +235,10 @@ type LogClient struct {
 
 func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
+}
+
+func (rc *LogClient) SetCheckRequirements(checkRequirements bool) {
+	rc.checkRequirements = checkRequirements
 }
 
 type restoreStatistics struct {
@@ -261,6 +266,7 @@ func NewLogClient(
 		pdHTTPClient:       pdHTTPCli,
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
+		checkRequirements:  true,
 		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
 		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}

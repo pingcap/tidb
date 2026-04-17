@@ -533,6 +533,30 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 		tk2.MustExec("set global tidb_enable_instance_plan_cache = 0;")
 	}
 
+	// constant-group-having-firstrow-pushdown
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t0 (c0 int)")
+		tk.MustExec("create table t84 (c0 int)")
+		tk.MustExec("insert into t0 values (1), (0), (NULL)")
+		tk.MustExec("insert into t84 values (1), (0), (NULL)")
+
+		baseQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL ORDER BY t84.c0"
+		trueQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING t84.c0 ORDER BY t84.c0"
+		notQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING NOT (t84.c0) ORDER BY t84.c0"
+		isNullQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t84.c0 IS NULL) ORDER BY t84.c0"
+
+		tk.MustQuery(baseQuery).Check(testkit.Rows("1"))
+		tk.MustQuery(trueQuery).Check(testkit.Rows("1"))
+		tk.MustQuery(notQuery).Check(testkit.Rows())
+		tk.MustQuery(isNullQuery).Check(testkit.Rows())
+		tk.MustQuery(`SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING t84.c0
+UNION ALL
+SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING NOT (t84.c0)
+UNION ALL
+SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t84.c0 IS NULL)`).Check(testkit.Rows("1"))
+	}
+
 	// virtual-generated-column-substitute
 	{
 		tk := prepareSharedTestKit(t)
