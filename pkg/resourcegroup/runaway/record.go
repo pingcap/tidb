@@ -140,7 +140,7 @@ func writeInsert(builder *strings.Builder, tableName string) {
 func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 9)
-	writeInsert(&builder, getRunawayWatchTableName())
+	writeInsert(&builder, runawayWatchFullTableName)
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -162,7 +162,7 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 11)
-	writeInsert(&builder, getRunawayWatchDoneTableName())
+	writeInsert(&builder, runawayWatchDoneFullTableName)
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
@@ -187,7 +187,7 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 1)
 	builder.WriteString("delete from ")
-	builder.WriteString(getRunawayWatchTableName())
+	builder.WriteString(runawayWatchFullTableName)
 	builder.WriteString(" where id = %?")
 	params = append(params, r.ID)
 	return builder.String(), params
@@ -197,7 +197,7 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 func genBatchInsertWatchStmt(records map[string]*QuarantineRecord) (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, len(records)*9)
-	writeInsert(&builder, getRunawayWatchTableName())
+	writeInsert(&builder, runawayWatchFullTableName)
 	firstRecord := true
 	for _, r := range records {
 		if !firstRecord {
@@ -226,7 +226,7 @@ func genBatchDeleteWatchByIDStmt(records map[int64]*QuarantineRecord) (string, [
 	var builder strings.Builder
 	params := make([]any, 0, len(records))
 	builder.WriteString("delete from ")
-	builder.WriteString(getRunawayWatchTableName())
+	builder.WriteString(runawayWatchFullTableName)
 	builder.WriteString(" where id in (")
 	first := true
 	for id := range records {
@@ -246,7 +246,10 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		tableName = "tidb_runaway_queries"
 		colName   = "start_time"
 	)
+<<<<<<< HEAD
 	var systemSchemaCIStr = model.NewCIStr("mysql")
+=======
+>>>>>>> e3f45e476d3 (resourcegroup/runaway: switch watch syncer to time-based cursor (#67758))
 
 	if !rm.ddl.OwnerManager().IsOwner() {
 		return

@@ -49,12 +49,29 @@ go_test(
         "checker_test.go",
         "flusher_test.go",
         "record_test.go",
+        "syncer_test.go",
     ],
     embed = [":runaway"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 15,
+=======
+    shard_count = 26,
+>>>>>>> e3f45e476d3 (resourcegroup/runaway: switch watch syncer to time-based cursor (#67758))
     deps = [
         "//pkg/metrics",
+<<<<<<< HEAD
+=======
+        "//pkg/owner",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/resolve",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/mock",
+        "//pkg/util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
+>>>>>>> e3f45e476d3 (resourcegroup/runaway: switch watch syncer to time-based cursor (#67758))
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
