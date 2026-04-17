@@ -3004,3 +3004,46 @@ func TestMergeMigrationsPreservesIngestedSstPaths(t *testing.T) {
 		merged.IngestedSstPaths,
 	)
 }
+
+func TestMergeAndMigrateToBoundsIngestedSstPathsOverTruncates(t *testing.T) {
+	ctx := context.Background()
+	s := tmp(t)
+	est := MigrationExtension(s)
+
+	placeholder := func(pfx string) {
+		require.NoError(t, s.WriteFile(ctx, path.Join(pfx, "monolith"), []byte("sst")))
+	}
+
+	// Simulate N rounds of: AppendMigration (one finished ingested-SST group at
+	// ascending AsIfTs) followed by truncate advancing TruncatedTo to that same
+	// ts. Each round the previous round's group becomes eligible for cleanup
+	// (Finished=true, GroupTS < TruncatedTo), while the current round's group
+	// stays (GroupTS == TruncatedTo >= TruncatedTo).
+	const rounds = 10
+	prefixOf := func(i int) string { return fmt.Sprintf("ext_backups/%06d", i) }
+
+	for i := 1; i <= rounds; i++ {
+		ts := uint64(i * 10)
+		pfx := prefixOf(i)
+		placeholder(pfx)
+		ingMeta := extFullBkup(prefix(pfx), asIfTS(ts), makeID(), finished())
+		ingMetaPath := pef(t, ingMeta, i, s)
+		pmig(s, uint64(i), mig(mExtFullBackup(ingMetaPath), mTruncatedTo(ts)))
+
+		res := est.MergeAndMigrateTo(ctx, math.MaxInt,
+			MMOptSkipLockingInTest(), MMOptAlwaysRunTruncate())
+		require.NoError(t, multierr.Combine(res.Warnings...),
+			"round %d warnings: %v", i, res.Warnings)
+
+		require.LessOrEqualf(t, len(res.NewBase.IngestedSstPaths), 1,
+			"round %d: expected at most 1 surviving IngestedSstPath, got %d (%v)",
+			i, len(res.NewBase.IngestedSstPaths), res.NewBase.IngestedSstPaths)
+
+		if i > 1 {
+			require.NoFileExistsf(t,
+				path.Join(s.Base(), prefixOf(i-1), "monolith"),
+				"round %d: previous round's ext_backups directory should have been cleaned",
+				i)
+		}
+	}
+}
