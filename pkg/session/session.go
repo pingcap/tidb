@@ -2497,7 +2497,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		// before in this session (with the same charset/collation/currentDB), reuse
 		// the already-built PlanCacheStmt and skip the expensive Preprocess+Build.
 		charset, collation := s.sessionVars.GetCharsetInfo()
-		dedupKey = variable.PrepareDedupCacheKey(sql, charset, collation, s.sessionVars.CurrentDB)
+		dedupKey = variable.PrepareDedupCacheKey(sql, charset, collation, s.sessionVars.CurrentDB, s.sessionVars.SQLMode)
 		if v := s.sessionVars.GetPrepareStmtDedupCache(dedupKey); v != nil {
 			cached := v.(*plannercore.PrepareStmtCacheEntry)
 			is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
