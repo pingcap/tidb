@@ -1774,15 +1774,18 @@ func MergePartTopNAndHistToGlobal(
 	}
 
 	// Pass 2 iterates sortedRefs (produced in sorted order by Pass 1's
-	// k-way merge) and merge-walks with allTopN.
+	// k-way merge) and merge-walks with allTopN. mergeOrd = cmp(topN,
+	// hist_upper): <0 means the next topN key sorts before the next
+	// hist upper (topN-only group), >0 means hist-only, ==0 means both
+	// at the same key (merged into one group).
 	ri, ti2 := 0, 0
 	for ri < len(sortedRefs) || ti2 < len(allTopN) {
 		var mergeOrd int
 		var topNDatum types.Datum
 		if ri >= len(sortedRefs) {
-			mergeOrd = 1
-		} else if ti2 >= len(allTopN) {
 			mergeOrd = -1
+		} else if ti2 >= len(allTopN) {
+			mergeOrd = 1
 		} else {
 			var err error
 			topNDatum, err = topNMetaToDatum(TopNMeta{Encoded: allTopN[ti2].encoded}, tp, isIndex, tz)
@@ -1797,7 +1800,10 @@ func MergePartTopNAndHistToGlobal(
 			}
 		}
 
-		if mergeOrd >= 0 {
+		// Pure topN group: topN key sorts before the next hist upper
+		// (or hist is exhausted). Skip entries already in global TopN;
+		// inject leftover ones at their sorted position.
+		if mergeOrd < 0 {
 			key := allTopN[ti2].encoded
 			topNCount := int64(allTopN[ti2].count)
 			ti2++
@@ -1805,67 +1811,74 @@ func MergePartTopNAndHistToGlobal(
 				topNCount += int64(allTopN[ti2].count)
 				ti2++
 			}
-			_, inGlobal := globalTopNMap[hack.String(key)]
-			if !inGlobal && topNCount > 0 {
-				if ri >= len(sortedRefs) {
-					var err error
-					topNDatum, err = topNMetaToDatum(TopNMeta{Encoded: key}, tp, isIndex, tz)
-					if err != nil {
-						return nil, nil, err
-					}
-				}
-				startNewGroup(&topNDatum)
-				addToBucket(&topNDatum, topNCount, topNCount)
-				if mergeOrd > 0 {
-					emitGroup()
-					continue
-				}
-			} else if mergeOrd > 0 {
+			if _, inGlobal := globalTopNMap[hack.String(key)]; inGlobal || topNCount == 0 {
 				continue
 			}
-		}
-
-		if mergeOrd <= 0 {
-			if mergeOrd < 0 {
-				startNewGroup(hists[sortedRefs[ri].histIdx].GetUpper(int(sortedRefs[ri].bucketIdx)))
-			}
-			topNMatch := isGlobalTopNVal(int(sortedRefs[ri].histIdx), int(sortedRefs[ri].bucketIdx))
-
-			j := ri + 1
-			for j < len(sortedRefs) {
-				c, err := hists[sortedRefs[j].histIdx].GetUpper(int(sortedRefs[j].bucketIdx)).Compare(
-					sc.TypeCtx(), hists[sortedRefs[ri].histIdx].GetUpper(int(sortedRefs[ri].bucketIdx)),
-					collate.GetBinaryCollator())
+			if ri >= len(sortedRefs) {
+				var err error
+				topNDatum, err = topNMetaToDatum(TopNMeta{Encoded: key}, tp, isIndex, tz)
 				if err != nil {
 					return nil, nil, err
 				}
-				if c != 0 {
-					break
-				}
-				j++
 			}
-
-			for k := ri; k < j; k++ {
-				h := hists[sortedRefs[k].histIdx]
-				bkt := h.Buckets[sortedRefs[k].bucketIdx]
-				count := bkt.Count
-				if sortedRefs[k].bucketIdx > 0 {
-					count -= h.Buckets[sortedRefs[k].bucketIdx-1].Count
-				}
-				repeat := bkt.Repeat
-				if topNMatch {
-					count -= repeat
-					repeat = 0
-					if count <= 0 {
-						continue
-					}
-				}
-				addToBucket(h.GetLower(int(sortedRefs[k].bucketIdx)), count, repeat)
-			}
-
-			ri = j
+			startNewGroup(&topNDatum)
+			addToBucket(&topNDatum, topNCount, topNCount)
 			emitGroup()
+			continue
 		}
+
+		// Hist group (alone, or merged with a topN entry at the same key).
+		startNewGroup(hists[sortedRefs[ri].histIdx].GetUpper(int(sortedRefs[ri].bucketIdx)))
+
+		if mergeOrd == 0 {
+			key := allTopN[ti2].encoded
+			topNCount := int64(allTopN[ti2].count)
+			ti2++
+			for ti2 < len(allTopN) && bytes.Equal(allTopN[ti2].encoded, key) {
+				topNCount += int64(allTopN[ti2].count)
+				ti2++
+			}
+			if _, inGlobal := globalTopNMap[hack.String(key)]; !inGlobal && topNCount > 0 {
+				addToBucket(&topNDatum, topNCount, topNCount)
+			}
+		}
+
+		topNMatch := isGlobalTopNVal(int(sortedRefs[ri].histIdx), int(sortedRefs[ri].bucketIdx))
+
+		j := ri + 1
+		for j < len(sortedRefs) {
+			c, err := hists[sortedRefs[j].histIdx].GetUpper(int(sortedRefs[j].bucketIdx)).Compare(
+				sc.TypeCtx(), hists[sortedRefs[ri].histIdx].GetUpper(int(sortedRefs[ri].bucketIdx)),
+				collate.GetBinaryCollator())
+			if err != nil {
+				return nil, nil, err
+			}
+			if c != 0 {
+				break
+			}
+			j++
+		}
+
+		for k := ri; k < j; k++ {
+			h := hists[sortedRefs[k].histIdx]
+			bkt := h.Buckets[sortedRefs[k].bucketIdx]
+			count := bkt.Count
+			if sortedRefs[k].bucketIdx > 0 {
+				count -= h.Buckets[sortedRefs[k].bucketIdx-1].Count
+			}
+			repeat := bkt.Repeat
+			if topNMatch {
+				count -= repeat
+				repeat = 0
+				if count <= 0 {
+					continue
+				}
+			}
+			addToBucket(h.GetLower(int(sortedRefs[k].bucketIdx)), count, repeat)
+		}
+
+		ri = j
+		emitGroup()
 	}
 
 	if bucketLower != nil && lastUpper != nil {
