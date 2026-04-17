@@ -96,9 +96,10 @@ const (
 	tooSlowThreshold   = 20 * time.Second
 )
 
-// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
+// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then dumps the selected table deltas to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
-func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
+// If tableIDs is empty, it dumps every table that held in map to KV.
+func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool, tableIDs ...int64) error {
 	defer util.Recover(metrics.LabelStats, "DumpStatsDeltaToKV", nil, false)
 	start := time.Now()
 	defer func() {
@@ -118,11 +119,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 	}
 
 	// Sort table IDs to ensure a consistent dump order to reduce the chance of deadlock.
-	tableIDs := make([]int64, 0, len(deltaMap))
-	for id := range deltaMap {
-		tableIDs = append(tableIDs, id)
-	}
-	slices.Sort(tableIDs)
+	tableIDs = collectPendingStatsDeltaTableIDs(deltaMap, tableIDs)
 
 	// Dump stats delta in batches.
 	for i := 0; i < len(tableIDs); i += dumpDeltaBatchSize {
@@ -217,6 +214,33 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 	}
 
 	return nil
+}
+
+func collectPendingStatsDeltaTableIDs(deltaMap map[int64]variable.TableDelta, targetTableIDs []int64) []int64 {
+	// If targetTableIDs is empty, collect pending deltas for all tables.
+	if len(targetTableIDs) == 0 {
+		tableIDs := make([]int64, 0, len(deltaMap))
+		for id := range deltaMap {
+			tableIDs = append(tableIDs, id)
+		}
+		slices.Sort(tableIDs)
+		return tableIDs
+	}
+
+	tableIDs := make([]int64, 0, len(targetTableIDs))
+	seen := make(map[int64]struct{}, len(targetTableIDs))
+	for _, id := range targetTableIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		if _, ok := deltaMap[id]; !ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		tableIDs = append(tableIDs, id)
+	}
+	slices.Sort(tableIDs)
+	return tableIDs
 }
 
 // dumpStatsDeltaToKV processes and writes multiple table stats count deltas to KV storage in batches.

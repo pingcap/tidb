@@ -327,7 +327,7 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(10000, sum.RowCnt.Load())
-	s.EqualValues(147780, sum.Bytes.Load())
+	s.EqualValues(147780, sum.Processed.Load())
 	// this GET comes from reading subtask meta from object storage.
 	s.EqualValues(1, sum.GetReqCnt.Load())
 	// we have 4 kv groups, 2 files per group, and 1 for the meta file.
@@ -342,10 +342,10 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
 	s.EqualValues(sum.RowCnt.Load(), 10000)
 	if kerneltype.IsClassic() {
-		s.EqualValues(sum.Bytes.Load(), 2622604)
+		s.EqualValues(sum.Processed.Load(), 2622604)
 	} else {
 		// There are total 10000 * 4 kv pairs, each with 4 bytes keyspace prefix.
-		s.EqualValues(sum.Bytes.Load(), 2782604)
+		s.EqualValues(sum.Processed.Load(), 2782604)
 	}
 	s.EqualValues(20, sum.GetReqCnt.Load())
 	// No conflicts in this case, no need to rewrite the external subtask meta.
@@ -362,7 +362,7 @@ func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.Task
 		err = json.Unmarshal([]byte(subtask.Summary), &v)
 		s.NoError(err)
 		accumSummary.RowCnt.Add(v.RowCnt.Load())
-		accumSummary.Bytes.Add(v.Bytes.Load())
+		accumSummary.Processed.Add(v.Processed.Load())
 		accumSummary.PutReqCnt.Add(v.PutReqCnt.Load())
 		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
 	}
@@ -525,18 +525,18 @@ func TestNextGenMetering(t *testing.T) {
 
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(3, sum.RowCnt.Load())
-	s.EqualValues(27, sum.Bytes.Load())
+	s.EqualValues(27, sum.Processed.Load())
 	s.EqualValues(1, sum.GetReqCnt.Load())
 	s.EqualValues(5, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
-	s.EqualValues(288, sum.Bytes.Load())
+	s.EqualValues(288, sum.Processed.Load())
 	s.EqualValues(4, sum.GetReqCnt.Load())
 	s.EqualValues(6, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
 	// if we retry write, the bytes may be larger than 288
-	s.GreaterOrEqual(sum.Bytes.Load(), int64(288))
+	s.GreaterOrEqual(sum.Processed.Load(), int64(288))
 	s.EqualValues(6, sum.GetReqCnt.Load())
 	s.EqualValues(0, sum.PutReqCnt.Load())
 
