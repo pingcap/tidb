@@ -1213,7 +1213,8 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 	}
 	return lock.LockType == ast.SelectLockForUpdate ||
 		lock.LockType == ast.SelectLockForUpdateNoWait ||
-		lock.LockType == ast.SelectLockForUpdateWaitN
+		lock.LockType == ast.SelectLockForUpdateWaitN ||
+		lock.LockType == ast.SelectLockForUpdateSkipLocked
 }
 
 func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {

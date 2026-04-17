@@ -953,3 +953,11 @@ execute _ldbstmt;
 drop database if exists lock_db1;
 drop database if exists lock_db2;
 deallocate prepare _ldbstmt;
+
+# https://github.com/pingcap/tidb/issues/67715
+drop table if exists t67715_a, t67715_b;
+create table t67715_a (c1 int, c2 int, c3 varchar(200));
+create table t67715_b (c1 smallint, c2 int, c3 varchar(200), index idx_c1 (c1));
+select t67715_a.c1, t67715_b.c1 from t67715_a inner join t67715_b on t67715_a.c1 = t67715_b.c1 where t67715_a.c1 = 1 for update;
+select t67715_a.c1, t67715_b.c1 from t67715_a inner join t67715_b on t67715_a.c1 = t67715_b.c1 where t67715_a.c1 = 1 for update skip locked;
+drop table t67715_a, t67715_b;
