@@ -76,7 +76,8 @@ type TableImporter struct {
 	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
 	dupIgnoreRows extsort.ExternalSorter
 
-	ignoreColumns map[string]struct{}
+	ignoreColumns   map[string]struct{}
+	columnConstants map[string]string
 }
 
 // NewTableImporter creates a new TableImporter.
@@ -87,6 +88,7 @@ func NewTableImporter(
 	tableInfo *checkpoints.TidbTableInfo,
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
+	columnConstants map[string]string,
 	kvStore tidbkv.Storage,
 	etcdCli *clientv3.Client,
 	logger log.Logger,
@@ -99,17 +101,18 @@ func NewTableImporter(
 	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
-		tableName:     tableName,
-		dbInfo:        dbInfo,
-		tableInfo:     tableInfo,
-		tableMeta:     tableMeta,
-		encTable:      tbl,
-		alloc:         idAlloc,
-		kvStore:       kvStore,
-		etcdCli:       etcdCli,
-		autoidCli:     autoidCli,
-		logger:        logger.With(zap.String("table", tableName)),
-		ignoreColumns: ignoreColumns,
+		tableName:       tableName,
+		dbInfo:          dbInfo,
+		tableInfo:       tableInfo,
+		tableMeta:       tableMeta,
+		encTable:        tbl,
+		alloc:           idAlloc,
+		kvStore:         kvStore,
+		etcdCli:         etcdCli,
+		autoidCli:       autoidCli,
+		logger:          logger.With(zap.String("table", tableName)),
+		ignoreColumns:   ignoreColumns,
+		columnConstants: columnConstants,
 	}, nil
 }
 
