@@ -2162,9 +2162,11 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}
 
 	vars := se.GetSessionVars()
+	queryDuration := time.Since(startTime).Seconds()
 	for _, dbName := range GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(time.Since(startTime).Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(queryDuration)
 	}
+	metrics.QueryDurationOnlyByResourceGroupHistogram.WithLabelValues(vars.StmtCtx.ResourceGroupName).Observe(queryDuration)
 	return rows, rs.Fields(), err
 }
 
@@ -2340,9 +2342,11 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 		}
 
 		vars := se.GetSessionVars()
+		queryDuration := time.Since(startTime).Seconds()
 		for _, dbName := range GetDBNames(vars) {
-			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(time.Since(startTime).Seconds())
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(queryDuration)
 		}
+		metrics.QueryDurationOnlyByResourceGroupHistogram.WithLabelValues(vars.StmtCtx.ResourceGroupName).Observe(queryDuration)
 		return rows, rs.Fields(), err
 	})
 }

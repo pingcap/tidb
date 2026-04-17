@@ -28,16 +28,17 @@ var (
 
 // Metrics
 var (
-	PacketIOCounter            *prometheus.CounterVec
-	QueryDurationHistogram     *prometheus.HistogramVec
-	QueryRPCHistogram          *prometheus.HistogramVec
-	QueryProcessedKeyHistogram *prometheus.HistogramVec
-	QueryTotalCounter          *prometheus.CounterVec
-	ConnGauge                  *prometheus.GaugeVec
-	DisconnectionCounter       *prometheus.CounterVec
-	PreparedStmtGauge          prometheus.Gauge
-	ExecuteErrorCounter        *prometheus.CounterVec
-	CriticalErrorCounter       prometheus.Counter
+	PacketIOCounter                           *prometheus.CounterVec
+	QueryDurationHistogram                    *prometheus.HistogramVec
+	QueryDurationOnlyByResourceGroupHistogram *prometheus.HistogramVec
+	QueryRPCHistogram                         *prometheus.HistogramVec
+	QueryProcessedKeyHistogram                *prometheus.HistogramVec
+	QueryTotalCounter                         *prometheus.CounterVec
+	ConnGauge                                 *prometheus.GaugeVec
+	DisconnectionCounter                      *prometheus.CounterVec
+	PreparedStmtGauge                         prometheus.Gauge
+	ExecuteErrorCounter                       *prometheus.CounterVec
+	CriticalErrorCounter                      prometheus.Counter
 
 	ServerStart = "server-start"
 	ServerStop  = "server-stop"
@@ -100,6 +101,15 @@ func InitServerMetrics() {
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblSQLType, LblDb, LblResourceGroup})
+
+	QueryDurationOnlyByResourceGroupHistogram = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "handle_query_duration_by_resource_group_seconds",
+			Help:      "Bucketed histogram of processing time (s) of handled queries by resource group without sql_type or db labels.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblResourceGroup})
 
 	QueryRPCHistogram = metricscommon.NewHistogramVec(
 		prometheus.HistogramOpts{
