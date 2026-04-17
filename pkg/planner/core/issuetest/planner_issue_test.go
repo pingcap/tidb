@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -532,6 +533,30 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 		tk2.MustExec("set global tidb_enable_instance_plan_cache = 0;")
 	}
 
+	// constant-group-having-firstrow-pushdown
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t0 (c0 int)")
+		tk.MustExec("create table t84 (c0 int)")
+		tk.MustExec("insert into t0 values (1), (0), (NULL)")
+		tk.MustExec("insert into t84 values (1), (0), (NULL)")
+
+		baseQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL ORDER BY t84.c0"
+		trueQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING t84.c0 ORDER BY t84.c0"
+		notQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING NOT (t84.c0) ORDER BY t84.c0"
+		isNullQuery := "SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t84.c0 IS NULL) ORDER BY t84.c0"
+
+		tk.MustQuery(baseQuery).Check(testkit.Rows("1"))
+		tk.MustQuery(trueQuery).Check(testkit.Rows("1"))
+		tk.MustQuery(notQuery).Check(testkit.Rows())
+		tk.MustQuery(isNullQuery).Check(testkit.Rows())
+		tk.MustQuery(`SELECT /* issue:65945 */ t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING t84.c0
+UNION ALL
+SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING NOT (t84.c0)
+UNION ALL
+SELECT t84.c0 FROM t84 NATURAL RIGHT JOIN t0 WHERE true GROUP BY NULL HAVING (t84.c0 IS NULL)`).Check(testkit.Rows("1"))
+	}
+
 	// virtual-generated-column-substitute
 	{
 		tk := prepareSharedTestKit(t)
@@ -594,18 +619,18 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 			"  │ │   │ └─TableReader(Probe) root  data:Selection",
 			"  │ │   │   └─Selection cop[tikv]  not(isnull(test.t2.c13))",
 			"  │ │   │     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  │ │   └─HashJoin(Probe) root  CARTESIAN left outer join, left side:TableReader",
-			"  │ │     ├─TableDual(Build) root  rows:0",
-			"  │ │     └─TableReader(Probe) root  data:Selection",
+			"  │ │   └─Projection(Probe) root  test.t1.vkey, <nil>->test.t1.c10",
+			"  │ │     └─TableReader root  data:Selection",
 			"  │ │       └─Selection cop[tikv]  not(isnull(test.t1.vkey))",
 			"  │ │         └─TableFullScan cop[tikv] table:b keep order:false, stats:pseudo",
-			"  │ └─Projection(Probe) root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column",
+			"  │ └─Projection(Probe) root  test.t2.c12, test.t2.c14, test.t2.c12->Column",
 			"  │   └─TableReader root  data:Selection",
 			"  │     └─Selection cop[tikv]  not(isnull(test.t2.c14))",
 			"  │       └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  └─Projection(Probe) root  cast(test.t3.vkey, double BINARY)->Column",
-			"    └─TableReader root  data:TableFullScan",
-			"      └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"))
+			"  └─Projection(Probe) root  cast(test.t3.vkey, bigint(0) BINARY)->Column",
+			"    └─Selection root  eq(cast(cast(test.t3.vkey, bigint(0) BINARY), double BINARY), cast(test.t3.vkey, double BINARY))",
+			"      └─TableReader root  data:TableFullScan",
+			"        └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo"))
 	}
 
 	// issue-58999-view-equality-expression-join-key-panic
@@ -733,6 +758,66 @@ WHERE table4.pk != 5
 GROUP BY field1
 HAVING (((field1 <> 6 AND field1 <= 8) OR field1 <> 7) OR field1 <= 9)
 ORDER BY field1`).Check(testkit.Rows())
+	}
+
+	// issue-63455-point-update-negative-to-unsigned
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table foo (id int primary key, bing bigint unsigned default null)")
+		tk.MustExec("insert into foo values (1, 1), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		// It should follow the normal cast behavior and fail in strict SQL mode.
+		tk.MustGetErrCode("update foo set bing = (select -1) where id = 2", errno.ErrWarnDataOutOfRange)
+
+		// Fast point-update path should behave the same; before the fix for #63455 it wrapped -1 to MAX_UINT64 without error.
+		tk.MustGetErrCode("update foo set bing = -1 where id = 2", errno.ErrWarnDataOutOfRange)
+	}
+
+	// issue-67534-point-update-unsigned-decimal-negative
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table foo (id int primary key, bing decimal(10, 0) unsigned default null)")
+		tk.MustExec("insert into foo values (1, 1), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		// It should follow the normal cast behavior and fail in strict SQL mode.
+		tk.MustGetErrCode("update foo set bing = (select -1) where id = 2", errno.ErrWarnDataOutOfRange)
+
+		// Fast point-update path should behave the same; before the fix for #67534 it might wrap -1 using CAST semantics.
+		tk.MustGetErrCode("update foo set bing = -1 where id = 2", errno.ErrWarnDataOutOfRange)
+	}
+
+	// issue-67534-point-update-unsigned-real-negative
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table foo (id int primary key, bing double unsigned default null)")
+		tk.MustExec("insert into foo values (1, 1), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		// It should follow the normal cast behavior and fail in strict SQL mode.
+		tk.MustGetErrCode("update foo set bing = (select -1) where id = 2", errno.ErrWarnDataOutOfRange)
+
+		// Fast point-update path should behave the same; before the fix for #67534 it might wrap -1 using CAST semantics.
+		tk.MustGetErrCode("update foo set bing = -1 where id = 2", errno.ErrWarnDataOutOfRange)
+	}
+
+	// issue-67534-point-update-set-int-assignment
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table foo (id int primary key, bing set('1','2','3') default null)")
+		tk.MustExec("insert into foo values (1, null), (2, null)")
+
+		// With a subquery in assignment, the planner won't use the fast point-update path.
+		tk.MustExec("update foo set bing = (select 3) where id = 1")
+
+		// Fast point-update path should have the same enum/set-as-int behavior as the normal UPDATE path.
+		tk.MustExec("update foo set bing = 3 where id = 2")
+
+		tk.MustQuery("select id, bing + 0, bing from foo order by id").Check(testkit.Rows(
+			"1 3 1,2",
+			"2 3 1,2",
+		))
 	}
 }
 

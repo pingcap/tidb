@@ -3131,6 +3131,7 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 	// the session state.
 	err = finishStmt(context.Background(), rs.se, nil, rs.sql)
 	if err != nil {
+		cursorHandle.Close()
 		err2 := detachedRS.Close()
 		if err2 != nil {
 			logutil.BgLogger().Error("close detached record set failed", zap.Error(err2))

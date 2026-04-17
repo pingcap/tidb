@@ -88,6 +88,44 @@ Projection	root		planner__core__rule_outer2inner.t0.c0, planner__core__rule_oute
           └─TableReader(Probe)	root		data:Selection
             └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t2.c3))
               └─TableFullScan	cop[tikv]	table:ref_4	keep order:false, stats:pseudo
+select
+subq_0.c_0 as c_0,
+subq_0.c_1 as c_1,
+subq_0.c_2 as c_2
+from
+(select
+ref_1.c0 as c_0,
+ref_0.c2 as c_1,
+ref_0.c2 as c_2
+from
+(t1 as ref_0
+right join (t0 as ref_1
+)
+on (ref_0.c1 = ref_1.c0 ))
+) as subq_0
+where (('' = (
+select
+(' n1`')  as c_0
+from
+(t2 as ref_3
+left join t2 as ref_4
+on (ref_3.c4 = ref_4.c3 ))
+where ((subq_0.c_1) <> (subq_0.c_2))
+or (true)
+order by c_0 desc
+limit 1)) is null)
+or ('' = (
+select
+(' n1`')  as c_0
+from
+(t2 as ref_3
+left join t2 as ref_4
+on (ref_3.c4 = ref_4.c3 ))
+where ((subq_0.c_1) <> (subq_0.c_2))
+or (true)
+order by c_0 desc
+limit 1));
+c_0	c_1	c_2
 DROP TABLE IF EXISTS `t0`;
 CREATE TABLE `t0` (
 `c0` int
@@ -139,14 +177,115 @@ where
 c_0
 drop table if exists t0;
 drop table if exists t1;
-CREATE TABLE t0(c0 INT);
-INSERT INTO t0 VALUES (1);
-CREATE TABLE t1(c0 INT);
-INSERT INTO t1(c0) VALUES (0);
-SELECT
-t0.c0 AS ref0,
-t1.c0 AS ref1
-FROM t0
-RIGHT OUTER JOIN t1 ON t0.c0 = t1.c0
-WHERE (t1.c0 AND (t0.c0 != NULL)) IS FALSE;
+create table t0(c0 int);
+create table t1(c0 int);
+insert into t0 values (1);
+insert into t1 values (-71);
+explain format='plan_tree' select
+coalesce(null | sign(strcmp(case when t0.c0 is null then 'b' else 'b' end, 'a')),
+length(nullif(char(t1.c0), 'KV'))) as w_1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where coalesce(null | sign(strcmp(case when t0.c0 is null then 'b' else 'b' end, 'a')),
+length(nullif(char(t1.c0), 'KV'))) > 1;
+id	task	access object	operator info
+Projection	root		coalesce(cast(bitor(<nil>, sign(cast(strcmp(case(isnull(planner__core__rule_outer2inner.t0.c0), b, b), a), double BINARY))), decimal(20,0) UNSIGNED BINARY), cast(length(if(eq(char_func(planner__core__rule_outer2inner.t1.c0, <nil>), KV), <nil>, char_func(planner__core__rule_outer2inner.t1.c0, <nil>))), decimal(20,0) BINARY))->Column
+└─Selection	root		gt(coalesce(cast(bitor(NULL, sign(cast(strcmp(case(isnull(planner__core__rule_outer2inner.t0.c0), "b", "b"), "a"), double BINARY))), decimal(20,0) UNSIGNED BINARY), cast(length(if(eq(char_func(planner__core__rule_outer2inner.t1.c0, NULL), "KV"), NULL, char_func(planner__core__rule_outer2inner.t1.c0, NULL))), decimal(20,0) BINARY)), 1)
+  └─HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core__rule_outer2inner.t0.c0, planner__core__rule_outer2inner.t1.c0)]
+    ├─TableReader(Build)	root		data:Selection
+    │ └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t0.c0))
+    │   └─TableFullScan	cop[tikv]	table:t0	keep order:false, stats:pseudo
+    └─TableReader(Probe)	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select
+coalesce(null | sign(strcmp(case when t0.c0 is null then 'b' else 'b' end, 'a')),
+length(nullif(char(t1.c0), 'KV'))) as w_1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where coalesce(null | sign(strcmp(case when t0.c0 is null then 'b' else 'b' end, 'a')),
+length(nullif(char(t1.c0), 'KV'))) > 1;
+w_1
+4
+drop table if exists t0;
+drop table if exists t1;
+create table t0(c0 int);
+insert into t0 values (1);
+create table t1(c0 int);
+insert into t1(c0) values (0);
+explain format='plan_tree' select
+t0.c0 as ref0,
+t1.c0 as ref1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where (t1.c0 and (t0.c0 != null)) is false;
+id	task	access object	operator info
+Selection	root		isfalse(and(planner__core__rule_outer2inner.t1.c0, ne(planner__core__rule_outer2inner.t0.c0, NULL)))
+└─HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core__rule_outer2inner.t0.c0, planner__core__rule_outer2inner.t1.c0)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		isfalse(and(planner__core__rule_outer2inner.t0.c0, ne(planner__core__rule_outer2inner.t0.c0, NULL))), not(isnull(planner__core__rule_outer2inner.t0.c0))
+  │   └─TableFullScan	cop[tikv]	table:t0	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select
+t0.c0 as ref0,
+t1.c0 as ref1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where (t1.c0 and (t0.c0 != null)) is false;
 ref0	ref1
+NULL	0
+drop table if exists t0;
+drop table if exists t1;
+create table t0(c0 int);
+create table t1(c0 int);
+insert into t0 values (1);
+insert into t1 values (0);
+explain format='plan_tree' select
+t0.c0 as ref0,
+t1.c0 as ref1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where ((~(t1.c0 and null)) - (case 0 when t0.c0 then 0 else 1 end));
+id	task	access object	operator info
+Selection	root		minus(bitneg(and(planner__core__rule_outer2inner.t1.c0, NULL)), case(eq(0, planner__core__rule_outer2inner.t0.c0), 0, 1))
+└─HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core__rule_outer2inner.t0.c0, planner__core__rule_outer2inner.t1.c0)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t0.c0))
+  │   └─TableFullScan	cop[tikv]	table:t0	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+select
+t0.c0 as ref0,
+t1.c0 as ref1
+from t0
+right outer join t1 on t0.c0 = t1.c0
+where ((~(t1.c0 and null)) - (case 0 when t0.c0 then 0 else 1 end));
+ref0	ref1
+NULL	0
+drop table if exists t0;
+drop table if exists t1;
+create table t0(c0 int);
+create table t1(c0 int);
+insert into t0 values (0);
+explain format='plan_tree' select
+t1.c0 as ref0,
+t0.c0 as ref1
+from t1
+right outer join t0 on t1.c0 = t0.c0
+where (null and t0.c0) ^ (case when t1.c0 then t0.c0 else true end);
+id	task	access object	operator info
+Selection	root		bitxor(and(NULL, planner__core__rule_outer2inner.t0.c0), case(planner__core__rule_outer2inner.t1.c0, planner__core__rule_outer2inner.t0.c0, 1))
+└─HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core__rule_outer2inner.t1.c0, planner__core__rule_outer2inner.t0.c0)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t1.c0))
+  │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t0	keep order:false, stats:pseudo
+select
+t1.c0 as ref0,
+t0.c0 as ref1
+from t1
+right outer join t0 on t1.c0 = t0.c0
+where (null and t0.c0) ^ (case when t1.c0 then t0.c0 else true end);
+ref0	ref1
+NULL	0

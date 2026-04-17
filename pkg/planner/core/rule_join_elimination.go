@@ -49,6 +49,35 @@ func appendUniqueCorrelatedCols(target []*expression.Column, corCols []*expressi
 	return target
 }
 
+// buildOuterJoinNullExtendedProjection rewrites an outer join whose inner child is guaranteed
+// to produce zero rows into a projection on top of the outer child.
+// Columns from the original inner side are replaced with typed NULLs.
+func buildOuterJoinNullExtendedProjection(
+	join *logicalop.LogicalJoin,
+	outerPlan base.LogicalPlan,
+) base.LogicalPlan {
+	exprs := make([]expression.Expression, 0, join.Schema().Len())
+	allFromOuter := true
+	for _, col := range join.Schema().Columns {
+		if outerPlan.Schema().Contains(col) {
+			exprs = append(exprs, col.Clone())
+			continue
+		}
+		allFromOuter = false
+		retType := col.RetType.Clone()
+		retType.DelFlag(mysql.NotNullFlag)
+		exprs = append(exprs, expression.NewNullWithFieldType(retType))
+	}
+	if allFromOuter {
+		return outerPlan
+	}
+	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(join.SCtx(), join.QueryBlockOffset())
+	proj.SetSchema(join.Schema().Clone())
+	proj.SetOutputNames(join.OutputNames().Shallow())
+	proj.SetChildren(outerPlan)
+	return proj
+}
+
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
 //  1. outer join elimination: For example left outer join, if the parent doesn't use the
 //     columns from right table and the join key of right table(the inner table) is a unique
@@ -69,6 +98,9 @@ func (o *OuterJoinEliminator) tryToEliminateOuterJoin(p *logicalop.LogicalJoin, 
 
 	outerPlan := p.Children()[1^innerChildIdx]
 	innerPlan := p.Children()[innerChildIdx]
+	if innerDual, ok := innerPlan.(*logicalop.LogicalTableDual); ok && innerDual.RowCount == 0 {
+		return buildOuterJoinNullExtendedProjection(p, outerPlan), true, nil
+	}
 
 	// in case of count(*) FROM R LOJ S, the parentCols is empty, but
 	// still need to proceed to check whether we can eliminate outer join.
@@ -133,6 +165,9 @@ func (*OuterJoinEliminator) extractInnerJoinKeys(join *logicalop.LogicalJoin, in
 
 // check whether one of unique keys sets is contained by inner join keys
 func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.LogicalPlan, joinKeys *expression.Schema, innerNullEQKeys intset.FastIntSet) (bool, error) {
+	if isSelectionPartitionedRowNumberWindowOneUnique(innerPlan, joinKeys) {
+		return true, nil
+	}
 	for _, keyInfo := range innerPlan.Schema().PKOrUK {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
@@ -162,6 +197,78 @@ func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.Logic
 		}
 	}
 	return false, nil
+}
+
+// isSelectionPartitionedRowNumberWindowOneUnique recognizes Selection(Window(row_number))
+// shapes where the filter keeps at most one row for each partition key, so the
+// inner side is unique on the join keys for outer join elimination.
+func isSelectionPartitionedRowNumberWindowOneUnique(innerPlan base.LogicalPlan, joinKeys *expression.Schema) bool {
+	sel, ok := innerPlan.(*logicalop.LogicalSelection)
+	if !ok || len(sel.Conditions) == 0 {
+		return false
+	}
+
+	window, ok := sel.Children()[0].(*logicalop.LogicalWindow)
+	if !ok || len(window.WindowFuncDescs) != 1 || window.WindowFuncDescs[0].Name != "row_number" {
+		return false
+	}
+	if window.Frame == nil || window.Frame.Start == nil || window.Frame.End == nil {
+		return false
+	}
+	if window.Frame.Type != ast.Rows || window.Frame.Start.Type != ast.CurrentRow || window.Frame.End.Type != ast.CurrentRow {
+		return false
+	}
+
+	windowColumns := window.GetWindowResultColumns()
+	if len(windowColumns) != 1 || !hasRowNumberUpperBoundOne(sel.Conditions, windowColumns[0]) {
+		return false
+	}
+
+	for _, partitionCol := range window.GetPartitionByCols() {
+		if !joinKeys.Contains(partitionCol) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasRowNumberUpperBoundOne matches predicates that keep the row_number() result
+// column at or below 1, either through an equality to 1 or through simple upper
+// bounds recognized by expression.FindUpperBound.
+func hasRowNumberUpperBoundOne(conditions []expression.Expression, rowNumberCol *expression.Column) bool {
+	for _, cond := range conditions {
+		if isColEqConst(cond, rowNumberCol, 1) {
+			return true
+		}
+		if col, upperBound := expression.FindUpperBound(cond); col != nil && col.EqualColumn(rowNumberCol) && upperBound <= 1 {
+			return true
+		}
+	}
+	return false
+}
+
+func isColEqConst(expr expression.Expression, targetCol *expression.Column, value int64) bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.EQ || len(sf.GetArgs()) != 2 {
+		return false
+	}
+	if col, ok := sf.GetArgs()[0].(*expression.Column); ok && col.EqualColumn(targetCol) {
+		constant, ok := sf.GetArgs()[1].(*expression.Constant)
+		if !ok {
+			return false
+		}
+		constantValue, ok := constant.Value.GetValue().(int64)
+		return ok && constantValue == value
+	}
+	if col, ok := sf.GetArgs()[1].(*expression.Column); ok && col.EqualColumn(targetCol) {
+		constant, ok := sf.GetArgs()[0].(*expression.Constant)
+		if !ok {
+			return false
+		}
+		constantValue, ok := constant.Value.GetValue().(int64)
+		return ok && constantValue == value
+	}
+	return false
 }
 
 // check whether one of index sets is contained by inner join index

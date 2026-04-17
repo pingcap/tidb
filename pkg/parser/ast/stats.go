@@ -58,6 +58,7 @@ const (
 	AnalyzeOptCMSketchWidth
 	AnalyzeOptNumSamples
 	AnalyzeOptSampleRate
+	AnalyzeOptNDVRate
 )
 
 // AnalyzeOptionString stores the string form of analyze options.
@@ -68,6 +69,7 @@ var AnalyzeOptionString = map[AnalyzeOptionType]string{
 	AnalyzeOptCMSketchDepth: "CMSKETCH DEPTH",
 	AnalyzeOptNumSamples:    "SAMPLES",
 	AnalyzeOptSampleRate:    "SAMPLERATE",
+	AnalyzeOptNDVRate:       "NDVRATE",
 }
 
 // HistogramOperationType is the type for histogram operation.
@@ -360,7 +362,7 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 type RefreshStatsStmt struct {
 	stmtNode
 
-	RefreshObjects []*RefreshObject
+	RefreshObjects []*StatsObject
 	// RefreshMode is non-nil when a refresh strategy is explicitly specified.
 	RefreshMode *RefreshStatsMode
 	// IsClusterWide indicates whether the refresh operation is for the entire cluster.
@@ -425,15 +427,15 @@ func (n *RefreshStatsStmt) Dedup() {
 
 	dbSeen := make(map[string]struct{})
 	tableSeen := make(map[string]struct{})
-	result := make([]*RefreshObject, 0, len(n.RefreshObjects))
+	result := make([]*StatsObject, 0, len(n.RefreshObjects))
 
 	for _, obj := range n.RefreshObjects {
-		switch obj.RefreshObjectScope {
+		switch obj.StatsObjectScope {
 		// Global scope supersedes everything else. Keep the first global target only.
-		case RefreshObjectScopeGlobal:
-			n.RefreshObjects = []*RefreshObject{obj}
+		case StatsObjectScopeGlobal:
+			n.RefreshObjects = []*StatsObject{obj}
 			return
-		case RefreshObjectScopeDatabase:
+		case StatsObjectScopeDatabase:
 			dbKey := obj.DBName.L
 			if _, exists := dbSeen[dbKey]; exists {
 				continue
@@ -443,7 +445,7 @@ func (n *RefreshStatsStmt) Dedup() {
 			// Remove tables from the same database that might have been added earlier.
 			filtered := result[:0]
 			for _, existing := range result {
-				if existing.RefreshObjectScope == RefreshObjectScopeTable {
+				if existing.StatsObjectScope == StatsObjectScopeTable {
 					existingDBKey := existing.DBName.L
 					if existingDBKey != "" && existingDBKey == dbKey {
 						tblKey := existingDBKey + "." + existing.TableName.L
@@ -455,7 +457,7 @@ func (n *RefreshStatsStmt) Dedup() {
 			}
 			result = append(filtered, obj)
 
-		case RefreshObjectScopeTable:
+		case StatsObjectScopeTable:
 			dbKey := obj.DBName.L
 			if dbKey != "" {
 				if _, exists := dbSeen[dbKey]; exists {
@@ -474,39 +476,39 @@ func (n *RefreshStatsStmt) Dedup() {
 	n.RefreshObjects = result
 }
 
-type RefreshObjectScopeType int
+type StatsObjectScopeType int
 
 const (
-	// RefreshObjectScopeTable is the scope of a table.
-	RefreshObjectScopeTable RefreshObjectScopeType = iota + 1
-	// RefreshObjectScopeDatabase is the scope of a database.
-	RefreshObjectScopeDatabase
-	// RefreshObjectScopeGlobal is the scope of all databases.
-	RefreshObjectScopeGlobal
+	// StatsObjectScopeTable is the scope of a table.
+	StatsObjectScopeTable StatsObjectScopeType = iota + 1
+	// StatsObjectScopeDatabase is the scope of a database.
+	StatsObjectScopeDatabase
+	// StatsObjectScopeGlobal is the scope of all databases.
+	StatsObjectScopeGlobal
 )
 
-type RefreshObject struct {
-	RefreshObjectScope RefreshObjectScopeType
-	DBName             CIStr
-	TableName          CIStr
+type StatsObject struct {
+	StatsObjectScope StatsObjectScopeType
+	DBName           CIStr
+	TableName        CIStr
 }
 
-func (o *RefreshObject) Restore(ctx *format.RestoreCtx) error {
-	switch o.RefreshObjectScope {
-	case RefreshObjectScopeTable:
+func (o *StatsObject) Restore(ctx *format.RestoreCtx) error {
+	switch o.StatsObjectScope {
+	case StatsObjectScopeTable:
 		if o.DBName.O != "" {
 			ctx.WriteName(o.DBName.O)
 			ctx.WritePlain(".")
 		}
 		ctx.WriteName(o.TableName.O)
-	case RefreshObjectScopeDatabase:
+	case StatsObjectScopeDatabase:
 		ctx.WriteName(o.DBName.O)
 		ctx.WritePlain(".*")
-	case RefreshObjectScopeGlobal:
+	case StatsObjectScopeGlobal:
 		ctx.WritePlain("*.*")
 	default:
 		// This should never happen.
-		return errors.Errorf("invalid refresh object scope: %d", o.RefreshObjectScope)
+		return errors.Errorf("invalid stats object scope: %d", o.StatsObjectScope)
 	}
 	return nil
 }

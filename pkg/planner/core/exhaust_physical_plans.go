@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -262,28 +261,6 @@ func constructIndexHashJoinStatic(
 	return indexHashJoins
 }
 
-// calcOuterExpectedCnt computes the expected row count for the outer child of
-// an ordered join (IndexJoin or Apply) given the parent's ExpectedCnt. It
-// accounts for the OptOrderingIdxSelRatio to model extra outer rows that may
-// need to be scanned before the inner side produces enough matching rows.
-// The ordering penalty (rowsToMeetFirst) is only applied when the property
-// requires ordered output.
-func calcOuterExpectedCnt(sctx base.PlanContext, prop *property.PhysicalProperty, outerRowCount, estimatedRowCount float64) float64 {
-	orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
-	hasOrder := !prop.IsSortItemEmpty()
-	if (prop.ExpectedCnt < estimatedRowCount) ||
-		(hasOrder && orderRatio > 0 && outerRowCount > estimatedRowCount && prop.ExpectedCnt < outerRowCount && estimatedRowCount > 0) {
-		var rowsToMeetFirst float64
-		if hasOrder {
-			rowsToMeetFirst = max(0.0, (outerRowCount-estimatedRowCount)*orderRatio)
-		}
-		expCntScale := prop.ExpectedCnt / estimatedRowCount
-		return (outerRowCount * expCntScale) + rowsToMeetFirst
-	}
-	return math.MaxFloat64
-}
-
 // constructIndexJoinStatic is used to enumerate a physical index join with undecided inner plan. Via index join prop
 // pushed down to the inner side, the inner plans will check the admission of valid indexJoinProp and enumerate admitted inner
 // operators. This function is quite similar with constructIndexJoin, differing in the following part:
@@ -317,7 +294,7 @@ func constructIndexJoinStatic(
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType,
-		ExpectedCnt:       calcOuterExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
+		ExpectedCnt:       physicalop.CalcChildExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
 		SortItems:         prop.SortItems,
 		CTEProducerStatus: prop.CTEProducerStatus,
 		NoCopPushDown:     prop.NoCopPushDown,
@@ -704,9 +681,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -725,9 +702,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
 		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
@@ -777,6 +754,8 @@ func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResul
 func constructDS2TableScanTask(
 	ds *logicalop.DataSource,
 	ranges ranger.Ranges,
+	filterConds []expression.Expression,
+	accessConds []expression.Expression,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
@@ -794,7 +773,7 @@ func constructDS2TableScanTask(
 		Columns:         ds.Columns,
 		TableAsName:     ds.TableAsName,
 		DBName:          ds.DBName,
-		FilterCondition: ds.PushedDownConds,
+		FilterCondition: filterConds,
 		Ranges:          ranges,
 		RangeInfo:       rangeInfo,
 		KeepOrder:       keepOrder,
@@ -845,9 +824,77 @@ func constructDS2TableScanTask(
 	}
 	copTask.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	ts.PlanPartInfo = copTask.PhysPlanPartInfo
+	var rootTaskConds []expression.Expression
+	// For IndexJoin probe-side scans, predicates that contain very large IN-lists and are not part of
+	// range construction can be expensive to execute in coprocessor. Keep them in TiDB.
+	ts.FilterCondition, rootTaskConds = splitLargeInListFiltersForIndexJoinProbe(ts.FilterCondition, indexJoinProbeSideLargeInNotInThreshold)
+	// Keep explicit probe-side selections for access predicates to preserve the previous
+	// plan shape (`TableReader data:Selection`) even when those predicates are already used
+	// to build ranges. This does not change range pruning or result correctness.
+	// NOTE: only keep predicates that are fully evaluable on the inner schema. Correlated
+	// access conditions (for example, `t2.col <= t1.col`) must not be attached here,
+	// otherwise later schema checks may fail when validating/cop-pushing table filters.
+	innerOnlyAccessConds := make([]expression.Expression, 0, len(accessConds))
+	for _, cond := range accessConds {
+		if expression.ExprFromSchema(cond, ds.Schema()) {
+			innerOnlyAccessConds = append(innerOnlyAccessConds, cond)
+		}
+	}
+	ts.FilterCondition = ranger.AppendConditionsIfNotExist(ds.SCtx().GetExprCtx().GetEvalCtx(), ts.FilterCondition, innerOnlyAccessConds)
+	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 	selStats := ts.StatsInfo().Scale(ds.SCtx().GetSessionVars(), selectivity)
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, selStats, ds.AstIndexHints)
 	return copTask
+}
+
+// splitLargeInListFiltersForIndexJoinProbe keeps most filters pushdown-able, but moves
+// predicates that contain large IN-lists to root execution for IndexJoin probe-side scans.
+func splitLargeInListFiltersForIndexJoinProbe(filters []expression.Expression, threshold int) (pushDownFilters, rootTaskFilters []expression.Expression) {
+	if len(filters) == 0 || threshold <= 0 {
+		return filters, nil
+	}
+	pushDownFilters = make([]expression.Expression, 0, len(filters))
+	for _, filter := range filters {
+		if containsLargeInList(filter, threshold) {
+			rootTaskFilters = append(rootTaskFilters, filter)
+			continue
+		}
+		pushDownFilters = append(pushDownFilters, filter)
+	}
+	return pushDownFilters, rootTaskFilters
+}
+
+// containsLargeInList checks whether an expression tree contains a large IN-list.
+// This is intentionally recursive so predicates like `a = 1 OR b IN (...)` are also captured.
+// NOTE: `NOT IN` is represented as `NOT(IN(...))`, so recursion naturally covers it.
+func containsLargeInList(expr expression.Expression, threshold int) bool {
+	inListLen := getInListLength(expr)
+	if inListLen > threshold {
+		return true
+	}
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	for _, arg := range sf.GetArgs() {
+		if containsLargeInList(arg, threshold) {
+			return true
+		}
+	}
+	return false
+}
+
+// getInListLength returns the element count of `a IN (...)`.
+// It returns -1 for non-IN predicates.
+func getInListLength(filter expression.Expression) int {
+	sf, ok := filter.(*expression.ScalarFunction)
+	if !ok {
+		return -1
+	}
+	if sf.FuncName.L == ast.In {
+		return max(len(sf.GetArgs())-1, 0)
+	}
+	return -1
 }
 
 // getColsNDVLowerBoundFromHistColl tries to get a lower bound of the NDV of columns (whose uniqueIDs are colUIDs).
@@ -993,6 +1040,10 @@ func constructDS2IndexScanTask(
 	}
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
 	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
+	// Only apply this gate to residual filters (not range builders) for IndexJoin probe side.
+	// Range-deriving predicates are decided earlier and remain unchanged.
+	pushDownIndexConds, rootTaskIndexConds := splitLargeInListFiltersForIndexJoinProbe(indexConds, indexJoinProbeSideLargeInNotInThreshold)
+	pushDownTblConds, rootTaskTblConds := splitLargeInListFiltersForIndexJoinProbe(tblConds, indexJoinProbeSideLargeInNotInThreshold)
 
 	// Note: due to a regression in JOB workload, we use the optimizer fix control to enable this for now.
 	//
@@ -1030,8 +1081,8 @@ func constructDS2IndexScanTask(
 		rowCount = math.Min(rowCount, 1.0)
 	}
 	tmpPath := &util.AccessPath{
-		IndexFilters:        indexConds,
-		TableFilters:        tblConds,
+		IndexFilters:        pushDownIndexConds,
+		TableFilters:        pushDownTblConds,
 		CountAfterIndex:     rowCount,
 		CountAfterAccess:    rowCount,
 		MinCountAfterAccess: 0,
@@ -1077,6 +1128,8 @@ func constructDS2IndexScanTask(
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
 	finalStats := ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount)
+	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskIndexConds...)
+	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskTblConds...)
 	if err := addPushedDownSelection4PhysicalIndexScan(is, cop, ds, tmpPath, finalStats); err != nil {
 		logutil.BgLogger().Warn("unexpected error happened during addPushedDownSelection4PhysicalIndexScan function", zap.Error(err))
 		return nil
@@ -1090,6 +1143,10 @@ const (
 	indexJoinMethod      = 0
 	indexHashJoinMethod  = 1
 	indexMergeJoinMethod = 2
+
+	// A fixed guardrail for step-1: do not push down probe-side residual predicates
+	// that contain IN-lists whose size is greater than this threshold.
+	indexJoinProbeSideLargeInNotInThreshold = 10000
 )
 
 func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod int, ok bool) {
@@ -2160,7 +2217,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 	// inner side produces enough matching rows (same logic used by IndexJoin).
 	outerExpectedCnt := math.MaxFloat64
 	if !prop.IsSortItemEmpty() {
-		outerExpectedCnt = calcOuterExpectedCnt(la.SCtx(), prop, stats0.RowCount, la.StatsInfo().RowCount)
+		outerExpectedCnt = physicalop.CalcChildExpectedCnt(la.SCtx(), prop, stats0.RowCount, la.StatsInfo().RowCount)
 	}
 
 	apply := physicalop.PhysicalApply{

@@ -77,8 +77,9 @@ type StatsUsage interface {
 	// ResetSessionStatsList resets the sessions stats list.
 	ResetSessionStatsList()
 
-	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
-	DumpStatsDeltaToKV(dumpAll bool) error
+	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then dumps the selected table deltas to KV.
+	// If tableIDs is empty, it dumps every table that held in the map.
+	DumpStatsDeltaToKV(dumpAll bool, tableIDs ...int64) error
 
 	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 	DumpColStatsUsageToKV() error

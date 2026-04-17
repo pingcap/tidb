@@ -134,7 +134,7 @@ func TestCollectorHandleEncodedRow(t *testing.T) {
 		var sharedTotalFileSize atomic.Int64
 		coll := NewCollector(
 			nil, logger, objStore, store, "test",
-			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
+			kvGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 		)
 		rowCount := 48
 		for i := range rowCount {
@@ -212,7 +212,7 @@ func TestCollectorHandleEncodedRowMaxTotalFileSize(t *testing.T) {
 	var sharedTotalFileSize atomic.Int64
 	coll := NewCollector(
 		nil, logger, objStore, store, "test",
-		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
+		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 	)
 
 	rowCount := 5
@@ -306,11 +306,11 @@ func TestCollectorHandleEncodedRowMaxTotalFileSizeSharedByCollectors(t *testing.
 	var sharedTotalFileSize atomic.Int64
 	coll1 := NewCollector(
 		nil, logger, objStore, store, "test1",
-		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
+		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 	)
 	coll2 := NewCollector(
 		nil, logger, objStore, store, "test2",
-		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil,
+		external.DataKVGroup, nil, nil, NewBoundedHandleSet(logger, &sharedSize, units.MiB), &sharedTotalFileSize, nil, nil,
 	)
 
 	row := []types.Datum{types.NewStringDatum("id"), types.NewStringDatum("value")}

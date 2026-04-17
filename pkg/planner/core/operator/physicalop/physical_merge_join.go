@@ -113,9 +113,8 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			// Adjust expected count for children nodes.
 			if prop.ExpectedCnt < statsInfo.RowCount {
-				expCntScale := prop.ExpectedCnt / statsInfo.RowCount
-				reqProps[0].ExpectedCnt = leftStatsInfo.RowCount * expCntScale
-				reqProps[1].ExpectedCnt = rightStatsInfo.RowCount * expCntScale
+				reqProps[0].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop, leftStatsInfo.RowCount, statsInfo.RowCount)
+				reqProps[1].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop, rightStatsInfo.RowCount, statsInfo.RowCount)
 			}
 			mergeJoin.SetChildrenReqProps(reqProps)
 			_, desc := prop.AllSameOrder()
