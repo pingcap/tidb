@@ -134,6 +134,13 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 	a.globalStats = newGlobalStats(len(a.histIDs))
 	a.globalStats.Num = len(a.histIDs)
 	a.globalStatsNDV = make([]int64, 0, a.globalStats.Num)
+	statslogutil.StatsLogger().Info("global stats prepare: fetching per-partition meta",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("partitions", a.partitionNum),
+		zap.Int("histIDs", len(a.histIDs)),
+		zap.String("reads", "mysql.stats_meta, mysql.stats_histograms"))
 	// get all partition stats
 	for _, def := range a.globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
@@ -182,6 +189,15 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 			}
 		}
 	}
+	statslogutil.StatsLogger().Info("global stats prepare: done",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("partitions", len(a.partitionIDs)),
+		zap.Int("skipped", len(a.skipPartition)),
+		zap.Int("missing", len(a.globalStats.MissingPartitionStats)),
+		zap.Int64("realtimeCount", a.globalStats.Count),
+		zap.Int64("modifyCount", a.globalStats.ModifyCount))
 	return nil
 }
 
@@ -341,6 +357,13 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {
+	statslogutil.StatsLogger().Info("global stats load: fmsketch",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("histIDs", a.globalStats.Num),
+		zap.Int("partitions", len(a.partitionIDs)),
+		zap.String("reads", "mysql.stats_fm_sketch"))
 	for i := range a.globalStats.Num {
 		// load fmsketch from tikv
 		for _, partitionID := range a.partitionIDs {
@@ -370,6 +393,13 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
 	failpoint.Inject("PanicInIOWorker", nil)
+	statslogutil.StatsLogger().Info("global stats load: cmsketch",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("histIDs", a.globalStats.Num),
+		zap.Int("partitions", len(a.partitionIDs)),
+		zap.String("reads", "mysql.stats_histograms"))
 	for i := range a.globalStats.Num {
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
@@ -403,6 +433,13 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			failpoint.Return(errors.New("ErrorSameTime returned error"))
 		}
 	})
+	statslogutil.StatsLogger().Info("global stats load: histogram + topN",
+		zap.String("table", a.globalTableInfo.Name.L),
+		zap.Int64("tableID", a.globalTableInfo.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("histIDs", a.globalStats.Num),
+		zap.Int("partitions", len(a.partitionIDs)),
+		zap.String("reads", "mysql.stats_histograms, mysql.stats_buckets, mysql.stats_top_n"))
 	for i := range a.globalStats.Num {
 		hists := make([]*statistics.Histogram, 0, a.partitionNum)
 		topn := make([]*statistics.TopN, 0, a.partitionNum)
