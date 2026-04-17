@@ -42,10 +42,7 @@ func enableFastAddIndexFailpoints(t *testing.T) {
 	// by EpochNotMatch or other errors, and can make those cases faster.
 	// we also reduce the retry backoff to make the test faster when region job
 	// is re-queued, as CI ENV might be slow and cause more re-queues.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/adjustNeedSplit",
-		func(needSplit *bool) {
-			*needSplit = true
-		})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/forceSplitRegion", "return(true)")
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/adjustRegionJobRetryBackoff",
 		func(backoff *time.Duration) {
 			*backoff = time.Second
