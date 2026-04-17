@@ -46,6 +46,7 @@ func NewCRRCheckpointService(
 	mgr, err := task.NewMgr(
 		ctx,
 		g,
+		cfg.KeyspaceName,
 		cfg.PD,
 		cfg.TLS,
 		task.GetKeepalive(&cfg.Config),

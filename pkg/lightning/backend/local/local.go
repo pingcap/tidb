@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -622,8 +623,9 @@ func NewBackend(
 	} else {
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
-	pdCli, err = pd.NewClientWithContext(
-		ctx, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
+	apiContext := keyspace.BuildAPIContext(config.KeyspaceName)
+	pdCli, err = pd.NewClientWithAPIContext(
+		ctx, apiContext, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
 		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
