@@ -150,23 +150,19 @@ var scanCases = []scanTestCase{
 }
 
 func newTestWatchReader(checkpoint time.Time) *systemTableReader {
-	return &systemTableReader{
-		TableName:     getRunawayWatchTableName(),
-		KeyCol:        "start_time",
-		KeyColIdx:     watchColStartTime,
-		RecordColumns: watchRecordColumns,
-		CheckPoint:    checkpoint,
-	}
+	r := newSystemTableReader(
+		runawayWatchFullTableName, "start_time", watchColStartTime, watchRecordColumns,
+	)
+	r.CheckPoint = checkpoint
+	return r
 }
 
 func newTestWatchDoneReader(checkpoint time.Time) *systemTableReader {
-	return &systemTableReader{
-		TableName:     getRunawayWatchDoneTableName(),
-		KeyCol:        "done_time",
-		KeyColIdx:     watchDoneColDoneTime,
-		RecordColumns: watchDoneRecordColumns,
-		CheckPoint:    checkpoint,
-	}
+	r := newSystemTableReader(
+		runawayWatchDoneFullTableName, "done_time", watchDoneColDoneTime, watchDoneRecordColumns,
+	)
+	r.CheckPoint = checkpoint
+	return r
 }
 
 func timeDatum(t time.Time) types.Datum {
