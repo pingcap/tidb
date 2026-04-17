@@ -18,7 +18,7 @@ function run_sql_as() {
 	SQL="$1"
   shift
 	echo "[$(date)] Executing SQL with user $user: $SQL"
-  echo "mysql version: $(mysql -V)"
+  echo "mysql version: $(mysql --version)"
   mysql -u$user -p$password -h127.0.0.1 -P4000 \
       "$@" \
       --default-character-set utf8 -E -e "$SQL" > "$TEST_DIR/sql_res.$TEST_NAME.txt" 2>&1
