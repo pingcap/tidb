@@ -83,7 +83,7 @@ const (
 	flagClusterSSLCA             = "cluster-ssl-ca"
 	flagClusterSSLCert           = "cluster-ssl-cert"
 	flagClusterSSLKey            = "cluster-ssl-key"
-  flagParquetCompress          = "parquet-compress"
+	flagParquetCompress          = "parquet-compress"
 	flagParquetPageSize          = "parquet-page-size"
 	flagParquetRowGroupSize      = "parquet-row-group-size"
 
@@ -206,10 +206,26 @@ type Config struct {
 	PDAddr string
 	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
 	// to PD endpoints for GC control.
-	ClusterSSLCA   string
-	ClusterSSLCert string
-	ClusterSSLKey  string
+	ClusterSSLCA        string
+	ClusterSSLCert      string
+	ClusterSSLKey       string
+	ParquetCompressType ParquetCompressType
+	ParquetPageSize     int64
+	ParquetRowGroupSize int64
 }
+
+type ParquetCompressType string
+
+const (
+	// NoCompression won't compress given bytes.
+	NoCompression ParquetCompressType = "no-compression"
+	// Gzip will compress given bytes in gzip format.
+	Gzip ParquetCompressType = "gz"
+	// Snappy will compress given bytes in snappy format.
+	Snappy ParquetCompressType = "snappy"
+	// Zstd will compress given bytes in zstd format.
+	Zstd ParquetCompressType = "zst"
+)
 
 // ServerInfoUnknown is the unknown database type to dumpling
 var ServerInfoUnknown = version.ServerInfo{
@@ -387,6 +403,9 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
 	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
+	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
+	flags.Int64(flagParquetPageSize, 1024*1024, "Parquet page size in bytes")
+	flags.Int64(flagParquetRowGroupSize, 16*1024*1024, "Parquet row group size in bytes")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
