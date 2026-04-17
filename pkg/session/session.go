@@ -3183,7 +3183,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 
 	var dedupKey string
-	if s.sessionVars.EnableCachePrepareStmt == true {
+	if s.sessionVars.EnableCachePrepareStmt {
 		// Session-level prepare dedup cache: if the same SQL text has been prepared
 		// before in this session (with the same charset/collation/currentDB), reuse
 		// the already-built PlanCacheStmt and skip the expensive Preprocess+Build.
@@ -3220,7 +3220,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 
 	// Store the result in the dedup cache for future Prepares of the same SQL.
-	if s.sessionVars.EnableCachePrepareStmt == true {
+	if s.sessionVars.EnableCachePrepareStmt {
 		if prepareExec.Stmt != nil {
 			s.sessionVars.SetPrepareStmtDedupCache(dedupKey, &plannercore.PrepareStmtCacheEntry{
 				Stmt:       prepareExec.Stmt.(*plannercore.PlanCacheStmt),
