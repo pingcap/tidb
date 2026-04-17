@@ -564,6 +564,15 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		}
 	}
 	if dbName == mysql.SystemDB && tableName == sysMaskingPolicyTableName {
+		// Skip when target cluster doesn't have mysql.tidb_masking_policy
+		// (for example, restoring to an older TiDB without masking policy feature).
+		if db.ExistingTables[tableName] == nil {
+			log.Info("skip restoring masking policies because target cluster doesn't support masking policy table",
+				zap.String("table", tableName),
+				zap.Stringer("database", db.Name),
+			)
+			return nil
+		}
 		if err := restoreMaskingPoliciesFromTemporaryTable(
 			ctx,
 			rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor(),
