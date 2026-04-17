@@ -1395,7 +1395,6 @@ func MergePartTopNAndHistToGlobal(
 	isIndex bool,
 	killer *sqlkiller.SQLKiller,
 	sc *stmtctx.StatementContext,
-	analyzeVer int,
 ) (*TopN, *Histogram, error) {
 	if expBucketNumber == 0 {
 		return nil, nil, errors.Errorf("expBucketNumber can not be zero")

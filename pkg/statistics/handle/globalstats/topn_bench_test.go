@@ -77,7 +77,7 @@ func benchmarkGlobalStatsMerge(partitions int, b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _, _ = statistics.MergePartTopNAndHistToGlobal(
-			topNs, hists, 100, 256, false, &killer, sc, 1,
+			topNs, hists, 100, 256, false, &killer, sc,
 		)
 	}
 }

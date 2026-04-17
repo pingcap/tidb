@@ -331,7 +331,6 @@ func blockingMergePartitionStats2GlobalStats(
 			uint32(opts[ast.AnalyzeOptNumTopN]),
 			int64(opts[ast.AnalyzeOptNumBuckets]),
 			isIndex, killer, sc.GetSessionVars().StmtCtx,
-			sc.GetSessionVars().AnalyzeVersion,
 		)
 		allTopN[i] = nil // Release for GC.
 		allHg[i] = nil   // Release for GC.

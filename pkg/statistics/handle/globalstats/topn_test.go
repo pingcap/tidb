@@ -117,7 +117,7 @@ func TestMergePartTopNAndHistToGlobalSpreadValue(t *testing.T) {
 	}
 
 	hybridTopN, hybridHist, err := statistics.MergePartTopNAndHistToGlobal(
-		topNs, hists, globalTopNSize, 100, false, &killer, sc, 1,
+		topNs, hists, globalTopNSize, 100, false, &killer, sc,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, hybridTopN)
@@ -200,7 +200,7 @@ func TestMergePartTopNAndHistToGlobalNoInflation(t *testing.T) {
 	}
 
 	hybridTopN, hybridHist, err := statistics.MergePartTopNAndHistToGlobal(
-		topNs, hists, globalTopNSize, 100, false, &killer, sc, 1,
+		topNs, hists, globalTopNSize, 100, false, &killer, sc,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, hybridTopN)
@@ -266,7 +266,7 @@ func TestMergePartTopNAndHistToGlobalCountPreservation(t *testing.T) {
 	}
 
 	hybridTopN, hybridHist, err := statistics.MergePartTopNAndHistToGlobal(
-		topNs, hists, 2, 10, false, &killer, sc, 1,
+		topNs, hists, 2, 10, false, &killer, sc,
 	)
 	require.NoError(t, err)
 
