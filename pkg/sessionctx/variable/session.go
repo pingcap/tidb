@@ -1724,6 +1724,9 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// EnableCachePrepareStmt indicates whether to cache prepare stmt in plan cache.
+	EnableCachePrepareStmt bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2259,6 +2262,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+		EnableCachePrepareStmt:        DefEnableCachePrepareStmt,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))

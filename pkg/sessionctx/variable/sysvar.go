@@ -3533,6 +3533,10 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCachePrepareStmt, Value: BoolToOnOff(DefEnableCachePrepareStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableCachePrepareStmt = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

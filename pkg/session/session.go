@@ -2492,29 +2492,32 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	// Session-level prepare dedup cache: if the same SQL text has been prepared
-	// before in this session (with the same charset/collation/currentDB), reuse
-	// the already-built PlanCacheStmt and skip the expensive Preprocess+Build.
-	charset, collation := s.sessionVars.GetCharsetInfo()
-	dedupKey := variable.PrepareDedupCacheKey(sql, charset, collation, s.sessionVars.CurrentDB)
-	if v := s.sessionVars.GetPrepareStmtDedupCache(dedupKey); v != nil {
-		cached := v.(*plannercore.PrepareStmtCacheEntry)
-		is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-		if cached.Stmt.SchemaVersion == is.SchemaMetaVersion() {
-			newStmt, rebuildErr := s.rebuildFromPrepareCache(ctx, cached, sql, charset, collation)
-			if rebuildErr == nil {
-				stmtID = s.sessionVars.GetNextPreparedStmtID()
-				if err = s.sessionVars.AddPreparedStmt(stmtID, newStmt); err != nil {
+	var dedupKey string
+	if s.sessionVars.EnableCachePrepareStmt == true {
+		// Session-level prepare dedup cache: if the same SQL text has been prepared
+		// before in this session (with the same charset/collation/currentDB), reuse
+		// the already-built PlanCacheStmt and skip the expensive Preprocess+Build.
+		charset, collation := s.sessionVars.GetCharsetInfo()
+		dedupKey = variable.PrepareDedupCacheKey(sql, charset, collation, s.sessionVars.CurrentDB)
+		if v := s.sessionVars.GetPrepareStmtDedupCache(dedupKey); v != nil {
+			cached := v.(*plannercore.PrepareStmtCacheEntry)
+			is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+			if cached.Stmt.SchemaVersion == is.SchemaMetaVersion() {
+				newStmt, rebuildErr := s.rebuildFromPrepareCache(ctx, cached, sql, charset, collation)
+				if rebuildErr == nil {
+					stmtID = s.sessionVars.GetNextPreparedStmtID()
+					if err = s.sessionVars.AddPreparedStmt(stmtID, newStmt); err != nil {
+						return
+					}
+					paramCount = cached.ParamCount
+					fields = cached.Fields
+					s.rollbackOnError(ctx)
 					return
 				}
-				paramCount = cached.ParamCount
-				fields = cached.Fields
-				s.rollbackOnError(ctx)
-				return
+				// Re-parse or rebuild failed; fall through to the full prepare path.
 			}
-			// Re-parse or rebuild failed; fall through to the full prepare path.
+			// Schema version changed; fall through and re-cache below.
 		}
-		// Schema version changed; fall through and re-cache below.
 	}
 
 	prepareExec := executor.NewPrepareExec(s, sql)
@@ -2527,12 +2530,14 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 
 	// Store the result in the dedup cache for future Prepares of the same SQL.
-	if prepareExec.Stmt != nil {
-		s.sessionVars.SetPrepareStmtDedupCache(dedupKey, &plannercore.PrepareStmtCacheEntry{
-			Stmt:       prepareExec.Stmt.(*plannercore.PlanCacheStmt),
-			Fields:     prepareExec.Fields,
-			ParamCount: prepareExec.ParamCount,
-		})
+	if s.sessionVars.EnableCachePrepareStmt == true {
+		if prepareExec.Stmt != nil {
+			s.sessionVars.SetPrepareStmtDedupCache(dedupKey, &plannercore.PrepareStmtCacheEntry{
+				Stmt:       prepareExec.Stmt.(*plannercore.PlanCacheStmt),
+				Fields:     prepareExec.Fields,
+				ParamCount: prepareExec.ParamCount,
+			})
+		}
 	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
 }
