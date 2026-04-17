@@ -301,6 +301,10 @@ type PlanReplayerStmt struct {
 	// 2. plan replayer dump explain <analyze> 'file'
 	File string
 
+	// StmtList is used for PLAN REPLAYER DUMP EXPLAIN [ANALYZE] ( "sql1", "sql2", ... )
+	// When non-nil, multiple SQL strings are dumped in one command.
+	StmtList []string
+
 	// Fields below are currently useless.
 
 	// Where is the where clause in select statement.
@@ -346,6 +350,17 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("EXPLAIN ANALYZE ")
 	} else {
 		ctx.WriteKeyWord("EXPLAIN ")
+	}
+	if len(n.StmtList) > 0 {
+		ctx.WritePlain("(")
+		for i, s := range n.StmtList {
+			if i > 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteString(s)
+		}
+		ctx.WritePlain(")")
+		return nil
 	}
 	if n.Stmt == nil {
 		if len(n.File) > 0 {
@@ -1039,6 +1054,7 @@ const (
 	FlushHosts
 	FlushLogs
 	FlushClientErrorsSummary
+	FlushStatsDelta
 )
 
 // LogType is the log type used in FLUSH statement.
@@ -1063,6 +1079,8 @@ type FlushStmt struct {
 	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 	Plugins         []string
+	IsCluster       bool           // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	FlushObjects    []*StatsObject // For FlushStatsDelta, scoped objects (db.tbl, db.*, *.*). Always non-empty.
 }
 
 // Restore implements Node interface.
@@ -1122,6 +1140,22 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(logType)
 	case FlushClientErrorsSummary:
 		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
+	case FlushStatsDelta:
+		ctx.WriteKeyWord("STATS_DELTA")
+		for i, obj := range n.FlushObjects {
+			if i == 0 {
+				ctx.WritePlain(" ")
+			} else {
+				ctx.WritePlain(", ")
+			}
+			if err := obj.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FlushStmt.FlushObjects[%d]", i)
+			}
+		}
+		if n.IsCluster {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord("CLUSTER")
+		}
 	default:
 		return errors.New("Unsupported type of FlushStmt")
 	}
@@ -3802,7 +3836,7 @@ func RedactURL(str string) string {
 
 	var redactKeys map[string]struct{}
 	switch strings.ToLower(scheme) {
-	case "s3", "ks3":
+	case "s3", "ks3", "oss":
 		redactKeys = map[string]struct{}{
 			"access-key":        {},
 			"secret-access-key": {},
@@ -3810,7 +3844,9 @@ func RedactURL(str string) string {
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
-			"sas-token": {},
+			"account-key":    {},
+			"encryption-key": {},
+			"sas-token":      {},
 		}
 	}
 
@@ -4079,7 +4115,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	}
 	// Hints without args except query block.
 	switch n.HintName.L {
-	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
+	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "use_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}

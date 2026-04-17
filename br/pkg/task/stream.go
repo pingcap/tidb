@@ -39,8 +39,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/encryption"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -194,14 +195,14 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamEndTS, "999999999999999999", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
 	_ = flags.MarkHidden(flagStreamEndTS)
-	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamStartSafePointTTL,
+	flags.Int64(flagGCSafePointTTS, gc.DefaultStreamStartSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 	_ = flags.MarkHidden(flagGCSafePointTTS)
 }
 
 func DefineStreamPauseFlags(flags *pflag.FlagSet) {
 	DefineStreamCommonFlags(flags)
-	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamPauseSafePointTTL,
+	flags.Int64(flagGCSafePointTTS, gc.DefaultStreamPauseSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 	flags.String(flagMessage, "", "The message for the pause task.")
 }
@@ -292,7 +293,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if cfg.SafePointTTL <= 0 {
-		cfg.SafePointTTL = utils.DefaultStreamStartSafePointTTL
+		cfg.SafePointTTL = gc.DefaultStreamStartSafePointTTL
 	}
 
 	return nil
@@ -313,7 +314,7 @@ func (cfg *StreamConfig) ParseStreamPauseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.SafePointTTL <= 0 {
-		cfg.SafePointTTL = utils.DefaultStreamPauseSafePointTTL
+		cfg.SafePointTTL = gc.DefaultStreamPauseSafePointTTL
 	}
 	return nil
 }
@@ -435,14 +436,14 @@ func (s *streamMgr) checkImportTaskRunning(ctx context.Context, etcdCLI *clientv
 }
 
 // setGCSafePoint sets the server safe point to PD.
-func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
+func (s *streamMgr) setGCSafePoint(ctx context.Context, sp gc.BRServiceSafePoint) error {
+	err := gc.CheckGCSafePoint(ctx, s.mgr.GetGCManager(), sp.BackupTS)
 	if err != nil {
 		return errors.Annotatef(err,
 			"failed to check gc safePoint, ts %v", sp.BackupTS)
 	}
 
-	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
+	err = s.mgr.GetGCManager().SetServiceSafePoint(ctx, sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -632,8 +633,8 @@ func RunStreamStart(
 		cfg.StartTS = logInfo.logMaxTS
 		if err = streamMgr.setGCSafePoint(
 			ctx,
-			utils.BRServiceSafePoint{
-				ID:       utils.MakeSafePointID(),
+			gc.BRServiceSafePoint{
+				ID:       gc.MakeSafePointID(),
 				TTL:      cfg.SafePointTTL,
 				BackupTS: cfg.StartTS,
 			},
@@ -643,8 +644,8 @@ func RunStreamStart(
 	} else {
 		if err = streamMgr.setGCSafePoint(
 			ctx,
-			utils.BRServiceSafePoint{
-				ID:       utils.MakeSafePointID(),
+			gc.BRServiceSafePoint{
+				ID:       gc.MakeSafePointID(),
 				TTL:      cfg.SafePointTTL,
 				BackupTS: cfg.StartTS,
 			},
@@ -794,7 +795,7 @@ func RunStreamStop(
 	}
 
 	if err := streamMgr.setGCSafePoint(ctx,
-		utils.BRServiceSafePoint{
+		gc.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      0, // 0 means remove this service safe point.
 			BackupTS: math.MaxUint64,
@@ -856,7 +857,7 @@ func RunStreamPause(
 	}
 	if err = streamMgr.setGCSafePoint(
 		ctx,
-		utils.BRServiceSafePoint{
+		gc.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      cfg.SafePointTTL,
 			BackupTS: globalCheckPointTS,
@@ -929,7 +930,7 @@ func RunStreamResume(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = utils.CheckGCSafePoint(ctx, streamMgr.mgr.GetPDClient(), globalCheckPointTS)
+	err = gc.CheckGCSafePoint(ctx, streamMgr.mgr.GetGCManager(), globalCheckPointTS)
 	if err != nil {
 		return errors.Annotatef(err, "the global checkpoint ts: %v(%s) has been gc. ",
 			globalCheckPointTS, oracle.GetTimeFromTS(globalCheckPointTS))
@@ -946,9 +947,9 @@ func RunStreamResume(
 	}
 
 	if err := streamMgr.setGCSafePoint(ctx,
-		utils.BRServiceSafePoint{
+		gc.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      utils.DefaultStreamStartSafePointTTL,
+			TTL:      gc.DefaultStreamStartSafePointTTL,
 			BackupTS: globalCheckPointTS,
 		},
 	); err != nil {
@@ -1332,7 +1333,7 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logInfo, err := getLogInfoFromStorage(ctx, s)
+	logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1819,6 +1820,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := logclient.NewLogClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	client.SetCheckRequirements(cfg.CheckRequirements)
 
 	err = client.Init(ctx, g, mgr.GetStorage())
 	if err != nil {
@@ -1840,6 +1842,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 		return nil, errors.Trace(err)
 	}
 	client.SetCrypter(&cfg.CipherInfo)
+	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)
 
 	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
@@ -1926,12 +1929,13 @@ func getLogInfo(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
-	return getLogInfoFromStorage(ctx, s)
+	return getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 }
 
 func getLogInfoFromStorage(
 	ctx context.Context,
 	s storeapi.Storage,
+	checkRequirements bool,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -1941,6 +1945,12 @@ func getLogInfoFromStorage(
 	backupMeta := &backuppb.BackupMeta{}
 	if err = backupMeta.Unmarshal(metaData); err != nil {
 		return backupLogInfo{}, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(metaData, backupMeta); err != nil {
+		if checkRequirements {
+			return backupLogInfo{}, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
 	// endVersion > 0 represents that the storage has been used for `br backup`
 	if backupMeta.GetEndVersion() > 0 {
@@ -2013,6 +2023,12 @@ func getFullBackupTS(
 	backupmeta := &backuppb.BackupMeta{}
 	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
 		return 0, 0, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptedMetaData, backupmeta); err != nil {
+		if cfg.CheckRequirements {
+			return 0, 0, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
 
 	// start and end are identical in full backup, pick random one
@@ -2232,6 +2248,8 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if cfg.PiTRTableTracker != nil {
 		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 	}
+	// reuse existing database ids if it exists in the current cluster
+	cfg.tableMappingManager.ReuseExistingDatabaseIDs(client.GetDomain().InfoSchema())
 	// replace temp id with read global id
 	err = cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 	if err != nil {

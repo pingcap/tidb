@@ -213,6 +213,9 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	ctx = clitutil.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return mgr.WithNewSession(func(se sessionctx.Context) (err error) {
+		// Keep BEGIN on the SQL path so the session enters transaction mode with the usual statement semantics.
+		// Commit / rollback use session methods instead, because cleanup still has to finish after caller
+		// cancellation and issuing SQL text there can leave the pooled internal session with a live txn.
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "begin")
 		if err != nil {
 			return err
@@ -220,14 +223,15 @@ func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 
 		success := false
 		defer func() {
-			sql := "rollback"
 			if success {
-				sql = "commit"
+				commitErr := se.CommitTxn(ctx)
+				if err == nil && commitErr != nil {
+					err = commitErr
+				}
+				return
 			}
-			_, commitErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql)
-			if err == nil && commitErr != nil {
-				err = commitErr
-			}
+
+			se.RollbackTxn(clitutil.WithInternalSourceType(context.Background(), kv.InternalDistTask))
 		}()
 
 		if err = fn(se); err != nil {
@@ -1048,6 +1052,34 @@ func (mgr *TaskManager) GetAllTasks(ctx context.Context) ([]*proto.TaskBase, err
 		tasks = append(tasks, row2TaskBasic(r))
 	}
 	return tasks, nil
+}
+
+// ActiveTaskSummary is the summary of active tasks in `mysql.tidb_global_task`.
+type ActiveTaskSummary struct {
+	Total       int64            `json:"total"`
+	PerKeyspace map[string]int64 `json:"per_keyspace"`
+}
+
+// GetActiveTaskCountsByKeyspace gets active task summary grouped by keyspace.
+func (mgr *TaskManager) GetActiveTaskCountsByKeyspace(ctx context.Context) (*ActiveTaskSummary, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select keyspace, count(1) from mysql.tidb_global_task group by keyspace`)
+	if err != nil {
+		return nil, err
+	}
+	summary := &ActiveTaskSummary{
+		PerKeyspace: make(map[string]int64, len(rs)),
+	}
+	for _, r := range rs {
+		keyspace := r.GetString(0)
+		cnt := r.GetInt64(1)
+		summary.Total += cnt
+		summary.PerKeyspace[keyspace] = cnt
+	}
+	return summary, nil
 }
 
 // GetAllSubtasks gets all subtasks with basic columns.

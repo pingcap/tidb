@@ -712,7 +712,7 @@ value desc;
 id	task	access object	operator info
 Projection	root		tpch50.partsupp.ps_partkey, Column
 └─TableDual	root		rows:0
-ScalarSubQuery	root		Output: ScalarQueryCol#57
+ScalarSubQuery	root		Output: ScalarQueryCol#66
 └─MaxOneRow	root		
   └─Projection	root		mul(Column, 0.0001000000)->Column
     └─HashAgg	root		funcs:sum(Column)->Column
@@ -1296,7 +1296,7 @@ Sort	root		Column
   └─HashAgg	root		group by:Column, funcs:count(1)->Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->Column
     └─Projection	root		tpch50.customer.c_acctbal->Column, substring(tpch50.customer.c_phone, 1, 2)->Column
       └─TableDual	root		rows:0
-ScalarSubQuery	root		Output: ScalarQueryCol#22
+ScalarSubQuery	root		Output: ScalarQueryCol#24
 └─MaxOneRow	root		
   └─HashAgg	root		funcs:avg(Column, Column)->Column
     └─TableReader	root		data:HashAgg

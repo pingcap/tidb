@@ -45,8 +45,8 @@ type LogicalAggregation struct {
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties [][]*expression.Column `hash64-equals:"true" shallow-ref:"true"`
-	InputCount         float64                // InputCount is the input count of this plan.
+	PossibleProperties base.PossiblePropertiesInfo `hash64-equals:"true" shallow-ref:"true"`
+	InputCount         float64                     // InputCount is the input count of this plan.
 
 	// Deprecated: NoCopPushDown is substituted by prop.NoCopPushDown.
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
@@ -265,25 +265,38 @@ func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*ex
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	childProps := childrenProperties[0]
+	la.hasTiFlash = childProps != nil && childProps.HasTiFlash
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
-		la.PossibleProperties = [][]*expression.Column{nil}
-		return nil
+		la.PossibleProperties = base.PossiblePropertiesInfo{
+			Orders:     [][]*expression.Column{nil},
+			HasTiFlash: la.hasTiFlash,
+		}
+		return &la.PossibleProperties
 	}
-	resultProperties := make([][]*expression.Column, 0, len(childProps))
+	if childProps == nil {
+		la.PossibleProperties = base.PossiblePropertiesInfo{
+			HasTiFlash: la.hasTiFlash,
+		}
+		return &la.PossibleProperties
+	}
+	resultProperties := make([][]*expression.Column, 0, len(childProps.Orders))
 	groupByCols := la.GetGroupByCols()
-	for _, possibleChildProperty := range childProps {
+	for _, possibleChildProperty := range childProps.Orders {
 		sortColOffsets := util.GetMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
 			prop := possibleChildProperty[:len(groupByCols)]
 			resultProperties = append(resultProperties, prop)
 		}
 	}
-	la.PossibleProperties = resultProperties
-	return resultProperties
+	la.PossibleProperties = base.PossiblePropertiesInfo{
+		Orders:     resultProperties,
+		HasTiFlash: la.hasTiFlash,
+	}
+	return &la.PossibleProperties
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -616,36 +629,96 @@ func (la *LogicalAggregation) pushDownDNFPredicates(cond expression.Expression, 
 
 // splitCondForAggregation splits the condition into those who can be pushed and others.
 func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Expression) (condsToPush, ret []expression.Expression) {
+	exprCtx := la.SCtx().GetExprCtx()
 	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
 	aggFirstRowColumns := expression.NewSchema(la.getAggFuncsColsForFirstRow()...)
-	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
+	aggConstResultColumns, aggConstResultExprs := la.getAggFuncsColsForConstResult()
+	var aggConstResultSchema *expression.Schema
+	if len(aggConstResultColumns) > 0 {
+		aggConstResultSchema = expression.NewSchema(aggConstResultColumns...)
+	}
 	for _, cond := range predicates {
-		subCondsToPush, subRet := la.pushDownDNFPredicates(cond, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
-		if len(subCondsToPush) > 0 {
-			condsToPush = append(condsToPush, subCondsToPush...)
-		}
-		if len(subRet) > 0 {
-			// If we cannot find columns that can be pushed down in the GROUP BY clause,
-			// we will then look for columns that can be pushed down in the aggregate functions.
-			// Currently, only the first row is supported.
-			for _, s := range subRet {
-				subCondsToPush1, subRet1 := la.pushDownDNFPredicates(s, aggFirstRowColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
-				if len(subCondsToPush1) > 0 {
-					condsToPush = append(condsToPush, subCondsToPush1...)
+		for _, cnfItem := range expression.SplitCNFItems(cond) {
+			if aggConstResultSchema != nil {
+				cnfItem = expression.FoldConstant(exprCtx, expression.ColumnSubstitute(exprCtx, cnfItem, aggConstResultSchema, aggConstResultExprs))
+			}
+			subCondsToPush, subRet := la.pushDownDNFPredicates(cnfItem, groupByColumns, exprsOriginal, la.pushDownPredicatesByGroupby)
+			if len(subCondsToPush) > 0 {
+				condsToPush = append(condsToPush, subCondsToPush...)
+			}
+			if len(subRet) > 0 {
+				// If we cannot find columns that can be pushed down in the GROUP BY clause,
+				// we will then look for columns that can be pushed down in the aggregate functions.
+				// Currently, only the first row is supported.
+				for _, s := range subRet {
+					subCondsToPush1, subRet1 := la.pushDownDNFPredicates(s, aggFirstRowColumns, exprsOriginal, la.pushDownPredicatesByAggFuncs)
+					if len(subCondsToPush1) > 0 {
+						condsToPush = append(condsToPush, subCondsToPush1...)
+					}
+					ret = append(ret, subRet1...)
 				}
-				ret = append(ret, subRet1...)
 			}
 		}
 	}
 	return condsToPush, ret
 }
 
+func (la *LogicalAggregation) hasOnlyConstGroupByItems() bool {
+	if len(la.GroupByItems) == 0 {
+		return true
+	}
+	for _, item := range la.GroupByItems {
+		if item.ConstLevel() < expression.ConstOnlyInContext {
+			return false
+		}
+	}
+	return true
+}
+
+// getAggFuncsColsForConstResult gets aggregate output columns whose values always match their
+// single row-independent argument for every non-empty group.
+func (la *LogicalAggregation) getAggFuncsColsForConstResult() (aggFuncsCols []*expression.Column, aggFuncsExprs []expression.Expression) {
+	if len(la.GroupByItems) == 0 {
+		return nil, nil
+	}
+	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
+	aggFuncsExprs = make([]expression.Expression, 0, len(la.AggFuncs))
+	for idx, col := range la.Schema().Columns {
+		if idx >= len(la.AggFuncs) {
+			break
+		}
+		aggFunc := la.AggFuncs[idx]
+		if aggFuncResultMatchesArgForNonEmptyGroup(aggFunc) {
+			aggFuncsCols = append(aggFuncsCols, col)
+			aggFuncsExprs = append(aggFuncsExprs, aggFunc.Args[0])
+		}
+	}
+	return aggFuncsCols, aggFuncsExprs
+}
+
+func aggFuncResultMatchesArgForNonEmptyGroup(aggFunc *aggregation.AggFuncDesc) bool {
+	if aggFunc.HasDistinct || len(aggFunc.Args) != 1 || len(aggFunc.OrderByItems) > 0 {
+		return false
+	}
+	switch aggFunc.Name {
+	case ast.AggFuncMax, ast.AggFuncMin:
+	default:
+		return false
+	}
+	return aggFunc.Args[0].ConstLevel() >= expression.ConstOnlyInContext
+}
+
 // getAggFuncsColsForFirstRow gets the columns that are used by first_row agg functions.
 func (la *LogicalAggregation) getAggFuncsColsForFirstRow() (aggFuncsCols []*expression.Column) {
+	// Constant-group aggregations (for example GROUP BY NULL) choose an arbitrary input row for
+	// firstrow() outputs, so pushing HAVING predicates on those outputs back to base rows is unsound.
+	if la.hasOnlyConstGroupByItems() {
+		return nil
+	}
 	aggFuncsCols = make([]*expression.Column, 0, len(la.AggFuncs))
 	for idx, col := range la.Schema().Columns {
 		aggFunc := la.AggFuncs[idx]

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // IndexIterator is the interface for iterator of index data on KV store.
@@ -89,6 +90,8 @@ type Index interface {
 	TableMeta() *model.TableInfo
 	// MeetPartialCondition returns true if the row meets the partial index condition of the index.
 	MeetPartialCondition(row []types.Datum) (bool, error)
+	// MeetPartialConditionWithChunk returns true if the row meets the partial index condition of the index.
+	MeetPartialConditionWithChunk(row chunk.Row) (bool, error)
 	// Create supports insert into statement.
 	// The `Create` inserts the index without considering the partial index condition. The caller should call `MeetPartialCondition` to check whether the
 	// row meets the partial index condition before calling `Create` to avoid unnecessary index creation.

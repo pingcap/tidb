@@ -787,8 +787,8 @@ func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args
 	return err
 }
 
-// CreateDatabase implements glue.Session
-func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInfo) error {
+// CreateDatabaseOnExistError implements glue.Session
+func (gs *tidbGlueSession) CreateDatabaseOnExistError(_ context.Context, schema *model.DBInfo) error {
 	return BRIECreateDatabase(gs.se, schema, "")
 }
 

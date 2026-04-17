@@ -9,8 +9,9 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 13,
+    shard_count = 2,
     deps = [
+        "//pkg/errno",
         "//pkg/parser",
         "//pkg/planner",
         "//pkg/planner/core/base",

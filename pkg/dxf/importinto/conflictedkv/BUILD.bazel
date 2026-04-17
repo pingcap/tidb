@@ -12,7 +12,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
@@ -32,6 +34,8 @@ go_library(
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -47,9 +51,10 @@ go_test(
     ],
     embed = [":conflictedkv"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 8,
     deps = [
         "//pkg/config/kerneltype",
+        "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/backend/encode",

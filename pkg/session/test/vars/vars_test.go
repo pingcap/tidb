@@ -186,6 +186,25 @@ func TestUpgradeSysvars(t *testing.T) {
 	require.Equal(t, "OFF", v) // the default value is restored.
 }
 
+func TestIndexJoinBuildV2SysVarCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("SHOW VARIABLES LIKE 'tidb_opt_index_join_build_v2'").Check(testkit.Rows("tidb_opt_index_join_build_v2 ON"))
+	tk.MustQuery("SELECT @@tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_opt_index_join_build_v2', 'OFF')`)
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_opt_index_join_build_v2'").Check(testkit.Rows("tidb_opt_index_join_build_v2 ON"))
+	tk2.MustQuery("SELECT @@GLOBAL.tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
+	tk2.MustQuery("SELECT @@tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
+	tk2.MustContainErrMsg("SET @@tidb_opt_index_join_build_v2 = OFF", "tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off")
+}
+
 func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	varName := "tidb_general_log"
 	defaultValue := "OFF" // This is the default value for tidb_general_log

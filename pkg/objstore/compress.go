@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"time"
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -97,6 +98,10 @@ func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, er
 		return nil, err
 	}
 	return io.ReadAll(compressBf)
+}
+
+func (w *withCompression) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	return w.Storage.PresignFile(ctx, fileName, expire)
 }
 
 // compressReader is a wrapper for compress.Reader

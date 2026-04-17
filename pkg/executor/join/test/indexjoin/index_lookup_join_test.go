@@ -71,6 +71,142 @@ func TestIndexLookupJoinHang(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIndexJoinNullEQ(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, index(a))")
+	tk.MustExec("create table t2(a int, b int, index(a))")
+	tk.MustExec("insert into t1 values (1, 10), (null, 11), (2, 12)")
+	tk.MustExec("insert into t2 values (1, 20), (null, 21), (null, 22), (3, 23)")
+
+	sql := "select /*+ INL_JOIN(t2) */ t1.a, t1.b, t2.b from t1 join t2 on t1.a <=> t2.a"
+	tk.MustHavePlan(sql, "IndexJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 10 20",
+		"<nil> 11 21",
+		"<nil> 11 22",
+	))
+
+	sql = "select /*+ INL_HASH_JOIN(t2) */ t1.a, t1.b, t2.b from t1 join t2 on t1.a <=> t2.a"
+	tk.MustHavePlan(sql, "IndexHashJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 10 20",
+		"<nil> 11 21",
+		"<nil> 11 22",
+	))
+}
+
+func TestIndexJoinNullEQMultiKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, index(a, b))")
+	tk.MustExec("create table t2(a int, b int, index(a, b))")
+	tk.MustExec("insert into t1 values (null, null), (null, 1), (null, 2), (1, 1), (1, 2), (2, null)")
+	tk.MustExec("insert into t2 values (null, null), (null, 1), (null, 2), (null, 3), (1, 1), (1, 2), (2, null), (2, 1)")
+
+	sql := "select /*+ INL_JOIN(t2) */ t1.a, t1.b, t2.b from t1 join t2 on t1.a <=> t2.a and t1.b = t2.b"
+	tk.MustHavePlan(sql, "IndexJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 1 1",
+		"1 2 2",
+		"<nil> 1 1",
+		"<nil> 2 2",
+	))
+
+	sql = "select /*+ INL_HASH_JOIN(t2) */ t1.a, t1.b, t2.b from t1 join t2 on t1.a <=> t2.a and t1.b <=> t2.b"
+	tk.MustHavePlan(sql, "IndexHashJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 1 1",
+		"1 2 2",
+		"2 <nil> <nil>",
+		"<nil> 1 1",
+		"<nil> 2 2",
+		"<nil> <nil> <nil>",
+	))
+}
+
+func TestIndexJoinNullEQUniqueKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, index(a))")
+	tk.MustExec("create table t2(a int, b int, unique key uk_a(a))")
+	tk.MustExec("insert into t1 values (1, 10), (null, 11), (2, 12)")
+	tk.MustExec("insert into t2 values (1, 20), (null, 21), (null, 22), (3, 23)")
+
+	sql := "select /*+ INL_JOIN(t2) */ t1.a, t1.b, t2.b from t1 join t2 on t1.a <=> t2.a"
+	tk.MustHavePlan(sql, "IndexJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 10 20",
+		"<nil> 11 21",
+		"<nil> 11 22",
+	))
+
+	sql = "select /*+ INL_HASH_JOIN(t2) */ t1.a, t1.b, t2.b from t1 join t2 on t1.a <=> t2.a"
+	tk.MustHavePlan(sql, "IndexHashJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 10 20",
+		"<nil> 11 21",
+		"<nil> 11 22",
+	))
+}
+
+func TestIndexJoinNullEQOuterJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, index(a))")
+	tk.MustExec("create table t2(a int, b int, index(a))")
+	tk.MustExec("insert into t1 values (null, 10), (1, 11), (2, 12)")
+	tk.MustExec("insert into t2 values (null, 20), (null, 21), (1, 22), (3, 23)")
+
+	sql := "select /*+ INL_JOIN(t2) */ t1.a, t1.b, t2.b from t1 left join t2 on t1.a <=> t2.a"
+	tk.MustHavePlan(sql, "IndexJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 11 22",
+		"2 12 <nil>",
+		"<nil> 10 20",
+		"<nil> 10 21",
+	))
+
+	sql = "select /*+ INL_HASH_JOIN(t2) */ t1.a, t1.b, t2.b from t1 left join t2 on t1.a <=> t2.a"
+	tk.MustHavePlan(sql, "IndexHashJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 11 22",
+		"2 12 <nil>",
+		"<nil> 10 20",
+		"<nil> 10 21",
+	))
+
+	sql = "select /*+ INL_JOIN(t1) */ t1.a, t1.b, t2.b from t1 right join t2 on t1.a <=> t2.a"
+	tk.MustHavePlan(sql, "IndexJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 11 22",
+		"<nil> 10 20",
+		"<nil> 10 21",
+		"<nil> <nil> 23",
+	))
+
+	sql = "select /*+ INL_HASH_JOIN(t1) */ t1.a, t1.b, t2.b from t1 right join t2 on t1.a <=> t2.a"
+	tk.MustHavePlan(sql, "IndexHashJoin")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 11 22",
+		"<nil> 10 20",
+		"<nil> 10 21",
+		"<nil> <nil> 23",
+	))
+}
+
 func TestIssue16887(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -200,4 +336,51 @@ func TestIssue54055(t *testing.T) {
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	require.NotNil(t, err)
 	rs.Close()
+}
+
+func TestIndexJoinInnerCTEStorageConcurrentBuild(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t_outer, t_inner;")
+	tk.MustExec("create table t_outer(a int, key(a));")
+	tk.MustExec("create table t_inner(a int, b int, key(a), key(b));")
+
+	const rowCount = 64
+	outerValues := make([]string, 0, rowCount)
+	innerValues := make([]string, 0, rowCount)
+	for i := 1; i <= rowCount; i++ {
+		outerValues = append(outerValues, fmt.Sprintf("(%d)", i))
+		innerValues = append(innerValues, fmt.Sprintf("(%d,%d)", i, i))
+	}
+	tk.MustExec(fmt.Sprintf("insert into t_outer values %s;", strings.Join(outerValues, ",")))
+	tk.MustExec(fmt.Sprintf("insert into t_inner values %s;", strings.Join(innerValues, ",")))
+
+	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=1;")
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=4;")
+	tk.MustExec("set @@tidb_index_join_batch_size=1;")
+	tk.MustExec("set @@tidb_opt_index_join_cost_factor=0.1;")
+	tk.MustExec("set @@tidb_opt_hash_join_cost_factor=100;")
+	tk.MustExec("set @@tidb_opt_merge_join_cost_factor=100;")
+
+	sql := `with recursive cte(a, b) as (
+		select a, b from t_inner
+		union all
+		select a, b from cte where a < 0
+	)
+	select /*+ INL_JOIN(dt) */ count(*)
+	from t_outer o
+	join (
+		select /*+ HASH_JOIN(c) */ i.a
+		from t_inner i join cte c on i.b = c.b
+	) dt
+	on o.a = dt.a`
+
+	plan := tk.MustQuery("explain format='brief' " + sql).String()
+	require.True(t, strings.Contains(plan, "IndexJoin") || strings.Contains(plan, "IndexHashJoin"), "%s doesn't have index join plan, full plan %s", sql, plan)
+	require.Contains(t, plan, "HashJoin")
+	require.Contains(t, plan, "CTE")
+	for range 20 {
+		tk.MustQuery(sql).Check(testkit.Rows(fmt.Sprintf("%d", rowCount)))
+	}
 }

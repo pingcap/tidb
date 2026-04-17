@@ -159,6 +159,21 @@ func (mr *MockPrefixClientMockRecorder) GetObject(arg0, arg1, arg2, arg3 any) *g
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetObject", reflect.TypeOf((*MockPrefixClient)(nil).GetObject), arg0, arg1, arg2, arg3)
 }
 
+// HeadObject mocks base method.
+func (m *MockPrefixClient) HeadObject(arg0 context.Context, arg1 string) (*s3like.HeadObjectResp, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HeadObject", arg0, arg1)
+	ret0, _ := ret[0].(*s3like.HeadObjectResp)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HeadObject indicates an expected call of HeadObject.
+func (mr *MockPrefixClientMockRecorder) HeadObject(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HeadObject", reflect.TypeOf((*MockPrefixClient)(nil).HeadObject), arg0, arg1)
+}
+
 // IsObjectExists mocks base method.
 func (m *MockPrefixClient) IsObjectExists(arg0 context.Context, arg1 string) (bool, error) {
 	m.ctrl.T.Helper()
@@ -175,18 +190,18 @@ func (mr *MockPrefixClientMockRecorder) IsObjectExists(arg0, arg1 any) *gomock.C
 }
 
 // ListObjects mocks base method.
-func (m *MockPrefixClient) ListObjects(arg0 context.Context, arg1 string, arg2 *string, arg3 int) (*s3like.ListResp, error) {
+func (m *MockPrefixClient) ListObjects(arg0 context.Context, arg1, arg2 string, arg3 *string, arg4 int) (*s3like.ListResp, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListObjects", arg0, arg1, arg2, arg3)
+	ret := m.ctrl.Call(m, "ListObjects", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].(*s3like.ListResp)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ListObjects indicates an expected call of ListObjects.
-func (mr *MockPrefixClientMockRecorder) ListObjects(arg0, arg1, arg2, arg3 any) *gomock.Call {
+func (mr *MockPrefixClientMockRecorder) ListObjects(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjects", reflect.TypeOf((*MockPrefixClient)(nil).ListObjects), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListObjects", reflect.TypeOf((*MockPrefixClient)(nil).ListObjects), arg0, arg1, arg2, arg3, arg4)
 }
 
 // MultipartUploader mocks base method.

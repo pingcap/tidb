@@ -310,10 +310,10 @@ use list_partition_invisible_idx;
 drop table if exists tlist;
 create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
 alter table tlist alter index a invisible;
-explain select a from tlist where a>=0 and a<=5;
+explain format = 'brief' select a from tlist where a>=0 and a<=5;
 create table tcollist (a int, b int, key(a)) partition by list columns (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5));
 alter table tcollist alter index a invisible;
-explain select a from tcollist where a>=0 and a<=5;
+explain format = 'brief' select a from tcollist where a>=0 and a<=5;
 
 
 # TestListPartitionCTE
@@ -535,10 +535,10 @@ create table t1 (id int, c date) partition by range (to_days(c))
 partition p1 values less than (to_days('2022-02-11')),
 partition p2 values less than (to_days('2022-03-11')));
 analyze table t1;
-explain select * from t1 where c in ('2022-01-23', '2022-01-22');
+explain format = 'brief' select * from t1 where c in ('2022-01-23', '2022-01-22');
 --sorted_result
 select * from t1 where c in ('2022-01-23', '2022-01-22');
-explain select * from t1 where c in (NULL, '2022-01-23');
+explain format = 'brief' select * from t1 where c in (NULL, '2022-01-23');
 --sorted_result
 select * from t1 where c in (NULL, '2022-01-23');
 drop table t1;
@@ -772,19 +772,19 @@ select * from t partition(p4);
 select * from t partition(p5);
 --sorted_result
 select * from t partition(p6);
-explain select * from t where a < '1943-02-12';
-explain select * from t where a >= '19690213';
-explain select * from t where a > '2003-03-13';
-explain select * from t where a < '2006-02-03';
-explain select * from t where a = '20070707';
-explain select * from t where a > '1949-10-10';
-explain select * from t where a > '2016-02-01' AND a < '20000103';
-explain select * from t where a < '19691112' or a >= '2019-09-18';
-explain select * from t where a is null;
-explain select * from t where '2003-02-27' >= a;
-explain select * from t where '20141024' < a;
-explain select * from t where '2003-03-30' > a;
-explain select * from t where a between '2003-03-30' AND '2014-01-01';
+explain format = 'brief' select * from t where a < '1943-02-12';
+explain format = 'brief' select * from t where a >= '19690213';
+explain format = 'brief' select * from t where a > '2003-03-13';
+explain format = 'brief' select * from t where a < '2006-02-03';
+explain format = 'brief' select * from t where a = '20070707';
+explain format = 'brief' select * from t where a > '1949-10-10';
+explain format = 'brief' select * from t where a > '2016-02-01' AND a < '20000103';
+explain format = 'brief' select * from t where a < '19691112' or a >= '2019-09-18';
+explain format = 'brief' select * from t where a is null;
+explain format = 'brief' select * from t where '2003-02-27' >= a;
+explain format = 'brief' select * from t where '20141024' < a;
+explain format = 'brief' select * from t where '2003-03-30' > a;
+explain format = 'brief' select * from t where a between '2003-03-30' AND '2014-01-01';
 
 
 # TestPartitionRangeColumnPruning
@@ -855,13 +855,13 @@ drop table if exists t;
 create table t(id int) PARTITION BY HASH(id) partitions 5;
 insert into t values(0),(0);
 analyze table t;
-explain select *,_tidb_rowid from t where _tidb_rowid=1;
+explain format = 'brief' select *,_tidb_rowid from t where _tidb_rowid=1;
 select *,_tidb_rowid from t where _tidb_rowid=1;
-explain select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
+explain format = 'brief' select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
 select *,_tidb_rowid from t partition(p0) where _tidb_rowid=1;
-explain select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
+explain format = 'brief' select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
 select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
-explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
+explain format = 'brief' select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
 
 
 # TestUnsignedBigintListPartitionPrune
@@ -872,7 +872,7 @@ CREATE TABLE `t` (
 PARTITION BY LIST (`a`)
 (PARTITION `p0` VALUES IN (18446744073709551610,1),
  PARTITION `p1` VALUES IN (2,3));
-explain select * from t where a < 18446744073709551610 and a > 2;
-explain select * from t where a < 18446744073709551610;
-explain select * from t where a not in (18446744073709551610, 1);
+explain format = 'brief' select * from t where a < 18446744073709551610 and a > 2;
+explain format = 'brief' select * from t where a < 18446744073709551610;
+explain format = 'brief' select * from t where a not in (18446744073709551610, 1);
 

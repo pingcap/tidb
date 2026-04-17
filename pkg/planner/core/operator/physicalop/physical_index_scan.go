@@ -230,7 +230,7 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}
@@ -385,9 +385,14 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 	}
 	setHandle := len(indexCols) > len(p.Index.Columns)
 	if !setHandle {
-		for i, col := range p.Columns {
+		for _, col := range p.Columns {
 			if (mysql.HasPriKeyFlag(col.GetFlag()) && p.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-				indexCols = append(indexCols, p.DataSourceSchema.Columns[i])
+				handleCol := expression.ColInfo2Col(p.DataSourceSchema.Columns, col)
+				intest.Assert(handleCol != nil, "handle column %d should exist in DataSourceSchema", col.ID)
+				if handleCol == nil {
+					continue
+				}
+				indexCols = append(indexCols, handleCol)
 				setHandle = true
 				break
 			}
@@ -656,6 +661,9 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		ConstColsByCond:  path.ConstCols,
 		Prop:             prop,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+
+	is.SetNoncacheableReason(path.NoncacheableReason)
+
 	rowCount := path.CountAfterAccess
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
 
@@ -685,8 +693,9 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
-	if isMatchProp {
-		is.Desc = prop.SortItems[0].Desc
+	// Index scan should maintain order (true for both normal sorting via SortItems and partial order via PartialOrderInfo)
+	if prop.NeedKeepOrder() {
+		is.Desc = prop.GetSortDescForKeepOrder()
 		is.KeepOrder = true
 	}
 	return is

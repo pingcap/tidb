@@ -158,7 +158,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
-		err = e.executeFlush(x)
+		err = e.executeFlush(ctx, x)
 	case *ast.AlterInstanceStmt:
 		err = e.executeAlterInstance(x)
 	case *ast.BeginStmt:
@@ -2733,8 +2733,8 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
 	intest.AssertFunc(func() bool {
 		for _, obj := range s.RefreshObjects {
-			switch obj.RefreshObjectScope {
-			case ast.RefreshObjectScopeDatabase, ast.RefreshObjectScopeTable:
+			switch obj.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase, ast.StatsObjectScopeTable:
 				if obj.DBName.L == "" {
 					return false
 				}
@@ -2792,12 +2792,12 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 		return origCount == len(s.RefreshObjects)
 	}, "RefreshObjects should be deduplicated in the building phase")
 	tableIDs := make([]int64, 0, len(s.RefreshObjects))
-	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].RefreshObjectScope == ast.RefreshObjectScopeGlobal
+	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
 	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	if !isGlobalScope {
 		for _, refreshObject := range s.RefreshObjects {
-			switch refreshObject.RefreshObjectScope {
-			case ast.RefreshObjectScopeDatabase:
+			switch refreshObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
 				exists := is.SchemaExists(refreshObject.DBName)
 				if !exists {
 					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
@@ -2818,7 +2818,7 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 				for _, table := range tables {
 					tableIDs = append(tableIDs, table.ID)
 				}
-			case ast.RefreshObjectScopeTable:
+			case ast.StatsObjectScopeTable:
 				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
 				if err != nil {
 					if infoschema.ErrTableNotExists.Equal(err) {
@@ -2913,7 +2913,7 @@ func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
 	return nil
 }
 
-func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
+func (e *SimpleExec) executeFlush(ctx context.Context, s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:
 		if s.ReadLock {
@@ -2932,6 +2932,33 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		}
 	case ast.FlushClientErrorsSummary:
 		errno.FlushStats()
+	case ast.FlushStatsDelta:
+		h := domain.GetDomain(e.Ctx()).StatsHandle()
+		if e.IsFromRemote {
+			err := h.DumpStatsDeltaToKV(true)
+			if err != nil {
+				statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV from remote", zap.Error(err))
+			} else {
+				statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV from remote")
+			}
+			return err
+		}
+		if s.IsCluster {
+			var sb strings.Builder
+			restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+			if err := s.Restore(restoreCtx); err != nil {
+				statslogutil.StatsErrVerboseLogger().Error("Failed to format flush stats delta statement", zap.Error(err))
+				return err
+			}
+			sql := sb.String()
+			if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+				statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast flush stats delta command", zap.String("sql", sql), zap.Error(err))
+				return err
+			}
+			logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+			return nil
+		}
+		return h.DumpStatsDeltaToKV(true)
 	}
 	return nil
 }
@@ -3063,7 +3090,7 @@ func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSess
 func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	switch s.Tp {
 	case ast.AdminReloadStatistics:
-		return e.executeAdminReloadStatistics(s)
+		return e.executeAdminReloadStatistics()
 	case ast.AdminFlushPlanCache:
 		return e.executeAdminFlushPlanCache(s)
 	case ast.AdminSetBDRRole:
@@ -3074,14 +3101,8 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
-	if s.Tp != ast.AdminReloadStatistics {
-		return errors.New("This AdminStmt is not ADMIN RELOAD STATS_EXTENDED")
-	}
-	if !e.Ctx().GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	return domain.GetDomain(e.Ctx()).StatsHandle().ReloadExtendedStatistics()
+func (*SimpleExec) executeAdminReloadStatistics() error {
+	return errors.New("Extended statistics feature has been removed")
 }
 
 func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {

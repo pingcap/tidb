@@ -293,20 +293,26 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	return
 }
 
-// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
-func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool {
-	// We simply choose one physical id to get its stats.
-	var tbl *statistics.Table
-	for _, pid := range physicalIDs {
-		tbl = sa.statsHandle.GetPhysicalTableStats(pid, tblInfo)
-		if !tbl.Pseudo {
-			break
-		}
+// AnalyzeVersionMatchesForTable reports whether the table already matches the requested
+// session version. For partitioned tables it checks the global stats and every partition;
+// for non-partitioned tables it checks the table stats alone.
+func (sa *statsAnalyze) AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool {
+	globalStats := sa.statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	if !statistics.AnalyzeVersionMatchesForTableStats(globalStats, requestedVersion) {
+		return false
 	}
-	if tbl == nil || tbl.Pseudo {
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
 		return true
 	}
-	return statistics.CheckAnalyzeVerOnTable(tbl, version)
+	for _, def := range pi.Definitions {
+		partitionStats := sa.statsHandle.GetPhysicalTableStats(def.ID, tblInfo)
+		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats, requestedVersion) {
+			return false
+		}
+	}
+	return true
 }
 
 // GetPriorityQueueSnapshot returns the stats priority queue snapshot.
@@ -550,6 +556,8 @@ func tryAutoAnalyzeTable(
 	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount < statistics.AutoAnalyzeMinCnt {
 		return false
 	}
+	requestedVersion := sctx.GetSessionVars().AnalyzeVersion
+	versionMatches := analyzeVersionMatches(requestedVersion, statsTbl)
 
 	// Check if the table needs to analyze.
 	if needAnalyze, reason := NeedAnalyzeTable(
@@ -566,9 +574,7 @@ func tryAutoAnalyzeTable(
 			zap.String("reason", reason),
 		)
 
-		tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
-		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
+		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
 
 		return true
 	}
@@ -591,9 +597,7 @@ func tryAutoAnalyzeTable(
 				"auto analyze for unanalyzed indexes",
 				zap.String("sql", escaped),
 			)
-			tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
-			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sqlWithIdx, paramsWithIdx...)
+			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -638,7 +642,12 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	db string,
 	ratio float64,
 ) bool {
-	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
+	requestedVersion := sctx.GetSessionVars().AnalyzeVersion
+	versionMatches := analyzeVersionMatchesForPartitions(
+		requestedVersion,
+		partitionDefs,
+		partitionStats,
+	)
 	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(partitionDefs))
 
@@ -663,7 +672,6 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("partition", def.Name.O),
 				zap.String("reason", reason),
 			)
-			statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 		}
 	}
 
@@ -688,8 +696,6 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			zap.Int("analyze partition batch size", analyzePartitionBatchSize),
 		)
 
-		statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 			start := i
 			end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
@@ -704,7 +710,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 			)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
+			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
 		}
 
 		return true
@@ -729,13 +735,9 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			// 2. If the index is not analyzed, we need to analyze it.
 			if !partitionStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) {
 				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
-				statistics.CheckAnalyzeVerOnTable(partitionStats, &tableStatsVer)
 			}
 		}
 		if len(needAnalyzePartitionNames) > 0 {
-			statsTbl := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-
 			for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 				start := i
 				end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
@@ -749,7 +751,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
-				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
+				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, requestedVersion, !versionMatches, sql, params...)
 			}
 
 			return true
@@ -757,6 +759,23 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	}
 
 	return false
+}
+
+func analyzeVersionMatches(requestedVersion int, tblStats *statistics.Table) bool {
+	return statistics.AnalyzeVersionMatchesForTableStats(tblStats, requestedVersion)
+}
+
+func analyzeVersionMatchesForPartitions(
+	requestedVersion int,
+	partitionDefs []model.PartitionDefinition,
+	partitionStats map[int64]*statistics.Table,
+) bool {
+	for _, def := range partitionDefs {
+		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats[def.ID], requestedVersion) {
+			return false
+		}
+	}
+	return true
 }
 
 // insertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.

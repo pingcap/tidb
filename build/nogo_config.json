@@ -1300,6 +1300,16 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "assertionapi": {
+    "exclude_files": {
+      "external/": "no need to vet third party code",
+      "pkg/parser/yy_parser.go": "ignore generated code",
+      "pkg/parser/parser.go": "ignore generated code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "/cgo/": "no need to vet third party code for cgo"
+    }
+  },
   "etcdconfig": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -1349,6 +1359,8 @@
   "QF1012": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
+      "pkg/config/config.go": "config/config.go code",
+      "pkg/executor/analyze_col.go": "skip analyze_col.go for QF1012",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",

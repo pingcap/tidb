@@ -374,6 +374,10 @@ func (b *builtinTimeFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 			result.AppendNull()
 			continue
 		}
+		if len(buf1.GetString(i)) == 0 {
+			result.AppendNull()
+			continue
+		}
 		res, err := b.formatTime(buf.GetDuration(i, 0), buf1.GetString(i))
 		if err != nil {
 			return err

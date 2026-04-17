@@ -118,7 +118,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@12f37562a884a2d680d5ca619df80c8d0a080aff
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@f2d90ea9522d30c9a8e8d70cc31c7f016ca2801f
     mv src mysql_tester
 }
 
@@ -221,7 +221,7 @@ rm -rf $mysql_tester_log
 if [ "$runs_on_port" -eq 0 ]
 then
     ports=($(find_multiple_available_ports 4000 2))
-    port=${ports[0]}
+    port=6999
     status=${ports[1]}
 fi
 

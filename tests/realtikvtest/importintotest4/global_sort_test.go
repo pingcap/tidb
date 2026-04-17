@@ -19,12 +19,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
@@ -325,7 +327,7 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(10000, sum.RowCnt.Load())
-	s.EqualValues(147780, sum.Bytes.Load())
+	s.EqualValues(147780, sum.Processed.Load())
 	// this GET comes from reading subtask meta from object storage.
 	s.EqualValues(1, sum.GetReqCnt.Load())
 	// we have 4 kv groups, 2 files per group, and 1 for the meta file.
@@ -340,15 +342,14 @@ func (s *mockGCSSuite) TestGlobalSortRecordedStepSummary() {
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
 	s.EqualValues(sum.RowCnt.Load(), 10000)
 	if kerneltype.IsClassic() {
-		s.EqualValues(sum.Bytes.Load(), 2622604)
+		s.EqualValues(sum.Processed.Load(), 2622604)
 	} else {
 		// There are total 10000 * 4 kv pairs, each with 4 bytes keyspace prefix.
-		s.EqualValues(sum.Bytes.Load(), 2782604)
+		s.EqualValues(sum.Processed.Load(), 2782604)
 	}
 	s.EqualValues(20, sum.GetReqCnt.Load())
-	// during collect_conflicts step, we will write the subtask meta again to
-	// fill the conflict info.
-	s.EqualValues(4, sum.PutReqCnt.Load())
+	// No conflicts in this case, no need to rewrite the external subtask meta.
+	s.EqualValues(0, sum.PutReqCnt.Load())
 }
 
 func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.TaskManager, taskID int64, step proto.Step) *execute.SubtaskSummary {
@@ -361,47 +362,11 @@ func (s *mockGCSSuite) getStepSummary(ctx context.Context, taskMgr *storage.Task
 		err = json.Unmarshal([]byte(subtask.Summary), &v)
 		s.NoError(err)
 		accumSummary.RowCnt.Add(v.RowCnt.Load())
-		accumSummary.Bytes.Add(v.Bytes.Load())
+		accumSummary.Processed.Add(v.Processed.Load())
 		accumSummary.PutReqCnt.Add(v.PutReqCnt.Load())
 		accumSummary.GetReqCnt.Add(v.GetReqCnt.Load())
 	}
 	return &accumSummary
-}
-
-func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
-	if kerneltype.IsClassic() {
-		s.T().Skip("Classic kernel cannot resolve unique key conflict during import")
-	}
-	var allData []string
-	for i := range 10 {
-		var content []byte
-		keyCnt := 1000
-		for j := range keyCnt {
-			idx := i*keyCnt + j
-			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
-		}
-		if i == 9 {
-			// add a duplicate key "test-123"
-			content = append(content, []byte("99999999,test-123\n")...)
-		}
-		s.server.CreateObject(fakestorage.Object{
-			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files-uk", Name: fmt.Sprintf("t.%d.csv", i)},
-			Content:     content,
-		})
-	}
-	slices.Sort(allData)
-	s.prepareAndUseDB("gs_multi_files")
-	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-	s.tk.MustExec("create table t (a bigint primary key , b varchar(100) unique key);")
-	// 1 subtask, encoding 10 files using 4 threads.
-	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
-	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files-uk/t.*.csv?endpoint=%s'
-		with cloud_storage_uri='%s', __max_engine_size='1', thread=8`, gcsEndpoint, sortStorageURI)
-	err := s.tk.QueryToErr(importSQL)
-	require.ErrorContains(s.T(), err, "duplicate key found")
-	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
-	// TODO: decode the key to use readable value in the error message.
-	require.ErrorContains(s.T(), err, "746573742d313233")
 }
 
 func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
@@ -515,13 +480,14 @@ func TestNextGenMetering(t *testing.T) {
 	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort")
 	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), index(b));")
 
-	baseTime := time.Now().Truncate(time.Minute).Unix()
+	baseTime := atomic.NewInt64(time.Now().Truncate(time.Minute).Unix() - 60)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
 		// the metering library requires the timestamp to be at minute boundary, but
 		// during test, we want to reduce the flush interval.
-		*ts = baseTime
-		baseTime += 60
+		*ts = baseTime.Add(60)
 	})
+	// this failpoint can make sure we only get one gotMeterData
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask", "return(true)")
 	var gotMeterData atomic.String
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
 		gotMeterData.Store(s.String())
@@ -549,30 +515,30 @@ func TestNextGenMetering(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 13}")
+	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 11}")
 	// note: the read/write of subtask meta file is also counted in obj_store part,
 	// but meta file contains file name which contains task and subtask ID, so
 	// the length may vary, we just use regexp to match here.
-	s.Regexp(`obj_store{r: 2.\d*KiB, w: 3.\d*KiB}`, gotMeterData.Load())
+	s.Regexp(`obj_store{r: 2.\d*KiB, w: [123].\d*KiB}`, gotMeterData.Load())
 	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
 	s.Regexp(`cluster{r: 0B, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
 
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(3, sum.RowCnt.Load())
-	s.EqualValues(27, sum.Bytes.Load())
+	s.EqualValues(27, sum.Processed.Load())
 	s.EqualValues(1, sum.GetReqCnt.Load())
 	s.EqualValues(5, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
-	s.EqualValues(288, sum.Bytes.Load())
+	s.EqualValues(288, sum.Processed.Load())
 	s.EqualValues(4, sum.GetReqCnt.Load())
 	s.EqualValues(6, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
 	// if we retry write, the bytes may be larger than 288
-	s.GreaterOrEqual(sum.Bytes.Load(), int64(288))
+	s.GreaterOrEqual(sum.Processed.Load(), int64(288))
 	s.EqualValues(6, sum.GetReqCnt.Load())
-	s.EqualValues(2, sum.PutReqCnt.Load())
+	s.EqualValues(0, sum.PutReqCnt.Load())
 
 	s.Eventually(func() bool {
 		items := *rowAndSizeMeterItems.Load()
@@ -582,6 +548,90 @@ func TestNextGenMetering(t *testing.T) {
 			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
 			items[metering.DurationSecondsField].(int64) > 0
 	}, 30*time.Second, 100*time.Millisecond)
+}
+
+func TestNextGenMeteringWithConflictResolution(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("Metering is not supported in classic kernel type")
+	}
+	bak := metering.FlushInterval
+	metering.FlushInterval = time.Second
+	t.Cleanup(func() {
+		metering.FlushInterval = bak
+	})
+	s := &mockGCSSuite{}
+	s.SetT(t)
+	s.SetupSuite()
+	t.Cleanup(func() {
+		s.TearDownSuite()
+	})
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	srcDirURI := realtikvtest.GetNextGenObjStoreURI("meter-conflict-test")
+	srcStore, err := handle.NewObjStore(ctx, srcDirURI)
+	s.NoError(err)
+	t.Cleanup(func() {
+		srcStore.Close()
+	})
+	// row 2 and row 3 conflict on unique key b, they should be removed.
+	s.NoError(srcStore.WriteFile(ctx, "t.1.csv", []byte("1,10\n2,20\n3,20\n4,40\n")))
+	s.prepareAndUseDB("metering_conflict")
+	glSortURI := realtikvtest.GetNextGenObjStoreURI("gl-sort-conflict")
+	s.tk.MustExec("create table t (a bigint primary key, b bigint, unique key uk_b(b));")
+
+	baseTime := atomic.NewInt64(time.Now().Truncate(time.Minute).Unix() - 60)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+		// the metering library requires the timestamp to be at minute boundary, but
+		// during test, we want to reduce the flush interval.
+		*ts = baseTime.Add(60)
+	})
+	// this failpoint can make sure we only get one gotMeterData
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/avoidTaskExecutorExitWhenNoSubtask", "return(true)")
+	var gotMeterData atomic.String
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+		gotMeterData.Store(s.String())
+	})
+	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+		rowAndSizeMeterItems.Store(&items)
+	})
+
+	importSQL := fmt.Sprintf(`import into t FROM '%s' with on_duplicate_key='capture', cloud_storage_uri='%s'`,
+		realtikvtest.GetNextGenObjStoreURI("meter-conflict-test/*.csv"), glSortURI)
+	result := s.tk.MustQuery(importSQL + ", __force_merge_step").Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 10", "4 40"))
+
+	taskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
+	s.NoError(err)
+	s.Eventually(func() bool {
+		return gotMeterData.Load() != ""
+	}, 30*time.Second, 300*time.Millisecond)
+
+	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
+	s.Regexp(`requests\{get: 15, put: 16\}`, gotMeterData.Load())
+	s.Regexp(`obj_store\{r: 3[.\d]*KiB, w: 3[.\d]*KiB\}`, gotMeterData.Load())
+	clusterMatch := regexp.MustCompile(`cluster\{r: 174B, w: ([0-9]+(?:\.[0-9]+)?(?:[KMGT]i)?B)\}`).FindStringSubmatch(gotMeterData.Load())
+	s.Len(clusterMatch, 2)
+	clusterWriteBytes, err := units.RAMInBytes(clusterMatch[1])
+	s.NoError(err)
+	// Ingest retries can increase write traffic accounting; assert the minimum
+	// deterministic bytes and tolerate retry inflation.
+	s.GreaterOrEqual(clusterWriteBytes, int64(250))
+
+	collectSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepCollectConflicts)
+	s.Equal(collectSum.GetReqCnt.Load(), uint64(2))
+	s.Equal(collectSum.PutReqCnt.Load(), uint64(1))
+	conflictResolutionSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepConflictResolution)
+	s.Equal(conflictResolutionSum.GetReqCnt.Load(), uint64(2))
+	s.EqualValues(0, conflictResolutionSum.PutReqCnt.Load())
+
+	ingestSum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
+	s.Equal(ingestSum.PutReqCnt.Load(), uint64(4))
 }
 
 func TestDropTableBeforeCleanup(t *testing.T) {

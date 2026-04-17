@@ -1,0 +1,42 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "crr",
+    srcs = [
+        "builder.go",
+        "crr_sim.go",
+        "flush_sim.go",
+        "harness.go",
+        "pd_sim.go",
+        "pd_sim_service.go",
+        "types.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/utiltest/crr",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/stream",
+        "//br/pkg/stream/backupmetas",
+        "//br/pkg/streamhelper",
+        "//br/pkg/utiltest/fakecluster",
+        "//pkg/kv",
+        "//pkg/objstore",
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/storeapi",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/logbackuppb",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//txnkv/txnlock",
+    ],
+)
+
+go_test(
+    name = "crr_test",
+    timeout = "short",
+    srcs = ["builder_test.go"],
+    embed = [":crr"],
+    flaky = True,
+    shard_count = 3,
+    deps = ["@com_github_stretchr_testify//require"],
+)

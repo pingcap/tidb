@@ -111,6 +111,8 @@ const (
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
 	HintIgnorePlanCache = "ignore_plan_cache"
+	// HintUsePlanCache is a hint to enforce using plan cache.
+	HintUsePlanCache = "use_plan_cache"
 	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
 	HintLimitToCop = "limit_to_cop"
 	// HintMerge is a hint which can switch turning inline for the CTE.
@@ -228,7 +230,9 @@ type StmtHints struct {
 	ResourceGroup string
 	// Do not store plan in either plan cache.
 	IgnorePlanCache bool
-	WriteSlowLog    bool
+	// Use plan cache under strategy that requires explicit hints.
+	UsePlanCache bool
+	WriteSlowLog bool
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -276,6 +280,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 		ForceNthPlan:                   sh.ForceNthPlan,
 		ResourceGroup:                  sh.ResourceGroup,
 		IgnorePlanCache:                sh.IgnorePlanCache,
+		UsePlanCache:                   sh.UsePlanCache,
 		WriteSlowLog:                   sh.WriteSlowLog,
 		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
@@ -409,6 +414,8 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			setVarsOffs = append(setVarsOffs, i)
 		case HintIgnorePlanCache:
 			stmtHints.IgnorePlanCache = true
+		case HintUsePlanCache:
+			stmtHints.UsePlanCache = true
 		case HintWriteSlowLog:
 			stmtHints.WriteSlowLog = true
 		}
@@ -565,11 +572,12 @@ type PlanHints struct {
 	NoIndexLookUpPushDown []HintedTable    // no_index_lookup_pushdown
 
 	// Hints belows are not associated with any particular table.
-	PreferAggType    uint // hash_agg, merge_agg, agg_to_cop and so on
-	PreferAggToCop   bool
-	PreferLimitToCop bool // limit_to_cop
-	CTEMerge         bool // merge
-	TimeRangeHint    ast.HintTimeRange
+	PreferAggType     uint // hash_agg, merge_agg, agg_to_cop and so on
+	PreferAggToCop    bool
+	PreferLimitToCop  bool // limit_to_cop
+	CTEMerge          bool // merge
+	TimeRangeHint     ast.HintTimeRange
+	StraightJoinOrder bool // straight_join
 }
 
 // HintedTable indicates which table this hint should take effect on.
@@ -784,6 +792,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		hjBuildTables, hjProbeTables                                                    []HintedTable
 		leadingHintCnt                                                                  int
 		leadingList                                                                     *ast.LeadingList
+		straightJoinHint                                                                bool
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -952,6 +961,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				continue
 			}
 			subQueryHintFlags |= HintFlagNoDecorrelate
+		case HintStraightJoin:
+			straightJoinHint = true
 		default:
 			// ignore hints that not implemented
 		}
@@ -988,6 +999,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		HJBuild:               hjBuildTables,
 		HJProbe:               hjProbeTables,
 		NoIndexLookUpPushDown: noIndexLookUpPushDownTables,
+		StraightJoinOrder:     straightJoinHint,
 	}, subQueryHintFlags, nil
 }
 

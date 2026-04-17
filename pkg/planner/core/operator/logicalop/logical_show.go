@@ -37,11 +37,12 @@ type LogicalShow struct {
 
 // ShowContents stores the contents for the `SHOW` statement.
 type ShowContents struct {
-	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
-	DBName            string
-	Table             *resolve.TableNameW // Used for showing columns.
-	Partition         ast.CIStr           // Use for showing partition
-	Column            *ast.ColumnName     // Used for `desc table column`.
+	Tp        ast.ShowStmtType // Databases/Tables/Columns/....
+	DBName    string
+	Table     *resolve.TableNameW // Used for showing columns.
+	Partition ast.CIStr           // Use for showing partition
+	// Column points to the AST selector for `desc table column` and is treated as read-only after plan build.
+	Column            *ast.ColumnName
 	IndexName         ast.CIStr
 	ResourceGroupName string               // Used for showing resource group
 	Flag              int                  // Some flag parsed from sql, such as FULL.
@@ -51,10 +52,11 @@ type ShowContents struct {
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 
 	Full        bool
-	IfNotExists bool       // Used for `show create database if not exists`.
-	GlobalScope bool       // Used by show variables.
-	Extended    bool       // Used for `show extended columns from ...`
-	Limit       *ast.Limit // Used for limit Result Set row number.
+	IfNotExists bool // Used for `show create database if not exists`.
+	GlobalScope bool // Used by show variables.
+	Extended    bool // Used for `show extended columns from ...`
+	// Limit points to the AST SHOW limit clause. It is only read during planner build and should stay immutable.
+	Limit *ast.Limit
 
 	ImportJobID       *int64 // Used for SHOW LOAD DATA JOB <jobID>
 	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>

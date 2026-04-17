@@ -29,6 +29,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -253,6 +254,9 @@ func TestUpdateStatsMeta(t *testing.T) {
 }
 
 func TestReplaceTables(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("in next-gen, system tables have reserved and fixed table ID, cannot be renamed")
+	}
 	ctx := context.Background()
 	brmk, err := brmock.NewCluster()
 	require.NoError(t, err)
@@ -328,6 +332,9 @@ func TestReplaceTables(t *testing.T) {
 }
 
 func TestReplaceTablesDowngrade(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("in next-gen, system tables have reserved and fixed table ID, cannot be renamed")
+	}
 	ctx := context.Background()
 	brmk, err := brmock.NewCluster()
 	require.NoError(t, err)
@@ -402,6 +409,9 @@ func TestReplaceTablesDowngrade(t *testing.T) {
 }
 
 func TestReplaceTablesWithoutUpdateStatsMeta(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("in next-gen, system tables have reserved and fixed table ID, cannot be renamed")
+	}
 	ctx := context.Background()
 	brmk, err := brmock.NewCluster()
 	require.NoError(t, err)
@@ -478,6 +488,9 @@ func TestReplaceTablesWithoutUpdateStatsMeta(t *testing.T) {
 }
 
 func TestReplaceTablesWithoutUpdateStatsMeta2(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("in next-gen, system tables have reserved and fixed table ID, cannot be renamed")
+	}
 	ctx := context.Background()
 	brmk, err := brmock.NewCluster()
 	require.NoError(t, err)
