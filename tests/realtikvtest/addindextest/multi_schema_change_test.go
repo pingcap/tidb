@@ -21,7 +21,7 @@ import (
 )
 
 func TestMultiSchemaChangeCreateNonUniqueIndex(t *testing.T) {
-	alwaysSplitAndReduceBackoff(t)
+	enableFastAddIndexFailpoints(t)
 	var colIDs = [][]int{
 		{1, 4, 7},
 		{2, 5, 8},
@@ -33,7 +33,7 @@ func TestMultiSchemaChangeCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestMultiSchemaChangeCreateUniqueIndex(t *testing.T) {
-	alwaysSplitAndReduceBackoff(t)
+	enableFastAddIndexFailpoints(t)
 	var colIDs = [][]int{
 		{1, 6, 8},
 		{2, 19},
@@ -45,21 +45,21 @@ func TestMultiSchemaChangeCreateUniqueIndex(t *testing.T) {
 }
 
 func TestMultiSchemaChangeCreatePrimaryKey(t *testing.T) {
-	alwaysSplitAndReduceBackoff(t)
+	enableFastAddIndexFailpoints(t)
 	ctx := testutils.InitCompCtx(t)
 	ctx.CompCtx.IsMultiSchemaChange = true
 	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
 }
 
 func TestMultiSchemaChangeCreateGenColIndex(t *testing.T) {
-	alwaysSplitAndReduceBackoff(t)
+	enableFastAddIndexFailpoints(t)
 	ctx := testutils.InitCompCtx(t)
 	ctx.CompCtx.IsMultiSchemaChange = true
 	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
 }
 
 func TestMultiSchemaChangeMultiColsIndex(t *testing.T) {
-	alwaysSplitAndReduceBackoff(t)
+	enableFastAddIndexFailpoints(t)
 	var coliIDs = [][]int{
 		{1},
 		{2},
