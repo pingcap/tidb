@@ -17,6 +17,8 @@ package versioninfo
 const (
 	// CommunityEdition is the default edition for building.
 	CommunityEdition = "Community"
+	// CoreVersion is the default core version for building.
+	CoreVersion = "v8.5.5"
 )
 
 // Version information.
@@ -26,4 +28,5 @@ var (
 	TiDBGitBranch                  = "None"
 	TiDBEdition                    = CommunityEdition
 	TiDBEnterpriseExtensionGitHash = ""
+	TiDBCoreVersion				   = CoreVersion
 )

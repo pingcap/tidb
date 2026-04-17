@@ -69,6 +69,7 @@ func GetTiDBInfo() string {
 	}
 	return fmt.Sprintf("Release Version: %s\n"+
 		"Edition: %s\n"+
+		"Core Version: %s\n"+
 		"Git Commit Hash: %s\n"+
 		"Git Branch: %s\n"+
 		"UTC Build Time: %s\n"+
@@ -79,6 +80,7 @@ func GetTiDBInfo() string {
 		"%s",
 		mysql.TiDBReleaseVersion,
 		versioninfo.TiDBEdition,
+		versioninfo.TiDBCoreVersion,
 		versioninfo.TiDBGitHash,
 		versioninfo.TiDBGitBranch,
 		versioninfo.TiDBBuildTS,
