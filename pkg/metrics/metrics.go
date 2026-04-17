@@ -574,10 +574,14 @@ func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
 	}
 }
 
+// isInternalChannelzTarget returns true if the target is used for internal channelz collector, which is identified by
+// the fact that its target is "bufnet" or "passthrough:///bufnet".
 func isInternalChannelzTarget(target string) bool {
 	return target == "bufnet" || target == "passthrough:///bufnet"
 }
 
+// isInternalChannelzSocket returns true if the socket is created by the internal channelz collector for scrapping
+// channelz metrics, which is identified by the fact that it has no remote endpoint.
 func isInternalChannelzSocket(socket *grpc_channelz_v1.Socket) bool {
 	return socket.GetRemote() == nil && socket.GetRemoteName() == ""
 }
