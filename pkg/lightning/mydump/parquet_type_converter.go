@@ -217,8 +217,11 @@ func rebaseLegacyTimestampMicros(micros int64, loc *time.Location) int64 {
 	year, month, day := local.Date()
 	hour, minute, second := local.Clock()
 	// Re-materialize the rebased wall-clock time in loc. Subtracting fixed 24h
-	// chunks from the UTC instant is not equivalent for locations whose
-	// historical offset changes between the original and rebased date.
+	// chunks from the UTC instant, or caching one fixed offset per named
+	// location, is not equivalent here: local := ...In(loc) resolves loc's
+	// offset at the original instant, while time.Date(..., loc) resolves loc's
+	// offset for the rebased local date. For named IANA locations, those
+	// offsets can differ because of DST or historical timezone transitions.
 	// day-dayDiff may be 0 or negative for early-month dates; time.Date
 	// intentionally normalizes that into the previous month/year.
 	return time.Date(year, month, day-dayDiff, hour, minute, second, local.Nanosecond(), loc).UnixMicro()

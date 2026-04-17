@@ -74,8 +74,13 @@ var (
 	// rebasing. The same term must be used both when parsing
 	// "org.apache.spark.version" and when constructing the Spark cutoffs below,
 	// otherwise legacy Spark files could be skipped silently.
-	sparkAppName                   = "spark"
-	sparkVersionMetadataKey        = "org.apache.spark.version"
+	sparkAppName            = "spark"
+	sparkVersionMetadataKey = "org.apache.spark.version"
+	// Spark writes this file-level footer key alongside its legacy rebase markers
+	// and reads it back only to choose the timezone for legacy date/timestamp
+	// rebasing. It is Spark-specific metadata, not Parquet's column-level
+	// TIMESTAMP semantics, so its presence does not mean an INT64
+	// TIMESTAMP_MICROS value is a "timestamp with timezone".
 	sparkTimeZoneMetadataKey       = "org.apache.spark.timeZone"
 	sparkLegacyDateTimeMetadataKey = "org.apache.spark.legacyDateTime"
 	sparkLegacyINT96MetadataKey    = "org.apache.spark.legacyINT96"
