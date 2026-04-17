@@ -64,6 +64,14 @@ var (
 	// readBatchSize is the number of rows to read in a single batch
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
+
+	sparkVersionMetadataKey        = "org.apache.spark.version"
+	sparkTimeZoneMetadataKey       = "org.apache.spark.timeZone"
+	sparkLegacyDateTimeMetadataKey = "org.apache.spark.legacyDateTime"
+	sparkLegacyINT96MetadataKey    = "org.apache.spark.legacyINT96"
+
+	sparkDatetimeRebaseCutoff = metadata.NewAppVersionExplicit("spark", 3, 0, 0)
+	sparkINT96RebaseCutoff    = metadata.NewAppVersionExplicit("spark", 3, 1, 0)
 )
 
 func estimateRowSize(row []types.Datum) int {
@@ -215,6 +223,81 @@ type convertedType struct {
 
 	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types
 	IsAdjustedToUTC bool
+
+	// sparkRebaseLocation is non-nil when the file footer says the column was
+	// written by a Spark release that used the legacy hybrid calendar.
+	sparkRebaseLocation *time.Location
+}
+
+func sparkVersionFromMetadata(fileMeta *metadata.FileMetaData) *metadata.AppVersion {
+	if fileMeta == nil {
+		return nil
+	}
+
+	if kv := fileMeta.KeyValueMetadata(); kv != nil {
+		if version := kv.FindValue(sparkVersionMetadataKey); version != nil {
+			return sparkAppVersion(*version)
+		}
+	}
+
+	return metadata.NewAppVersion(fileMeta.GetCreatedBy())
+}
+
+func sparkAppVersion(version string) *metadata.AppVersion {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return nil
+	}
+
+	appVersion := metadata.NewAppVersion("spark version " + version)
+	if appVersion.App != "spark" {
+		return nil
+	}
+	return appVersion
+}
+
+func sparkRebaseLocation(
+	fileMeta *metadata.FileMetaData,
+	cutoff *metadata.AppVersion,
+	legacyKey string,
+	fallback *time.Location,
+) *time.Location {
+	if fileMeta == nil {
+		return nil
+	}
+
+	legacy := false
+	if kv := fileMeta.KeyValueMetadata(); kv != nil {
+		if kv.FindValue(legacyKey) != nil {
+			legacy = true
+		}
+	}
+
+	if !legacy {
+		version := sparkVersionFromMetadata(fileMeta)
+		if version != nil && version.App == "spark" && version.LessThan(cutoff) {
+			legacy = true
+		}
+	}
+
+	if !legacy {
+		return nil
+	}
+
+	if fileMeta != nil {
+		if kv := fileMeta.KeyValueMetadata(); kv != nil {
+			if tzName := kv.FindValue(sparkTimeZoneMetadataKey); tzName != nil {
+				if loc, err := time.LoadLocation(*tzName); err == nil {
+					return loc
+				}
+			}
+		}
+	}
+
+	if fallback != nil {
+		return fallback
+	}
+	return time.UTC
 }
 
 // rowGroupParser parses rows from one parquet row group.
@@ -640,6 +723,26 @@ func NewParquetParser(
 
 		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
 			return nil, errors.Errorf("unsupported parquet logical type %s", colTypes[i].converted.String())
+		}
+
+		switch desc.PhysicalType() {
+		case parquet.Types.Int32:
+			if colTypes[i].converted == schema.ConvertedTypes.Date {
+				colTypes[i].sparkRebaseLocation = sparkRebaseLocation(
+					reader.MetaData(), sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, meta.Loc,
+				)
+			}
+		case parquet.Types.Int64:
+			if colTypes[i].converted == schema.ConvertedTypes.TimestampMillis ||
+				colTypes[i].converted == schema.ConvertedTypes.TimestampMicros {
+				colTypes[i].sparkRebaseLocation = sparkRebaseLocation(
+					reader.MetaData(), sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, meta.Loc,
+				)
+			}
+		case parquet.Types.Int96:
+			colTypes[i].sparkRebaseLocation = sparkRebaseLocation(
+				reader.MetaData(), sparkINT96RebaseCutoff, sparkLegacyINT96MetadataKey, meta.Loc,
+			)
 		}
 	}
 

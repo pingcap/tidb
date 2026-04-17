@@ -28,6 +28,8 @@ import (
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/compress"
+	"github.com/apache/arrow-go/v18/parquet/file"
+	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -304,6 +306,117 @@ func TestParquetVariousTypes(t *testing.T) {
 			expectedDatum, err := table.CastColumnValueWithStrictMode(types.NewStringDatum(s), tp)
 			require.NoError(t, err)
 			require.Equal(t, expectedDatum, row[i])
+		}
+	})
+
+	t.Run("spark_legacy_datetime_rebase", func(t *testing.T) {
+		legacyMeta := metadata.NewKeyValueMetadata()
+		require.NoError(t, legacyMeta.Append("org.apache.spark.version", "2.4.8-amzn-1"))
+		require.NoError(t, legacyMeta.Append("org.apache.spark.timeZone", "UTC"))
+
+		modernMeta := metadata.NewKeyValueMetadata()
+		require.NoError(t, modernMeta.Append("org.apache.spark.version", "3.5.0-amzn-1"))
+		require.NoError(t, modernMeta.Append("org.apache.spark.timeZone", "UTC"))
+
+		testCases := []struct {
+			name     string
+			meta     metadata.KeyValueMetadata
+			date     string
+			expected []time.Time
+		}{
+			{
+				name: "legacy",
+				meta: legacyMeta,
+				date: "1582-10-04",
+				expected: []time.Time{
+					time.Date(1582, 10, 4, 12, 34, 56, 789000000, time.UTC),
+					time.Date(1582, 10, 4, 12, 34, 56, 789123000, time.UTC),
+					time.Date(1582, 10, 4, 12, 34, 56, 789123000, time.UTC),
+				},
+			},
+			{
+				name: "modern",
+				meta: modernMeta,
+				date: "1582-10-14",
+				expected: []time.Time{
+					time.Date(1582, 10, 14, 12, 34, 56, 789000000, time.UTC),
+					time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC),
+					time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC),
+				},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				pc := []ParquetColumn{
+					{
+						Name:      "date",
+						Type:      parquet.Types.Int32,
+						Converted: schema.ConvertedTypes.Date,
+						Gen: func(_ int) (any, []int16) {
+							return []int32{int32(time.Date(1582, 10, 14, 0, 0, 0, 0, time.UTC).Unix() / 86400)}, []int16{1}
+						},
+					},
+					{
+						Name:      "timestampmillis",
+						Type:      parquet.Types.Int64,
+						Converted: schema.ConvertedTypes.TimestampMillis,
+						Gen: func(_ int) (any, []int16) {
+							return []int64{time.Date(1582, 10, 14, 12, 34, 56, 789000000, time.UTC).UnixMilli()}, []int16{1}
+						},
+					},
+					{
+						Name:      "timestampmicros",
+						Type:      parquet.Types.Int64,
+						Converted: schema.ConvertedTypes.TimestampMicros,
+						Gen: func(_ int) (any, []int16) {
+							return []int64{time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC).UnixMicro()}, []int16{1}
+						},
+					},
+					{
+						Name:      "timestampint96",
+						Type:      parquet.Types.Int96,
+						Converted: schema.ConvertedTypes.None,
+						Gen: func(_ int) (any, []int16) {
+							return []parquet.Int96{newInt96(time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC).UnixMicro())}, []int16{1}
+						},
+					},
+				}
+
+				dir := t.TempDir()
+				name := "legacy-timestamp.parquet"
+				require.NoError(t,
+					WriteParquetFile(
+						dir, name, pc, 1,
+						parquet.WithCreatedBy("parquet-mr version 1.10.1"),
+						file.WithWriteMetadata(tc.meta),
+					),
+				)
+
+				reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+				require.NotNil(t, reader.fileMeta.KeyValueMetadata().FindValue("org.apache.spark.version"))
+				if tc.name == "legacy" {
+					version := sparkVersionFromMetadata(reader.fileMeta)
+					require.NotNil(t, version)
+					require.Equal(t, "spark", version.App)
+					require.True(t, version.LessThan(sparkDatetimeRebaseCutoff))
+					require.NotNil(t, reader.colTypes[0].sparkRebaseLocation)
+					require.NotNil(t, reader.colTypes[1].sparkRebaseLocation)
+					require.NotNil(t, reader.colTypes[2].sparkRebaseLocation)
+					require.NotNil(t, reader.colTypes[3].sparkRebaseLocation)
+				}
+				require.NoError(t, reader.ReadRow())
+				row := reader.lastRow.Row
+				require.Len(t, row, 4)
+
+				require.Equal(t, tc.date, row[0].GetMysqlTime().String())
+
+				for i, expected := range tc.expected {
+					gotTime, err := row[i+1].GetMysqlTime().GoTime(time.UTC)
+					require.NoError(t, err)
+					require.Equal(t, expected, gotTime)
+				}
+			})
 		}
 	})
 

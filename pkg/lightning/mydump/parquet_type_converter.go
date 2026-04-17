@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"time"
 
+	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
@@ -173,6 +174,38 @@ func setParquetDecimalFromInt64(
 	return dec.Round(dec, scale, types.ModeTruncate)
 }
 
+func julianGregorianDayDiff(year int, month time.Month) int {
+	if month <= time.February {
+		year--
+	}
+	return year/100 - year/400 - 2
+}
+
+// rebaseJulianToGregorianDays converts a Julian-calendar day count into the
+// corresponding proleptic Gregorian day count while preserving the wall-clock
+// date label.
+func rebaseJulianToGregorianDays(days int) int {
+	t := arrow.Date32(days).ToTime()
+	return days - julianGregorianDayDiff(t.Year(), t.Month())
+}
+
+func rebaseLegacyTimestampMicros(micros int64, loc *time.Location) int64 {
+	if micros >= int64(time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()) {
+		return micros
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	local := time.UnixMicro(micros).In(loc)
+	localMidnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+	rebasedDays := rebaseJulianToGregorianDays(int(arrow.Date32FromTime(localMidnight)))
+	rebasedDate := arrow.Date32(rebasedDays).ToTime()
+	y, m, d := rebasedDate.Date()
+	rebasedLocal := time.Date(y, m, d, local.Hour(), local.Minute(), local.Second(), local.Nanosecond(), loc)
+	return rebasedLocal.UTC().UnixMicro()
+}
+
 //nolint:all_revive
 func getBoolDataSetter(val bool, d *types.Datum) error {
 	if val {
@@ -192,8 +225,10 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 		}
 	case schema.ConvertedTypes.Date:
 		return func(val int32, d *types.Datum) error {
-			// Convert days since Unix epoch to time.Time
-			t := time.Unix(int64(val)*86400, 0).In(time.UTC)
+			if converted.sparkRebaseLocation != nil {
+				val = int32(rebaseJulianToGregorianDays(int(val)))
+			}
+			t := arrow.Date32(val).ToTime()
 			mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeDate, 0)
 			d.SetMysqlTime(mysqlTime)
 			return nil
@@ -250,8 +285,10 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 		}
 	case schema.ConvertedTypes.TimestampMillis:
 		return func(val int64, d *types.Datum) error {
-			// Convert milliseconds to time.Time
-			t := time.UnixMilli(val).In(time.UTC)
+			if converted.sparkRebaseLocation != nil {
+				val = rebaseLegacyTimestampMicros(val*1000, converted.sparkRebaseLocation) / 1000
+			}
+			t := arrow.Timestamp(val).ToTime(arrow.Millisecond)
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
@@ -261,8 +298,10 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 		}
 	case schema.ConvertedTypes.TimestampMicros:
 		return func(val int64, d *types.Datum) error {
-			// Convert microseconds to time.Time
-			t := time.UnixMicro(val).In(time.UTC)
+			if converted.sparkRebaseLocation != nil {
+				val = rebaseLegacyTimestampMicros(val, converted.sparkRebaseLocation)
+			}
+			t := arrow.Timestamp(val).ToTime(arrow.Microsecond)
 			if converted.IsAdjustedToUTC {
 				t = t.In(loc)
 			}
@@ -283,15 +322,22 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 // newInt96 is a utility function to create a parquet.Int96 for test,
 // where microseconds is the number of microseconds since Unix epoch.
 func newInt96(microseconds int64) parquet.Int96 {
-	day := uint32(microseconds/(86400*1e6) + 2440588)
-	nanoOfDay := uint64(microseconds % (86400 * 1e6) * 1e3)
+	const microsPerDay = int64(86400 * 1e6)
+	dayOffset := microseconds / microsPerDay
+	rem := microseconds % microsPerDay
+	if rem < 0 {
+		dayOffset--
+		rem += microsPerDay
+	}
+	day := uint32(dayOffset + 2440588)
+	nanoOfDay := uint64(rem * 1e3)
 	var b [12]byte
 	binary.LittleEndian.PutUint64(b[:8], nanoOfDay)
 	binary.LittleEndian.PutUint32(b[8:], day)
 	return parquet.Int96(b)
 }
 
-func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustToUTC bool) {
+func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustToUTC bool, rebaseLocation *time.Location) {
 	// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 	// INT96 timestamp layout
 	// --------------------------
@@ -304,9 +350,11 @@ func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustT
 	// two parts: the first 8 bytes is the nanoseconds within the day, and the last 4 bytes
 	// is the Julian Day (days since noon on January 1, 4713 BC). And it will be converted it to UTC by
 	//   julian day - 2440588 (Julian Day of the Unix epoch 1970-01-01 00:00:00)
-	// As julian day is decoded as uint32, so if user store a date before 1970-01-01, the converted time will be wrong
-	// and possibly to be truncated.
-	t := val.ToTime().In(time.UTC)
+	micros := int96ToUnixMicros(val)
+	if rebaseLocation != nil {
+		micros = rebaseLegacyTimestampMicros(micros, rebaseLocation)
+	}
+	t := arrow.Timestamp(micros).ToTime(arrow.Microsecond)
 	if adjustToUTC {
 		t = t.In(loc)
 	}
@@ -314,9 +362,15 @@ func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustT
 	d.SetMysqlTime(mysqlTime)
 }
 
+func int96ToUnixMicros(val parquet.Int96) int64 {
+	nanosOfDay := int64(binary.LittleEndian.Uint64(val[:8]))
+	julianDay := int64(binary.LittleEndian.Uint32(val[8:]))
+	return (julianDay-2440588)*86400*1e6 + nanosOfDay/1e3
+}
+
 func getInt96Setter(converted *convertedType, loc *time.Location) setter[parquet.Int96] {
 	return func(val parquet.Int96, d *types.Datum) error {
-		setInt96Data(val, d, loc, converted.IsAdjustedToUTC)
+		setInt96Data(val, d, loc, converted.IsAdjustedToUTC, converted.sparkRebaseLocation)
 		return nil
 	}
 }

@@ -163,7 +163,7 @@ func getStore(path string) (storeapi.Storage, error) {
 
 // WriteParquetFile writes a simple Parquet file with the specified columns and number of rows.
 // It's used for test and DON'T use this function to generate large Parquet files.
-func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...parquet.WriterProperty) error {
+func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...any) error {
 	s, err := getStore(path)
 	if err != nil {
 		return err
@@ -195,9 +195,20 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int,
 	}
 
 	node, _ := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
-	opts = append(opts, addOpts...)
+	var writerOpts []file.WriteOption
+	for _, opt := range addOpts {
+		switch v := opt.(type) {
+		case parquet.WriterProperty:
+			opts = append(opts, v)
+		case file.WriteOption:
+			writerOpts = append(writerOpts, v)
+		default:
+			return fmt.Errorf("unsupported parquet writer option type %T", opt)
+		}
+	}
 	props := parquet.NewWriterProperties(opts...)
-	pw := file.NewParquetWriter(wrapper, node, file.WithWriterProps(props))
+	writerOpts = append(writerOpts, file.WithWriterProps(props))
+	pw := file.NewParquetWriter(wrapper, node, writerOpts...)
 	//nolint: errcheck
 	defer pw.Close()
 
