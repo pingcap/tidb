@@ -629,12 +629,13 @@ func (s *PlanCacheStmt) DBName() []model.CIStr { return s.dbName }
 // Tbls returns the tbls field (used for metadata lock during Execute).
 func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
 
-// SetDBNameAndTbls sets the dbName and tbls fields.
-// Called when rebuilding a PlanCacheStmt from the prepare dedup cache so that
-// each stmt instance has its own slice (planCachePreprocess replaces tbls[i]).
+// SetDBNameAndTbls sets the dbName and tbls fields, cloning the input slices
+// so that this PlanCacheStmt owns independent backing arrays. This is required
+// because planCachePreprocess replaces tbls[i] in-place during Execute, and
+// sharing the backing array with a cached template would cause cross-stmt contamination.
 func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []model.CIStr, tbls []table.Table) {
-	s.dbName = dbName
-	s.tbls = tbls
+	s.dbName = slices.Clone(dbName)
+	s.tbls = slices.Clone(tbls)
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

@@ -31,7 +31,6 @@ import (
 	"math"
 	"math/rand"
 	"runtime/pprof"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -2603,7 +2602,7 @@ func (s *session) rebuildFromPrepareCache(
 	// dbName and tbls are only read during Execute (not written to by
 	// CollectPlanCacheStmtInfo since that populates tables, not tbls).
 	// Clone them so that planCachePreprocess can safely replace tbls[i].
-	newStmt.SetDBNameAndTbls(slices.Clone(cached.Stmt.DBName()), slices.Clone(cached.Stmt.Tbls()))
+	newStmt.SetDBNameAndTbls(cached.Stmt.DBName(), cached.Stmt.Tbls())
 
 	return newStmt, nil
 }
