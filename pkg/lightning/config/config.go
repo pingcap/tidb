@@ -1036,10 +1036,11 @@ type AllIgnoreColumns []*IgnoreColumns
 
 // IgnoreColumns is the config for ignoring columns.
 type IgnoreColumns struct {
-	DB          string   `toml:"db" json:"db"`
-	Table       string   `toml:"table" json:"table"`
-	TableFilter []string `toml:"table-filter" json:"table-filter"`
-	Columns     []string `toml:"columns" json:"columns"`
+	DB              string            `toml:"db" json:"db"`
+	Table           string            `toml:"table" json:"table"`
+	TableFilter     []string          `toml:"table-filter" json:"table-filter"`
+	Columns         []string          `toml:"columns" json:"columns"`
+	ColumnConstants map[string]string `toml:"column-constants" json:"column-constants"`
 }
 
 // ColumnsMap returns a map of columns.

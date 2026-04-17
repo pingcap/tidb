@@ -34,6 +34,9 @@ type EncodingConfig struct {
 	// when encoding.
 	// default false, in this case we will do sharding automatically if needed.
 	UseIdentityAutoRowID bool
+	// ColumnConstants provides literal string values for columns absent from the
+	// source data file. Keys must be lowercase column names (col.Name.L).
+	ColumnConstants map[string]string
 }
 
 // EncodingBuilder consists of operations to handle encoding backend row data formats from source.

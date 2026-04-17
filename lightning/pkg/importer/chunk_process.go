@@ -185,9 +185,10 @@ func (cr *chunkProcessor) process(
 			// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
 			AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 		},
-		Path:   cr.chunk.Key.Path,
-		Table:  t.encTable,
-		Logger: logger,
+		Path:            cr.chunk.Key.Path,
+		Table:           t.encTable,
+		Logger:          logger,
+		ColumnConstants: t.columnConstants,
 	})
 	if err != nil {
 		return err
@@ -271,9 +272,10 @@ func (cr *chunkProcessor) encodeLoop(
 				// use chunk.PrevRowIDMax as the auto random seed, so it can stay the same value after recover from checkpoint.
 				AutoRandomSeed: cr.chunk.Chunk.PrevRowIDMax,
 			},
-			Path:   cr.chunk.Key.Path,
-			Table:  encTable,
-			Logger: logger,
+			Path:            cr.chunk.Key.Path,
+			Table:           encTable,
+			Logger:          logger,
+			ColumnConstants: t.columnConstants,
 		})
 		if err != nil {
 			return 0, 0, errors.Trace(err)
