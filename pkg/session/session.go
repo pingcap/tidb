@@ -2543,7 +2543,11 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 
 // rebuildFromPrepareCache constructs a new PlanCacheStmt from a cached entry,
 // re-parsing the SQL to obtain an independent AST (with fresh ParamMarkerExpr
-// nodes) while skipping the expensive Preprocess and PlanBuilder.Build steps.
+// nodes) while skipping only the expensive PlanBuilder.Build step.
+// Preprocess is still executed to build a fresh ResolveCtx whose tableNames map
+// is keyed by the new AST's TableName pointers; reusing the cached ResolveCtx
+// would cause nil-deref panics on plan-cache miss because the old pointer keys
+// would not match the newly-parsed AST nodes.
 func (s *session) rebuildFromPrepareCache(
 	ctx context.Context,
 	cached *plannercore.PrepareStmtCacheEntry,
@@ -2566,6 +2570,21 @@ func (s *session) rebuildFromPrepareCache(
 
 	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 
+	// Run Preprocess to build a fresh ResolveCtx aligned with the new AST.
+	// This is the only way to populate ResolveCtx.tableNames with the new
+	// AST's *ast.TableName pointer keys without re-running the full Build.
+	ret := &plannercore.PreprocessorReturn{InfoSchema: is}
+	nodeW := resolve.NewNodeW(stmtNode)
+	if err = plannercore.Preprocess(ctx, s, nodeW, plannercore.InPrepare,
+		plannercore.WithPreprocessorReturn(ret)); err != nil {
+		return nil, err
+	}
+	// Defensive: if schema changed between our earlier check and Preprocess,
+	// fall through to the full prepare path.
+	if ret.InfoSchema.SchemaMetaVersion() != cached.Stmt.SchemaVersion {
+		return nil, errors.New("schema version changed during rebuild")
+	}
+
 	newStmt := &plannercore.PlanCacheStmt{
 		// Fields derived from the new AST:
 		PreparedAst: &ast.Prepared{
@@ -2574,8 +2593,10 @@ func (s *session) rebuildFromPrepareCache(
 		},
 		Params: markers,
 
+		// Fresh ResolveCtx whose tableNames keys match the new AST pointers.
+		ResolveCtx: nodeW.GetResolveContext(),
+
 		// Immutable fields – safe to share with the cached template:
-		ResolveCtx:          cached.Stmt.ResolveCtx,
 		StmtDB:              cached.Stmt.StmtDB,
 		StmtText:            cached.Stmt.StmtText,
 		VisitInfos:          cached.Stmt.VisitInfos,
