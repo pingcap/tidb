@@ -53,7 +53,7 @@ create user xxx;
 grant all on session__privileges.t1 to xxx;
 grant select on session__privileges.t2 to xxx;
 update t2 set id = 666 where id = 1;
-Error 8121 (HY000): privilege check for 'Update' fail
+Error 1143 (42000): UPDATE command denied to user 'xxx'@'%' for column 'id' in table 't2'
 ## Cover a bug that t1 and t2 both require update privilege.
 ## In fact, the privlege check for t1 should be update, and for t2 should be select.
 update t1,t2 set t1.id = t2.id;

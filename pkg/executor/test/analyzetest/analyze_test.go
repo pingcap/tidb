@@ -510,7 +510,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "220000", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t, reason to use this rate is \"use min(1, 110000/220000) as the sample-rate=0.5\"",
 	))
 	tk.MustExec("insert into t values(1),(1),(1)")
@@ -520,7 +519,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "3", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"",
 	))
 }
@@ -2600,10 +2598,9 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition with index and with options are allowed under dynamic V1
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
-	rows := tk.MustQuery("show warnings").Rows()
-	require.Len(t, rows, 0)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	tbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -2612,7 +2609,7 @@ PARTITION BY RANGE ( a ) (
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
 
 	tk.MustExec("analyze table t partition p1 index idx with 1 topn, 2 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release."))
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetIdx(tableInfo.Indices[0].ID).Buckets))
@@ -2726,6 +2723,11 @@ PARTITION BY RANGE ( a ) (
 func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	bakRunAutoAnalyze := variable.RunAutoAnalyze.Load()
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze = %t", bakRunAutoAnalyze))
+	})
 	tk.MustExec("use test")
 	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
 	// We want to test that HandleAutoAnalyze is aware of setting @@global.tidb_enable_analyze_snapshot to 1 and reads data from snapshot.

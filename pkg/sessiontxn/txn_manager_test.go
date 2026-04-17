@@ -486,11 +486,11 @@ func TestSnapshotInterceptor(t *testing.T) {
 
 		val, err := txn.Get(context.Background(), k)
 		require.NoError(t, err)
-		require.Equal(t, []byte("v1"), val)
+		require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
 
 		val, err = txn.GetSnapshot().Get(context.Background(), k)
 		require.NoError(t, err)
-		require.Equal(t, []byte("v1"), val)
+		require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
 
 		tk.Session().RollbackTxn(context.Background())
 	}
@@ -499,7 +499,7 @@ func TestSnapshotInterceptor(t *testing.T) {
 	snap := internal.GetSnapshotWithTS(tk.Session(), 0, temptable.SessionSnapshotInterceptor(tk.Session(), sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()))
 	val, err := snap.Get(context.Background(), k)
 	require.NoError(t, err)
-	require.Equal(t, []byte("v1"), val)
+	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
 }
 
 func checkBasicActiveTxn(t *testing.T, sctx sessionctx.Context) kv.Transaction {

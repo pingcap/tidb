@@ -527,7 +527,7 @@ func buildIndexLookUpTask(ctx base.PlanContext, t *CopTask) *RootTask {
 		expectedCnt:      t.expectCnt,
 		keepOrder:        t.keepOrder,
 		PlanPartInfo:     t.physPlanPartInfo,
-	}.Init(ctx, t.tablePlan.QueryBlockOffset(), t.indexLookUpPushDown)
+	}.Init(ctx, t.tablePlan.QueryBlockOffset(), t.indexLookUpPushDownBy)
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
 	// the final agg would be broken. Please reference comments for the similar logic in
 	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.

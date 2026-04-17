@@ -135,6 +135,7 @@ func AppendRangeForLogRestore(
 
 type CheckpointMetadataForLogRestore struct {
 	UpstreamClusterID uint64 `json:"upstream-cluster-id"`
+	RestoreStartTS    uint64 `json:"restore-start-ts"`
 	RestoredTS        uint64 `json:"restored-ts"`
 	StartTS           uint64 `json:"start-ts"`
 	RewriteTS         uint64 `json:"rewrite-ts"`
@@ -249,6 +250,19 @@ type CheckpointIngestIndexRepairSQL struct {
 	IndexRepaired   bool `json:"-"`
 }
 
+type CheckpointForeignKeyUpdateSQL struct {
+	FKID       int64  `json:"fk-id"`
+	SchemaName string `json:"schema-name"`
+	TableName  string `json:"table-name"`
+	FKName     string `json:"fk-name"`
+	AddSQL     string `json:"add-sql"`
+	AddArgs    []any  `json:"add-args"`
+
+	OldForeignKeyFound bool `json:"-"`
+	ForeignKeyUpdated  bool `json:"-"`
+}
+
 type CheckpointIngestIndexRepairSQLs struct {
-	SQLs []CheckpointIngestIndexRepairSQL
+	SQLs   []CheckpointIngestIndexRepairSQL
+	FKSQLs []CheckpointForeignKeyUpdateSQL
 }

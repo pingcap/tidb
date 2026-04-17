@@ -132,7 +132,7 @@ func (importer *LogFileImporter) ImportKVFiles(
 		}
 	}
 
-	log.Debug("rewrite file keys",
+	logutil.CL(ctx).Debug("rewrite file keys",
 		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey))
 
 	// This RetryState will retry 45 time, about 10 min.

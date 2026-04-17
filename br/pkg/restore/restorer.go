@@ -258,7 +258,10 @@ func (s *BatchRestorer) WaitUntilFinish() error {
 
 func (s *BatchRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
 	s.workerPool.ApplyOnErrorGroup(s.eg, func() error {
+		counter := 0
 		return GroupOverlappedBackupFileSetsIter(s.ectx, s.regionClient, slices.Concat(batchFileSets...), func(batchSet BatchBackupFileSet) {
+			i := counter
+			counter += 1
 			s.workerPool.ApplyOnErrorGroup(s.eg, func() (restoreErr error) {
 				fileStart := time.Now()
 				defer func() {
@@ -272,7 +275,8 @@ func (s *BatchRestorer) GoRestore(onProgress func(int64), batchFileSets ...Batch
 						}
 					}
 				}()
-				err := s.batchFileImporter.Import(s.ectx, batchSet...)
+				cx := logutil.ContextWithField(s.ectx, zap.Int("batch#", i))
+				err := s.batchFileImporter.Import(cx, batchSet...)
 				if err != nil {
 					return errors.Trace(err)
 				}

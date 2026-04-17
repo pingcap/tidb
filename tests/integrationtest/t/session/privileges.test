@@ -57,7 +57,7 @@ grant all on session__privileges.t1 to xxx;
 grant select on session__privileges.t2 to xxx;
 
 connect (conn1, localhost, xxx,,session__privileges);
--- error 8121
+-- error 1143
 update t2 set id = 666 where id = 1;
 -- echo ## Cover a bug that t1 and t2 both require update privilege.
 -- echo ## In fact, the privlege check for t1 should be update, and for t2 should be select.

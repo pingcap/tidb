@@ -124,6 +124,11 @@ func Selectivity(
 		return a.ID == b.ID
 	})
 	for _, col := range extractedCols {
+		if col.IsHidden && col.VirtualExpr != nil {
+			// For expression index, only the index stats should be used,
+			// column stats can be ignored.
+			continue
+		}
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {
@@ -778,6 +783,24 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 	return nil
 }
 
+// findPrefixOfIndex will find columns in index by checking the unique id.
+// So it will return at once no matching column is found.
+func findPrefixOfIndex(cols []*expression.Column, idxColIDs []int64) []*expression.Column {
+	retCols := make([]*expression.Column, 0, len(idxColIDs))
+idLoop:
+	for _, id := range idxColIDs {
+		for _, col := range cols {
+			if col.UniqueID == id {
+				retCols = append(retCols, col)
+				continue idLoop
+			}
+		}
+		// If no matching column is found, just return.
+		return retCols
+	}
+	return retCols
+}
+
 // findPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
 // So it will return at once no matching column is found.
 func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, idxColIDs []int64,
@@ -799,7 +822,7 @@ func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, 
 		}
 		return retCols
 	}
-	return expression.FindPrefixOfIndex(cols, idxColIDs)
+	return findPrefixOfIndex(cols, idxColIDs)
 }
 
 func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, rangeType ranger.RangeType,

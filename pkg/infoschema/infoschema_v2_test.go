@@ -596,21 +596,6 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 	require.Equal(t, tblInfo.Lock, tblInfo1.Lock)
 	tblInfo.Lock = nil
 	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionUnlockTable, 10, infoschemacontext.TableLockAttribute, false)
-
-	// test foreign key correctness in schema change
-	tblInfo.ForeignKeys = []*model.FKInfo{{
-		ID:        1,
-		Name:      pmodel.NewCIStr("fk_1"),
-		RefSchema: pmodel.NewCIStr("t"),
-		RefTable:  pmodel.NewCIStr("t"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("a")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("t_a")},
-		State:     model.StateWriteOnly,
-	}}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, infoschemacontext.ForeignKeysAttribute, true)
-	require.Equal(t, tblInfo.ForeignKeys, tblInfo1.ForeignKeys)
-	tblInfo.ForeignKeys = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropForeignKey, 12, infoschemacontext.ForeignKeysAttribute, false)
 }
 
 func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {

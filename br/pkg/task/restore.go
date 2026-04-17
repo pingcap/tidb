@@ -111,6 +111,8 @@ const (
 
 	FlagResetSysUsers = "reset-sys-users"
 
+	FlagSysCheckCollation = "sys-check-collation"
+
 	defaultPiTRBatchCount     = 8
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
@@ -146,6 +148,8 @@ type RestoreCommonConfig struct {
 	WithSysTable bool `json:"with-sys-table" toml:"with-sys-table"`
 
 	ResetSysUsers []string `json:"reset-sys-users" toml:"reset-sys-users"`
+
+	SysCheckCollation bool `json:"sys-check-collation" toml:"sys-check-collation"`
 }
 
 // adjust adjusts the abnormal config value in the current config.
@@ -289,6 +293,12 @@ type RestoreConfig struct {
 
 	WaitTiflashReady bool `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
+	// PITR-related fields for blocklist creation
+	// RestoreStartTS is the timestamp when the restore operation began (before any table creation).
+	// This is used for blocklist files to accurately mark when tables were created.
+	RestoreStartTS      uint64                      `json:"-" toml:"-"`
+	tableMappingManager *stream.TableMappingManager `json:"-" toml:"-"`
+
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
 	Prepare             bool                  `json:"prepare" toml:"prepare"`
@@ -358,6 +368,8 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 		" default is true, the incremental restore will not perform rewrite on the incremental data"+
 		" meanwhile the incremental restore will not allow to restore 3 backfilled type ddl jobs,"+
 		" these ddl jobs are Add index, Modify column and Reorganize partition")
+	flags.Bool(FlagSysCheckCollation, false, "whether check the privileges table rows to permit to restore the privilege data"+
+		" from utf8mb4_bin collate column to utf8mb4_general_ci collate column")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -488,7 +500,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWaitTiFlashReady)
 	}
-
+	cfg.SysCheckCollation, err = flags.GetBool(FlagSysCheckCollation)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagSysCheckCollation)
+	}
 	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
@@ -728,6 +743,7 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 	client.SetWithSysTable(cfg.WithSysTable)
 	client.SetRewriteMode(ctx)
+	client.SetCheckPrivilegeTableRowsCollateCompatiblity(cfg.SysCheckCollation)
 	return nil
 }
 
@@ -894,18 +910,51 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreErr = err
 			return
 		}
-		tableIds := make([]int64, 0, len(cfg.PiTRTableTracker.TableIdToDBIds))
-		for tableId := range cfg.PiTRTableTracker.TableIdToDBIds {
-			tableIds = append(tableIds, tableId)
+		if cfg.tableMappingManager == nil {
+			log.Error("tableMappingManager is nil, blocklist will contain no IDs")
+			restoreErr = errors.New("tableMappingManager is nil")
+			return
 		}
-		for tableId := range cfg.PiTRTableTracker.PartitionIds {
-			tableIds = append(tableIds, tableId)
+
+		// Extract downstream IDs from tableMappingManager
+		// ApplyFilterToDBReplaceMap has already filtered the DBReplaceMap based on PiTRTableTracker,
+		// so we can directly iterate through it and collect non-filtered IDs
+		downstreamTableIds := make(map[int64]struct{})
+		var downstreamDbIds []int64
+
+		// Iterate through DBReplaceMap which has already been filtered by ApplyFilterToDBReplaceMap
+		for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
+			if dbReplace.FilteredOut {
+				continue
+			}
+			// Collect downstream DB ID
+			downstreamDbIds = append(downstreamDbIds, dbReplace.DbID)
+
+			// Iterate through tables in this database
+			for _, tableReplace := range dbReplace.TableMap {
+				if tableReplace.FilteredOut {
+					continue
+				}
+				// Collect downstream table ID
+				downstreamTableIds[tableReplace.TableID] = struct{}{}
+
+				// Collect all partition IDs for this table
+				for _, downstreamPartitionId := range tableReplace.PartitionMap {
+					downstreamTableIds[downstreamPartitionId] = struct{}{}
+				}
+			}
 		}
-		dbIds := make([]int64, 0, len(cfg.PiTRTableTracker.DBIds))
-		for dbId := range cfg.PiTRTableTracker.DBIds {
-			dbIds = append(dbIds, dbId)
+
+		restoreStartTs := cfg.RestoreStartTS
+		if restoreStartTs == 0 {
+			log.Warn("restoreStartTS is not set, the blocklist will block from 0 to restoreCommitTs")
 		}
-		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, cfg.StartTS, cfg.RewriteTS, tableIds, dbIds)
+		// Convert map to slice for function call
+		tableIdsSlice := make([]int64, 0, len(downstreamTableIds))
+		for id := range downstreamTableIds {
+			tableIdsSlice = append(tableIdsSlice, id)
+		}
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, cfg.RewriteTS, tableIdsSlice, downstreamDbIds)
 		if err != nil {
 			restoreErr = err
 			return
@@ -915,7 +964,9 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreErr = err
 			return
 		}
-		log.Info("save the log restore table IDs blocklist into log backup storage")
+		log.Info("save the log restore table IDs blocklist into log backup storage",
+			zap.Int("downstreamTableCount", len(downstreamTableIds)),
+			zap.Int("downstreamDbCount", len(downstreamDbIds)))
 		if err = logTaskStorage.WriteFile(c, filename, data); err != nil {
 			restoreErr = err
 			return
@@ -1121,8 +1172,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UpstreamClusterID == 0 {
 		cfg.UpstreamClusterID = backupMeta.ClusterId
 	}
-	schemaVersionPair := snapclient.SchemaVersionPairT{}
 	if loadStatsPhysical || loadSysTablePhysical {
+		schemaVersionPair := snapclient.SchemaVersionPairT{}
 		upstreamClusterVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
 		if upstreamClusterVersion == nil {
 			log.Warn("The cluster version from backupmeta is invalid. Fallback to logically load system tables.",
@@ -1384,8 +1435,17 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
-		if err = snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
+		canLoadSysTablePhysical, err := snapclient.CheckSysTableCompatibility(mgr.GetDomain(), tables, client.GetCheckPrivilegeTableRowsCollateCompatiblity())
+		if err != nil {
 			return errors.Trace(err)
+		}
+		if loadSysTablePhysical && !canLoadSysTablePhysical {
+			log.Info("The system tables schema is not compatible. Fallback to logically load system tables.")
+			loadSysTablePhysical = false
+		}
+		if client.GetCheckPrivilegeTableRowsCollateCompatiblity() && canLoadSysTablePhysical {
+			log.Info("The system tables schema match so no need to set sys check collation")
+			client.SetCheckPrivilegeTableRowsCollateCompatiblity(false)
 		}
 	}
 
@@ -1443,11 +1503,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.piTRTaskInfo != nil {
 			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
 		}
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, hash, cpEnabledAndExists)
+		sets, restoreSchedulersConfigFromCheckpoint, newRestoreStartTS, err := client.InitCheckpoint(
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, cfg.RestoreStartTS, logRestoredTS, hash, cpEnabledAndExists)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Info("try to reuse restore start timestamp for blocklist",
+			zap.Uint64("new restore start ts", newRestoreStartTS),
+			zap.Uint64("old restore start ts", cfg.RestoreStartTS),
+		)
+		cfg.RestoreStartTS = newRestoreStartTS
 		if restoreSchedulersConfigFromCheckpoint != nil {
 			// The last range rule will be dropped when the last restore quits.
 			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
@@ -1674,7 +1739,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
 		StatsConcurrency:    cfg.StatsConcurrency,
-		SchemaVersionPair:   schemaVersionPair,
 		RestoreTS:           restoreTS,
 
 		KvClient:   mgr.GetStorage().GetClient(),

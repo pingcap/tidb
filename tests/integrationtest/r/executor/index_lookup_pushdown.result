@@ -1,4 +1,4 @@
-drop table if exists t1, t2, t3, t4, t5, t6, t7, tmp1, tmp2;
+drop table if exists t1, t2, t3, t4, t5, t6, t7, t8, t9, tmp1, tmp2;
 set @@tidb_scatter_region='table';
 create table t1(id int primary key, a varchar(32), b int, c int, index i(a, b));
 create table t2(a varchar(32), b int, c int, d int, e int, primary key(a, b) CLUSTERED, index i(c), unique index u(e)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -137,6 +137,98 @@ IndexLookUp_13	1.00	root		limit embedded(offset:10, count:1)
 └─TableRowIDScan_11(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > '2h' limit 10, 1;
 id	a	b	c
+explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) NO_INDEX_LOOKUP_PUSHDOWN(t1) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root		data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(executor__index_lookup_pushdown.t1.a, "x")
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified
+explain select /*+ NO_INDEX_LOOKUP_PUSHDOWN(t1, i) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1815	hint NO_INDEX_LOOKUP_PUSH_DOWN is inapplicable, only table name without indexes is supported
+set @@tidb_index_lookup_pushdown_policy='force';
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+force
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select * from t1 where a > 'x' and a < 'y' order by a;
+id	estRows	task	access object	operator info
+IndexLookUp_19	250.00	root		
+├─IndexRangeScan_17(Build)	250.00	cop[tikv]	table:t1, index:i(a, b)	range:("x","y"), keep order:true, stats:pseudo
+└─TableRowIDScan_18(Probe)	250.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select /*+ NO_INDEX_LOOKUP_PUSHDOWN(t1) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_index_lookup_pushdown_policy='affinity-force';
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+affinity-force
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+alter table t1 affinity = 'table';
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+alter table t1 affinity = 'none';
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_index_lookup_pushdown_policy='hint-only';
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+hint-only
+explain select * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select /*+ INDEX_LOOKUP_PUSHDOWN(t1, i) */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain select /*+ SET_VAR(tidb_index_lookup_pushdown_policy='force') */ * from t1 where a = 'x';
+id	estRows	task	access object	operator info
+IndexLookUp_7	10.00	root		
+├─LocalIndexLookUp_9(Build)	10.00	cop[tikv]		index handle offsets:[2]
+│ ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t1, index:i(a, b)	range:["x","x"], keep order:false, stats:pseudo
+│ └─TableRowIDScan_8(Probe)	10.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+set @@tidb_index_lookup_pushdown_policy=default;
+select @@tidb_index_lookup_pushdown_policy;
+@@tidb_index_lookup_pushdown_policy
+hint-only
 prepare stmt from 'select /*+ index_lookup_pushdown(t1, i) */ * from t1 where a > ? and c > ?';
 set @x1 = '1j';
 set @x2 = '5e';
@@ -473,4 +565,43 @@ id	a	b
 1	2	3
 Level	Code	Message
 Warning	1815	hint INDEX_LOOKUP_PUSHDOWN is inapplicable, only leader read is supported
+set @@tidb_replica_read='leader';
+create table t8 (a int, b int, key idx_a(a));
+create table t9 (a int, b int, key idx_a(a));
+insert into t8 values (20,1),(24,5),(23,9);
+insert into t9 values (1,1),(3,2),(6,3),(10,4),(12,5),(15,6),(25,7);
+explain format='brief' select *
+from t8
+where t8.a < (
+select /*+ INDEX_LOOKUP_PUSHDOWN(t9, idx_a) */ sum(t9.b)
+from t9 use index(idx_a)
+where t9.a > t8.b
+)
+order by t8.a, t8.b;
+id	estRows	task	access object	operator info
+Sort	10000.00	root		executor__index_lookup_pushdown.t8.a, executor__index_lookup_pushdown.t8.b
+└─Projection	10000.00	root		executor__index_lookup_pushdown.t8.a, executor__index_lookup_pushdown.t8.b
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:lt(cast(executor__index_lookup_pushdown.t8.a, decimal(10,0) BINARY), Column#7)
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	10000.00	root		funcs:sum(Column#10)->Column#7
+      └─IndexLookUp	10000.00	root		
+        ├─HashAgg(Build)	10000.00	cop[tikv]		funcs:sum(executor__index_lookup_pushdown.t9.b)->Column#10
+        │ └─LocalIndexLookUp	80000000.00	cop[tikv]		index handle offsets:[1]
+        │   ├─Selection(Build)	80000000.00	cop[tikv]		gt(executor__index_lookup_pushdown.t9.a, executor__index_lookup_pushdown.t8.b)
+        │   │ └─IndexFullScan	100000000.00	cop[tikv]	table:t9, index:idx_a(a)	keep order:false, stats:pseudo
+        │   └─TableRowIDScan(Probe)	80000000.00	cop[tikv]	table:t9	keep order:false, stats:pseudo
+        └─HashAgg(Probe)	0.00	cop[tikv]		funcs:sum(executor__index_lookup_pushdown.t9.b)->Column#10
+          └─TableRowIDScan	0.00	cop[tikv]	table:t9	keep order:false, stats:pseudo
+select *
+from t8
+where t8.a < (
+select /*+ INDEX_LOOKUP_PUSHDOWN(t9, idx_a) */ sum(t9.b)
+from t9 use index(idx_a)
+where t9.a > t8.b
+)
+order by t8.a, t8.b;
+a	b
+20	1
+24	5
 set @@tidb_scatter_region=default;

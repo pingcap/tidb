@@ -63,7 +63,7 @@ const (
 
 const (
 	// Todo: make it configable
-	gRPCTimeOut = 25 * time.Minute
+	gRPCTimeOut = 200 * time.Minute
 )
 
 // RewriteMode is a mode flag that tells the TiKV how to handle the rewrite rules.
@@ -433,9 +433,10 @@ func (importer *SnapFileImporter) Import(
 		logutil.CL(ctx).Debug("scan regions", logutil.Key("start key", startKey), logutil.Key("end key", endKey), zap.Int("count", len(regionInfos)), zap.Int("pool size", workerpoolsize))
 		start := time.Now()
 		// Try to download and ingest the file in every region
-		for _, regionInfo := range regionInfos {
+		for i, regionInfo := range regionInfos {
 			info := regionInfo
 			// Try to download file.
+			ectx := logutil.ContextWithField(ectx, zap.Int("region#", i), zap.Int("total#", len(regionInfos)))
 			workerpool.ApplyOnErrorGroup(eg, func() error {
 				downloadMetas, errDownload := importer.download(ectx, info, backupFileSets, importer.cipher, importer.apiVersion)
 				if errDownload != nil {
@@ -463,7 +464,7 @@ func (importer *SnapFileImporter) Import(
 			})
 		}
 		return eg.Wait()
-	}, utils.NewImportSSTBackoffer())
+	}, utils.VerboseRetry(utils.NewImportSSTBackoffer(), logutil.CL(ctx)))
 	if err != nil {
 		logutil.CL(ctx).Error("import sst file failed after retry, stop the whole progress", restore.ZapBatchBackupFileSet(backupFileSets), zap.Error(err))
 		return errors.Trace(err)
@@ -752,17 +753,24 @@ func (importer *SnapFileImporter) batchDownloadSST(
 			defer func() {
 				importer.releaseToken(tokenCh)
 			}()
-			for _, downloadReqMap := range downloadReqs {
-				for _, req := range downloadReqMap {
+			for i, downloadReqMap := range downloadReqs {
+				logger0 := logutil.CL(ectx).With(zap.Int("filegroup#", i), zap.Int("filegroup.total#", len(downloadReqs)))
+				for j, req := range downloadReqMap {
 					var err error
 					var resp *import_sstpb.DownloadResponse
-					resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffer(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+					logger := logger0.With(zap.String("reqName", j))
+					resp, err = utils.WithRetryV2(ectx, utils.VerboseRetry(utils.NewDownloadSSTBackoffer(), logger), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 						dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 						defer cancel()
 						if len(req.Ssts) == 0 {
 							// fallback to single download
 							return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
 						}
+						logger.Info("Sending batch download SST request.",
+							zap.Uint64("store_id", peer.GetStoreId()),
+							logutil.BriefSSTMetas("ssts", maps.Values(req.Ssts)),
+							logutil.Region(regionInfo.Region),
+						)
 						return importer.importClient.BatchDownloadSST(dctx, peer.GetStoreId(), req)
 					})
 					if err != nil {
@@ -772,7 +780,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
 					}
 					if resp.GetIsEmpty() {
-						log.Warn("download file skipped", zap.String("filename", req.Name),
+						logger.Warn("download file skipped", zap.String("filename", req.Name),
 							logutil.Region(regionInfo.Region), zap.Error(berrors.ErrKVRangeIsEmpty))
 						continue
 					}
@@ -999,6 +1007,7 @@ func (importer *SnapFileImporter) ingest(
 		errPb := ingestResp.GetError()
 		switch {
 		case errPb == nil:
+			logutil.CL(ctx).Info("finish ingesting into a region.", logutil.Region(info.Region), zap.Int("sst", len(downloadMetas)))
 			return nil
 		case errPb.NotLeader != nil:
 			// If error is `NotLeader`, update the region info and retry

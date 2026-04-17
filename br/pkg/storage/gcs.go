@@ -169,6 +169,12 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 	object := s.objectName(name)
 	err := s.GetBucketHandle().Object(object).Delete(ctx)
+	// for delete single file, files are deleted should be considered
+	if err != nil {
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
+			return nil
+		}
+	}
 	return errors.Trace(err)
 }
 
@@ -597,8 +603,6 @@ type gcsObjectReader struct {
 
 	prefetchSize int
 	// reader context used for implement `io.Seek`
-	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
-	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx context.Context
 }
 

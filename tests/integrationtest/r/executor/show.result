@@ -1141,3 +1141,74 @@ t	CREATE TABLE `t` (
   `b` int DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! PRE_SPLIT_REGIONS=2 */
+create database test_show_columns_db;
+create user test_show_columns_user;
+create table test_show_columns_db.t (a int, b int);
+create view test_show_columns_db.v (x, y) AS select a as aa, b as bb from test_show_columns_db.t;
+// no grant would report error
+show columns from test_show_columns_db.t;
+Error 1142 (42000): SELECT command denied to user 'test_show_columns_user'@'%' for table 't'
+show columns from test_show_columns_db.v;
+Error 1142 (42000): SELECT command denied to user 'test_show_columns_user'@'%' for table 'v'
+// with column privilege, specific columns are shown.
+grant select(a) on test_show_columns_db.t to test_show_columns_user;
+grant select(x) on test_show_columns_db.v to test_show_columns_user;
+show columns from test_show_columns_db.t;
+Field	Type	Null	Key	Default	Extra
+a	int	YES		NULL	
+show columns from test_show_columns_db.v;
+Field	Type	Null	Key	Default	Extra
+x	int	YES		NULL	
+grant insert(b) on test_show_columns_db.t to test_show_columns_user;
+grant update(y) on test_show_columns_db.v to test_show_columns_user;
+show columns from test_show_columns_db.t;
+Field	Type	Null	Key	Default	Extra
+a	int	YES		NULL	
+b	int	YES		NULL	
+show columns from test_show_columns_db.v;
+Field	Type	Null	Key	Default	Extra
+x	int	YES		NULL	
+y	int	YES		NULL	
+// with table privilege, all columns are shown.
+revoke select(a),insert(b) on test_show_columns_db.t from test_show_columns_user;
+revoke select(x),update(y) on test_show_columns_db.v from test_show_columns_user;
+grant update on test_show_columns_db.t to test_show_columns_user;
+grant references on test_show_columns_db.v to test_show_columns_user;
+show columns from test_show_columns_db.t;
+Field	Type	Null	Key	Default	Extra
+a	int	YES		NULL	
+b	int	YES		NULL	
+show columns from test_show_columns_db.v;
+Field	Type	Null	Key	Default	Extra
+x	int	YES		NULL	
+y	int	YES		NULL	
+drop database test_show_columns_db;
+drop user test_show_columns_user;
+create database test_show_index_db;
+create user test_show_index_user;
+create table test_show_index_db.t (a int, b int);
+alter table test_show_index_db.t add index i1(a);
+alter table test_show_index_db.t add index i2(b);
+alter table test_show_index_db.t add index i3(a,b);
+// no grant would report error
+show index from test_show_index_db.t;
+Error 1142 (42000): SELECT command denied to user 'test_show_index_user'@'%' for table 't'
+// with any column privilege, indexes are shown.
+grant update(a) on test_show_index_db.t to test_show_index_user;
+show index from test_show_index_db.t;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t	1	i1	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i2	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i3	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i3	2	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+// with table privilege, indexes are shown.
+revoke update(a) on test_show_index_db.t from test_show_index_user;
+grant references on test_show_index_db.t to test_show_index_user;
+show index from test_show_index_db.t;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t	1	i1	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i2	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i3	1	a	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+t	1	i3	2	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+drop database test_show_index_db;
+drop user test_show_index_user;

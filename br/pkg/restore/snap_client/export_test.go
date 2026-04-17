@@ -45,7 +45,8 @@ var (
 	GetSortedPhysicalTables       = getSortedPhysicalTables
 	GetMinUserTableID             = getMinUserTableID
 	NotifyUpdateAllUsersPrivilege = notifyUpdateAllUsersPrivilege
-	UpdateStatsTableSchema        = updateStatsTableSchema
+	GetSchemaVersionFromStatsMeta = getSchemaVersionFromStatsMeta
+	UpdateStatsMetaSchema         = updateStatsMetaSchema
 )
 
 // MockClient create a fake Client used to test.
@@ -125,7 +126,6 @@ func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 func (rc *SnapClient) ReplaceTables(
 	ctx context.Context,
 	createdTables []*restoreutils.CreatedTable,
-	schemaVersionPair SchemaVersionPairT,
 	restoreTS uint64,
 	loadStatsPhysical, loadSysTablePhysical bool,
 	kvClient kv.Client,
@@ -135,7 +135,6 @@ func (rc *SnapClient) ReplaceTables(
 	return rc.replaceTables(
 		ctx,
 		createdTables,
-		schemaVersionPair,
 		restoreTS,
 		loadStatsPhysical,
 		loadSysTablePhysical,
@@ -147,4 +146,12 @@ func (rc *SnapClient) ReplaceTables(
 
 func NewTemporaryTableChecker(loadStatsPhysical, loadSysTablePhysical bool) *TemporaryTableChecker {
 	return &TemporaryTableChecker{loadStatsPhysical: loadStatsPhysical, loadSysTablePhysical: loadSysTablePhysical}
+}
+
+func (rc *SnapClient) CheckPrivilegeTableRowsCollateCompatibility(
+	ctx context.Context,
+	dbNameL, tableNameL string,
+	upstreamTable, downstreamTable *model.TableInfo,
+) error {
+	return rc.checkPrivilegeTableRowsCollateCompatibility(ctx, dbNameL, tableNameL, upstreamTable, downstreamTable)
 }

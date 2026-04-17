@@ -324,7 +324,7 @@ func (h *conflictIndexKVHandler) handleBufferedHandles(ctx context.Context) erro
 	}
 	for rowKey, val := range res {
 		handle := rowKeys2Handle[rowKey]
-		if err := h.encodeAndHandleRow(ctx, handle, val); err != nil {
+		if err := h.encodeAndHandleRow(ctx, handle, val.Value); err != nil {
 			return errors.Trace(err)
 		}
 	}

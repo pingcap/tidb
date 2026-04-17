@@ -60,7 +60,7 @@ const (
 var MaxConflictRowFileSize int64 = 8 * units.GiB
 
 type collectConflictsStepExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	taskID   int64
 	store    tidbkv.Storage
 	taskMeta *TaskMeta
@@ -112,10 +112,10 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 		}
 		e.result.merge(result)
 	}
-	return nil
+	return e.onFinished(ctx, subtask)
 }
 
-func (e *collectConflictsStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+func (e *collectConflictsStepExecutor) onFinished(_ context.Context, subtask *proto.Subtask) error {
 	subtaskMeta := &CollectConflictsStepMeta{}
 	if err := json.Unmarshal(subtask.Meta, subtaskMeta); err != nil {
 		return errors.Trace(err)

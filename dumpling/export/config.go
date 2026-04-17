@@ -738,9 +738,10 @@ const (
 )
 
 var (
-	decodeRegionVersion = semver.New("3.0.0")
-	gcSafePointVersion  = semver.New("4.0.0")
-	tableSampleVersion  = semver.New("5.0.0-nightly")
+	decodeRegionVersion    = semver.New("3.0.0")
+	gcSafePointVersion     = semver.New("4.0.0")
+	tableSampleVersion     = semver.New("5.0.0-nightly")
+	minNewTerminologyMySQL = semver.New("8.4.0") // first MySQL version to no longer support MASTER/SLAVE/etc
 )
 
 func adjustConfig(conf *Config, fns ...func(*Config) error) error {

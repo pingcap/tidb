@@ -85,6 +85,7 @@ import (
 	/* TiDB hint names */
 	hintAggToCop              "AGG_TO_COP"
 	hintIgnorePlanCache       "IGNORE_PLAN_CACHE"
+	hintWriteSlowLog          "WRITE_SLOW_LOG"
 	hintHashAgg               "HASH_AGG"
 	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
 	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
@@ -114,6 +115,7 @@ import (
 	hintOrderIndex            "ORDER_INDEX"
 	hintNoOrderIndex          "NO_ORDER_INDEX"
 	hintIndexLookUpPushDown   "INDEX_LOOKUP_PUSHDOWN"
+	hintNoIndexLookUpPushDown "NO_INDEX_LOOKUP_PUSHDOWN"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -345,6 +347,12 @@ TableOptimizerHintOpt:
 		$$ = &ast.TableOptimizerHint{
 			HintName: model.NewCIStr($1),
 			QBName:   model.NewCIStr($3),
+		}
+	}
+|	"WRITE_SLOW_LOG"
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
 		}
 	}
 |	"QUERY_TYPE" '(' QueryBlockOpt HintQueryType ')'
@@ -668,6 +676,7 @@ SupportedIndexLevelOptimizerHintName:
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
+|	"NO_INDEX_LOOKUP_PUSHDOWN"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -742,6 +751,7 @@ Identifier:
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"
 |	"IGNORE_PLAN_CACHE"
+|	"WRITE_SLOW_LOG"
 |	"HASH_AGG"
 |	"MPP_1PHASE_AGG"
 |	"MPP_2PHASE_AGG"
@@ -771,6 +781,7 @@ Identifier:
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
+|   "NO_INDEX_LOOKUP_PUSHDOWN"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"

@@ -84,7 +84,8 @@ type DataSource struct {
 	UnMutableHandleCols util.HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
-	TblCols []*expression.Column
+	TblCols     []*expression.Column
+	TblColsByID map[int64]*expression.Column
 	// CommonHandleCols and CommonHandleLens save the info of primary key which is the clustered index.
 	CommonHandleCols []*expression.Column
 	CommonHandleLens []int
@@ -566,7 +567,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
 	is.SetSchema(ds.Schema())
-	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
+	is.IdxCols, is.IdxColLens = util.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
 
 	sg := TiKVSingleGather{
 		Source:        ds,
@@ -584,8 +585,8 @@ func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 	gathers = append(gathers, tg)
 	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+			path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+				util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 			// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
 			if utilfuncp.IsSingleScan(ds, path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
@@ -676,4 +677,11 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+// AppendTableCol appends a column to the original columns of the table before pruning,
+// accessed through ds.TblCols and ds.TblColsByID.
+func (ds *DataSource) AppendTableCol(col *expression.Column) {
+	ds.TblCols = append(ds.TblCols, col)
+	ds.TblColsByID[col.ID] = col
 }

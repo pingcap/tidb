@@ -20,6 +20,7 @@ go_library(
         "//pkg/ddl/label",
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
+        "//pkg/domain/affinity",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/model",

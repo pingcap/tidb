@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -85,35 +86,24 @@ type taskCheckpoint struct {
 	lastBatchRead bool
 }
 
-// FlushController is an interface to control the flush of data so after it
-// returns caller can save checkpoint.
-type FlushController interface {
-	// Flush checks if al engines need to be flushed and imported based on given
-	// FlushMode. It's concurrent safe.
-	Flush(ctx context.Context, mode FlushMode) (flushed, imported bool, err error)
-}
-
 // NewCheckpointManager creates a new checkpoint manager.
 func NewCheckpointManager(
 	ctx context.Context,
 	sessPool *sess.Pool,
 	physicalID int64,
 	jobID int64,
-	indexIDs []int64,
 	localStoreDir string,
 	pdCli pd.Client,
 ) (*CheckpointManager, error) {
 	instanceAddr := InstanceAddr()
 	ctx2, cancel := context.WithCancel(ctx)
-	logger := logutil.DDLIngestLogger().With(
-		zap.Int64("jobID", jobID), zap.Int64s("indexIDs", indexIDs))
+	logger := logutil.DDLIngestLogger().With(zap.Int64("jobID", jobID))
 
 	cm := &CheckpointManager{
 		ctx:           ctx2,
 		cancel:        cancel,
 		sessPool:      sessPool,
 		jobID:         jobID,
-		indexIDs:      indexIDs,
 		localStoreDir: localStoreDir,
 		pdCli:         pdCli,
 		logger:        logger,
@@ -171,16 +161,16 @@ func (s *CheckpointManager) NextKeyToProcess() kv.Key {
 	return nil
 }
 
-// Status returns the status of the checkpoint.
-func (s *CheckpointManager) Status() (keyCnt int, minKeyImported kv.Key) {
+// TotalKeyCount returns the key counts that have processed.
+// It contains the keys that is not sync to checkpoint.
+func (s *CheckpointManager) TotalKeyCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	total := 0
 	for _, cp := range s.checkpoints {
 		total += cp.writtenKeys
 	}
-	// TODO(lance6716): ???
-	return s.flushedKeyCnt + total, s.importedKeyLowWatermark
+	return s.flushedKeyCnt + total
 }
 
 // Register registers a new task. taskID MUST be continuous ascending and start
@@ -216,9 +206,9 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
 }
 
 // AdvanceWatermark advances the watermark according to flushed or imported status.
-func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
-	if !flushed {
-		return
+func (s *CheckpointManager) AdvanceWatermark(imported bool) error {
+	if s.noUpdate() {
+		return nil
 	}
 
 	failpoint.Inject("resignAfterFlush", func() {
@@ -230,17 +220,26 @@ func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
 		}
 	})
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.afterFlush()
 
 	if imported {
-		s.afterImport()
+		err := s.afterImport()
+		if err != nil {
+			return err
+		}
+		err = s.updateCheckpoint()
+		if err != nil {
+			return err
+		}
+		return nil
 	}
+	return nil
 }
 
 // afterFlush should be called after all engine is flushed.
 func (s *CheckpointManager) afterFlush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for {
 		cp := s.checkpoints[s.minTaskIDFinished]
 		if cp == nil || !cp.lastBatchRead || cp.writtenKeys < cp.totalKeys {
@@ -254,17 +253,41 @@ func (s *CheckpointManager) afterFlush() {
 	}
 }
 
-func (s *CheckpointManager) afterImport() {
+func (s *CheckpointManager) afterImport() error {
+	p, l, err := s.pdCli.GetTS(s.ctx)
+	failpoint.Inject("mockAfterImportAllocTSFailed", func(_ failpoint.Value) {
+		err = errors.Errorf("mock err")
+	})
+	if err != nil {
+		s.logger.Warn("advance watermark get ts failed", zap.Error(err))
+		return err
+	}
+	newTS := oracle.ComposeTS(p, l)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.importedKeyLowWatermark.Cmp(s.flushedKeyLowWatermark) > 0 {
 		s.logger.Warn("lower watermark of flushed key is less than imported key",
 			zap.String("flushed", hex.EncodeToString(s.flushedKeyLowWatermark)),
 			zap.String("imported", hex.EncodeToString(s.importedKeyLowWatermark)),
 		)
-		return
+		return errors.Errorf("flushed key is less than imported key")
 	}
 	s.importedKeyLowWatermark = s.flushedKeyLowWatermark
 	s.importedKeyCnt = s.flushedKeyCnt
+	intest.Assert(s.ts < newTS)
+	if s.ts < newTS {
+		s.ts = newTS
+	}
 	s.dirty = true
+	return nil
+}
+
+func (s *CheckpointManager) noUpdate() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.checkpoints) == 0 && s.minTaskIDFinished == 0
 }
 
 // Close closes the checkpoint manager.
@@ -494,16 +517,4 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		return s.ctx.Err()
 	}
 	return nil
-}
-
-func (s *CheckpointManager) refreshTSAndUpdateCP() (uint64, error) {
-	p, l, err := s.pdCli.GetTS(s.ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	newTS := oracle.ComposeTS(p, l)
-	s.mu.Lock()
-	s.ts = newTS
-	s.mu.Unlock()
-	return newTS, s.updateCheckpoint()
 }

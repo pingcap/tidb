@@ -1596,6 +1596,11 @@ error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
 '''
 
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s
@@ -2344,6 +2349,11 @@ Column count doesn't match value count at row %d
 ["planner:1142"]
 error = '''
 %-.128s command denied to user '%-.48s'@'%-.255s' for table '%-.64s'
+'''
+
+["planner:1143"]
+error = '''
+%-.16s command denied to user '%-.48s'@'%-.255s' for column '%-.192s' in table '%-.192s'
 '''
 
 ["planner:1146"]

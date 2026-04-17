@@ -214,3 +214,22 @@ func TestMemQuotaAnalyze2(t *testing.T) {
 	tk.MustExec("set global tidb_mem_quota_analyze=128;")
 	tk.MustExecToErr("analyze table tbl_2;")
 }
+
+func TestAnalyzeSessionMemTrackerDetachOnClose(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err := tk.ExecToErr("analyze table test.not_exists with 1 topn")
+	require.Error(t, err)
+
+	vars := tk.Session().GetSessionVars()
+	// Clear any residue from the analyze statement to make the delta deterministic.
+	vars.MemTracker.ReplaceBytesUsed(0)
+	base := executor.GlobalAnalyzeMemoryTracker.BytesConsumed()
+	vars.MemTracker.Consume(1024)
+	require.Equal(t, base+1024, executor.GlobalAnalyzeMemoryTracker.BytesConsumed())
+
+	tk.Session().Close()
+	require.Equal(t, base, executor.GlobalAnalyzeMemoryTracker.BytesConsumed())
+}

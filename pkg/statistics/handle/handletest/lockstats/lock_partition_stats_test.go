@@ -56,6 +56,7 @@ func TestLockAndUnlockPartitionStats(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
 		"Warning 1105 skip analyze locked table: test.t partition (p0)",
 	))
 	partitionStats1 := handle.GetPhysicalTableStats(p0Id, tbl)
@@ -488,6 +489,7 @@ func TestNewPartitionShouldBeLockedIfWholeTableLocked(t *testing.T) {
 	// Check the new partition is locked.
 	tk.MustExec("analyze table t partition p2")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1681 ANALYZE with tidb_analyze_version=1 is deprecated and will be removed in a future release.",
 		"Warning 1105 skip analyze locked table: test.t partition (p2)",
 	))
 

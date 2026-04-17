@@ -27,6 +27,7 @@ go_library(
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/restore/utils",
         "//br/pkg/storage",
+        "//br/pkg/stream/backupmetas",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
         "//br/pkg/utils/consts",
@@ -71,6 +72,7 @@ go_test(
         "rewrite_meta_rawkv_test.go",
         "search_test.go",
         "stream_metas_test.go",
+        "stream_mgr_fuzz_test.go",
         "stream_misc_test.go",
         "table_mapping_test.go",
     ],
@@ -79,6 +81,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//br/pkg/storage",
+        "//br/pkg/stream/backupmetas",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
         "//br/pkg/utils/consts",

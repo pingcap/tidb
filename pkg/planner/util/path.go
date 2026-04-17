@@ -27,6 +27,18 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
+// IndexLookUpPushDownByType indicates whether to use index lookup push down optimization where it comes.
+type IndexLookUpPushDownByType int
+
+const (
+	// IndexLookUpPushDownNone indicates do not push down the index lookup.
+	IndexLookUpPushDownNone IndexLookUpPushDownByType = iota
+	// IndexLookUpPushDownByHint indicates the hint tells to push down the index lookup.
+	IndexLookUpPushDownByHint
+	// IndexLookUpPushDownBySysVar indicates the system variable tells to push down the index lookup.
+	IndexLookUpPushDownBySysVar
+)
+
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type AccessPath struct {
@@ -93,8 +105,21 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
-	// Whether to use the index lookup push down optimization for this access path.
-	IsIndexLookUpPushDown bool
+	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
+	IndexLookUpPushDownBy IndexLookUpPushDownByType
+
+	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
+	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
+	// merge sort on the 3 ranges to satisfy the ORDER BY b, c.
+
+	// GroupedRanges stores the result of grouping ranges by columns. Finally, we need a merge sort on the results of
+	// each range group.
+	GroupedRanges [][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge sort to satisfy the physical
+	// property.
+	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
+	// It's used in plan cache or Apply.
+	GroupByColIdxs []int
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -129,6 +154,9 @@ func (path *AccessPath) Clone() *AccessPath {
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
+		IndexLookUpPushDownBy:        path.IndexLookUpPushDownBy,
+		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
+		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -142,6 +170,9 @@ func (path *AccessPath) Clone() *AccessPath {
 			tmp = append(tmp, oneAlternative.Clone())
 		}
 		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+	}
+	for _, ranges := range path.GroupedRanges {
+		ret.GroupedRanges = append(ret.GroupedRanges, CloneRanges(ranges))
 	}
 	return ret
 }
@@ -165,11 +196,6 @@ func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
 func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
-	// The plan cache do not support subquery now. So we skip this function when
-	// 'MaybeOverOptimized4PlanCache' function return true .
-	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
-		return nil, path.TableFilters
-	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
@@ -191,6 +217,9 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			if !colEqConstant && !colEqCorCol {
 				continue
 			}
+			// The plan cache do not support subquery now. So we skip the plan cache when there are correlated subqueries.
+			// Future judgement should be aligned with the function `isPhysicalPlanCacheable`.
+			ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
 			matched = true
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {

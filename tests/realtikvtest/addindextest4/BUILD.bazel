@@ -12,7 +12,9 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/ddl",
+        "//pkg/disttask/framework/proto",
         "//pkg/domain",
+        "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/testkit",

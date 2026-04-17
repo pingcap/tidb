@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -93,8 +94,8 @@ const (
 	TablePrometheusCacheExpiry = 10 * time.Second
 	// RequestRetryInterval is the sleep time before next retry for http request
 	RequestRetryInterval = 200 * time.Millisecond
-	// SyncBundlesMaxRetry is the max retry times for sync placement bundles
-	SyncBundlesMaxRetry = 3
+	// RequestPDMaxRetry is the max retry times for sync placement bundles
+	RequestPDMaxRetry = 3
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
@@ -276,6 +277,10 @@ func GlobalInfoSyncerInit(
 	is.initTiFlashReplicaManager(codec)
 	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
+
+	// Initialize affinity package
+	affinity.InitManager(is.pdHTTPCli)
+
 	return is, nil
 }
 
@@ -684,7 +689,7 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 
 // PutRuleBundlesWithDefaultRetry will retry for default times
 func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bundle) (err error) {
-	return PutRuleBundlesWithRetry(ctx, bundles, SyncBundlesMaxRetry, RequestRetryInterval)
+	return PutRuleBundlesWithRetry(ctx, bundles, RequestPDMaxRetry, RequestRetryInterval)
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {

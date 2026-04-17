@@ -38,13 +38,13 @@ drop table if exists t;
 create table t (a bigint);
 insert into t(a) values (9223372036854775807);
 alter table t modify column a int;
-Error 1690 (22003): constant 9223372036854775807 overflows int
+Error 1265 (01000): Data truncated for column 'a', value is '9223372036854775807'
 alter table t modify column a mediumint;
-Error 1690 (22003): constant 9223372036854775807 overflows mediumint
+Error 1265 (01000): Data truncated for column 'a', value is '9223372036854775807'
 alter table t modify column a smallint;
-Error 1690 (22003): constant 9223372036854775807 overflows smallint
+Error 1265 (01000): Data truncated for column 'a', value is '9223372036854775807'
 alter table t modify column a tinyint;
-Error 1690 (22003): constant 9223372036854775807 overflows tinyint
+Error 1265 (01000): Data truncated for column 'a', value is '9223372036854775807'
 admin check table t;
 drop table if exists t;
 create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f bigint);

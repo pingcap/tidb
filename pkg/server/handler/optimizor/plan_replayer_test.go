@@ -93,6 +93,9 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
 
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server.RunInGoTestChan = make(chan struct{})
 	srv, err := server.NewServer(cfg, driver)
 	srv.SetDomain(dom)
 	require.NoError(t, err)
@@ -338,6 +341,8 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 		config.AllowAllFiles = true
 	}))
 	require.NoError(t, err, "Error connecting")
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	defer func() {
 		err := db.Close()
 		require.NoError(t, err)
@@ -353,15 +358,31 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec("drop table planReplayer.c")
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
+	tk.MustExec("use planReplayer")
+	tk.MustExec("set @@tidb_use_plan_baselines = 1")
 
-	// 3-3. check whether binding takes effect
-	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
-	rows := tk.MustQuery("select @@last_plan_from_binding")
+	rows := tk.MustQuery("select @@global.tidb_mem_quota_binding_cache")
 	require.True(t, rows.Next(), "unexpected data")
-	var count int64
-	err = rows.Scan(&count)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), count)
+	var originBindingCacheQuota int64
+	require.NoError(t, rows.Scan(&originBindingCacheQuota))
+	require.NoError(t, rows.Close())
+	tk.MustExec("set global tidb_mem_quota_binding_cache = 268435456") // 256MB
+	defer tk.MustExec(fmt.Sprintf("set global tidb_mem_quota_binding_cache = %d", originBindingCacheQuota))
+
+	tk.MustExec("admin reload bindings")
+	// 3-3. check whether binding takes effect
+	require.Eventually(t, func() bool {
+		tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
+		rows := tk.MustQuery("select @@last_plan_from_binding")
+		if !rows.Next() {
+			_ = rows.Close()
+			return false
+		}
+		var count int64
+		err := rows.Scan(&count)
+		_ = rows.Close()
+		return err == nil && count == int64(1)
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestIssue43192(t *testing.T) {
@@ -461,6 +482,13 @@ func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerCli
 	require.NoError(t, rows.Close())
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
 	require.True(t, rows.Next(), "unexpected data")
+	var token string
+	require.NoError(t, rows.Scan(&token))
+	require.NoError(t, rows.Close())
+	require.Equal(t, filename, token)
+
+	// Cleanup the binding created for dumping to avoid interference when the same server later loads the replayer file.
+	tk.MustExec("drop global binding for select a, b from t where a in (1, 2, 3)")
 	return filename
 }
 
@@ -468,6 +496,8 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	h := dom.StatsHandle()
 	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	defer func() {
 		err := db.Close()
 		require.NoError(t, err)
@@ -528,7 +558,7 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	return filename
 }
 
-func prepareData4Issue64802(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain) string {
+func prepareData4Issue64802(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain, injectedPanic bool) string {
 	h := dom.StatsHandle()
 	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
@@ -554,6 +584,32 @@ SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2
 FROM test_table t1
 JOIN test_table t2 ON t1.id = t2.id;
 `)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`CREATE TABLE test_table (
+    id INT PRIMARY KEY,
+    value1 INT,
+    value2 INT
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`CREATE global BINDING FOR
+SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id
+USING
+SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id;
+`)
+	tk.MustExec(`use test`)
+	if injectedPanic {
+		fpName := "github.com/pingcap/tidb/pkg/planner/core/ConsumeVolcanoOptimizePanic"
+		require.NoError(t, failpoint.Enable(fpName, "panic(\"injected panic\")"))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+		}()
+	}
 	rows := tk.MustQuery("plan replayer dump explain SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2 FROM test_table t1 JOIN test_table t2 ON t1.id = t2.id;")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename string
@@ -565,6 +621,14 @@ JOIN test_table t2 ON t1.id = t2.id;
 }
 
 func TestIssue64802(t *testing.T) {
+	testIssue64802(t, false)
+}
+
+func TestIssue64802WithPanic(t *testing.T) {
+	testIssue64802(t, true)
+}
+
+func testIssue64802(t *testing.T, injectedPanic bool) {
 	origin := config.GetGlobalConfig().TempDir
 	defer func() {
 		config.GetGlobalConfig().TempDir = origin
@@ -577,7 +641,7 @@ func TestIssue64802(t *testing.T) {
 	server, client := prepareServerAndClientForTest(t, store, dom)
 	defer server.Close()
 
-	filename := prepareData4Issue64802(t, client, dom)
+	filename := prepareData4Issue64802(t, client, dom, false)
 	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 
 	// 2. check the contents of the plan replayer zip files.
@@ -643,7 +707,6 @@ func TestIssue64802(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table test.test_table")
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
-
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
 FROM test_table t1
@@ -772,6 +835,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	ts2 := oracle.GoTimeToTS(time2)
 	stats1, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
 	require.NoError(t, err)
+	stats1.Sort()
 
 	// 1-2. second insert and second analyze, trigger second dump history stats
 	tk.MustExec("insert into t value(4,4,4), (5,5,5), (6,6,6)")
@@ -785,6 +849,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	ts3 := oracle.GoTimeToTS(time3)
 	stats2, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
 	require.NoError(t, err)
+	stats2.Sort()
 
 	// 2. get the plan replayer and assert
 
@@ -808,6 +873,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	// the result is the same as stats2, and IsHistoricalStats is false.
 	require.Len(t, jsonTbls1, 1)
 	require.False(t, jsonTbls1[0].IsHistoricalStats)
+	jsonTbls1[0].Sort()
 	require.Equal(t, jsonTbls1[0], stats2)
 
 	// because we failed to get historical stats, there's an error message.
@@ -831,6 +897,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Len(t, jsonTbls2, 1)
 	require.True(t, jsonTbls2[0].IsHistoricalStats)
 	jsonTbls2[0].IsHistoricalStats = false
+	jsonTbls2[0].Sort()
 	require.Equal(t, jsonTbls2[0], stats1)
 
 	// succeeded to get historical stats, there should be no error message.
@@ -854,6 +921,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Len(t, jsonTbls3, 1)
 	require.True(t, jsonTbls3[0].IsHistoricalStats)
 	jsonTbls3[0].IsHistoricalStats = false
+	jsonTbls3[0].Sort()
 	require.Equal(t, jsonTbls3[0], stats2)
 
 	// succeeded to get historical stats, there should be no error message.

@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-	"sync/atomic"
+	goatomic "sync/atomic"
 	"testing"
 	"time"
 
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 func init() {
@@ -72,7 +73,7 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("alter table t add unique index idx1(b);")
 	tk.MustExec("admin check table t;")
 	require.Equal(t, int64(0), ingest.LitMemRoot.CurrentUsage())
-	require.NoError(t, local.LastAlloc.CheckRefCnt())
+	require.NoError(t, local.LastAlloc.Load().CheckRefCnt())
 }
 
 func TestAddIndexIngestLimitOneBackend(t *testing.T) {
@@ -237,7 +238,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum", `return(true)`))
 	done := make(chan error, 1)
-	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, 2)
+	goatomic.StoreInt32(&ddl.TestCheckWorkerNumber, 2)
 	testutil.SessionExecInGoroutine(store, "addindexlit", "alter table t add index idx(a);", done)
 
 	running := true
@@ -251,7 +252,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 		case wg := <-ddl.TestCheckWorkerNumCh:
 			offset = (offset + 1) % 3
 			tk.MustExec(fmt.Sprintf("set @@tidb_ddl_reorg_worker_cnt=%d", cnt[offset]))
-			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset]/2+2))
+			goatomic.StoreInt32(&ddl.TestCheckWorkerNumber, int32(cnt[offset]/2+2))
 			wg.Done()
 		}
 	}
@@ -470,10 +471,58 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
-	ingest.ForceSyncFlagForTest = true
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
+	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
 	tk.MustExec("alter table t add index idx_test(b);")
-	ingest.ForceSyncFlagForTest = false
 	tk.MustExec("update t set b = b + 1;")
+
+	var counter atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackStartTS", func(uint64) {
+		counter.Inc()
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackAfterFn", func() {
+		counter.Dec()
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
+		assert.Equal(t, int32(0), counter.Load())
+	})
+	tk.MustExec("alter table t add index idx_test2(b);")
+}
+
+func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt=1;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
+	tk.MustExec("insert into t values(1, 1, 1);")
+	tk.MustExec("insert into t values(100000, 1, 2);")
+	ingest.ForceSyncFlagForTest.Store(true)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+	tk.MustExec("update t set b = b + 1;")
+
+	//// TODO(tangenta): add scan ts, import ts and key range to the checkpoint information, so that
+	//// we can re-ingest the same task idempotently.
+	// tk.MustExec("alter table t drop index idx;")
+	// testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
+	// tk.MustExec("alter table t add unique index idx(k);")
+	// tk.MustExec("admin check table t;")
+	// tk.MustExec("update t set k = k + 10;")
+
+	tk.MustExec("alter table t drop index idx;")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
+	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "1*return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/afterSetTSBeforeImportEngine", "1*return")
+	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 }
 
 func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
@@ -491,9 +540,22 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
-	ingest.ForceSyncFlagForTest = true
+	ingest.ForceSyncFlagForTest.Store(true)
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
-	ingest.ForceSyncFlagForTest = false
+	ingest.ForceSyncFlagForTest.Store(false)
+}
+
+func TestAddIndexRecoverOnDuplicateCheck(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = on;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (2), (3);")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockCollectRemoteDuplicateRowsFailed", "1*return")
+	tk.MustExec("alter table t add unique index idx(a);")
 }
 
 func TestAddIndexBackfillLostUpdate(t *testing.T) {
@@ -710,6 +772,9 @@ func TestIssue55808(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	tk.MustExec("set global tidb_enable_dist_task = off;")
 	tk.MustExec("set global tidb_ddl_error_count_limit = 0")
+	defer func() {
+		tk.MustExec("set global tidb_ddl_error_count_limit = default;")
+	}()
 
 	backup := local.MaxWriteAndIngestRetryTimes
 	local.MaxWriteAndIngestRetryTimes = 1

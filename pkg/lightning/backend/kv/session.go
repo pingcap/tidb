@@ -173,7 +173,7 @@ func (*MemBuf) Cleanup(_ kv.StagingHandle) {}
 
 // GetLocal implements the kv.MemBuffer interface.
 func (mb *MemBuf) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
-	return mb.Get(ctx, key)
+	return kv.GetValue(ctx, mb, key)
 }
 
 // Size returns sum of keys and values length.
@@ -235,8 +235,8 @@ func (*transaction) Flush() (int, error) {
 func (*transaction) Reset() {}
 
 // Get implements the kv.Retriever interface
-func (*transaction) Get(_ context.Context, _ kv.Key) ([]byte, error) {
-	return nil, kv.ErrNotExist
+func (*transaction) Get(_ context.Context, _ kv.Key, _ ...kv.GetOption) (kv.ValueEntry, error) {
+	return kv.ValueEntry{}, kv.ErrNotExist
 }
 
 // Iter implements the kv.Retriever interface

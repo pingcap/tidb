@@ -220,6 +220,25 @@ const (
 	AllCTECanMpp
 )
 
+// PhysicalPropMatchResult describes the result of matching PhysicalProperty against an access path.
+type PhysicalPropMatchResult int
+
+const (
+	// PropNotMatched means the access path cannot satisfy the required order.
+	PropNotMatched PhysicalPropMatchResult = iota
+	// PropMatched means the access path can satisfy the required property directly.
+	PropMatched
+	// PropMatchedNeedMergeSort means the access path can satisfy the required property, but a merge sort between range
+	// groups is needed.
+	// Corresponding information will be recorded in AccessPath.GroupedRanges and AccessPath.GroupByColIdxs.
+	PropMatchedNeedMergeSort
+)
+
+// Matched returns true if the required order can be satisfied.
+func (r PhysicalPropMatchResult) Matched() bool {
+	return r == PropMatched || r == PropMatchedNeedMergeSort
+}
+
 // PhysicalProperty stands for the required physical property by parents.
 // It contains the orders and the task types.
 type PhysicalProperty struct {

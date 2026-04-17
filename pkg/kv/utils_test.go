@@ -89,13 +89,13 @@ func (s *mockMap) IterReverse(Key, Key) (Iterator, error) {
 	return nil, nil
 }
 
-func (s *mockMap) Get(_ context.Context, k Key) ([]byte, error) {
+func (s *mockMap) Get(_ context.Context, k Key, _ ...GetOption) (ValueEntry, error) {
 	for i, key := range s.index {
 		if key.Cmp(k) == 0 {
-			return s.value[i], nil
+			return NewValueEntry(s.value[i], 0), nil
 		}
 	}
-	return nil, ErrNotExist
+	return ValueEntry{}, ErrNotExist
 }
 
 func (s *mockMap) Set(k Key, v []byte) error {

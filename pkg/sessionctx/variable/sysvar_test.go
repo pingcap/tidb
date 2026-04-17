@@ -1264,7 +1264,7 @@ func TestTiDBIgnoreInlistPlanDigest(t *testing.T) {
 	vars.GlobalVarsAccessor = mock
 	initValue, err := mock.GetGlobalSysVar(TiDBIgnoreInlistPlanDigest)
 	require.NoError(t, err)
-	require.Equal(t, initValue, Off)
+	require.Equal(t, initValue, On)
 	// Set to On(init at start)
 	err1 := mock.SetGlobalSysVar(context.Background(), TiDBIgnoreInlistPlanDigest, On)
 	require.NoError(t, err1)
@@ -1740,6 +1740,34 @@ func TestTiDBSchemaCacheSize(t *testing.T) {
 	require.Error(t, err)
 	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "a700MB")
 	require.Error(t, err)
+}
+
+func TestTiDBCircuitBreakerPDMetadataErrorRateThresholdRatio(t *testing.T) {
+	sv := GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio)
+	vars := NewSessionVars(nil)
+
+	// Too low, will get raised to the min value
+	val, err := sv.Validate(vars, "-1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MinValue, 10), val)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '-1'", warn.Error())
+
+	// Too high, will get lowered to the max value
+	val, err = sv.Validate(vars, "1.1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(GetSysVar(TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio).MaxValue, 10), val)
+	warn = vars.StmtCtx.GetWarnings()[1].Err
+	require.Equal(t, "[variable:1292]Truncated incorrect tidb_cb_pd_metadata_error_rate_threshold_ratio value: '1.1'", warn.Error())
+
+	// valid
+	val, err = sv.Validate(vars, "0.9", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0.9", val)
+
+	val, err = sv.Validate(vars, "0.0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0.0", val)
 }
 
 func TestEnableWindowFunction(t *testing.T) {

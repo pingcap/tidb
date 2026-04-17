@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,11 +27,10 @@ func TestImportTaskExecutor(t *testing.T) {
 	ctx := context.Background()
 	executor := NewImportExecutor(
 		ctx,
-		":4000",
 		&proto.Task{
 			TaskBase: proto.TaskBase{ID: 1},
 		},
-		nil,
+		taskexecutor.NewParamForTest(nil, nil, nil, ":4000"),
 		nil,
 	).(*importExecutor)
 
