@@ -193,3 +193,83 @@ func TestDecodeMetaFile(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckBackupFilesExists(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	s, err := objstore.NewLocalStorage(base)
+	require.NoError(t, err)
+	cipher := &backuppb.CipherInfo{CipherType: 1}
+
+	require.NoError(t, s.WriteFile(ctx, "v1-data.sst", []byte("sst")))
+	require.NoError(t, s.WriteFile(ctx, "v1-stats", []byte("stats")))
+	v1Meta := &backuppb.BackupMeta{
+		Files: []*backuppb.File{
+			{Name: "v1-data.sst"},
+		},
+		Schemas: []*backuppb.Schema{
+			{
+				StatsIndex: []*backuppb.StatsFileIndex{
+					{Name: "v1-stats"},
+				},
+			},
+		},
+	}
+	total, missing, err := metautil.CheckBackupFilesExists(ctx, s, v1Meta, cipher)
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Empty(t, missing)
+
+	require.NoError(t, s.WriteFile(ctx, "v2-data.sst", []byte("sst")))
+	require.NoError(t, s.WriteFile(ctx, "v2-stats", []byte("stats")))
+	schemaMetaFile := flushMetaFile(ctx, t, "v2-schema.meta", &backuppb.MetaFile{
+		Schemas: []*backuppb.Schema{
+			{
+				StatsIndex: []*backuppb.StatsFileIndex{
+					{Name: "v2-stats"},
+				},
+			},
+		},
+	}, s, cipher)
+	dataMetaFile := flushMetaFile(ctx, t, "v2-files.meta", &backuppb.MetaFile{
+		DataFiles: []*backuppb.File{
+			{Name: "v2-data.sst"},
+		},
+	}, s, cipher)
+	v2Meta := &backuppb.BackupMeta{
+		FileIndex: &backuppb.MetaFile{
+			MetaFiles: []*backuppb.File{
+				dataMetaFile,
+			},
+		},
+		SchemaIndex: &backuppb.MetaFile{
+			MetaFiles: []*backuppb.File{
+				schemaMetaFile,
+			},
+		},
+	}
+	total, missing, err = metautil.CheckBackupFilesExists(ctx, s, v2Meta, cipher)
+	require.NoError(t, err)
+	require.Equal(t, 4, total)
+	require.Empty(t, missing)
+
+	missingDataMeta := &backuppb.BackupMeta{
+		Files: []*backuppb.File{
+			{Name: "missing-data.sst"},
+		},
+	}
+	total, missing, err = metautil.CheckBackupFilesExists(ctx, s, missingDataMeta, cipher)
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Equal(t, []string{"missing-data.sst"}, missing)
+
+	missingMetaIndex := &backuppb.BackupMeta{
+		SchemaIndex: &backuppb.MetaFile{
+			MetaFiles: []*backuppb.File{
+				{Name: "missing-meta"},
+			},
+		},
+	}
+	_, _, err = metautil.CheckBackupFilesExists(ctx, s, missingMetaIndex, cipher)
+	require.Error(t, err)
+}

@@ -4,8 +4,11 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
@@ -51,6 +54,49 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newTestStorageCommand())
 	cmd.AddCommand(newPitrChecksumCommand())
 	cmd.AddCommand(newUpstreamChecksumCommand())
+	cmd.AddCommand(checkFullBackupFilesCommand())
+	return cmd
+}
+
+func checkFullBackupFilesCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "check-full-backup-files",
+		Short: "verify all files referenced by full backup metadata exist in object storage",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := GetDefaultContext()
+			cfg := task.Config{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return errors.Trace(err)
+			}
+			_, s, backupMeta, err := task.ReadBackupMeta(ctx, metautil.MetaFile, &cfg)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			total, missing, err := metautil.CheckBackupFilesExists(ctx, s, backupMeta, &cfg.CipherInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if len(missing) > 0 {
+				const maxPreview = 20
+				preview := missing
+				if len(preview) > maxPreview {
+					preview = preview[:maxPreview]
+				}
+				return errors.Errorf(
+					"found %d/%d missing backup objects (checked via object-store HEAD): %s",
+					len(missing),
+					total,
+					strings.Join(preview, ", "),
+				)
+			}
+			cmd.Println(fmt.Sprintf(
+				"all %d backup objects referenced in backupmeta exist (checked via object-store HEAD)",
+				total,
+			))
+			return nil
+		},
+	}
 	return cmd
 }
 
