@@ -44,6 +44,8 @@ const (
 	// That is: floor(log256(10^81-1))
 	maximumDecimalBytes = 33
 	microsPerDay        = int64(24 * time.Hour / time.Microsecond)
+	// julianDayOfUnixEpoch is the Julian day number for 1970-01-01.
+	julianDayOfUnixEpoch = int64(2440588)
 )
 
 func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
@@ -345,15 +347,14 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 // newInt96 is a utility function to create a parquet.Int96 for test,
 // where microseconds is the number of microseconds since Unix epoch.
 func newInt96(microseconds int64) parquet.Int96 {
-	const microsPerDay = int64(86400 * 1e6)
 	dayOffset := microseconds / microsPerDay
 	rem := microseconds % microsPerDay
 	if rem < 0 {
 		dayOffset--
 		rem += microsPerDay
 	}
-	day := uint32(dayOffset + 2440588)
-	nanoOfDay := uint64(rem * 1e3)
+	day := uint32(dayOffset + julianDayOfUnixEpoch)
+	nanoOfDay := uint64(rem * int64(time.Microsecond))
 	var b [12]byte
 	binary.LittleEndian.PutUint64(b[:8], nanoOfDay)
 	binary.LittleEndian.PutUint32(b[8:], day)
@@ -372,7 +373,7 @@ func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustT
 	// INT96 is a deprecated type in parquet format to store timestamp, which consists of
 	// two parts: the first 8 bytes is the nanoseconds within the day, and the last 4 bytes
 	// is the Julian Day (days since noon on January 1, 4713 BC). And it will be converted it to UTC by
-	//   julian day - 2440588 (Julian Day of the Unix epoch 1970-01-01 00:00:00)
+	// subtracting the Julian day of the Unix epoch (1970-01-01 00:00:00).
 	micros := int96ToUnixMicros(val)
 	if rebaseLocation != nil {
 		micros = rebaseLegacyTimestampMicros(micros, rebaseLocation)
@@ -388,7 +389,7 @@ func setInt96Data(val parquet.Int96, d *types.Datum, loc *time.Location, adjustT
 func int96ToUnixMicros(val parquet.Int96) int64 {
 	nanosOfDay := int64(binary.LittleEndian.Uint64(val[:8]))
 	julianDay := int64(binary.LittleEndian.Uint32(val[8:]))
-	return (julianDay-2440588)*86400*1e6 + nanosOfDay/1e3
+	return (julianDay-julianDayOfUnixEpoch)*microsPerDay + nanosOfDay/int64(time.Microsecond)
 }
 
 func getInt96Setter(converted *convertedType, loc *time.Location) setter[parquet.Int96] {
