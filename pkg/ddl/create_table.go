@@ -1279,6 +1279,14 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 		tblInfo.Partition = &pi
 	} else if s.ExcludePartitions {
 		tblInfo.Partition = nil
+		// Global indexes are only valid on partitioned tables; demote them to local.
+		for i, idx := range tblInfo.Indices {
+			if idx.Global {
+				clone := *idx
+				clone.Global = false
+				tblInfo.Indices[i] = &clone
+			}
+		}
 	}
 
 	// for issue #64948, temporary table does not support TLL, we should remove it

@@ -306,7 +306,24 @@ func TestCreateTableLikeExcludePartitions(t *testing.T) {
 	tbl = external.GetTableByName(t, tk, "test", "dst_restore")
 	require.Nil(t, tbl.Meta().Partition, "dst_restore created with EXCLUDE PARTITIONS must be non-partitioned")
 
-	tk.MustExec("drop table if exists src_range, src_hash, src_list, src_plain, dst_range, dst_hash, dst_list, dst_plain, dst_with_parts, dst_restore")
+	// Source table with a global index: EXCLUDE PARTITIONS must demote it to local.
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer tk.MustExec("set tidb_enable_global_index=default")
+	tk.MustExec("drop table if exists src_global_idx")
+	tk.MustExec(`create table src_global_idx (
+		id   int not null,
+		code varchar(20) not null,
+		unique key uk_code (code) global
+	) partition by hash(id) partitions 4`)
+	tk.MustExec("drop table if exists dst_global_idx")
+	tk.MustExec("create table dst_global_idx like src_global_idx exclude partitions")
+	tbl = external.GetTableByName(t, tk, "test", "dst_global_idx")
+	require.Nil(t, tbl.Meta().Partition)
+	for _, idx := range tbl.Meta().Indices {
+		require.False(t, idx.Global, "global index flag must be cleared on non-partitioned copy")
+	}
+
+	tk.MustExec("drop table if exists src_range, src_hash, src_list, src_plain, dst_range, dst_hash, dst_list, dst_plain, dst_with_parts, dst_restore, src_global_idx, dst_global_idx")
 }
 
 func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
