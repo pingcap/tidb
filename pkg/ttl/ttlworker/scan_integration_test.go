@@ -34,7 +34,7 @@ import (
 
 func TestCancelWhileScan(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
 
 	tk.MustExec("create table test.t (id int, created_at datetime) TTL= created_at + interval 1 hour")
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
