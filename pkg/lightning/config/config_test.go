@@ -17,6 +17,7 @@ package config
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -1458,4 +1459,22 @@ func TestRedactConfig(t *testing.T) {
 		require.Contains(t, cfg.Redact(), tt.redact)
 		require.Contains(t, cfg.String(), tt.origin)
 	}
+}
+
+func TestTargetPartitionConfig(t *testing.T) {
+	cfg := NewConfig()
+	require.Equal(t, "", cfg.Mydumper.TargetPartition)
+
+	tomlStr := `
+[mydumper]
+data-source-dir = "."
+target-partition = "p_acme"
+`
+	err := toml.Unmarshal([]byte(tomlStr), cfg)
+	require.NoError(t, err)
+	require.Equal(t, "p_acme", cfg.Mydumper.TargetPartition)
+
+	jsonBytes, err := json.Marshal(cfg.Mydumper)
+	require.NoError(t, err)
+	require.Contains(t, string(jsonBytes), `"target-partition":"p_acme"`)
 }
