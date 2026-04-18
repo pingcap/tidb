@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestChecksum(t *testing.T) {
@@ -39,4 +40,31 @@ func TestChecksum(t *testing.T) {
 	// see cophandler.handleCopChecksumRequest
 	// here we only check 2 (index) * 3 (partition) requests are sent
 	tk.MustQuery("ADMIN CHECKSUM TABLE t").Check(testkit.Rows("test t 0 6 6"))
+}
+
+func TestChecksumTablePartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec(`
+		CREATE TABLE tpart (
+			c1 INT PRIMARY KEY,
+			c2 INT
+		) PARTITION BY RANGE(c1) (
+			PARTITION p0 VALUES LESS THAN (10),
+			PARTITION p1 VALUES LESS THAN (20),
+			PARTITION p2 VALUES LESS THAN MAXVALUE
+		)`)
+	tk.MustExec("INSERT INTO tpart VALUES (1, 1), (11, 2), (21, 3)")
+
+	full := tk.MustQuery("ADMIN CHECKSUM TABLE tpart").Rows()
+	require.Len(t, full, 1)
+
+	p0 := tk.MustQuery("ADMIN CHECKSUM TABLE tpart PARTITION (p0)").Rows()
+	require.Len(t, p0, 1)
+	require.NotEqual(t, full[0][2], p0[0][2], "partition checksum should differ from full table checksum")
+
+	err := tk.ExecToErr("ADMIN CHECKSUM TABLE tpart PARTITION (p_nonexistent)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Unknown partition")
 }

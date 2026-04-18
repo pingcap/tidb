@@ -1642,7 +1642,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		for _, tn := range as.Tables {
 			tnWs = append(tnWs, b.resolveCtx.GetTableName(tn))
 		}
-		p := &ChecksumTable{Tables: tnWs}
+		p := &ChecksumTable{Tables: tnWs, PartitionNames: as.PartitionNames}
 		p.SetSchemaAndNames(buildChecksumTableSchema())
 		ret = p
 	case ast.AdminShowNextRowID:
