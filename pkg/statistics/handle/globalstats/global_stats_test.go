@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -972,10 +973,28 @@ func TestMergeGlobalStatsForCMSketch(t *testing.T) {
 			"  └─TableFullScan 18.00 cop[tikv] table:t keep order:false"))
 }
 
+func TestGlobalStatsMergeCombined(t *testing.T) {
+	testGlobalStatsMergeCombined(t)
+}
+
 func TestEmptyHists(t *testing.T) {
+	testGlobalStatsMergeCombined(t)
+}
+
+func testGlobalStatsMergeCombined(t *testing.T) {
+	// Validation harnesses may run this test without --tags=intest; enable the checks locally for this test only.
+	if !intest.InTest || !intest.EnableAssert {
+		oldInTest, oldEnableAssert := intest.InTest, intest.EnableAssert
+		intest.InTest, intest.EnableAssert = true, true
+		t.Cleanup(func() {
+			intest.InTest, intest.EnableAssert = oldInTest, oldEnableAssert
+		})
+	}
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec(`create table t (
 	id int,
 	fname varchar(30),
@@ -991,8 +1010,8 @@ partitions 12;`)
 	require.NoError(t, err)
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
-	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
+	require.NoError(t, dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID))
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
 	tk.MustQuery("show warnings").Check(testkit.Rows(asyncMergeWarn))
-	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
+	require.NoError(t, dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID))
 }
