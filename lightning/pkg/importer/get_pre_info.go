@@ -230,7 +230,7 @@ func (g *TargetInfoGetterImpl) IsPartitionEmpty(ctx context.Context, schemaName 
 	var result bool
 	exec := common.SQLWithRetry{
 		DB:     g.db,
-		Logger: log.Wrap(logutil.Logger(ctx)),
+		Logger: log.FromContext(ctx),
 	}
 	var dump int
 	err := exec.QueryRow(ctx, "check partition empty",
@@ -655,6 +655,10 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return 0.0, false, errors.Trace(err)
 	}
 	logger := log.FromContext(ctx).With(zap.String("table", tableMeta.Name))
+	sampleIgCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
+	if err != nil {
+		return 0.0, false, errors.Trace(err)
+	}
 	kvEncoder, err := p.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        p.cfg.TiDB.SQLMode,
@@ -662,8 +666,9 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 			SysVars:        sysVars,
 			AutoRandomSeed: 0,
 		},
-		Table:  tbl,
-		Logger: logger,
+		Table:           tbl,
+		Logger:          logger,
+		ColumnConstants: sampleIgCols.ColumnConstants,
 	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
