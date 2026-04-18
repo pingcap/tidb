@@ -23,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -201,30 +203,60 @@ type checksumResult struct {
 }
 
 type checksumContext struct {
-	dbInfo    *model.DBInfo
-	tableInfo *model.TableInfo
-	startTs   uint64
-	response  *tipb.ChecksumResponse
+	dbInfo         *model.DBInfo
+	tableInfo      *model.TableInfo
+	startTs        uint64
+	response       *tipb.ChecksumResponse
+	partitionNames []ast.CIStr // if non-empty, only checksum these partitions
 }
 
-func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64) *checksumContext {
+func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64, partitionNames []ast.CIStr) *checksumContext {
 	return &checksumContext{
-		dbInfo:    db,
-		tableInfo: table,
-		startTs:   startTs,
-		response:  &tipb.ChecksumResponse{},
+		dbInfo:         db,
+		tableInfo:      table,
+		startTs:        startTs,
+		response:       &tipb.ChecksumResponse{},
+		partitionNames: partitionNames,
 	}
 }
 
 func (c *checksumContext) buildTasks(ctx sessionctx.Context) ([]*checksumTask, error) {
 	var partDefs []model.PartitionDefinition
 	if part := c.tableInfo.Partition; part != nil {
-		partDefs = part.Definitions
+		if len(c.partitionNames) == 0 {
+			partDefs = part.Definitions
+		} else {
+			nameSet := make(map[string]struct{}, len(c.partitionNames))
+			for _, n := range c.partitionNames {
+				nameSet[n.L] = struct{}{}
+			}
+			for _, def := range part.Definitions {
+				if _, ok := nameSet[def.Name.L]; ok {
+					partDefs = append(partDefs, def)
+				}
+			}
+			if len(partDefs) != len(c.partitionNames) {
+				for _, n := range c.partitionNames {
+					found := false
+					for _, def := range part.Definitions {
+						if def.Name.L == n.L {
+							found = true
+							break
+						}
+					}
+					if !found {
+						return nil, table.ErrUnknownPartition.GenWithStackByArgs(n.O, c.tableInfo.Name.O)
+					}
+				}
+			}
+		}
 	}
 
 	reqs := make([]*checksumTask, 0, (len(c.tableInfo.Indices)+1)*(len(partDefs)+1))
-	if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, c.tableInfo.ID, &reqs); err != nil {
-		return nil, err
+	if len(c.partitionNames) == 0 {
+		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, c.tableInfo.ID, &reqs); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, partDef := range partDefs {

@@ -734,7 +734,7 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) exec.
 		return nil
 	}
 	for _, t := range v.Tables {
-		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs)
+		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs, v.PartitionNames)
 	}
 	return e
 }
