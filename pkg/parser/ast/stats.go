@@ -350,7 +350,6 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-
 // DedupFlushObjects removes duplicate or shadowed scoped objects for FLUSH STATS_DELTA.
 func (n *FlushStmt) DedupFlushObjects() {
 	n.FlushObjects = dedupStatsObjects(n.FlushObjects)
