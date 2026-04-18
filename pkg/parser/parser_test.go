@@ -1472,6 +1472,7 @@ func TestDBAStmt(t *testing.T) {
 		{"flush stats_delta *.* cluster", true, "FLUSH STATS_DELTA *.* CLUSTER"},
 		{"flush stats_delta db1.*", true, "FLUSH STATS_DELTA `db1`.*"},
 		{"flush stats_delta db1.* cluster", true, "FLUSH STATS_DELTA `db1`.* CLUSTER"},
+		{"flush stats_delta t1", true, "FLUSH STATS_DELTA `t1`"},
 		{"flush stats_delta db1.t1", true, "FLUSH STATS_DELTA `db1`.`t1`"},
 		{"flush stats_delta db1.t1 cluster", true, "FLUSH STATS_DELTA `db1`.`t1` CLUSTER"},
 		{"flush stats_delta db1.t1, db2.*", true, "FLUSH STATS_DELTA `db1`.`t1`, `db2`.*"},
