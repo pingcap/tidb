@@ -40,9 +40,12 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.opencensus.io/stats/view"
 	uberatomic "go.uber.org/atomic"
 	"go.uber.org/goleak"
@@ -63,6 +66,8 @@ var (
 
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
+	intest.InTest = true
+	intest.EnableAssert = true
 	testsetup.SetupForCommonTest()
 	*WithRealTiKV = true
 	flag.Parse()
@@ -248,10 +253,12 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 	}
 	store, err = d.Open(path)
 	require.NoError(t, err)
+	disablePDRouterClient(t, store)
 	if kerneltype.IsNextGen() && ks != keyspace.System {
 		sysPath := *TiKVPath + "&keyspaceName=" + keyspace.System
 		sysStore, err := d.Open(sysPath)
 		require.NoError(t, err)
+		disablePDRouterClient(t, sysStore)
 		kvstore.SetSystemStorage(sysStore)
 		if !option.keepSystemStore {
 			t.Cleanup(func() {
@@ -301,6 +308,12 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...RealTiKVStoreOption)
 		view.Stop()
 	})
 	return store, dom
+}
+
+func disablePDRouterClient(t *testing.T, store kv.Storage) {
+	pdStore, ok := store.(interface{ GetPDClient() pd.Client })
+	require.True(t, ok)
+	require.NoError(t, pdStore.GetPDClient().UpdateOption(opt.EnableRouterClient, false))
 }
 
 // UpdateTiDBConfig updates the TiDB configuration for the real TiKV test.

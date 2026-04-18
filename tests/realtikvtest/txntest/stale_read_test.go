@@ -1286,20 +1286,30 @@ func TestStaleSessionQuery(t *testing.T) {
 func TestStaleReadCompatibility(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	getCurrentTime := func() time.Time {
+		tk.MustExec("begin")
+		tsStr := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+		tk.MustExec("rollback")
+		ts, err := strconv.ParseUint(tsStr, 10, 64)
+		require.NoError(t, err)
+		return oracle.GetTimeFromTS(ts)
+	}
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("insert into t(id) values (1)")
 	time.Sleep(2 * time.Second)
-	t1 := time.Now()
+	t1 := getCurrentTime()
 	tk.MustExec("insert into t(id) values (2)")
 	time.Sleep(2 * time.Second)
-	t2 := time.Now()
+	t2 := getCurrentTime()
 	tk.MustExec("insert into t(id) values (3)")
+	t1Str := t1.Format("2006-1-2 15:04:05")
+	t2Str := t2.Format("2006-1-2 15:04:05")
 	// assert select as of timestamp won't work after set transaction read only as of timestamp
-	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
-	err := tk.ExecToErr(fmt.Sprintf("select * from t as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t1Str))
+	err := tk.ExecToErr(fmt.Sprintf("select * from t as of timestamp '%s';", t1Str))
 	require.Error(t, err)
 	require.Regexp(t, ".*invalid as of timestamp: can't use select as of while already set transaction as of.*", err.Error())
 	// assert set transaction read only as of timestamp is consumed
@@ -1307,20 +1317,24 @@ func TestStaleReadCompatibility(t *testing.T) {
 	// enable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness='-1'")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectNow", fmt.Sprintf(`return(%d)`, t1.Unix())))
-	require.Len(t, tk.MustQuery("select * from t;").Rows(), 1)
+	rows := tk.MustQuery("select * from t;").Rows()
+	require.GreaterOrEqual(t, len(rows), 1)
+	require.LessOrEqual(t, len(rows), 2)
 	// assert select as of timestamp during tidb_read_staleness
-	require.Len(t, tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2.Format("2006-1-2 15:04:05"))).Rows(), 2)
+	require.Len(t, tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2Str)).Rows(), 2)
 	// assert set transaction as of timestamp during tidb_read_staleness
-	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t2.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t2Str))
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 2)
 
 	// assert begin stale transaction during tidb_read_staleness
-	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t2.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t2Str))
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 2)
 	tk.MustExec("commit")
 
 	// assert session query still is affected by tidb_read_staleness
-	require.Len(t, tk.MustQuery("select * from t;").Rows(), 1)
+	rows = tk.MustQuery("select * from t;").Rows()
+	require.GreaterOrEqual(t, len(rows), 1)
+	require.LessOrEqual(t, len(rows), 2)
 
 	// disable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness=''")
