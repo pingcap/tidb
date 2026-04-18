@@ -158,7 +158,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 					DB:   plan.DBName,
 					Name: plan.TableInfo.Name.L,
 					Core: plan.TableInfo,
-				})
+				}, "")
 			},
 		)
 	}
