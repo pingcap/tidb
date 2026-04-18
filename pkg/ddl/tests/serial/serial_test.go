@@ -228,6 +228,87 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("insert into cc select * from information_schema.columns;")
 }
 
+func TestCreateTableLikeExcludePartitions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// RANGE partitioned source table.
+	tk.MustExec("drop table if exists src_range")
+	tk.MustExec(`create table src_range (
+		id int not null,
+		val varchar(100)
+	) partition by range (id) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than maxvalue
+	)`)
+	tk.MustExec("insert into src_range values (1,'a'),(15,'b'),(25,'c')")
+
+	// EXCLUDE PARTITIONS: new table must be non-partitioned.
+	tk.MustExec("drop table if exists dst_range")
+	tk.MustExec("create table dst_range like src_range exclude partitions")
+	tbl := external.GetTableByName(t, tk, "test", "dst_range")
+	require.Nil(t, tbl.Meta().Partition, "EXCLUDE PARTITIONS should produce a non-partitioned table")
+
+	// Can insert without specifying a partition.
+	tk.MustExec("insert into dst_range values (1,'a'),(15,'b')")
+	tk.MustQuery("select count(*) from dst_range").Check(testkit.Rows("2"))
+
+	// Schema (columns, indices) is still copied from source.
+	require.Equal(t, len(tbl.Meta().Columns), 2)
+
+	// HASH partitioned source table.
+	tk.MustExec("drop table if exists src_hash")
+	tk.MustExec("create table src_hash (id int, name varchar(50)) partition by hash(id) partitions 4")
+	tk.MustExec("drop table if exists dst_hash")
+	tk.MustExec("create table dst_hash like src_hash exclude partitions")
+	tbl = external.GetTableByName(t, tk, "test", "dst_hash")
+	require.Nil(t, tbl.Meta().Partition)
+
+	// LIST COLUMNS partitioned source table (mirrors our actual use-case).
+	tk.MustExec("drop table if exists src_list")
+	tk.MustExec(`create table src_list (
+		customer_name varchar(64) not null,
+		etl_ts datetime not null,
+		mid_val varchar(64),
+		KEY idx_mid (customer_name, mid_val)
+	) partition by list columns (customer_name, etl_ts) (
+		partition p_placeholder values in (('__placeholder__', '2000-01-01 00:00:00'))
+	)`)
+	tk.MustExec("drop table if exists dst_list")
+	tk.MustExec("create table dst_list like src_list exclude partitions")
+	tbl = external.GetTableByName(t, tk, "test", "dst_list")
+	require.Nil(t, tbl.Meta().Partition)
+	// Indices are still copied.
+	require.Equal(t, 1, len(tbl.Meta().Indices))
+
+	// Non-partitioned source: EXCLUDE PARTITIONS is a no-op (no error).
+	tk.MustExec("drop table if exists src_plain")
+	tk.MustExec("create table src_plain (id int primary key, val text)")
+	tk.MustExec("drop table if exists dst_plain")
+	tk.MustExec("create table dst_plain like src_plain exclude partitions")
+	tbl = external.GetTableByName(t, tk, "test", "dst_plain")
+	require.Nil(t, tbl.Meta().Partition)
+	tk.MustExec("insert into dst_plain values (1,'hello')")
+	tk.MustQuery("select * from dst_plain").Check(testkit.Rows("1 hello"))
+
+	// Verify regular LIKE (without EXCLUDE PARTITIONS) still copies partitions.
+	tk.MustExec("drop table if exists dst_with_parts")
+	tk.MustExec("create table dst_with_parts like src_range")
+	tbl = external.GetTableByName(t, tk, "test", "dst_with_parts")
+	require.NotNil(t, tbl.Meta().Partition)
+	require.Equal(t, 3, len(tbl.Meta().Partition.Definitions))
+
+	// Verify EXCLUDE PARTITIONS can be used in a second CREATE without error.
+	tk.MustExec("drop table if exists dst_restore")
+	tk.MustExec("create table dst_restore like src_range exclude partitions")
+	tbl = external.GetTableByName(t, tk, "test", "dst_restore")
+	require.Nil(t, tbl.Meta().Partition, "dst_restore created with EXCLUDE PARTITIONS must be non-partitioned")
+
+	tk.MustExec("drop table if exists src_range, src_hash, src_list, src_plain, dst_range, dst_hash, dst_list, dst_plain, dst_with_parts, dst_restore")
+}
+
 func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

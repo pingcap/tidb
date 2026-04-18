@@ -1189,15 +1189,16 @@ type CreateTableStmt struct {
 	// ON COMMIT DELETE ROWS => true
 	// ON COMMIT PRESERVE ROW => false
 	OnCommitDelete bool
-	Table          *TableName
-	ReferTable     *TableName
-	Cols           []*ColumnDef
-	Constraints    []*Constraint
-	SplitIndex     []*SplitIndexOption
-	Options        []*TableOption
-	Partition      *PartitionOptions
-	OnDuplicate    OnDuplicateKeyHandlingType
-	Select         ResultSetNode
+	Table              *TableName
+	ReferTable         *TableName
+	Cols               []*ColumnDef
+	Constraints        []*Constraint
+	SplitIndex         []*SplitIndexOption
+	Options            []*TableOption
+	Partition          *PartitionOptions
+	OnDuplicate        OnDuplicateKeyHandlingType
+	Select             ResultSetNode
+	ExcludePartitions  bool // LIKE ... EXCLUDE PARTITIONS: don't copy partition definitions
 }
 
 // Restore implements Node interface.
@@ -1222,6 +1223,9 @@ func (n *CreateTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" LIKE ")
 		if err := n.ReferTable.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing CreateTableStmt ReferTable")
+		}
+		if n.ExcludePartitions {
+			ctx.WriteKeyWord(" EXCLUDE PARTITIONS")
 		}
 	}
 	lenCols := len(n.Cols)

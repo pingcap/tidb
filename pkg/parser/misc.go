@@ -386,6 +386,7 @@ var tokenMap = map[string]int{
 	"EXEC_ELAPSED":                   execElapsed,
 	"EXCEPT":                         except,
 	"EXCHANGE":                       exchange,
+	"EXCLUDE":                        exclude,
 	"EXCLUSIVE":                      exclusive,
 	"EXECUTE":                        execute,
 	"EXISTS":                         exists,

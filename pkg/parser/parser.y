@@ -448,6 +448,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	events                     "EVENTS"
 	evolve                     "EVOLVE"
 	exchange                   "EXCHANGE"
+	exclude                    "EXCLUDE"
 	exclusive                  "EXCLUSIVE"
 	execute                    "EXECUTE"
 	expansion                  "EXPANSION"
@@ -1302,6 +1303,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ObjectType                             "Grant statement object type"
 	OnDuplicateKeyUpdate                   "ON DUPLICATE KEY UPDATE value list"
 	OnCommitOpt                            "ON COMMIT DELETE |PRESERVE ROWS"
+	ExcludePartitionsOpt                   "EXCLUDE PARTITIONS or empty"
 	DuplicateOpt                           "[IGNORE|REPLACE] in CREATE TABLE ... SELECT statement or LOAD DATA statement"
 	FormatOpt                              "FORMAT 'SQL FILE'..."
 	OfTablesOpt                            "OF table_name [, ...]"
@@ -4859,19 +4861,20 @@ CreateTableStmt:
 		}
 		$$ = stmt
 	}
-|	"CREATE" OptTemporary "TABLE" IfNotExists TableName LikeTableWithOrWithoutParen OnCommitOpt
+|	"CREATE" OptTemporary "TABLE" IfNotExists TableName LikeTableWithOrWithoutParen ExcludePartitionsOpt OnCommitOpt
 	{
 		tmp := &ast.CreateTableStmt{
-			Table:            $5.(*ast.TableName),
-			ReferTable:       $6.(*ast.TableName),
-			IfNotExists:      $4.(bool),
-			TemporaryKeyword: $2.(ast.TemporaryKeyword),
+			Table:             $5.(*ast.TableName),
+			ReferTable:        $6.(*ast.TableName),
+			IfNotExists:       $4.(bool),
+			TemporaryKeyword:  $2.(ast.TemporaryKeyword),
+			ExcludePartitions: $7.(bool),
 		}
-		if ($7 != nil && tmp.TemporaryKeyword != ast.TemporaryGlobal) || (tmp.TemporaryKeyword == ast.TemporaryGlobal && $7 == nil) {
+		if ($8 != nil && tmp.TemporaryKeyword != ast.TemporaryGlobal) || (tmp.TemporaryKeyword == ast.TemporaryGlobal && $8 == nil) {
 			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if tmp.TemporaryKeyword == ast.TemporaryGlobal {
-				tmp.OnCommitDelete = $7.(bool)
+				tmp.OnCommitDelete = $8.(bool)
 			}
 		}
 		$$ = tmp
@@ -5411,6 +5414,15 @@ LikeTableWithOrWithoutParen:
 |	'(' "LIKE" TableName ')'
 	{
 		$$ = $3
+	}
+
+ExcludePartitionsOpt:
+	{
+		$$ = false
+	}
+|	"EXCLUDE" "PARTITIONS"
+	{
+		$$ = true
 	}
 
 /*******************************************************************
@@ -7511,6 +7523,7 @@ UnReservedKeyword:
 |	"RTREE"
 |	"HYPO"
 |	"EXCHANGE"
+|	"EXCLUDE"
 |	"COLUMN_FORMAT"
 |	"REPAIR"
 |	"IMPORT"

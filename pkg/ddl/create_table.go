@@ -1272,11 +1272,13 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 		replica.Available = false
 		tblInfo.TiFlashReplica = &replica
 	}
-	if referTblInfo.Partition != nil {
+	if referTblInfo.Partition != nil && !s.ExcludePartitions {
 		pi := *referTblInfo.Partition
 		pi.Definitions = make([]model.PartitionDefinition, len(referTblInfo.Partition.Definitions))
 		copy(pi.Definitions, referTblInfo.Partition.Definitions)
 		tblInfo.Partition = &pi
+	} else if s.ExcludePartitions {
+		tblInfo.Partition = nil
 	}
 
 	// for issue #64948, temporary table does not support TLL, we should remove it
