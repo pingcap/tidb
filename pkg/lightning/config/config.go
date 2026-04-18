@@ -629,6 +629,10 @@ const (
 	// 	- max-pending-peer-count = math.MaxInt32
 	// see br/pkg/pdutil/pd.go for more detail.
 	PausePDSchedulerScopeGlobal PausePDSchedulerScope = "global"
+	// PausePDSchedulerScopeOff disables PD scheduler pausing entirely, skipping
+	// registerTaskToPD. Useful when many Lightning instances run in parallel and
+	// PD registration contention causes context deadline exceeded errors.
+	PausePDSchedulerScopeOff PausePDSchedulerScope = "off"
 )
 
 // DuplicateResolutionAlgorithm is the config type of how to resolve duplicates.
@@ -1206,7 +1210,7 @@ func (t *TikvImporter) adjust() error {
 
 	t.PausePDSchedulerScope = PausePDSchedulerScope(strings.ToLower(string(t.PausePDSchedulerScope)))
 	switch t.PausePDSchedulerScope {
-	case PausePDSchedulerScopeTable, PausePDSchedulerScopeGlobal:
+	case PausePDSchedulerScopeTable, PausePDSchedulerScopeGlobal, PausePDSchedulerScopeOff:
 	default:
 		return common.ErrInvalidConfig.GenWithStack("pause-pd-scheduler-scope is invalid, allowed value include: table, global")
 	}
