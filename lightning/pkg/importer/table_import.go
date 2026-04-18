@@ -1093,7 +1093,7 @@ func (tr *TableImporter) postProcess(
 			}
 
 			var remoteChecksum *local.RemoteChecksum
-			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
+			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo, rc.cfg.Mydumper.TargetPartition)
 			failpoint.Inject("checksum-error", func() {
 				tr.logger.Info("failpoint checksum-error injected.")
 				remoteChecksum = nil

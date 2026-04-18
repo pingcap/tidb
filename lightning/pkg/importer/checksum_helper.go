@@ -63,7 +63,7 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 
 // DoChecksum do checksum for tables.
 // table should be in <db>.<table>, format.  e.g. foo.bar
-func DoChecksum(ctx context.Context, table *checkpoints.TidbTableInfo) (*local.RemoteChecksum, error) {
+func DoChecksum(ctx context.Context, table *checkpoints.TidbTableInfo, partitionName string) (*local.RemoteChecksum, error) {
 	var err error
 	manager, ok := ctx.Value(&checksumManagerKey).(local.ChecksumManager)
 	if !ok {
@@ -72,7 +72,7 @@ func DoChecksum(ctx context.Context, table *checkpoints.TidbTableInfo) (*local.R
 
 	task := log.FromContext(ctx).With(zap.String("table", table.Name)).Begin(zap.InfoLevel, "remote checksum")
 
-	cs, err := manager.Checksum(ctx, table)
+	cs, err := manager.Checksum(ctx, table, partitionName)
 	dur := task.End(zap.ErrorLevel, err)
 	if m, ok := metric.FromContext(ctx); ok {
 		m.ChecksumSecondsHistogram.Observe(dur.Seconds())

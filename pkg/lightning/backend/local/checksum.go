@@ -83,7 +83,8 @@ func (rc *RemoteChecksum) IsEqual(other *verification.KVChecksum) bool {
 
 // ChecksumManager is a manager that manages checksums.
 type ChecksumManager interface {
-	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error)
+	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, partitionName string) (*RemoteChecksum, error)
+	Close()
 }
 
 // fetch checksum for tidb sql client
@@ -102,7 +103,7 @@ func NewTiDBChecksumExecutor(db *sql.DB) ChecksumManager {
 	}
 }
 
-func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, partitionName string) (*RemoteChecksum, error) {
 	var err error
 	if err = e.manager.addOneJob(ctx, e.db); err != nil {
 		return nil, err
@@ -146,9 +147,14 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 		}
 	}
 
+	checksumSQL := "ADMIN CHECKSUM TABLE " + tableName
+	if partitionName != "" {
+		checksumSQL += " PARTITION (`" + partitionName + "`)"
+	}
+
 	cs := RemoteChecksum{}
 	err = common.SQLWithRetry{DB: conn, Logger: task.Logger}.QueryRow(ctx, "compute remote checksum",
-		"ADMIN CHECKSUM TABLE "+tableName, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
+		checksumSQL, &cs.Schema, &cs.Table, &cs.Checksum, &cs.TotalKVs, &cs.TotalBytes,
 	)
 	dur := task.End(zap.ErrorLevel, err)
 	if m, ok := metric.FromContext(ctx); ok {
@@ -159,6 +165,8 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	}
 	return &cs, nil
 }
+
+func (*tidbChecksumExecutor) Close() {}
 
 type gcLifeTimeManager struct {
 	runningJobsLock sync.Mutex
@@ -342,7 +350,7 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 var retryGetTSInterval = time.Second
 
 // Checksum implements the ChecksumManager interface.
-func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo) (*RemoteChecksum, error) {
+func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, _ string) (*RemoteChecksum, error) {
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	var (
 		physicalTS, logicalTS int64
@@ -374,6 +382,11 @@ func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 	defer e.manager.removeOneJob(tbl)
 
 	return e.checksumDB(ctx, tableInfo, ts)
+}
+
+// Close closes the TiKVChecksumManager. This function cannot be called concurrently with Checksum.
+func (e *TiKVChecksumManager) Close() {
+	e.manager.close()
 }
 
 type tableChecksumTS struct {
