@@ -324,6 +324,12 @@ func (t *TargetInfo) IsTableEmpty(_ context.Context, schemaName string, tableNam
 	return &result, nil
 }
 
+// IsPartitionEmpty checks whether the specified partition of the table contains data or not.
+// It implements the TargetInfoGetter interface.
+func (t *TargetInfo) IsPartitionEmpty(_ context.Context, schemaName string, tableName string, partitionName string) (*bool, error) {
+	return nil, errors.New("not implemented")
+}
+
 // CheckVersionRequirements performs the check whether the target satisfies the version requirements.
 // It implements the TargetInfoGetter interface.
 func (*TargetInfo) CheckVersionRequirements(_ context.Context) error {

@@ -1388,7 +1388,13 @@ func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 					}
 				}
 
-				isEmptyPtr, err1 := ci.preInfoGetter.IsTableEmpty(gCtx, tblNameComp.DBName, tblNameComp.TableName)
+				var isEmptyPtr *bool
+				var err1 error
+				if ci.cfg.Mydumper.TargetPartition != "" {
+					isEmptyPtr, err1 = ci.preInfoGetter.IsPartitionEmpty(gCtx, tblNameComp.DBName, tblNameComp.TableName, ci.cfg.Mydumper.TargetPartition)
+				} else {
+					isEmptyPtr, err1 = ci.preInfoGetter.IsTableEmpty(gCtx, tblNameComp.DBName, tblNameComp.TableName)
+				}
 				if err1 != nil {
 					return err1
 				}
