@@ -246,10 +246,6 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		tableName = "tidb_runaway_queries"
 		colName   = "start_time"
 	)
-<<<<<<< HEAD
-	var systemSchemaCIStr = model.NewCIStr("mysql")
-=======
->>>>>>> e3f45e476d3 (resourcegroup/runaway: switch watch syncer to time-based cursor (#67758))
 
 	if !rm.ddl.OwnerManager().IsOwner() {
 		return

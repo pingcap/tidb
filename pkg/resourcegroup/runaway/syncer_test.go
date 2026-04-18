@@ -242,11 +242,6 @@ func TestGenSelectStmts(t *testing.T) {
 	sql, params = sqlGenFn()
 	require.Equal(t, "select * from mysql.tidb_runaway_watch where id = %?", sql)
 	require.Equal(t, []any{int64(42)}, params)
-
-	sqlGenFn = reader.genSelectByGroupStmt("rg_bulk")
-	sql, params = sqlGenFn()
-	require.Equal(t, "select * from mysql.tidb_runaway_watch where resource_group_name = %?", sql)
-	require.Equal(t, []any{"rg_bulk"}, params)
 }
 
 func TestWatchAdvanceCheckpoint(t *testing.T) {
@@ -522,10 +517,9 @@ func TestScanInvalidTail(t *testing.T) {
 	}
 }
 
-// TestPointQueryPreservesScanState guards the invariant that
-// getWatchRecordByID / getWatchRecordByGroup leave scan-cursor state
-// (lastScanKeyTime, CheckPoint, UpperBound) untouched, so manual
-// RemoveRunawayWatch* calls between sync ticks can't perturb the cursor.
+// TestPointQueryPreservesScanState guards the invariant that getWatchRecordByID
+// leaves scan-cursor state (lastScanKeyTime, CheckPoint, UpperBound) untouched,
+// so manual RemoveRunawayWatch calls between sync ticks can't perturb the cursor.
 func TestPointQueryPreservesScanState(t *testing.T) {
 	startTime := time.Date(2026, 4, 14, 10, 0, 0, 123000000, time.UTC)
 	endTime := startTime.Add(5 * time.Minute)
@@ -545,7 +539,6 @@ func TestPointQueryPreservesScanState(t *testing.T) {
 		call func(*syncer) ([]*QuarantineRecord, error)
 	}{
 		{"by_id", func(s *syncer) ([]*QuarantineRecord, error) { return s.getWatchRecordByID(30005) }},
-		{"by_group", func(s *syncer) ([]*QuarantineRecord, error) { return s.getWatchRecordByGroup("rg_bulk") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
