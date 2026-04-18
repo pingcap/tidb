@@ -1,0 +1,10 @@
+[mydumper]
+no-schema = false
+
+[[mydumper.ignore-data-columns]]
+db      = "col_constants"
+table   = "t"
+columns = ["customer_name", "etl_ts"]
+[mydumper.ignore-data-columns.column-constants]
+customer_name = "acme"
+etl_ts        = "2026-04-17 21:00:00"
