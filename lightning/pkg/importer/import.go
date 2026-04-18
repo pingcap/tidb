@@ -1362,11 +1362,13 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		}
 		ctx = context.WithValue(ctx, &checksumManagerKey, manager)
 
-		undo, err := rc.registerTaskToPD(ctx)
-		if err != nil {
-			return errors.Trace(err)
+		if rc.cfg.TikvImporter.PausePDSchedulerScope != config.PausePDSchedulerScopeOff {
+			undo, err := rc.registerTaskToPD(ctx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			defer undo()
 		}
-		defer undo()
 	}
 
 	type task struct {
