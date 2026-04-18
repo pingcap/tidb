@@ -2506,6 +2506,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 				if rebuildErr == nil {
 					stmtID = s.sessionVars.GetNextPreparedStmtID()
 					if err = s.sessionVars.AddPreparedStmt(stmtID, newStmt); err != nil {
+						s.rollbackOnError(ctx)
 						return
 					}
 					paramCount = cached.ParamCount
@@ -2514,6 +2515,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 					return
 				}
 				// Re-parse or rebuild failed; fall through to the full prepare path.
+				logutil.Logger(ctx).Warn("prepare stmt dedup cache rebuild failed, fallback to full prepare", zap.Error(rebuildErr))
 			}
 			// Schema version changed; fall through and re-cache below.
 		}
