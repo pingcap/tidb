@@ -86,27 +86,49 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	ingest.LitInitialized = false
 
 	var checkErr error
-	var runDML, backfillDone bool
+	var runDML, backfillDone, ddlDone bool
 	// only trigger reload when schema version changed
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/disableOnTickReload", "return(true)")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
-		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
+	ddlDoneCh := make(chan error, 1)
+	go func() {
+		_, err := tk.Exec("alter table t add primary key idx(c1);")
+		ddlDoneCh <- err
+	}()
+	deadline := time.After(30 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for !runDML {
+		select {
+		case <-ticker.C:
 			idx := testutil.FindIdxInfo(dom, "test", "t", "primary")
-			if idx == nil || idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer == 0 {
-				return
+			if idx == nil {
+				continue
 			}
-			if !backfillDone {
-				// Wait another round so that the backfill process is finished, but
-				// the info schema is not updated.
-				backfillDone = true
-				return
+			if idx.BackfillState != model.BackfillStateReadyToMerge && idx.BackfillState != model.BackfillStateMerging {
+				continue
 			}
+			backfillDone = true
 			runDML = true
-			// Add delete record 4 to the temporary index.
+			// Add delete record 4 when add-primary-key enters the merge phase.
 			_, checkErr = tk2.Exec("delete from t where c1 = 4;")
+		case err := <-ddlDoneCh:
+			require.NoError(t, err)
+			ddlDone = true
+		case <-deadline:
+			require.FailNow(t, "timed out waiting for add primary key merge phase")
 		}
-	})
-	tk.MustExec("alter table t add primary key idx(c1);")
+		if ddlDone {
+			break
+		}
+	}
+	if !ddlDone {
+		select {
+		case err := <-ddlDoneCh:
+			require.NoError(t, err)
+		case <-deadline:
+			require.FailNow(t, "timed out waiting for add primary key DDL completion")
+		}
+	}
 	require.True(t, backfillDone)
 	require.True(t, runDML)
 	require.NoError(t, checkErr)
