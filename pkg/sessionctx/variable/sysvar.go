@@ -2707,6 +2707,56 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBMViewTaskMax, Value: strconv.Itoa(DefTiDBMViewTaskMax), Type: TypeInt, MinValue: 0, MaxValue: 256, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceTaskMaxConcurrency.Load(); setter != nil {
+			(*setter)(val)
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBMViewTaskThresholdCPU, Value: strconv.FormatFloat(DefTiDBMViewTaskThresholdCPU, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceTaskThresholdCPU.Load(); setter != nil {
+			(*setter)(val)
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBMViewTaskThresholdMemory, Value: strconv.FormatFloat(DefTiDBMViewTaskThresholdMemory, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceTaskThresholdMemory.Load(); setter != nil {
+			(*setter)(val)
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBMViewRefreshHistTime, Value: strconv.Itoa(DefTiDBMViewRefreshHistTime), Type: TypeInt, MinValue: 1, MaxValue: 8760, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceMViewRefreshHistRetention.Load(); setter != nil {
+			(*setter)(time.Duration(val) * time.Hour)
+		}
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBMLogPurgeHistTime, Value: strconv.Itoa(DefTiDBMLogPurgeHistTime), Type: TypeInt, MinValue: 1, MaxValue: 8760, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.Atoi(s)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceMLogPurgeHistRetention.Load(); setter != nil {
+			(*setter)(time.Duration(val) * time.Hour)
+		}
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonTransactionalIgnoreError, Value: BoolToOnOff(DefTiDBBatchDMLIgnoreError), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.NonTransactionalIgnoreError = TiDBOptOn(val)

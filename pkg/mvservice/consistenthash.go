@@ -1,0 +1,163 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package mvservice
+
+import (
+	"hash/crc32"
+	"sort"
+	"strconv"
+)
+
+// ConsistentHash is a consistent hashing ring.
+// It is not thread-safe; callers must provide external synchronization if needed.
+type ConsistentHash struct {
+	ring     []virtualNode
+	data     map[string][]virtualNode
+	hashFunc func(data []byte) uint32
+	replicas int
+}
+
+type virtualNode *virtualNodeImpl
+
+type virtualNodeImpl struct {
+	hash uint32
+	node string
+}
+
+// NewConsistentHash creates a consistent hash instance.
+// replicas is the number of virtual nodes per real node and is clamped to [1, 200].
+func NewConsistentHash(replicas int) *ConsistentHash {
+	replicas = min(max(1, replicas), 200)
+	return &ConsistentHash{
+		data:     make(map[string][]virtualNode),
+		hashFunc: crc32.ChecksumIEEE,
+		replicas: replicas,
+	}
+}
+
+// Rebuild rebuilds the consistent hash with the given nodes.
+func (c *ConsistentHash) Rebuild(nodes map[string]serverInfo) {
+	c.ring = make([]virtualNode, 0, len(nodes)*c.replicas)
+	c.data = make(map[string][]virtualNode, len(nodes))
+	for node := range nodes {
+		c.doInsert(node)
+	}
+	c.doResort()
+}
+
+func (c *ConsistentHash) doResort() {
+	// Keep the ring sorted for binary search.
+	sort.Slice(c.ring, func(i, j int) bool {
+		if c.ring[i].hash == c.ring[j].hash {
+			return c.ring[i].node < c.ring[j].node
+		}
+		return c.ring[i].hash < c.ring[j].hash
+	})
+}
+
+func (c *ConsistentHash) doInsert(node string) bool {
+	if node == "" {
+		return false
+	}
+	if _, ok := c.data[node]; ok {
+		return false
+	}
+	nodes := make([]virtualNode, 0, c.replicas)
+	for i := 0; i < c.replicas; i++ {
+		// Create a virtual node identifier, e.g. "node1#0", "node1#1".
+		virtualKey := node + "#" + strconv.Itoa(i)
+		hash := c.hashFunc([]byte(virtualKey))
+		n := virtualNode(&virtualNodeImpl{hash: hash, node: node})
+		c.ring = append(c.ring, n)
+		nodes = append(nodes, n)
+	}
+	c.data[node] = nodes
+	return true
+}
+
+// AddNode adds a real node (and creates virtual nodes).
+func (c *ConsistentHash) AddNode(node string) bool {
+	if c.doInsert(node) {
+		c.doResort()
+		return true
+	}
+	return false
+}
+
+// RemoveNode removes a real node (and all its virtual nodes).
+func (c *ConsistentHash) RemoveNode(node string) {
+	if _, ok := c.data[node]; !ok {
+		return
+	}
+	delete(c.data, node)
+
+	// Compact in place to remove target node's virtual nodes in O(n).
+	ring := c.ring
+	write := 0
+	for _, vnode := range ring {
+		if vnode.node == node {
+			continue
+		}
+		ring[write] = vnode
+		write++
+	}
+	// Clear removed slots to release references.
+	for i := write; i < len(ring); i++ {
+		ring[i] = nil
+	}
+	c.ring = ring[:write]
+}
+
+// GetNode returns the real node for the given key bytes.
+func (c *ConsistentHash) GetNode(key []byte) string {
+	if len(c.ring) == 0 {
+		return ""
+	}
+
+	hash := c.hashFunc(key)
+
+	// Binary search for the first node clockwise.
+	idx := sort.Search(len(c.ring), func(i int) bool {
+		return c.ring[i].hash >= hash
+	})
+
+	// Wrap to the start of the ring if out of range.
+	if idx == len(c.ring) {
+		idx = 0
+	}
+
+	return c.ring[idx].node
+}
+
+// GetNodes returns all real nodes.
+func (c *ConsistentHash) GetNodes() []string {
+	nodes := make([]string, 0, len(c.data))
+	for node := range c.data {
+		nodes = append(nodes, node)
+	}
+
+	// sort for stable order in tests
+	sort.Strings(nodes)
+	return nodes
+}
+
+// NodeCount returns the number of real nodes.
+func (c *ConsistentHash) NodeCount() int {
+	return len(c.data)
+}
+
+func (c *ConsistentHash) getVirtualNodes(node string) int {
+	return len(c.data[node])
+}

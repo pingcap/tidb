@@ -738,6 +738,14 @@ type MaterializedViewInfo struct {
 	// RefreshNext is the expression string after "NEXT", stored in canonical SQL format.
 	RefreshNext string `json:"refresh_next,omitempty"`
 
+	// AlertWarningSec controls warning log threshold (seconds) since LAST_SUCCESS_READ_TSO
+	// for automatically scheduled MV refresh tasks. 0 means disabled.
+	AlertWarningSec int64 `json:"alert_warning_sec,omitempty"`
+
+	// AlertOverdueSec controls overdue log threshold (seconds) since LAST_SUCCESS_READ_TSO
+	// for automatically scheduled MV refresh tasks. 0 means disabled.
+	AlertOverdueSec int64 `json:"alert_overdue_sec,omitempty"`
+
 	// DefinitionSQLMode is the SQL mode captured from CREATE MATERIALIZED VIEW session.
 	DefinitionSQLMode mysql.SQLMode `json:"definition_sql_mode"`
 

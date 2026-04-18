@@ -1831,3 +1831,52 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestMVServiceGlobalSysVars(t *testing.T) {
+	mock := NewMockGlobalAccessor4Tests()
+
+	oldTaskMax := SetMVServiceTaskMaxConcurrency.Load()
+	oldCPU := SetMVServiceTaskThresholdCPU.Load()
+	oldMemory := SetMVServiceTaskThresholdMemory.Load()
+	oldRefreshHist := SetMVServiceMViewRefreshHistRetention.Load()
+	oldPurgeHist := SetMVServiceMLogPurgeHistRetention.Load()
+	defer func() {
+		SetMVServiceTaskMaxConcurrency.Store(oldTaskMax)
+		SetMVServiceTaskThresholdCPU.Store(oldCPU)
+		SetMVServiceTaskThresholdMemory.Store(oldMemory)
+		SetMVServiceMViewRefreshHistRetention.Store(oldRefreshHist)
+		SetMVServiceMLogPurgeHistRetention.Store(oldPurgeHist)
+	}()
+
+	gotTaskMax := -1
+	gotCPU := -1.0
+	gotMemory := -1.0
+	var gotRefreshHist time.Duration
+	var gotPurgeHist time.Duration
+
+	taskMaxFn := func(v int) { gotTaskMax = v }
+	cpuFn := func(v float64) { gotCPU = v }
+	memoryFn := func(v float64) { gotMemory = v }
+	refreshHistFn := func(v time.Duration) { gotRefreshHist = v }
+	purgeHistFn := func(v time.Duration) { gotPurgeHist = v }
+	SetMVServiceTaskMaxConcurrency.Store(&taskMaxFn)
+	SetMVServiceTaskThresholdCPU.Store(&cpuFn)
+	SetMVServiceTaskThresholdMemory.Store(&memoryFn)
+	SetMVServiceMViewRefreshHistRetention.Store(&refreshHistFn)
+	SetMVServiceMLogPurgeHistRetention.Store(&purgeHistFn)
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), TiDBMViewTaskMax, "0"))
+	require.Equal(t, 0, gotTaskMax)
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), TiDBMViewTaskThresholdCPU, "0.7"))
+	require.Equal(t, 0.7, gotCPU)
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), TiDBMViewTaskThresholdMemory, "0.6"))
+	require.Equal(t, 0.6, gotMemory)
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), TiDBMViewRefreshHistTime, "24"))
+	require.Equal(t, 24*time.Hour, gotRefreshHist)
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), TiDBMLogPurgeHistTime, "48"))
+	require.Equal(t, 48*time.Hour, gotPurgeHist)
+}
