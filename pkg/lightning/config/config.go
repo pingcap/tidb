@@ -889,6 +889,7 @@ type MydumperRuntime struct {
 	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
 	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
 	IgnoreColumns    AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	TargetPartition  string           `toml:"target-partition" json:"target-partition"`
 	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
 	//   - utf8mb4
 	//   - GB18030
