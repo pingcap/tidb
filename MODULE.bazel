@@ -4,3 +4,27 @@
 #
 # For more details, please check https://github.com/bazelbuild/bazel/issues/18958
 ###############################################################################
+
+module(name = "tidb")
+
+# Bazel 7's embedded bazel_tools module pulls in older Bzlmod defaults for
+# rules_python and rules_proto, which in turn select protobuf/protoc 21.7.
+# That protoc does not support the --retain_options flag expected by
+# GenProtoDescriptorSet, so it mixes badly with the WORKSPACE-provided
+# protobuf repo used by this repository and breaks bazel_prepare during
+# proto_library analysis. Pin these 2 modules to the same versions used in
+# WORKSPACE so Bzlmod stays aligned with the legacy external dependency graph.
+# This should no longer be needed once .bazelversion is migrated to Bazel 8.0.0
+# or above, which embeds rules_python 0.40.
+bazel_dep(name = "rules_python", version = "1.4.1")
+bazel_dep(name = "rules_proto", version = "6.0.0")
+
+single_version_override(
+    module_name = "rules_python",
+    version = "1.4.1",
+)
+
+single_version_override(
+    module_name = "rules_proto",
+    version = "6.0.0",
+)
