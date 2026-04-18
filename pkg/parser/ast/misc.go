@@ -2599,6 +2599,7 @@ type AdminStmt struct {
 	LimitSimple     LimitSimple
 	BDRRole         BDRRole
 	AlterJobOptions []*AlterJobOption
+	PartitionNames  []CIStr // for ADMIN CHECKSUM TABLE ... PARTITION (p1, p2)
 }
 
 // Restore implements Node interface.
@@ -2686,6 +2687,17 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CHECKSUM TABLE ")
 		if err := restoreTables(); err != nil {
 			return err
+		}
+		if len(n.PartitionNames) != 0 {
+			ctx.WriteKeyWord(" PARTITION ")
+			ctx.WritePlain("(")
+			for i, name := range n.PartitionNames {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteName(name.O)
+			}
+			ctx.WritePlain(")")
 		}
 	case AdminCancelDDLJobs:
 		ctx.WriteKeyWord("CANCEL DDL JOBS ")
