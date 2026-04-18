@@ -1174,7 +1174,7 @@ func (tr *TableImporter) postProcess(
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzeSkipped
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
-			err := tr.analyzeTable(ctx, rc.db)
+			err := tr.analyzeTable(ctx, rc.db, rc.cfg.Mydumper.TargetPartition)
 			// witch post restore level 'optional', we will skip analyze error
 			if rc.cfg.PostRestore.Analyze == config.OpLevelOptional {
 				if err != nil {
@@ -1361,13 +1361,17 @@ func (tr *TableImporter) compareChecksum(remoteChecksum *local.RemoteChecksum, l
 	return nil
 }
 
-func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB) error {
+func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB, partitionName string) error {
 	task := tr.logger.Begin(zap.InfoLevel, "analyze")
 	exec := common.SQLWithRetry{
 		DB:     db,
 		Logger: tr.logger,
 	}
-	err := exec.Exec(ctx, "analyze table", "ANALYZE TABLE "+tr.tableName)
+	sql := "ANALYZE TABLE " + tr.tableName
+	if partitionName != "" {
+		sql += " PARTITION `" + partitionName + "`"
+	}
+	err := exec.Exec(ctx, "analyze table", sql)
 	task.End(zap.ErrorLevel, err)
 	return err
 }
