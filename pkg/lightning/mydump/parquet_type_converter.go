@@ -36,8 +36,6 @@ var (
 	// as-is with a cheap comparison. This is a Spark compatibility threshold,
 	// not a Go time package constant.
 	legacyTimestampRebaseCutoffMicros = time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()
-	// Spark's DATE rebasing uses precomputed switch days for positive years
-	// rather than the simplified century-based formula used below for timestamps.
 	// The entries here are copied from Spark's RebaseDateTime.rebaseJulianToGregorianDays.
 	// Each element in sparkLegacyDateRebaseSwitchDays is the first stored legacy
 	// Spark DATE day count in an interval; the diff at the same index in

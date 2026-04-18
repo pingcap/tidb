@@ -20,6 +20,7 @@ import (
 	"os"
 	"path"
 
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +30,9 @@ var part0Content []byte
 
 //go:embed part1.parquet
 var part1Content []byte
+
+//go:embed spark-legacy-date.gz.parquet
+var sparkLegacyDateContent []byte
 
 func (s *mockGCSSuite) TestImportParquet() {
 	// Each file contains 10 rows, we manually set the row count to 5 when we skip reading the file.
@@ -97,4 +101,27 @@ func (s *mockGCSSuite) TestImportParquet() {
 			}
 		}
 	}
+}
+
+func (s *mockGCSSuite) TestImportParquetWithSparkLegacyDates() {
+	tempDir := s.T().TempDir()
+	// this parquet has below spark metadata:
+	// org.apache.spark.timeZone UTC
+	// org.apache.spark.legacyDateTime
+	importPath := path.Join(tempDir, "spark-legacy-date.gz.parquet")
+	s.NoError(os.WriteFile(importPath, sparkLegacyDateContent, 0o644))
+
+	s.tk.MustExec("USE test;")
+	s.tk.MustExec("DROP TABLE IF EXISTS t;")
+	s.tk.MustExec("CREATE TABLE t (d DATE NOT NULL);")
+	s.tk.MustQuery(fmt.Sprintf("IMPORT INTO test.t FROM '%s' FORMAT 'parquet'", importPath))
+	s.tk.MustQuery("SELECT d FROM test.t ORDER BY d").Check(testkit.Rows(
+		"0001-01-01", "0100-02-28", "0100-03-01", "0200-02-28", "0200-03-01",
+		"0300-03-01", "0300-03-02", "0500-03-02", "0500-03-03", "0600-03-03",
+		"0600-03-04", "0700-03-04", "0700-03-05", "0900-03-05", "0900-03-06",
+		"1000-03-06", "1000-03-07", "1100-03-07", "1100-03-08", "1300-03-08",
+		"1300-03-09", "1400-03-09", "1400-03-10", "1500-03-10", "1500-03-11",
+		"1582-10-04", "1582-10-15", "1582-10-16", "1700-03-01", "1900-01-01",
+		"1970-01-01", "2000-02-29", "9999-12-31",
+	))
 }
