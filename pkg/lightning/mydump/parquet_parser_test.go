@@ -420,6 +420,43 @@ func TestParquetVariousTypes(t *testing.T) {
 		}
 	})
 
+	t.Run("spark_legacy_date_switches", func(t *testing.T) {
+		testCases := []struct {
+			name     string
+			days     int
+			expected int
+		}{
+			{
+				// Spark's first positive-year legacy DATE switch: hybrid 0100-03-01
+				// rebases from -682945 to -682944.
+				name:     "first_positive_year_switch",
+				days:     -682945,
+				expected: -682944,
+			},
+			{
+				name:     "zero_delta_range",
+				days:     -646420,
+				expected: -646420,
+			},
+			{
+				name:     "cutover_day",
+				days:     int(time.Date(1582, 10, 15, 0, 0, 0, 0, time.UTC).Unix() / 86400),
+				expected: int(time.Date(1582, 10, 15, 0, 0, 0, 0, time.UTC).Unix() / 86400),
+			},
+			{
+				name:     "post_cutover_date",
+				days:     int(time.Date(1700, 3, 1, 0, 0, 0, 0, time.UTC).Unix() / 86400),
+				expected: int(time.Date(1700, 3, 1, 0, 0, 0, 0, time.UTC).Unix() / 86400),
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				require.Equal(t, tc.expected, rebaseJulianToGregorianDays(tc.days))
+			})
+		}
+	})
+
 	t.Run("legacy_timestamp_rebase_utc", func(t *testing.T) {
 		loadedUTC, err := time.LoadLocation("UTC")
 		require.NoError(t, err)

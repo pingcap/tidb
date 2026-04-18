@@ -36,6 +36,29 @@ var (
 	// as-is with a cheap comparison. This is a Spark compatibility threshold,
 	// not a Go time package constant.
 	legacyTimestampRebaseCutoffMicros = time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()
+	// Spark's DATE rebasing uses precomputed switch days for positive years
+	// rather than the simplified century-based formula used below for timestamps.
+	// The entries here are copied from Spark's RebaseDateTime.rebaseJulianToGregorianDays.
+	// Each element in sparkLegacyDateRebaseSwitchDays is the first stored legacy
+	// Spark DATE day count in an interval; the diff at the same index in
+	// sparkLegacyDateRebaseDiffs applies until the next switch day.
+	sparkLegacyDateRebaseDiffs      = [...]int{2, 1, 0, -1, -2, -3, -4, -5, -6, -7, -8, -9, -10, 0}
+	sparkLegacyDateRebaseSwitchDays = [...]int{
+		-719164, // 0001-01-01: first positive-year legacy DATE Spark handles with the switch table
+		-682945, // 0100-03-01: switch from a +2-day to a +1-day rebase
+		-646420, // 0200-03-01: start of Spark's zero-delta legacy DATE interval
+		-609895, // 0300-03-02: switch from 0 days to -1 day
+		-536845, // 0500-03-03: switch from -1 day to -2 days
+		-500320, // 0600-03-04: switch from -2 days to -3 days
+		-463795, // 0700-03-05: switch from -3 days to -4 days
+		-390745, // 0900-03-06: switch from -4 days to -5 days
+		-354220, // 1000-03-07: switch from -5 days to -6 days
+		-317695, // 1100-03-08: switch from -6 days to -7 days
+		-244645, // 1300-03-09: switch from -7 days to -8 days
+		-208120, // 1400-03-10: switch from -8 days to -9 days
+		-171595, // 1500-03-11: switch from -9 days to -10 days
+		-141427, // 1582-10-15: Gregorian cutover day; Spark stops shifting dates from here onward
+	}
 )
 
 const (
@@ -44,8 +67,25 @@ const (
 	// That is: floor(log256(10^81-1))
 	maximumDecimalBytes = 33
 	microsPerDay        = int64(24 * time.Hour / time.Microsecond)
+	// unixSecondsPerDay converts a midnight UTC Unix timestamp into a whole-day
+	// count. DATE values are stored as days since the Unix epoch, so the fallback
+	// path below divides Unix seconds by this constant to get back to a day count.
+	unixSecondsPerDay = int64(24 * time.Hour / time.Second)
 	// julianDayOfUnixEpoch is the Julian day number for 1970-01-01.
 	julianDayOfUnixEpoch = int64(2440588)
+	// julianDayNumberConversionOffset is the constant from the standard
+	// Julian-day-number to Julian-calendar conversion. It shifts the input JDN
+	// into a four-year cycle form before extracting year/month/day fields.
+	julianDayNumberConversionOffset = int64(32082)
+	// julianDaysPerFourYearCycle is the number of days in four Julian calendar
+	// years: 365*4 plus one leap day.
+	julianDaysPerFourYearCycle = int64(1461)
+	// julianMonthConversionFactor is the month extractor denominator from the
+	// March-based civil-date conversion formula.
+	julianMonthConversionFactor = int64(153)
+	// julianCalendarYearOffset is the normalization offset used by the
+	// Julian-day-number conversion before mapping back to the civil year.
+	julianCalendarYearOffset = int64(4800)
 )
 
 func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
@@ -192,12 +232,36 @@ func julianGregorianDayDiff(year int, month time.Month) int {
 	return year/100 - year/400 - 2
 }
 
+// julianDayNumberToDate converts a Julian day number into a Julian calendar
+// date. Spark's DATE fallback for very early values needs the Julian calendar
+// label first, then re-encodes that same label on the proleptic Gregorian day
+// axis. The arithmetic here follows the standard Julian-day-number conversion
+// formula, written with named constants so each step's meaning is visible.
+func julianDayNumberToDate(jdn int64) (year int, month time.Month, day int) {
+	c := jdn + julianDayNumberConversionOffset
+	d := (4*c + 3) / julianDaysPerFourYearCycle
+	e := c - (julianDaysPerFourYearCycle*d)/4
+	m := (5*e + 2) / julianMonthConversionFactor
+	day = int(e - (julianMonthConversionFactor*m+2)/5 + 1)
+	month = time.Month(m + 3 - 12*(m/10))
+	year = int(d - julianCalendarYearOffset + m/10)
+	return
+}
+
 // rebaseJulianToGregorianDays converts a Julian-calendar day count into the
 // corresponding proleptic Gregorian day count while preserving the wall-clock
 // date label.
 func rebaseJulianToGregorianDays(days int) int {
-	t := arrow.Date32(days).ToTime()
-	return days - julianGregorianDayDiff(t.Year(), t.Month())
+	if days < sparkLegacyDateRebaseSwitchDays[0] {
+		year, month, day := julianDayNumberToDate(int64(days) + julianDayOfUnixEpoch)
+		return int(time.Date(year, month, day, 0, 0, 0, 0, time.UTC).Unix() / unixSecondsPerDay)
+	}
+
+	i := len(sparkLegacyDateRebaseSwitchDays)
+	for i > 1 && days < sparkLegacyDateRebaseSwitchDays[i-1] {
+		i--
+	}
+	return days + sparkLegacyDateRebaseDiffs[i-1]
 }
 
 func rebaseLegacyTimestampMicros(micros int64, loc *time.Location) int64 {
