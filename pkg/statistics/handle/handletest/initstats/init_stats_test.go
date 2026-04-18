@@ -95,6 +95,8 @@ func TestLiteInitStatsWithTableIDs(t *testing.T) {
 	withStatsLease(t, -1, func() {
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
+		sm := testkit.MockSessionManager{}
+		dom.InfoSyncer().SetSessionManager(&sm)
 		h := dom.StatsHandle()
 		_, ok := h.Get(tbl1.Meta().ID)
 		require.False(t, ok)
@@ -152,6 +154,8 @@ func TestNonLiteInitStatsWithTableIDs(t *testing.T) {
 	withStatsLease(t, -1, func() {
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
+		sm := testkit.MockSessionManager{}
+		dom.InfoSyncer().SetSessionManager(&sm)
 		is = dom.InfoSchema()
 		h := dom.StatsHandle()
 		_, ok := h.Get(tbl1.Meta().ID)
@@ -365,6 +369,8 @@ func TestNonLiteInitStatsAndCheckTheLastTableStats(t *testing.T) {
 	withStatsLease(t, -1, func() {
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
+		sm := testkit.MockSessionManager{}
+		dom.InfoSyncer().SetSessionManager(&sm)
 		is = dom.InfoSchema()
 		h := dom.StatsHandle()
 		_, ok := h.Get(tbl1.Meta().ID)
