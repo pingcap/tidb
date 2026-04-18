@@ -705,6 +705,97 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	return s
 }
 
+// TestColumnConstants verifies that ColumnConstants in EncodingConfig injects
+// literal values for columns missing from the source data, bypassing the DDL DEFAULT.
+func TestColumnConstants(t *testing.T) {
+	// Table with two columns: `name` VARCHAR(64) NOT NULL DEFAULT 'default_name'
+	//                          `ts`   DATETIME   NOT NULL DEFAULT '2000-01-01 00:00:00'
+	tblInfo := mockTableInfo(t,
+		"create table t (name varchar(64) not null default 'default_name', ts datetime not null default '2000-01-01 00:00:00');")
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+
+	// Encoder with column-constants overriding the DDL defaults.
+	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: map[string]string{"tidb_row_format_version": "2"},
+		},
+		Logger: log.L(),
+		ColumnConstants: map[string]string{
+			"name": "acme",
+			"ts":   "2026-04-17 21:00:00",
+		},
+	}, nil)
+	require.NoError(t, err)
+
+	nameCol := tbl.Cols()[0]
+	tsCol := tbl.Cols()[1]
+
+	// nil inputDatum → should use constant, not DDL default.
+	nameDatum, err := lkv.GetActualDatum(encoder, nameCol, 1, nil)
+	require.NoError(t, err)
+	require.Equal(t, "acme", nameDatum.GetString())
+
+	tsDatum, err := lkv.GetActualDatum(encoder, tsCol, 1, nil)
+	require.NoError(t, err)
+	require.Equal(t, "2026-04-17 21:00:00", tsDatum.GetMysqlTime().String())
+
+	// Non-nil inputDatum → constant is NOT used; the provided value wins.
+	explicitDatum := types.NewStringDatum("explicit_name")
+	gotDatum, err := lkv.GetActualDatum(encoder, nameCol, 1, &explicitDatum)
+	require.NoError(t, err)
+	require.Equal(t, "explicit_name", gotDatum.GetString())
+}
+
+// TestColumnConstantsNoDDLDefault verifies that column-constants works even when
+// the column has no DDL DEFAULT (which would otherwise fail with GetColDefaultValue).
+func TestColumnConstantsNoDDLDefault(t *testing.T) {
+	// `name` has no DEFAULT — normally a missing column would error.
+	tblInfo := mockTableInfo(t, "create table t (name varchar(64) not null);")
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+
+	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: map[string]string{"tidb_row_format_version": "2"},
+		},
+		Logger: log.L(),
+		ColumnConstants: map[string]string{"name": "acme"},
+	}, nil)
+	require.NoError(t, err)
+
+	nameCol := tbl.Cols()[0]
+	datum, err := lkv.GetActualDatum(encoder, nameCol, 1, nil)
+	require.NoError(t, err)
+	require.Equal(t, "acme", datum.GetString())
+}
+
+// TestColumnConstantsTypeMismatch verifies that a type-incompatible constant returns an error.
+func TestColumnConstantsTypeMismatch(t *testing.T) {
+	tblInfo := mockTableInfo(t, "create table t (id bigint not null);")
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+
+	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: map[string]string{"tidb_row_format_version": "2"},
+		},
+		Logger: log.L(),
+		ColumnConstants: map[string]string{"id": "not_a_number"},
+	}, nil)
+	require.NoError(t, err)
+
+	idCol := tbl.Cols()[0]
+	_, err = lkv.GetActualDatum(encoder, idCol, 1, nil)
+	require.Error(t, err)
+}
+
 // BenchmarkSQL2KV Run `go test -benchmem -run=^$ -bench ^BenchmarkSQL2KV$ github.com/pingcap/tidb/pkg/lightning/backend/kv` to get benchmark result.
 func BenchmarkSQL2KV(b *testing.B) {
 	s := SetUpTest(b)

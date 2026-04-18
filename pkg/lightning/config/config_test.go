@@ -1459,3 +1459,47 @@ func TestRedactConfig(t *testing.T) {
 		require.Contains(t, cfg.String(), tt.origin)
 	}
 }
+
+// TestIgnoreColumnsColumnConstants verifies that column-constants parses correctly
+// from TOML and that GetIgnoreColumns returns the map alongside the column list.
+func TestIgnoreColumnsColumnConstants(t *testing.T) {
+	tomlData := `
+[[mydumper.ignore-data-columns]]
+db    = "mydb"
+table = "mytable"
+columns = ["customer_name", "etl_ts"]
+[mydumper.ignore-data-columns.column-constants]
+customer_name = "acme"
+etl_ts        = "2026-04-17 21:00:00"
+`
+	cfg := NewConfig()
+	_, err := toml.Decode(tomlData, cfg)
+	require.NoError(t, err)
+
+	ic, err := cfg.Mydumper.IgnoreColumns.GetIgnoreColumns("mydb", "mytable", false)
+	require.NoError(t, err)
+	require.Equal(t, []string{"customer_name", "etl_ts"}, ic.Columns)
+	require.Equal(t, map[string]string{
+		"customer_name": "acme",
+		"etl_ts":        "2026-04-17 21:00:00",
+	}, ic.ColumnConstants)
+}
+
+// TestIgnoreColumnsColumnConstantsAbsent verifies that GetIgnoreColumns returns
+// nil ColumnConstants when no column-constants are specified (no regression).
+func TestIgnoreColumnsColumnConstantsAbsent(t *testing.T) {
+	tomlData := `
+[[mydumper.ignore-data-columns]]
+db      = "mydb"
+table   = "mytable"
+columns = ["customer_name"]
+`
+	cfg := NewConfig()
+	_, err := toml.Decode(tomlData, cfg)
+	require.NoError(t, err)
+
+	ic, err := cfg.Mydumper.IgnoreColumns.GetIgnoreColumns("mydb", "mytable", false)
+	require.NoError(t, err)
+	require.Equal(t, []string{"customer_name"}, ic.Columns)
+	require.Nil(t, ic.ColumnConstants)
+}
