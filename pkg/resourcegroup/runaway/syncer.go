@@ -208,13 +208,6 @@ func (s *syncer) getWatchRecordByID(id int64) ([]*QuarantineRecord, error) {
 	return s.readQuarantineRecords(s.newWatchReader, s.newWatchReader.genSelectByIDStmt(id))
 }
 
-<<<<<<< HEAD
-=======
-func (s *syncer) getWatchRecordByGroup(groupName string) ([]*QuarantineRecord, error) {
-	return s.readQuarantineRecords(s.newWatchReader, s.newWatchReader.genSelectByGroupStmt(groupName))
-}
-
->>>>>>> e3f45e476d3 (resourcegroup/runaway: switch watch syncer to time-based cursor (#67758))
 func (s *syncer) getNewWatchRecords() ([]*QuarantineRecord, error) {
 	return s.scanNewRecordsInRange(s.newWatchReader)
 }
@@ -338,9 +331,8 @@ type systemTableReader struct {
 	// Precomputed SQL templates derived from TableName/KeyCol. Only the
 	// parameters change across calls, so building them once avoids
 	// per-scan string allocations.
-	selectByIDSQL    string
-	selectByGroupSQL string
-	selectWindowSQL  string
+	selectByIDSQL   string
+	selectWindowSQL string
 	// lastScanKeyTime is the key-column time of the last valid row produced
 	// by the most recent scanNewRecordsInRange call. Only scanNewRecordsInRange
 	// writes to it; point-query paths leave it alone so manual Remove* calls
@@ -350,14 +342,13 @@ type systemTableReader struct {
 
 func newSystemTableReader(tableName, keyCol string, keyColIdx int, cols quarantineColumns) *systemTableReader {
 	return &systemTableReader{
-		TableName:        tableName,
-		KeyCol:           keyCol,
-		KeyColIdx:        keyColIdx,
-		RecordColumns:    cols,
-		CheckPoint:       NullTime,
-		UpperBound:       NullTime,
-		selectByIDSQL:    fmt.Sprintf("select * from %s where id = %%?", tableName),
-		selectByGroupSQL: fmt.Sprintf("select * from %s where resource_group_name = %%?", tableName),
+		TableName:     tableName,
+		KeyCol:        keyCol,
+		KeyColIdx:     keyColIdx,
+		RecordColumns: cols,
+		CheckPoint:    NullTime,
+		UpperBound:    NullTime,
+		selectByIDSQL: fmt.Sprintf("select * from %s where id = %%?", tableName),
 		selectWindowSQL: fmt.Sprintf(
 			"select * from %s where %s >= %%? and %s < %%? order by %s limit %%?",
 			tableName, keyCol, keyCol, keyCol,
@@ -365,11 +356,9 @@ func newSystemTableReader(tableName, keyCol string, keyColIdx int, cols quaranti
 	}
 }
 
-<<<<<<< HEAD
-=======
 // sqlGenFn returns the SQL statement and parameters for one read issued by the
-// syncer. Point-query callers (by ID / by resource group) build a closure via
-// genSelectBy*Stmt; the window-scan path calls genSelectStmt directly.
+// syncer. Point-query callers (by ID) build a closure via genSelectByIDStmt;
+// the window-scan path calls genSelectStmt directly.
 type sqlGenFn func() (string, []any)
 
 func (r *systemTableReader) genSelectByIDStmt(id int64) sqlGenFn {
@@ -378,13 +367,6 @@ func (r *systemTableReader) genSelectByIDStmt(id int64) sqlGenFn {
 	}
 }
 
-func (r *systemTableReader) genSelectByGroupStmt(groupName string) sqlGenFn {
-	return func() (string, []any) {
-		return r.selectByGroupSQL, []any{groupName}
-	}
-}
-
->>>>>>> e3f45e476d3 (resourcegroup/runaway: switch watch syncer to time-based cursor (#67758))
 func (r *systemTableReader) genSelectStmt() (string, []any) {
 	return r.selectWindowSQL, []any{r.CheckPoint, r.UpperBound, watchSyncBatchLimit}
 }
