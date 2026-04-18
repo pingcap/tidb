@@ -1718,21 +1718,21 @@ select /*+ set_var(tidb_enable_cache_prepare_stmt=0) */ @@tidb_enable_cache_prep
 0
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
-1
+0
 set @@tidb_enable_cache_prepare_stmt=default;
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
-1
+0
 select /*+ set_var(tidb_enable_cache_prepare_stmt=1) */ @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
 1
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
-1
+0
 set @@tidb_enable_cache_prepare_stmt=default;
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
-1
+0
 set @@tidb_enable_cache_prepare_stmt=off;
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
@@ -1744,4 +1744,4 @@ select @@tidb_enable_cache_prepare_stmt;
 set @@tidb_enable_cache_prepare_stmt=default;
 select @@tidb_enable_cache_prepare_stmt;
 @@tidb_enable_cache_prepare_stmt
-1
+0

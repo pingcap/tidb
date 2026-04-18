@@ -29,6 +29,7 @@ import (
 func TestPrepareStmtDedupCacheBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = 1")
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id bigint primary key, age int, city varchar(32))")
 
@@ -49,6 +50,7 @@ func TestPrepareStmtDedupCacheBasic(t *testing.T) {
 	require.Len(t, fields2, 2)
 	require.Equal(t, "id", fields2[0].Column.Name.L)
 	require.Equal(t, "city", fields2[1].Column.Name.L)
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = default")
 }
 
 // TestPrepareStmtDedupCacheExecute verifies that stmts produced via the dedup
@@ -57,6 +59,7 @@ func TestPrepareStmtDedupCacheExecute(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = 1")
 	tk.MustExec("create table t2 (id bigint primary key, val int)")
 	tk.MustExec("insert into t2 values (1, 10), (2, 20), (3, 30)")
 
@@ -99,6 +102,8 @@ func TestPrepareStmtDedupCacheExecute(t *testing.T) {
 	// The original stmt must still work independently.
 	ids = runAndCollect(id1, 25)
 	require.Equal(t, []int64{3}, ids)
+
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = default")
 }
 
 // TestPrepareStmtDedupCacheSchemaChange verifies that a DDL (schema version bump)
@@ -108,6 +113,7 @@ func TestPrepareStmtDedupCacheSchemaChange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = 1")
 	tk.MustExec("create table t3 (id bigint primary key, name varchar(32))")
 
 	sql := "select id, name from t3 where id = ?"
@@ -135,6 +141,7 @@ func TestPrepareStmtDedupCacheSchemaChange(t *testing.T) {
 	rs, err := tk.Session().ExecutePreparedStmt(ctx, id2, expression.Args2Expressions4Test(1))
 	require.NoError(t, err)
 	require.NoError(t, rs.Close())
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = default")
 }
 
 // TestPrepareStmtDedupCacheIsolatedByDB verifies that prepare dedup cache entries
@@ -143,6 +150,7 @@ func TestPrepareStmtDedupCacheSchemaChange(t *testing.T) {
 func TestPrepareStmtDedupCacheIsolatedByDB(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = 1")
 	tk.MustExec("create database if not exists db1")
 	tk.MustExec("create database if not exists db2")
 	tk.MustExec("use db1")
@@ -166,6 +174,7 @@ func TestPrepareStmtDedupCacheIsolatedByDB(t *testing.T) {
 	require.NotEqual(t, id1, id2)
 	// fields2 reflects db2.tblx.v which is bigint (not int), so a fresh build must have run.
 	require.Len(t, fields2, 1)
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = default")
 }
 
 // TestPrepareStmtDedupCachePrepareExecuteCloseLoop verifies the prepare-per-request
@@ -175,6 +184,7 @@ func TestPrepareStmtDedupCachePrepareExecuteCloseLoop(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = 1")
 	tk.MustExec("create table t4 (id bigint primary key, score int)")
 	tk.MustExec("insert into t4 values (1,100),(2,200),(3,300)")
 
@@ -208,4 +218,5 @@ func TestPrepareStmtDedupCachePrepareExecuteCloseLoop(t *testing.T) {
 
 		require.NoError(t, tk.Session().DropPreparedStmt(id))
 	}
+	tk.MustExec("set tidb_enable_cache_prepare_stmt = default")
 }

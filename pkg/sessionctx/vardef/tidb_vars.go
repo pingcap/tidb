@@ -1790,7 +1790,7 @@ const (
 	DefTiDBMemArbitratorQueryReservedText             = "0"
 	DefTiDBMemArbitratorWaitAverse                    = "0"
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
-	DefEnableCachePrepareStmt                         = true
+	DefEnableCachePrepareStmt                         = false
 	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
 	DefConnectAttrsSize int64 = 4096
