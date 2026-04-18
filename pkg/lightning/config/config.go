@@ -1561,7 +1561,14 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.PostRestore.Analyze = global.PostRestore.Analyze
 	cfg.App.CheckRequirements = global.App.CheckRequirements
 	cfg.Security = global.Security
-	cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreColumns
+	if len(global.Mydumper.IgnoreDataCols) > 0 {
+		cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreDataCols
+	} else {
+		cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreColumns
+	}
+	if global.Mydumper.TargetPartition != "" {
+		cfg.Mydumper.TargetPartition = global.Mydumper.TargetPartition
+	}
 	return nil
 }
 

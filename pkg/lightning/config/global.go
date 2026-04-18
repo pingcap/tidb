@@ -56,9 +56,11 @@ type GlobalTiDB struct {
 type GlobalMydumper struct {
 	SourceDir string `toml:"data-source-dir" json:"data-source-dir"`
 	// Deprecated
-	NoSchema      bool             `toml:"no-schema" json:"no-schema"`
-	Filter        []string         `toml:"filter" json:"filter"`
-	IgnoreColumns []*IgnoreColumns `toml:"ignore-columns" json:"ignore-columns"`
+	NoSchema        bool             `toml:"no-schema" json:"no-schema"`
+	Filter          []string         `toml:"filter" json:"filter"`
+	IgnoreColumns   []*IgnoreColumns `toml:"ignore-columns" json:"ignore-columns"`
+	IgnoreDataCols  AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	TargetPartition string           `toml:"target-partition" json:"target-partition"`
 }
 
 // GlobalImporter is the global configuration of tikv-importer.

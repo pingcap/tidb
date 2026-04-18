@@ -229,6 +229,30 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 	return &result, nil
 }
 
+// IsPartitionEmpty checks whether a specific named partition of the table is empty.
+func (g *TargetInfoGetterImpl) IsPartitionEmpty(ctx context.Context, schemaName string, tableName string, partitionName string) (*bool, error) {
+	var result bool
+	exec := common.SQLWithRetry{
+		DB:     g.db,
+		Logger: log.FromContext(ctx),
+	}
+	var dump int
+	err := exec.QueryRow(ctx, "check partition empty",
+		fmt.Sprintf("SELECT 1 FROM `%s`.`%s` PARTITION (`%s`) USE INDEX() LIMIT 1", schemaName, tableName, partitionName),
+		&dump,
+	)
+	switch {
+	case errors.ErrorEqual(err, sql.ErrNoRows):
+		result = true
+	case err != nil:
+		return nil, errors.Trace(err)
+	default:
+		result = false
+	}
+	return &result, nil
+}
+
+
 // GetTargetSysVariablesForImport gets some important system variables for importing on the target.
 // It implements the TargetInfoGetter interface.
 // It uses the SQL to fetch sys variables from the target.
@@ -636,6 +660,10 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return 0.0, false, errors.Trace(err)
 	}
 	logger := log.Wrap(logutil.Logger(ctx).With(zap.String("table", tableMeta.Name)))
+	sampleIgCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
+	if err != nil {
+		return 0.0, false, errors.Trace(err)
+	}
 	kvEncoder, err := p.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        p.cfg.TiDB.SQLMode,
@@ -643,8 +671,9 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 			SysVars:        sysVars,
 			AutoRandomSeed: 0,
 		},
-		Table:  tbl,
-		Logger: logger,
+		Table:           tbl,
+		Logger:          logger,
+		ColumnConstants: sampleIgCols.ColumnConstants,
 	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
