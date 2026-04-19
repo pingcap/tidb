@@ -154,7 +154,7 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 
 	checksumSQL := "ADMIN CHECKSUM TABLE " + tableName
 	if partitionName != "" {
-		checksumSQL += " PARTITION (`" + partitionName + "`)"
+		checksumSQL += " PARTITION (" + common.EscapeIdentifier(partitionName) + ")"
 	}
 
 	cs := RemoteChecksum{}

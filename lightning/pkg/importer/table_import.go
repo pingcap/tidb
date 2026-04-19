@@ -1369,7 +1369,7 @@ func (tr *TableImporter) analyzeTable(ctx context.Context, db *sql.DB, partition
 	}
 	sql := "ANALYZE TABLE " + tr.tableName
 	if partitionName != "" {
-		sql += " PARTITION `" + partitionName + "`"
+		sql += " PARTITION " + common.EscapeIdentifier(partitionName)
 	}
 	err := exec.Exec(ctx, "analyze table", sql)
 	task.End(zap.ErrorLevel, err)
