@@ -30,7 +30,7 @@ Use a checkbox list for granular progress. Every stopping point must be reflecte
 - [ ] M1: Switch the bucket-row codec to `proto.Marshal(statistics.HistogramToProto(hg))`, no wrapper file. Add a round-trip unit test that explicitly covers a v2 column histogram (first time those get proto-round-tripped). Expected: random histograms encode and decode losslessly; one row per histogram.
 - [ ] M2: Switch writers and readers. Rewrite `saveBucketsToStorage` to `INSERT … ON DUPLICATE KEY UPDATE value = VALUES(value)` against `stats_data`, then unconditionally `DELETE` the matching `stats_buckets` row in the same session. Rewrite `InsertColStats2KV` to use `INSERT IGNORE` against `stats_data` (preserves the legacy "create-if-absent" semantics). Rewrite `HistogramFromStorageWithPriority` to read `stats_data` first and fall back to `stats_buckets` on miss, logging the fallback at INFO with rate limit.
 - [ ] M3: Bootstrap loader. Rewrite `getTablesWithBucketsInRange`, `genInitStatsBucketsSQLForIndexes`, `initStatsBuckets4Chunk` in `pkg/statistics/handle/bootstrap.go` so that initial stats loading queries `stats_data` first and falls back to `stats_buckets` for indexes that have no `stats_data` row. Two separate queries (skip the legacy one if the new query already covers the table-id range). New `initStatsBuckets4Chunk` variant for the blob payload. No data migration during bootstrap.
-- [ ] M4: GC and ID migration. Route `gc.go` deletes to both tables; keep `stats_buckets` in `changeGlobalStatsTables` so restore/ID-migration continues to work.
+- [ ] M4: GC and ID migration. Add a per-histogram `stats_data` DELETE in `deleteHistStatsFromKV` scoped by `(table_id, type, hist_id)` (same session as the existing legacy DELETE). The whole-table `GCStats` path already deletes `stats_data` by `table_id` (added by #66303). `changeGlobalStatsTables` already includes `stats_data`, no change. BR systable list already includes both tables.
 - [ ] M5: Tests. Add unit tests covering write, read, GC, ID migration, bootstrap with mixed legacy/new data, and the `INSERT IGNORE` default-bucket path. Update existing bucket-counting tests that reference `mysql.stats_buckets`.
 - [ ] M6: Integration and realtikv tests. Update `tests/integrationtest/t/executor/kv.test` (and `.result`), `tests/realtikvtest/statisticstest/statistics_test.go`, `br/tests/br_restore_physical/run.sh`. Confirm `ANALYZE` + `SHOW STATS_BUCKETS` round-trip passes end-to-end.
 - [ ] M7: Performance check. Reproduce the #66751 workload (partitioned table with many columns, run `ANALYZE TABLE`) on a local cluster and confirm the wall-clock improvement. Record numbers in `Artifacts and Notes`.
@@ -109,6 +109,14 @@ Record every key decision in this format:
 
 - Decision: No data migration during bootstrap; an upgrade-gate that controls when writes start landing in `stats_data` is deferred to a separate follow-up PR modeled on PR #66847's pattern.
   Rationale: Migrating data at bootstrap would slow startup, complicate failure recovery, and conflate two concerns. The natural migration trigger is the next ANALYZE — which writes a fresh blob and lazily purges the legacy row (M2). The remaining hazard is rolling-upgrade mixed-version clusters: a newly-upgraded node would write to `stats_data` while older nodes still read only from `stats_buckets`, causing temporary plan regressions on the old nodes. PR #66847 addresses the analogous problem for global index V1 keys with a cluster-version-gated atomic flag (`globalIndexV1Supported`) updated by a background loop polling all server-info entries; the same pattern applied here would gate the new write path behind "all nodes ≥ first-version-with-stats_data-bucket-support". Out of scope for this PR; tracked as a follow-up so this PR can ship with read-side coverage in place but write-side gated by a future flag.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: Per-histogram GC adds a `stats_data` DELETE keyed on `(table_id, type, hist_id)`, in the same session as the existing legacy DELETE. Whole-table GC and `ChangeGlobalStatsID` need no change; both already handle `stats_data` via wiring added in #66303.
+  Rationale: `deleteHistStatsFromKV` (gc.go:259) keys the legacy DELETE on `(table_id, hist_id, is_index)`; `stats_data` carries the same identity but with `type` instead of `is_index` (1 = col bucket, 2 = idx bucket). Same-session DELETE keeps the reader's "exactly one of the two tables holds this histogram" invariant intact through the GC. Order between the two DELETEs is unimportant because the migration invariant guarantees only one row ever exists across both tables for any given histogram (M2's unconditional purge enforces this on write). Whole-table GC at `gc.go:170` already does `DELETE FROM stats_data WHERE table_id=?`, which correctly purges all bucket rows (and any future row types) for the dropped table.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: BR needs no code change; both tables are already in the systable restore map. Only `br/tests/br_restore_physical/run.sh` needs an assertion update (covered under M6).
+  Rationale: #66303 already added `stats_data` to `br/pkg/restore/snap_client/systable_restore.go:44`. BR backs up and restores rows of each system table verbatim, so the existing wiring covers the new bucket payload without modification.
   Date/Author: 2026-04-20 / mattias, claude.
 
 - Decision: No bootstrap version bump is added by this PR.
@@ -256,9 +264,18 @@ Rewrite the read path:
 
 **M4 — GC, BR, ID migration.**
 
-- `gc.go:161` and `gc.go:259`: issue the DELETE against both tables. Order does not matter; run the `stats_data` delete first so a crash between them leaves the legacy row behind (which is harmless — it will be ignored on next read because the new table is checked first, and it will be deleted on the next GC pass).
-- `update.go:154` (`changeGlobalStatsTables`): keep `stats_buckets` in the list; add `stats_data` if it is not already there (check while implementing). The migration SQL for `stats_data` has a different shape (`type` column, no `is_index`), so it may need its own branch.
-- BR (`br/pkg/restore/snap_client/systable_restore.go:44`): no code change needed. BR already handles `stats_buckets`; `stats_data` is already in the map via #66303.
+- **Whole-table GC (`GCStats`, gc.go:170)**: no change needed. The DELETE against `stats_data` by `table_id` was already added by #66303 and correctly purges every row for the dropped table regardless of `type`.
+
+- **Per-histogram GC (`deleteHistStatsFromKV`, gc.go:259)**: add one new DELETE next to the existing legacy DELETE, in the same session. The legacy DELETE keys on `(table_id, hist_id, is_index)`; the new DELETE keys on `(table_id, type, hist_id)` where `type = StatsDataTypeColBucket` if `is_index == 0` else `StatsDataTypeIdxBucket`:
+
+        DELETE FROM mysql.stats_data
+        WHERE  table_id = ? AND type = ? AND hist_id = ?
+
+  Both DELETEs in the same transaction so a reader never sees one purge land without the other. Order between them does not matter — the read path only ever returns one of the two rows (`stats_data` first, fall back to `stats_buckets`), and a properly maintained migration invariant is that **bucket data for the same histogram must never exist in both tables simultaneously** (M2's unconditional purge enforces that on every write).
+
+- **`ChangeGlobalStatsID` (`update.go:154`)**: no change. `stats_data` is already in `changeGlobalStatsTables` (added by #66303) and the single UPDATE template `update mysql.<table> set table_id = %? where table_id = %?` works for `stats_data` because `table_id` is its first column.
+
+- **BR (`br/pkg/restore/snap_client/systable_restore.go:44`)**: no code change. Both `stats_buckets` and `stats_data` are already in the map (#66303). The only test asset to update is `br/tests/br_restore_physical/run.sh:74` (post-restore assertion, see M6).
 
 **M5 — Unit tests.** Add to `pkg/statistics/handle/storage/`:
 
