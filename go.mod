@@ -100,11 +100,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20260127035637-77643524c499
-=======
-	github.com/pingcap/kvproto v0.0.0-20260302041553-bdcab1db9bef
->>>>>>> origin/release-8.5
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -334,11 +330,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.40.0 // indirect
 	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
-<<<<<<< HEAD
 	golang.org/x/crypto v0.48.0 // indirect
-=======
-	golang.org/x/crypto v0.45.0 // indirect
->>>>>>> origin/release-8.5
 	golang.org/x/exp/typeparams v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
@@ -358,11 +350,11 @@ require (
 	stathat.com/c/consistent v1.0.0 // indirect
 )
 
-replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260319090131-1b48a0dae99e
+replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260420075637-38aef268e3c4
 
-replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260320054443-16d7506a6204
+replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260417082301-3cc4736ad2e2
 
-replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260320025932-85bedded2396
+replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260417065116-5d9cbc7f890a
 
 replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.

@@ -1038,16 +1038,13 @@ const (
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
 
-<<<<<<< HEAD
 	// TiDBEnableUDVSubstitute indicates whether to enable user defined variable substitute.
 	TiDBEnableUDVSubstitute = "tidb_enable_udv_substitute"
 
 	// TiDBEnableSPParamSubstitute indicates whether to enable stored procedure parameter substitute.
 	TiDBEnableSPParamSubstitute = "tidb_enable_sp_param_substitute"
-=======
 	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
->>>>>>> origin/release-8.5
 )
 
 // TiDB vars that have only global scope
@@ -1680,11 +1677,8 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
-<<<<<<< HEAD
 	DefTiDBPlanCacheMaxDecimalParamNums               = -1
-=======
 	DefTiDBAccelerateUserCreationUpdate               = false
->>>>>>> origin/release-8.5
 	DefTiDBLoadBindingTimeout                         = 200
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly

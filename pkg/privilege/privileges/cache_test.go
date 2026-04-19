@@ -16,10 +16,7 @@ package privileges_test
 
 import (
 	"fmt"
-<<<<<<< HEAD
-=======
 	"math/rand"
->>>>>>> origin/release-8.5
 	"strings"
 	"testing"
 	"time"
@@ -446,11 +443,7 @@ func TestSortUserTable(t *testing.T) {
 		privileges.NewUserRecord("localhost", ""),
 	})
 	p.SortUserTable()
-<<<<<<< HEAD
-	result := []privileges.UserRecord{
-=======
 	result = []privileges.UserRecord{
->>>>>>> origin/release-8.5
 		privileges.NewUserRecord("localhost", ""),
 		privileges.NewUserRecord("localhost", "root"),
 		privileges.NewUserRecord(`%`, "jeffrey"),
@@ -516,11 +509,7 @@ func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
 	}
 
 	require.Equal(t, len(x), len(y), "%s\n vs %s\n", sbX.String(), sbY.String())
-<<<<<<< HEAD
-	for i := 0; i < len(x); i++ {
-=======
 	for i := range x {
->>>>>>> origin/release-8.5
 		require.Equal(t, x[i].User, y[i].User, "%s\n vs %s\n", sbX.String(), sbY.String())
 		require.Equal(t, x[i].Host, y[i].Host, "%s\n vs %s\n", sbX.String(), sbY.String())
 	}

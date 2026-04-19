@@ -186,18 +186,6 @@ func TestRevokeColumnPriv(t *testing.T) {
 
 	// grant column priv should add records to both mysql.columns_priv and mysql.tables_priv
 	tk.MustExec("GRANT SELECT(c1) ON test.t1 TO u1")
-<<<<<<< HEAD
-	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
-		Check(testkit.Rows("Select"))
-	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
-		Check(testkit.Rows(" Select"))
-
-	// revoke column privilege should remove records from both mysql.columns_priv and mysql.tables_priv
-	tk.MustExec("REVOKE SELECT(c1) ON test.t1 FROM u1")
-	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
-		Check(testkit.Rows())
-	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
-=======
 	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
 		Check(testkit.Rows("Select"))
 	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
@@ -218,21 +206,10 @@ func TestRevokeColumnPriv(t *testing.T) {
 	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
 		Check(testkit.Rows())
 	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
->>>>>>> origin/release-8.5
 		Check(testkit.Rows())
 
 	// revoke table privilege should also remove corresponding records from mysql.columns_priv
 	tk.MustExec("GRANT SELECT,SELECT(c1) ON test.t1 TO u1")
-<<<<<<< HEAD
-	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
-		Check(testkit.Rows("Select"))
-	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
-		Check(testkit.Rows("Select Select"))
-	tk.MustExec("REVOKE SELECT ON test.t1 FROM u1")
-	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1' AND Column_name='c1'").
-		Check(testkit.Rows())
-	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv WHERE User='u1' AND Host='%' AND Db='test' AND Table_name='t1'`).
-=======
 	tk.MustQuery("SELECT column_priv FROM mysql.columns_priv ORDER BY table_name, column_name").
 		Check(testkit.Rows("Select"))
 	tk.MustQuery(`SELECT table_priv,column_priv FROM mysql.tables_priv ORDER BY table_name`).
@@ -273,6 +250,5 @@ func TestRevokeColumnPriv(t *testing.T) {
 	// Note that column-level REFERENCES will be revoked
 	tk.MustExec("REVOKE ALL on t1 from u1")
 	tk.MustQuery("select table_priv,column_priv from mysql.tables_priv where user='u1'").
->>>>>>> origin/release-8.5
 		Check(testkit.Rows())
 }

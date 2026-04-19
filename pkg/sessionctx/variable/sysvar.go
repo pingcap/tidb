@@ -3662,7 +3662,6 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},
 	},
-<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: TiDBEnableLoginHistory, Value: BoolToOnOff(DefTiDBEnableLoginHistory), Type: TypeBool,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
 			EnableLoginHistory.Store(TiDBOptOn(val))
@@ -3693,14 +3692,12 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
-=======
 	{Scope: ScopeGlobal, Name: TiDBAccelerateUserCreationUpdate, Value: BoolToOnOff(DefTiDBAccelerateUserCreationUpdate), Type: TypeBool,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			AccelerateUserCreationUpdate.Store(TiDBOptOn(val))
 			return nil
 		},
 	},
->>>>>>> origin/release-8.5
 	{
 		Scope:    ScopeGlobal,
 		Name:     TiDBAdvancerCheckPointLagLimit,
@@ -3752,7 +3749,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: PKDBEnableWhitelist, Value: BoolToOnOff(DefPKDBEnableWhitelist), Type: TypeBool,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
 			EnableWhitelist.Store(TiDBOptOn(val))
@@ -3781,7 +3777,6 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: LowerCaseTableNames, Value: "2", Type: TypeInt, MinValue: 0, MaxValue: 2, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return strconv.Itoa(model.GetLowerCaseTableNames()), nil
 	}},
-=======
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSlowLogRules, Value: "", Type: TypeStr,
 		SetSession: func(s *SessionVars, val string) error {
 			slowLogRules, err := ParseSessionSlowLogRules(val)
@@ -3834,7 +3829,6 @@ var defaultSysVars = []*SysVar{
 			return strconv.Itoa(int(GlobalSlowLogRateLimiter.Limit())), nil
 		},
 	},
->>>>>>> origin/release-8.5
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

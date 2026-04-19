@@ -1775,7 +1775,6 @@ type SessionVars struct {
 	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
 	IndexLookUpPushDownPolicy string
 
-<<<<<<< HEAD
 	// database name +"."+procedure_name as key , *RoutineCacahe as value.
 	ProcedurePlanCache map[string]any
 	// LastProcedureErrorStr is used to save last handler command.
@@ -1798,13 +1797,11 @@ type SessionVars struct {
 
 	// LogHistory indicate historical login information
 	LogHistory string
-=======
 	// InPacketBytes records the total incoming packet bytes from clients for current session.
 	InPacketBytes atomic.Uint64
 
 	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
 	OutPacketBytes atomic.Uint64
->>>>>>> origin/release-8.5
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.

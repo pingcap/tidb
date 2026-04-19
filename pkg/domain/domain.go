@@ -2282,18 +2282,6 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			select {
 			case <-do.exit:
 				return
-<<<<<<< HEAD
-			case _, ok = <-watchCh:
-			case <-time.After(duration):
-			case <-pkdbrepl.StandbyUserReloadTickCh:
-			}
-			if !ok {
-				logutil.BgLogger().Warn("load privilege loop watch channel closed")
-				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
-				count++
-				if count > 10 {
-					time.Sleep(time.Duration(count) * time.Second)
-=======
 			case resp, ok := <-watchCh:
 				if ok {
 					count = 0
@@ -2309,11 +2297,12 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 						}
 						continue
 					}
->>>>>>> origin/release-8.5
 				}
 			case <-time.After(duration):
 				event.All = true
 				event = do.batchReadMoreData(watchCh, event)
+			case <-pkdbrepl.StandbyUserReloadTickCh:
+				event.All = true
 			}
 
 			// All events are from this TiDB-Server, skip them

@@ -832,15 +832,12 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
-<<<<<<< HEAD
-	case *ast.CreateProcedureInfo:
-		p.flag &= ^inCreateOrDropTable
-=======
 		if lockCtx := p.getLockSelectCtxStackTop(); lockCtx != nil {
 			p.checkLockClauseTables(x, lockCtx)
 			p.popLockSelectCtx()
 		}
->>>>>>> origin/release-8.5
+	case *ast.CreateProcedureInfo:
+		p.flag &= ^inCreateOrDropTable
 	case *ast.SetOprStmt:
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]

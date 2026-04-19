@@ -417,23 +417,7 @@ func BuildIndexInfo(
 			idxInfo.Tp = indexOption.Tp
 		}
 		idxInfo.Global = indexOption.Global
-<<<<<<< HEAD
-		// Set global index version for new global indexes.
-		// Version 1 is only needed for non-clustered tables with non-unique global indexes
-		// to prevent collisions after EXCHANGE PARTITION due to duplicate _tidb_rowid values.
-		// Clustered tables and unique indexes don't have this issue and use version 0.
-		idxInfo.GlobalIndexVersion = 0
-		if indexOption.Global && !idxInfo.Unique && !tblInfo.HasClusteredIndex() {
-			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
-			failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
-				if valInt, ok := val.(int); ok {
-					idxInfo.GlobalIndexVersion = uint8(valInt)
-				}
-			})
-		}
-=======
 		setGlobalIndexVersion(tblInfo, idxInfo)
->>>>>>> origin/release-8.5
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = pmodel.IndexTypeBtree

@@ -573,15 +573,12 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 	}
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(pids))
 	for i, kvRange := range kvRanges {
-<<<<<<< HEAD
 		if hasTableSplit {
 			keyRanges := kv.NewNonPartitionedKeyRanges(kvRange)
 			keyRanges.Intersect(start, end)
 			kvRange = keyRanges.FirstPartitionRange()
 		}
 		e.kvRanges = append(e.kvRanges, kvRange...)
-=======
->>>>>>> origin/release-8.5
 		partitionIDAndRanges = append(partitionIDAndRanges, kv.PartitionIDAndRanges{
 			ID:        pids[i],
 			KeyRanges: kvRange,

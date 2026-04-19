@@ -20,12 +20,14 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestUptime(t *testing.T) {
@@ -63,8 +65,6 @@ func TestUptime(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, stats[upTime].(int64), int64(time.Since(time.Unix(1282967700, 0)).Seconds()))
 }
-<<<<<<< HEAD
-=======
 
 func TestInitStatsSessionBlockGC(t *testing.T) {
 	origConfig := config.GetGlobalConfig()
@@ -112,4 +112,3 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 		require.NoError(t, store.Close())
 	}
 }
->>>>>>> origin/release-8.5

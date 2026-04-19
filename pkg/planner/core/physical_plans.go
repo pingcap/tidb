@@ -1031,15 +1031,12 @@ type PhysicalTableScan struct {
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
 
-<<<<<<< HEAD
 	// TableSplit is a split (range) of the table to read.
 	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
-=======
 	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
->>>>>>> origin/release-8.5
 }
 
 // VectorIndexExtra is the extra information for vector index.

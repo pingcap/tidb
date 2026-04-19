@@ -96,11 +96,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		}
 
 		switch f.Type.String() {
-<<<<<<< HEAD
-		case "[]int", "[]byte", "[]float", "[]bool", "[]string", "[]uint32": // simple slice
-=======
 		case "[]int", "[]byte", "[]float", "[]bool", "[]uint32", "[]string": // simple slice
->>>>>>> origin/release-8.5
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
 		case "core.physicalSchemaProducer", "core.basePhysicalAgg", "core.basePhysicalJoin":

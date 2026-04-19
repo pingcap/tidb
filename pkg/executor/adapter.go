@@ -1859,14 +1859,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	cfg := config.GetGlobalConfig()
-<<<<<<< HEAD
-	costTime := sessVars.GetTotalCostDuration()
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
-	enable := cfg.Instance.EnableSlowLog.Load()
-	// if the level is Debug, print slow logs anyway
-	force := level <= zapcore.DebugLevel
-	if (!enable || costTime < threshold) && !force {
-=======
 	var slowItems *variable.SlowQueryLogItems
 
 	matchRules := stmtCtx.WriteSlowLog
@@ -1896,7 +1888,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 
 	if !variable.GlobalSlowLogRateLimiter.Allow() {
 		sampleLoggerFactory().Info("slow log skipped due to rate limiting", zap.Int64("tidb_slow_log_max_per_sec", int64(variable.GlobalSlowLogRateLimiter.Limit())))
->>>>>>> origin/release-8.5
 		return
 	}
 

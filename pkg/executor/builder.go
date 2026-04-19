@@ -83,11 +83,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/util/logutil"
-=======
 	"github.com/pingcap/tidb/pkg/util/intest"
->>>>>>> origin/release-8.5
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
@@ -2498,7 +2495,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
-<<<<<<< HEAD
 			strings.ToLower(infoschema.TableRoutines),
 			strings.ToLower(infoschema.TableColumnPrivileges),
 			strings.ToLower(infoschema.TableTablePrivileges),
@@ -2509,11 +2505,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableLogReplClusterStatusGlobal),
 			strings.ToLower(infoschema.TableLogReplWorkflowHistoryGlobal),
 			strings.ToLower(infoschema.TableLogReplStatusLocal):
-=======
-			strings.ToLower(infoschema.TableColumnPrivileges),
-			strings.ToLower(infoschema.TableTablePrivileges),
-			strings.ToLower(infoschema.TableSchemaPrivileges):
->>>>>>> origin/release-8.5
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{

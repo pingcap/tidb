@@ -3897,7 +3897,6 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
 }
 
-<<<<<<< HEAD
 func TestIssue57780(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3938,8 +3937,6 @@ func TestIssue57780(t *testing.T) {
 	tk.MustExec(`alter table cis_assay_report_detail change column test_decimal test_decimal decimal(11,2)`)
 }
 
-=======
->>>>>>> origin/release-8.5
 // Test for issue 64176.
 func TestExchangeTiDBRowID(t *testing.T) {
 	store := testkit.CreateMockStore(t)

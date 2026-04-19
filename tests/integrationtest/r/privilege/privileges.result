@@ -663,7 +663,6 @@ update privilege__privileges.tt1 inner join t_f
 set t_f.fullname=t_f.fullname
 where tt1.id=t_f.id;
 Error 1288 (HY000): The target table t_f of the UPDATE is not updatable
-<<<<<<< HEAD
 drop user if exists test_permission@'%';
 CREATE USER test_permission;
 set sql_require_primary_key = 0;
@@ -678,7 +677,6 @@ GRANT SUPER ON *.* TO test_permission;
 set global sql_require_primary_key = 1;
 set global sql_require_primary_key = 0;
 drop user test_permission@'%';
-=======
 drop user if exists u1;
 create user u1;
 create role 'aa@bb';
@@ -902,4 +900,3 @@ GRANTEE	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	PRIVILEGE_TYPE	IS_GRAN
 'test_information_schema_u3'@'%'	def	test_information_schema	t	a	SELECT	NO
 drop database test_information_schema;
 drop user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;
->>>>>>> origin/release-8.5

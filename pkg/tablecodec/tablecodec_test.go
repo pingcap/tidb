@@ -816,8 +816,6 @@ func TestDecodeIndexHandleWithPartitionIDInKeyAndValue(t *testing.T) {
 	// Verify the inner handle is the expected IntHandle
 	require.Equal(t, kv.IntHandle(handleID), ph.Handle, "inner handle should be IntHandle")
 }
-<<<<<<< HEAD
-=======
 
 // TestUniqueGlobalIndexKeyWithNullValues tests that for unique global indexes on
 // non-clustered tables:
@@ -975,4 +973,3 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 			"legacy (v0) global index key should NOT contain partition ID flag")
 	}
 }
->>>>>>> origin/release-8.5

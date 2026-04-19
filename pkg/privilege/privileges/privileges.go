@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/lbac"
@@ -401,7 +402,6 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	return false
 }
 
-<<<<<<< HEAD
 // GetUserResources gets the maximum number of connections for the current user
 func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
 	if SkipWithGrant {
@@ -441,8 +441,6 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	return ""
 }
 
-=======
->>>>>>> origin/release-8.5
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, error) {
 	if SkipWithGrant {

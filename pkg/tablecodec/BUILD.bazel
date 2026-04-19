@@ -35,15 +35,9 @@ go_test(
     ],
     embed = [":tablecodec"],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 24,
-=======
-    shard_count = 25,
->>>>>>> origin/release-8.5
     deps = [
         "//pkg/kv",
-        "//pkg/meta/model",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx/stmtctx",

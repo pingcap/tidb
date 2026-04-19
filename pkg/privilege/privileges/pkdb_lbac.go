@@ -40,26 +40,26 @@ func (p *MySQLPrivilege) LoadLBAC(ctx sqlexec.RestrictedSQLExecutor) error {
 	if !variable.EnableLBAC.Load() {
 		return nil
 	}
-	if err := p.loadTable(ctx, sqlLoadSecurityLabelComponents, p.decodeLBACComponentRow); err != nil {
+	if err := loadRestrictedTable(ctx, sqlLoadSecurityLabelComponents, p.decodeLBACComponentRow); err != nil {
 		return errors.Trace(err)
 	}
-	if err := p.loadTable(ctx, sqlLoadSecurityPolicies, p.decodeLBACPolicyRow); err != nil {
+	if err := loadRestrictedTable(ctx, sqlLoadSecurityPolicies, p.decodeLBACPolicyRow); err != nil {
 		return errors.Trace(err)
 	}
-	if err := p.loadTable(ctx, sqlLoadSecurityLabels, p.decodeLBACLabelRow); err != nil {
+	if err := loadRestrictedTable(ctx, sqlLoadSecurityLabels, p.decodeLBACLabelRow); err != nil {
 		return errors.Trace(err)
 	}
-	if err := p.loadTable(ctx, sqlLoadUserSecurityLabels, p.decodeLBACUserLabelRow); err != nil {
+	if err := loadRestrictedTable(ctx, sqlLoadUserSecurityLabels, p.decodeLBACUserLabelRow); err != nil {
 		return errors.Trace(err)
 	}
-	if err := p.loadTable(ctx, sqlLoadUserExemptions, p.decodeLBACUserExemptionRow); err != nil {
+	if err := loadRestrictedTable(ctx, sqlLoadUserExemptions, p.decodeLBACUserExemptionRow); err != nil {
 		return errors.Trace(err)
 	}
 	p.buildLBACCache()
 	return nil
 }
 
-func (p *immutable) decodeLBACComponentRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *MySQLPrivilege) decodeLBACComponentRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value lbac.Component
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
@@ -88,7 +88,7 @@ func (p *immutable) decodeLBACComponentRow(row chunk.Row, fs []*resolve.ResultFi
 	return nil
 }
 
-func (p *immutable) decodeLBACPolicyRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *MySQLPrivilege) decodeLBACPolicyRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value lbac.Policy
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
@@ -111,7 +111,7 @@ func (p *immutable) decodeLBACPolicyRow(row chunk.Row, fs []*resolve.ResultField
 	return nil
 }
 
-func (p *immutable) decodeLBACLabelRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *MySQLPrivilege) decodeLBACLabelRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value lbac.Label
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
@@ -135,7 +135,7 @@ func (p *immutable) decodeLBACLabelRow(row chunk.Row, fs []*resolve.ResultField)
 	return nil
 }
 
-func (p *immutable) decodeLBACUserLabelRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *MySQLPrivilege) decodeLBACUserLabelRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value lbac.UserLabel
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
@@ -157,7 +157,7 @@ func (p *immutable) decodeLBACUserLabelRow(row chunk.Row, fs []*resolve.ResultFi
 	return nil
 }
 
-func (p *immutable) decodeLBACUserExemptionRow(row chunk.Row, fs []*resolve.ResultField) error {
+func (p *MySQLPrivilege) decodeLBACUserExemptionRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value lbac.UserExemption
 	for i, f := range fs {
 		switch f.ColumnAsName.L {

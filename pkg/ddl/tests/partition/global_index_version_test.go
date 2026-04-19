@@ -68,12 +68,8 @@ func TestGlobalIndexVersion0(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/SetGlobalIndexVersion"))
 	tk.MustQuery(`select count(*) from tp use index(idx_b)`).Check(testkit.Rows("13"))
 	tk.MustQuery(`select count(*) from tp ignore index(idx_b)`).Check(testkit.Rows("14"))
-<<<<<<< HEAD
-	// tk.MustContainErrMsg(`admin check table tp`, "[admin:8223]data inconsistency in table: tp, index: idx_b, handle:")
-=======
 	// Disabled, since not catching the error in 8.5
 	//tk.MustContainErrMsg(`admin check table tp`, "[admin:8223]data inconsistency in table: tp, index: idx_b, handle:")
->>>>>>> origin/release-8.5
 
 	tk.MustContainErrMsg(`update tp set b = 16 where a = 6`, `[tikv:8141]assertion failed: key: `)
 	tk.MustContainErrMsg(`update tp set b = 7 where b = 17`, `[tikv:8141]assertion failed: key: `)
@@ -138,14 +134,9 @@ func TestGlobalIndexVersion0(t *testing.T) {
 
 	require.NotNil(t, globalIdx, "Global index idx_ab not found")
 	require.True(t, globalIdx.Global, "Index should be global")
-<<<<<<< HEAD
-	require.Equal(t, model.GlobalIndexVersionLegacy, globalIdx.GlobalIndexVersion,
-		"Global index should have version %d", model.GlobalIndexVersionLegacy)
-=======
 	// Version V1 is now default for unique nullable indexes
 	require.Equal(t, model.GlobalIndexVersionV1, globalIdx.GlobalIndexVersion,
 		"Global index should have version %d", model.GlobalIndexVersionV1)
->>>>>>> origin/release-8.5
 
 	// Verify that clustered tables get V0 global indexes
 	tk.MustExec(`CREATE TABLE tpc (
@@ -279,8 +270,6 @@ func TestGlobalIndexVersionConstants(t *testing.T) {
 	require.Equal(t, uint8(1), model.GlobalIndexVersionV1)
 	require.Equal(t, uint8(2), model.GlobalIndexVersionV2)
 }
-<<<<<<< HEAD
-=======
 
 // TestGlobalIndexTruncateAndDropPartition verifies that TRUNCATE PARTITION and
 // DROP PARTITION correctly clean up only the affected partition's global index entries
@@ -507,4 +496,3 @@ func TestUpdateIndexesResetsGlobalIndexVersion(t *testing.T) {
 		"1 99", "3 30"))
 	tk.MustExec("ADMIN CHECK TABLE t_upd_idx")
 }
->>>>>>> origin/release-8.5

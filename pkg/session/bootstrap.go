@@ -116,13 +116,9 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
-<<<<<<< HEAD
 		Max_user_connections 	SMALLINT UNSIGNED DEFAULT 0,
-		PRIMARY KEY (Host, User));`
-=======
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
->>>>>>> origin/release-8.5
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
 		"Host CHAR(255) NOT NULL DEFAULT ''," +
@@ -1063,13 +1059,10 @@ const (
 	tidbDefOOMAction = "default_oom_action"
 	// The variable name in mysql.tidb table and it records the current DDLTableVersion
 	tidbDDLTableVersion = "ddl_table_version"
-<<<<<<< HEAD
 	// The variable name in mysql.tidb table and it records the lower_case_table_names value.
 	lowerCaseTableNames = "lower_case_table_names"
-=======
 	// The variable name in mysql.tidb table and it records the cluster id of this cluster
 	tidbClusterID = "cluster_id"
->>>>>>> origin/release-8.5
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -3603,7 +3596,6 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
-<<<<<<< HEAD
 func upgradeEEToVer2(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion2 {
 		return
@@ -3723,7 +3715,8 @@ func upgradeToEEVer15(s sessiontypes.Session, ver int64) {
 	}
 	// Forbid updating lower_case_table_names for existing clusters.
 	writeLowerCaseTableNamesParameter(s, 2)
-=======
+}
+
 func upgradeToVer224(s sessiontypes.Session, ver int64) {
 	if ver >= version224 {
 		return
@@ -3808,7 +3801,6 @@ func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) 
 		cols = append(cols, row.GetString(0))
 	}
 	return cols
->>>>>>> origin/release-8.5
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

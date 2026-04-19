@@ -1049,11 +1049,7 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 		require.NoError(t, fp.Close())
 		require.NoError(t, os.Remove(path))
 	}()
-<<<<<<< HEAD
-	_, err = fp.WriteString("1\n")
-=======
 	_, err = fp.WriteString("1,2,3\n")
->>>>>>> origin/release-8.5
 	require.NoError(t, err)
 
 	store := testkit.CreateMockStore(t)
@@ -1062,15 +1058,11 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 	tk.MustExec("use test")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`CREATE USER 'test_load'@'localhost';`)
-<<<<<<< HEAD
-	tk.MustExec(`CREATE TABLE t_load(a int)`)
-=======
 	tk.MustExec(`GRANT SELECT on *.* to 'test_load'@'localhost'`)
 	tk.MustExec(`CREATE TABLE t_load(a int, b int, c int)`)
 	tk1 := testkit.NewTestKit(t, store)
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
 	tk1.MustExec("use test")
->>>>>>> origin/release-8.5
 
 	var reader io.ReadCloser = mydump.NewStringReader("1")
 	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (
@@ -1079,28 +1071,6 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 		return reader, nil
 	}
 
-<<<<<<< HEAD
-	tk.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
-
-	tk.MustExec(`GRANT SELECT on *.* to 'test_load'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
-	err = tk.ExecToErr(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path))
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
-
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec(`GRANT INSERT(a) on test.t_load to 'test_load'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
-	time.Sleep(3 * time.Second)
-	tk.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(a)", path))
-
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
-	err = tk.ExecToErr(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path))
-	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
-=======
 	tk1.Session().(sessionctx.Context).SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load(a)", path), mysql.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT INSERT(a) on test.t_load to 'test_load'@'localhost'`)
@@ -1114,10 +1084,10 @@ func TestLoadDataColumnPrivilege(t *testing.T) {
 	tk.MustExec(`GRANT INSERT(c) on test.t_load to 'test_load'@'localhost'`)
 	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' INTO TABLE t_load", path))
 
+	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
 	tk1.MustGetErrCode(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path), mysql.ErrTableaccessDenied)
 	tk.MustExec(`GRANT DELETE on *.* to 'test_load'@'localhost'`)
 	tk1.MustExec(fmt.Sprintf("LOAD DATA LOCAL INFILE '%s' REPLACE INTO TABLE t_load", path))
->>>>>>> origin/release-8.5
 }
 
 func TestAuthHost(t *testing.T) {
@@ -2232,7 +2202,6 @@ func TestShowGrantsSQLMode(t *testing.T) {
 	})
 }
 
-<<<<<<< HEAD
 // group is the synonyms of role.
 func TestGroupPrivileges(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
@@ -2352,7 +2321,8 @@ func TestSetRoutinePrivileges(t *testing.T) {
 	tk.MustExec(`CREATE USER 'test3'@'%'`)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustGetErrCode(`grant execute on procedure test.t2 to test3`, 8121)
-=======
+}
+
 func TestProtectUserAndRoleWithRestrictedPrivileges(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
@@ -2458,7 +2428,6 @@ func TestSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
 	tk.MustExec("drop user aaa")
 	priv = handle.Get()
 	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
->>>>>>> origin/release-8.5
 }
 
 func TestSelectColumnPrivilege(t *testing.T) {
@@ -2489,10 +2458,7 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustExec(`DO (SELECT a FROM test.t1)`)
 	userTk.MustGetErrCode(`SELECT b FROM test.t1`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SET @res = (SELECT b FROM test.t1)`, errno.ErrColumnaccessDenied)
-<<<<<<< HEAD
-=======
 	userTk.MustGetErrCode(`DO (SELECT b FROM test.t1)`, errno.ErrColumnaccessDenied)
->>>>>>> origin/release-8.5
 	userTk.MustGetErrCode(`SELECT a FROM test.t2`, errno.ErrColumnaccessDenied)
 	/* column accessed in WHERE clause */
 	userTk.MustGetErrCode(`SELECT a FROM test.t1 WHERE b = 2`, errno.ErrColumnaccessDenied)
@@ -2510,39 +2476,25 @@ func TestSelectColumnPrivilege(t *testing.T) {
 	userTk.MustQuery(`SELECT * FROM test.t3`).Check(testkit.Rows(`1 4`))
 
 	/* test `Select` column privilege in clause */
-<<<<<<< HEAD
-	// No need to check `Select` column privilege in USING clause
-	userTk.MustExec(`SELECT test.t1.a FROM test.t1 JOIN test.t2 USING (a)`)
-	// `Select` column privilege in ON and ORDER BY clause is needed
-	userTk.MustExec(`SELECT a FROM test.t1 NATURAL JOIN test.t4`)
-	userTk.MustGetErrCode(`SELECT * FROM test.t1 NATURAL JOIN test.t4`, errno.ErrTableaccessDenied)
-	userTk.MustGetErrCode(`SELECT test.t1.a FROM test.t1 JOIN test.t2 ON test.t1.a = test.t2.a`, errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode(`SELECT test.t2.c FROM test.t2 ORDER BY a`, errno.ErrColumnaccessDenied)
-	tk.MustExec(`GRANT SELECT(a) ON test.t2 TO 'testuser'@'localhost';`)
-=======
 	userTk.MustGetErrCode(`SELECT test.t1.a FROM test.t1 JOIN test.t2 USING (a)`, errno.ErrColumnaccessDenied)
 	// `Select` column privilege in ON and ORDER BY clause is needed
 	userTk.MustGetErrCode(`SELECT a FROM test.t1 NATURAL JOIN test.t4`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`SELECT * FROM test.t1 NATURAL JOIN test.t4`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT test.t1.a FROM test.t1 JOIN test.t2 ON test.t1.a = test.t2.a`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT test.t2.c FROM test.t2 ORDER BY a`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(a) ON test.t2 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`SELECT test.t1.a FROM test.t1 JOIN test.t2 USING (a)`)
->>>>>>> origin/release-8.5
 	userTk.MustExec(`SELECT test.t1.a FROM test.t1 JOIN test.t2 ON test.t1.a = test.t2.a`)
 	userTk.MustExec(`SELECT test.t2.c FROM test.t2 ORDER BY a`)
 	// HAVING and GROUP BY clauses also require `Select` column privilege
 	tk.MustExec(`ALTER TABLE test.t1 ADD COLUMN c int`)
 	userTk.MustGetErrCode(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';`)
-<<<<<<< HEAD
-	userTk.MustGetErrCode(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`, errno.ErrColumnaccessDenied)
-=======
 	userTk.MustExec(`SET @res = (SELECT b FROM test.t1)`)
 	userTk.MustExec(`DO (SELECT b FROM test.t1)`)
 	userTk.MustGetErrCode(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(b) ON test.t4 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`SELECT a FROM test.t1 NATURAL JOIN test.t4`)
->>>>>>> origin/release-8.5
 	tk.MustExec(`GRANT SELECT(c) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`SELECT SUM(test.t1.a) FROM test.t1 GROUP BY test.t1.b HAVING count(test.t1.c) > 0`)
 }
@@ -2564,12 +2516,9 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	userTk.MustExec(`use test;`)
 
 	/* Subquery */
-<<<<<<< HEAD
-=======
 	subQueryInHaving := `SELECT b, COUNT(*) AS counts
 		FROM t1 GROUP BY b HAVING
     COUNT(*) > (SELECT AVG(a) FROM (SELECT COUNT(*) AS a FROM t1 GROUP BY b) AS counts);`
->>>>>>> origin/release-8.5
 	userTk.MustQuery(`select a from t1 where a in (select a from t1);`).Check(testkit.Rows(`1`))
 	userTk.MustGetErrCode(`select a from t1 where a in (select a from t2);`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`select a from t1 where exists (select a from t2);`, errno.ErrColumnaccessDenied)
@@ -2581,13 +2530,10 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	userTk.MustGetErrCode(`select a from t1 where b = 1 and exists (select a from t1);`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT (SELECT a FROM t2) FROM t1;`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`SELECT b FROM t2	WHERE a = (SELECT MAX(a) FROM t1);`, errno.ErrColumnaccessDenied)
-<<<<<<< HEAD
-=======
 	userTk.MustGetErrCode(`SELECT count(*) FROM test.t2;`, errno.ErrTableaccessDenied)
 	userTk.MustGetErrCode(`SELECT (SELECT count(*) FROM test.t2);`, errno.ErrTableaccessDenied)
 	userTk.MustExec("SELECT count(*) FROM test.t1;")
 	userTk.MustExec("SELECT (SELECT count(*) FROM test.t1);")
->>>>>>> origin/release-8.5
 
 	/* CTE */
 	userTk.MustGetErrCode(`WITH CTE AS (SELECT b from t1) SELECT * FROM cte t;`, errno.ErrColumnaccessDenied)
@@ -2597,13 +2543,10 @@ func TestSelectColumnPrivilegeInSubqueryAndCTE(t *testing.T) {
 	userTk.MustQuery(`with cte1 as (with cte2 as (select 1) select * from cte2) select * from cte1;`).Check(testkit.Rows(`1`))
 	userTk.MustQuery(`with cte1 as (with cte2 as (SELECT a from t1) select * from cte2) select * from cte1;`).Check(testkit.Rows(`1`))
 	userTk.MustGetErrCode(`with cte1 as (with cte2 as (SELECT b from t1) select * from cte2) select * from cte1;`, errno.ErrColumnaccessDenied)
-<<<<<<< HEAD
-=======
 
 	userTk.MustGetErrCode(subQueryInHaving, errno.ErrColumnaccessDenied)
 	tk.MustExec("GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';")
 	userTk.MustQuery(subQueryInHaving)
->>>>>>> origin/release-8.5
 }
 
 func TestInsertColumnPrivilege(t *testing.T) {
@@ -2625,11 +2568,9 @@ func TestInsertColumnPrivilege(t *testing.T) {
 	userTk.MustGetErrCode(`INSERT INTO test.t1 VALUES (1, 2)`, errno.ErrTableaccessDenied)
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 2;`)
 	userTk.MustGetErrCode(`INSERT INTO test.t1 SET b = 1`, errno.ErrColumnaccessDenied)
-<<<<<<< HEAD
 	userTk.MustExec(`INSERT INTO test.t1(a) SELECT a FROM test.t2;`)
 	userTk.MustGetErrCode(`INSERT INTO test.t1(a) SELECT b FROM test.t2;`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`INSERT INTO test.t1(b) SELECT a FROM test.t2;`, errno.ErrColumnaccessDenied)
-=======
 	userTk.MustGetErrCode(`INSERT INTO test.t1 SET a = 1, b = 2;`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT INSERT(b) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 1, b = 2;`)
@@ -2639,10 +2580,6 @@ func TestInsertColumnPrivilege(t *testing.T) {
 	// userTk.MustGetErrCode(`INSERT INTO test.t1 SET a = 1, b = a * 2;`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(a) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`INSERT INTO test.t1 SET a = 1, b = a * 2;`)
-
-	userTk.MustExec(`INSERT INTO test.t1(a) SELECT a FROM test.t2;`)
-	userTk.MustGetErrCode(`INSERT INTO test.t1(a) SELECT b FROM test.t2;`, errno.ErrColumnaccessDenied)
->>>>>>> origin/release-8.5
 }
 
 func TestUpdateColumnPrivilege(t *testing.T) {
@@ -2656,19 +2593,32 @@ func TestUpdateColumnPrivilege(t *testing.T) {
 	userTk := testkit.NewTestKit(t, store)
 	err := userTk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-<<<<<<< HEAD
+	userTk.MustGetErrCode(`UPDATE test.t1 SET a = 2`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT UPDATE(a) ON test.t1 TO 'testuser'@'localhost';`)
-
 	userTk.MustExec(`UPDATE test.t1 SET a = 2;`)
 	tk.MustQuery(`SELECT * FROM test.t1`).Check(testkit.Rows(`2 2`))
+
 	userTk.MustGetErrCode(`UPDATE test.t1 SET b = 3`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT UPDATE(b) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`UPDATE test.t1 SET b = 3`)
+
 	userTk.MustGetErrCode(`UPDATE test.t1 SET b = 3 WHERE b = 1`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`UPDATE test.t1 SET b = 3 ORDER BY b`, errno.ErrColumnaccessDenied)
 	userTk.MustGetErrCode(`UPDATE test.t1 SET a = b + 1`, errno.ErrColumnaccessDenied)
 	tk.MustExec(`GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';`)
 	userTk.MustExec(`UPDATE test.t1 SET b = 3 WHERE b = 1`)
+	userTk.MustExec(`UPDATE test.t1 SET b = 3 ORDER BY b`)
 	userTk.MustExec(`UPDATE test.t1 SET a = b + 1`)
+
+	tk.MustExec(`DROP TABLE IF EXISTS test.t2;`)
+	tk.MustExec(`CREATE TABLE test.t2 (c int, d int);`)
+	tk.MustExec(`INSERT INTO test.t2 VALUES (1, 2);`)
+
+	userTk.MustGetErrCode(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`, errno.ErrColumnaccessDenied)
+	userTk.MustGetErrCode(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`, errno.ErrColumnaccessDenied)
+	tk.MustExec(`GRANT SELECT(c,d) ON test.t2 TO 'testuser'@'localhost';`)
+	userTk.MustExec(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`)
+	userTk.MustExec(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`)
 }
 
 func TestUserGroupMisc(t *testing.T) {
@@ -2703,34 +2653,6 @@ func TestUserGroupMisc(t *testing.T) {
 	require.Error(t, err)
 	res = tk2.MustQuery("SHOW GRANTS")
 	require.Equal(t, len(res.Rows()), 2)
-=======
-
-	userTk.MustGetErrCode(`UPDATE test.t1 SET a = 2`, errno.ErrColumnaccessDenied)
-	tk.MustExec(`GRANT UPDATE(a) ON test.t1 TO 'testuser'@'localhost';`)
-	userTk.MustExec(`UPDATE test.t1 SET a = 2;`)
-	tk.MustQuery(`SELECT * FROM test.t1`).Check(testkit.Rows(`2 2`))
-
-	userTk.MustGetErrCode(`UPDATE test.t1 SET b = 3`, errno.ErrColumnaccessDenied)
-	tk.MustExec(`GRANT UPDATE(b) ON test.t1 TO 'testuser'@'localhost';`)
-	userTk.MustExec(`UPDATE test.t1 SET b = 3`)
-
-	userTk.MustGetErrCode(`UPDATE test.t1 SET b = 3 WHERE b = 1`, errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode(`UPDATE test.t1 SET b = 3 ORDER BY b`, errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode(`UPDATE test.t1 SET a = b + 1`, errno.ErrColumnaccessDenied)
-	tk.MustExec(`GRANT SELECT(b) ON test.t1 TO 'testuser'@'localhost';`)
-	userTk.MustExec(`UPDATE test.t1 SET b = 3 WHERE b = 1`)
-	userTk.MustExec(`UPDATE test.t1 SET b = 3 ORDER BY b`)
-	userTk.MustExec(`UPDATE test.t1 SET a = b + 1`)
-
-	tk.MustExec(`DROP TABLE IF EXISTS test.t2;`)
-	tk.MustExec(`CREATE TABLE test.t2 (c int, d int);`)
-	tk.MustExec(`INSERT INTO test.t2 VALUES (1, 2);`)
-
-	userTk.MustGetErrCode(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`, errno.ErrColumnaccessDenied)
-	userTk.MustGetErrCode(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`, errno.ErrColumnaccessDenied)
-	tk.MustExec(`GRANT SELECT(c,d) ON test.t2 TO 'testuser'@'localhost';`)
-	userTk.MustExec(`UPDATE test.t1, test.t2 SET a = c WHERE b = d`)
-	userTk.MustExec(`UPDATE test.t1, (SELECT c FROM test.t2 WHERE d = 2) AS tt SET a = tt.c	`)
 }
 
 func TestColumnPrivilege4NonPreparePlanCache(t *testing.T) {
@@ -2924,5 +2846,4 @@ func TestColumnPrivilege4TraceAndExplain(t *testing.T) {
 
 	userTk.MustQuery(traceSQL).CheckNotContain("session.RollbackTxn")
 	userTk.MustQuery(explainSQL)
->>>>>>> origin/release-8.5
 }

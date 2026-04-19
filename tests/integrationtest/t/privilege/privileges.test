@@ -899,7 +899,6 @@ with t_f as (
 disconnect u53490;
 connection default;
 
-<<<<<<< HEAD
 # TestIssue61825
 drop user if exists test_permission@'%';
 CREATE USER test_permission;
@@ -923,7 +922,7 @@ set global sql_require_primary_key = 0;
 connection default;
 drop user test_permission@'%';
 disconnect test_conn;
-=======
+
 # TestIssue59552
 drop user if exists u1;
 create user u1;
@@ -1129,4 +1128,3 @@ disconnect test_information_schema_u3;
 connection default;
 drop database test_information_schema;
 drop user test_information_schema_u1, test_information_schema_u2, test_information_schema_u3;
->>>>>>> origin/release-8.5

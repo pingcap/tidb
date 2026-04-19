@@ -179,11 +179,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
-<<<<<<< HEAD
         "//pkg/server/err",
-=======
-        "//pkg/resourcegroup",
->>>>>>> origin/release-8.5
         "//pkg/server/internal",
         "//pkg/server/internal/column",
         "//pkg/server/internal/handshake",

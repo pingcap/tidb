@@ -716,37 +716,25 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 
-<<<<<<< HEAD
-=======
 	// SHOW COLUMNS displays information only for those columns for which you have some privilege.
 	// https://dev.mysql.com/doc/refman/8.4/en/show-columns.html
 	// 1. If you have table privilege, all columns can be shown
 	// 2. If you have only some columns privielge, these columns can be shown
 	// 3. If you have neither table or column privilege, an error is returned
->>>>>>> origin/release-8.5
 	passTblPrivCheck, passColPrivCheck := false, false
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	priv := mysql.InsertPriv | mysql.SelectPriv | mysql.UpdatePriv | mysql.ReferencesPriv
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
-<<<<<<< HEAD
 		// check privileges in table level
 		if tb.Meta().TempTableType == model.TempTableLocal {
 			priv |= mysql.CreateTMPTablePriv
 		}
-=======
->>>>>>> origin/release-8.5
 		if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", priv) {
 			passTblPrivCheck = true
 		}
 	} else {
 		passTblPrivCheck = true
-<<<<<<< HEAD
-	}
-	if !passTblPrivCheck && e.Ctx().GetSessionVars().StmtCtx.InExplainStmt {
-		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
-=======
->>>>>>> origin/release-8.5
 	}
 
 	var cols []*table.Column
@@ -838,10 +826,7 @@ func (e *ShowExec) fetchShowIndex() error {
 	statsTbl := h.GetPhysicalTableStats(tb.Meta().ID, tb.Meta())
 
 	// SHOW INDEX requires some privilege for any column in the table.
-<<<<<<< HEAD
-=======
 	// https://dev.mysql.com/doc/refman/8.4/en/show-index.html
->>>>>>> origin/release-8.5
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 	if checker != nil && e.Ctx().GetSessionVars().User != nil {
@@ -1840,12 +1825,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
-<<<<<<< HEAD
         user_attributes->>'$.Password_locking.password_lock_time_days',
-		Max_user_connections
-=======
-        user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string
->>>>>>> origin/release-8.5
+		authentication_string, Max_user_connections
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1921,15 +1902,12 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		}
 	}
 
-<<<<<<< HEAD
-	maxUserConnections := rows[0].GetInt64(10)
+	authData := rows[0].GetString(10)
+	maxUserConnections := rows[0].GetInt64(11)
 	maxUserConnectionsStr := ""
 	if maxUserConnections > 0 {
 		maxUserConnectionsStr = fmt.Sprintf(" WITH MAX_USER_CONNECTIONS %d", maxUserConnections)
 	}
-=======
-	authData := rows[0].GetString(10)
->>>>>>> origin/release-8.5
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
