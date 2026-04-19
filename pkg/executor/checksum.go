@@ -234,7 +234,12 @@ func (c *checksumContext) buildTasks(ctx sessionctx.Context) ([]*checksumTask, e
 			for _, def := range part.Definitions {
 				defByName[def.Name.L] = def
 			}
+			seen := make(map[string]struct{}, len(c.partitionNames))
 			for _, n := range c.partitionNames {
+				if _, dup := seen[n.L]; dup {
+					continue
+				}
+				seen[n.L] = struct{}{}
 				def, ok := defByName[n.L]
 				if !ok {
 					return nil, table.ErrUnknownPartition.GenWithStackByArgs(n.O, c.tableInfo.Name.O)
@@ -281,13 +286,19 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 		if indexInfo.State != model.StatePublic {
 			continue
 		}
-		req, err = c.buildIndexRequest(ctx, physicalTableID, indexInfo)
+		// Global indexes are stored under the logical table ID, not the
+		// partition's physical ID. Use tableID (== tableInfo.ID) for them.
+		indexPhysicalID := physicalTableID
+		if indexInfo.Global {
+			indexPhysicalID = tableID
+		}
+		req, err = c.buildIndexRequest(ctx, indexPhysicalID, indexInfo)
 		if err != nil {
 			return err
 		}
 		*reqs = append(*reqs, &checksumTask{
 			tableID:         tableID,
-			physicalTableID: physicalTableID,
+			physicalTableID: indexPhysicalID,
 			indexID:         indexInfo.ID,
 			request:         req,
 		})

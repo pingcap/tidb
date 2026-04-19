@@ -65,6 +65,12 @@ func TestChecksumTablePartition(t *testing.T) {
 	require.NotEqual(t, "0", p0[0][2], "partition p0 checksum must be non-zero")
 	require.NotEqual(t, full[0][2], p0[0][2], "partition checksum should differ from full table checksum")
 
+	// Duplicate partition name must not double-count KVs/bytes/checksum.
+	p0dup := tk.MustQuery("ADMIN CHECKSUM TABLE tpart PARTITION (p0, p0)").Rows()
+	require.Len(t, p0dup, 1)
+	require.Equal(t, p0[0][2], p0dup[0][2], "duplicate partition name must not double-count checksum")
+	require.Equal(t, p0[0][3], p0dup[0][3], "duplicate partition name must not double-count KVs")
+
 	err := tk.ExecToErr("ADMIN CHECKSUM TABLE tpart PARTITION (p_nonexistent)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Unknown partition")
