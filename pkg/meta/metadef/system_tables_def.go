@@ -296,10 +296,10 @@ const (
 		INDEX tbl(table_id, is_index, hist_id)
 	);`
 
-	// CreateStatsTableDataTable stores per-table statistics data with a proper clustered PK.
+	// CreateStatsDataTable stores per-table statistics data with a proper clustered PK.
 	// Initially used for global stats merging (e.g. FM sketches, samples), designed to
 	// accommodate future migration of data from other stats_* tables that lack a proper PK.
-	CreateStatsTableDataTable = `CREATE TABLE IF NOT EXISTS mysql.stats_table_data (
+	CreateStatsDataTable = `CREATE TABLE IF NOT EXISTS mysql.stats_data (
 		table_id 	BIGINT(64) NOT NULL COMMENT 'physical partition ID (or table ID for non-partitioned tables)',
 		type 		INT NOT NULL COMMENT '0=col fmsketch, 1=idx fmsketch, 2=sample (reserved)',
 		hist_id 	BIGINT(64) NOT NULL COMMENT 'column or index ID',

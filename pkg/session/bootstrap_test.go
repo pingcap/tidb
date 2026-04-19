@@ -1877,7 +1877,7 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	// make sure that later change won't affect existing version schemas.
 	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 52)
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
-	// version 2: stats_table_data
+	// version 2: stats_data
 	require.Len(t, versionedBootstrapSchemas[1].databases[0].Tables, 1)
 
 	versions := make([]int, 0, len(versionedBootstrapSchemas))
@@ -1919,19 +1919,19 @@ func TestBootstrapSchemasUpgradeToVersion2(t *testing.T) {
 		return m.SetNextGenBootTableVersion(meta.BaseNextGenBootTableVersion)
 	}))
 
-	// Verify version is 1 and stats_table_data does not exist yet.
+	// Verify version is 1 and stats_data does not exist yet.
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		ver, err := m.GetNextGenBootTableVersion()
 		require.NoError(t, err)
 		require.Equal(t, meta.BaseNextGenBootTableVersion, ver)
-		tbl, err := m.GetTable(metadef.SystemDatabaseID, metadef.StatsTableDataTableID)
+		tbl, err := m.GetTable(metadef.SystemDatabaseID, metadef.StatsDataTableID)
 		require.NoError(t, err)
-		require.Nil(t, tbl, "stats_table_data should not exist before upgrade")
+		require.Nil(t, tbl, "stats_data should not exist before upgrade")
 		return nil
 	}))
 
-	// Run bootstrapSchemas — this should apply version 2 and create stats_table_data.
+	// Run bootstrapSchemas — this should apply version 2 and create stats_data.
 	require.NoError(t, bootstrapSchemas(store))
 
 	// Verify version advanced to 2 and the table was created with the reserved ID.
@@ -1940,11 +1940,11 @@ func TestBootstrapSchemasUpgradeToVersion2(t *testing.T) {
 		ver, err := m.GetNextGenBootTableVersion()
 		require.NoError(t, err)
 		require.Equal(t, meta.NextGenBootTableVersion2, ver)
-		tbl, err := m.GetTable(metadef.SystemDatabaseID, metadef.StatsTableDataTableID)
+		tbl, err := m.GetTable(metadef.SystemDatabaseID, metadef.StatsDataTableID)
 		require.NoError(t, err)
-		require.NotNil(t, tbl, "stats_table_data should be created by version 2 upgrade")
-		require.Equal(t, metadef.StatsTableDataTableID, tbl.ID)
-		require.Equal(t, "stats_table_data", tbl.Name.L)
+		require.NotNil(t, tbl, "stats_data should be created by version 2 upgrade")
+		require.Equal(t, metadef.StatsDataTableID, tbl.ID)
+		require.Equal(t, "stats_data", tbl.Name.L)
 		return nil
 	}))
 }

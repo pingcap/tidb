@@ -333,7 +333,7 @@ var (
 
 	// systemTablesOfNextGenVersion2 contains the system tables added in version 2.
 	systemTablesOfNextGenVersion2 = []TableBasicInfo{
-		{ID: metadef.StatsTableDataTableID, Name: "stats_table_data", SQL: metadef.CreateStatsTableDataTable},
+		{ID: metadef.StatsDataTableID, Name: "stats_data", SQL: metadef.CreateStatsDataTable},
 	}
 )
 

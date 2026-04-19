@@ -495,7 +495,7 @@ const (
 	version258 = 258
 
 	// version259
-	// Add mysql.stats_table_data table for per-table statistics data.
+	// Add mysql.stats_data table for per-table statistics data.
 	version259 = 259
 )
 
@@ -2116,5 +2116,5 @@ func upgradeToVer258(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer259(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, metadef.CreateStatsTableDataTable)
+	doReentrantDDL(s, metadef.CreateStatsDataTable)
 }

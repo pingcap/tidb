@@ -185,7 +185,7 @@ const (
 	// created 52 physical tables.
 	// Note: DDL related tables are created separately, see DDLTableVersion.
 	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
-	// NextGenBootTableVersion2 adds the stats_table_data table.
+	// NextGenBootTableVersion2 adds the stats_data table.
 	NextGenBootTableVersion2 NextGenBootTableVersion = 2
 )
 
