@@ -1280,10 +1280,13 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	} else if s.ExcludePartitions {
 		tblInfo.Partition = nil
 		// Global indexes are only valid on partitioned tables; demote them to local.
+		// Also reset GlobalIndexVersion: a stale non-zero version on a local index
+		// causes GenIndexKey to expect a PartitionHandle and panic on DML.
 		for i, idx := range tblInfo.Indices {
 			if idx.Global {
 				clone := *idx
 				clone.Global = false
+				clone.GlobalIndexVersion = 0
 				tblInfo.Indices[i] = &clone
 			}
 		}
