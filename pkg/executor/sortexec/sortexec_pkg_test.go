@@ -82,6 +82,12 @@ func TestInterruptedDuringSort(t *testing.T) {
 }
 
 func TestInterruptedDuringSpilling(t *testing.T) {
+	originalSpillChunkSize := spillChunkSize
+	SetSmallSpillChunkSizeForTest()
+	defer func() {
+		spillChunkSize = originalSpillChunkSize
+	}()
+
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempStoragePath = t.TempDir()
