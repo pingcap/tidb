@@ -29,7 +29,7 @@ Use a checkbox list for granular progress. Every stopping point must be reflecte
 - [x] (2026-04-19) Reserve `StatsDataTypeColBucket=1`, `StatsDataTypeIdxBucket=2`, `StatsDataTypeColFMSketch=3`, `StatsDataTypeIdxFMSketch=4` in `pkg/meta/metadef/system.go` and update the SQL comment on the `type` column of `CreateStatsDataTable`. Landed in commit `f4a4d6aa86` on branch `stats-tables-with-clustered-pk`.
 - [ ] M1: Switch the bucket-row codec to `proto.Marshal(statistics.HistogramToProto(hg))`, no wrapper file. Add a round-trip unit test that explicitly covers a v2 column histogram (first time those get proto-round-tripped). Expected: random histograms encode and decode losslessly; one row per histogram.
 - [ ] M2: Switch writers and readers. Rewrite `saveBucketsToStorage` to `INSERT … ON DUPLICATE KEY UPDATE value = VALUES(value)` against `stats_data`, then unconditionally `DELETE` the matching `stats_buckets` row in the same session. Rewrite `InsertColStats2KV` to use `INSERT IGNORE` against `stats_data` (preserves the legacy "create-if-absent" semantics). Rewrite `HistogramFromStorageWithPriority` to read `stats_data` first and fall back to `stats_buckets` on miss, logging the fallback at INFO with rate limit.
-- [ ] M3: Bootstrap loader. Rewrite `getTablesWithBucketsInRange`, `genInitStatsBucketsSQLForIndexes`, `initStatsBuckets4Chunk` in `pkg/statistics/handle/bootstrap.go` so that initial stats loading reads `stats_data` first and then reads the remaining (table_id, is_index) pairs from `stats_buckets`.
+- [ ] M3: Bootstrap loader. Rewrite `getTablesWithBucketsInRange`, `genInitStatsBucketsSQLForIndexes`, `initStatsBuckets4Chunk` in `pkg/statistics/handle/bootstrap.go` so that initial stats loading queries `stats_data` first and falls back to `stats_buckets` for indexes that have no `stats_data` row. Two separate queries (skip the legacy one if the new query already covers the table-id range). New `initStatsBuckets4Chunk` variant for the blob payload. No data migration during bootstrap.
 - [ ] M4: GC and ID migration. Route `gc.go` deletes to both tables; keep `stats_buckets` in `changeGlobalStatsTables` so restore/ID-migration continues to work.
 - [ ] M5: Tests. Add unit tests covering write, read, GC, ID migration, bootstrap with mixed legacy/new data, and the `INSERT IGNORE` default-bucket path. Update existing bucket-counting tests that reference `mysql.stats_buckets`.
 - [ ] M6: Integration and realtikv tests. Update `tests/integrationtest/t/executor/kv.test` (and `.result`), `tests/realtikvtest/statisticstest/statistics_test.go`, `br/tests/br_restore_physical/run.sh`. Confirm `ANALYZE` + `SHOW STATS_BUCKETS` round-trip passes end-to-end.
@@ -101,6 +101,14 @@ Record every key decision in this format:
 
 - Decision: `ChangeGlobalStatsID` needs no change.
   Rationale: `pkg/statistics/handle/storage/update.go:154-156` already lists `stats_data` in `changeGlobalStatsTables` (added by #66303). The single UPDATE template `update mysql.<table> set table_id = %? where table_id = %?` works for `stats_data` because `table_id` is its first column.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: Bootstrap loader uses two separate queries (stats_data first, then stats_buckets), not UNION; per-index fallback in Go.
+  Rationale: Two queries are easier to unit-test than a single UNION, and they let us skip the legacy probe entirely once the new query already covers every `table_id` in the requested range. Per-index fallback in Go (skip legacy rows whose `(table_id, hist_id)` was already returned by the new scan) avoids any SQL `NOT IN` gymnastics and keeps the legacy parse path (`initStatsBuckets4Chunk`) untouched. A new variant — `initStatsBuckets4ChunkFromStatsData` — handles the blob payload via `proto.Unmarshal` + `statistics.HistogramFromProto` in one call per histogram.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: No data migration during bootstrap; an upgrade-gate that controls when writes start landing in `stats_data` is deferred to a separate follow-up PR modeled on PR #66847's pattern.
+  Rationale: Migrating data at bootstrap would slow startup, complicate failure recovery, and conflate two concerns. The natural migration trigger is the next ANALYZE — which writes a fresh blob and lazily purges the legacy row (M2). The remaining hazard is rolling-upgrade mixed-version clusters: a newly-upgraded node would write to `stats_data` while older nodes still read only from `stats_buckets`, causing temporary plan regressions on the old nodes. PR #66847 addresses the analogous problem for global index V1 keys with a cluster-version-gated atomic flag (`globalIndexV1Supported`) updated by a background loop polling all server-info entries; the same pattern applied here would gate the new write path behind "all nodes ≥ first-version-with-stats_data-bucket-support". Out of scope for this PR; tracked as a follow-up so this PR can ship with read-side coverage in place but write-side gated by a future flag.
   Date/Author: 2026-04-20 / mattias, claude.
 
 - Decision: No bootstrap version bump is added by this PR.
@@ -213,11 +221,38 @@ Rewrite the read path:
 
 - `HistogramFromStorageWithPriority` (read.go:132): first query `SELECT value FROM mysql.stats_data WHERE table_id=? AND type=? AND hist_id=?`. If a row is returned, `proto.Unmarshal` it into a `tipb.Histogram`, then `statistics.HistogramFromProto` and proceed with the existing `hg.DecodeTo(tp, tz)` step. If no row, fall back to the existing `SELECT … FROM mysql.stats_buckets WHERE …` and log at INFO once per (table_id, is_index, hist_id) with a rate limit so the message does not flood. Future direction: a `stats_meta` successor with a clustered PK could carry a per-table flag indicating whether bucket data lives in `stats_data` vs. legacy, removing the need for fallback probing — out of scope for this PR.
 
-**M3 — Bootstrap loader.** In `pkg/statistics/handle/bootstrap.go`:
+**M3 — Bootstrap loader.** In `pkg/statistics/handle/bootstrap.go`. Read-only at bootstrap; no data migration.
 
-- `getTablesWithBucketsInRange` (line 586): instead of `SELECT DISTINCT table_id FROM mysql.stats_buckets WHERE is_index = 1`, union with `SELECT DISTINCT table_id FROM mysql.stats_data WHERE type = 2`. Either a single `UNION` query or two queries merged in Go — two queries are easier to unit-test.
-- `genInitStatsBucketsSQLForIndexes` (line 726): run the new-format scan first (`SELECT table_id, hist_id, value FROM mysql.stats_data WHERE type = 2 AND table_id IN (…) ORDER BY table_id`) and then the old-format scan (`SELECT … FROM mysql.stats_buckets WHERE is_index = 1 AND table_id IN (…) AND (table_id, hist_id) NOT IN (new-covered set) ORDER BY table_id`). The "NOT IN" is the tricky bit: collect `(table_id, hist_id)` seen in the new scan into a set, then filter the legacy scan in Go.
-- `initStatsBuckets4Chunk` (line 681): today it parses 5 columns per row into one bucket. Split into two helpers: `initStatsBucketsFromLegacyChunk` (current code unchanged) and `initStatsBucketsFromBlobChunk` (parse blob via `proto.Unmarshal` + `statistics.HistogramFromProto` into all buckets of the histogram in one call). The caller picks the helper based on which scan the chunk came from.
+- `getTablesWithBucketsInRange` (line 586): two separate queries, not a UNION. First:
+
+        SELECT DISTINCT table_id
+        FROM   mysql.stats_data
+        WHERE  type = 2 AND table_id IN (<range>)
+
+  Then, only if the first query did not return every `table_id` in the requested range, run the legacy:
+
+        SELECT DISTINCT table_id
+        FROM   mysql.stats_buckets
+        WHERE  is_index = 1 AND table_id IN (<range>)
+
+  Merge the two `table_id` sets in Go. Two queries are easier to unit-test than a UNION and let us skip the legacy probe entirely once the migration is steady-state on a given cluster.
+
+- `genInitStatsBucketsSQLForIndexes` (line 726) + `initStatsBuckets4Chunk` (line 681): straight-forward fallback per index, no SQL `NOT IN` gymnastics.
+
+  1. Run the new-format scan first:
+
+         SELECT table_id, hist_id, value
+         FROM   mysql.stats_data
+         WHERE  type = 2 AND table_id IN (<range>)
+         ORDER BY table_id
+
+     Parse with a new `initStatsBuckets4ChunkFromStatsData` (or similarly-named variant) that does `proto.Unmarshal` + `statistics.HistogramFromProto` to populate all buckets of the histogram in one call. Track the `(table_id, hist_id)` pairs that appeared in this scan.
+
+  2. Then run the legacy scan exactly as today, hitting `mysql.stats_buckets` with `ORDER BY table_id`, parsed by the existing `initStatsBuckets4Chunk` unchanged.
+
+  3. In the result loop for the legacy scan, skip rows whose `(table_id, hist_id)` was already seen in step 1 — simple Go-side filter against the set built above. No need to push the filter into SQL.
+
+  This keeps the existing legacy path intact (low risk of breaking what works today) and bolts the new path on top.
 
 **M4 — GC, BR, ID migration.**
 
