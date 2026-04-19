@@ -94,6 +94,109 @@ func TestRefreshStatsStmt(t *testing.T) {
 	}
 }
 
+func TestFlushStatsDeltaScoped(t *testing.T) {
+	tests := []struct {
+		sql     string
+		want    string
+		objects int // expected number of FlushObjects
+		cluster bool
+	}{
+		{
+			sql:     "FLUSH STATS_DELTA *.*",
+			want:    "FLUSH STATS_DELTA *.*",
+			objects: 1,
+		},
+		{
+			sql:     "FLUSH STATS_DELTA *.* CLUSTER",
+			want:    "FLUSH STATS_DELTA *.* CLUSTER",
+			objects: 1,
+			cluster: true,
+		},
+		{
+			sql:     "FLUSH STATS_DELTA db1.*",
+			want:    "FLUSH STATS_DELTA `db1`.*",
+			objects: 1,
+		},
+		{
+			sql:     "FLUSH STATS_DELTA db1.t1",
+			want:    "FLUSH STATS_DELTA `db1`.`t1`",
+			objects: 1,
+		},
+		{
+			sql:     "FLUSH STATS_DELTA db1.t1 CLUSTER",
+			want:    "FLUSH STATS_DELTA `db1`.`t1` CLUSTER",
+			objects: 1,
+			cluster: true,
+		},
+		{
+			sql:     "FLUSH STATS_DELTA table1",
+			want:    "FLUSH STATS_DELTA `table1`",
+			objects: 1,
+		},
+		{
+			sql:     "FLUSH STATS_DELTA db1.t1, db2.*, *.*",
+			want:    "FLUSH STATS_DELTA `db1`.`t1`, `db2`.*, *.*",
+			objects: 3,
+		},
+		{
+			sql:     "FLUSH STATS_DELTA db1.t1, db2.* CLUSTER",
+			want:    "FLUSH STATS_DELTA `db1`.`t1`, `db2`.* CLUSTER",
+			objects: 2,
+			cluster: true,
+		},
+	}
+
+	p := parser.New()
+	for _, test := range tests {
+		t.Run(test.sql, func(t *testing.T) {
+			stmt, err := p.ParseOneStmt(test.sql, "", "")
+			require.NoError(t, err)
+			fs := stmt.(*ast.FlushStmt)
+			require.Equal(t, ast.FlushStatsDelta, fs.Tp)
+			require.Len(t, fs.FlushObjects, test.objects)
+			require.Equal(t, test.cluster, fs.IsCluster)
+			var sb strings.Builder
+			err = stmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			require.NoError(t, err)
+			require.Equal(t, test.want, sb.String())
+		})
+	}
+
+	dedupTests := []struct {
+		name string
+		sql  string
+		want string
+	}{
+		{
+			name: "global overrides all",
+			sql:  "FLUSH STATS_DELTA table1, db1.t1, *.*, db2.t2",
+			want: "FLUSH STATS_DELTA *.*",
+		},
+		{
+			name: "database removes prior tables",
+			sql:  "FLUSH STATS_DELTA db1.t1, db2.t1, db1.*, db2.t2",
+			want: "FLUSH STATS_DELTA `db2`.`t1`, `db1`.*, `db2`.`t2`",
+		},
+		{
+			name: "table duplicates case insensitive",
+			sql:  "FLUSH STATS_DELTA db1.t1, db1.T1, db2.t1",
+			want: "FLUSH STATS_DELTA `db1`.`t1`, `db2`.`t1`",
+		},
+	}
+	for _, test := range dedupTests {
+		t.Run(test.name, func(t *testing.T) {
+			stmt, err := p.ParseOneStmt(test.sql, "", "")
+			require.NoError(t, err)
+			fs := stmt.(*ast.FlushStmt)
+			fs.DedupFlushObjects()
+			var sb strings.Builder
+			err = fs.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+			require.NoError(t, err)
+			require.Equal(t, test.want, sb.String())
+		})
+	}
+}
+
 func TestRefreshStatsStmtDedup(t *testing.T) {
 	tests := []struct {
 		name string

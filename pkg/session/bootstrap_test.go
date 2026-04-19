@@ -288,7 +288,6 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	se := CreateSessionAndSetID(t, store)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -298,20 +297,29 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
 
 	// downgrade `mDDLTableVersion`
-	m.SetDDLTableVersion(meta.MDLTableVersion)
-	MustExec(t, se, "drop table mysql.tidb_background_subtask")
-	MustExec(t, se, "drop table mysql.tidb_background_subtask_history")
+	require.NoError(t, m.SetDDLTableVersion(meta.MDLTableVersion))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	dom.Close()
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMutator(txn)
+	systemDBID, err := m.GetSystemDBID()
+	require.NoError(t, err)
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBBackgroundSubtaskTableID))
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBBackgroundSubtaskHistoryTableID))
 	// TODO(lance6716): remove it after tidb_ddl_notifier GA
-	MustExec(t, se, "drop table mysql.tidb_ddl_notifier")
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBDDLNotifierTableID))
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
 	// to upgrade session for create ddl related tables
-	dom.Close()
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
 
-	se = CreateSessionAndSetID(t, store)
+	se := CreateSessionAndSetID(t, store)
 	MustExec(t, se, "select * from mysql.tidb_background_subtask")
 	MustExec(t, se, "select * from mysql.tidb_background_subtask_history")
 	dom.Close()

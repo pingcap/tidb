@@ -3405,10 +3405,13 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 		return 0, fmt.Errorf("less than 3 regions")
 	}
 	sample := regionInfos.Regions[1]
-	if sample.ApproximateKeys == 0 || sample.ApproximateSize == 0 {
+	// ApproximateSize is SST/blob file size (can reflect compression), while
+	// ApproximateKvSize is KV data size and usually closer to logical table size.
+	sizeInMiB := max(sample.ApproximateSize, sample.ApproximateKvSize)
+	if sample.ApproximateKeys == 0 || sizeInMiB == 0 {
 		return 0, fmt.Errorf("zero approximate size")
 	}
-	return int(uint64(sample.ApproximateSize)*size.MB) / int(sample.ApproximateKeys), nil
+	return int(uint64(sizeInMiB)*size.MB) / int(sample.ApproximateKeys), nil
 }
 
 func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
