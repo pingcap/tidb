@@ -1123,7 +1123,10 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 		rangeMaxSize:     rangeMaxSize,
 	}
 	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, false)
-	return res.Ranges, res.AccessConds, res.RemainedConds, err
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return res.Ranges, res.AccessConds, res.RemainedConds, nil
 }
 
 func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []expression.Expression) []expression.Expression {
