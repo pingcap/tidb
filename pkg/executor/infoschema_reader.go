@@ -238,6 +238,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+<<<<<<< HEAD
 		case infoschema.TableRoutines:
 			err = e.setDataForRoutines(ctx, sctx)
 		case infoschema.TableColumnPrivileges:
@@ -258,6 +259,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForLogReplWorkflowHistoryGlobal(ctx, sctx)
 		case infoschema.TableLogReplStatusLocal:
 			err = e.setDataForLogReplStatusLocal(ctx, sctx)
+=======
+		case infoschema.TableColumnPrivileges:
+			err = e.setDataFromColumnPrivileges(sctx)
+		case infoschema.TableTablePrivileges:
+			err = e.setDataFromTablePrivileges(sctx)
+		case infoschema.TableSchemaPrivileges:
+			err = e.setDataFromSchemaPrivileges(sctx)
+>>>>>>> origin/release-8.5
 		}
 		if err != nil {
 			return nil, err
@@ -4353,6 +4362,7 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	return nil
 }
 
+<<<<<<< HEAD
 func (e *memtableRetriever) setDataFromColumnPrivileges(ctx context.Context, sctx sessionctx.Context) error {
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
@@ -4412,12 +4422,24 @@ func (e *memtableRetriever) setDataFromColumnPrivileges(ctx context.Context, sct
 				isGrantable,
 			))
 		}
+=======
+func (e *memtableRetriever) setDataFromColumnPrivileges(sctx sessionctx.Context) error {
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchColumnPrivileges(sctx, user)
+	if err != nil {
+		return err
+>>>>>>> origin/release-8.5
 	}
 
 	e.rows = rows
 	return nil
 }
 
+<<<<<<< HEAD
 func (e *memtableRetriever) setDataFromTablePrivileges(ctx context.Context, sctx sessionctx.Context) error {
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
@@ -4470,12 +4492,24 @@ func (e *memtableRetriever) setDataFromTablePrivileges(ctx context.Context, sctx
 				))
 			}
 		}
+=======
+func (e *memtableRetriever) setDataFromTablePrivileges(sctx sessionctx.Context) error {
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchTablePrivileges(sctx, user)
+	if err != nil {
+		return err
+>>>>>>> origin/release-8.5
 	}
 
 	e.rows = rows
 	return nil
 }
 
+<<<<<<< HEAD
 func (e *memtableRetriever) setDataFromSchemaPrivileges(ctx context.Context, sctx sessionctx.Context) error {
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
@@ -4542,6 +4576,19 @@ func (e *memtableRetriever) setDataFromSchemaPrivileges(ctx context.Context, sct
 			}
 		}
 	}
+=======
+func (e *memtableRetriever) setDataFromSchemaPrivileges(sctx sessionctx.Context) error {
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil {
+		return nil
+	}
+	rows, err := pm.FetchSchemaPrivileges(sctx, user)
+	if err != nil {
+		return err
+	}
+
+>>>>>>> origin/release-8.5
 	e.rows = rows
 	return nil
 }

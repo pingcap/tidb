@@ -57,15 +57,16 @@ func (m *globalMetadata) recordFinishTime(t time.Time) {
 	m.buffer.WriteString("Finished dump at: " + t.Format(metadataTimeLayout) + "\n")
 }
 
-func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType version.ServerType, afterConn bool) error { // revive:disable-line:flag-parameter
+func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverInfo version.ServerInfo, afterConn bool) error { // revive:disable-line:flag-parameter
 	if afterConn {
 		m.afterConnBuffer.Reset()
-		return recordGlobalMetaData(m.tctx, db, &m.afterConnBuffer, serverType, afterConn, m.snapshot)
+		return recordGlobalMetaData(m.tctx, db, &m.afterConnBuffer, serverInfo, afterConn, m.snapshot)
 	}
-	return recordGlobalMetaData(m.tctx, db, &m.buffer, serverType, afterConn, m.snapshot)
+	return recordGlobalMetaData(m.tctx, db, &m.buffer, serverInfo, afterConn, m.snapshot)
 }
 
-func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Buffer, serverType version.ServerType, afterConn bool, snapshot string) error { // revive:disable-line:flag-parameter
+func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Buffer, serverInfo version.ServerInfo, afterConn bool, snapshot string) error { // revive:disable-line:flag-parameter
+	serverType := serverInfo.ServerType
 	writeMasterStatusHeader := func() {
 		buffer.WriteString("SHOW MASTER STATUS:")
 		if afterConn {
@@ -95,7 +96,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 	// +-------------+--------------------+--------------+------------------+-------------------+
 	// 1 row in set (0.00 sec)
 	case version.ServerTypeMySQL, version.ServerTypeTiDB:
-		str, err := ShowMasterStatus(db)
+		str, err := ShowMasterStatus(db, serverInfo)
 		if err != nil {
 			return err
 		}
@@ -127,7 +128,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 	// +--------------------------+
 	// 1 row in set (0.00 sec)
 	case version.ServerTypeMariaDB:
-		str, err := ShowMasterStatus(db)
+		str, err := ShowMasterStatus(db, serverInfo)
 		if err != nil {
 			return err
 		}
@@ -136,7 +137,7 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 		var gtidSet string
 		err = db.QueryRowContext(context.Background(), "SELECT @@global.gtid_binlog_pos").Scan(&gtidSet)
 		if err != nil {
-			tctx.L().Warn("fail to get gtid for mariaDB", zap.Error(err))
+			tctx.L().Warn("fail to get gtid for MariaDB", zap.Error(err))
 		}
 
 		if logFile != "" {
@@ -167,9 +168,14 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 		isms = false
 	}
 	if isms {
-		query = "SHOW ALL SLAVES STATUS"
+		query = "SHOW ALL SLAVES STATUS" // MariaDB
+	} else if serverInfo.ServerVersion == nil {
+		query = "SHOW SLAVE STATUS" // Unknown version
+	} else if serverInfo.ServerType == version.ServerTypeMySQL &&
+		!serverInfo.ServerVersion.LessThan(*minNewTerminologyMySQL) {
+		query = "SHOW REPLICA STATUS" // MySQL 8.4.0 and newer
 	} else {
-		query = "SHOW SLAVE STATUS"
+		query = "SHOW SLAVE STATUS" // MySQL
 	}
 	return simpleQuery(db, query, func(rows *sql.Rows) error {
 		cols, err := rows.Columns()
@@ -191,11 +197,11 @@ func recordGlobalMetaData(tctx *tcontext.Context, db *sql.Conn, buffer *bytes.Bu
 				switch col {
 				case "connection_name":
 					connName = data[i].String
-				case "exec_master_log_pos":
+				case "exec_master_log_pos", "exec_source_log_pos":
 					pos = data[i].String
-				case "relay_master_log_file":
+				case "relay_master_log_file", "relay_source_log_file":
 					logFile = data[i].String
-				case "master_host":
+				case "master_host", "source_host":
 					host = data[i].String
 				case "executed_gtid_set":
 					gtidSet = data[i].String

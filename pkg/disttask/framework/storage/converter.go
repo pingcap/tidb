@@ -73,6 +73,8 @@ func Row2Task(r chunk.Row) *proto.Task {
 			logutil.BgLogger().Error("unmarshal task modify param", zap.Error(err))
 		}
 	}
+	maxNodeCnt := r.GetInt64(15)
+	task.MaxNodeCount = int(maxNodeCnt)
 	return task
 }
 

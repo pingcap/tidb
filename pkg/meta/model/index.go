@@ -42,16 +42,29 @@ const (
 	// changingIndexPrefix the prefix is used to initialize new index name created in modify column.
 	// The new name will be like "_Idx$_<old_index_name>_n".
 	changingIndexPrefix = "_Idx$_"
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/release-8.5
 	// GlobalIndexVersion constants define the key format versions for global indexes.
 	// GlobalIndexVersionLegacy is the legacy format (version 0) where partition ID is not in the key.
 	// This format has a bug with duplicate handles after EXCHANGE PARTITION on non-clustered tables.
 	// See https://github.com/pingcap/tidb/issues/65289
 	GlobalIndexVersionLegacy uint8 = 0
 	// GlobalIndexVersionV1 is the current format (version 1) where partition ID is encoded in the key
+<<<<<<< HEAD
 	// for non-unique global indexes on non-clustered tables to prevent key collisions
 	// after EXCHANGE PARTITION.
 	// For unique global indexes, the partition ID is not needed in the key since uniqueness is
 	// already enforced.
+=======
+	// for global indexes on non-clustered tables to prevent key collisions
+	// after EXCHANGE PARTITION.
+	// Applies to non-unique indexes (handle always in key) and unique indexes with nullable
+	// columns (handle in key when any indexed value is NULL, since NULL != NULL).
+	// For unique global indexes where all columns are NOT NULL, version 0 is used since
+	// uniqueness alone prevents collisions.
+>>>>>>> origin/release-8.5
 	// For clustered tables, common handles already include partition-specific data.
 	// Notice that for V1 the partition id is still in the value part as well,
 	// for decreasing the risk of issues changing the read code path for various index reads.
@@ -116,10 +129,19 @@ type IndexInfo struct {
 	Global        bool             `json:"is_global"`    // Whether the index is global.
 	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
 	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+<<<<<<< HEAD
 	// Version of global index key format, only used for non-clustered, non-unique global indexes.
 	// 0=legacy/unique/clustered,
 	// 1=v1 non-unique non-clustered with partition ID in key and value.
 	// 2=v2 non-unique non-clustered with partition ID in key only (TODO).
+=======
+	// Version of global index key format for non-clustered tables.
+	// Set to V1 when the handle can appear in the index key (non-unique indexes,
+	// or unique indexes with any nullable column) to prevent collisions after EXCHANGE PARTITION.
+	// 0=legacy, or unique with all NOT NULL columns, or clustered.
+	// 1=v1 with partition ID in key and value.
+	// 2=v2 with partition ID in key only (TODO).
+>>>>>>> origin/release-8.5
 	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
 }
 

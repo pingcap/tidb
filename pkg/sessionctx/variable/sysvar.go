@@ -65,6 +65,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -1797,6 +1798,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(ForeignKeyChecks, originalValue)
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBForeignKeyCheckInSharedLock, Value: BoolToOnOff(DefTiDBForeignKeyCheckInSharedLock), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.ForeignKeyCheckInSharedLock = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableForeignKey, Value: BoolToOnOff(true), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableForeignKey.Store(TiDBOptOn(val))
 		return nil
@@ -2571,10 +2576,17 @@ var defaultSysVars = []*SysVar{
 		s.GuaranteeLinearizability = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2, SetSession: func(s *SessionVars, val string) error {
-		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
-		return nil
-	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeVersion, Value: strconv.Itoa(DefTiDBAnalyzeVersion), Type: TypeInt, MinValue: 1, MaxValue: 2,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			if normalizedValue == "1" {
+				vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGenByArgs("tidb_analyze_version=1", "tidb_analyze_version=2"))
+			}
+			return normalizedValue, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
+			return nil
+		}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBHashJoinVersion, Value: DefTiDBHashJoinVersion, Type: TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
 			lowerValue := strings.ToLower(normalizedValue)
@@ -3636,11 +3648,21 @@ var defaultSysVars = []*SysVar{
 		s.SharedLockPromotion = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxDistTaskNodes, Value: strconv.Itoa(DefTiDBMaxDistTaskNodes), Type: TypeInt, MinValue: -1, MaxValue: 128,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			maxNodes := TidbOptInt(normalizedValue, DefTiDBMaxDistTaskNodes)
+			if maxNodes == 0 {
+				return normalizedValue, errors.New("max_dist_task_nodes should be -1 or [1, 128]")
+			}
+			return normalizedValue, nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBTSOClientRPCMode, Value: DefTiDBTSOClientRPCMode, Type: TypeEnum, PossibleValues: []string{TSOClientRPCModeDefault, TSOClientRPCModeParallel, TSOClientRPCModeParallelFast},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},
 	},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: TiDBEnableLoginHistory, Value: BoolToOnOff(DefTiDBEnableLoginHistory), Type: TypeBool,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
 			EnableLoginHistory.Store(TiDBOptOn(val))
@@ -3671,6 +3693,14 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+=======
+	{Scope: ScopeGlobal, Name: TiDBAccelerateUserCreationUpdate, Value: BoolToOnOff(DefTiDBAccelerateUserCreationUpdate), Type: TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			AccelerateUserCreationUpdate.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
+>>>>>>> origin/release-8.5
 	{
 		Scope:    ScopeGlobal,
 		Name:     TiDBAdvancerCheckPointLagLimit,
@@ -3722,6 +3752,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: PKDBEnableWhitelist, Value: BoolToOnOff(DefPKDBEnableWhitelist), Type: TypeBool,
 		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
 			EnableWhitelist.Store(TiDBOptOn(val))
@@ -3750,6 +3781,60 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: LowerCaseTableNames, Value: "2", Type: TypeInt, MinValue: 0, MaxValue: 2, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return strconv.Itoa(model.GetLowerCaseTableNames()), nil
 	}},
+=======
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSlowLogRules, Value: "", Type: TypeStr,
+		SetSession: func(s *SessionVars, val string) error {
+			slowLogRules, err := ParseSessionSlowLogRules(val)
+			if err != nil {
+				return err
+			}
+			s.SlowLogRules.SlowLogRules = slowLogRules
+			s.SlowLogRules.NeedUpdateEffectiveFields = true
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			if vars.SlowLogRules.SlowLogRules != nil {
+				return vars.SlowLogRules.RawRules, nil
+			}
+			return "", nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			gRules, err := ParseGlobalSlowLogRules(s)
+			if err != nil {
+				return err
+			}
+			GlobalSlowLogRules.Store(gRules)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return GlobalSlowLogRules.Load().RawRules, nil
+		},
+	},
+	{
+		Scope:    ScopeGlobal,
+		Name:     TiDBSlowLogMaxPerSec,
+		Value:    "0",
+		Type:     TypeInt,
+		MinValue: 0, MaxValue: 1000000,
+		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
+			d := TidbOptInt(s, 0)
+			if d == int(GlobalSlowLogRateLimiter.Limit()) {
+				return nil
+			}
+
+			if d == 0 {
+				GlobalSlowLogRateLimiter.SetLimit(rate.Inf)
+				return nil
+			}
+			GlobalSlowLogRateLimiter.SetLimit(rate.Limit(d))
+			GlobalSlowLogRateLimiter.SetBurst(d)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+			return strconv.Itoa(int(GlobalSlowLogRateLimiter.Limit())), nil
+		},
+	},
+>>>>>>> origin/release-8.5
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

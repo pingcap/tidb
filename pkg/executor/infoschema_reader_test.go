@@ -664,9 +664,14 @@ func TestColumnTable(t *testing.T) {
 				where TABLE_SCHEMA = 'test' and TABLE_NAME = 'tbl1' and COLUMN_NAME = 'col_2';`).Check(
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
+<<<<<<< HEAD
 	tk.MustQuery(`select count(*) from information_schema.columns
 			where TABLE_SCHEMA = 'test' and TABLE_NAME in ('tbl1', 'tbl2', 'view1');`).Check(
 		testkit.RowsWithSep("|", "9"))
+=======
+	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
+		testkit.RowsWithSep("|", "5017"))
+>>>>>>> origin/release-8.5
 }
 
 func TestIndexUsageTable(t *testing.T) {
@@ -713,7 +718,11 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
+<<<<<<< HEAD
 		testkit.RowsWithSep("|", "102"))
+=======
+		testkit.RowsWithSep("|", "88"))
+>>>>>>> origin/release-8.5
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
@@ -1103,6 +1112,7 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_schema_cache_size = default")
 
 	for _, testCase := range []struct {
 		sql    string

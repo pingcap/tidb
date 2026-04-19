@@ -63,3 +63,53 @@ func TestUptime(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, stats[upTime].(int64), int64(time.Since(time.Unix(1282967700, 0)).Seconds()))
 }
+<<<<<<< HEAD
+=======
+
+func TestInitStatsSessionBlockGC(t *testing.T) {
+	origConfig := config.GetGlobalConfig()
+	defer func() {
+		config.StoreGlobalConfig(origConfig)
+	}()
+	session.SetStatsLease(3 * time.Second)
+	// Here I didn't restore the original stats lease because it's not exposed in this version.
+	// It should be acceptable because most of the tests will set lease to -1 to disable the stats lease.
+
+	newConfig := *origConfig
+	for _, lite := range []bool{false, true} {
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats", "pause"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStatsLite", "pause"))
+		newConfig.Performance.LiteInitStats = lite
+		config.StoreGlobalConfig(&newConfig)
+
+		store, err := mockstore.NewMockStore()
+		require.NoError(t, err)
+		dom, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+
+		infoSyncer := dom.InfoSyncer()
+		sv := CreateMockServer(t, store)
+		sv.SetDomain(dom)
+		infoSyncer.SetSessionManager(sv)
+		time.Sleep(time.Second)
+		require.Eventually(t, func() bool {
+			now := time.Now()
+			startTSList := sv.GetInternalSessionStartTSList()
+			for _, startTs := range startTSList {
+				if startTs != 0 {
+					startTime := oracle.GetTimeFromTS(startTs)
+					// test pass if the min_start_ts is blocked over 1s.
+					if now.Sub(startTime) > time.Second {
+						return true
+					}
+				}
+			}
+			return false
+		}, 10*time.Second, 10*time.Millisecond, "min_start_ts is not blocked over 1s")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStatsLite"))
+		dom.Close()
+		require.NoError(t, store.Close())
+	}
+}
+>>>>>>> origin/release-8.5

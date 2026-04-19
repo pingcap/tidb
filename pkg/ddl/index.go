@@ -331,6 +331,36 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	}
 }
 
+// Set global index version for new global indexes.
+// Version 1 is needed for non-clustered tables to prevent collisions after
+// EXCHANGE PARTITION due to duplicate _tidb_rowid values.
+// For non-unique indexes, the handle is always encoded in the key.
+// For unique indexes with NULL values, the handle is also encoded in the key
+// (since NULL != NULL, multiple NULLs are allowed).
+// In both cases, we need the partition ID in the key to distinguish rows
+// from different partitions that may have the same _tidb_rowid.
+// Clustered tables don't have this issue and use version 0.
+func setGlobalIndexVersion(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	idxInfo.GlobalIndexVersion = 0
+	if idxInfo.Global && !tblInfo.HasClusteredIndex() {
+		needPartitionInKey := !idxInfo.Unique
+		if !needPartitionInKey {
+			nullCols := getNullColInfos(tblInfo, idxInfo.Columns)
+			if len(nullCols) > 0 {
+				needPartitionInKey = true
+			}
+		}
+		if needPartitionInKey {
+			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
+			failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
+				if valInt, ok := val.(int); ok {
+					idxInfo.GlobalIndexVersion = uint8(valInt)
+				}
+			})
+		}
+	}
+}
+
 // decimal using a binary format that packs nine decimal (base 10) digits into four bytes.
 func calcBytesLengthForDecimal(m int) int {
 	return (m / 9 * 4) + ((m%9)+1)/2
@@ -387,6 +417,7 @@ func BuildIndexInfo(
 			idxInfo.Tp = indexOption.Tp
 		}
 		idxInfo.Global = indexOption.Global
+<<<<<<< HEAD
 		// Set global index version for new global indexes.
 		// Version 1 is only needed for non-clustered tables with non-unique global indexes
 		// to prevent collisions after EXCHANGE PARTITION due to duplicate _tidb_rowid values.
@@ -400,6 +431,9 @@ func BuildIndexInfo(
 				}
 			})
 		}
+=======
+		setGlobalIndexVersion(tblInfo, idxInfo)
+>>>>>>> origin/release-8.5
 	} else {
 		// Use btree as default index type.
 		idxInfo.Tp = pmodel.IndexTypeBtree
@@ -598,15 +632,15 @@ func setIndexVisibility(tblInfo *model.TableInfo, name pmodel.CIStr, invisible b
 	}
 }
 
-func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*model.ColumnInfo, error) {
-	nullCols := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
-	for _, colName := range indexInfo.Columns {
+func getNullColInfos(tblInfo *model.TableInfo, cols []*model.IndexColumn) []*model.ColumnInfo {
+	nullCols := make([]*model.ColumnInfo, 0, len(cols))
+	for _, colName := range cols {
 		col := model.FindColumnInfo(tblInfo.Columns, colName.Name.L)
 		if !mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag()) {
 			nullCols = append(nullCols, col)
 		}
 	}
-	return nullCols, nil
+	return nullCols
 }
 
 func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, job *model.Job,
@@ -619,10 +653,7 @@ func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, job *model.Job,
 	if err != nil {
 		return nil, err
 	}
-	nullCols, err := getNullColInfos(tblInfo, indexInfo)
-	if err != nil {
-		return nil, err
-	}
+	nullCols := getNullColInfos(tblInfo, indexInfo.Columns)
 	if len(nullCols) == 0 {
 		return nil, nil
 	}
@@ -2414,7 +2445,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 		return nil
 	}
 
-	batchVals, err := txn.BatchGet(context.Background(), uniqueBatchKeys)
+	batchVals, err := kv.BatchGetValue(context.Background(), txn, uniqueBatchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2898,7 +2929,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			return err
 		}
 
-		task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
+		targetScope := reorgInfo.ReorgMeta.TargetScope
+		maxNodeCnt := reorgInfo.ReorgMeta.MaxNodeCount
+		task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, metaData)
 		if err != nil {
 			return err
 		}
@@ -3190,8 +3223,8 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 }
 
 // submitAndWaitTask submits a task and wait for it to finish.
-func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, taskMeta []byte) error {
-	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, taskMeta)
+func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) error {
+	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, taskMeta)
 	if err != nil {
 		return err
 	}
@@ -3469,7 +3502,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		}
 
 		var found map[string][]byte
-		found, err = txn.BatchGet(ctx, globalIndexKeys)
+		found, err = kv.BatchGetValue(ctx, txn, globalIndexKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}

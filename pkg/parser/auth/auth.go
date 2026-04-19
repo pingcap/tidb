@@ -94,6 +94,7 @@ func (role *RoleIdentity) String() string {
 	return fmt.Sprintf("`%s`@`%s`", role.Username, role.Hostname)
 }
 
+<<<<<<< HEAD
 // GetUserAndHostName returns the user and host name if the given u is not nil.
 func GetUserAndHostName(u *UserIdentity) (username string, hostname string) {
 	if u == nil {
@@ -103,4 +104,15 @@ func GetUserAndHostName(u *UserIdentity) (username string, hostname string) {
 		return u.AuthUsername, u.AuthHostname
 	}
 	return u.Username, u.Hostname
+=======
+// GetUserAndHostName returns the user and host name if the given user is not nil.
+func GetUserAndHostName(user *UserIdentity) (username string, hostname string) {
+	if user == nil {
+		return "", ""
+	}
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		return user.AuthUsername, user.AuthHostname
+	}
+	return user.Username, user.Hostname
+>>>>>>> origin/release-8.5
 }

@@ -419,7 +419,7 @@ func estimateRowCountWithUniformDistribution(
 		// This can happen when sampling collects fewer than all NDV.
 		if histNDV > 0 && modifyCount == 0 {
 			topNMinCount := uint64(0)
-			if len(topN.TopN) > 0 {
+			if topN != nil && len(topN.TopN) > 0 {
 				topNMinCount = topN.TopN[0].Count
 				for _, item := range topN.TopN {
 					topNMinCount = min(topNMinCount, item.Count)

@@ -113,11 +113,20 @@ type PointGetPlan struct {
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost             float64
 
+<<<<<<< HEAD
 	// required by column privileges
 	// unfold indicates whether the FieldName in 'names' is unfolded from wildcard
 	unfold []bool
 	// columns in the where clause should be check privilege
 	colsInWhereClause []string
+=======
+	// unfoldFromWildCard indicates whether the FieldName in 'outputNames' is unfolded from wildcard
+	// It is used by checking column privileges. Why do not add the field name to visitInfo onsite?
+	// Because if the PointGetPlan is inside UPDATE or DELETE, we need not to check the SelectPriv of
+	// all output names. In the above two statements, only columns in WHERE clause are needed to check.
+	unfoldFromWildCard []bool
+	colsInWhereClause  []string
+>>>>>>> origin/release-8.5
 
 	// required by cost model
 	planCostInit bool
@@ -481,9 +490,17 @@ type BatchPointGetPlan struct {
 	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost          float64
 
+<<<<<<< HEAD
 	// required by column privileges
 	// unfold indicates whether the FieldName in 'names' is unfolded from wildcard
 	unfold []bool
+=======
+	// unfoldFromWildCard indicates whether the FieldName in 'outputNames' is unfolded from wildcard
+	// It is used by checking column privileges. Why do not add the field name to visitInfo onsite?
+	// Because if the BatchPointGetPlan is inside UPDATE or DELETE, we need not to check the SelectPriv of
+	// all output names. In the above two statements, only columns in WHERE clause are needed to check.
+	unfoldFromWildCard []bool
+>>>>>>> origin/release-8.5
 	// columns in the where clause should be check privilege
 	colsInWhereClause []string
 
@@ -919,6 +936,25 @@ type PointPlanVal struct {
 
 var pointGetVisitInfo4Test []visitInfo
 
+<<<<<<< HEAD
+=======
+func setVisitInfo4Test(vs []visitInfo) {
+	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
+		if val.(bool) {
+			pointGetVisitInfo4Test = vs
+		}
+	})
+}
+
+func appendVisitInfo4Test(vs []visitInfo) {
+	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
+		if val.(bool) {
+			pointGetVisitInfo4Test = append(pointGetVisitInfo4Test, vs...)
+		}
+	})
+}
+
+>>>>>>> origin/release-8.5
 // TryFastPlan tries to use the PointGetPlan for the query.
 func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
@@ -957,12 +993,20 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x, node.GetResolveContext()); fp != nil {
+<<<<<<< HEAD
 			visitInfos := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.names, fp.unfold, fp.colsInWhereClause)
 			failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
 				if val.(bool) {
 					pointGetVisitInfo4Test = visitInfos
 				}
 			})
+=======
+			visitInfos, ok := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.names, fp.unfoldFromWildCard, fp.colsInWhereClause)
+			if !ok {
+				return nil
+			}
+			setVisitInfo4Test(visitInfos)
+>>>>>>> origin/release-8.5
 			if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 				return nil
 			}
@@ -974,12 +1018,20 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 			return
 		}
 		if fp := tryPointGetPlan(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
+<<<<<<< HEAD
 			visitInfos := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.outputNames, fp.unfold, fp.colsInWhereClause)
 			failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
 				if val.(bool) {
 					pointGetVisitInfo4Test = visitInfos
 				}
 			})
+=======
+			visitInfos, ok := getVisitInfo(userName, hostName, fp.dbName, fp.TblInfo.Name.L, fp.outputNames, fp.unfoldFromWildCard, fp.colsInWhereClause)
+			if !ok {
+				return nil
+			}
+			setVisitInfo4Test(visitInfos)
+>>>>>>> origin/release-8.5
 			if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 				return nil
 			}
@@ -1005,18 +1057,30 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	return nil
 }
 
+<<<<<<< HEAD
 func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfold []bool, colsInWhere []string) (res []visitInfo) {
+=======
+// getVisitInfo collects 2 source of visitInfos:
+//  1. output names. To distinguish between table-level and column-level privilege error report, unfoldFromWildCard is needed.
+//     If the PointPlan is inside UPDATE or DELETE statements, the checking of output names should be ignored.
+//  2. columns in WHERE clause.
+func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfold []bool, colsInWhere []string) (res []visitInfo, ok bool) {
+>>>>>>> origin/release-8.5
 	if len(outputNames) != len(unfold) {
 		if intest.InTest {
 			panic("outputNames and unfold should have the same length")
 		}
 		logutil.BgLogger().Error("outputNames length %d not equal to unfold length %d",
 			zap.Int("outputNames", len(outputNames)), zap.Int("unfold", len(unfold)), zap.Stack("stack"))
+<<<<<<< HEAD
 		if len(outputNames) < len(unfold) {
 			unfold = unfold[:len(outputNames)]
 		} else {
 			outputNames = outputNames[:len(unfold)]
 		}
+=======
+		return nil, false
+>>>>>>> origin/release-8.5
 	}
 	for i, name := range outputNames {
 		var authErr error
@@ -1042,7 +1106,11 @@ func getVisitInfo(user, host, db, tbl string, outputNames types.NameSlice, unfol
 			err:       plannererrors.ErrColumnaccessDenied.FastGenByArgs("SELECT", user, host, col, tbl),
 		})
 	}
+<<<<<<< HEAD
 	return res
+=======
+	return res, true
+>>>>>>> origin/release-8.5
 }
 
 func getLockWaitTime(ctx base.PlanContext, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
@@ -1416,7 +1484,12 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 	p.dbName = dbName
+<<<<<<< HEAD
 	p.unfold = unfold
+=======
+	p.unfoldFromWildCard = unfold
+	p.colsInWhereClause = whereColNames
+>>>>>>> origin/release-8.5
 	return p
 }
 
@@ -1427,7 +1500,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 // 2. It must be a single table select.
 // 3. All the columns must be public and not generated.
 // 4. The condition is an access path that the range is a unique key.
-func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context, check bool) *PointGetPlan {
+func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *resolve.Context, check bool) (p *PointGetPlan) {
 	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
@@ -1475,6 +1548,12 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	if pairs == nil && !isTableDual {
 		return nil
 	}
+	defer func() {
+		if p != nil {
+			p.colsInWhereClause = pairsToColumnNames(pairs)
+			p.unfoldFromWildCard = unfold
+		}
+	}()
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 &&
@@ -1509,6 +1588,13 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	}
 
 	return checkTblIndexForPointPlan(ctx, tnW, schema, tblAlias.L, selStmt.TableHints, names, pairs, isTableDual, check, unfold)
+}
+
+func pairsToColumnNames(pairs []nameValuePair) (res []string) {
+	for _, pair := range pairs {
+		res = append(res, pair.colName)
+	}
+	return
 }
 
 func pairsToColumnNames(pairs []nameValuePair) (res []string) {
@@ -1701,6 +1787,12 @@ func newPointGetPlan(ctx base.PlanContext, dbName string, schema *expression.Sch
 	return p
 }
 
+<<<<<<< HEAD
+=======
+// checkFastPlanPrivilege checks two types of privilege:
+// 1. user meets all visitInfos requirement
+// 2. all tables can pass the check in CheckTableLock
+>>>>>>> origin/release-8.5
 func checkFastPlanPrivilege(ctx base.PlanContext, visitInfos ...visitInfo) error {
 	pm := privilege.GetPrivilegeManager(ctx)
 	lockVisitInfos := make([]visitInfo, 0, len(visitInfos))
@@ -1730,12 +1822,19 @@ func buildSchemaFromFields(
 	tblName pmodel.CIStr,
 	fields []*ast.SelectField,
 ) (
+<<<<<<< HEAD
 	*expression.Schema,
 	[]*types.FieldName,
 	[]bool,
+=======
+	_ *expression.Schema,
+	names []*types.FieldName,
+	unfold []bool,
+>>>>>>> origin/release-8.5
 ) {
 	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
-	names := make([]*types.FieldName, 0, len(tbl.Columns)+1)
+	names = make([]*types.FieldName, 0, len(tbl.Columns)+1)
+	unfold = make([]bool, 0, len(tbl.Columns)+1)
 	if len(fields) > 0 {
 		unfold := make([]bool, 0, len(tbl.Columns)+1)
 		for _, field := range fields {
@@ -1798,13 +1897,18 @@ func buildSchemaFromFields(
 			OrigColName: col.Name,
 			ColName:     col.Name,
 		})
+		unfold = append(unfold, false)
 		column := colInfoToColumn(col, len(columns))
 		columns = append(columns, column)
 	}
+<<<<<<< HEAD
 	schema := expression.NewSchema(columns...)
 	// We don't need to return the 'unfold', since for DELETE and UPDATE,
 	// we don't check the outputNames' column-privilege
 	return schema, names, nil
+=======
+	return expression.NewSchema(columns...), names, unfold
+>>>>>>> origin/release-8.5
 }
 
 func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldName, *expression.Column, bool) {
@@ -1881,6 +1985,10 @@ func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblNam
 		}
 		return nvPairs, isTableDual
 	case opcode.EQ:
+		// Views' columns have no FieldType.
+		if tbl.IsView() {
+			return nil, false
+		}
 		var (
 			d       types.Datum
 			colName *ast.ColumnNameExpr
@@ -1920,10 +2028,6 @@ func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblNam
 			return nil, false
 		}
 		if d.IsNull() {
-			return nil, false
-		}
-		// Views' columns have no FieldType.
-		if tbl.IsView() {
 			return nil, false
 		}
 		if colName.Name.Table.L != "" && colName.Name.Table.L != tblName.L {
@@ -2130,7 +2234,10 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 		colsInWhereClause []string
 	)
 	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/release-8.5
 	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
@@ -2150,12 +2257,21 @@ func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolv
 
 	if pointPlan != nil {
 		// We don't check the output names, since they are expended to all columns of the table.
+<<<<<<< HEAD
 		visitInfos := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
 		failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
 			if val.(bool) {
 				pointGetVisitInfo4Test = visitInfos
 			}
 		})
+=======
+		// See the comment in buildSchemaFromFields
+		visitInfos, ok := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
+		if !ok {
+			return nil
+		}
+		setVisitInfo4Test(visitInfos)
+>>>>>>> origin/release-8.5
 		if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 			return nil
 		}
@@ -2180,11 +2296,15 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 			err:       plannererrors.ErrColumnaccessDenied.FastGenByArgs("UPDATE", userName, hostName, assign.ColName.L, tbl.Name.L),
 		})
 	}
+<<<<<<< HEAD
 	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
 		if val.(bool) {
 			pointGetVisitInfo4Test = append(pointGetVisitInfo4Test, visitInfos...)
 		}
 	})
+=======
+	appendVisitInfo4Test(visitInfos)
+>>>>>>> origin/release-8.5
 	if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 		return nil
 	}
@@ -2255,7 +2375,11 @@ func buildOrderedList(ctx base.PlanContext, pointPlan base.Plan, list []*ast.Ass
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
+<<<<<<< HEAD
 		expr, vs, err := rewriteAstExprWithPlanCtxWithVisitInfos(ctx, assign.Expr, pointPlan.Schema(), pointPlan.OutputNames(), false)
+=======
+		expr, vs, err := rewriteAstExprWithPlanCtx(ctx, assign.Expr, pointPlan.Schema(), pointPlan.OutputNames(), false)
+>>>>>>> origin/release-8.5
 		if err != nil {
 			return nil, nil, true
 		}
@@ -2298,7 +2422,10 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		colsInWhereClause []string
 	)
 	userName, hostName := auth.GetUserAndHostName(ctx.GetSessionVars().User)
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/release-8.5
 	if pointGet := tryPointGetPlan(ctx, selStmt, resolveCtx, true); pointGet != nil {
 		if pointGet.IsTableDual {
 			return PhysicalTableDual{
@@ -2315,6 +2442,7 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		}
 		pointPlan, dbName, tbl, colsInWhereClause = batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo, batchPointGet.colsInWhereClause
 	}
+<<<<<<< HEAD
 
 	if pointPlan != nil {
 		// We don't check the output names, since they are expended to all columns of the table.
@@ -2324,6 +2452,16 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 				pointGetVisitInfo4Test = visitInfos
 			}
 		})
+=======
+	if pointPlan != nil {
+		// We don't check the output names, since they are expended to all columns of the table.
+		// See the comment in buildSchemaFromFields
+		visitInfos, ok := getVisitInfo(userName, hostName, dbName, tbl.Name.L, nil, nil, colsInWhereClause)
+		if !ok {
+			return nil
+		}
+		setVisitInfo4Test(visitInfos)
+>>>>>>> origin/release-8.5
 		if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 			return nil
 		}
@@ -2343,11 +2481,15 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 		privilege: mysql.DeletePriv,
 		err:       plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", userName, hostName, tbl.Name.L),
 	}}
+<<<<<<< HEAD
 	failpoint.Inject("point-get-visit-info", func(val failpoint.Value) {
 		if val.(bool) {
 			pointGetVisitInfo4Test = append(pointGetVisitInfo4Test, visitInfos...)
 		}
 	})
+=======
+	appendVisitInfo4Test(visitInfos)
+>>>>>>> origin/release-8.5
 	if checkFastPlanPrivilege(ctx, visitInfos...) != nil {
 		return nil
 	}
@@ -2360,7 +2502,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if err != nil {
 		return nil
 	}
-	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo)
+	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo, 0)
 	if err != nil {
 		return nil
 	}

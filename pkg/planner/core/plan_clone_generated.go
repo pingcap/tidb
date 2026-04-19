@@ -281,8 +281,13 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.AccessConditions = util.CloneExpressions(op.AccessConditions)
 	cloned.ctx = newCtx
+<<<<<<< HEAD
 	cloned.unfold = make([]bool, len(op.unfold))
 	copy(cloned.unfold, op.unfold)
+=======
+	cloned.unfoldFromWildCard = make([]bool, len(op.unfoldFromWildCard))
+	copy(cloned.unfoldFromWildCard, op.unfoldFromWildCard)
+>>>>>>> origin/release-8.5
 	cloned.colsInWhereClause = make([]string, len(op.colsInWhereClause))
 	copy(cloned.colsInWhereClause, op.colsInWhereClause)
 	cloned.accessCols = util.CloneColumns(op.accessCols)
@@ -311,8 +316,13 @@ func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
 	copy(cloned.PartitionIdxs, op.PartitionIdxs)
+<<<<<<< HEAD
 	cloned.unfold = make([]bool, len(op.unfold))
 	copy(cloned.unfold, op.unfold)
+=======
+	cloned.unfoldFromWildCard = make([]bool, len(op.unfoldFromWildCard))
+	copy(cloned.unfoldFromWildCard, op.unfoldFromWildCard)
+>>>>>>> origin/release-8.5
 	cloned.colsInWhereClause = make([]string, len(op.colsInWhereClause))
 	copy(cloned.colsInWhereClause, op.colsInWhereClause)
 	cloned.accessCols = util.CloneColumns(op.accessCols)
