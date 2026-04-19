@@ -1107,7 +1107,7 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 // The returned remainedConds are conditions that must be re-applied as filters (e.g. when a
 // collation mismatch makes the range approximate but the condition is still needed for correctness).
 func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions []expression.Expression,
-	cols []*expression.Column, lengths []int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
+	cols []*expression.Column, lengths []int, rangeMaxSize int64) (ranges Ranges, accessConds []expression.Expression, remainedConds []expression.Expression, err error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
