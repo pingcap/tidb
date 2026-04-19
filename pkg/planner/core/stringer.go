@@ -345,6 +345,8 @@ func toString(in base.Plan, strs []string, idxs []int) ([]string, []int) {
 		str = fmt.Sprintf("Window(%s)", buffer.String())
 	case *physicalop.PhysicalWindow:
 		str = fmt.Sprintf("Window(%s)", x.ExplainInfo())
+	case *physicalop.PhysicalStreamWindow:
+		str = fmt.Sprintf("StreamWindow(%s)", x.ExplainInfo())
 	case *physicalop.PhysicalShuffle:
 		str = fmt.Sprintf("Partition(%s)", x.ExplainInfo())
 	case *physicalop.PhysicalShuffleReceiverStub:

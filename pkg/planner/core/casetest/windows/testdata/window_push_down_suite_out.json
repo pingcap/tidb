@@ -146,6 +146,78 @@
           "                  └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "drop table if exists stream_window_t",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "create table stream_window_t(a int, b int, c int, key idx_ab(a, b))",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "insert into stream_window_t values (1, 1, 11), (1, 2, 12), (2, 1, 21), (2, 3, 23)",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select a, row_number() over(partition by a) as rn from stream_window_t",
+        "Plan": [
+          "StreamWindow root  row_number()->Column over(partition by test.stream_window_t.a rows between current row and current row)",
+          "└─IndexReader root  index:IndexFullScan",
+          "  └─IndexFullScan cop[tikv] table:stream_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because there aren't tiflash replicas of table `stream_window_t`."
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select a, b, row_number() over(partition by a order by b) as rn from stream_window_t",
+        "Plan": [
+          "StreamWindow root  row_number()->Column over(partition by test.stream_window_t.a order by test.stream_window_t.b rows between current row and current row)",
+          "└─IndexReader root  index:IndexFullScan",
+          "  └─IndexFullScan cop[tikv] table:stream_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because there aren't tiflash replicas of table `stream_window_t`."
+        ]
+      },
+      {
+        "SQL": "select a, b, row_number() over(partition by a order by b) as rn from stream_window_t",
+        "Plan": [
+          "1 1 1",
+          "1 2 2",
+          "2 1 1",
+          "2 3 2"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select a, b, rank() over(partition by a order by b) as rk from stream_window_t",
+        "Plan": [
+          "Window root  rank()->Column over(partition by test.stream_window_t.a order by test.stream_window_t.b)",
+          "└─IndexReader root  index:IndexFullScan",
+          "  └─IndexFullScan cop[tikv] table:stream_window_t, index:idx_ab(a, b) keep order:true, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because there aren't tiflash replicas of table `stream_window_t`."
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select a, c, row_number() over(partition by a order by c) as rn from stream_window_t",
+        "Plan": [
+          "Shuffle root  execution info: concurrency:5, data sources:[TableReader]",
+          "└─Window root  row_number()->Column over(partition by test.stream_window_t.a order by test.stream_window_t.c rows between current row and current row)",
+          "  └─Sort root  test.stream_window_t.a, test.stream_window_t.c",
+          "    └─ShuffleReceiver root  ",
+          "      └─TableReader root  data:TableFullScan",
+          "        └─TableFullScan cop[tikv] table:stream_window_t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "MPP mode may be blocked because there aren't tiflash replicas of table `stream_window_t`."
+        ]
       }
     ]
   },

@@ -37,7 +37,8 @@ func testWithData(t *testing.T, tk *testkit.TestKit, input Input, output Output)
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 		})
-		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+		stmt := strings.ToLower(strings.TrimSpace(tt))
+		if !strings.HasPrefix(stmt, "select") && !strings.HasPrefix(stmt, "explain") {
 			tk.MustExec(tt)
 			continue
 		}

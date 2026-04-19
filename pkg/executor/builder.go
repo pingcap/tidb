@@ -324,6 +324,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildIndexLookUpReader(v)
 	case *physicalop.PhysicalWindow:
 		return b.buildWindow(v)
+	case *physicalop.PhysicalStreamWindow:
+		return b.buildStreamWindow(v)
 	case *physicalop.PhysicalShuffle:
 		return b.buildShuffle(v)
 	case *physicalop.PhysicalShuffleReceiverStub:
@@ -3621,7 +3623,6 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 	e.OuterCtx.HashCols = outerHashCols
 	e.InnerCtx.HashCols = innerHashCols
 	e.InnerCtx.HashCollators = hashCollators
-
 	e.JoinResult = exec.TryNewCacheChunk(e)
 	executor_metrics.ExecutorCounterIndexLookUpJoin.Inc()
 	return e
@@ -4917,6 +4918,32 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
 	case *physicalop.PhysicalSelection:
+		// Keep the Selection on top even after recognizing the upper-bound
+		// row_number filter. The fused child only guarantees "produce at most K
+		// rows per partition"; predicates like rn = K still need the original
+		// filter semantics above it.
+		if streamWindow, limitCount, ok := physicalop.CanUsePartitionTopNStreamWindow(v); ok {
+			childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, streamWindow.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+			if err != nil {
+				return nil, err
+			}
+			partitionTopNExec, err := builder.buildPartitionTopNWindowForIndexJoin(streamWindow, childExec, limitCount)
+			if err != nil {
+				terror.Log(childExec.Close())
+				return nil, err
+			}
+			exec := &SelectionExec{
+				selectionExecutorContext: newSelectionExecutorContext(builder.ctx),
+				BaseExecutorV2:           exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), partitionTopNExec),
+				filters:                  v.Conditions,
+			}
+			err = exec.open(ctx)
+			if err != nil {
+				terror.Log(partitionTopNExec.Close())
+				return nil, err
+			}
+			return exec, nil
+		}
 		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 		if err != nil {
 			return nil, err
@@ -4944,6 +4971,17 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildStreamAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
+	case *physicalop.PhysicalStreamWindow:
+		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
+		if err != nil {
+			return nil, err
+		}
+		exec, err := builder.buildStreamWindowForIndexJoin(ctx, v, childExec)
+		if err != nil {
+			terror.Log(childExec.Close())
+			return nil, err
+		}
+		return exec, nil
 	case *physicalop.PhysicalHashJoin:
 		return builder.buildHashJoinForIndexJoin(ctx, v, lookUpContents, indexRanges, keyOff2IdxOff, cwc, canReorderHandles, memTracker, interruptSignal)
 	case *mockPhysicalIndexReader:
@@ -5423,6 +5461,53 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	return e, nil
 }
 
+func (builder *dataReaderBuilder) buildStreamWindowForIndexJoin(
+	_ context.Context,
+	v *physicalop.PhysicalStreamWindow,
+	childExec exec.Executor,
+) (executor exec.Executor, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
+	windowExec := builder.executorBuilder.buildWindowExecWithChildExec(&v.PhysicalWindow, childExec, true)
+	if builder.executorBuilder.err != nil {
+		return nil, builder.executorBuilder.err
+	}
+	pipelinedExec, ok := windowExec.(*PipelinedWindowExec)
+	if !ok {
+		return nil, errors.New("stream window for index join must be built with stream window executor")
+	}
+	streamWindowExec := &StreamWindowExec{PipelinedWindowExec: pipelinedExec}
+	err = streamWindowExec.OpenSelf()
+	if err != nil {
+		return nil, err
+	}
+	return streamWindowExec, nil
+}
+
+func (builder *dataReaderBuilder) buildPartitionTopNWindowForIndexJoin(
+	v *physicalop.PhysicalStreamWindow,
+	childExec exec.Executor,
+	limitCount uint64,
+) (exec.Executor, error) {
+	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
+	for _, item := range v.PartitionBy {
+		groupByItems = append(groupByItems, item.Col)
+	}
+	partitionTopNExec := &PartitionTopNWindowExec{
+		BaseExecutor: exec.NewBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(builder.ctx.GetExprCtx().GetEvalCtx(), builder.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
+		limitCount:   limitCount,
+		resultColIdx: v.Schema().Len() - 1,
+	}
+	if err := partitionTopNExec.OpenSelf(); err != nil {
+		return nil, err
+	}
+	return partitionTopNExec, nil
+}
+
 // buildRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildRangesForIndexJoin(rctx *rangerctx.RangerContext, lookUpContents []*join.IndexJoinLookUpContent,
 	ranges []*ranger.Range, keyOff2IdxOff []int, cwc *physicalop.ColWithCmpFuncManager,
@@ -5544,10 +5629,31 @@ func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.
 }
 
 func (b *executorBuilder) buildWindow(v *physicalop.PhysicalWindow) exec.Executor {
+	return b.buildWindowBase(v, false)
+}
+
+func (b *executorBuilder) buildStreamWindow(v *physicalop.PhysicalStreamWindow) exec.Executor {
+	windowExec := b.buildWindowBase(&v.PhysicalWindow, true)
+	if windowExec == nil || b.err != nil {
+		return nil
+	}
+	pipelinedExec, ok := windowExec.(*PipelinedWindowExec)
+	if !ok {
+		b.err = errors.New("stream window must be built with pipelined window executor")
+		return nil
+	}
+	return &StreamWindowExec{PipelinedWindowExec: pipelinedExec}
+}
+
+func (b *executorBuilder) buildWindowBase(v *physicalop.PhysicalWindow, forcePipelined bool) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
 		return nil
 	}
+	return b.buildWindowExecWithChildExec(v, childExec, forcePipelined)
+}
+
+func (b *executorBuilder) buildWindowExecWithChildExec(v *physicalop.PhysicalWindow, childExec exec.Executor, forcePipelined bool) exec.Executor {
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
 	for _, item := range v.PartitionBy {
@@ -5575,7 +5681,7 @@ func (b *executorBuilder) buildWindow(v *physicalop.PhysicalWindow) exec.Executo
 	}
 
 	var err error
-	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
+	if forcePipelined || b.ctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
 			BaseExecutor:   base,
 			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx().GetEvalCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),

@@ -54,6 +54,7 @@ go_library(
         "operate_ddl_jobs.go",
         "opt_rule_blacklist.go",
         "parallel_apply.go",
+        "partition_topn_window.go",
         "pipelined_window.go",
         "plan_replayer.go",
         "point_get.go",

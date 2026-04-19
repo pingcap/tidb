@@ -254,6 +254,73 @@ func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {
 	}
 }
 
+func TestIndexJoinWithStreamWindowInner(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, key(a))")
+	tk.MustExec("create table t2(a int, b int, c int, key idx_abc(a, b, c))")
+	tk.MustExec("insert into t1 values (1), (2), (3)")
+	tk.MustExec("insert into t2 values (1, 1, 11), (1, 2, 12), (2, 1, 21), (2, 3, 23), (3, 4, 34)")
+	tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern=1")
+	tk.Session().GetSessionVars().InitChunkSize = 1
+	tk.Session().GetSessionVars().MaxChunkSize = 1
+
+	windowSQL := "select a, b, c, row_number() over(partition by a order by b) as rn from t2"
+	tk.MustQuery(windowSQL).Sort().Check(testkit.Rows(
+		"1 1 11 1",
+		"1 2 12 2",
+		"2 1 21 1",
+		"2 3 23 2",
+		"3 4 34 1",
+	))
+	windowFilterSQL := "select * from (" + windowSQL + ") tmp where rn = 1"
+	tk.MustQuery(windowFilterSQL).Sort().Check(testkit.Rows(
+		"1 1 11 1",
+		"2 1 21 1",
+		"3 4 34 1",
+	))
+
+	sql := "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 1"
+	tk.MustHavePlan(sql, "IndexJoin")
+	tk.MustHavePlan(sql, "StreamWindow")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 1 11",
+		"2 1 21",
+		"3 4 34",
+	))
+
+	sql = "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn = 2"
+	tk.MustHavePlan(sql, "IndexJoin")
+	tk.MustHavePlan(sql, "StreamWindow")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 2 12",
+		"2 3 23",
+	))
+
+	sql = "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn < 2"
+	tk.MustHavePlan(sql, "IndexJoin")
+	tk.MustHavePlan(sql, "StreamWindow")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 1 11",
+		"2 1 21",
+		"3 4 34",
+	))
+
+	sql = "select /*+ INL_JOIN(tmp) */ t1.a, tmp.b, tmp.c from t1 join (select a, b, c, row_number() over(partition by a order by b) as rn from t2) tmp on t1.a = tmp.a where tmp.rn <= 2"
+	tk.MustHavePlan(sql, "IndexJoin")
+	tk.MustHavePlan(sql, "StreamWindow")
+	tk.MustQuery(sql).Sort().Check(testkit.Rows(
+		"1 1 11",
+		"1 2 12",
+		"2 1 21",
+		"2 3 23",
+		"3 4 34",
+	))
+}
+
 func TestIssue45716(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

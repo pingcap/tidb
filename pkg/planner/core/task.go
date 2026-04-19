@@ -2150,9 +2150,26 @@ func attach2TaskForMPP4PhysicalWindow(p *physicalop.PhysicalWindow, mpp *physica
 }
 
 func attach2Task4PhysicalWindow(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
-	p := pp.(*physicalop.PhysicalWindow)
+	var (
+		p              *physicalop.PhysicalWindow
+		isStreamWindow bool
+	)
+	switch v := pp.(type) {
+	case *physicalop.PhysicalWindow:
+		p = v
+	case *physicalop.PhysicalStreamWindow:
+		p = &v.PhysicalWindow
+		isStreamWindow = true
+	default:
+		return base.InvalidTask
+	}
 	if mpp, ok := tasks[0].Copy().(*physicalop.MppTask); ok && p.StoreTp == kv.TiFlash {
 		return attach2TaskForMPP4PhysicalWindow(p, mpp)
+	}
+	if isStreamWindow {
+		if cop, ok := tasks[0].(*physicalop.CopTask); ok && cop.IndexPlan != nil && cop.TablePlan != nil {
+			return base.InvalidTask
+		}
 	}
 	t := tasks[0].ConvertToRootTask(p.SCtx())
 	return attachPlan2Task(p.Self, t)

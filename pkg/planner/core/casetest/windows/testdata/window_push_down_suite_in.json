@@ -12,7 +12,15 @@
       "explain format = 'plan_tree' select *, row_number() over w, rank() over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
       "explain format = 'plan_tree' select *, rank() over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
       "explain format = 'plan_tree' select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
-      "explain format = 'plan_tree' select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;"
+      "explain format = 'plan_tree' select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;",
+      "drop table if exists stream_window_t",
+      "create table stream_window_t(a int, b int, c int, key idx_ab(a, b))",
+      "insert into stream_window_t values (1, 1, 11), (1, 2, 12), (2, 1, 21), (2, 3, 23)",
+      "explain format = 'plan_tree' select a, row_number() over(partition by a) as rn from stream_window_t",
+      "explain format = 'plan_tree' select a, b, row_number() over(partition by a order by b) as rn from stream_window_t",
+      "select a, b, row_number() over(partition by a order by b) as rn from stream_window_t",
+      "explain format = 'plan_tree' select a, b, rank() over(partition by a order by b) as rk from stream_window_t",
+      "explain format = 'plan_tree' select a, c, row_number() over(partition by a order by c) as rn from stream_window_t"
     ]
   },
   {

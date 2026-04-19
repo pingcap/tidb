@@ -48,6 +48,10 @@ func optimizeByShuffle(tsk base.Task, ctx base.PlanContext) base.Task {
 		if shuffle := optimizeByShuffle4Window(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)
 		}
+	case *physicalop.PhysicalStreamWindow:
+		if shuffle := optimizeByShuffle4Window(&p.PhysicalWindow, ctx); shuffle != nil {
+			return shuffle.Attach2Task(tsk)
+		}
 	case *physicalop.PhysicalMergeJoin:
 		if shuffle := optimizeByShuffle4MergeJoin(p, ctx); shuffle != nil {
 			return shuffle.Attach2Task(tsk)

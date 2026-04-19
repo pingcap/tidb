@@ -597,7 +597,16 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan, indexJoinProp *property
 		if !checkIndexJoinInnerTaskWithAgg(x, indexJoinProp) {
 			return false
 		}
-
+	case *logicalop.LogicalWindow:
+		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return false
+		}
+		// IndexJoin inner patterns only admit the ordered-input stream window
+		// subset. The general window path still behaves like an optimization
+		// fence for this matcher.
+		if !physicalop.CanUseStreamWindow(x) {
+			return false
+		}
 	case *logicalop.LogicalUnionScan:
 	default: // index join inner side couldn't allow join, sort, limit, because they are Optimization Fence.
 		return false
