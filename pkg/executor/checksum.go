@@ -230,28 +230,16 @@ func (c *checksumContext) buildTasks(ctx sessionctx.Context) ([]*checksumTask, e
 		if len(c.partitionNames) == 0 {
 			partDefs = part.Definitions
 		} else {
-			nameSet := make(map[string]struct{}, len(c.partitionNames))
-			for _, n := range c.partitionNames {
-				nameSet[n.L] = struct{}{}
-			}
+			defByName := make(map[string]model.PartitionDefinition, len(part.Definitions))
 			for _, def := range part.Definitions {
-				if _, ok := nameSet[def.Name.L]; ok {
-					partDefs = append(partDefs, def)
-				}
+				defByName[def.Name.L] = def
 			}
-			if len(partDefs) != len(c.partitionNames) {
-				for _, n := range c.partitionNames {
-					found := false
-					for _, def := range part.Definitions {
-						if def.Name.L == n.L {
-							found = true
-							break
-						}
-					}
-					if !found {
-						return nil, table.ErrUnknownPartition.GenWithStackByArgs(n.O, c.tableInfo.Name.O)
-					}
+			for _, n := range c.partitionNames {
+				def, ok := defByName[n.L]
+				if !ok {
+					return nil, table.ErrUnknownPartition.GenWithStackByArgs(n.O, c.tableInfo.Name.O)
 				}
+				partDefs = append(partDefs, def)
 			}
 		}
 	}

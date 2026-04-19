@@ -62,6 +62,7 @@ func TestChecksumTablePartition(t *testing.T) {
 
 	p0 := tk.MustQuery("ADMIN CHECKSUM TABLE tpart PARTITION (p0)").Rows()
 	require.Len(t, p0, 1)
+	require.NotEqual(t, "0", p0[0][2], "partition p0 checksum must be non-zero")
 	require.NotEqual(t, full[0][2], p0[0][2], "partition checksum should differ from full table checksum")
 
 	err := tk.ExecToErr("ADMIN CHECKSUM TABLE tpart PARTITION (p_nonexistent)")
