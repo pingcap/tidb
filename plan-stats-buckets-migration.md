@@ -28,7 +28,7 @@ Use a checkbox list for granular progress. Every stopping point must be reflecte
 
 - [x] (2026-04-19) Reserve `StatsDataTypeColBucket=1`, `StatsDataTypeIdxBucket=2`, `StatsDataTypeColFMSketch=3`, `StatsDataTypeIdxFMSketch=4` in `pkg/meta/metadef/system.go` and update the SQL comment on the `type` column of `CreateStatsDataTable`. Landed in commit `f4a4d6aa86` on branch `stats-tables-with-clustered-pk`.
 - [ ] M1: Switch the bucket-row codec to `proto.Marshal(statistics.HistogramToProto(hg))`, no wrapper file. Add a round-trip unit test that explicitly covers a v2 column histogram (first time those get proto-round-tripped). Expected: random histograms encode and decode losslessly; one row per histogram.
-- [ ] M2: Switch writers and readers. Rewrite `saveBucketsToStorage` to write to `stats_data` and purge the matching `stats_buckets` row. Rewrite `HistogramFromStorageWithPriority` to read `stats_data` first and fall back to `stats_buckets` on miss.
+- [ ] M2: Switch writers and readers. Rewrite `saveBucketsToStorage` to `INSERT … ON DUPLICATE KEY UPDATE value = VALUES(value)` against `stats_data`, then unconditionally `DELETE` the matching `stats_buckets` row in the same session. Rewrite `InsertColStats2KV` to use `INSERT IGNORE` against `stats_data` (preserves the legacy "create-if-absent" semantics). Rewrite `HistogramFromStorageWithPriority` to read `stats_data` first and fall back to `stats_buckets` on miss, logging the fallback at INFO with rate limit.
 - [ ] M3: Bootstrap loader. Rewrite `getTablesWithBucketsInRange`, `genInitStatsBucketsSQLForIndexes`, `initStatsBuckets4Chunk` in `pkg/statistics/handle/bootstrap.go` so that initial stats loading reads `stats_data` first and then reads the remaining (table_id, is_index) pairs from `stats_buckets`.
 - [ ] M4: GC and ID migration. Route `gc.go` deletes to both tables; keep `stats_buckets` in `changeGlobalStatsTables` so restore/ID-migration continues to work.
 - [ ] M5: Tests. Add unit tests covering write, read, GC, ID migration, bootstrap with mixed legacy/new data, and the `INSERT IGNORE` default-bucket path. Update existing bucket-counting tests that reference `mysql.stats_buckets`.
@@ -77,6 +77,30 @@ Record every key decision in this format:
 
 - Decision: Codec is `proto.Marshal(statistics.HistogramToProto(hg))` reusing the existing helpers; no new wrapper file, no version byte, no bespoke format.
   Rationale: `HistogramToProto`/`HistogramFromProto` already exist at `pkg/statistics/histogram.go:906,933` and preserve every field that `stats_buckets` carries (per-histogram NDV, per-bucket Count/Repeat/LowerBound/UpperBound/NDV). The proto round-trip is exercised in production for every region of every index analyze and for v1 column analyze, so it is the most-tested histogram codec in the system. Per-histogram fields not in the proto (`NullCount`, `LastUpdateVersion`, `TotColSize`, `Correlation`, `ID`) live in `stats_histograms`, not `stats_buckets`, so their absence is correct. NULL bucket bounds are not a real case (NULL counts are tracked in `stats_histograms.null_count`), so the proto's non-nullable `bytes` for bound values matches reality.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: ANALYZE writes use `INSERT … ON DUPLICATE KEY UPDATE value = VALUES(value)`, not `REPLACE INTO`.
+  Rationale: For a clustered-PK table with no secondary indexes (which `stats_data` is), ODKU compiles to a single KV Put on update, while REPLACE compiles to a Delete + Put. Saving the Delete adds up across thousands of histograms × thousands of partitions per ANALYZE. Affected-rows convention is identical for our purposes (1 = INSERTed, 2 = UPDATEd), so the legacy-purge optimization (next decision) still works.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: Unconditional legacy purge after every new-path write (no affected-rows optimization for now).
+  Rationale: We considered using ODKU's `affected_rows` to skip a no-op DELETE in the steady state. Two unresolved concerns: (1) TiDB's ODKU affected-rows semantics for our exact case (clustered PK, single non-key column update) have not been verified to match MySQL — needs a deliberate test; (2) when the new blob equals the existing blob, MySQL returns `affected_rows = 0` because the UPDATE is elided entirely — and `ON UPDATE CURRENT_TIMESTAMP` does NOT fire in that case (the timestamp's auto-update is gated on at least one user column actually changing, so it gives no independent signal). A naïve `if affected == 1 { DELETE }` would then skip the purge on the first new-path write to a histogram whose new blob happens to be identical to a pre-existing row's blob (rare in practice due to sampling variance, but possible on small/static tables). The corrected check `affected != 2` re-introduces the no-op DELETE on `0`, eroding most of the savings.
+
+  A bulletproof variant would be to force a real UPDATE by including `updated_at = NOW(6)` in the SET clause (microsecond precision means two ANALYZE writes in the same microsecond are essentially impossible) and switching to `affected != 2`. That closes the `0` hole but still depends on TiDB matching MySQL's affected-rows convention.
+
+  Cost of the always-DELETE path: one DELETE on a non-existent key per ANALYZE per histogram. In TiDB MVCC this resolves to a transaction-buffer entry with no key to delete at commit, so the KV-level cost is ~zero; the only real cost is the session/network roundtrip we're already paying for the ODKU. Defer the optimization until a benchmark shows the no-op DELETE is meaningful in aggregate; until then, always DELETE.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: `InsertColStats2KV` uses `INSERT IGNORE`, not REPLACE/ODKU.
+  Rationale: This path creates a default single-bucket histogram when a new column is added. The intent is "create only if absent; never overwrite a real ANALYZE result." REPLACE/ODKU would clobber an existing histogram; INSERT IGNORE is a no-op on PK collision, which is exactly the legacy `INSERT IGNORE INTO stats_buckets` semantics. Minimally different from the legacy code.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: Dual-read fallback logs at INFO with rate limiting.
+  Rationale: On a fresh upgrade, every histogram read for an unmigrated table will trigger a fallback until the next ANALYZE — a per-read log line would spam. INFO level matches the existing log volume in this area; rate limiting (e.g. one summary line per stats handle init, or one per (table_id, is_index, hist_id) per minute) keeps signal high. A future `stats_meta` successor with a clustered PK could carry a per-table flag indicating where bucket data lives, removing the need for fallback probing — out of scope here.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: `ChangeGlobalStatsID` needs no change.
+  Rationale: `pkg/statistics/handle/storage/update.go:154-156` already lists `stats_data` in `changeGlobalStatsTables` (added by #66303). The single UPDATE template `update mysql.<table> set table_id = %? where table_id = %?` works for `stats_data` because `table_id` is its first column.
   Date/Author: 2026-04-20 / mattias, claude.
 
 - Decision: No bootstrap version bump is added by this PR.
@@ -152,21 +176,42 @@ NULL handling is not a concern: bucket bounds carry only non-null values; NULL c
 
 **M2 — Switch writers and readers.** No feature flag (see Decision Log). Rewrite the write paths:
 
-- `saveBucketsToStorage` (save.go:83): instead of the loop that INSERTs one row per bucket, do `blob, err := proto.Marshal(statistics.HistogramToProto(hg))` then `REPLACE INTO mysql.stats_data (table_id, type, hist_id, value) VALUES (?, ?, ?, ?)` with `type = StatsDataTypeColBucket` if `is_index == 0` else `StatsDataTypeIdxBucket`. Also `DELETE FROM mysql.stats_buckets WHERE table_id=? AND is_index=? AND hist_id=?` so the legacy row does not shadow the new one.
-- `SaveAnalyzeResultToStorage` (save.go:296): the pre-write `DELETE FROM mysql.stats_buckets …` stays; the `INSERT` path is subsumed into the new `saveBucketsToStorage`.
-- `SaveColOrIdxStatsToStorage` (save.go:361): same pattern as above.
-- `InsertColStats2KV` (save.go:486): the `insert ignore into mysql.stats_buckets … values (…, 0, …)` path becomes a read-modify-write against `stats_data`. Pseudocode:
+- `saveBucketsToStorage` (save.go:83): instead of the loop that INSERTs one row per bucket, do `blob, err := proto.Marshal(statistics.HistogramToProto(hg))` then
 
-        existing, err := readStatsDataBucketBlob(sctx, tableID, colTypeValue, histID)
-        if err != nil { return err }
-        if existing != nil { return nil } // equivalent of INSERT IGNORE no-op
+        INSERT INTO mysql.stats_data (table_id, type, hist_id, value)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE value = VALUES(value)
+
+  with `type = StatsDataTypeColBucket` if `is_index == 0` else `StatsDataTypeIdxBucket`. Then unconditionally:
+
+        DELETE FROM mysql.stats_buckets
+          WHERE table_id=? AND is_index=? AND hist_id=?
+
+  Both statements run in the same session/transaction so a concurrent reader never sees both rows simultaneously.
+
+  We considered an "affected-rows == 1 → purge, == 2 → skip purge" optimization to avoid a no-op DELETE on the steady-state common case. **Two unresolved concerns** make us default to unconditional DELETE for now:
+
+  1. **TiDB ODKU affected-rows semantics are unverified for this case.** MySQL returns 1 for INSERT, 2 for UPDATE, 0 if the UPDATE would not change any column. TiDB usually matches but should not be assumed. Needs a unit test or a deliberate `EXPLAIN ANALYZE`-style verification before relying on it for correctness.
+
+  2. **The `affected_rows = 0` case breaks the optimization.** If a new ANALYZE produces a blob byte-for-byte identical to the existing row's value, both MySQL and TiDB ODKU return 0 — not 2. The naïve `if affected == 1 { DELETE }` check would then skip the purge even when it is the first new-path write on a histogram that still has legacy data. Sampling variance makes identical blobs rare in practice (per-bucket counts and NDV depend on the sample) but not impossible (very small / static tables, deterministic sample order). The corrected check would be `if affected != 2 { DELETE }`, but that re-introduces the no-op DELETE on `affected = 0`, eroding the savings.
+
+  If either concern is settled by a follow-up benchmark showing the steady-state DELETE is meaningful, we can re-enable the optimization with `affected != 2` and a clear comment. Until then: always purge.
+
+- `SaveAnalyzeResultToStorage` (save.go:296): the pre-write `DELETE FROM mysql.stats_buckets …` becomes redundant once `saveBucketsToStorage` handles purge; remove it. The `INSERT` path is subsumed into the new `saveBucketsToStorage`.
+- `SaveColOrIdxStatsToStorage` (save.go:361): same pattern as above.
+- `InsertColStats2KV` (save.go:486): the `insert ignore into mysql.stats_buckets … values (…, 0, …)` path becomes the equivalent against `stats_data`. We need INSERT IGNORE semantics here (create default bucket only if no histogram exists yet — never overwrite a real ANALYZE result), not REPLACE/ODKU which would clobber existing data:
+
         hg := &statistics.Histogram{ … default single-bucket … }
         blob, _ := proto.Marshal(statistics.HistogramToProto(hg))
-        _, err = util.Exec(sctx, "INSERT INTO mysql.stats_data (table_id, type, hist_id, value) VALUES (?, ?, ?, ?)", …)
+        _, err = util.Exec(sctx,
+            "INSERT IGNORE INTO mysql.stats_data (table_id, type, hist_id, value) VALUES (?, ?, ?, ?)",
+            tableID, StatsDataTypeColBucket, colInfo.ID, blob)
+
+  No legacy purge here: this path runs only when a column is added, before any ANALYZE has populated either table for that hist_id. The dual-read fallback handles the rare case of a pre-upgrade legacy row sharing the hist_id.
 
 Rewrite the read path:
 
-- `HistogramFromStorageWithPriority` (read.go:132): first query `SELECT value FROM mysql.stats_data WHERE table_id=? AND type=? AND hist_id=?`. If a row is returned, `proto.Unmarshal` it into a `tipb.Histogram`, then `statistics.HistogramFromProto` and proceed with the existing `hg.DecodeTo(tp, tz)` step. If no row, fall back to the existing `SELECT … FROM mysql.stats_buckets WHERE …` and log at INFO once per (table_id, is_index, hist_id) with a rate limit so the message does not flood.
+- `HistogramFromStorageWithPriority` (read.go:132): first query `SELECT value FROM mysql.stats_data WHERE table_id=? AND type=? AND hist_id=?`. If a row is returned, `proto.Unmarshal` it into a `tipb.Histogram`, then `statistics.HistogramFromProto` and proceed with the existing `hg.DecodeTo(tp, tz)` step. If no row, fall back to the existing `SELECT … FROM mysql.stats_buckets WHERE …` and log at INFO once per (table_id, is_index, hist_id) with a rate limit so the message does not flood. Future direction: a `stats_meta` successor with a clustered PK could carry a per-table flag indicating whether bucket data lives in `stats_data` vs. legacy, removing the need for fallback probing — out of scope for this PR.
 
 **M3 — Bootstrap loader.** In `pkg/statistics/handle/bootstrap.go`:
 
