@@ -81,3 +81,31 @@ func TestChecksumTablePartition(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "PARTITION () clause on non partitioned table")
 }
+
+func TestChecksumTablePartitionGlobalIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec(`
+		CREATE TABLE tgidx (
+			c1 INT,
+			c2 INT NOT NULL,
+			UNIQUE KEY uidx (c2) GLOBAL
+		) PARTITION BY RANGE(c1) (
+			PARTITION p0 VALUES LESS THAN (10),
+			PARTITION p1 VALUES LESS THAN MAXVALUE
+		)`)
+	tk.MustExec("INSERT INTO tgidx VALUES (1, 100), (11, 200)")
+
+	// Partition-scoped checksum on a table with a global index must succeed
+	// and return a non-zero result (global index keyed under tableInfo.ID).
+	p0 := tk.MustQuery("ADMIN CHECKSUM TABLE tgidx PARTITION (p0)").Rows()
+	require.Len(t, p0, 1)
+	require.NotEqual(t, "0", p0[0][2], "partition p0 checksum must be non-zero with global index")
+
+	// Requesting the same partition twice must not double-count.
+	p0dup := tk.MustQuery("ADMIN CHECKSUM TABLE tgidx PARTITION (p0, p0)").Rows()
+	require.Len(t, p0dup, 1)
+	require.Equal(t, p0[0][2], p0dup[0][2], "duplicate partition must not double checksum with global index")
+	require.Equal(t, p0[0][3], p0dup[0][3], "duplicate partition must not double KVs with global index")
+}
