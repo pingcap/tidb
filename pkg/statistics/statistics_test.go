@@ -658,6 +658,80 @@ func SubTestHistogramProtoConversion() func(*testing.T) {
 	}
 }
 
+// TestHistogramProtoRoundtripV2Column covers the round-trip for a v2 column
+// histogram built locally via BuildHistAndTopN from row samples — the path that
+// has never been proto-round-tripped in production (v2 column analyze sends
+// samples over the wire, not histograms). This is the codec invariant that the
+// stats_buckets -> stats_data migration depends on. See plan-stats-buckets-
+// migration.md, milestone M1.
+func TestHistogramProtoRoundtripV2Column(t *testing.T) {
+	ctx := mock.NewContext()
+	const cnt = 10_000
+	sketch := NewFMSketch(cnt)
+	data := make([]*SampleItem, 0, cnt)
+	for i := 1; i <= cnt; i++ {
+		d := types.NewIntDatum(int64(i))
+		require.NoError(t, sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d))
+		data = append(data, &SampleItem{Value: &d})
+	}
+	// Add some repeats so a TopN is produced (mirrors the benchmark fixture).
+	for _, v := range []int64{2, 4, 7, 11} {
+		for j := 0; j < 5; j++ {
+			d := types.NewIntDatum(v)
+			require.NoError(t, sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d))
+			data = append(data, &SampleItem{Value: &d})
+		}
+	}
+	collector := &SampleCollector{
+		Samples:   data,
+		NullCount: 0,
+		Count:     int64(len(data)),
+		FMSketch:  sketch,
+		TotalSize: int64(len(data)) * 8,
+	}
+	tp := types.NewFieldType(mysql.TypeLong)
+	hg, _, err := BuildHistAndTopN(ctx, 256, 100, 7, collector, tp, true, nil)
+	require.NoError(t, err)
+	require.NotNil(t, hg)
+	require.Greater(t, hg.Len(), 0)
+
+	// The proto layer represents bounds as raw bytes. HistogramToProto requires
+	// the source bounds to be BytesDatum (see histogram.go:905); v2-built column
+	// histograms have native-typed bounds, so convert them to blob the same way
+	// the storage write path does (convertBoundToBlob in storage/save.go just
+	// calls Datum.ConvertTo for TypeBlob). This is the gap-flag from the M1
+	// plan: confirm the round-trip works for this code path.
+	blobHg, err := hg.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+	require.NoError(t, err)
+	require.Equal(t, hg.Len(), blobHg.Len())
+
+	// HistogramFromProto resets ID/NullCount/LastUpdateVersion/TotColSize/
+	// Correlation to zero (see HistogramFromProto in histogram.go), so
+	// HistogramEqual is too strict here. Instead, assert the round-trip is
+	// stable at the proto level: marshal -> unmarshal -> marshal yields
+	// byte-identical output.
+	p1 := HistogramToProto(blobHg)
+	require.NotNil(t, p1)
+	bytes1, err := p1.Marshal()
+	require.NoError(t, err)
+
+	round := HistogramFromProto(p1)
+	require.Equal(t, blobHg.NDV, round.NDV)
+	require.Equal(t, blobHg.Len(), round.Len())
+	for i := 0; i < blobHg.Len(); i++ {
+		require.Equal(t, blobHg.Buckets[i].Count, round.Buckets[i].Count, "bucket %d count", i)
+		require.Equal(t, blobHg.Buckets[i].Repeat, round.Buckets[i].Repeat, "bucket %d repeat", i)
+		require.Equal(t, blobHg.Buckets[i].NDV, round.Buckets[i].NDV, "bucket %d ndv", i)
+		require.Equal(t, blobHg.GetLower(i).GetBytes(), round.GetLower(i).GetBytes(), "bucket %d lower", i)
+		require.Equal(t, blobHg.GetUpper(i).GetBytes(), round.GetUpper(i).GetBytes(), "bucket %d upper", i)
+	}
+
+	p2 := HistogramToProto(round)
+	bytes2, err := p2.Marshal()
+	require.NoError(t, err)
+	require.Equal(t, bytes1, bytes2, "proto round-trip is not byte-stable")
+}
+
 func TestPruneTopN(t *testing.T) {
 	var totalNDV, nullCnt, sampleRows, totalRows int64
 
