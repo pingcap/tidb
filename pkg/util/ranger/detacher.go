@@ -567,12 +567,15 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	for _, cond := range newConditions {
-		isAccessCond, _ := checker.check(cond)
+		isAccessCond, shouldReserve := checker.check(cond)
 		if !isAccessCond {
 			filterConds = append(filterConds, cond)
 			continue
 		}
 		accessConds = append(accessConds, cond)
+		if shouldReserve {
+			filterConds = append(filterConds, cond)
+		}
 		// TODO: if it's prefix column, we need to add cond to filterConds?
 	}
 	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(eqOrInCount, accessConds)

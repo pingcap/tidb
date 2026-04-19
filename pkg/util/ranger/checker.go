@@ -17,6 +17,7 @@ package ranger
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -67,6 +68,12 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			if c.matchColumn(scalar.GetArgs()[1]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[1].GetType(c.ctx).EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[1].GetType(c.ctx).GetCollate(), collation) {
+					// When comparing a column with a binary-collated constant (e.g. col = CAST(x AS BINARY)),
+					// allow building an approximate index range for EQ/NullEQ. The condition is kept as a
+					// filter (shouldReserve=true) to ensure the binary comparison semantics are enforced.
+					if collation == charset.CollationBin && (scalar.FuncName.L == ast.EQ || scalar.FuncName.L == ast.NullEQ) {
+						return true, true
+					}
 					return false, true
 				}
 				isFullLength := c.isFullLengthColumn()
@@ -80,6 +87,9 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			if c.matchColumn(scalar.GetArgs()[0]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[0].GetType(c.ctx).EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType(c.ctx).GetCollate(), collation) {
+					if collation == charset.CollationBin && (scalar.FuncName.L == ast.EQ || scalar.FuncName.L == ast.NullEQ) {
+						return true, true
+					}
 					return false, true
 				}
 				isFullLength := c.isFullLengthColumn()
@@ -121,7 +131,17 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			return false, true
 		}
 		if scalar.GetArgs()[0].GetType(c.ctx).EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType(c.ctx).GetCollate(), collation) {
-			return false, true
+			if collation != charset.CollationBin {
+				return false, true
+			}
+			// Binary collation mismatch: verify all IN-list values are constants before
+			// allowing approximate range building with a filter for correctness.
+			for _, v := range scalar.GetArgs()[1:] {
+				if _, ok := v.(*expression.Constant); !ok {
+					return false, true
+				}
+			}
+			return true, true
 		}
 		for _, v := range scalar.GetArgs()[1:] {
 			if _, ok := v.(*expression.Constant); !ok {
