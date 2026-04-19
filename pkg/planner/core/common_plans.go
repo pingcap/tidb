@@ -123,7 +123,9 @@ type ChecksumTable struct {
 	physicalop.SimpleSchemaProducer
 
 	Tables         []*resolve.TableNameW
-	PartitionNames []ast.CIStr // if non-empty, only checksum these partitions
+	// PartitionNames restricts the checksum to the named partitions only.
+	// When empty, the full table is checksummed.
+	PartitionNames []ast.CIStr
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.

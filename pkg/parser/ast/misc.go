@@ -2706,7 +2706,9 @@ type AdminStmt struct {
 	LimitSimple     LimitSimple
 	BDRRole         BDRRole
 	AlterJobOptions []*AlterJobOption
-	PartitionNames  []CIStr // for ADMIN CHECKSUM TABLE ... PARTITION (p1, p2)
+	// PartitionNames holds the partition names for ADMIN CHECKSUM TABLE ... PARTITION (p1, p2).
+	// When non-empty, the checksum is scoped to the specified partitions only.
+	PartitionNames  []CIStr
 }
 
 // Restore implements Node interface.
