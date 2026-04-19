@@ -1309,6 +1309,9 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			err       error
 		)
 
+		// pausePDScheduler is false when scope="off": Lightning skips PD task
+		// registration and the scheduler pause/restore lifecycle entirely, which
+		// avoids contention when many Lightning jobs run concurrently.
 		pausePDScheduler := rc.cfg.TikvImporter.PausePDSchedulerScope != config.PausePDSchedulerScopeOff
 
 		if rc.cfg.TikvImporter.PausePDSchedulerScope == config.PausePDSchedulerScopeGlobal {
