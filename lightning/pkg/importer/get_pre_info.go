@@ -234,11 +234,11 @@ func (g *TargetInfoGetterImpl) IsPartitionEmpty(ctx context.Context, schemaName 
 	var result bool
 	exec := common.SQLWithRetry{
 		DB:     g.db,
-		Logger: log.FromContext(ctx),
+		Logger: log.Wrap(logutil.Logger(ctx)),
 	}
 	var dump int
 	err := exec.QueryRow(ctx, "check partition empty",
-		fmt.Sprintf("SELECT 1 FROM `%s`.`%s` PARTITION (`%s`) USE INDEX() LIMIT 1", schemaName, tableName, partitionName),
+		common.SprintfWithIdentifiers("SELECT 1 FROM %s.%s PARTITION (%s) USE INDEX() LIMIT 1", schemaName, tableName, partitionName),
 		&dump,
 	)
 	switch {
@@ -660,7 +660,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return 0.0, false, errors.Trace(err)
 	}
 	logger := log.Wrap(logutil.Logger(ctx).With(zap.String("table", tableMeta.Name)))
-	sampleIgCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
+	igCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
@@ -673,7 +673,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		},
 		Table:           tbl,
 		Logger:          logger,
-		ColumnConstants: sampleIgCols.ColumnConstants,
+		ColumnConstants: igCols.ColumnConstants,
 	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
@@ -709,10 +709,6 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	//nolint: errcheck
 	defer parser.Close()
 	logger.Begin(zap.InfoLevel, "sample file")
-	igCols, err := p.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
-	if err != nil {
-		return 0.0, false, errors.Trace(err)
-	}
 
 	initializedColumns := false
 	var (

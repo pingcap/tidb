@@ -1017,6 +1017,11 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 		}
 		delete(fullExtendColsSet, col.Name.O)
 	}
+	// Columns with a configured constant satisfy the "has a value" requirement
+	// just as well as columns with a DDL DEFAULT.
+	for col := range igCol.ColumnConstants {
+		defaultCols[col] = struct{}{}
+	}
 	if len(fullExtendColsSet) > 0 {
 		extendCols := make([]string, 0, len(fullExtendColsSet))
 		for col := range fullExtendColsSet {

@@ -35,7 +35,8 @@ type EncodingConfig struct {
 	// default false, in this case we will do sharding automatically if needed.
 	UseIdentityAutoRowID bool
 	// ColumnConstants provides literal string values for columns absent from the
-	// source data file. Keys must be lowercase column names (col.Name.L).
+	// source data file, including columns removed by ignore-data-columns.
+	// Keys must be lowercase column names (col.Name.L).
 	ColumnConstants map[string]string
 }
 

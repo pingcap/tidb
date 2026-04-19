@@ -793,7 +793,7 @@ func TestColumnConstantsTypeMismatch(t *testing.T) {
 
 	idCol := tbl.Cols()[0]
 	_, err = lkv.GetActualDatum(encoder, idCol, 1, nil)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "Truncated incorrect")
 }
 
 // BenchmarkSQL2KV Run `go test -benchmem -run=^$ -bench ^BenchmarkSQL2KV$ github.com/pingcap/tidb/pkg/lightning/backend/kv` to get benchmark result.

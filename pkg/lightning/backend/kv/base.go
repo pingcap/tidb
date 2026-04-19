@@ -298,6 +298,12 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
 		value = types.GetMinValue(&col.FieldType)
 	case isBadNullValue:
+		if e.ColumnConstants != nil {
+			if constVal, ok := e.ColumnConstants[col.Name.L]; ok {
+				d := types.NewStringDatum(constVal)
+				return table.CastColumnValue(e.SessionCtx.GetExprCtx(), d, col.ToInfo(), false, false)
+			}
+		}
 		err = col.HandleBadNull(errCtx, &value, 0)
 	default:
 		if e.ColumnConstants != nil {

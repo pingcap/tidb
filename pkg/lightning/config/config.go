@@ -978,6 +978,17 @@ func (m *MydumperRuntime) adjust() error {
 				cols[i] = strings.ToLower(col)
 			}
 			ig.Columns = cols
+			if len(ig.ColumnConstants) > 0 {
+				normalized := make(map[string]string, len(ig.ColumnConstants))
+				for col, val := range ig.ColumnConstants {
+					lowerCol := strings.ToLower(col)
+					if _, dup := normalized[lowerCol]; dup {
+						return common.ErrInvalidConfig.GenWithStack("duplicate column-constants entry for column %s", lowerCol)
+					}
+					normalized[lowerCol] = val
+				}
+				ig.ColumnConstants = normalized
+			}
 		}
 	}
 	return m.adjustFilePath()
@@ -1565,9 +1576,6 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 		cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreDataCols
 	} else {
 		cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreColumns
-	}
-	if global.Mydumper.TargetPartition != "" {
-		cfg.Mydumper.TargetPartition = global.Mydumper.TargetPartition
 	}
 	return nil
 }
