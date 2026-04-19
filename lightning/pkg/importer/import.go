@@ -1332,8 +1332,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 				cleanup = needCleanup
 			}
 
-			// Only restore PD schedulers when we actually paused them.
-			if pausePDScheduler && needSwitchBack && restoreFn != nil {
+			if needSwitchBack && restoreFn != nil {
 				logTask.Info("add back PD leader&region schedulers")
 				if restoreE := restoreFn(restoreCtx); restoreE != nil {
 					logTask.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
