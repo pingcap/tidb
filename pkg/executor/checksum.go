@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -221,6 +222,9 @@ func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64
 }
 
 func (c *checksumContext) buildTasks(ctx sessionctx.Context) ([]*checksumTask, error) {
+	if len(c.partitionNames) > 0 && c.tableInfo.Partition == nil {
+		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
+	}
 	var partDefs []model.PartitionDefinition
 	if part := c.tableInfo.Partition; part != nil {
 		if len(c.partitionNames) == 0 {

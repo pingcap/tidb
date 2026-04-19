@@ -67,4 +67,10 @@ func TestChecksumTablePartition(t *testing.T) {
 	err := tk.ExecToErr("ADMIN CHECKSUM TABLE tpart PARTITION (p_nonexistent)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Unknown partition")
+
+	// PARTITION clause on a non-partitioned table must error, not return a zeroed checksum.
+	tk.MustExec("CREATE TABLE tnopart (c1 INT PRIMARY KEY, c2 INT)")
+	err = tk.ExecToErr("ADMIN CHECKSUM TABLE tnopart PARTITION (p0)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "PARTITION () clause on non partitioned table")
 }
