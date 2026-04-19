@@ -796,6 +796,57 @@ func TestColumnConstantsTypeMismatch(t *testing.T) {
 	require.ErrorContains(t, err, "Truncated incorrect")
 }
 
+// TestColumnConstantsExplicitNull verifies that a ColumnConstants entry heals an
+// explicit NULL datum for a NOT NULL column, i.e. the constant is applied instead
+// of HandleBadNull returning an error.
+//
+// This covers the isBadNullValue branch in getActualDatum: when the source row
+// contains a literal NULL for a NOT NULL column, the encoder first checks whether
+// a column-constant is configured and, if so, casts that constant as the column
+// value — effectively treating ColumnConstants as a NULL-replacement as well as a
+// missing-column filler.
+func TestColumnConstantsExplicitNull(t *testing.T) {
+	// `name` has no DEFAULT; strict mode means a missing value would error.
+	tblInfo := mockTableInfo(t, "create table t (name varchar(64) not null);")
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+
+	nameCol := tbl.Cols()[0]
+
+	// Without a constant, passing an explicit NULL for a NOT NULL column must error.
+	encoderNoConst, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: map[string]string{"tidb_row_format_version": "2"},
+		},
+		Logger: log.L(),
+	}, nil)
+	require.NoError(t, err)
+
+	var nullDatum types.Datum
+	nullDatum.SetNull()
+
+	_, err = lkv.GetActualDatum(encoderNoConst, nameCol, 1, &nullDatum)
+	require.Error(t, err)
+
+	// With a constant, the explicit NULL is replaced by the constant value.
+	encoderWithConst, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: map[string]string{"tidb_row_format_version": "2"},
+		},
+		Logger:          log.L(),
+		ColumnConstants: map[string]string{"name": "fallback"},
+	}, nil)
+	require.NoError(t, err)
+
+	datum, err := lkv.GetActualDatum(encoderWithConst, nameCol, 1, &nullDatum)
+	require.NoError(t, err)
+	require.Equal(t, "fallback", datum.GetString())
+}
+
 // BenchmarkSQL2KV Run `go test -benchmem -run=^$ -bench ^BenchmarkSQL2KV$ github.com/pingcap/tidb/pkg/lightning/backend/kv` to get benchmark result.
 func BenchmarkSQL2KV(b *testing.B) {
 	s := SetUpTest(b)
