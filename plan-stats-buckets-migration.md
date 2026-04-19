@@ -34,7 +34,7 @@ Use a checkbox list for granular progress. Every stopping point must be reflecte
 - [ ] M5: Tests. Add unit tests covering write, read, GC, ID migration, bootstrap with mixed legacy/new data, the `INSERT IGNORE` default-bucket path, and the migration invariant ("a histogram's buckets live in exactly one of stats_buckets and stats_data, never both"). Add a single end-to-end bootstrap-and-domain-restart test using `SHOW STATS_BUCKETS` for content assertions. Update existing bucket-counting tests that reference `mysql.stats_buckets`, replacing direct row-counts with `SHOW STATS_BUCKETS` for content assertions and with the new `legacyBucketRowCount`/`newBucketRowCount` helpers for storage-layout assertions.
 - [ ] M6: Integration and realtikv tests. Repoint `tests/integrationtest/t/executor/kv.test` bucket queries to `mysql.stats_data WHERE type IN (1, 2)` and drop the `bucket_id`-based query (no longer queryable through SQL). Add a sibling `delete from mysql.stats_data` cleanup in `tests/realtikvtest/statisticstest/statistics_test.go:56`. Repoint `br/tests/br_restore_physical/run.sh:74` to JOIN against `mysql.stats_data` with `type IN (1, 2)`. Confirm `ANALYZE` + `SHOW STATS_BUCKETS` round-trip passes end-to-end.
 - [ ] M7: Performance check. Two-tier: (1) screening run at 200 partitions × 10 columns during development for fast feedback; (2) final report at 8000 partitions × 15+ columns for the PR claim. Baseline is the pingcap/master commit this PR is based on. Capture wall-clock and CPU graphs from both TiDB and TiKV. Acceptance bar: ≥20% wall-clock reduction; target ~2×.
-- [ ] M8: Open the PR. Title: `statistics: migrate stats_buckets data into stats_data`. Issue references: `ref #66220, ref #66751`. Run `Ready` verification profile from `.agents/skills/tidb-verify-profile` before marking the PR ready.
+- [ ] M8: Open the PR. Title: `statistics: migrate stats_buckets data into stats_data`. Issue line: `Issue Number: close #66751, ref #66220`. Open the PR with #66303's commits included; once #66303 merges to pingcap/master, merge pingcap/master back into this branch to drop the duplicates. PR cannot merge until #66303 does. Run `Ready` verification profile from `.agents/skills/tidb-verify-profile` before marking the PR ready.
 
 
 ## Surprises & Discoveries
@@ -153,6 +153,14 @@ Record every key decision in this format:
 
 - Decision: Acceptance bar is ≥ 20% wall-clock reduction; target is ~2× (matching #66751).
   Rationale: The 2× claim from the upstream issue is the optimistic ceiling for an 8000×50 workload; smaller realistic workloads will land closer to 20–50%. Setting the floor at 20% gives us room to ship a meaningful improvement even if Tier 2 underperforms the customer reproduction; falling below 20% triggers a "stop and investigate" gate before continuing.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: PR opens against `pingcap/master` while still carrying #66303's commits as a transitive dependency.
+  Rationale: Waiting for #66303 to merge before opening would block review on this branch. Reviewers can see the combined diff and review what's specific to this PR; the merge is gated on #66303 merging first. After #66303 lands, a `git merge pingcap/master` into this branch drops the duplicate commits and reduces the diff to just this PR's content. Avoids stacked-PR machinery (this user is not in GitHub's stacked-PR private preview, see prior conversation).
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: PR closes #66751, references #66220.
+  Rationale: #66751 is the specific stats_buckets clustered-PK perf issue this PR resolves and so should be closed by it. #66220 is the broader partitioned-table-statistics performance umbrella that also covers the planned follow-on migrations of `stats_top_n`, `stats_fm_sketch`, and `stats_histograms`; every future migration PR should also `ref #66220` so the cumulative wall-clock impact stays trackable in one place.
   Date/Author: 2026-04-20 / mattias, claude.
 
 - Decision: No bootstrap version bump is added by this PR.
@@ -389,7 +397,13 @@ Why `SHOW STATS_BUCKETS` is the right tool for content assertions: it reads from
 
 **Acceptance**: ≥ 20% wall-clock reduction is the minimum to ship; ~2× speedup is the target taken from #66751. If the screening run does not clear 20%, stop and investigate before running the expensive Tier 2.
 
-**M8 — Open the PR.** Use the template: `gh pr create -T .github/pull_request_template.md`. Title: `statistics: migrate stats_buckets data into stats_data`. Issue line: `Issue Number: ref #66220, ref #66751`. Before flipping the PR to "ready for review", run the `Ready` profile from `.agents/skills/tidb-verify-profile` (which includes `make lint`).
+**M8 — Open the PR.** Use the template: `gh pr create -T .github/pull_request_template.md`.
+
+- **Title**: `statistics: migrate stats_buckets data into stats_data`.
+- **Issue line**: `Issue Number: close #66751, ref #66220`. #66751 is the specific bucket-clustered-PK issue this PR resolves; #66220 is the umbrella performance issue covering all stats_* → stats_data migrations (every future migration PR — `stats_top_n`, `stats_fm_sketch`, `stats_histograms` — should also `ref #66220` so the cumulative wall-clock impact on partitioned-table statistics stays trackable in one place).
+- **Base branch**: open against `pingcap/master`. The branch carries #66303's commits as a transitive dependency. Reviewers will see the combined diff; we cannot merge until #66303 merges first. Once #66303 lands, merge `pingcap/master` back into this branch to drop the duplicate commits and reduce the diff to just this PR's content.
+- **Pre-flight**: run the `Ready` profile from `.agents/skills/tidb-verify-profile` (which includes `make lint`). Confirm `make bazel_prepare` has been run if any new top-level test was added or any Go file was added/moved (Quick Decision Matrix in `AGENTS.md`).
+- **Description content**: paste the M7 perf table (Tier 1 + Tier 2), call out the migration invariant explicitly, mention the dual-read fallback, and note that the rolling-upgrade write-side gate is a deliberate follow-up (referencing the #66847 pattern).
 
 
 ## Concrete Steps
