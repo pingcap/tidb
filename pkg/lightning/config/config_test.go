@@ -138,6 +138,52 @@ func TestPausePDSchedulerScope(t *testing.T) {
 	require.Equal(t, PausePDSchedulerScopeGlobal, cfg.TikvImporter.PausePDSchedulerScope)
 }
 
+func TestPausePDSchedulerScopeOff(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK,
+		`{"port":4444,"advertise-address":"","path":"123.45.67.89:1234,56.78.90.12:3456"}`,
+	)
+	defer ts.Close()
+	tmpDir := t.TempDir()
+
+	newCfg := func() *Config {
+		cfg := NewConfig()
+		cfg.TiDB.Host = host
+		cfg.TiDB.StatusPort = port
+		cfg.TikvImporter.Backend = BackendLocal
+		cfg.TikvImporter.SortedKVDir = "test"
+		cfg.Mydumper.SourceDir = tmpDir
+		return cfg
+	}
+
+	// "off" (case-insensitive) should be accepted and normalised to lower-case.
+	cfg := newCfg()
+	cfg.TikvImporter.PausePDSchedulerScope = "OFF"
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, PausePDSchedulerScopeOff, cfg.TikvImporter.PausePDSchedulerScope)
+
+	cfg = newCfg()
+	cfg.TikvImporter.PausePDSchedulerScope = "off"
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, PausePDSchedulerScopeOff, cfg.TikvImporter.PausePDSchedulerScope)
+
+	// "table" and "global" continue to work.
+	cfg = newCfg()
+	cfg.TikvImporter.PausePDSchedulerScope = "table"
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, PausePDSchedulerScopeTable, cfg.TikvImporter.PausePDSchedulerScope)
+
+	cfg = newCfg()
+	cfg.TikvImporter.PausePDSchedulerScope = "global"
+	require.NoError(t, cfg.Adjust(context.Background()))
+	require.Equal(t, PausePDSchedulerScopeGlobal, cfg.TikvImporter.PausePDSchedulerScope)
+
+	// An unrecognised value must still be rejected.
+	cfg = newCfg()
+	cfg.TikvImporter.PausePDSchedulerScope = "none"
+	err := cfg.Adjust(context.Background())
+	require.ErrorContains(t, err, "pause-pd-scheduler-scope is invalid")
+}
+
 func TestAdjustPdAddrAndPortViaAdvertiseAddr(t *testing.T) {
 	ts, host, port := startMockServer(t, http.StatusOK,
 		`{"port":6666,"advertise-address":"121.212.121.212:5555","path":"34.34.34.34:3434"}`,
