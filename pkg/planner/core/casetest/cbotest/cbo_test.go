@@ -49,7 +49,7 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 		tk.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
@@ -242,7 +242,7 @@ func TestTableDual(t *testing.T) {
 		tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
@@ -274,12 +274,12 @@ func TestEstimation(t *testing.T) {
 		h := dom.StatsHandle()
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		tk.MustExec("analyze table t all columns")
 		for i := 1; i <= 8; i++ {
 			tk.MustExec("delete from t where a = ?", i)
 		}
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
@@ -459,12 +459,12 @@ func TestOutdatedAnalyze(t *testing.T) {
 		h := dom.StatsHandle()
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		tk.MustExec("analyze table t all columns")
 		tk.MustExec("insert into t select * from t")
 		tk.MustExec("insert into t select * from t")
 		tk.MustExec("insert into t select * from t")
-		tk.MustExec("flush stats_delta")
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []struct {
 			SQL                          string
@@ -553,7 +553,7 @@ func testInconsistentEstimation(t *testing.T, tk *testkit.TestKit, dom *domain.D
 	for range 10 {
 		tk.MustExec("insert into t values (5,5,5), (10,10,10)")
 	}
-	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("analyze table t all columns with 2 buckets ")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")

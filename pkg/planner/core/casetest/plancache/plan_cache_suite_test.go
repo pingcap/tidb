@@ -325,14 +325,14 @@ func runPreparedPlanCacheRedactExplain(t *testing.T, tk *testkit.TestKit) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-		"IndexJoin_11 37.46 root  inner join, inner:IndexLookUp_30, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-		"├─TableReader_26(Build) 9990.00 root  data:Selection_25",
-		"│ └─Selection_25 9990.00 cop[tikv]  not(isnull(test.t1.a))",
-		"│   └─TableFullScan_24 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"└─IndexLookUp_30(Probe) 37.46 root  ",
-		"  ├─Selection_29(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
-		"  │ └─IndexRangeScan_27 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan_28(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+		"IndexJoin_9 37.46 root  inner join, inner:IndexLookUp_28, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_28(Probe) 37.46 root  ",
+		"  ├─Selection_27(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_25 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_26(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 	tk.MustExec(`deallocate prepare stmt1`)
 }
 
@@ -370,7 +370,7 @@ func runPreparedPlanCacheInvalidRange(t *testing.T, tk *testkit.TestKit) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]any{{"TableDual_6"}}) // use TableDual directly instead of TableFullScan
+		[][]any{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
 
 	tk.MustExec("execute st using @l, @r")
 	tk.MustExec("execute st using @l, @r")
@@ -413,18 +413,18 @@ func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
-			{"Projection_10"},
-			{"└─HashJoin_26"},
-			{"  ├─IndexReader_28(Build)"},
-			{"  │ └─IndexRangeScan_27"}, // RangeScan instead of FullScan
-			{"  └─TableReader_34(Probe)"},
-			{"    └─Selection_33"},
-			{"      └─TableFullScan_32"},
+			{"Projection_9"},
+			{"└─HashJoin_23"},
+			{"  ├─IndexReader_25(Build)"},
+			{"  │ └─IndexRangeScan_24"}, // RangeScan instead of FullScan
+			{"  └─TableReader_31(Probe)"},
+			{"    └─Selection_30"},
+			{"      └─TableFullScan_29"},
 		})
 
 	tk.MustExec("execute st using @b")
 	tk.MustExec("execute st using @b")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustExec("deallocate prepare st")
 }
 
@@ -464,7 +464,7 @@ func runPreparedPlanCacheInlJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustExec("execute stmt using @a, @b, @c")
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustExec("deallocate prepare stmt")
 }
 
@@ -1049,7 +1049,7 @@ func runPreparedPlanCachePointGetSafety(t *testing.T, tk *testkit.TestKit) {
 	ps := []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Equal(t, rows[0][0], "Batch_Point_Get_6") // use BatchPointGet
+	require.Equal(t, rows[0][0], "Batch_Point_Get_5") // use BatchPointGet
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 
@@ -1061,7 +1061,7 @@ func runPreparedPlanCachePointGetSafety(t *testing.T, tk *testkit.TestKit) {
 	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Equal(t, rows[0][0], "Point_Get_6") // use Point_Get_5
+	require.Equal(t, rows[0][0], "Point_Get_5") // use Point_Get_5
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit
 
@@ -2009,4 +2009,61 @@ func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
 	tk.MustExec(`rollback`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("0 1"))
+}
+
+// TestPlanCacheSkipStatsOnBinding verifies that tidb_plan_cache_skip_stats_on_binding
+// suppresses stats-version-based plan cache invalidation when a SQL binding is active.
+//
+// With the variable ON, ANALYZE does not invalidate the cache entry for a bound query
+// because the binding pins the plan and stats changes cannot alter the chosen plan.
+// Without a binding, or with the variable OFF, ANALYZE continues to invalidate as usual.
+func TestPlanCacheSkipStatsOnBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key idx_b(b))`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+
+	// Enable stats-version-based invalidation so that ANALYZE normally busts the cache.
+	tk.MustExec(`set @@tidb_plan_cache_invalidation_on_fresh_stats = ON`)
+	tk.MustExec(`set @@tidb_plan_cache_skip_stats_on_binding = ON`)
+
+	// -- Part 1: No binding. ANALYZE must bust the cache. --
+	tk.MustExec(`prepare st from 'select * from t where b=?'`)
+	tk.MustExec(`set @v=1`)
+	tk.MustExec(`execute st using @v`)
+	tk.MustExec(`execute st using @v`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // cached
+
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`execute st using @v`)
+	// Stats version changed, no binding → cache miss.
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	// -- Part 2: With binding + skip=ON. ANALYZE must NOT bust the cache. --
+	tk.MustExec(`create binding using select /*+ use_index(t, idx_b) */ * from t where b=1`)
+	tk.MustExec(`execute st using @v`) // first exec under binding → new key, cache miss
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`execute st using @v`) // second exec → cache hit
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`execute st using @v`)
+	// Binding active + skip=ON → stats version excluded from key → cache hit.
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	// -- Part 3: skip=OFF restores the old behaviour: ANALYZE busts the cache even with a binding. --
+	tk.MustExec(`set @@tidb_plan_cache_skip_stats_on_binding = OFF`)
+	// Key now includes stats version; previous entry (without stats ver) is a different key → miss.
+	tk.MustExec(`execute st using @v`)
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+	tk.MustExec(`execute st using @v`) // warm the cache under the new key
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`execute st using @v`)
+	// skip=OFF → stats version back in key → ANALYZE causes cache miss.
+	tk.MustQuery(`select @@last_plan_from_binding, @@last_plan_from_cache`).Check(testkit.Rows("1 0"))
+
+	tk.MustExec(`drop binding for select * from t where b=1`)
 }

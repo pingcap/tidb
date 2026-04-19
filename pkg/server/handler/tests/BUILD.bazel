@@ -22,6 +22,8 @@ go_test(
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/schstatus",
         "//pkg/dxf/framework/storage",
+        "//pkg/dxf/importinto/jobhistory",
+        "//pkg/dxf/importinto/taskkey",
         "//pkg/executor/mppcoordmanager",
         "//pkg/infoschema",
         "//pkg/kv",

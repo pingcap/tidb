@@ -237,7 +237,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	))
 
 	require.EqualValues(t, kvCount, collector.Rows.Load())
-	require.EqualValues(t, kvSize, collector.Bytes.Load())
+	require.EqualValues(t, kvSize, collector.ProcessedCnt.Load())
 
 	kvs := make([]KVPair, 0, kvCount)
 

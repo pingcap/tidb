@@ -35,6 +35,7 @@ go_library(
         "mydecimal.go",
         "overflow.go",
         "set.go",
+        "string.go",
         "time.go",
         "truncate.go",
         "vector.go",

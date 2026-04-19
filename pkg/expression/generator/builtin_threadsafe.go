@@ -144,7 +144,7 @@ func generateCode(funcNames []string, header, template string) ([]byte, error) {
 	var buffer bytes.Buffer
 	buffer.WriteString(header)
 	for _, funcName := range funcNames {
-		buffer.WriteString(fmt.Sprintf(template, funcName))
+		fmt.Fprintf(&buffer, template, funcName)
 	}
 	return format.Source(buffer.Bytes())
 }

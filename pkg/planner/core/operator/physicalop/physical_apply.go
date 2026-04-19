@@ -32,6 +32,11 @@ type PhysicalApply struct {
 
 	CanUseCache bool
 	Concurrency int
+	// KeepOrder indicates that parallel apply must emit results in the same
+	// order as the outer child produces rows.  When true the executor uses a
+	// reorder buffer so that inner workers can run concurrently while the
+	// consumer still sees rows in outer-order.
+	KeepOrder   bool
 	OuterSchema []*expression.CorrelatedColumn
 	// NoDecorrelate is used to flag that an Apply operator remained undecorrelated due to the no_decorrelate hint exists. This allows the EXPLAIN EXPLORE feature to know exactly when to suggest adding a no_decorrelate hint when reverse-generating the sql recommended hints from the physical plan tree."
 	NoDecorrelate bool
@@ -67,6 +72,7 @@ func (p *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error
 	cloned.PhysicalHashJoin = *hj
 	cloned.CanUseCache = p.CanUseCache
 	cloned.Concurrency = p.Concurrency
+	cloned.KeepOrder = p.KeepOrder
 	cloned.NoDecorrelate = p.NoDecorrelate
 	for _, col := range p.OuterSchema {
 		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
