@@ -1212,7 +1212,7 @@ func (t *TikvImporter) adjust() error {
 	switch t.PausePDSchedulerScope {
 	case PausePDSchedulerScopeTable, PausePDSchedulerScopeGlobal, PausePDSchedulerScopeOff:
 	default:
-		return common.ErrInvalidConfig.GenWithStack("pause-pd-scheduler-scope is invalid, allowed value include: table, global")
+		return common.ErrInvalidConfig.GenWithStack("pause-pd-scheduler-scope is invalid, allowed values include: table, global, off")
 	}
 	return nil
 }
