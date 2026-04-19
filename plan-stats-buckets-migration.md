@@ -27,7 +27,7 @@ You can observe the change concretely by:
 Use a checkbox list for granular progress. Every stopping point must be reflected.
 
 - [x] (2026-04-19) Reserve `StatsDataTypeColBucket=1`, `StatsDataTypeIdxBucket=2`, `StatsDataTypeColFMSketch=3`, `StatsDataTypeIdxFMSketch=4` in `pkg/meta/metadef/system.go` and update the SQL comment on the `type` column of `CreateStatsDataTable`. Landed in commit `f4a4d6aa86` on branch `stats-tables-with-clustered-pk`.
-- [ ] M1: Decide and prototype the bucket payload codec. Add `pkg/statistics/handle/storage/bucket_codec.go` plus table-driven round-trip tests. Expected: random histograms encode and decode losslessly; one row per histogram.
+- [ ] M1: Switch the bucket-row codec to `proto.Marshal(statistics.HistogramToProto(hg))`, no wrapper file. Add a round-trip unit test that explicitly covers a v2 column histogram (first time those get proto-round-tripped). Expected: random histograms encode and decode losslessly; one row per histogram.
 - [ ] M2: Switch writers and readers. Rewrite `saveBucketsToStorage` to write to `stats_data` and purge the matching `stats_buckets` row. Rewrite `HistogramFromStorageWithPriority` to read `stats_data` first and fall back to `stats_buckets` on miss.
 - [ ] M3: Bootstrap loader. Rewrite `getTablesWithBucketsInRange`, `genInitStatsBucketsSQLForIndexes`, `initStatsBuckets4Chunk` in `pkg/statistics/handle/bootstrap.go` so that initial stats loading reads `stats_data` first and then reads the remaining (table_id, is_index) pairs from `stats_buckets`.
 - [ ] M4: GC and ID migration. Route `gc.go` deletes to both tables; keep `stats_buckets` in `changeGlobalStatsTables` so restore/ID-migration continues to work.
@@ -74,6 +74,10 @@ Record every key decision in this format:
 - Decision: Value `0` in the `type` column is left undefined and reserved for future use (for example a potential replacement for `stats_meta`).
   Rationale: The user explicitly does not want to pre-commit to an unused slot. Leaving a gap is fine; a comment in the `CREATE TABLE` documents it as reserved.
   Date/Author: 2026-04-19 / mattias, claude.
+
+- Decision: Codec is `proto.Marshal(statistics.HistogramToProto(hg))` reusing the existing helpers; no new wrapper file, no version byte, no bespoke format.
+  Rationale: `HistogramToProto`/`HistogramFromProto` already exist at `pkg/statistics/histogram.go:906,933` and preserve every field that `stats_buckets` carries (per-histogram NDV, per-bucket Count/Repeat/LowerBound/UpperBound/NDV). The proto round-trip is exercised in production for every region of every index analyze and for v1 column analyze, so it is the most-tested histogram codec in the system. Per-histogram fields not in the proto (`NullCount`, `LastUpdateVersion`, `TotColSize`, `Correlation`, `ID`) live in `stats_histograms`, not `stats_buckets`, so their absence is correct. NULL bucket bounds are not a real case (NULL counts are tracked in `stats_histograms.null_count`), so the proto's non-nullable `bytes` for bound values matches reality.
+  Date/Author: 2026-04-20 / mattias, claude.
 
 - Decision: No bootstrap version bump is added by this PR.
   Rationale: `stats_data` already exists (created by #66303 at version 255 and in NextGen boot table version 2). The migration only changes which table a new write targets; no schema change, no upgrade step, no bootstrap entry change.
@@ -138,18 +142,17 @@ The plan lives entirely on branch `stats-tables-with-clustered-pk` (which includ
 
 The high-level sequence is: first introduce a pure data codec (no behavior change), then switch writers to `stats_data` and add dual-read fallback for upgrade smoothness, then convert the bootstrap loader, then handle GC/BR/migration, then tests and performance verification. Each milestone is individually reviewable inside one PR or can be split along the dashed lines below if review feedback asks.
 
-**M1 — Bucket codec.** Create `pkg/statistics/handle/storage/bucket_codec.go` with two exported functions:
+**M1 — Bucket codec.** Reuse the existing `statistics.HistogramToProto` and `statistics.HistogramFromProto` (`pkg/statistics/histogram.go:906,933`) plus `proto.Marshal` / `proto.Unmarshal` from `github.com/pingcap/tipb/go-tipb`. No new wrapper file or new exported functions. The blob written to `stats_data.value` is exactly the bytes of `proto.Marshal(statistics.HistogramToProto(hg))`. The reader does `proto.Unmarshal` into a `tipb.Histogram`, then `statistics.HistogramFromProto` to land in a `statistics.Histogram` whose bounds are bytes-datums; the existing post-decode step (`hg.DecodeTo(tp, tz)` already done by callers today) handles type conversion.
 
-    func EncodeBuckets(hg *statistics.Histogram) ([]byte, error)
-    func DecodeBuckets(blob []byte, hg *statistics.Histogram) error
+This works because the proto round-trip is already exercised in production for index analyze (every region, every analyze) and v1 column analyze. The only path that has never been proto-round-tripped is **v2 column histograms** (built locally from row samples in `analyze_col_sampling.go`), so the M1 test must explicitly cover that case.
 
-Prefer reusing `tipb.Histogram` from `github.com/pingcap/tipb/go-tipb` if a quick grep (`grep -rn "tipb\.Histogram" pkg/statistics`) confirms that the coprocessor protocol's histogram shape already carries `count`, `repeats`, `lower_bound`, `upper_bound`, `ndv` per bucket. If it is a clean fit, wrap `proto.Marshal`/`proto.Unmarshal`. Otherwise, add a minimal versioned format: one leading byte (format version), then repeated bucket records. Document the choice in `Decision Log`.
+Add a round-trip unit test colocated near the existing proto helpers (e.g. extend `pkg/statistics/statistics_test.go` rather than create a new file) covering: an empty histogram, one bucket, `MaxBucketNumber` buckets, wide upper/lower bounds (up to 64 KB each), a v2 column histogram built via the column sampling path, and a malformed blob (expected `proto.Unmarshal` error).
 
-Add `bucket_codec_test.go` with a table-driven round-trip test for: empty histogram, one bucket, `MaxBucketNumber` buckets, wide upper/lower bounds (up to 64 KB each), and a malformed blob (expected decode error).
+NULL handling is not a concern: bucket bounds carry only non-null values; NULL counts live in `stats_histograms.null_count` (not in any bucket). The proto's non-nullable `bytes` for bound matches reality.
 
 **M2 — Switch writers and readers.** No feature flag (see Decision Log). Rewrite the write paths:
 
-- `saveBucketsToStorage` (save.go:83): instead of the loop that INSERTs one row per bucket, encode the `statistics.Histogram` with `EncodeBuckets`, then `REPLACE INTO mysql.stats_data (table_id, type, hist_id, value) VALUES (?, ?, ?, ?)` with `type = StatsDataTypeColBucket` if `is_index == 0` else `StatsDataTypeIdxBucket`. Also `DELETE FROM mysql.stats_buckets WHERE table_id=? AND is_index=? AND hist_id=?` so the legacy row does not shadow the new one.
+- `saveBucketsToStorage` (save.go:83): instead of the loop that INSERTs one row per bucket, do `blob, err := proto.Marshal(statistics.HistogramToProto(hg))` then `REPLACE INTO mysql.stats_data (table_id, type, hist_id, value) VALUES (?, ?, ?, ?)` with `type = StatsDataTypeColBucket` if `is_index == 0` else `StatsDataTypeIdxBucket`. Also `DELETE FROM mysql.stats_buckets WHERE table_id=? AND is_index=? AND hist_id=?` so the legacy row does not shadow the new one.
 - `SaveAnalyzeResultToStorage` (save.go:296): the pre-write `DELETE FROM mysql.stats_buckets …` stays; the `INSERT` path is subsumed into the new `saveBucketsToStorage`.
 - `SaveColOrIdxStatsToStorage` (save.go:361): same pattern as above.
 - `InsertColStats2KV` (save.go:486): the `insert ignore into mysql.stats_buckets … values (…, 0, …)` path becomes a read-modify-write against `stats_data`. Pseudocode:
@@ -158,18 +161,18 @@ Add `bucket_codec_test.go` with a table-driven round-trip test for: empty histog
         if err != nil { return err }
         if existing != nil { return nil } // equivalent of INSERT IGNORE no-op
         hg := &statistics.Histogram{ … default single-bucket … }
-        blob, _ := EncodeBuckets(hg)
+        blob, _ := proto.Marshal(statistics.HistogramToProto(hg))
         _, err = util.Exec(sctx, "INSERT INTO mysql.stats_data (table_id, type, hist_id, value) VALUES (?, ?, ?, ?)", …)
 
 Rewrite the read path:
 
-- `HistogramFromStorageWithPriority` (read.go:132): first query `SELECT value FROM mysql.stats_data WHERE table_id=? AND type=? AND hist_id=?`. If a row is returned, `DecodeBuckets` into the histogram and return. If no row, fall back to the existing `SELECT … FROM mysql.stats_buckets WHERE …` and log at INFO once per (table_id, is_index, hist_id) with a rate limit so the message does not flood.
+- `HistogramFromStorageWithPriority` (read.go:132): first query `SELECT value FROM mysql.stats_data WHERE table_id=? AND type=? AND hist_id=?`. If a row is returned, `proto.Unmarshal` it into a `tipb.Histogram`, then `statistics.HistogramFromProto` and proceed with the existing `hg.DecodeTo(tp, tz)` step. If no row, fall back to the existing `SELECT … FROM mysql.stats_buckets WHERE …` and log at INFO once per (table_id, is_index, hist_id) with a rate limit so the message does not flood.
 
 **M3 — Bootstrap loader.** In `pkg/statistics/handle/bootstrap.go`:
 
 - `getTablesWithBucketsInRange` (line 586): instead of `SELECT DISTINCT table_id FROM mysql.stats_buckets WHERE is_index = 1`, union with `SELECT DISTINCT table_id FROM mysql.stats_data WHERE type = 2`. Either a single `UNION` query or two queries merged in Go — two queries are easier to unit-test.
 - `genInitStatsBucketsSQLForIndexes` (line 726): run the new-format scan first (`SELECT table_id, hist_id, value FROM mysql.stats_data WHERE type = 2 AND table_id IN (…) ORDER BY table_id`) and then the old-format scan (`SELECT … FROM mysql.stats_buckets WHERE is_index = 1 AND table_id IN (…) AND (table_id, hist_id) NOT IN (new-covered set) ORDER BY table_id`). The "NOT IN" is the tricky bit: collect `(table_id, hist_id)` seen in the new scan into a set, then filter the legacy scan in Go.
-- `initStatsBuckets4Chunk` (line 681): today it parses 5 columns per row into one bucket. Split into two helpers: `initStatsBucketsFromLegacyChunk` (current code unchanged) and `initStatsBucketsFromBlobChunk` (parse blob via `DecodeBuckets` into all buckets of the histogram in one call). The caller picks the helper based on which scan the chunk came from.
+- `initStatsBuckets4Chunk` (line 681): today it parses 5 columns per row into one bucket. Split into two helpers: `initStatsBucketsFromLegacyChunk` (current code unchanged) and `initStatsBucketsFromBlobChunk` (parse blob via `proto.Unmarshal` + `statistics.HistogramFromProto` into all buckets of the histogram in one call). The caller picks the helper based on which scan the chunk came from.
 
 **M4 — GC, BR, ID migration.**
 
@@ -179,7 +182,7 @@ Rewrite the read path:
 
 **M5 — Unit tests.** Add to `pkg/statistics/handle/storage/`:
 
-- `bucket_codec_test.go` — round-trip coverage (see M1).
+- Extension to `pkg/statistics/statistics_test.go` — round-trip coverage including a v2-built column histogram (see M1).
 - `save_test.go` additions — `TestSaveBucketsWritesStatsData` (ANALYZE writes `type=1` for a column, `type=2` for an index, and the matching `stats_buckets` row is purged).
 - `read_test.go` additions — `TestReadBucketsPrefersStatsData` (seed both, new wins), `TestReadBucketsFallsBackToLegacy` (seed only legacy, still works).
 - `gc_test.go` updates — existing row-count assertions at lines 41/46/52/58/77/83/88/94 must now also check `stats_data`. Add `TestGCStatsPurgesBothBucketTables`.
@@ -213,11 +216,11 @@ Step 1 — confirm starting point:
     git log --oneline -1
     # expected: statistics: reserve stats_data type values …
 
-Step 2 — scaffold codec (M1):
+Step 2 — add round-trip test (M1):
 
-    # create pkg/statistics/handle/storage/bucket_codec.go with EncodeBuckets/DecodeBuckets
-    # create pkg/statistics/handle/storage/bucket_codec_test.go with round-trip tests
-    go test -count=1 -run TestEncodeBuckets ./pkg/statistics/handle/storage/...
+    # extend pkg/statistics/statistics_test.go with a Test*HistogramProtoRoundtrip
+    # covering: empty / 1 bucket / MaxBucketNumber / wide bounds / v2 column hist / malformed blob
+    go test -count=1 -run "HistogramProto" ./pkg/statistics/...
     # expected: PASS
 
 Step 3 — Bazel prepare if files were added (per AGENTS.md Quick Decision Matrix):
@@ -293,19 +296,24 @@ If PR #66303 is re-requested-changes and the `StatsDataType*` constants or the S
 
 (To be populated during execution. Expected entries:)
 
-- M1 — which codec was chosen (tipb vs. bespoke) and why.
+- M1 — confirmation that the proto round-trip is lossless for v2-built column histograms; any surprises around `Tp` being `TypeBlob` after `HistogramFromProto`.
 - M7 — `ANALYZE` wall-clock before/after on the reproduction workload, with `EXPLAIN ANALYZE` or server-side timing.
 - M8 — PR URL and CI run URL.
 
 
 ## Interfaces and Dependencies
 
-In `pkg/statistics/handle/storage/bucket_codec.go`, define:
+No new exported API. Storage call sites use:
 
-    func EncodeBuckets(hg *statistics.Histogram) ([]byte, error)
-    func DecodeBuckets(blob []byte, hg *statistics.Histogram) error
+    // write
+    blob, err := proto.Marshal(statistics.HistogramToProto(hg))
+    // read
+    var p tipb.Histogram
+    if err := proto.Unmarshal(blob, &p); err != nil { … }
+    hg := statistics.HistogramFromProto(&p)
+    // caller does hg.DecodeTo(tp, tz) afterward, same pattern as today
 
-`hg` is `*github.com/pingcap/tidb/pkg/statistics.Histogram`. Encoder reads `hg.Buckets[i].{Count, Repeat, LowerBound, UpperBound}` and `hg.NDV`; decoder populates the same fields. Implementation may delegate to `github.com/pingcap/tipb/go-tipb.Histogram` if that proto carries the required fields (decide and record in `Decision Log`).
+`statistics.HistogramToProto` and `statistics.HistogramFromProto` already exist at `pkg/statistics/histogram.go:906,933`. They preserve `NDV` and per-bucket `Count`/`Repeats`/`LowerBound`/`UpperBound`/`NDV`. Per-histogram fields not in the proto (`NullCount`, `LastUpdateVersion`, `TotColSize`, `Correlation`, `ID`) are correctly outside scope: they live in `mysql.stats_histograms`, not `stats_buckets`/`stats_data`.
 
 No new system variable is added.
 
