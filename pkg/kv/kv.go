@@ -610,6 +610,9 @@ type Request struct {
 
 	RunawayChecker resourcegroup.RunawayChecker
 
+	// CoprResolveLockLite controls whether coprocessor uses resolve lock lite.
+	CoprResolveLockLite bool
+
 	// ConnID stores the session connection id.
 	ConnID uint64
 	// ConnAlias stores the session connection alias.

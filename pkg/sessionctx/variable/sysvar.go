@@ -274,6 +274,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableChunkRPC = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBCoprResolveLockLite, Value: BoolToOnOff(vardef.DefTiDBCoprResolveLockLite), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.CoprResolveLockLite = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TxnIsolationOneShot, Value: "", skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return checkIsolationLevel(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {

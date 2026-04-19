@@ -1191,6 +1191,9 @@ type SessionVars struct {
 	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
 	EnableChunkRPC bool
 
+	// CoprResolveLockLite controls whether coprocessor uses resolve lock lite.
+	CoprResolveLockLite bool
+
 	writeStmtBufs WriteStmtBufs
 
 	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.

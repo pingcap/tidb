@@ -1213,7 +1213,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		respChan:                it.respChan,
 		finishCh:                it.finishCh,
 		vars:                    it.vars,
-		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
+		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, it.req.CoprResolveLockLite),
 		memTracker:              it.memTracker,
 		replicaReadSeed:         it.replicaReadSeed,
 		pagingTaskIdx:           &it.pagingTaskIdx,

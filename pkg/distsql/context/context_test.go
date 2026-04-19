@@ -50,6 +50,7 @@ func TestContextDetach(t *testing.T) {
 		InRestrictedSQL:        true,
 		EnabledRateLimitAction: true,
 		EnableChunkRPC:         true,
+		CoprResolveLockLite:    true,
 		OriginalSQL:            "a",
 		KVVars:                 kvVars,
 		KvExecCounter:          &stmtstats.KvExecCounter{},

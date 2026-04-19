@@ -41,6 +41,7 @@ type DistSQLContext struct {
 
 	EnabledRateLimitAction bool
 	EnableChunkRPC         bool
+	CoprResolveLockLite    bool
 	OriginalSQL            string
 	KVVars                 *tikvstore.Variables
 	KvExecCounter          *stmtstats.KvExecCounter
