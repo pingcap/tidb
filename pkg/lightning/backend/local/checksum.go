@@ -377,7 +377,10 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 var retryGetTSInterval = time.Second
 
 // Checksum implements the ChecksumManager interface.
-func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, _ string) (*RemoteChecksum, error) {
+func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, partitionName string) (*RemoteChecksum, error) {
+	if partitionName != "" {
+		return nil, errors.Errorf("partition-scoped checksum is not supported by TiKV checksum manager; use tidb checksum manager instead (set checksum-via-sql = true): partition %s", partitionName)
+	}
 	tbl := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	var (
 		physicalTS, logicalTS int64

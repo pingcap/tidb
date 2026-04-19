@@ -348,6 +348,10 @@ FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 	if myStatus < metaStatusRestoreStarted {
 		// the table might have data if our StartRowID is not 0, or if the table
 		// don't have any auto id.
+		// baseTotalKvs here comes exclusively from this task's own table_meta row
+		// (keyed by table_id+task_id), so concurrent Lightning jobs importing
+		// different partitions of the same table cannot mix their base-checksum
+		// values. Each job only reads/writes its own row.
 		if (myStartRowID > 0 || !hasAutoID) && m.needChecksum && baseTotalKvs == 0 {
 			// if another instance finished import before below checksum logic,
 			// it will cause checksum mismatch, but it's very rare.
