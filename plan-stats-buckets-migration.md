@@ -31,7 +31,7 @@ Use a checkbox list for granular progress. Every stopping point must be reflecte
 - [ ] M2: Switch writers and readers. Rewrite `saveBucketsToStorage` to `INSERT … ON DUPLICATE KEY UPDATE value = VALUES(value)` against `stats_data`, then unconditionally `DELETE` the matching `stats_buckets` row in the same session. Rewrite `InsertColStats2KV` to use `INSERT IGNORE` against `stats_data` (preserves the legacy "create-if-absent" semantics). Rewrite `HistogramFromStorageWithPriority` to read `stats_data` first and fall back to `stats_buckets` on miss, logging the fallback at INFO with rate limit.
 - [ ] M3: Bootstrap loader. Rewrite `getTablesWithBucketsInRange`, `genInitStatsBucketsSQLForIndexes`, `initStatsBuckets4Chunk` in `pkg/statistics/handle/bootstrap.go` so that initial stats loading queries `stats_data` first and falls back to `stats_buckets` for indexes that have no `stats_data` row. Two separate queries (skip the legacy one if the new query already covers the table-id range). New `initStatsBuckets4Chunk` variant for the blob payload. No data migration during bootstrap.
 - [ ] M4: GC and ID migration. Add a per-histogram `stats_data` DELETE in `deleteHistStatsFromKV` scoped by `(table_id, type, hist_id)` (same session as the existing legacy DELETE). The whole-table `GCStats` path already deletes `stats_data` by `table_id` (added by #66303). `changeGlobalStatsTables` already includes `stats_data`, no change. BR systable list already includes both tables.
-- [ ] M5: Tests. Add unit tests covering write, read, GC, ID migration, bootstrap with mixed legacy/new data, and the `INSERT IGNORE` default-bucket path. Update existing bucket-counting tests that reference `mysql.stats_buckets`.
+- [ ] M5: Tests. Add unit tests covering write, read, GC, ID migration, bootstrap with mixed legacy/new data, the `INSERT IGNORE` default-bucket path, and the migration invariant ("a histogram's buckets live in exactly one of stats_buckets and stats_data, never both"). Add a single end-to-end bootstrap-and-domain-restart test using `SHOW STATS_BUCKETS` for content assertions. Update existing bucket-counting tests that reference `mysql.stats_buckets`, replacing direct row-counts with `SHOW STATS_BUCKETS` for content assertions and with the new `legacyBucketRowCount`/`newBucketRowCount` helpers for storage-layout assertions.
 - [ ] M6: Integration and realtikv tests. Update `tests/integrationtest/t/executor/kv.test` (and `.result`), `tests/realtikvtest/statisticstest/statistics_test.go`, `br/tests/br_restore_physical/run.sh`. Confirm `ANALYZE` + `SHOW STATS_BUCKETS` round-trip passes end-to-end.
 - [ ] M7: Performance check. Reproduce the #66751 workload (partitioned table with many columns, run `ANALYZE TABLE`) on a local cluster and confirm the wall-clock improvement. Record numbers in `Artifacts and Notes`.
 - [ ] M8: Open the PR. Title: `statistics: migrate stats_buckets data into stats_data`. Issue references: `ref #66220, ref #66751`. Run `Ready` verification profile from `.agents/skills/tidb-verify-profile` before marking the PR ready.
@@ -117,6 +117,18 @@ Record every key decision in this format:
 
 - Decision: BR needs no code change; both tables are already in the systable restore map. Only `br/tests/br_restore_physical/run.sh` needs an assertion update (covered under M6).
   Rationale: #66303 already added `stats_data` to `br/pkg/restore/snap_client/systable_restore.go:44`. BR backs up and restores rows of each system table verbatim, so the existing wiring covers the new bucket payload without modification.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: Tests use two separate row-count helpers per table, not a unified `bucketRowCount`; content assertions use `SHOW STATS_BUCKETS`.
+  Rationale: `mysql.stats_buckets` stores one row per bucket; `mysql.stats_data` stores one row per histogram (the blob holds many buckets). Summing rows across the two tables gives a meaningless number — they are not the same unit. For storage-layout tests ("nothing left after GC", "purge happened") use `legacyBucketRowCount` and `newBucketRowCount` separately. For content tests ("ANALYZE produced these buckets") use `SHOW STATS_BUCKETS`, which reads from in-memory stats via `domain.StatsHandle().GetPhysicalTableStats(...)` and is therefore format-agnostic — exercises the entire load → cache → render pipeline regardless of which table backed the load.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: Codify the migration invariant as a test (`assertMigrationInvariant`).
+  Rationale: M2 and M4 both rely on the property that bucket data for a given histogram lives in exactly one of `stats_buckets` and `stats_data`, never both. Encoding this as a reusable assertion (callable after every test that mutates either table) catches regressions in any code path — write, GC, BR restore, ID migration — and makes the invariant readable to future contributors.
+  Date/Author: 2026-04-20 / mattias, claude.
+
+- Decision: Bootstrap test coverage uses both unit-style and end-to-end forms.
+  Rationale: Unit-style tests on the loader functions are fast and let us drive every edge case (only-new, only-legacy, mixed, conflict). A single end-to-end test that seeds both tables, restarts the domain, and asserts via `SHOW STATS_BUCKETS` proves the entire pipeline (load + decode + type plumbing + cache + render) works together. Skipping the E2E test would risk shipping a regression that unit-tests miss; relying solely on E2E would make edge-case coverage slow.
   Date/Author: 2026-04-20 / mattias, claude.
 
 - Decision: No bootstrap version bump is added by this PR.
@@ -277,25 +289,40 @@ Rewrite the read path:
 
 - **BR (`br/pkg/restore/snap_client/systable_restore.go:44`)**: no code change. Both `stats_buckets` and `stats_data` are already in the map (#66303). The only test asset to update is `br/tests/br_restore_physical/run.sh:74` (post-restore assertion, see M6).
 
-**M5 — Unit tests.** Add to `pkg/statistics/handle/storage/`:
+**M5 — Unit tests.**
 
-- Extension to `pkg/statistics/statistics_test.go` — round-trip coverage including a v2-built column histogram (see M1).
-- `save_test.go` additions — `TestSaveBucketsWritesStatsData` (ANALYZE writes `type=1` for a column, `type=2` for an index, and the matching `stats_buckets` row is purged).
-- `read_test.go` additions — `TestReadBucketsPrefersStatsData` (seed both, new wins), `TestReadBucketsFallsBackToLegacy` (seed only legacy, still works).
-- `gc_test.go` updates — existing row-count assertions at lines 41/46/52/58/77/83/88/94 must now also check `stats_data`. Add `TestGCStatsPurgesBothBucketTables`.
+Test placement:
+
+- Codec round-trip stays in `pkg/statistics/statistics_test.go` next to the existing `HistogramToProto` / `HistogramFromProto` test (`statistics_test.go:655-656`).
+- All other tests live under `pkg/statistics/handle/storage/` next to the code they cover.
+
+Shared helpers (new file `pkg/statistics/handle/storage/bucket_test_helpers.go`):
+
+- `legacyBucketRowCount(t, tk, tableID) int` and `newBucketRowCount(t, tk, tableID) int` — separate counters because the row-count semantics differ between the two tables (`stats_buckets` = one row per bucket, `stats_data` = one row per histogram with a blob holding many buckets). Tests that only need to assert "GC purged everything" can read both as `== 0`. Tests that need bucket-count or content equivalence should use `SHOW STATS_BUCKETS` instead (see below).
+- `assertMigrationInvariant(t, tk, tableID)` — for each tracked `(table_id, hist_id)` row in `mysql.stats_histograms`, asserts that the histogram's bucket data lives in **exactly one** of `stats_buckets` and `stats_data`, never both. Codifies the M4 invariant.
+
+Test files:
+
+- Codec — extend `pkg/statistics/statistics_test.go` with cases for: empty histogram, one bucket, `MaxBucketNumber` buckets, wide upper/lower bounds (up to 64 KB each), a v2-built column histogram (first time those get proto-round-tripped), and a malformed blob (expected `proto.Unmarshal` error).
+- `save_test.go` — `TestSaveBucketsWritesStatsData` (ANALYZE writes `type=1` for a column, `type=2` for an index, and the matching `stats_buckets` row is purged); `TestInsertColStats2KVWritesStatsData` (default-bucket-on-add-column lands in `stats_data`, and the legacy path is no longer touched).
+- `read_test.go` — `TestReadBucketsPrefersStatsData` (seed both, new wins); `TestReadBucketsFallsBackToLegacy` (seed only legacy, still works).
+- `gc_test.go` — update existing row-count assertions to count both tables via the helpers; add `TestGCStatsPurgesBothBucketTables`.
 - `update_test.go` — `TestChangeGlobalStatsIDMigratesBothBucketTables`.
-- `save.go`/`InsertColStats2KV` — `TestInsertColStats2KVWritesStatsData`.
+- `bucket_test_helpers_test.go` — `TestStatsBucketsMigrationInvariantAfterAnalyze` (run several ANALYZE cycles, run `assertMigrationInvariant` after each).
 
-Bootstrap tests:
+Bootstrap tests (split between unit-style and end-to-end):
 
-- `pkg/statistics/handle/bootstrap_test.go` (or wherever `TestInitStats*` lives — confirm while editing) — `TestBootstrapInitStatsBucketsFromStatsData`, `TestBootstrapInitStatsBucketsMixedLegacyAndNew`.
+- Unit-style in `pkg/statistics/handle/bootstrap_test.go` (or wherever `TestInitStats*` lives — confirm while editing): `TestBootstrapInitStatsBucketsFromStatsData` (only `stats_data` populated), `TestBootstrapInitStatsBucketsFromLegacy` (only `stats_buckets`), `TestBootstrapInitStatsBucketsMixedLegacyAndNew` (different histograms in each table), `TestBootstrapInitStatsBucketsNewWinsOverLegacy` (same `(table_id, hist_id)` in both — new must win, even though the M4 invariant says this should not happen in practice; defensive coverage). Each calls the loader functions directly with a seeded test cluster.
+- End-to-end in the same file: `TestBootstrapInitStatsBucketsEndToEnd` — seeds both tables with a representative mix, triggers a domain restart (close+reopen, or a `domain.Reload()` equivalent — confirm the available API while writing), then runs `SHOW STATS_BUCKETS db.t` and asserts the rendered bucket list matches expectations. This exercises the entire load → cache → render pipeline.
+
+Why `SHOW STATS_BUCKETS` is the right tool for content assertions: it reads from in-memory stats via `domain.StatsHandle().GetPhysicalTableStats(...)` (`pkg/executor/show_stats.go:283`) and never hits the SQL tables directly. So it is naturally format-agnostic and gives apples-to-apples bucket content regardless of which table backed the load. Anywhere a test wants to compare "what did ANALYZE produce" before vs after the migration, use `SHOW STATS_BUCKETS`, not direct counts on the storage tables.
 
 **M6 — Integration and realtikv tests.**
 
 - `tests/integrationtest/t/executor/kv.test` and `.../r/executor/kv.result`: the two existing bucket queries (lines 11, 16) must either be updated to read from `stats_data`, or rewritten as a `UNION` so the test is codec-agnostic. Use the TiDB integration-test recording flow (`.agents/skills/tidb-integrationtest-recorder`).
 - `tests/realtikvtest/statisticstest/statistics_test.go:56` — `delete from mysql.stats_buckets` prep becomes `delete from both`.
 - `br/tests/br_restore_physical/run.sh:74` — expectation becomes "rows exist in either table".
-- `pkg/statistics/handle/handletest/statstest/stats_test.go:843`, `.../handle_test.go:1047`, `.../ddl/ddl_test.go:385`, `.../asyncload/async_load_test.go:241`: update each to count/update the right table. Prefer a helper `bucketRowCount(tableID)` that sums rows in both tables so existing assertions stay format-agnostic during the transition.
+- `pkg/statistics/handle/handletest/statstest/stats_test.go:843`, `.../handle_test.go:1047`, `.../ddl/ddl_test.go:385`, `.../asyncload/async_load_test.go:241`: each does direct row counts/updates against `mysql.stats_buckets`. Replace SQL-level assertions with `SHOW STATS_BUCKETS` where the test is asserting on bucket *content*; use the `legacyBucketRowCount` / `newBucketRowCount` helpers from M5 where the test is asserting on storage layout (e.g. "no stale rows for this hist_id"). Do not introduce a single `bucketRowCount` summing both — the row-count semantics are incompatible (one row per bucket in legacy; one row per histogram in stats_data).
 
 **M7 — Performance check.** Using a local cluster (TiUP playground via `.agents/skills/tidb-realtikv-runner`), reproduce the #66751 workload at a reduced scale (e.g. 200 partitions × 50 cols is enough to see a signal without burning hours). Measure `ANALYZE TABLE t` wall-clock on the merge base (master, pre-migration) and on this branch. Record both numbers in `Artifacts and Notes`. Expect the new branch to be noticeably faster; if it is not, that is a blocker, not a pass.
 
