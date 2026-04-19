@@ -613,6 +613,9 @@ type Request struct {
 	// CoprResolveLockLite controls whether coprocessor uses resolve lock lite.
 	CoprResolveLockLite bool
 
+	// CoprSyncResolveLock controls whether coprocessor resolves locks synchronously.
+	CoprSyncResolveLock bool
+
 	// ConnID stores the session connection id.
 	ConnID uint64
 	// ConnAlias stores the session connection alias.

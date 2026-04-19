@@ -2370,6 +2370,7 @@ func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.L
 		CallerStartTS: worker.req.StartTs,
 		Locks:         []*txnlock.Lock{txnlock.NewLock(lockErr)},
 		Detail:        resolveLockDetail,
+		SyncResolve:   worker.req.CoprSyncResolveLock,
 	}
 	resolveLocksRes, err1 := worker.kvclient.ResolveLocksWithOpts(bo.TiKVBackoffer(), resolveLocksOpts)
 	err1 = derr.ToTiDBErr(err1)

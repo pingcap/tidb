@@ -1194,6 +1194,9 @@ type SessionVars struct {
 	// CoprResolveLockLite controls whether coprocessor uses resolve lock lite.
 	CoprResolveLockLite bool
 
+	// CoprSyncResolveLock controls whether coprocessor resolves locks asynchronously.
+	CoprSyncResolveLock bool
+
 	writeStmtBufs WriteStmtBufs
 
 	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.

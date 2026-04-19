@@ -278,6 +278,10 @@ var defaultSysVars = []*SysVar{
 		s.CoprResolveLockLite = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBCoprSyncResolveLock, Value: BoolToOnOff(vardef.DefTiDBCoprSyncResolveLock), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.CoprSyncResolveLock = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TxnIsolationOneShot, Value: "", skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return checkIsolationLevel(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
