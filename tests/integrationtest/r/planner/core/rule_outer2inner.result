@@ -222,7 +222,7 @@ id	task	access object	operator info
 Selection	root		isfalse(and(planner__core__rule_outer2inner.t1.c0, ne(planner__core__rule_outer2inner.t0.c0, NULL)))
 └─HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core__rule_outer2inner.t0.c0, planner__core__rule_outer2inner.t1.c0)]
   ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		isfalse(and(planner__core__rule_outer2inner.t0.c0, ne(planner__core__rule_outer2inner.t0.c0, NULL))), not(isnull(planner__core__rule_outer2inner.t0.c0))
+  │ └─Selection	cop[tikv]		not(isnull(planner__core__rule_outer2inner.t0.c0))
   │   └─TableFullScan	cop[tikv]	table:t0	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
