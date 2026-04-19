@@ -158,6 +158,16 @@ const (
 	StatsDataTableID = ReservedGlobalIDUpperBound - 62
 )
 
+// Type values for the `type` column of mysql.stats_data.
+// Value 0 is intentionally undefined and reserved for future use
+// (e.g. a potential replacement for stats_meta).
+const (
+	StatsDataTypeColBucket   int = 1
+	StatsDataTypeIdxBucket   int = 2
+	StatsDataTypeColFMSketch int = 3
+	StatsDataTypeIdxFMSketch int = 4
+)
+
 // IsReservedID checks if the given ID is a reserved global ID.
 func IsReservedID(id int64) bool {
 	return ReservedGlobalIDLowerBound < id && id <= ReservedGlobalIDUpperBound

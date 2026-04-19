@@ -301,7 +301,7 @@ const (
 	// accommodate future migration of data from other stats_* tables that lack a proper PK.
 	CreateStatsDataTable = `CREATE TABLE IF NOT EXISTS mysql.stats_data (
 		table_id 	BIGINT(64) NOT NULL COMMENT 'physical partition ID (or table ID for non-partitioned tables)',
-		type 		INT NOT NULL COMMENT '0=col fmsketch, 1=idx fmsketch, 2=sample (reserved)',
+		type 		INT NOT NULL COMMENT '0=undefined (reserved), 1=col bucket, 2=idx bucket, 3=col fmsketch, 4=idx fmsketch',
 		hist_id 	BIGINT(64) NOT NULL COMMENT 'column or index ID',
 		value 		LONGBLOB NOT NULL,
 		updated_at 	TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
