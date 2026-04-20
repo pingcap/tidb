@@ -384,6 +384,10 @@ func TestDDLHistogram(t *testing.T) {
 	rs.Check(testkit.Rows("1"))
 	rs = testKit.MustQuery("select count(*) from mysql.stats_buckets where table_id = ? and hist_id = 1 and is_index = 1", tableInfo.ID)
 	rs.Check(testkit.Rows("0"))
+	// After the stats_buckets -> stats_data migration bucket data for this
+	// index would live in mysql.stats_data with type = 2. Check there too.
+	rs = testKit.MustQuery("select count(*) from mysql.stats_data where table_id = ? and hist_id = 1 and type = 2", tableInfo.ID)
+	rs.Check(testkit.Rows("0"))
 	rs = testKit.MustQuery("select count(*) from mysql.stats_top_n where table_id = ? and hist_id = 1 and is_index = 1", tableInfo.ID)
 	rs.Check(testkit.Rows("2"))
 }

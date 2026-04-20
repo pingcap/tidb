@@ -99,7 +99,12 @@ func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hist
 // Log) for the affected_rows = 0 corner case that motivates the conservative
 // always-DELETE choice.
 func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (err error) {
-	if hg == nil {
+	if hg == nil || hg.Len() == 0 {
+		// Legacy saveBucketsToStorage was a pure no-op for empty histograms
+		// (the per-bucket insert loop iterated zero times). Preserve that
+		// behavior: writing an empty-buckets proto blob would leave a
+		// stats_data row that downstream tests expecting "no buckets for this
+		// hist_id" would flag.
 		return
 	}
 	sc := sctx.GetSessionVars().StmtCtx

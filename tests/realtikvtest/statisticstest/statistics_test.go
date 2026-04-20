@@ -54,6 +54,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 		tk.MustExec("delete from mysql.stats_meta")
 		tk.MustExec("delete from mysql.stats_histograms")
 		tk.MustExec("delete from mysql.stats_buckets")
+		tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
 		dom.StatsHandle().Clear()
 	}()
 
