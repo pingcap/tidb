@@ -457,7 +457,7 @@ func (p *PhysicalCTESource) MemoryUsage() (sum int64) {
 }
 
 // ToPB generates the pb structure.
-func (p *PhysicalCTESource) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+func (p *PhysicalCTESource) ToPB(_ *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
 	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
 	for _, column := range p.Schema().Columns {
 		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, storeType)
