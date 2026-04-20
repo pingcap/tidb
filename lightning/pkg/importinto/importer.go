@@ -114,6 +114,8 @@ func NewImporter(
 			importsdk.WithFileRouters(cfg.Mydumper.FileRouters),
 			importsdk.WithRoutes(cfg.Routes),
 			importsdk.WithCharset(cfg.Mydumper.CharacterSet),
+			importsdk.WithDataCharacterSet(cfg.Mydumper.DataCharacterSet),
+			importsdk.WithCSVConfig(cfg.Mydumper.CSV),
 			importsdk.WithLogger(imp.logger),
 		}
 		sdk, err := importsdk.NewImportSDK(ctx, cfg.Mydumper.SourceDir, db, sdkOpts...)

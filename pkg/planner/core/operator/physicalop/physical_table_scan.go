@@ -505,7 +505,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			if i != 0 {
 				buffer.WriteString(", ")
 			}
-			buffer.WriteString(runtimeFilter.ExplainInfo(false))
+			buffer.WriteString(runtimeFilter.ExplainInfo(false, ectx))
 		}
 	}
 	if len(p.UsedColumnarIndexes) > 0 {
@@ -542,7 +542,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
 					annIndexBuffer.WriteString("->")
 					cols := p.Schema().Columns
-					annIndexBuffer.WriteString(cols[len(cols)-1].String())
+					annIndexBuffer.WriteString(cols[len(cols)-1].ExplainInfo(ectx))
 				}
 				annIndexes = append(annIndexes, annIndexBuffer.String())
 			} else if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeInverted && idx.QueryInfo != nil {
@@ -804,7 +804,7 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 		pushedFilters = pushedFilters1
 		remainingFilters = append(remainingFilters, remainingFilters1...)
 		if len(pushedFilters) != 0 {
-			selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, pushedFilters, nil)
+			selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, pushedFilters, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
@@ -842,10 +842,41 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 				ts.Columns = append(ts.Columns, col.ToInfo())
 			}
 		}
-	} else if !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
+	} else if ts.HandleCols != nil && !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
 		ts.Schema().Append(ts.HandleCols.GetCol(0))
 		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 		columnAdded = true
+	} else if ds.Table.Type().IsClusterTable() {
+		// For cluster tables without HandleCols, use the first column like preferKeyColumnFromTable does.
+		// This handles the case when column-prune-logical rule is blocked and cluster tables don't have
+		// their handle cols set up through the normal column pruning path.
+		if len(ts.TblCols) > 0 {
+			col := ts.TblCols[0]
+			if !ts.Schema().Contains(col) {
+				ts.Schema().Append(col)
+				// Find the corresponding ColumnInfo from table metadata
+				if colInfo := model.FindColumnInfoByID(ts.Table.Columns, col.ID); colInfo != nil {
+					ts.Columns = append(ts.Columns, colInfo)
+				} else {
+					ts.Columns = append(ts.Columns, col.ToInfo())
+				}
+				columnAdded = true
+			}
+		} else if len(ts.Table.Columns) > 0 {
+			// Fallback to table metadata columns
+			colMeta := ts.Table.Columns[0]
+			col := &expression.Column{
+				RetType:  colMeta.FieldType.Clone(),
+				UniqueID: ts.SCtx().GetSessionVars().AllocPlanColumnID(),
+				ID:       colMeta.ID,
+				OrigName: fmt.Sprintf("%v.%v.%v", ts.DBName, ts.Table.Name, colMeta.Name),
+			}
+			if !ts.Schema().Contains(col) {
+				ts.Schema().Append(col)
+				ts.Columns = append(ts.Columns, colMeta)
+				columnAdded = true
+			}
+		}
 	}
 
 	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
@@ -883,7 +914,15 @@ func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expre
 func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTableScan) (err error) {
 	handleCols := ds.HandleCols
 	if handleCols == nil {
-		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+		if (ds.TableInfo.PKIsHandle || ds.TableInfo.IsCommonHandle) && ds.UnMutableHandleCols != nil {
+			handleCols = ds.UnMutableHandleCols
+		} else if ds.Table.Type().IsClusterTable() {
+			// For cluster tables without handles, ts.HandleCols remains nil.
+			// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.
+			return nil
+		} else {
+			handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+		}
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)

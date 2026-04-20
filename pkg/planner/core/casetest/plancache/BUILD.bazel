@@ -36,6 +36,7 @@ go_test(
         "//pkg/session",
         "//pkg/session/sessmgr",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

@@ -43,19 +43,22 @@ type GetResp struct {
 	ContentRange  *string
 }
 
+// HeadObjectResp is the response of HeadObject.
+type HeadObjectResp struct {
+	ReplicationStatus string
+}
+
 // Object is the object info.
 type Object struct {
 	Key  string
 	Size int64
 }
 
-// ListResp is the response of ListObjects.
+// ListResp is the response of ListObjectsV2.
 type ListResp struct {
-	// we use the term from AWS ListObjects, but for other S3-like storage, it
-	// may come from different field, such as for OSS, it's NextContinuationToken
-	NextMarker  *string
-	IsTruncated bool
-	Objects     []Object
+	NextContinuationToken *string
+	IsTruncated           bool
+	Objects               []Object
 }
 
 // CopyInput is the input of CopyObject.
@@ -93,6 +96,8 @@ type PrefixClient interface {
 	DeleteObject(ctx context.Context, name string) error
 	// DeleteObjects deletes multiple objects with the given names.
 	DeleteObjects(ctx context.Context, names []string) error
+	// HeadObject fetches object metadata for the given name.
+	HeadObject(ctx context.Context, name string) (*HeadObjectResp, error)
 	// IsObjectExists checks whether the object with the given name exists.
 	IsObjectExists(ctx context.Context, name string) (bool, error)
 	// ListObjects lists objects with the given extra prefix, marker and maxKeys.
@@ -100,7 +105,7 @@ type PrefixClient interface {
 	// maxKeys is the maximum number of keys to return.
 	// Note: the extraPrefix is directly appended to the storeapi.Prefix of the
 	// PrefixClient, caller should make sure the input extraPrefix correct.
-	ListObjects(ctx context.Context, extraPrefix string, marker *string, maxKeys int) (*ListResp, error)
+	ListObjects(ctx context.Context, extraPrefix, startAfter string, continuationToken *string, maxKeys int) (*ListResp, error)
 	// CopyObject copies an object from the source to the destination.
 	CopyObject(ctx context.Context, params *CopyInput) error
 	// MultipartWriter creates a multipart writer for the object with the given

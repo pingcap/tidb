@@ -428,6 +428,26 @@ func (cc *clientConn) closeWithoutLock() error {
 	return closeConn(cc)
 }
 
+func (cc *clientConn) currentResourceGroupName() string {
+	if ctx := cc.getCtx(); ctx != nil {
+		if name := ctx.GetSessionVars().ResourceGroupName; name != "" {
+			return name
+		}
+	}
+	return resourcegroup.DefaultResourceGroupName
+}
+
+func (cc *clientConn) moveResourceGroupCounter(oldGroup string) {
+	if oldGroup == "" {
+		oldGroup = resourcegroup.DefaultResourceGroupName
+	}
+	newGroup := cc.currentResourceGroupName()
+	if oldGroup != newGroup {
+		metrics.ConnGauge.WithLabelValues(oldGroup).Dec()
+		metrics.ConnGauge.WithLabelValues(newGroup).Inc()
+	}
+}
+
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
 // and auth salt to the client.
 func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
@@ -1212,15 +1232,27 @@ func (cc *clientConn) Run(ctx context.Context) {
 						timestamp = ctx.GetSessionVars().TxnCtx.StaleReadTs
 					}
 				}
-				logutil.Logger(ctx).Warn("command dispatched failed",
-					zap.String("connInfo", cc.String()),
-					zap.String("command", mysql.Command2Str[data[0]]),
-					zap.String("status", cc.SessionStatusToString()),
-					zap.Stringer("sql", getLastStmtInConn{cc}),
-					zap.String("txn_mode", txnMode),
-					zap.Uint64("timestamp", timestamp),
-					zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
-				)
+				sqlStmt := getLastStmtInConn{cc}.String()
+				if sqlStmt == `select $$` {
+					// MySQL Client sends `select $$` on connection. This is used to detect support for
+					// dollar quoted function or procedure body
+					// We suppress this here to reduce the log volume and noise.
+					//
+					// As the statement is hardcoded in MySQL, we don't need to `strings.EqualFold()` this.
+					//
+					// https://github.com/mysql/mysql-server/blob/447eb26e094b444a88c532028647e48228c3c04f/client/mysql.cc#L1288-L1292
+					logutil.Logger(ctx).Debug("command dispatched failed for `select $$`, this is expected")
+				} else {
+					logutil.Logger(ctx).Warn("command dispatched failed",
+						zap.String("connInfo", cc.String()),
+						zap.String("command", mysql.Command2Str[data[0]]),
+						zap.String("status", cc.SessionStatusToString()),
+						zap.String("sql", sqlStmt),
+						zap.String("txn_mode", txnMode),
+						zap.Uint64("timestamp", timestamp),
+						zap.String("err", errStrForLog(err, cc.ctx.GetSessionVars().EnableRedactLog)),
+					)
+				}
 			}
 			err1 := cc.writeError(ctx, err)
 			terror.Log(err1)
@@ -1345,7 +1377,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cc.lastPacket = data
 	cmd := data[0]
 	data = data[1:]
-	if topsqlstate.TopSQLEnabled() {
+	if topsqlstate.TopProfilingEnabled() {
 		rawCtx := ctx
 		defer pprof.SetGoroutineLabels(rawCtx)
 		sqlID := cc.ctx.GetSessionVars().SQLCPUUsages.AllocNewSQLID()
@@ -2047,7 +2079,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 }
 
 func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls string) {
-	if !topsqlstate.TopSQLEnabled() {
+	if !topsqlstate.TopProfilingEnabled() {
 		return
 	}
 	normalized, digest := parser.NormalizeDigest(sqls)
@@ -2372,6 +2404,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 	data := cc.alloc.AllocWithLen(4, 1024)
 	req := rs.NewChunk(cc.ctx.GetSessionVars().GetChunkAllocator())
 	gotColumnInfo := false
+	var columns []*column.Info
+	columnCount := 0
 	firstNext := true
 	validNextCount := 0
 	var start time.Time
@@ -2381,6 +2415,20 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
+	totalRows := 0
+	defer func() {
+		cells := int64(totalRows) * int64(columnCount)
+		if cells <= 0 {
+			return
+		}
+		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+		if ruv2Metrics == nil {
+			ruv2Metrics = cc.ctx.GetSessionVars().RUV2Metrics
+		}
+		if ruv2Metrics != nil {
+			ruv2Metrics.AddResultChunkCells(cells)
+		}
+	}()
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
 			//nolint:forcetypeassert
@@ -2405,7 +2453,8 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if !gotColumnInfo {
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
-			columns := rs.Columns()
+			columns = rs.Columns()
+			columnCount = len(columns)
 			if stmtDetail != nil {
 				start = time.Now()
 			}
@@ -2427,6 +2476,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if rowCount == 0 {
 			break
 		}
+		totalRows += rowCount
 		validNextCount++
 		firstNext = false
 		reg := trace.StartRegion(ctx, "WriteClientConn")
@@ -2436,9 +2486,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		for i := range rowCount {
 			data = data[0:4]
 			if binary {
-				data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+				data, err = column.DumpBinaryRow(data, columns, req.GetRow(i), cc.rsEncoder)
 			} else {
-				data, err = column.DumpTextRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)
+				data, err = column.DumpTextRow(data, columns, req.GetRow(i), cc.rsEncoder)
 			}
 			if err != nil {
 				reg.End()
@@ -2480,11 +2530,16 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		start      time.Time
 	)
 	data := cc.alloc.AllocWithLen(4, 1024)
+	writtenRows := 0
 	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 	if stmtDetailRaw != nil {
 		//nolint:forcetypeassert
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 	}
+	defer func() {
+		cells := int64(writtenRows) * int64(len(rs.Columns()))
+		resultset.ReportCursorRUV2Delta(rs, cells)
+	}()
 	if stmtDetail != nil {
 		start = time.Now()
 	}
@@ -2502,6 +2557,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		if err = cc.writePacket(data); err != nil {
 			return err
 		}
+		writtenRows++
 
 		iter.Next(ctx)
 	}
@@ -2555,6 +2611,7 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 }
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
+	oldResourceGroup := cc.currentResourceGroupName()
 	user, data := util2.ParseNullTermString(data)
 	cc.user = string(hack.String(user))
 	if len(data) < 1 {
@@ -2587,6 +2644,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
 	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
 	err := cc.openSession()
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	if err != nil {
 		return err
 	}
@@ -2614,6 +2672,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) handleResetConnection(ctx context.Context) error {
+	oldResourceGroup := cc.currentResourceGroupName()
 	user := cc.ctx.GetSessionVars().User
 	err := cc.ctx.Close()
 	if err != nil {
@@ -2629,6 +2688,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return err
 	}
 	cc.SetCtx(tidbCtx)
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	if !cc.ctx.AuthWithoutVerification(ctx, user) {
 		return errors.New("Could not reset connection")
 	}

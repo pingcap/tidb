@@ -55,12 +55,20 @@ type collectConflictsStepExecutor struct {
 	currSubtaskID               int64
 	sizeOfHandlesFromIndex      atomic.Int64
 	sizeLimitOfHandlesFromIndex int64
+	sizeOfConflictRowFiles      atomic.Int64
 	result                      *conflictedkv.CollectResult
-	sharedHandleSet             *conflictedkv.BoundedHandleSet
-	summary                     execute.SubtaskSummary
+	// one conflicted row might generate multiple conflicted UK KV, this set is
+	// used to avoid collecting checksum for this row multiple times.
+	// such as for `create table t(id int primary key, c1 int, c2 int, unique u1(c1), unique u2(c2))`
+	// if we have 2 rows (1, 3, 4), (2, 3, 4), one pair of conflicted UK KV will
+	// be generated for kv group u1 and u2 respectively.
+	// this also means we need to process conflicted UK KV group one by one.
+	sharedHandleSet *conflictedkv.BoundedHandleSet
+	summary         execute.SubtaskSummary
 }
 
 var _ execute.StepExecutor = &collectConflictsStepExecutor{}
+var _ execute.Collector = &collectConflictsStepExecutor{}
 
 // NewCollectConflictsStepExecutor creates a new collectConflictsStepExecutor.
 // exported for test.
@@ -135,6 +143,7 @@ func (e *collectConflictsStepExecutor) onFinished(_ context.Context, subtask *pr
 	subtaskMeta.Checksum = newFromKVChecksum(e.result.Checksum)
 	subtaskMeta.ConflictedRowCount = e.result.RowCount
 	subtaskMeta.ConflictedRowFilenames = e.result.Filenames
+	subtaskMeta.ConflictedRowRecordingCapped = e.result.RowRecordingCapped
 	subtaskMeta.TooManyConflictsFromIndex = e.sharedHandleSet.BoundExceeded()
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
@@ -172,13 +181,29 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 		return err
 	}
 
-	var mu sync.Mutex
+	var (
+		mu             sync.Mutex
+		mergedLocalSet = conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
+	)
 	for i := range concurrency {
 		encoder := encoders[i]
 		uid := uuid.New().String()
 		filenamePrefix := getConflictRowFilenamePrefix(e.task.ID, e.currSubtaskID, uid)
 		localSet := conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
-		collector := conflictedkv.NewCollector(e.tableImporter.Table, e.logger, objStore, e.store, filenamePrefix, kvGroup, encoder, e.sharedHandleSet, localSet)
+		collector := conflictedkv.NewCollector(
+			e.tableImporter.Table,
+			e.logger,
+			objStore,
+			e.store,
+			filenamePrefix,
+			kvGroup,
+			encoder,
+			e.sharedHandleSet,
+			localSet,
+			&e.sizeOfConflictRowFiles,
+			e,
+			e.GetMeterRecorder(),
+		)
 		eg.Go(func() (err error) {
 			defer func() {
 				err2 := collector.Close(egCtx)
@@ -186,7 +211,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 					err = err2
 				}
 				mu.Lock()
-				e.sharedHandleSet.Merge(localSet)
+				mergedLocalSet.Merge(localSet)
 				e.result.Merge(collector.GetCollectResult())
 				mu.Unlock()
 			}()
@@ -194,7 +219,12 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 		})
 	}
 
-	return eg.Wait()
+	if err = eg.Wait(); err != nil {
+		return err
+	}
+
+	e.sharedHandleSet.Merge(mergedLocalSet)
+	return nil
 }
 
 // right now we only have 1 subtask, but later we might have multiple subtasks
@@ -202,6 +232,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 func (e *collectConflictsStepExecutor) resetForNewSubtask(subtaskID int64) {
 	e.currSubtaskID = subtaskID
 	e.sizeOfHandlesFromIndex.Store(0)
+	e.sizeOfConflictRowFiles.Store(0)
 	// we use half of the subtask memory to cache the conflict row handle from index.
 	e.sizeLimitOfHandlesFromIndex = e.GetResource().Mem.Capacity() / 2
 	e.result = conflictedkv.NewCollectResult(e.store.GetCodec().GetKeyspace())
@@ -220,6 +251,14 @@ func (e *collectConflictsStepExecutor) RealtimeSummary() *execute.SubtaskSummary
 
 func (e *collectConflictsStepExecutor) ResetSummary() {
 	e.summary.Reset()
+}
+
+// Accepted implements Collector.Accepted interface.
+func (*collectConflictsStepExecutor) Accepted(_ int64) {}
+
+// Processed implements Collector.Processed interface.
+func (e *collectConflictsStepExecutor) Processed(processedConflictKVs, _ int64) {
+	e.summary.Processed.Add(processedConflictKVs)
 }
 
 // getConflictRowFilenamePrefix returns the file name prefix to store the conflict

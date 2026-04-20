@@ -20,7 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -44,6 +44,19 @@ func (h mockHandleEncodedRowFn) HandleEncodedRow(ctx context.Context, handle tid
 	return h(ctx, handle, row, kvPairs)
 }
 
+type mockTrafficRecorder struct {
+	readBytes  atomic.Uint64
+	writeBytes atomic.Uint64
+}
+
+func (r *mockTrafficRecorder) IncClusterReadBytes(n uint64) {
+	r.readBytes.Add(n)
+}
+
+func (r *mockTrafficRecorder) IncClusterWriteBytes(n uint64) {
+	r.writeBytes.Add(n)
+}
+
 func getEncoder(t *testing.T, tbl table.Table) *importer.TableKVEncoder {
 	t.Helper()
 	encodeCfg := &encode.EncodingConfig{
@@ -61,9 +74,6 @@ func getEncoder(t *testing.T, tbl table.Table) *importer.TableKVEncoder {
 }
 
 func TestHandler(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip test for next-gen kernel temporarily, we need to adapt the test later")
-	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -95,7 +105,8 @@ func TestHandler(t *testing.T) {
 				kvPairCnt += int64(len(kvPairs.Pairs))
 				return nil
 			})
-			baseHdl := conflictedkv.NewBaseHandler(tbl, external.DataKVGroup, encoder, mockEncodedKVHdl, logger)
+			progressCollector := &execute.TestCollector{}
+			baseHdl := conflictedkv.NewBaseHandler(tbl, external.DataKVGroup, encoder, mockEncodedKVHdl, progressCollector, logger)
 			dataKVHdl := conflictedkv.NewDataKVHandler(baseHdl)
 			t.Cleanup(func() {
 				require.NoError(t, dataKVHdl.Close(ctx))
@@ -119,7 +130,7 @@ func TestHandler(t *testing.T) {
 					}
 					// completely same row repeat 10 times
 					for range 10 {
-						ch <- &external.KVPair{Key: pair.Key, Value: pair.Val}
+						ch <- &external.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
 					}
 				}
 				close(ch)
@@ -128,6 +139,7 @@ func TestHandler(t *testing.T) {
 			require.NoError(t, eg.Wait())
 			require.EqualValues(t, 10, rowCnt)
 			require.EqualValues(t, expectedKVs, kvPairCnt)
+			require.EqualValues(t, 10, progressCollector.ProcessedCnt.Load())
 		}
 
 		t.Run("clustered pk table", func(t *testing.T) {
@@ -168,10 +180,12 @@ func TestHandler(t *testing.T) {
 				return nil
 			})
 			var targetIndexID int64 = 2
-			baseHdl := conflictedkv.NewBaseHandler(tbl, external.IndexID2KVGroup(targetIndexID), encoder, mockEncodedKVHdl, logger)
+			progressCollector := &execute.TestCollector{}
+			baseHdl := conflictedkv.NewBaseHandler(tbl, external.IndexID2KVGroup(targetIndexID), encoder, mockEncodedKVHdl, progressCollector, logger)
+			trafficRec := &mockTrafficRecorder{}
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
-				conflictedkv.NewLazyRefreshedSnapshot(store),
+				conflictedkv.NewLazyRefreshedSnapshot(store, trafficRec),
 				conflictedkv.NewHandleFilter(alreadyProcessedHandles),
 			)
 			require.NoError(t, indexKVHdl.PreRun())
@@ -206,7 +220,7 @@ func TestHandler(t *testing.T) {
 						require.NoError(t, err)
 						// only send unique index kv pairs
 						if indexID == targetIndexID {
-							ch <- &external.KVPair{Key: pair.Key, Value: pair.Val}
+							ch <- &external.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
 						}
 					}
 				}
@@ -214,9 +228,11 @@ func TestHandler(t *testing.T) {
 				return nil
 			})
 			require.NoError(t, eg.Wait())
+			require.Greater(t, trafficRec.readBytes.Load(), uint64(0))
 			require.EqualValues(t, 3, rowCnt)
 			require.EqualValues(t, expectedKVs, kvPairCnt)
 			require.EqualValues(t, map[string]struct{}{"2": {}, "4": {}, "5": {}}, handledHandles)
+			require.EqualValues(t, 16, progressCollector.ProcessedCnt.Load())
 		}
 
 		t.Run("clustered pk table", func(t *testing.T) {

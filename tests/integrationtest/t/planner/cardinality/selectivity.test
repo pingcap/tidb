@@ -10,7 +10,6 @@ set tidb_enable_clustered_index = DEFAULT;
 drop table t;
 
 # TestStatsVer2
-set tidb_cost_model_version=2;
 set tidb_analyze_version=2;
 drop table if exists tint;
 create table tint(a int, b int, c int, index singular(a), index multi(b, c));

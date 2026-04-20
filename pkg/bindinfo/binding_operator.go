@@ -173,8 +173,12 @@ func (op *bindingOperator) DropBinding(sqlDigests []string) (deletedRows uint64,
 			return err
 		}
 
-		for _, sqlDigest := range sqlDigests {
-			updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6).String()
+		// Ensure update_time is strictly increasing even if multiple operations happen in the same microsecond.
+		// This avoids missing updates when `update_time < updateTs` compares equal timestamps.
+		baseTime := time.Now().Add(time.Microsecond)
+		for i, sqlDigest := range sqlDigests {
+			updateTime := baseTime.Add(time.Duration(i) * time.Microsecond)
+			updateTs := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 6).String()
 			_, err = exec(
 				sctx,
 				`UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status != %?`,

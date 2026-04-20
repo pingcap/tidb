@@ -343,6 +343,10 @@ func TestPlanReplayerStmtRestore(t *testing.T) {
 			"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'test'"},
 		{"plan replayer dump with stats as of timestamp '12345' explain analyze 'test2'",
 			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP _UTF8MB4'12345' EXPLAIN ANALYZE 'test2'"},
+		{"plan replayer dump explain ('SELECT * FROM t1', 'SELECT * FROM t2')",
+			"PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')"},
+		{"plan replayer dump explain analyze ('SELECT * FROM t1')",
+			"PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1')"},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.PlanReplayerStmt)
@@ -379,6 +383,9 @@ func TestRedactURL(t *testing.T) {
 		{args{"azure://bucket/file?sas-token=123"}, "azure://bucket/file?sas-token=xxxxxx"},
 		{args{"azblob://container/file?sas-token=123"}, "azblob://container/file?sas-token=xxxxxx"},
 		{args{"azure://container/file?account-name=test&sas_token=123"}, "azure://container/file?account-name=test&sas_token=xxxxxx"},
+		{args{"azure://container/file?account-name=test&account-key=123"}, "azure://container/file?account-key=xxxxxx&account-name=test"},
+		{args{"azblob://container/file?encryption-key=123"}, "azblob://container/file?encryption-key=xxxxxx"},
+		{args{"azure://container/file?account_key=123&encryption_key=456"}, "azure://container/file?account_key=xxxxxx&encryption_key=xxxxxx"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.args.str, func(t *testing.T) {

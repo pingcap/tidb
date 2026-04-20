@@ -162,8 +162,8 @@ func NewMeter(cfg *mconfig.MeteringConfig) (*Meter, error) {
 	if len(cfg.Type) == 0 || len(cfg.Bucket) == 0 {
 		return nil, nil
 	}
-	s3Config := cfg.ToProviderConfig()
-	provider, err := storage.NewObjectStorageProvider(s3Config)
+	providerConfig := cfg.ToProviderConfig()
+	provider, err := storage.NewObjectStorageProvider(providerConfig)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create storage provider")
 	}

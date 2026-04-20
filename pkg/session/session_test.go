@@ -41,10 +41,10 @@ func TestDDLTableVersionTables(t *testing.T) {
 	for _, v := range ddlTableVersionTables {
 		allDDLTables = append(allDDLTables, v.tables...)
 	}
-	testTableBasicInfoSlice(t, allDDLTables)
+	testTableBasicInfoSlice(t, allDDLTables, " mysql.%s (")
 }
 
-func testTableBasicInfoSlice(t *testing.T, allTables []TableBasicInfo) {
+func testTableBasicInfoSlice(t *testing.T, allTables []TableBasicInfo, sqlFmt string) {
 	t.Helper()
 	require.True(t, slices.IsSortedFunc(allTables, func(a, b TableBasicInfo) int {
 		if a.ID == b.ID {
@@ -59,8 +59,8 @@ func testTableBasicInfoSlice(t *testing.T, allTables []TableBasicInfo) {
 		require.Greater(t, vt.ID, metadef.ReservedGlobalIDLowerBound, "table ID should be greater than ReservedGlobalIDLowerBound")
 		require.LessOrEqual(t, vt.ID, metadef.ReservedGlobalIDUpperBound, "table ID should be less than or equal to ReservedGlobalIDUpperBound")
 		require.Equal(t, strings.ToLower(vt.Name), vt.Name, "table name should be in lower case")
-		require.Contains(t, vt.SQL, fmt.Sprintf(" mysql.%s (", vt.Name),
-			"table SQL should contain table name and follow the format 'mysql.<table_name> ('")
+		require.Contains(t, vt.SQL, fmt.Sprintf(sqlFmt, vt.Name),
+			fmt.Sprintf("table SQL should contain table name and follow the format %s", sqlFmt))
 	}
 }
 
@@ -68,16 +68,16 @@ func TestMemArbitratorSession(t *testing.T) {
 	require.Equal(t, int64(15), approxParseSQLTokenCnt("/*select * from **/SELECT x FROM `t\\`` # abc \nwhere a = 1.23 and b = 'abc\"d\\'e' -- abc \nand c_1_2 in \"abc'd\\\"e\" # (1,2,3)\n"))
 	require.Equal(t, int64(0), approxParseSQLTokenCnt("select @@version @a")) // not select ... from ...
 	require.Equal(t, int64(0), approxParseSQLTokenCnt("set @a=1"))
-	require.Equal(t, int64(4), approxParseSQLTokenCnt("desc analyze table t"))
-	require.Equal(t, int64(3), approxParseSQLTokenCnt("analyze table t"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("desc analyze table t"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("analyze table t"))
 	require.Equal(t, int64(0), approxParseSQLTokenCnt("/*select * from **/explain show warnings"))
 	require.Equal(t, int64(0), approxParseSQLTokenCnt("/*select * from **/desc show columns from t"))
 	require.Equal(t, int64(5), approxParseSQLTokenCnt("insert into t values 1"))
 	require.Equal(t, int64(5), approxParseSQLTokenCnt("update t set a=1"))
 	require.Equal(t, int64(6), approxParseSQLTokenCnt("delete from t where a=1"))
 	require.Equal(t, int64(5), approxParseSQLTokenCnt("replace into t values 1"))
-	require.Equal(t, int64(6), approxParseSQLTokenCnt("execute stmt1 using @a,@b,@c"))
-	require.Equal(t, int64(6), approxParseSQLTokenCnt("execute stmt1 using @a,@b,@c"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("prepare stmt1 from 'select * from t where a=? and b=?'"))
+	require.Equal(t, int64(0), approxParseSQLTokenCnt("execute stmt1 using @a,@b,@c"))
 	require.Equal(t, int64(10), approxParseSQLTokenCnt("select * from `a_1`.`b_2` where c1 = ? and c2 = ?"))
 	require.Equal(t, int64(9), approxCompilePlanTokenCnt("select * from `a_1`.`b_2` where c1 = ? and c2 = ?", true))
 	require.Equal(t, int64(0), approxCompilePlanTokenCnt("select @@version @a", true))

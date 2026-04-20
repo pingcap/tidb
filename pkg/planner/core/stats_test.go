@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -303,8 +304,8 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessionapi.Sess
 	optFlag := builder.GetOptFlag()
 	// Manually add the flags that adjustOptimizationFlags would add
 	if !se.GetSessionVars().InRestrictedSQL || se.GetSessionVars().InternalSQLScanUserTable {
-		optFlag |= (1 << 15) // FlagCollectPredicateColumnsPoint
-		optFlag |= (1 << 19) // FlagSyncWaitStatsLoadPoint
+		optFlag |= rule.FlagCollectPredicateColumnsPoint
+		optFlag |= rule.FlagSyncWaitStatsLoadPoint
 	}
 
 	// Run logical optimization which includes index pruning via CollectPredicateColumnsPoint

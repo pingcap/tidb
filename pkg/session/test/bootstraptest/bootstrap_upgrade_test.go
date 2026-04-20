@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
@@ -1181,6 +1182,56 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 	})
 }
 
+func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Upgrade from 7.5.0 to 8.5+ or above.
+	ver750 := 180
+	seV7 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver750))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV7, ver750)
+	session.MustExec(t, seV7, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBAnalyzeDistSQLScanConcurrency))
+	session.MustExec(t, seV7, "commit")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+
+	// We are now in 7.5.0, check tidb_analyze_distsql_scan_concurrency should not exist.
+	res := session.MustExecToRecodeSet(t, seV7, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBAnalyzeDistSQLScanConcurrency))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+
+	// Change the global variable tidb_distsql_scan_concurrency to 32.
+	session.MustExec(t, seV7, "set @@global.tidb_distsql_scan_concurrency = 32")
+
+	dom.Close()
+	domCurVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := session.CreateSessionAndSetID(t, store)
+	// We are now in version no lower than 8.5, tidb_analyze_distsql_scan_concurrency should be 32.
+	res = session.MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_analyze_distsql_scan_concurrency")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, int64(32), row.GetInt64(0))
+}
+
 func TestBootstrapInNextGenInvalidSystemTable(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("this is only checked in next-gen kernel")
@@ -1199,4 +1250,54 @@ func TestBootstrapInNextGenInvalidSystemTable(t *testing.T) {
 	})
 	_, err = session.BootstrapSession(store)
 	require.ErrorContains(t, err, "system table should not be partitioned table")
+}
+
+// TestUpgradeVersion256PlanCacheSkipStatsOnBinding verifies that upgradeToVer256
+// correctly initializes tidb_plan_cache_skip_stats_on_binding to ON when upgrading
+// from a cluster at version 255 where the variable did not yet exist.
+func TestUpgradeVersion256PlanCacheSkipStatsOnBinding(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV255 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(255))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV255, 255)
+
+	// Remove the variable to simulate a pre-256 cluster where it didn't exist yet.
+	session.MustExec(t, seV255, "DELETE FROM mysql.global_variables WHERE variable_name='tidb_plan_cache_skip_stats_on_binding'")
+	session.MustExec(t, seV255, "commit")
+
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seV255)
+	require.NoError(t, err)
+	require.Equal(t, int64(255), ver)
+	dom.Close()
+
+	domCurrent, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurrent.Close()
+
+	seCurrent := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seCurrent)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	// upgradeToVer256 must have initialized the variable to ON.
+	r := session.MustExecToRecodeSet(t, seCurrent, "SELECT variable_value FROM mysql.global_variables WHERE variable_name='tidb_plan_cache_skip_stats_on_binding'")
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "ON", row.GetString(0))
 }
