@@ -91,8 +91,10 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	return mockScheduler
 }
 
+type mockSchedulerManagerCtxKey string
+
 func MockSchedulerManager(store kv.Storage, pool *pools.ResourcePool, ext scheduler.Extension, cleanup scheduler.CleanUpRoutine) (*scheduler.Manager, *storage.TaskManager) {
-	ctx := context.WithValue(context.Background(), "etcd", true)
+	ctx := context.WithValue(context.Background(), mockSchedulerManagerCtxKey("etcd"), true)
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 	sch := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
@@ -127,7 +129,7 @@ func RunTaskFailInManager(t *testing.T) {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "handle_test")
 
-	schManager, mgr := MockSchedulerManager(store, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
+	schManager, mgr := MockSchedulerManager(store, pool, getNumberExampleSchedulerExt(ctrl), nil)
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			mockScheduler := mock.NewMockScheduler(ctrl)
@@ -541,7 +543,7 @@ func RunManagerScheduleLoop(t *testing.T) {
 		require.Equal(t, 6, status.TaskQueue.ScheduledCount)
 		require.Equal(t, 3, status.TiDBWorker.RequiredCount)
 		// finish tasks
-		for i := range len(concurrencies) {
+		for i := range concurrencies {
 			waitChannels[fmt.Sprintf("key/%d", i)] <- struct{}{}
 		}
 		require.Eventually(t, func() bool {

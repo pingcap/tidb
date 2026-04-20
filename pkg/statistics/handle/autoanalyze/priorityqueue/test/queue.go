@@ -260,7 +260,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	require.Equal(t, tbl1.Meta().ID, updatedJob1.GetTableID())
 
 	// Update 15 times on t2.
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		tk.MustExec("update t2 set a = a + 1 where a = " + strconv.Itoa(i+3))
 	}
 
@@ -716,7 +716,7 @@ func RunConcurrentClose(t *testing.T) {
 
 	const numGoroutines = 20
 	var wg sync.WaitGroup
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		wg.Go(
 			func() {
 				defer func() {
@@ -763,7 +763,7 @@ func RunConcurrentInitializeAndClose(t *testing.T) {
 			close(done)
 		}()
 
-		for i := 0; i < numIterations; i++ {
+		for range numIterations {
 			if err := pq.Initialize(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				t.Errorf("Initialize() failed: %v", err)
 			}
@@ -772,7 +772,7 @@ func RunConcurrentInitializeAndClose(t *testing.T) {
 	}()
 
 	go func() {
-		for i := 0; i < numIterations*2; i++ {
+		for range numIterations * 2 {
 			time.Sleep(5 * time.Millisecond)
 			pq.Close()
 		}

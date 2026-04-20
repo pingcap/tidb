@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "register_gen.go",
         "s3.go",
+        "suite.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/objstore/s3store/test",
     visibility = ["//visibility:public"],

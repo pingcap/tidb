@@ -1913,6 +1913,16 @@ func (local *Backend) CloseEngineMgr() {
 
 var getSplitConfFromStoreFunc = getSplitConfFromStore
 
+// GetSplitConfFromStore is exported for tests.
+func GetSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (int64, int64, error) {
+	return getSplitConfFromStore(ctx, host, tls)
+}
+
+// SetGetSplitConfFromStoreFunc overrides getSplitConfFromStoreFunc in tests.
+func SetGetSplitConfFromStoreFunc(fn func(context.Context, string, *common.TLS) (int64, int64, error)) {
+	getSplitConfFromStoreFunc = fn
+}
+
 // return region split size, region split keys, error
 func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
 	splitSize int64, regionSplitKeys int64, err error) {

@@ -5,9 +5,10 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
-        "mega_main_test.go",
         "mega_imports_test.go",
+        "mega_main_test.go",
     ],
+    flaky = True,
     deps = [
         "//pkg/bindinfo/test",
         "//pkg/bindinfo/tests/test",

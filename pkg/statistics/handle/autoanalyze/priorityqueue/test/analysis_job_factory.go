@@ -30,8 +30,8 @@ import (
 
 func RunCalculateChangePercentage(t *testing.T) {
 	tests := []struct {
-		name             string
 		tblStats         *statistics.Table
+		name             string
 		autoAnalyzeRatio float64
 		want             float64
 	}{
@@ -87,8 +87,8 @@ func RunCalculateChangePercentage(t *testing.T) {
 
 func RunGetTableLastAnalyzeDuration(t *testing.T) {
 	tests := []struct {
-		name         string
 		tblStats     *statistics.Table
+		name         string
 		currentTs    uint64
 		wantDuration time.Duration
 	}{
@@ -124,10 +124,10 @@ func RunCheckIndexesNeedAnalyze(t *testing.T) {
 	analyzedMap.InsertCol(1, true)
 	analyzedMap.InsertIndex(1, false)
 	tests := []struct {
-		name     string
 		tblInfo  *model.TableInfo
 		tblStats *statistics.Table
 		want     map[int64]struct{}
+		name     string
 	}{
 		{
 			name: "Test Table not analyzed",
@@ -229,16 +229,16 @@ func RunCalculateIndicatorsForPartitions(t *testing.T) {
 	analyzedMap.InsertCol(2, true)
 	analyzedMap.InsertIndex(1, true)
 	tests := []struct {
-		name                       string
 		globalStats                *statistics.Table
 		partitionStats             map[priorityqueue.PartitionIDAndName]*statistics.Table
+		wantPartitions             map[int64]struct{}
+		name                       string
 		defs                       []model.PartitionDefinition
 		autoAnalyzeRatio           float64
 		currentTs                  uint64
 		wantAvgChangePercentage    float64
 		wantAvgSize                float64
 		wantAvgLastAnalyzeDuration time.Duration
-		wantPartitions             map[int64]struct{}
 	}{
 		{
 			name: "Test Table not analyzed",
@@ -488,10 +488,10 @@ func RunCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 
 func RunAutoAnalysisTimeWindow(t *testing.T) {
 	tests := []struct {
-		name       string
 		start      time.Time
 		end        time.Time
 		current    time.Time
+		name       string
 		wantWithin bool
 	}{
 		{

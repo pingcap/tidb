@@ -2172,7 +2172,7 @@ func RunEnsureActiveUserCoverage(t *testing.T) {
 
 	for ith, c := range cases {
 		var visited bool
-		ctx := context.WithValue(context.Background(), "mock", &visited)
+		ctx := context.WithValue(context.Background(), privileges.EnsureActiveUserVisitKey, &visited)
 		rs, err := tk.ExecWithContext(ctx, c.sql)
 		require.NoError(t, err)
 
@@ -2193,7 +2193,7 @@ func RunSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
 	// trigger priv reload
 	tk.MustExec("create user aaa")
 	handle := dom.PrivilegeHandle()
-	handle.CheckFullData(t, true)
+	require.True(t, handle.FullData())
 	priv := handle.Get()
 	require.False(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
 
@@ -2202,7 +2202,7 @@ func RunSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("1"))
 	require.True(t, vardef.AccelerateUserCreationUpdate.Load())
 	tk.MustExec("create user bbb")
-	handle.CheckFullData(t, false)
+	require.False(t, handle.FullData())
 	// trigger priv reload, but data for bbb is not really loaded
 	tk.MustExec("grant select on test.* to bbb")
 	priv = handle.Get()
@@ -2219,7 +2219,7 @@ func RunSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
 	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = off")
 	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("0"))
 	tk.MustExec("drop user aaa")
-	handle.CheckFullData(t, true)
+	require.True(t, handle.FullData())
 	priv = handle.Get()
 	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
 }

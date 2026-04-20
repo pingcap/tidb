@@ -148,8 +148,8 @@ func RunIsDynamicPartitionedTableAnalysisJob(t *testing.T) {
 		job priorityqueue.AnalysisJob
 	}
 	tests := []struct {
-		name string
 		args args
+		name string
 		want bool
 	}{
 		{

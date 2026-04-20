@@ -378,9 +378,9 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx *mock.Context, p multiArg
 	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
 
-	args := make([]expression.Expression, len(p.dataTypes))
+	args := make([]expression.Expression, 0, len(p.dataTypes)+1)
 	for k := range p.dataTypes {
-		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
+		args = append(args, &expression.Column{RetType: p.dataTypes[k], Index: k})
 	}
 
 	desc, err := aggregation.NewAggFuncDesc(ctx, p.funcName, args, false)
@@ -670,9 +670,9 @@ func testAggMemFunc(t *testing.T, p aggMemTest) {
 func testMultiArgsAggFunc(t *testing.T, ctx *mock.Context, p multiArgsAggTest) {
 	srcChk := p.genSrcChk()
 
-	args := make([]expression.Expression, len(p.dataTypes))
+	args := make([]expression.Expression, 0, len(p.dataTypes)+1)
 	for k := range p.dataTypes {
-		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
+		args = append(args, &expression.Column{RetType: p.dataTypes[k], Index: k})
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
@@ -761,9 +761,9 @@ func testMultiArgsAggMemFunc(t *testing.T, p multiArgsAggMemTest) {
 	srcChk := p.multiArgsAggTest.genSrcChk()
 	ctx := mock.NewContext()
 
-	args := make([]expression.Expression, len(p.multiArgsAggTest.dataTypes))
+	args := make([]expression.Expression, 0, len(p.multiArgsAggTest.dataTypes)+1)
 	for k := range p.multiArgsAggTest.dataTypes {
-		args[k] = &expression.Column{RetType: p.multiArgsAggTest.dataTypes[k], Index: k}
+		args = append(args, &expression.Column{RetType: p.multiArgsAggTest.dataTypes[k], Index: k})
 	}
 	if p.multiArgsAggTest.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
@@ -849,9 +849,9 @@ func benchmarkMultiArgsAggFunc(b *testing.B, ctx *mock.Context, p multiArgsAggTe
 	}
 	srcChk.AppendDatum(0, &types.Datum{})
 
-	args := make([]expression.Expression, len(p.dataTypes))
+	args := make([]expression.Expression, 0, len(p.dataTypes)+1)
 	for k := range p.dataTypes {
-		args[k] = &expression.Column{RetType: p.dataTypes[k], Index: k}
+		args = append(args, &expression.Column{RetType: p.dataTypes[k], Index: k})
 	}
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(separator), RetType: types.NewFieldType(mysql.TypeString)})
@@ -897,7 +897,7 @@ func baseBenchmarkAggFunc(b *testing.B, ctx aggfuncs.AggFuncUpdateContext, final
 	finalPr, _ := finalFunc.AllocPartialResult()
 	output.Reset()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := finalFunc.UpdatePartialResult(ctx, input, finalPr)
 		if err != nil {
 			b.Fatal(err)

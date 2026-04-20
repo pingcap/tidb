@@ -43,6 +43,11 @@ func percentile(data sort.Interface, percent int) int {
 	return selection.Select(data, k)
 }
 
+// PercentileForTesting exposes percentile selection to external tests.
+func PercentileForTesting(data sort.Interface, percent int) int {
+	return percentile(data, percent)
+}
+
 type basePercentile struct {
 	percent int
 

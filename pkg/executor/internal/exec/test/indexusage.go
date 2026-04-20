@@ -96,9 +96,9 @@ func RunIndexUsageReporter(t *testing.T) {
 }
 
 type indexStatsExpect struct {
+	samples []indexusage.Sample
 	tableID int64
 	idxID   int64
-	samples []indexusage.Sample
 }
 
 type testCase struct {
@@ -245,24 +245,24 @@ func RunIndexUsageReporterWithRealData(t *testing.T) {
 		{
 			"select id_1 from t where id_1 >= 30",
 			"IndexReader",
-			[]indexStatsExpect{{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}}},
+			[]indexStatsExpect{{tableID: tableID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}}},
 		},
 		{
 			"select id_1 from t where id_1 - 95 >= 0 and id_1 >= 90",
 			"IndexReader",
-			[]indexStatsExpect{{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 10, 100)}}},
+			[]indexStatsExpect{{tableID: tableID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 10, 100)}}},
 		},
 		{
 			"select id_2 from t use index(idx_1) where id_1 >= 30 and id_1 - 50 >= 0",
 			"IndexLookUp",
-			[]indexStatsExpect{{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}}},
+			[]indexStatsExpect{{tableID: tableID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}}},
 		},
 		{
 			"select /*+ USE_INDEX_MERGE(t, idx_1, idx_2) */ id_2 from t where id_1 >= 30 and id_2 >= 80 and id_2 - 95 >= 0",
 			"IndexMerge",
 			[]indexStatsExpect{
-				{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}},
-				{tableID, idx2ID, []indexusage.Sample{indexusage.NewSample(1, 1, 20, 100)}},
+				{tableID: tableID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}},
+				{tableID: tableID, idxID: idx2ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 20, 100)}},
 			},
 		},
 		{
@@ -270,14 +270,14 @@ func RunIndexUsageReporterWithRealData(t *testing.T) {
 			"Point_Get",
 			[]indexStatsExpect{
 				// The point get will always use smallest bucket.
-				{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
+				{tableID: tableID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
 			},
 		},
 		{
 			"select id_1 from t where id_1 = 1 or id_1 = 50 or id_1 = 25",
 			"Batch_Point_Get",
 			[]indexStatsExpect{
-				{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 3, 100)}},
+				{tableID: tableID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 3, 100)}},
 			},
 		},
 	}
@@ -319,10 +319,10 @@ partition p3 values less than MAXVALUE)`)
 			"select id_1 from t where id_1 >= 30",
 			"PartitionUnion",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{
+				{tableID: table.Meta().ID, idxID: idx1ID, samples: []indexusage.Sample{
 					indexusage.NewSample(1, 1, 20, 30),
 				}},
-				{table.Meta().ID, idx1ID, []indexusage.Sample{
+				{tableID: table.Meta().ID, idxID: idx1ID, samples: []indexusage.Sample{
 					indexusage.NewSample(0, 1, 50, 50),
 				}},
 			},
@@ -332,7 +332,7 @@ partition p3 values less than MAXVALUE)`)
 			"select id_1 from t where id_1 - 95 >= 0 and id_1 >= 90",
 			"IndexReader",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 10, 50)}},
+				{tableID: table.Meta().ID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 10, 50)}},
 			},
 		},
 		// PointGet in a partition
@@ -340,7 +340,7 @@ partition p3 values less than MAXVALUE)`)
 			"select * from t where id_1 = 1",
 			"Point_Get",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
+				{tableID: table.Meta().ID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
 			},
 		},
 		// BatchPointGet in a partition
@@ -348,7 +348,7 @@ partition p3 values less than MAXVALUE)`)
 			"select * from t where id_1 in (1,3,5,9)",
 			"Batch_Point_Get",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 4, 100)}},
+				{tableID: table.Meta().ID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 4, 100)}},
 			},
 		},
 	}
@@ -390,7 +390,7 @@ partition p3 values less than MAXVALUE)`)
 			"select * from t use index(idx_1) where id_1 = 1",
 			"Point_Get",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
+				{tableID: table.Meta().ID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
 			},
 		},
 		// BatchPointGet on global index
@@ -398,7 +398,7 @@ partition p3 values less than MAXVALUE)`)
 			"select * from t ignore index(primary) where id_1 in (1,3,5,9)",
 			"Batch_Point_Get",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 4, 100)}},
+				{tableID: table.Meta().ID, idxID: idx1ID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 4, 100)}},
 			},
 		},
 	}
@@ -489,21 +489,21 @@ func RunIndexUsageReporterWithClusterIndex(t *testing.T) {
 		{
 			"select id from t0 where id >= 30",
 			"TableReader",
-			[]indexStatsExpect{{testTableInfos[0].tableID, testTableInfos[0].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}}},
+			[]indexStatsExpect{{tableID: testTableInfos[0].tableID, idxID: testTableInfos[0].pkID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}}},
 		},
 		// TableReader on CommonHandle
 		{
 			"select id from t1 where id >= \"30\"",
 			"TableReader",
 			// It'll scan 76 rows according to the string order
-			[]indexStatsExpect{{testTableInfos[1].tableID, testTableInfos[1].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 76, 100)}}},
+			[]indexStatsExpect{{tableID: testTableInfos[1].tableID, idxID: testTableInfos[1].pkID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 76, 100)}}},
 		},
 		// IndexRangeScan on NonClustered PK
 		{
 			"select id from t2 where id >= \"30\"",
 			"IndexRangeScan",
 			// It'll scan 76 rows according to the string order
-			[]indexStatsExpect{{testTableInfos[2].tableID, testTableInfos[2].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 76, 100)}}},
+			[]indexStatsExpect{{tableID: testTableInfos[2].tableID, idxID: testTableInfos[2].pkID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 76, 100)}}},
 		},
 		// IndexMerge on PK and a normal Unique Key
 		{
@@ -511,9 +511,9 @@ func RunIndexUsageReporterWithClusterIndex(t *testing.T) {
 			"IndexMerge",
 			// It'll scan 76 rows according to the string order
 			[]indexStatsExpect{
-				{testTableInfos[3].tableID, testTableInfos[3].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}},
-				{testTableInfos[3].tableID, testTableInfos[3].pkID, []indexusage.Sample{indexusage.NewSample(0, 1, 5, 100)}},
-				{testTableInfos[3].tableID, testTableInfos[3].extraIdxID, []indexusage.Sample{indexusage.NewSample(1, 1, 50, 100)}},
+				{tableID: testTableInfos[3].tableID, idxID: testTableInfos[3].pkID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 70, 100)}},
+				{tableID: testTableInfos[3].tableID, idxID: testTableInfos[3].pkID, samples: []indexusage.Sample{indexusage.NewSample(0, 1, 5, 100)}},
+				{tableID: testTableInfos[3].tableID, idxID: testTableInfos[3].extraIdxID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 50, 100)}},
 			},
 		},
 		// PointGet on PKAsHandle
@@ -521,26 +521,26 @@ func RunIndexUsageReporterWithClusterIndex(t *testing.T) {
 			"select * from t0 where id = 1",
 			"Point_Get",
 			// The point get will always use smallest bucket.
-			[]indexStatsExpect{{testTableInfos[0].tableID, testTableInfos[0].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}}},
+			[]indexStatsExpect{{tableID: testTableInfos[0].tableID, idxID: testTableInfos[0].pkID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}}},
 		},
 		// PointGet on CommonHandle
 		{
 			"select * from t1 where id = \"1\"",
 			"Point_Get",
 			// The point get will always use smallest bucket.
-			[]indexStatsExpect{{testTableInfos[1].tableID, testTableInfos[1].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}}},
+			[]indexStatsExpect{{tableID: testTableInfos[1].tableID, idxID: testTableInfos[1].pkID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}}},
 		},
 		// BatchPointGet on PKAsHandle
 		{
 			"select * from t0 where id in (1,3,5,9)",
 			"Batch_Point_Get",
-			[]indexStatsExpect{{testTableInfos[0].tableID, testTableInfos[0].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 4, 100)}}},
+			[]indexStatsExpect{{tableID: testTableInfos[0].tableID, idxID: testTableInfos[0].pkID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 4, 100)}}},
 		},
 		// BatchPointGet on CommonHandle
 		{
 			"select * from t1 where id in (\"1\",\"3\",\"5\",\"9\")",
 			"Batch_Point_Get",
-			[]indexStatsExpect{{testTableInfos[1].tableID, testTableInfos[1].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 4, 100)}}},
+			[]indexStatsExpect{{tableID: testTableInfos[1].tableID, idxID: testTableInfos[1].pkID, samples: []indexusage.Sample{indexusage.NewSample(1, 1, 4, 100)}}},
 		},
 	}
 

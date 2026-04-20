@@ -14,6 +14,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser/types",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/context",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",

@@ -10,6 +10,7 @@ go_library(
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/domain",
+        "//pkg/executor",
         "//pkg/parser/mysql",
         "//pkg/testkit",
         "//pkg/testkit/mega/register",

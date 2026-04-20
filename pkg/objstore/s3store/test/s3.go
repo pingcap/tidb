@@ -604,9 +604,6 @@ func TestFileSyncedEmptyStatus(t *testing.T) {
 	require.Contains(t, err.Error(), "is empty")
 }
 
-func TestDeleteFileNoError(t *testing.T) {
-}
-
 func RunDeleteFileNoError(t *testing.T) {
 	s := CreateS3Suite(t)
 	ctx := context.Background()

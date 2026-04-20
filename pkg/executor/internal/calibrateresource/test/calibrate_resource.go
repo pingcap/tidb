@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -139,7 +140,7 @@ tiflash_proxy_tikv_server_cpu_cores_quota 20
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/calibrateresource/mockMetricsResponse"))
 	}()
 	mockData := make(map[string][][]types.Datum)
-	ctx := context.WithValue(context.Background(), "__mockMetricsTableData", mockData)
+	ctx := context.WithValue(context.Background(), executor.ContextKeyType("__mockMetricsTableData"), mockData)
 	ctx = failpoint.WithHook(ctx, func(_ context.Context, fpname string) bool {
 		return fpName == fpname
 	})

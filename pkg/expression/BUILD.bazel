@@ -145,23 +145,3 @@ go_library(
         "@org_uber_go_zap//:zap",
     ],
 )
-
-go_test(
-    name = "expression_test",
-    timeout = "short",
-    srcs = [
-        "builtin_compare_vec_generated_test.go",
-        "builtin_control_vec_generated_test.go",
-        "builtin_other_vec_generated_test.go",
-        "builtin_string_vec_generated_test.go",
-        "builtin_time_vec_generated_test.go",
-    ],
-    embed = [":expression"],
-    flaky = True,
-    shard_count = 10,
-    deps = [
-        "//pkg/parser/ast",
-        "//pkg/parser/mysql",
-        "//pkg/types",
-    ],
-)

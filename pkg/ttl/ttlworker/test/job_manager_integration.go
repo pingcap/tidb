@@ -1851,7 +1851,7 @@ func RunIterationOfRunningJob(t *testing.T) {
 	se, closeSe := sessionFactory()
 	defer closeSe()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
-	for tableID := int64(0); tableID < 100; tableID++ {
+	for tableID := range int64(100) {
 		testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
 		m.InfoSchemaCache().Tables[testTable.ID] = testTable
 

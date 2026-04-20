@@ -134,8 +134,8 @@ func RunPredicateUsage_BumpAfterOldStoredValue(t *testing.T) {
 }
 
 type testTimeCollector struct {
-	mu   sync.Mutex
 	data []time.Duration
+	mu   sync.Mutex
 }
 
 func (c *testTimeCollector) Record(d time.Duration) {
@@ -180,7 +180,7 @@ func RunDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 	for i := 1; i <= tableCount; i++ {
 		tk.MustExec(fmt.Sprintf("drop table if exists t%d", i))
 		cols := make([]string, 0, numCols)
-		for c := 0; c < numCols; c++ {
+		for c := range numCols {
 			cols = append(cols, fmt.Sprintf("c%d int", c))
 		}
 		tk.MustExec(fmt.Sprintf("create table t%d (%s)", i, strings.Join(cols, ", ")))
@@ -196,7 +196,7 @@ func RunDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 		tid := tbl.Meta().ID
 		tableIDs = append(tableIDs, tid)
 		cids := make([]int64, 0, numCols)
-		for c := 0; c < numCols; c++ {
+		for c := range numCols {
 			cids = append(cids, tbl.Meta().Columns[c].ID)
 		}
 		allCols = append(allCols, cids)
@@ -230,7 +230,7 @@ func RunDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 
 	const goroutines = 10
 	elapsedCh := make(chan time.Duration, goroutines)
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		go func(id int) {
 			gStart := time.Now()
 			dom := dec.GetDomain(id)
@@ -245,7 +245,7 @@ func RunDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 		}(g)
 	}
 	goroutineTimes := make([]time.Duration, goroutines)
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		goroutineTimes[g] = <-elapsedCh
 	}
 	avg, minVal, maxVal := calculateStats(goroutineTimes)

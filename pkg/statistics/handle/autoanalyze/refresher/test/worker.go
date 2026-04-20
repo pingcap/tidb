@@ -29,9 +29,9 @@ import (
 
 // mockAnalysisJob implements the priorityqueue.AnalysisJob interface for testing
 type mockAnalysisJob struct {
+	analyze func(statstypes.StatsHandle, sysproctrack.Tracker) error
 	tableID int64
 	weight  float64
-	analyze func(statstypes.StatsHandle, sysproctrack.Tracker) error
 }
 
 func (m *mockAnalysisJob) GetTableID() int64 { return m.tableID }

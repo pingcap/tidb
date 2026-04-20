@@ -2234,7 +2234,7 @@ func RunDurationConvertToYearFromNow(t *testing.T) {
 
 func BenchmarkFormat(b *testing.B) {
 	t1 := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := t1.DateFormat("%Y-%m-%d %H:%i:%s")
 		if err != nil {
 			b.Fatal(err)
@@ -2246,7 +2246,7 @@ func BenchmarkTimeAdd(b *testing.B) {
 	typeCtx := types.DefaultStmtNoWarningContext
 	arg1, _ := types.ParseTime(typeCtx, "2017-01-18", mysql.TypeDatetime, types.MaxFsp)
 	arg2, _, _ := types.ParseDuration(typeCtx, "12:30:59", types.MaxFsp)
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := arg1.Add(typeCtx, arg2)
 		if err != nil {
 			b.Fatal(err)
@@ -2282,7 +2282,7 @@ func BenchmarkTimeCompare(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		for _, c := range tbl {
 			c.Arg1.Compare(c.Arg2)
 		}
@@ -2291,7 +2291,7 @@ func BenchmarkTimeCompare(b *testing.B) {
 
 func benchmarkDateFormat(b *testing.B, name, str string) {
 	b.Run(name, func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			types.ParseDateFormat(str)
 		}
 	})
@@ -2308,7 +2308,7 @@ func BenchmarkParseDateFormat(b *testing.B) {
 
 func benchmarkDatetimeFormat(b *testing.B, name string, ctx types.Context, str string) {
 	b.Run(name, func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			_, err := types.ParseDatetime(ctx, str)
 			if err != nil {
 				b.Fatal(err)
@@ -2325,7 +2325,7 @@ func BenchmarkParseDatetimeFormat(b *testing.B) {
 
 func benchmarkStrToDate(b *testing.B, name string, ctx types.Context, str, format string) {
 	b.Run(name, func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for range b.N {
 			var t types.Time
 			t.StrToDate(ctx, str, format)
 		}

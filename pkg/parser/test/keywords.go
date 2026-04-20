@@ -35,10 +35,6 @@ func RunKeywords(t *testing.T) {
 	require.Equal(t, found, true, "TiDBKeyword ADMIN is part of the list")
 }
 
-func TestKeywordsLength(t *testing.T) {
-	require.Equal(t, 678, len(parser.Keywords))
-}
-
 func RunKeywordsLength(t *testing.T) {
 	require.Equal(t, 678, len(parser.Keywords))
 

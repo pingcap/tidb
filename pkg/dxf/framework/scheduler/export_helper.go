@@ -19,3 +19,12 @@ package scheduler
 
 // ExportNewScheduler - source not found
 func ExportNewScheduler() any { return nil }
+
+// GetRunningTaskCnt returns the current running scheduler count for tests.
+func (sm *Manager) GetRunningTaskCnt() int { return sm.getSchedulerCount() }
+
+// DelRunningTask removes a running scheduler for tests.
+func (sm *Manager) DelRunningTask(taskID int64) { sm.delScheduler(taskID) }
+
+// DoCleanupRoutine runs one cleanup pass for tests.
+func (sm *Manager) DoCleanupRoutine() { sm.doCleanupTask() }

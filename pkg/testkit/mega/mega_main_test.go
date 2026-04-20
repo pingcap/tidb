@@ -33,8 +33,8 @@ var (
 	flagMegaRun  = flag.String("mega.run", "", "Run tests matching pattern (e.g., 'ddl/*', '*/GetTimeZone')")
 	flagMegaList = flag.Bool("mega.list", false, "List all registered tests and exit")
 	// Legacy -ut flag removed, use "mega.test run" instead
-	flagMegaP      = flag.Int("mega.p", 8, "Number of parallel workers in orchestrator mode")
-	flagMegaTimeout  = flag.Duration("mega.timeout", 3*time.Minute, "Per-test timeout in orchestrator mode")
+	flagMegaP       = flag.Int("mega.p", 8, "Number of parallel workers in orchestrator mode")
+	flagMegaTimeout = flag.Duration("mega.timeout", 3*time.Minute, "Per-test timeout in orchestrator mode")
 )
 
 var helpCalled = false
@@ -542,8 +542,6 @@ func isRegexSpecial(ch rune) bool {
 		ch == '{' || ch == '}' || ch == '^' || ch == '$' || ch == '\\'
 }
 
-
-
 // Subcommand constants.
 const (
 	cmdHelp = "help"
@@ -554,11 +552,11 @@ const (
 
 // knownSubcommands is the set of recognized subcommands.
 var knownSubcommands = map[string]bool{
-	cmdHelp: true,
-	cmdList: true,
-	cmdRun:  true,
-	cmdTest: true,
-	"-h":    true,
+	cmdHelp:  true,
+	cmdList:  true,
+	cmdRun:   true,
+	cmdTest:  true,
+	"-h":     true,
 	"--help": true,
 }
 
@@ -613,7 +611,6 @@ func HandleCLI() (shouldRunTests bool, exitCode int) {
 			RunOrchestrator()
 			return false, 1 // RunOrchestrator calls os.Exit
 		}
-		return false, 0
 
 	case cmdTest:
 		// Alias for 'run'

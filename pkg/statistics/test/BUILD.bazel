@@ -4,6 +4,7 @@ go_library(
     name = "test",
     srcs = [
         "integration.go",
+        "main.go",
         "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/test",

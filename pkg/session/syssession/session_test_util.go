@@ -16,6 +16,15 @@
 
 package syssession
 
+// WithSuppressAssert temporarily suppresses internal asserts for tests.
+func WithSuppressAssert(fn func()) {
+	defer func() {
+		suppressAssertInTest = false
+	}()
+	suppressAssertInTest = true
+	fn()
+}
+
 // NewSessionForTest creates a new session for test.
 func NewSessionForTest(sctx SessionContext) (*Session, error) {
 	se := &Session{}

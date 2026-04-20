@@ -151,10 +151,10 @@ func buildRepresentativeConditions(names []colPredicates) []string {
 		}
 	}
 
-	for i := 0; i < len(predicates); i++ {
-		for j := i + 1; j < len(predicates); j++ {
+	for i := range predicates {
+		for _, rightPredicates := range predicates[i+1:] {
 			for _, left := range predicates[i] {
-				for _, right := range predicates[j] {
+				for _, right := range rightPredicates {
 					addCondition(left, right)
 				}
 			}

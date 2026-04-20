@@ -706,8 +706,9 @@ func RunHeartBeatErrorNotBlockOthers(t *testing.T) {
 
 	now = now.Add(time.Hour)
 	require.Error(t, m.UpdateHeartBeatForTask(context.Background(), se, now, m.GetRunningTasks()[0]))
-	for i := 1; i < 4; i++ {
-		require.NoError(t, m.UpdateHeartBeatForTask(context.Background(), se, now, m.GetRunningTasks()[i]))
+	for i := range 3 {
+		idx := i + 1
+		require.NoError(t, m.UpdateHeartBeatForTask(context.Background(), se, now, m.GetRunningTasks()[idx]))
 	}
 
 	now = now.Add(time.Hour)

@@ -14,8 +14,32 @@
 
 package taskexecutor
 
+import (
+	"testing"
+	"time"
+)
+
 // Export helper functions for mega test framework
 // This file exports internal symbols needed by test packages
 
 // ExportNewTaskExecutor - source not found
 func ExportNewTaskExecutor() any { return nil }
+
+// ReduceCheckInterval lowers polling intervals for tests and restores them on cleanup.
+func ReduceCheckInterval(t *testing.T) {
+	t.Helper()
+
+	origTaskCheckInterval := TaskCheckInterval
+	origSubtaskCheckInterval := SubtaskCheckInterval
+	origMaxSubtaskCheckInterval := MaxSubtaskCheckInterval
+
+	TaskCheckInterval = 100 * time.Millisecond
+	SubtaskCheckInterval = 100 * time.Millisecond
+	MaxSubtaskCheckInterval = 200 * time.Millisecond
+
+	t.Cleanup(func() {
+		TaskCheckInterval = origTaskCheckInterval
+		SubtaskCheckInterval = origSubtaskCheckInterval
+		MaxSubtaskCheckInterval = origMaxSubtaskCheckInterval
+	})
+}
