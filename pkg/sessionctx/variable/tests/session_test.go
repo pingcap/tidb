@@ -875,6 +875,8 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 }
 
 func TestSetTiDBCloudStorageURI(t *testing.T) {
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+
 	vars := variable.NewSessionVars(nil)
 	mock := variable.NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
