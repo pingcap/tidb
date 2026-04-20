@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -85,6 +86,45 @@ func TestPagingResponseReadBytes(t *testing.T) {
 		},
 	}
 	require.Equal(t, uint64(1_048_576), pagingResponseReadBytes(resp))
+}
+
+func TestRUEMAConcurrentObserveAndPredict(t *testing.T) {
+	// One EMA per copIterator is shared by multiple workers, so Observe and
+	// Predict must be race-free. Run with `go test -race` to exercise the
+	// mutex; this test guarantees no panic/deadlock and that readiness is
+	// eventually observed from a reader goroutine.
+	e := newRUEMA()
+	const writers = 8
+	const iters = 200
+	done := make(chan struct{})
+	go func() {
+		// Reader: hammer Predict/IsReady while writers fan in samples.
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				_ = e.Predict()
+				_ = e.IsReady()
+			}
+		}
+	}()
+	base := time.Now()
+	var wg sync.WaitGroup
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				e.Observe(uint64(100_000+id*1_000+i),
+					base.Add(time.Duration(i)*time.Millisecond))
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(done)
+	require.True(t, e.IsReady(), "after N*M observations the EMA must be ready")
+	require.Greater(t, e.Predict(), uint64(0), "prediction must be positive after observations")
 }
 
 func TestRUEMANonMonotonicTime(t *testing.T) {

@@ -16,6 +16,7 @@ package copr
 
 import (
 	"math"
+	"sync"
 	"time"
 )
 
@@ -30,9 +31,12 @@ const ruEMAMinSamples = 2
 // ruEMA is a time-aware EMA over per-RPC MVCC read bytes, weighting older
 // samples by exp(-Δt/τ) so long gaps decay stale samples automatically.
 //
-// Not safe for concurrent use; each copTask's paging loop is serialized
-// through one worker.
+// One EMA is shared across all copTasks of a single copIterator (a logical
+// coprocessor request), so multiple workers may Observe/Predict concurrently.
+// Access is serialized by an internal mutex; contention is a non-issue in
+// practice because updates fire at most once per paging RPC per worker.
 type ruEMA struct {
+	mu        sync.Mutex
 	tau       time.Duration
 	value     float64
 	lastObsAt time.Time
@@ -46,6 +50,8 @@ func newRUEMA() *ruEMA {
 
 // Observe folds a new read-bytes sample into the EMA with time-aware decay.
 func (e *ruEMA) Observe(bytes uint64, now time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	x := float64(bytes)
 	if e.samples == 0 {
 		e.value = x
@@ -64,12 +70,16 @@ func (e *ruEMA) Observe(bytes uint64, now time.Time) {
 
 // IsReady reports whether enough samples have been seen to trust Predict.
 func (e *ruEMA) IsReady() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.samples >= ruEMAMinSamples
 }
 
 // Predict returns the current EMA estimate, or 0 before readiness.
 func (e *ruEMA) Predict() uint64 {
-	if !e.IsReady() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.samples < ruEMAMinSamples {
 		return 0
 	}
 	if e.value < 0 {

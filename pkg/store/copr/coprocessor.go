@@ -228,6 +228,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
+		ema:              newRUEMA(),
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -310,8 +311,6 @@ type copTask struct {
 	pagingSize      uint64
 	pagingSizeBytes uint64
 	pagingTaskIdx   uint32
-	// ema refines the RC paging pre-charge from observed per-RPC read bytes.
-	ema *ruEMA
 
 	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 	requestSource  util.RequestSource
@@ -720,7 +719,6 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				busyThreshold:     req.StoreBusyThreshold,
 				skipBuckets:       opt.skipBuckets,
 				exceedsBoundRetry: opt.exceedsBoundRetry,
-				ema:               newRUEMA(),
 			}
 			if opt.skipBuckets {
 				task.buildLocStartKey = append([]byte(nil), loc.Location.StartKey...)
@@ -925,7 +923,6 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 			storeType:    req.StoreType,
 			storeAddr:    addr,
 			RowCountHint: -1,
-			ema:          newRUEMA(),
 		})
 	}
 	return tasks, nil
@@ -1028,6 +1025,11 @@ type copIterator struct {
 
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
+
+	// ema refines the RC paging pre-charge from observed per-RPC read bytes.
+	// One EMA per copIterator (logical scan) so samples from every copTask
+	// under the same request converge a single estimate.
+	ema *ruEMA
 }
 
 type liteCopIteratorWorker struct {
@@ -1058,6 +1060,10 @@ type copIteratorWorker struct {
 	storeBatchedNum         *atomic.Uint64
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
+
+	// ema is a shared pointer into the owning copIterator's EMA so every
+	// worker updates the same learned estimate.
+	ema *ruEMA
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -1252,6 +1258,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		storeBatchedNum:         &it.storeBatchedNum,
 		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
 		stats:                   it.stats,
+		ema:                     it.ema,
 	}
 }
 
@@ -1723,8 +1730,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	// Supply a learned RC pre-charge hint when the per-logical-scan EMA has
 	// converged. Until it has, leave PredictedReadBytes at 0 so PD falls back
 	// to PagingSizeBytes (the worst-case cap) as the pre-charge basis.
-	if task.ema.IsReady() {
-		req.PredictedReadBytes = task.ema.Predict()
+	if worker.ema.IsReady() {
+		req.PredictedReadBytes = worker.ema.Predict()
 	}
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
@@ -1883,13 +1890,11 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	}
 	if result != nil && len(result.remains) > 0 {
 		// If there is region error or lock error, keep the paging size and retry.
-		// Preserve the EMA state so the learned estimate survives the retry
-		// split - the remain tasks are a continuation of the same logical
-		// scan, just fanned back out to updated regions.
+		// The EMA is owned by the copIterator, so remain tasks pick it up via
+		// the same worker and no per-task propagation is needed.
 		for _, remainedTask := range result.remains {
 			remainedTask.pagingSize = task.pagingSize
 			remainedTask.pagingSizeBytes = task.pagingSizeBytes
-			remainedTask.ema = task.ema
 		}
 		return result, nil
 	}
@@ -1904,12 +1909,12 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
 		// Classify before Observe so the counter reflects the regime that
 		// gated the just-completed RPC's pre-charge, not the post-update one.
-		if task.ema.IsReady() {
+		if worker.ema.IsReady() {
 			copr_metrics.EMAObservationReady.Inc()
 		} else {
 			copr_metrics.EMAObservationCold.Inc()
 		}
-		task.ema.Observe(readBytes, time.Now())
+		worker.ema.Observe(readBytes, time.Now())
 	}
 
 	// calculate next ranges and grow the paging size
