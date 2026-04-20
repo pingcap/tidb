@@ -38,24 +38,32 @@ func TestGCStats(t *testing.T) {
 
 	testKit.MustExec("alter table t drop index idx")
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("12"))
+	// stats_buckets is empty after analyze: saveBucketsToStorage now writes
+	// one row per histogram into mysql.stats_data (type IN (1, 2) for col/idx
+	// buckets) and unconditionally purges the matching legacy stats_buckets
+	// row. So the per-histogram count moves from stats_buckets to stats_data.
+	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.stats_data where type in (1, 2)").Check(testkit.Rows("4"))
 	h := dom.StatsHandle()
 	ddlLease := time.Duration(0)
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("3"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("9"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.stats_data where type in (1, 2)").Check(testkit.Rows("3"))
 
 	testKit.MustExec("alter table t drop index idx_a")
 	testKit.MustExec("alter table t drop column a")
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("1"))
-	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("3"))
+	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.stats_data where type in (1, 2)").Check(testkit.Rows("1"))
 
 	testKit.MustExec("drop table t")
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+	testKit.MustQuery("select count(*) from mysql.stats_data where type in (1, 2)").Check(testkit.Rows("0"))
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
 }
@@ -74,24 +82,30 @@ func TestGCPartition(t *testing.T) {
 		testKit.MustExec("analyze table t with 0 topn")
 
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
+		// See TestGCStats: bucket data now lives in mysql.stats_data (one row
+		// per histogram) instead of mysql.stats_buckets (one row per bucket).
+		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+		testKit.MustQuery("select count(*) from mysql.stats_data where type in (1, 2)").Check(testkit.Rows("6"))
 		h := dom.StatsHandle()
 		ddlLease := time.Duration(0)
 		testKit.MustExec("alter table t drop index idx")
 		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
+		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+		testKit.MustQuery("select count(*) from mysql.stats_data where type in (1, 2)").Check(testkit.Rows("4"))
 
 		testKit.MustExec("alter table t drop column b")
 		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
-		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("5"))
+		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+		testKit.MustQuery("select count(*) from mysql.stats_data where type in (1, 2)").Check(testkit.Rows("2"))
 
 		testKit.MustExec("drop table t")
 		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("2"))
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
+		testKit.MustQuery("select count(*) from mysql.stats_data where type in (1, 2)").Check(testkit.Rows("0"))
 		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
 	})

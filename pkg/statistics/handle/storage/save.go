@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -37,6 +38,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
+
+// statsDataBucketType returns the stats_data.type value for a histogram given
+// its is_index flag (1 for index histograms, 0 for column histograms).
+func statsDataBucketType(isIndex int) int {
+	if isIndex != 0 {
+		return metadef.StatsDataTypeIdxBucket
+	}
+	return metadef.StatsDataTypeColBucket
+}
 
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
@@ -72,45 +82,57 @@ func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hist
 	return nil
 }
 
+// saveBucketsToStorage writes a histogram's bucket data into mysql.stats_data
+// as a single proto-marshaled row keyed by (table_id, type, hist_id), where
+// type discriminates column-bucket (1) from index-bucket (2). It then
+// unconditionally purges the matching legacy mysql.stats_buckets row in the
+// same session so a reader never sees both rows simultaneously.
+//
+// The proto codec is the existing statistics.HistogramToProto helper used by
+// the analyze coprocessor protocol; bounds must already be in blob form, so
+// each bound is converted via convertBoundToBlob first (mirroring the legacy
+// per-bucket save path).
+//
+// Note: a previous implementation returned an "affected_rows == 1 -> purge,
+// 2 -> skip" optimization to avoid the no-op DELETE in the steady state; that
+// optimization was deferred. See plan-stats-buckets-migration.md (Decision
+// Log) for the affected_rows = 0 corner case that motivates the conservative
+// always-DELETE choice.
 func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (err error) {
 	if hg == nil {
 		return
 	}
 	sc := sctx.GetSessionVars().StmtCtx
-	for i := 0; i < len(hg.Buckets); {
-		end := min(i+batchInsertSize, len(hg.Buckets))
-		sql := new(strings.Builder)
-		sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
-		for j := i; j < end; j++ {
-			bucket := hg.Buckets[j]
-			count := bucket.Count
-			if j > 0 {
-				count -= hg.Buckets[j-1].Count
-			}
-			var upperBound types.Datum
-			upperBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetUpper(j))
-			if err != nil {
-				return
-			}
-			var lowerBound types.Datum
-			lowerBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetLower(j))
-			if err != nil {
-				return
-			}
-			val := sqlescape.MustEscapeSQL("(%?, %?, %?, %?, %?, %?, %?, %?, %?)", tableID, isIndex, hg.ID, j, count, bucket.Repeat, lowerBound.GetBytes(), upperBound.GetBytes(), bucket.NDV)
-			if j > i {
-				val = "," + val
-			}
-			if j > i && sql.Len()+len(val) > maxInsertLength {
-				end = j
-				break
-			}
-			sql.WriteString(val)
-		}
-		i = end
-		if _, err = util.Exec(sctx, sql.String()); err != nil {
+	// Convert each bucket bound into blob form so HistogramToProto serializes
+	// them as raw bytes (the proto's LowerBound/UpperBound are non-nullable
+	// bytes; native-typed datums would yield empty bytes).
+	blobHg := statistics.NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, types.NewFieldType(mysql.TypeBlob), hg.Len(), hg.TotColSize)
+	blobHg.Correlation = hg.Correlation
+	for j := 0; j < hg.Len(); j++ {
+		var upperBound, lowerBound types.Datum
+		upperBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetUpper(j))
+		if err != nil {
 			return
 		}
+		lowerBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetLower(j))
+		if err != nil {
+			return
+		}
+		blobHg.AppendBucketWithNDV(&lowerBound, &upperBound, hg.Buckets[j].Count, hg.Buckets[j].Repeat, hg.Buckets[j].NDV)
+	}
+	blob, err := statistics.HistogramToProto(blobHg).Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if _, err = util.Exec(sctx,
+		"insert into mysql.stats_data (table_id, type, hist_id, value) values (%?, %?, %?, %?) on duplicate key update value = values(value)",
+		tableID, statsDataBucketType(isIndex), hg.ID, blob); err != nil {
+		return
+	}
+	if _, err = util.Exec(sctx,
+		"delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?",
+		tableID, isIndex, hg.ID); err != nil {
+		return
 	}
 	return
 }
@@ -293,9 +315,9 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, results.StatsVer, hg.Correlation); err != nil {
 				return 0, err
 			}
-			if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
-				return 0, err
-			}
+			// saveBucketsToStorage upserts into stats_data and unconditionally
+			// deletes the matching legacy stats_buckets row, so a separate
+			// pre-write delete here would be redundant.
 			err = saveBucketsToStorage(sctx, tableID, result.IsIndex, hg)
 			if err != nil {
 				return 0, err
@@ -358,9 +380,9 @@ func SaveColOrIdxStatsToStorage(
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, hg.Correlation); err != nil {
 		return 0, err
 	}
-	if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
-		return 0, err
-	}
+	// saveBucketsToStorage upserts into stats_data and unconditionally deletes
+	// the matching legacy stats_buckets row, so a pre-write delete here is
+	// redundant.
 	err = saveBucketsToStorage(sctx, tableID, isIndex, hg)
 	if err != nil {
 		return 0, err
@@ -480,13 +502,22 @@ func InsertColStats2KV(
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		// There must be only one bucket for this new column and the value is the default value.
+		// Build a single-bucket histogram representing the default value, then
+		// proto-marshal it for storage in stats_data. INSERT IGNORE preserves
+		// the legacy "create-if-absent" semantics: if a real ANALYZE has
+		// already populated the histogram, the PK collision is a silent no-op
+		// and the existing histogram is preserved.
+		boundDatum := types.NewBytesDatum(value.GetBytes())
+		defaultHg := statistics.NewHistogram(colInfo.ID, 1, 0, 0, types.NewFieldType(mysql.TypeBlob), 1, int64(len(value.GetBytes()))*count)
+		defaultHg.AppendBucket(&boundDatum, &boundDatum, count, count)
+		blob, err := statistics.HistogramToProto(defaultHg).Marshal()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert ignore into mysql.stats_buckets
-				(table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound)
-			values (%?, 0, %?, 0, %?, %?, %?, %?)`,
-			physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes(),
+			`insert ignore into mysql.stats_data (table_id, type, hist_id, value) values (%?, %?, %?, %?)`,
+			physicalID, metadef.StatsDataTypeColBucket, colInfo.ID, blob,
 		); err != nil {
 			return 0, errors.Trace(err)
 		}

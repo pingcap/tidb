@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/slice"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -578,42 +580,65 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 	return selectPrefix + rangeStartClause + rangeEndClause + orderSuffix
 }
 
-// getTablesWithBucketsInRange checks which tables in the given range have buckets.
-// Returns a map where keys are table IDs that have bucket entries.
+// getTablesWithBucketsInRange checks which tables in the given range have
+// index buckets. Returns a map where keys are table IDs that have at least
+// one index bucket row in either mysql.stats_data (the new clustered-PK
+// storage) or mysql.stats_buckets (the legacy storage). Two separate queries
+// rather than a UNION because the legacy probe can be skipped entirely once
+// the migration is steady-state on a given cluster (the new query covers all
+// tables); for now we always run both for safety.
 func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
-	// Query to find table_ids that have buckets in the given range
+	tablesWithBuckets := make(map[int64]struct{})
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+
+	// First scan: stats_data with type = idx-bucket. Each row represents a full
+	// histogram; tables in this set have already been migrated.
+	sqlNew := "select HIGH_PRIORITY distinct table_id from mysql.stats_data" +
+		" where type = " + strconv.Itoa(metadef.StatsDataTypeIdxBucket) +
+		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
+		" and table_id < " + strconv.FormatInt(tableRange[1], 10)
+	if err := scanTableIDs(sctx, ctx, sqlNew, tablesWithBuckets); err != nil {
+		return nil, err
+	}
+
+	// Second scan: legacy stats_buckets. Picks up any table whose bucket data
+	// has not yet been re-written to stats_data on this upgraded cluster.
 	// TODO: Figure out if HIGH_PRIORITY is working as intended here.
-	sql := "select /*+ USE_INDEX(stats_buckets, tbl) */ HIGH_PRIORITY distinct table_id from mysql.stats_buckets" +
+	sqlLegacy := "select /*+ USE_INDEX(stats_buckets, tbl) */ HIGH_PRIORITY distinct table_id from mysql.stats_buckets" +
 		" where is_index = 1" +
 		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
 		" and table_id < " + strconv.FormatInt(tableRange[1], 10)
+	if err := scanTableIDs(sctx, ctx, sqlLegacy, tablesWithBuckets); err != nil {
+		return nil, err
+	}
 
+	return tablesWithBuckets, nil
+}
+
+// scanTableIDs runs the given DISTINCT-table_id SQL and inserts the results
+// into out. Used by getTablesWithBucketsInRange to merge the new and legacy
+// scans.
+func scanTableIDs(sctx sessionctx.Context, ctx context.Context, sql string, out map[int64]struct{}) error {
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
-	tablesWithBuckets := make(map[int64]struct{})
-
 	for {
 		err := rc.Next(ctx, req)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
 			break
 		}
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			tableID := row.GetInt64(0)
-			tablesWithBuckets[tableID] = struct{}{}
+			out[row.GetInt64(0)] = struct{}{}
 		}
 	}
-
-	return tablesWithBuckets, nil
+	return nil
 }
 
 func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
@@ -678,7 +703,11 @@ func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMem
 	return nil
 }
 
-func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
+// initStatsBuckets4Chunk processes a chunk of legacy mysql.stats_buckets rows
+// (one row per bucket). When skipPair returns true for a (table_id, hist_id)
+// pair, those rows are dropped — used by the dual-scan loader to skip indexes
+// already covered by the new mysql.stats_data scan.
+func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, skipPair func(tableID, histID int64) bool) {
 	var table *statistics.Table
 	var (
 		hasErr        bool
@@ -687,6 +716,9 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, histID := row.GetInt64(0), row.GetInt64(1)
+		if skipPair != nil && skipPair(tableID, histID) {
+			continue
+		}
 		if table == nil || table.PhysicalID != tableID {
 			if table != nil {
 				table.SetAllIndexFullLoadForBootstrap()
@@ -716,6 +748,70 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 	}
 	if hasErr {
 		logutil.BgLogger().Error("failed to convert datum for at least one histogram bucket", zap.Int64("table ID", failedTableID), zap.Int64("column ID", failedHistID))
+	}
+}
+
+// initStatsBuckets4ChunkFromStatsData processes a chunk of mysql.stats_data
+// rows (one row per histogram, with all buckets packed into a proto-marshaled
+// blob). For each row it decodes the blob and appends every bucket to the
+// corresponding index histogram in one shot. Tracks the seen (table_id,
+// hist_id) pairs in seenPairs so the legacy stats_buckets scan that follows
+// can skip them.
+func (*Handle) initStatsBuckets4ChunkFromStatsData(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, seenPairs map[int64]map[int64]struct{}) {
+	var table *statistics.Table
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		tableID, histID := row.GetInt64(0), row.GetInt64(1)
+		blob := row.GetBytes(2)
+		if seenPairs != nil {
+			perTable, ok := seenPairs[tableID]
+			if !ok {
+				perTable = make(map[int64]struct{})
+				seenPairs[tableID] = perTable
+			}
+			perTable[histID] = struct{}{}
+		}
+		if table == nil || table.PhysicalID != tableID {
+			if table != nil {
+				table.SetAllIndexFullLoadForBootstrap()
+				cache.Put(table.PhysicalID, table)
+			}
+			var ok bool
+			table, ok = cache.Get(tableID)
+			if !ok {
+				continue
+			}
+			table = table.CopyAs(statistics.AllDataWritable)
+		}
+		index := table.GetIdx(histID)
+		if index == nil {
+			continue
+		}
+		var protoHg tipb.Histogram
+		if err := protoHg.Unmarshal(blob); err != nil {
+			logutil.BgLogger().Error("failed to unmarshal stats_data bucket blob",
+				zap.Int64("table_id", tableID), zap.Int64("hist_id", histID), zap.Error(err))
+			continue
+		}
+		// HistogramFromProto produces a histogram with TypeBlob/BytesDatum
+		// bounds — exactly the shape AppendBucketWithNDV expects below for
+		// index buckets (the legacy reader at initStatsBuckets4Chunk also
+		// constructs BytesDatum bounds for index histograms). The proto's
+		// per-bucket Count is the cumulative running total (same convention
+		// as in-memory statistics.Histogram), not a per-bucket delta as the
+		// legacy stats_buckets storage uses, so it can be passed straight
+		// through to AppendBucketWithNDV without re-summing.
+		parsed := statistics.HistogramFromProto(&protoHg)
+		hist := &index.Histogram
+		for i := 0; i < parsed.Len(); i++ {
+			bucket := parsed.Buckets[i]
+			lower := *parsed.GetLower(i)
+			upper := *parsed.GetUpper(i)
+			hist.AppendBucketWithNDV(&lower, &upper, bucket.Count, bucket.Repeat, bucket.NDV)
+		}
+	}
+	if table != nil {
+		table.SetAllIndexFullLoadForBootstrap()
+		cache.Put(table.PhysicalID, table)
 	}
 }
 
@@ -760,15 +856,37 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 }
 
 // initStatsBucketsByPagingWithSCtx contains the core business logic for initStatsBucketsByPaging.
-// This method preserves git blame history by keeping the original logic intact.
+// First scans mysql.stats_data (the new clustered-PK storage) for the table
+// range, decoding each blob into the corresponding index histogram. Then
+// scans the legacy mysql.stats_buckets for any indexes whose (table_id,
+// hist_id) pair was not covered by the first scan — preserves the existing
+// per-bucket-row parsing for pre-migration data on upgraded clusters.
 func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task) error {
-	sql := genInitStatsBucketsSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
-	rc, err := util.Exec(sctx, sql)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	seenPairs := make(map[int64]map[int64]struct{})
+
+	// Scan 1: stats_data (one row per histogram, blob-encoded buckets).
+	sqlNew := genInitStatsBucketsSQLForIndexesFromStatsData([2]int64{task.StartTid, task.EndTid})
+	if err := h.scanInitStatsBucketsFromStatsData(sctx, ctx, cache, sqlNew, seenPairs); err != nil {
+		return err
+	}
+
+	// Scan 2: legacy stats_buckets (one row per bucket). Skip pairs already
+	// loaded from stats_data.
+	sqlLegacy := genInitStatsBucketsSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
+	skip := func(tableID, histID int64) bool {
+		perTable, ok := seenPairs[tableID]
+		if !ok {
+			return false
+		}
+		_, ok = perTable[histID]
+		return ok
+	}
+	rc, err := util.Exec(sctx, sqlLegacy)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -779,9 +897,46 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsBuckets4Chunk(cache, iter)
+		h.initStatsBuckets4Chunk(cache, iter, skip)
 	}
 	return nil
+}
+
+// scanInitStatsBucketsFromStatsData runs the stats_data scan portion of the
+// dual-table bucket loader. Records every (table_id, hist_id) it loads in
+// seenPairs so the subsequent legacy scan can skip them.
+func (h *Handle) scanInitStatsBucketsFromStatsData(sctx sessionctx.Context, ctx context.Context, cache statstypes.StatsCache, sql string, seenPairs map[int64]map[int64]struct{}) error {
+	rc, err := util.Exec(sctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rc.Next(ctx, req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		h.initStatsBuckets4ChunkFromStatsData(cache, iter, seenPairs)
+	}
+	return nil
+}
+
+// genInitStatsBucketsSQLForIndexesFromStatsData returns the SQL that loads
+// every index-bucket row (type = idx-bucket) from mysql.stats_data within the
+// given table-id range, ordered by table_id so the chunk loader can group
+// per-table work without re-fetching cache entries.
+func genInitStatsBucketsSQLForIndexesFromStatsData(tableRange [2]int64) string {
+	intest.Assert(tableRange[0] < tableRange[1], "invalid table range")
+	return "select HIGH_PRIORITY table_id, hist_id, value from mysql.stats_data" +
+		" where type = " + strconv.Itoa(metadef.StatsDataTypeIdxBucket) +
+		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
+		" and table_id < " + strconv.FormatInt(tableRange[1], 10) +
+		" order by table_id"
 }
 
 func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
