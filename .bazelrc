@@ -26,4 +26,9 @@ test --test_env=HTTPS_PROXY --test_env=https_proxy
 test --test_env=HTTP_PROXY --test_env=http_proxy
 test:race --test_timeout=1200,6000,18000,72000
 
+build:ci --build_event_publish_all_actions
+test:ci --build_event_publish_all_actions
+build:ci --experimental_build_event_upload_strategy=fully_async
+test:ci --experimental_build_event_upload_strategy=fully_async
+
 try-import /data/bazel
