@@ -40,8 +40,6 @@ type tableResultWriter struct {
 	oldRow  []types.Datum
 	newRow  []types.Datum
 	touched []bool
-	// prevTouched caches touched indexes from previous update row.
-	prevTouched []int
 
 	stats *mvDeltaMergeAggWriterStats
 }
@@ -149,7 +147,6 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 		oldRow:             make([]types.Datum, len(writableCols)),
 		newRow:             make([]types.Datum, len(writableCols)),
 		touched:            make([]bool, len(writableCols)),
-		prevTouched:        make([]int, 0, len(aggWritableIDs)),
 	}, nil
 }
 
@@ -336,10 +333,7 @@ func (w *tableResultWriter) buildUpdateRows(result *ChunkResult, rowIdx int) {
 }
 
 func (w *tableResultWriter) buildTouchedFromBitmap(updateTouchedBitmap []uint8, updateTouchedStride, updateOrdinal int) {
-	for _, idx := range w.prevTouched {
-		w.touched[idx] = false
-	}
-	w.prevTouched = w.prevTouched[:0]
+	clear(w.touched)
 
 	offset := updateOrdinal * updateTouchedStride
 	rowBits := updateTouchedBitmap[offset : offset+updateTouchedStride]
@@ -349,7 +343,6 @@ func (w *tableResultWriter) buildTouchedFromBitmap(updateTouchedBitmap []uint8, 
 			bitPos := (byteIdx << 3) + bitInByte
 			idx := w.aggWritableIDs[bitPos]
 			w.touched[idx] = true
-			w.prevTouched = append(w.prevTouched, idx)
 			b &= b - 1
 		}
 	}
