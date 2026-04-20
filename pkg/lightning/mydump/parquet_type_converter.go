@@ -447,14 +447,12 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 // newInt96 is a utility function to create a parquet.Int96 for test,
 // where microseconds is the number of microseconds since Unix epoch.
 func newInt96(microseconds int64) parquet.Int96 {
-	dayOffset := microseconds / microsPerDay
-	rem := microseconds % microsPerDay
-	if rem < 0 {
-		dayOffset--
-		rem += microsPerDay
-	}
+	// INT96 stores the time-of-day as a non-negative field, so pre-epoch
+	// timestamps must be split with floor division instead of Go's truncation.
+	dayOffset := floorDivInt64(microseconds, microsPerDay)
+	microsOfDay := floorModInt64(microseconds, microsPerDay)
 	day := uint32(dayOffset + julianDayOfUnixEpoch)
-	nanoOfDay := uint64(rem * int64(time.Microsecond))
+	nanoOfDay := uint64(microsOfDay * int64(time.Microsecond))
 	var b [12]byte
 	binary.LittleEndian.PutUint64(b[:8], nanoOfDay)
 	binary.LittleEndian.PutUint32(b[8:], day)
