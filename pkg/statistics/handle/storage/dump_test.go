@@ -76,7 +76,8 @@ func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
 	}
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
-	tk.MustExec("delete from mysql.stats_buckets"); tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
+	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
 	tk.MustExec("delete from mysql.stats_fm_sketch")
 	tk.MustExec("delete from mysql.stats_data")
 	tk.MustExec("delete from mysql.column_stats_usage")
@@ -183,7 +184,8 @@ func TestLoadGlobalStats(t *testing.T) {
 	// remove all statistics
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
-	tk.MustExec("delete from mysql.stats_buckets"); tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
+	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
 	dom.StatsHandle().Clear()
 	clearedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 0, len(clearedStats.Partitions))
@@ -251,7 +253,8 @@ func TestLoadPartitionStats(t *testing.T) {
 	// remove all statistics
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
-	tk.MustExec("delete from mysql.stats_buckets"); tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
+	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
 	dom.StatsHandle().Clear()
 	clearedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 0, len(clearedStats.Partitions))
@@ -291,7 +294,8 @@ func TestLoadPredicateColumns(t *testing.T) {
 	// remove all statistics
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
-	tk.MustExec("delete from mysql.stats_buckets"); tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
+	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
 	tk.MustExec("delete from mysql.column_stats_usage")
 	h.Clear()
 
@@ -380,7 +384,8 @@ PARTITION BY RANGE ( a ) (
 
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
-	tk.MustExec("delete from mysql.stats_buckets"); tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
+	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_data where type in (1, 2)")
 	h.Clear()
 
 	err = h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0)
