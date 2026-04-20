@@ -35,13 +35,24 @@ func installSubscribeSupportForRandomN(c *fakeCluster, n int) {
 }
 
 func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
+	t.Helper()
+	const (
+		quietWindow = 500 * time.Millisecond
+		timeout     = 30 * time.Second
+		checkEvery  = 50 * time.Millisecond
+	)
+
 	last := len(sub.Events())
-	time.Sleep(100 * time.Microsecond)
+	stableSince := time.Now()
 	require.Eventually(t, func() bool {
-		noProg := len(sub.Events()) == last
-		last = len(sub.Events())
-		return noProg
-	}, 3*time.Second, 100*time.Millisecond)
+		current := len(sub.Events())
+		if current != last {
+			last = current
+			stableSince = time.Now()
+			return false
+		}
+		return time.Since(stableSince) >= quietWindow
+	}, timeout, checkEvery)
 }
 
 func TestSubBasic(t *testing.T) {
