@@ -796,10 +796,10 @@ func (*Handle) initStatsBuckets4ChunkFromStatsData(cache statstypes.StatsCache, 
 		// bounds — exactly the shape AppendBucketWithNDV expects below for
 		// index buckets (the legacy reader at initStatsBuckets4Chunk also
 		// constructs BytesDatum bounds for index histograms). The proto's
-		// per-bucket Count is the cumulative running total (same convention
-		// as in-memory statistics.Histogram), not a per-bucket delta as the
-		// legacy stats_buckets storage uses, so it can be passed straight
-		// through to AppendBucketWithNDV without re-summing.
+		// per-bucket Count is a delta (same convention as legacy
+		// stats_buckets), so pass it straight through; CalcPreScalar in
+		// initStatsBucketsAndCalcPreScalar accumulates deltas into cumulative
+		// counts after bootstrap is complete.
 		parsed := statistics.HistogramFromProto(&protoHg)
 		hist := &index.Histogram
 		for i := 0; i < parsed.Len(); i++ {

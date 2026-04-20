@@ -106,6 +106,14 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	// Convert each bucket bound into blob form so HistogramToProto serializes
 	// them as raw bytes (the proto's LowerBound/UpperBound are non-nullable
 	// bytes; native-typed datums would yield empty bytes).
+	//
+	// Per-bucket Count is stored as the delta from the previous bucket (not
+	// the in-memory cumulative value). This matches the legacy stats_buckets
+	// storage convention so that both the bootstrap loader (which calls
+	// CalcPreScalar to re-accumulate deltas) and the priority reader (which
+	// accumulates via a running totalCount) produce the correct in-memory
+	// cumulative counts post-decode. Storing cumulative here would cause
+	// CalcPreScalar to double-accumulate during bootstrap.
 	blobHg := statistics.NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, types.NewFieldType(mysql.TypeBlob), hg.Len(), hg.TotColSize)
 	blobHg.Correlation = hg.Correlation
 	for j := 0; j < hg.Len(); j++ {
@@ -118,7 +126,11 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 		if err != nil {
 			return
 		}
-		blobHg.AppendBucketWithNDV(&lowerBound, &upperBound, hg.Buckets[j].Count, hg.Buckets[j].Repeat, hg.Buckets[j].NDV)
+		deltaCount := hg.Buckets[j].Count
+		if j > 0 {
+			deltaCount -= hg.Buckets[j-1].Count
+		}
+		blobHg.AppendBucketWithNDV(&lowerBound, &upperBound, deltaCount, hg.Buckets[j].Repeat, hg.Buckets[j].NDV)
 	}
 	blob, err := statistics.HistogramToProto(blobHg).Marshal()
 	if err != nil {

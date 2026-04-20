@@ -196,9 +196,11 @@ func histogramFromStatsDataWithPriority(
 	}
 	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, parsed.Len(), totColSize)
 	hg.Correlation = corr
-	// proto's per-bucket Count is already the cumulative running total (same
-	// as in-memory statistics.Histogram), not a per-bucket delta as legacy
-	// stats_buckets uses. Pass it straight through.
+	// proto's per-bucket Count is a delta from the previous bucket (same
+	// convention as legacy stats_buckets). Accumulate into a running total so
+	// the in-memory histogram ends up with cumulative counts, matching
+	// histogramFromLegacyStatsBucketsWithPriority.
+	totalCount := int64(0)
 	for i := 0; i < parsed.Len(); i++ {
 		bucket := parsed.Buckets[i]
 		var lowerBound, upperBound types.Datum
@@ -215,7 +217,8 @@ func histogramFromStatsDataWithPriority(
 				return nil, false, errors.Trace(err)
 			}
 		}
-		hg.AppendBucketWithNDV(&lowerBound, &upperBound, bucket.Count, bucket.Repeat, bucket.NDV)
+		totalCount += bucket.Count
+		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, bucket.Repeat, bucket.NDV)
 	}
 	hg.PreCalculateScalar()
 	return hg, true, nil

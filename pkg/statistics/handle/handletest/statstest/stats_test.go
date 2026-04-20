@@ -839,9 +839,12 @@ func TestInitStatsMemoryFullBlocksBucketsButKeepsTopN(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
-	// Verify the table has buckets before testing
-	rows := tk.MustQuery("select count(*) from mysql.stats_buckets where table_id = " +
-		fmt.Sprintf("%d", tbl.Meta().ID) + " and is_index = 1").Rows()
+	// Verify the table has buckets before testing. After the stats_buckets ->
+	// stats_data migration bucket data is persisted as proto-marshaled blobs
+	// in mysql.stats_data under type IN (1, 2), not per-bucket rows in
+	// mysql.stats_buckets.
+	rows := tk.MustQuery("select count(*) from mysql.stats_data where table_id = " +
+		fmt.Sprintf("%d", tbl.Meta().ID) + " and type = 2").Rows()
 	bucketCount := rows[0][0].(string)
 	require.NotEqual(t, "0", bucketCount, "table should have buckets for this test")
 
