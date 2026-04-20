@@ -110,7 +110,7 @@ func TestDeleter(t *testing.T) {
 
 		encoder := getEncoder(t, tbl)
 		trafficRec := &mockTrafficRecorder{}
-		deleter := conflictedkv.NewDeleter(tbl, logger, store, kvGroup, encoder, trafficRec)
+		deleter := conflictedkv.NewDeleter(tbl, logger, store, kvGroup, encoder, nil, trafficRec)
 		eg := util.NewErrorGroupWithRecover()
 		ch := make(chan *external.KVPair)
 		eg.Go(func() error {

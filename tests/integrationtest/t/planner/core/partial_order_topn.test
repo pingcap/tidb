@@ -201,7 +201,8 @@ explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * fr
 
 # ORDER BY a, b with index (a, b(15))
 explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */  * from t_multi_col order by a, b limit 5;
-
+select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col order by a, b limit 3 offset 2;
+explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col order by a, b limit 3 offset 2;
 # ORDER BY a, b, c with index (a, b, c(10))
 explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_c_prefix) */  * from t_multi_col order by a, b, c limit 5;
 
@@ -535,4 +536,3 @@ select @@tidb_opt_partial_ordered_index_for_topn;
 drop table if exists t_varchar, t_char, t_text, t_multi_col, t_no_prefix;
 drop table if exists t_join1, t_join2, t_empty, t_prefix_len, t_null;
 drop table if exists t12, t15;
-

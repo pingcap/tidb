@@ -23,6 +23,7 @@ import (
 )
 
 func TestConcurrentDDLCreateNonUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13},
@@ -36,6 +37,7 @@ func TestConcurrentDDLCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestConcurrentDDLCreateUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	var colIDs = [][]int{
 		{1, 6, 11, 13},
@@ -49,6 +51,7 @@ func TestConcurrentDDLCreateUniqueIndex(t *testing.T) {
 }
 
 func TestConcurrentDDLCreatePrimaryKey(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	ctx := testutils.InitConcurrentDDLTest(t, nil, nil, testutils.TestPK)
 	ctx.CompCtx.Start(ctx)
@@ -57,6 +60,7 @@ func TestConcurrentDDLCreatePrimaryKey(t *testing.T) {
 }
 
 func TestConcurrentDDLCreateGenColIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	ctx := testutils.InitConcurrentDDLTest(t, nil, nil, testutils.TestGenIndex)
 	ctx.CompCtx.Start(ctx)
@@ -65,6 +69,7 @@ func TestConcurrentDDLCreateGenColIndex(t *testing.T) {
 }
 
 func TestConcurrentDDLCreateMultiColsIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	testutil.ReduceCheckInterval(t)
 	var coliIDs = [][]int{
 		{7},

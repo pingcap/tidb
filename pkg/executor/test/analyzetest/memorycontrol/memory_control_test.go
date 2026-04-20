@@ -164,7 +164,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	go dom.ServerMemoryLimitHandle().Run()
 
 	tk.MustExec("insert into t values(4),(5),(6)")
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	err := h.Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 
