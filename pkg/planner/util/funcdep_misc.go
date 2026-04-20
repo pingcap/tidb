@@ -41,7 +41,7 @@ func ExtractNotNullFromConds(conditions []expression.Expression, p base.LogicalP
 		if len(cols) == 0 {
 			continue
 		}
-		if IsNullRejected(p.SCtx(), p.Schema(), condition, false) {
+		if IsNullRejected(p.SCtx(), p.Schema(), condition) {
 			for _, col := range cols {
 				notnullColsUniqueIDs.Insert(int(col.UniqueID))
 			}

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "runaway",
@@ -40,5 +40,19 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//resource_group/controller",
         "@org_uber_go_zap//:zap",
+    ],
+)
+go_test(
+    name = "runaway_test",
+    timeout = "short",
+    srcs = ["syncer_test.go"],
+    embed = [":runaway"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/resolve",
+        "//pkg/util/mock",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
     ],
 )

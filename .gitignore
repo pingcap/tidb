@@ -15,6 +15,7 @@ tags
 .cursor
 .codex
 .trae
+/.mcp.json
 docs/superpowers/plans/
 
 # Go workspace / tooling

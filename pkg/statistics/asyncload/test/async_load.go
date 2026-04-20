@@ -36,7 +36,7 @@ func RunLoadColumnStatisticsAfterTableDrop(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT);")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
@@ -84,7 +84,7 @@ func RunLoadStatisticsAfterColumnDrop(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT);")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
@@ -132,7 +132,7 @@ func RunLoadIndexStatisticsAfterTableDrop(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT, INDEX idx_b (b));")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
@@ -180,7 +180,7 @@ func RunLoadStatisticsAfterIndexDrop(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT, INDEX idx_b (b));")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
@@ -228,7 +228,7 @@ func RunLoadCorruptedStatistics(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT, INDEX idx_b (b));")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	testKit.MustExec("flush stats_delta")
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Only collect the histogram buckets.
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS WITH 0 TOPN;")

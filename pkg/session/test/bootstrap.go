@@ -278,7 +278,6 @@ func RunDDLTableCreateBackfillTable(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipCheckReservedSchemaObjInNextGen", "return(true)")
 	store, dom := sessionpkg.ExportedCreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
-	se := sessionpkg.ExportedCreateSessionAndSetID(t, store)
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -288,11 +287,21 @@ func RunDDLTableCreateBackfillTable(t *testing.T) {
 	require.GreaterOrEqual(t, ver, meta.BackfillTableVersion)
 
 	// downgrade `mDDLTableVersion`
-	m.SetDDLTableVersion(meta.MDLTableVersion)
-	sessionpkg.ExportedMustExec(t, se, "drop table mysql.tidb_background_subtask")
-	sessionpkg.ExportedMustExec(t, se, "drop table mysql.tidb_background_subtask_history")
+	require.NoError(t, m.SetDDLTableVersion(meta.MDLTableVersion))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	dom.Close()
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMutator(txn)
+	systemDBID, err := m.GetSystemDBID()
+	require.NoError(t, err)
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBBackgroundSubtaskTableID))
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBBackgroundSubtaskHistoryTableID))
 	// TODO(lance6716): remove it after tidb_ddl_notifier GA
-	sessionpkg.ExportedMustExec(t, se, "drop table mysql.tidb_ddl_notifier")
+	require.NoError(t, m.DropTableOrView(systemDBID, metadef.TiDBDDLNotifierTableID))
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
@@ -301,7 +310,7 @@ func RunDDLTableCreateBackfillTable(t *testing.T) {
 	dom, err = sessionpkg.ExportedBootstrapSession(store)
 	require.NoError(t, err)
 
-	se = sessionpkg.ExportedCreateSessionAndSetID(t, store)
+	se := sessionpkg.ExportedCreateSessionAndSetID(t, store)
 	sessionpkg.ExportedMustExec(t, se, "select * from mysql.tidb_background_subtask")
 	sessionpkg.ExportedMustExec(t, se, "select * from mysql.tidb_background_subtask_history")
 	dom.Close()
@@ -925,27 +934,33 @@ func RunTiDBUpgradeToVer140(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, ver139, ver)
 	}
+	checkUpgraded := func() {
+		s := sessionpkg.ExportedCreateSessionAndSetID(t, store)
+		defer s.Close()
+		ver, err := sessionpkg.GetBootstrapVersion(s)
+		require.NoError(t, err)
+		require.Less(t, ver139, ver)
+	}
 
 	// drop column task_key and then upgrade
 	s := sessionpkg.ExportedCreateSessionAndSetID(t, store)
 	sessionpkg.ExportedMustExec(t, s, "alter table mysql.tidb_global_task drop column task_key")
 	resetTo139(s)
+	s.Close()
 	do.Close()
 	dom, err := sessionpkg.ExportedBootstrapSession(store)
 	require.NoError(t, err)
-	ver, err := sessionpkg.GetBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, ver139, ver)
-	dom.Close()
+	checkUpgraded()
 
-	// upgrade with column task_key exists
+	// Create the reset session while the current domain is still alive; sessions
+	// bound to a closed domain can fail schema validation on commit.
 	s = sessionpkg.ExportedCreateSessionAndSetID(t, store)
 	resetTo139(s)
+	s.Close()
+	dom.Close()
 	dom, err = sessionpkg.ExportedBootstrapSession(store)
 	require.NoError(t, err)
-	ver, err = sessionpkg.GetBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, ver139, ver)
+	checkUpgraded()
 	dom.Close()
 }
 

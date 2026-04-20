@@ -1079,7 +1079,8 @@ type FlushStmt struct {
 	Tables          []*TableName // For FlushTableStmt, if Tables is empty, it means flush all tables.
 	ReadLock        bool
 	Plugins         []string
-	IsCluster       bool // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	IsCluster       bool           // For FlushStatsDelta, whether to flush cluster-wide stats delta
+	FlushObjects    []*StatsObject // For FlushStatsDelta, scoped objects (db.tbl, db.*, *.*). Always non-empty.
 }
 
 // Restore implements Node interface.
@@ -1141,6 +1142,16 @@ func (n *FlushStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CLIENT_ERRORS_SUMMARY")
 	case FlushStatsDelta:
 		ctx.WriteKeyWord("STATS_DELTA")
+		for i, obj := range n.FlushObjects {
+			if i == 0 {
+				ctx.WritePlain(" ")
+			} else {
+				ctx.WritePlain(", ")
+			}
+			if err := obj.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore FlushStmt.FlushObjects[%d]", i)
+			}
+		}
 		if n.IsCluster {
 			ctx.WritePlain(" ")
 			ctx.WriteKeyWord("CLUSTER")

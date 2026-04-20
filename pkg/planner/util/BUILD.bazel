@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "util",
@@ -11,12 +11,15 @@ go_library(
         "handle_cols.go",
         "misc.go",
         "null_misc.go",
+        "null_misc_builtins.go",
         "path.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/util",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errctx",
         "//pkg/expression",
+        "//pkg/expression/exprctx",
         "//pkg/kv",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
@@ -41,5 +44,16 @@ go_library(
         "//pkg/util/size",
         "//pkg/util/slice",
         "@com_github_pingcap_errors//:errors",
+    ],
+)
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["null_misc_test.go"],
+    embed = [":util"],
+    flaky = True,
+    deps = [
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
     ],
 )
