@@ -597,7 +597,7 @@ func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (
 		" where type = " + strconv.Itoa(metadef.StatsDataTypeIdxBucket) +
 		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
 		" and table_id < " + strconv.FormatInt(tableRange[1], 10)
-	if err := scanTableIDs(sctx, ctx, sqlNew, tablesWithBuckets); err != nil {
+	if err := scanTableIDs(ctx, sctx, sqlNew, tablesWithBuckets); err != nil {
 		return nil, err
 	}
 
@@ -608,7 +608,7 @@ func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (
 		" where is_index = 1" +
 		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
 		" and table_id < " + strconv.FormatInt(tableRange[1], 10)
-	if err := scanTableIDs(sctx, ctx, sqlLegacy, tablesWithBuckets); err != nil {
+	if err := scanTableIDs(ctx, sctx, sqlLegacy, tablesWithBuckets); err != nil {
 		return nil, err
 	}
 
@@ -618,7 +618,7 @@ func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (
 // scanTableIDs runs the given DISTINCT-table_id SQL and inserts the results
 // into out. Used by getTablesWithBucketsInRange to merge the new and legacy
 // scans.
-func scanTableIDs(sctx sessionctx.Context, ctx context.Context, sql string, out map[int64]struct{}) error {
+func scanTableIDs(ctx context.Context, sctx sessionctx.Context, sql string, out map[int64]struct{}) error {
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -802,7 +802,7 @@ func (*Handle) initStatsBuckets4ChunkFromStatsData(cache statstypes.StatsCache, 
 		// counts after bootstrap is complete.
 		parsed := statistics.HistogramFromProto(&protoHg)
 		hist := &index.Histogram
-		for i := 0; i < parsed.Len(); i++ {
+		for i := range parsed.Len() {
 			bucket := parsed.Buckets[i]
 			lower := *parsed.GetLower(i)
 			upper := *parsed.GetUpper(i)
@@ -867,7 +867,7 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 
 	// Scan 1: stats_data (one row per histogram, blob-encoded buckets).
 	sqlNew := genInitStatsBucketsSQLForIndexesFromStatsData([2]int64{task.StartTid, task.EndTid})
-	if err := h.scanInitStatsBucketsFromStatsData(sctx, ctx, cache, sqlNew, seenPairs); err != nil {
+	if err := h.scanInitStatsBucketsFromStatsData(ctx, sctx, cache, sqlNew, seenPairs); err != nil {
 		return err
 	}
 
@@ -905,7 +905,7 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 // scanInitStatsBucketsFromStatsData runs the stats_data scan portion of the
 // dual-table bucket loader. Records every (table_id, hist_id) it loads in
 // seenPairs so the subsequent legacy scan can skip them.
-func (h *Handle) scanInitStatsBucketsFromStatsData(sctx sessionctx.Context, ctx context.Context, cache statstypes.StatsCache, sql string, seenPairs map[int64]map[int64]struct{}) error {
+func (h *Handle) scanInitStatsBucketsFromStatsData(ctx context.Context, sctx sessionctx.Context, cache statstypes.StatsCache, sql string, seenPairs map[int64]map[int64]struct{}) error {
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
 		return errors.Trace(err)

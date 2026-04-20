@@ -121,7 +121,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	// CalcPreScalar to double-accumulate during bootstrap.
 	blobHg := statistics.NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, types.NewFieldType(mysql.TypeBlob), hg.Len(), hg.TotColSize)
 	blobHg.Correlation = hg.Correlation
-	for j := 0; j < hg.Len(); j++ {
+	for j := range hg.Len() {
 		var upperBound, lowerBound types.Datum
 		upperBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetUpper(j))
 		if err != nil {

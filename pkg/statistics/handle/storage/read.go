@@ -231,7 +231,7 @@ func histogramFromStatsDataWithPriority(
 	// the in-memory histogram ends up with cumulative counts, matching
 	// histogramFromLegacyStatsBucketsWithPriority.
 	totalCount := int64(0)
-	for i := 0; i < parsed.Len(); i++ {
+	for i := range parsed.Len() {
 		bucket := parsed.Buckets[i]
 		var lowerBound, upperBound types.Datum
 		if isIndex == 1 {
