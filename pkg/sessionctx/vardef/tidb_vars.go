@@ -694,6 +694,11 @@ const (
 	// TiDBEnableNoopFuncs set true will enable using fake funcs(like get_lock release_lock)
 	TiDBEnableNoopFuncs = "tidb_enable_noop_functions"
 
+	// TiDBSkipTiFlashReplicaWait skips the StateReplicaOnly wait for TiFlash replica readiness
+	// during ADD PARTITION. Use when the caller writes only to TiKV and does not need TiFlash
+	// ready before the partition is made public.
+	TiDBSkipTiFlashReplicaWait = "tidb_skip_tiflash_replica_wait"
+
 	// TiDBEnableStmtSummary indicates whether the statement summary is enabled.
 	TiDBEnableStmtSummary = "tidb_enable_stmt_summary"
 
@@ -1552,6 +1557,7 @@ const (
 	DefTiDBExpensiveQueryTimeThreshold      = 60      // 60s
 	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10 // 10 minutes
 	DefTiDBScatterRegion                    = ScatterOff
+	DefTiDBSkipTiFlashReplicaWait           = false
 	DefTiDBWaitSplitRegionFinish            = true
 	DefWaitSplitRegionTimeout               = 300 // 300s
 	DefTiDBEnableNoopFuncs                  = Off

@@ -1798,6 +1798,26 @@ func TestTiDBHashJoinVersion(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestTiDBSkipTiFlashReplicaWait(t *testing.T) {
+	sv := GetSysVar(vardef.TiDBSkipTiFlashReplicaWait)
+	require.NotNil(t, sv)
+	require.Equal(t, Off, sv.Value)
+
+	vars := NewSessionVars(nil)
+
+	require.NoError(t, sv.SetSessionFromHook(vars, On))
+	require.True(t, vars.SkipTiFlashReplicaWait)
+	val, err := sv.GetSessionFromHook(vars)
+	require.NoError(t, err)
+	require.Equal(t, On, val)
+
+	require.NoError(t, sv.SetSessionFromHook(vars, Off))
+	require.False(t, vars.SkipTiFlashReplicaWait)
+	val, err = sv.GetSessionFromHook(vars)
+	require.NoError(t, err)
+	require.Equal(t, Off, val)
+}
+
 func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	vars := NewSessionVars(nil)
 

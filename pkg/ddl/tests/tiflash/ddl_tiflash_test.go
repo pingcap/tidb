@@ -1071,6 +1071,56 @@ func TestTiFlashProgressForPartitionTable(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
+// TestAddPartitionSkipTiFlashReplicaWait verifies that when
+// tidb_skip_tiflash_replica_wait=ON the DDL ADD PARTITION completes without
+// waiting for TiFlash replication, and the new partition is NOT prematurely
+// added to AvailablePartitionIDs (the background ticker handles that later).
+func TestAddPartitionSkipTiFlashReplicaWait(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash_skip")
+	tk.MustExec("create table ddltiflash_skip(z int) PARTITION BY RANGE(z) " +
+		"(PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))")
+	tk.MustExec("alter table ddltiflash_skip set tiflash replica 1")
+
+	// Wait for initial partitions to become available via the TiFlash ticker.
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash_skip")
+
+	// Enable skip-wait so the DDL worker bypasses the StateReplicaOnly retry loop.
+	tk.MustExec("SET SESSION tidb_skip_tiflash_replica_wait = ON")
+
+	// ADD PARTITION should complete immediately without waiting for TiFlash replication.
+	tk.MustExec("ALTER TABLE ddltiflash_skip ADD PARTITION (PARTITION p2 VALUES LESS THAN (30))")
+
+	// Verify the new partition is now public (DDL succeeded).
+	tb, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("ddltiflash_skip"))
+	require.NoError(t, err)
+	pi := tb.Meta().GetPartitionInfo()
+	require.NotNil(t, pi)
+	require.Equal(t, 0, len(pi.AddingDefinitions), "AddingDefinitions should be empty after DDL completes")
+
+	// Find the new partition ID.
+	var newPartID int64
+	for _, def := range pi.Definitions {
+		if def.Name.L == "p2" {
+			newPartID = def.ID
+			break
+		}
+	}
+	require.NotZero(t, newPartID, "partition p2 should exist in Definitions")
+
+	// The key correctness assertion: with skipWait=true, the DDL worker must NOT
+	// have prematurely added the new partition to AvailablePartitionIDs.
+	// The background TiFlash ticker is responsible for that once replication completes.
+	require.NotNil(t, tb.Meta().TiFlashReplica)
+	require.False(t, tb.Meta().TiFlashReplica.IsPartitionAvailable(newPartID),
+		"new partition should NOT be in AvailablePartitionIDs immediately after ADD PARTITION with skipWait=true")
+}
+
 func TestTiFlashGroupIndexWhenStartup(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	tiflash := s.tiflash
