@@ -56,24 +56,100 @@ type TestData struct {
 	funcMap        map[string]int
 }
 
+func resolveRepoRoot(start string) string {
+	dir := start
+	for {
+		for _, marker := range []string{"MODULE.bazel", "WORKSPACE", "go.mod"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+func absolutizeCallerFile(callerFile string) string {
+	if callerFile == "" || filepath.IsAbs(callerFile) {
+		return callerFile
+	}
+
+	var roots []string
+	if cwd, err := os.Getwd(); err == nil {
+		roots = append(roots, cwd)
+		if root := resolveRepoRoot(cwd); root != "" {
+			roots = append(roots, root)
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		if root := resolveRepoRoot(filepath.Dir(exe)); root != "" {
+			roots = append(roots, root)
+		}
+	}
+
+	for _, root := range roots {
+		abs := filepath.Join(root, callerFile)
+		if _, err := os.Stat(abs); err == nil {
+			return abs
+		}
+		if info, err := os.Stat(filepath.Dir(abs)); err == nil && info.IsDir() {
+			return abs
+		}
+	}
+	return callerFile
+}
+
+func resolveTestSuitePrefix(dir, suiteName, callerFile string) string {
+	defaultPrefix := filepath.Join(dir, suiteName)
+	candidates := []string{defaultPrefix}
+
+	if callerFile != "" {
+		callerFile = absolutizeCallerFile(callerFile)
+		callerDir := filepath.Dir(callerFile)
+		candidates = append(candidates, filepath.Join(callerDir, dir, suiteName))
+		// Mega tests often move sources into a sibling "test" package while
+		// keeping testdata in the parent package directory.
+		if filepath.Base(callerDir) == "test" {
+			candidates = append(candidates, filepath.Join(callerDir, "..", dir, suiteName))
+		}
+	}
+
+	for _, prefix := range candidates {
+		if _, err := os.Stat(fmt.Sprintf("%s_in.json", prefix)); err == nil {
+			return prefix
+		}
+	}
+	return defaultPrefix
+}
+
+func resolveTestDataCallerFile() string {
+	pcs := make([]uintptr, 16)
+	n := runtime.Callers(2, pcs)
+	frames := runtime.CallersFrames(pcs[:n])
+
+	for {
+		frame, more := frames.Next()
+		if frame.File != "" {
+			file := filepath.ToSlash(frame.File)
+			if !strings.Contains(file, "/pkg/testkit/testdata/") && !strings.HasPrefix(file, "pkg/testkit/testdata/") {
+				return frame.File
+			}
+		}
+		if !more {
+			break
+		}
+	}
+	return ""
+}
+
 func loadTestSuiteData(dir, suiteName string, cascades ...bool) (res TestData, err error) {
 	inCascades := len(cascades) > 0 && cascades[0]
 	res.filePathPrefix = filepath.Join(dir, suiteName)
-
-	// If the file doesn't exist at the relative path, try to find it relative
-	// to the caller's source file. This handles the case where the mega test
-	// binary runs from a different working directory than the package directory.
-	inFile := fmt.Sprintf("%s_in.json", res.filePathPrefix)
-	if _, err := os.Stat(inFile); err != nil {
-		_, callerFile, _, ok := runtime.Caller(2) // caller of LoadTestSuiteData
-		if ok {
-			callerDir := filepath.Dir(callerFile)
-			altPrefix := filepath.Join(callerDir, dir, suiteName)
-			altInFile := fmt.Sprintf("%s_in.json", altPrefix)
-			if _, err := os.Stat(altInFile); err == nil {
-				res.filePathPrefix = altPrefix
-			}
-		}
+	if callerFile := resolveTestDataCallerFile(); callerFile != "" {
+		res.filePathPrefix = resolveTestSuitePrefix(dir, suiteName, callerFile)
 	}
 
 	res.input, err = loadTestSuiteCases(fmt.Sprintf("%s_in.json", res.filePathPrefix))
