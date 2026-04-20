@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -991,6 +992,39 @@ func TestUpgradeToVer255RunawayQueriesDedup(t *testing.T) {
 		dom2.Close()
 	})
 
+	// helperSetupV255BakOnly leaves mysql.tidb_runaway_queries in the given state
+	// (missing or empty with the v255 schema) and stages the already-deduplicated
+	// rows in mysql.tidb_runaway_queries_bak. This simulates an upgrade that
+	// crashed after Step 2 populated bak but before Step 4 finished the re-insert.
+	helperSetupV255BakOnly := func(t *testing.T, se sessionapi.Session, mainMode string) {
+		session.MustExec(t, se, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries")
+		session.MustExec(t, se, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries_bak")
+		session.MustExec(t, se, `CREATE TABLE mysql.tidb_runaway_queries_bak (
+			resource_group_name varchar(32) NOT NULL,
+			start_time TIMESTAMP NOT NULL,
+			update_time TIMESTAMP NOT NULL,
+			repeats BIGINT,
+			match_type varchar(12) NOT NULL,
+			action varchar(64) NOT NULL,
+			sample_sql TEXT NOT NULL,
+			sql_digest varchar(64) NOT NULL,
+			plan_digest varchar(64) NOT NULL,
+			tidb_server varchar(512),
+			rule VARCHAR(512) DEFAULT ''
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+		session.MustExec(t, se, `INSERT INTO mysql.tidb_runaway_queries_bak
+			(resource_group_name, start_time, update_time, repeats, match_type, action, sample_sql, sql_digest, plan_digest, tidb_server, rule)
+			VALUES
+			('rg1', '2025-01-01 00:00:01', '2025-01-01 00:00:03', 18, 'identify', 'kill',     'SELECT 1', 'digest_aaa', 'plan_aaa', 'tidb1', ''),
+			('rg2', '2025-06-15 12:00:00', '2025-06-15 12:00:00', 1,  'watch',    'cooldown', 'SELECT 2', 'digest_bbb', 'plan_bbb', 'tidb1', 'rule1')`)
+		if mainMode == "empty" {
+			// Main exists in the v255 shape but is empty (crash between Step 3 CREATE and Step 4 INSERT).
+			session.MustExec(t, se, metadef.CreateTiDBRunawayQueriesTable)
+		}
+		// mainMode == "missing" leaves mysql.tidb_runaway_queries dropped (crash between Step 3 DROP and CREATE).
+		session.MustExec(t, se, "commit")
+	}
+
 	// Sub-test 2: idempotency — re-running v255 on already-migrated data.
 	t.Run("idempotent", func(t *testing.T) {
 		se254 := session.CreateSessionAndSetID(t, store)
@@ -1015,5 +1049,53 @@ func TestUpgradeToVer255RunawayQueriesDedup(t *testing.T) {
 		se := session.CreateSessionAndSetID(t, store)
 		helperAssertPostV255(t, se)
 		dom3.Close()
+	})
+
+	// runRecoverySubtest prepares a mid-upgrade state in the store and then drives the
+	// v255 upgrade through that state. Prior subtests have closed their domains, so the
+	// first BootstrapSession here is what brings one back up for the DDL setup work.
+	runRecoverySubtest := func(t *testing.T, mainMode string) {
+		domSetup, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+
+		seSetup := session.CreateSessionAndSetID(t, store)
+		helperSetupV255BakOnly(t, seSetup, mainMode)
+
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMutator(txn)
+		err = m.FinishBootstrap(int64(254))
+		require.NoError(t, err)
+		err = txn.Commit(ctx)
+		require.NoError(t, err)
+		session.RevertVersionAndVariables(t, seSetup, 254)
+		session.MustExec(t, seSetup, "commit")
+
+		store.SetOption(session.StoreBootstrappedKey, nil)
+		ver, err := session.GetBootstrapVersion(seSetup)
+		require.NoError(t, err)
+		require.Equal(t, int64(254), ver)
+		domSetup.Close()
+
+		domUpgrade, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+
+		helperAssertPostV255(t, session.CreateSessionAndSetID(t, store))
+		domUpgrade.Close()
+	}
+
+	// Sub-test 3: crash-recovery — main table dropped, bak holds the migrated rows.
+	// Simulates a crash between Step 3 DROP main and Step 3 CREATE main. The upgrade
+	// must recreate main from bak rather than Fatal on ALTER-of-missing-table.
+	t.Run("recover_main_missing", func(t *testing.T) {
+		runRecoverySubtest(t, "missing")
+	})
+
+	// Sub-test 4: crash-recovery — main exists in v255 shape but is empty, bak holds
+	// the migrated rows. Simulates a crash between Step 3 CREATE main and Step 4
+	// INSERT from bak. The upgrade must transfer bak's rows into main (INSERT IGNORE)
+	// rather than silently drop bak and leave main empty.
+	t.Run("recover_main_empty", func(t *testing.T) {
+		runRecoverySubtest(t, "empty")
 	})
 }

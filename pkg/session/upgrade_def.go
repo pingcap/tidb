@@ -2057,9 +2057,93 @@ func upgradeToVer254(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
 }
 
+// bootstrapScalarCount runs a scalar COUNT(*) query during bootstrap and returns the result.
+// Fatals on error — matches the rest of the bootstrap code's error discipline.
+func bootstrapScalarCount(s sessionapi.Session, sql string, args ...any) int64 {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, sql, args...)
+	if err != nil {
+		logutil.BgLogger().Fatal("bootstrapScalarCount query error", zap.String("sql", sql), zap.Error(err))
+	}
+	req := rs.NewChunk(nil)
+	if err := rs.Next(ctx, req); err != nil {
+		logutil.BgLogger().Fatal("bootstrapScalarCount read error", zap.String("sql", sql), zap.Error(err))
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Fatal("bootstrapScalarCount close error", zap.String("sql", sql), zap.Error(err))
+	}
+	if req.NumRows() == 0 {
+		return 0
+	}
+	return req.GetRow(0).GetInt64(0)
+}
+
+// tidbRunawayQueriesHasV255PK returns true when mysql.tidb_runaway_queries already carries the
+// v255 composite primary key, which is the signal that the upgrade succeeded in a prior run.
+func tidbRunawayQueriesHasV255PK(s sessionapi.Session) bool {
+	return bootstrapScalarCount(s,
+		"SELECT COUNT(*) FROM information_schema.statistics "+
+			"WHERE table_schema=%? AND table_name=%? AND index_name=%?",
+		"mysql", "tidb_runaway_queries", "PRIMARY") > 0
+}
+
+// tidbRunawayQueriesTableExists reports whether the main table exists.
+func tidbRunawayQueriesTableExists(s sessionapi.Session) bool {
+	return bootstrapScalarCount(s,
+		"SELECT COUNT(*) FROM information_schema.tables "+
+			"WHERE table_schema=%? AND table_name=%?",
+		"mysql", "tidb_runaway_queries") > 0
+}
+
+// tidbRunawayQueriesBakExists reports whether the v255 migration staging table is present.
+func tidbRunawayQueriesBakExists(s sessionapi.Session) bool {
+	return bootstrapScalarCount(s,
+		"SELECT COUNT(*) FROM information_schema.tables "+
+			"WHERE table_schema=%? AND table_name=%?",
+		"mysql", "tidb_runaway_queries_bak") > 0
+}
+
 func upgradeToVer255(s sessionapi.Session, _ int64) {
 	// TiDB cannot ALTER TABLE ADD PRIMARY KEY ... CLUSTERED on an existing table,
 	// so we must recreate mysql.tidb_runaway_queries with the target schema.
+	//
+	// The upgrade runs as a sequence of DDL statements, and DDL cannot be wrapped in
+	// a single transaction, so we must tolerate crash-and-restart between any two
+	// statements. The three branches below cover every reachable intermediate state:
+	//
+	//   (a) main already in v255 shape — prior run completed, or crashed after Step 3
+	//       CREATE but before Step 4 INSERT. Finish by transferring any data still in
+	//       bak (INSERT IGNORE; identical rows are a no-op) and dropping bak.
+	//   (b) main missing — prior run crashed after Step 3 DROP and before CREATE.
+	//       Recreate main and restore from bak if the staging data is available.
+	//   (c) main still in pre-v255 shape — run the full migration.
+
+	if tidbRunawayQueriesHasV255PK(s) {
+		if tidbRunawayQueriesBakExists(s) {
+			mustExecute(s, "INSERT IGNORE INTO mysql.tidb_runaway_queries "+
+				"(resource_group_name, start_time, update_time, repeats, match_type, "+
+				"action, sample_sql, sql_digest, plan_digest, tidb_server, rule) "+
+				"SELECT resource_group_name, start_time, update_time, repeats, match_type, "+
+				"action, sample_sql, sql_digest, plan_digest, tidb_server, rule "+
+				"FROM mysql.tidb_runaway_queries_bak")
+		}
+		mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries_bak")
+		return
+	}
+
+	if !tidbRunawayQueriesTableExists(s) {
+		mustExecute(s, metadef.CreateTiDBRunawayQueriesTable)
+		if tidbRunawayQueriesBakExists(s) {
+			mustExecute(s, "INSERT INTO mysql.tidb_runaway_queries "+
+				"(resource_group_name, start_time, update_time, repeats, match_type, "+
+				"action, sample_sql, sql_digest, plan_digest, tidb_server, rule) "+
+				"SELECT resource_group_name, start_time, update_time, repeats, match_type, "+
+				"action, sample_sql, sql_digest, plan_digest, tidb_server, rule "+
+				"FROM mysql.tidb_runaway_queries_bak")
+		}
+		mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_queries_bak")
+		return
+	}
 
 	// Step 1: add update_time column to the old table so the migration SELECT works.
 	// DEFAULT CURRENT_TIMESTAMP backfills existing rows.
