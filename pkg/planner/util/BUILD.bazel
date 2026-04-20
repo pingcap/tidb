@@ -46,13 +46,20 @@ go_library(
         "@com_github_pingcap_errors//:errors",
     ],
 )
+
 go_test(
     name = "util_test",
     timeout = "short",
     srcs = ["null_misc_test.go"],
     embed = [":util"],
     flaky = True,
+    shard_count = 2,
     deps = [
+        "//pkg/expression",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/vardef",
+        "//pkg/types",
         "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
     ],

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "cardinality",
@@ -43,5 +43,48 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "cardinality_test",
+    timeout = "short",
+    srcs = ["selectivity_test.go"],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 42,
+    deps = [
+        ":cardinality",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/resolve",
+        "//pkg/planner/core/rule",
+        "//pkg/planner/planctx",
+        "//pkg/planner/util",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/statistics",
+        "//pkg/statistics/asyncload",
+        "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/collate",
+        "//pkg/util/hint",
+        "//pkg/util/mock",
+        "//pkg/util/ranger",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
     ],
 )

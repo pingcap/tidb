@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 exports_files(
     ["plan_clone_utils.go"],
@@ -204,5 +204,42 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "core_test",
+    timeout = "short",
+    srcs = ["logical_plans_test.go"],
+    data = glob(["testdata/**"]),
+    embed = [":core"],
+    flaky = True,
+    shard_count = 44,
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/expression",
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/planner/core/resolve",
+        "//pkg/planner/core/rule",
+        "//pkg/planner/property",
+        "//pkg/planner/util",
+        "//pkg/planner/util/coretestsdk",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit/testdata",
+        "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/hint",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
     ],
 )

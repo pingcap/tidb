@@ -42,16 +42,22 @@ go_library(
         "@org_uber_go_zap//:zap",
     ],
 )
+
 go_test(
     name = "runaway_test",
     timeout = "short",
     srcs = ["syncer_test.go"],
     embed = [":runaway"],
     flaky = True,
+    shard_count = 10,
     deps = [
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/planner/core/resolve",
+        "//pkg/types",
+        "//pkg/util/chunk",
         "//pkg/util/mock",
+        "//pkg/util/sqlexec",
         "@com_github_ngaut_pools//:pools",
         "@com_github_stretchr_testify//require",
     ],

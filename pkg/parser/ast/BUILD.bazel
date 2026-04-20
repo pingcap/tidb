@@ -40,7 +40,7 @@ go_test(
     srcs = ["base_test.go"],
     embed = [":ast"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/parser/charset",
         "@com_github_stretchr_testify//require",
