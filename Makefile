@@ -683,13 +683,6 @@ bazel_ci_simple_prepare:
 
 BAZEL_NO_REMOTE_CACHE_CONFIG := --remote_cache= --noremote_accept_cached --noremote_upload_local_results
 
-.PHONY: bazel_ci_simple_prepare_no_remote_cache
-bazel_ci_simple_prepare_no_remote_cache:
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) $(BAZEL_NO_REMOTE_CACHE_CONFIG) //:gazelle
-	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) $(BAZEL_NO_REMOTE_CACHE_CONFIG) \
-		--run_under="cd $(CURDIR) && " \
-		 //tools/tazel:tazel
-
 .PHONY: bazel_prepare
 bazel_prepare: ## Update and generate BUILD.bazel files. Please run this before commit.
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
@@ -729,7 +722,7 @@ BAZEL_COVERAGE_TARGETS = \
 	-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_coverage_test
-bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare_no_remote_cache
+bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 	@echo "==> phase 1: build instrumented test binaries"
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc build $(BAZEL_CMD_CONFIG) $(BAZEL_NO_REMOTE_CACHE_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --collect_code_coverage --jobs=$(BAZEL_COVERAGE_BUILD_JOBS) --build_tests_only \
 		--define gotags=$(UNIT_TEST_TAGS) \
