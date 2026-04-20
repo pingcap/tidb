@@ -520,3 +520,14 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	// Temporary network partitioning may cause pk commit failure.
 	uint16(terror.CodeResultUndetermined): {},
 }
+<<<<<<< HEAD
+=======
+
+// ReorgRetryableErrMsgs are the error messages that are retryable for reorganization.
+var ReorgRetryableErrMsgs = []string{
+	"context deadline exceeded",
+	"requested lease not found",
+	"mvcc: required revision has been compacted",
+	"All returned regions have no leaders",
+}
+>>>>>>> d15bed39426 (ddl: retry modify column reorg on transient errors (#67713))
