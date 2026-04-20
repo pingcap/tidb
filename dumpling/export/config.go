@@ -381,7 +381,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
 	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
-	flags.StringSlice(flagPartitions, nil, "The table partitions to dump")
+	flags.StringSlice(flagPartitions, nil, "The table partitions to dump. Every listed partition must exist on all selected base tables; incompatible with --sql. TiDB >= v5.0.0 only")
 
 	flags.String(flagPDAddr, "", "PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized)")
 	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
@@ -549,6 +549,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.Partitions = normalizePartitions(conf.Partitions)
 
 	if conf.Threads <= 0 {
 		return errors.Errorf("--threads is set to %d. It should be greater than 0", conf.Threads)
@@ -845,4 +846,21 @@ func matchMysqlBugversion(info version.ServerInfo) bool {
 	bugVersionStart := semver.New("8.0.2")
 	bugVersionEnd := semver.New("8.0.23")
 	return bugVersionStart.LessThan(*currentVersion) && currentVersion.LessThan(*bugVersionEnd)
+}
+
+func normalizePartitions(partitions []string) []string {
+	seen := make(map[string]struct{}, len(partitions))
+	result := make([]string, 0, len(partitions))
+	for _, p := range partitions {
+		p = strings.ToLower(strings.TrimSpace(p))
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		result = append(result, p)
+	}
+	return result
 }

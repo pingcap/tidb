@@ -502,10 +502,10 @@ func (d *Dumper) checkPartitionsFlag(tctx *tcontext.Context, conn *BaseConn, all
 	}
 	conf := d.conf
 	if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
-		return errors.New("partition: dump with partitions flag is only available for TiDB")
+		return errors.New("--partitions is only available for TiDB")
 	}
 	if conf.ServerInfo.ServerVersion == nil || conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) < 0 {
-		return errors.New("partition: dump with partitions flag requires TiDB version >= v5.0.0")
+		return errors.New("--partitions requires TiDB version >= v5.0.0")
 	}
 	for dbName, tables := range allTables {
 		for _, table := range tables {
@@ -522,7 +522,7 @@ func (d *Dumper) checkPartitionsFlag(tctx *tcontext.Context, conn *BaseConn, all
 			}
 			for _, partition := range conf.Partitions {
 				if _, ok := partitionSet[strings.ToLower(partition)]; !ok {
-					return errors.Errorf("partition: partition %s does not exist in table %s.%s", partition, dbName, table.Name)
+					return errors.Errorf("--partitions: partition %s does not exist in table %s.%s", partition, dbName, table.Name)
 				}
 			}
 		}
@@ -802,8 +802,8 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	}
 
 	if len(d.conf.Partitions) > 0 {
-		tctx.L().Warn("partition: dump with partitions flag does not support using rows")
-		return errors.New("partition: dump with partitions flag does not support using rows")
+		tctx.L().Warn("--partitions is not compatible with the row-based dump method, skipping fallback")
+		return errors.New("--partitions is not compatible with the row-based dump method")
 	}
 
 	orderByClause, err := buildOrderByClause(tctx, conf, conn, db, tbl, meta.HasImplicitRowID())
@@ -963,29 +963,27 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 
 func (d *Dumper) concurrentDumpTiDBPartitionTablesWithTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
 	db, tbl := meta.DatabaseName(), meta.TableName()
-	var (
-		handleColNames []string
-		handleVals     [][]string
-		err            error
-	)
+
+	pkFields, pkColTypes, err := selectTiDBRowKeyFields(tctx, conn, meta, nil)
+	if err != nil {
+		return err
+	}
 
 	cachedHandleVals := make([][][]string, len(d.conf.Partitions))
-	cachedHandleColNames := make([][]string, len(d.conf.Partitions))
 	totalChunk := 0
-	startChunk := 0
 	for i, partition := range d.conf.Partitions {
 		tctx.L().Debug("dumping TiDB tables with TABLESAMPLE",
 			zap.String("database", db), zap.String("table", tbl), zap.String("partition", partition))
-		handleColNames, handleVals, err = selectTiDBTableSample(tctx, conn, meta, partition)
+		handleVals, err := selectTiDBTableSampleForPartition(tctx, conn, meta, pkFields, pkColTypes, partition)
 		if err != nil {
 			return err
 		}
 		cachedHandleVals[i] = handleVals
-		cachedHandleColNames[i] = handleColNames
 		totalChunk += len(handleVals) + 1
 	}
+	startChunk := 0
 	for i, partition := range d.conf.Partitions {
-		err = d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, cachedHandleColNames[i], cachedHandleVals[i], partition, startChunk, totalChunk)
+		err = d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, pkFields, cachedHandleVals[i], partition, startChunk, totalChunk)
 		if err != nil {
 			return err
 		}
@@ -1104,6 +1102,48 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 	}
 
 	return pkFields, pkVals, err
+}
+
+func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, pkFields, pkColTypes []string, partition string) ([][]string, error) {
+	query := buildTiDBTableSampleQuery(pkFields, meta.DatabaseName(), meta.TableName(), partition)
+	pkValNum := len(pkFields)
+	var iter SQLRowIter
+	rowRec := MakeRowReceiver(pkColTypes)
+	buf := new(bytes.Buffer)
+
+	var pkVals [][]string
+	err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
+		if iter == nil {
+			iter = &rowIter{
+				rows: rows,
+				args: make([]any, pkValNum),
+			}
+		}
+		if err := iter.Decode(rowRec); err != nil {
+			return errors.Trace(err)
+		}
+		pkValRow := make([]string, 0, pkValNum)
+		for _, rec := range rowRec.receivers {
+			rec.WriteToBuffer(buf, true)
+			pkValRow = append(pkValRow, buf.String())
+			buf.Reset()
+		}
+		pkVals = append(pkVals, pkValRow)
+		return nil
+	}, func() {
+		if iter != nil {
+			_ = iter.Close()
+			iter = nil
+		}
+		rowRec = MakeRowReceiver(pkColTypes)
+		pkVals = pkVals[:0]
+		buf.Reset()
+	}, query)
+	if err == nil && iter != nil && iter.Error() != nil {
+		err = iter.Error()
+	}
+
+	return pkVals, err
 }
 
 func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string, partitions ...string) string {
