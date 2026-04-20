@@ -1,3 +1,6 @@
+//go:build !intest
+// +build !intest
+
 // Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");

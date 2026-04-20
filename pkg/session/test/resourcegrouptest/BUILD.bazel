@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = ["resource_group_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/testkit",
         "@com_github_pingcap_failpoint//:failpoint",

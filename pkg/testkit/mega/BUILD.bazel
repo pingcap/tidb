@@ -155,6 +155,7 @@ go_test(
         "//pkg/util/cteutil/test",
         "//pkg/util/dbterror/test",
         "//pkg/util/dbutil/test",
+        "//pkg/util/ddl-checker",
         "//pkg/util/deadlockhistory/test",
         "//pkg/util/disjointset/test",
         "//pkg/util/disk/test",
