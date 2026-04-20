@@ -310,6 +310,16 @@ func TestPreparedPlanCacheBatchPointGetEqAndInFixControl(t *testing.T) {
 	tk.MustQuery("execute st using @a, @b, @c").Sort().Check(testkit.Rows("1 1", "1 2"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
+	// Verify cache hit with changed EQ param
+	tk.MustExec("set @a=2, @b='1', @c='2'")
+	tk.MustQuery("execute st using @a, @b, @c").Sort().Check(testkit.Rows("2 1", "2 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Verify cache recovers after the duplicate-IN miss
+	tk.MustExec("set @a=1, @b='1', @c='2'")
+	tk.MustQuery("execute st using @a, @b, @c").Sort().Check(testkit.Rows("1 1", "1 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
 	tk.MustExec("set @a=1, @b='1', @c='1'")
 	tk.MustQuery("execute st using @a, @b, @c").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
