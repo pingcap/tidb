@@ -43,6 +43,11 @@ type likeEscapeSpec struct {
 	explicit bool
 }
 
+type insertRowAlias struct {
+	rowAlias      ast.CIStr
+	columnAliases []ast.CIStr
+}
+
 func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool) {
 	switch strings.ToUpper(name) {
 	case ast.MaskingPolicyRestrictNameInsertIntoSelect:
@@ -1276,6 +1281,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	IndexPartSpecificationList             "List of index column name or expression"
 	IndexPartSpecificationListOpt          "Optional list of index column name or expression"
 	InsertValues                           "Rest part of INSERT/REPLACE INTO statement"
+	InsertRowAliasOpt                      "optional row alias for INSERT VALUES/SET"
 	IntervalExpr                           "Interval expression"
 	JoinTable                              "join table"
 	JoinType                               "join type"
@@ -7911,12 +7917,18 @@ IntoOpt:
 |	"INTO"
 
 InsertValues:
-	'(' ColumnNameListOpt ')' ValueSym ValuesList
+	'(' ColumnNameListOpt ')' ValueSym ValuesList InsertRowAliasOpt
 	{
-		$$ = &ast.InsertStmt{
+		x := &ast.InsertStmt{
 			Columns: $2.([]*ast.ColumnName),
 			Lists:   $5.([][]ast.ExprNode),
 		}
+		if $6 != nil {
+			alias := $6.(*insertRowAlias)
+			x.RowAlias = alias.rowAlias
+			x.ColumnAliases = alias.columnAliases
+		}
+		$$ = x
 	}
 |	'(' ColumnNameListOpt ')' SetOprStmt
 	{
@@ -7943,9 +7955,15 @@ InsertValues:
 		}
 		$$ = &ast.InsertStmt{Columns: $2.([]*ast.ColumnName), Select: sel}
 	}
-|	ValueSym ValuesList %prec insertValues
+|	ValueSym ValuesList InsertRowAliasOpt %prec insertValues
 	{
-		$$ = &ast.InsertStmt{Lists: $2.([][]ast.ExprNode)}
+		x := &ast.InsertStmt{Lists: $2.([][]ast.ExprNode)}
+		if $3 != nil {
+			alias := $3.(*insertRowAlias)
+			x.RowAlias = alias.rowAlias
+			x.ColumnAliases = alias.columnAliases
+		}
+		$$ = x
 	}
 |	SetOprStmt
 	{
@@ -7972,9 +7990,15 @@ InsertValues:
 		}
 		$$ = &ast.InsertStmt{Select: sel}
 	}
-|	"SET" ColumnSetValueList
+|	"SET" ColumnSetValueList InsertRowAliasOpt
 	{
-		$$ = $2.(*ast.InsertStmt)
+		x := $2.(*ast.InsertStmt)
+		if $3 != nil {
+			alias := $3.(*insertRowAlias)
+			x.RowAlias = alias.rowAlias
+			x.ColumnAliases = alias.columnAliases
+		}
+		$$ = x
 	}
 
 ValueSym:
@@ -8035,6 +8059,24 @@ ColumnSetValueList:
 		ins.Columns = append(ins.Columns, $3.(*ast.ColumnName))
 		ins.Lists[0] = append(ins.Lists[0], $5.(ast.ExprNode))
 		$$ = ins
+	}
+
+/*
+ * Optional row alias for INSERT ... VALUES/SET (MySQL 8.0.19+).
+ * See https://dev.mysql.com/doc/refman/8.0/en/insert-on-duplicate.html
+ */
+InsertRowAliasOpt:
+	/* empty */ %prec empty
+	{
+		$$ = nil
+	}
+|	"AS" Identifier
+	{
+		$$ = &insertRowAlias{rowAlias: ast.NewCIStr($2)}
+	}
+|	"AS" Identifier '(' IdentList ')'
+	{
+		$$ = &insertRowAlias{rowAlias: ast.NewCIStr($2), columnAliases: $4.([]ast.CIStr)}
 	}
 
 /*

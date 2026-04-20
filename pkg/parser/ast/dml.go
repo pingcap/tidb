@@ -2415,6 +2415,12 @@ type InsertStmt struct {
 	PartitionNames []CIStr
 	// Returning represents the RETURNING select_expr list for INSERT statement.
 	Returning []*SelectField
+	// RowAlias is the optional row alias for VALUES/SET clause (MySQL 8.0.19+).
+	// e.g. INSERT INTO t VALUES (1,2) AS new ON DUPLICATE KEY UPDATE b = new.b
+	RowAlias CIStr
+	// ColumnAliases is the optional column alias list for the row alias.
+	// e.g. INSERT INTO t VALUES (1,2) AS new(m, n) ON DUPLICATE KEY UPDATE b = m
+	ColumnAliases []CIStr
 }
 
 // Restore implements Node interface.
@@ -2527,6 +2533,20 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		default:
 			return errors.Errorf("Incorrect type for InsertStmt.Select: %T", v)
+		}
+	}
+	if asName := n.RowAlias.String(); asName != "" {
+		ctx.WriteKeyWord(" AS ")
+		ctx.WriteName(asName)
+		if len(n.ColumnAliases) > 0 {
+			ctx.WritePlain("(")
+			for i, col := range n.ColumnAliases {
+				if i > 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteName(col.String())
+			}
+			ctx.WritePlain(")")
 		}
 	}
 	if n.OnDuplicate != nil {
