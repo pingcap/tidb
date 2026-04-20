@@ -939,6 +939,9 @@ func TestDMLStmt(t *testing.T) {
 		// row alias without ON DUPLICATE KEY UPDATE
 		{"INSERT INTO t VALUES (1,2) AS new;", true, "INSERT INTO `t` VALUES (1,2) AS `new`"},
 		{"INSERT INTO t VALUES (1,2) AS new(a,b);", true, "INSERT INTO `t` VALUES (1,2) AS `new`(`a`, `b`)"},
+		// row alias is not supported for REPLACE
+		{"REPLACE INTO t VALUES (1,2) AS new;", false, ""},
+		{"REPLACE INTO t SET a=1,b=2 AS new;", false, ""},
 
 		// for insert ... set
 		{"INSERT INTO t SET a=1,b=2", true, "INSERT INTO `t` SET `a`=1,`b`=2"},
