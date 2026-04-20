@@ -920,7 +920,9 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 
 func isSafePointGetPath4PlanCacheScenario4(path *util.AccessPath) bool {
 	// safe scenario 4: each key column corresponds to a single EQ, except one column that corresponds
-	// to a single IN, like `a=1 and b=2 and c in (3, 4)` --> `[[1, 2, 3], [1, 2, 4]]`.
+	// to a single IN. The IN can appear at the beginning, in the middle, or at the end of the key,
+	// like `a in (1, 2) and b=3 and c=4`, `a=1 and b in (2, 3) and c=4`, or
+	// `a=1 and b=2 and c in (3, 4)`.
 	// This currently supports exactly one IN predicate only.
 	// TODO: support multiple IN predicates, like `a in (1, 2) and b in (3, 4)`, after the plan-cache
 	// safety check and rebuild path can verify the cartesian-product case safely.
