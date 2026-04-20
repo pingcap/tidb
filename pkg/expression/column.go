@@ -737,6 +737,12 @@ func (col *Column) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) 
 
 func (col *Column) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
 	for i, c := range schema.Columns {
+		if c.EqualColumn(col) {
+			col.Index = i
+			return true
+		}
+	}
+	for i, c := range schema.Columns {
 		if c.EqualByExprAndID(ctx, col) {
 			col.Index = i
 			return true

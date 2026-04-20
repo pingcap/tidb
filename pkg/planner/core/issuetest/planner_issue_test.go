@@ -164,6 +164,41 @@ func TestPlannerIssueRegressions(t *testing.T) {
 				"      └─TableRowIDScan(Probe) cop[tikv] table:t3 keep order:false, stats:pseudo"))
 	}
 
+	// ambiguous-expression-index-generated-column-substitution
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec(`create table space (
+  workspace_id binary(16) not null,
+  tenant_id varchar(100) not null,
+  id binary(16) not null,
+  name varchar(200) not null,
+  description varchar(500),
+  created_at datetime(6) not null,
+  updated_at datetime(6),
+  created_by varchar(128) not null,
+  updated_by varchar(128),
+  status enum('CURRENT','ARCHIVED','TRASHED') not null,
+  is_default boolean not null default false,
+  primary key (workspace_id, id)
+)`)
+		tk.MustExec("create index space_default_idx on space(is_default)")
+		tk.MustExec("create index space_workspace_id_lower_name_id_idx on space(workspace_id, (lower(name)), id)")
+		tk.MustExec("create index space_workspace_id_status_id_idx on space(workspace_id, status, id)")
+		tk.MustExec("create index space_workspace_id_status_lower_name_id_idx on space(workspace_id, status, (lower(name)), id)")
+
+		sql := `SELECT /*+ USE_INDEX(space, space_workspace_id_lower_name_id_idx, space_workspace_id_status_lower_name_id_idx) */
+workspace_id, tenant_id, id, name, description, created_at, updated_at, created_by, updated_by, status, is_default
+FROM space
+WHERE workspace_id = x'b1c7f6cfae0f4d4791b5cf04f6a3beeb'
+  AND LOWER(name) LIKE '%backend%'
+  AND status = 'CURRENT'
+ORDER BY LOWER(name), id
+LIMIT 3`
+		plan := fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + sql).Rows())
+		require.Contains(t, plan, "IndexLookUp")
+		require.Contains(t, plan, "index:space_workspace_id_status_lower_name_id_idx")
+	}
+
 	// null-safe-join-with-union
 	{
 		tk := prepareSharedTestKit(t)
