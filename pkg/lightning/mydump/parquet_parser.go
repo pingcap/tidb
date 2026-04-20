@@ -47,6 +47,9 @@ const (
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
+	// sparkRebaseDefaultTimeZoneID must exist in the generated Spark rebase
+	// table. Tests assert this invariant so the parser can return it directly.
+	sparkRebaseDefaultTimeZoneID = "UTC"
 )
 
 var (
@@ -242,12 +245,11 @@ type convertedType struct {
 	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types
 	IsAdjustedToUTC bool
 
-	// sparkRebaseLocation is non-nil when the file footer says the column was
+	// sparkRebaseTimeZoneID is non-empty when the file footer says the column was
 	// written by a Spark release that used the legacy hybrid Julian/Gregorian
-	// calendar for ancient DATE/TIMESTAMP values. A nil location means no Spark
-	// legacy rebase is needed, so the values stay on the normal Proleptic
-	// Gregorian path.
-	sparkRebaseLocation *time.Location
+	// calendar for ancient DATE/TIMESTAMP values. The value is a Spark timezone
+	// table key, not necessarily a Go-loadable location.
+	sparkRebaseTimeZoneID string
 }
 
 func sparkVersionFromMetadata(fileMeta *metadata.FileMetaData) *metadata.AppVersion {
@@ -277,14 +279,14 @@ func sparkAppVersion(version string) *metadata.AppVersion {
 	return appVersion
 }
 
-func sparkRebaseLocation(
+func sparkRebaseTimeZoneID(
 	fileMeta *metadata.FileMetaData,
 	cutoff *metadata.AppVersion,
 	legacyKey string,
 	fallback *time.Location,
-) *time.Location {
+) string {
 	if fileMeta == nil {
-		return nil
+		return ""
 	}
 
 	kv := fileMeta.KeyValueMetadata()
@@ -303,27 +305,31 @@ func sparkRebaseLocation(
 	}
 
 	if !legacy {
-		// nil means this file should stay on the normal Proleptic Gregorian read
-		// path, without Spark's legacy hybrid-calendar correction.
-		return nil
+		// Empty string means this file should stay on the normal Proleptic
+		// Gregorian read path, without Spark's legacy hybrid-calendar correction.
+		return ""
 	}
 
 	if kv != nil {
 		if tzName := kv.FindValue(sparkTimeZoneMetadataKey); tzName != nil {
-			if loc, err := time.LoadLocation(*tzName); err == nil {
-				return loc
+			timeZoneID := strings.TrimSpace(*tzName)
+			if _, ok := sparkJulianGregorianRebaseMicrosIndex(timeZoneID); ok {
+				return timeZoneID
 			}
 		}
 	}
 
 	if fallback != nil {
-		return fallback
+		timeZoneID := fallback.String()
+		if _, ok := sparkJulianGregorianRebaseMicrosIndex(timeZoneID); ok {
+			return timeZoneID
+		}
 	}
 	// Spark's timezone footer is optional, but timestamp rebasing still needs a
 	// deterministic location. UTC is the safest last resort because it preserves
 	// the encoded instant without introducing an extra local-time shift, and
 	// DATE rebasing ignores the location entirely.
-	return time.UTC
+	return sparkRebaseDefaultTimeZoneID
 }
 
 // rowGroupParser parses rows from one parquet row group.
@@ -754,19 +760,19 @@ func NewParquetParser(
 		switch desc.PhysicalType() {
 		case parquet.Types.Int32:
 			if colTypes[i].converted == schema.ConvertedTypes.Date {
-				colTypes[i].sparkRebaseLocation = sparkRebaseLocation(
+				colTypes[i].sparkRebaseTimeZoneID = sparkRebaseTimeZoneID(
 					reader.MetaData(), sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, meta.Loc,
 				)
 			}
 		case parquet.Types.Int64:
 			if colTypes[i].converted == schema.ConvertedTypes.TimestampMillis ||
 				colTypes[i].converted == schema.ConvertedTypes.TimestampMicros {
-				colTypes[i].sparkRebaseLocation = sparkRebaseLocation(
+				colTypes[i].sparkRebaseTimeZoneID = sparkRebaseTimeZoneID(
 					reader.MetaData(), sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, meta.Loc,
 				)
 			}
 		case parquet.Types.Int96:
-			colTypes[i].sparkRebaseLocation = sparkRebaseLocation(
+			colTypes[i].sparkRebaseTimeZoneID = sparkRebaseTimeZoneID(
 				reader.MetaData(), sparkINT96RebaseCutoff, sparkLegacyINT96MetadataKey, meta.Loc,
 			)
 		}
