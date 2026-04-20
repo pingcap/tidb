@@ -1757,10 +1757,10 @@ func isRetryableJobError(err error, jobErrCnt int64) bool {
 	if jobErrCnt+1 >= variable.GetDDLErrorCountLimit() {
 		return false
 	}
-	return isRetryableError(err)
+	return isRetryableError(err, true)
 }
 
-func isRetryableError(err error) bool {
+func isRetryableError(err error, retryUnknown bool) bool {
 	errMsg := err.Error()
 	for _, m := range dbterror.ReorgRetryableErrMsgs {
 		if strings.Contains(errMsg, m) {
@@ -1773,8 +1773,7 @@ func isRetryableError(err error) bool {
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
 		return ok
 	}
-	// For the unknown errors, we should retry.
-	return true
+	return retryUnknown
 }
 
 func runReorgJobAndHandleErr(
