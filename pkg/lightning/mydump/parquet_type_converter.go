@@ -255,6 +255,44 @@ func rebaseJulianToGregorianDays(days int) int {
 	return days + sparkLegacyDateRebaseDiffs[i-1]
 }
 
+// floorDivInt64 returns floor(x/y). Go integer division truncates toward zero,
+// which is not the semantics Spark uses when splitting negative microsecond
+// timestamps into days and micros-of-day.
+func floorDivInt64(x, y int64) int64 {
+	q := x / y
+	if r := x % y; r != 0 && (r < 0) != (y < 0) {
+		q--
+	}
+	return q
+}
+
+// floorModInt64 returns x modulo y using floor division, matching Java/Scala
+// Math.floorMod for negative timestamps.
+func floorModInt64(x, y int64) int64 {
+	return x - floorDivInt64(x, y)*y
+}
+
+// Spark falls back to a hybrid-calendar conversion before the generated switch
+// table starts. The first switch and diff encode the source Julian-side offset
+// and target Gregorian-side offset at the Common Era boundary.
+// Spark source:
+// https://github.com/apache/spark/blob/v3.5.7/sql/api/src/main/scala/org/apache/spark/sql/catalyst/util/RebaseDateTime.scala#L438-L478
+// Fallback branch:
+// https://github.com/apache/spark/blob/v3.5.7/sql/api/src/main/scala/org/apache/spark/sql/catalyst/util/RebaseDateTime.scala#L502-L510
+func rebaseSparkJulianToGregorianMicrosBeforeSwitch(micros, firstSwitch, firstDiff int64) int64 {
+	julianCommonEraStartMicros := int64(sparkLegacyDateRebaseSwitchDays[0]) * microsPerDay
+	gregorianCommonEraStartMicros := time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC).UnixMicro()
+	sourceOffset := julianCommonEraStartMicros - firstSwitch
+	targetOffset := gregorianCommonEraStartMicros - firstSwitch - firstDiff
+
+	localMicros := micros + sourceOffset
+	localDays := floorDivInt64(localMicros, microsPerDay)
+	microsOfDay := floorModInt64(localMicros, microsPerDay)
+	year, month, day := julianDayNumberToDate(localDays + julianDayOfUnixEpoch)
+	gregorianLocalMicros := time.Date(year, month, day, 0, 0, 0, 0, time.UTC).UnixMicro() + microsOfDay
+	return gregorianLocalMicros - targetOffset
+}
+
 func rebaseSparkJulianToGregorianMicros(timeZoneID string, micros int64) (int64, error) {
 	if micros >= legacyTimestampRebaseCutoffMicros {
 		return micros, nil
@@ -275,19 +313,7 @@ func rebaseSparkJulianToGregorianMicros(timeZoneID string, micros int64) (int64,
 		return 0, errors.Errorf("empty Spark legacy timestamp rebase table for timezone %q", timeZoneID)
 	}
 	if micros < switches[0] {
-		// Spark falls back to a slow hybrid-calendar implementation for values
-		// before its generated table range. TiDB only implements the generated
-		// table path because Go's time package does not provide Spark's hybrid
-		// Julian/Gregorian calendar fallback semantics. Report an error instead
-		// of applying an approximation that can produce wrong historical
-		// timestamps. For example, UTC values before the first UTC table switch
-		// are unsupported; that means inputs earlier than 0000-12-30T00:00:00Z,
-		// such as 0000-12-29T23:59:59.999999Z and earlier. Other timezones have
-		// similar Common Era boundary ranges shifted by their historical offsets.
-		return 0, errors.Errorf(
-			"Spark legacy timestamp before supported rebase table range: timezone %q, micros %d, first supported micros %d",
-			timeZoneID, micros, switches[0],
-		)
+		return rebaseSparkJulianToGregorianMicrosBeforeSwitch(micros, switches[0], diffs[0]), nil
 	}
 
 	i := len(switches)

@@ -628,40 +628,36 @@ func TestParquetVariousTypes(t *testing.T) {
 		require.Equal(t, time.Date(1400, 3, 1, 0, 0, 0, 0, time.UTC), gotTime)
 	})
 
-	t.Run("spark_legacy_timestamp_before_table_range_returns_error", func(t *testing.T) {
-		legacyMeta := metadata.NewKeyValueMetadata()
-		require.NoError(t, legacyMeta.Append("org.apache.spark.version", "2.4.8"))
-		require.NoError(t, legacyMeta.Append("org.apache.spark.timeZone", sparkRebaseDefaultTimeZoneID))
-
+	t.Run("spark_legacy_timestamp_before_table_range_uses_hybrid_calendar_fallback", func(t *testing.T) {
 		index, ok := sparkJulianGregorianRebaseMicrosIndex(sparkRebaseDefaultTimeZoneID)
 		require.True(t, ok)
 		switches, _ := sparkJulianGregorianRebaseMicrosSlices(index)
 		require.NotEmpty(t, switches)
-		unsupportedMicros := switches[0] - 1
-		pc := []ParquetColumn{
+
+		testCases := []struct {
+			name     string
+			micros   int64
+			expected int64
+		}{
 			{
-				Name:      "timestampmicros",
-				Type:      parquet.Types.Int64,
-				Converted: schema.ConvertedTypes.TimestampMicros,
-				Gen: func(_ int) (any, []int16) {
-					return []int64{unsupportedMicros}, []int16{1}
-				},
+				name:     "common_era_boundary",
+				micros:   switches[0] - 1,
+				expected: time.Date(0, 12, 31, 23, 59, 59, 999999000, time.UTC).UnixMicro(),
+			},
+			{
+				name:     "julian_only_leap_day",
+				micros:   -65317968000000001,
+				expected: time.Date(-100, 3, 1, 23, 59, 59, 999999000, time.UTC).UnixMicro(),
 			},
 		}
 
-		dir := t.TempDir()
-		name := "legacy-timestamp-before-table-range.parquet"
-		require.NoError(t,
-			WriteParquetFile(
-				dir, name, pc, 1,
-				parquet.WithCreatedBy("parquet-mr version 1.10.1"),
-				file.WithWriteMetadata(legacyMeta),
-			),
-		)
-
-		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
-		require.Equal(t, sparkRebaseDefaultTimeZoneID, reader.colTypes[0].sparkRebaseTimeZoneID)
-		require.ErrorContains(t, reader.ReadRow(), "Spark legacy timestamp before supported rebase table range")
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				rebased, err := rebaseSparkJulianToGregorianMicros(sparkRebaseDefaultTimeZoneID, tc.micros)
+				require.NoError(t, err)
+				require.Equal(t, tc.expected, rebased)
+			})
+		}
 	})
 
 	t.Run("decimal_with_nulls", func(t *testing.T) {
