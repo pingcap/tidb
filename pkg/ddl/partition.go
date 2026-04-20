@@ -208,7 +208,9 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		}
 
 		// When TiFlash Replica is ready, we must move them into `AvailablePartitionIDs`.
-		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+		// Skip this when skipWait=true: the background TiFlash ticker is responsible
+		// for adding the partition ID to AvailablePartitionIDs once replication actually completes.
+		if !skipWait && tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			for _, d := range partInfo.Definitions {
 				tblInfo.TiFlashReplica.AvailablePartitionIDs = append(tblInfo.TiFlashReplica.AvailablePartitionIDs, d.ID)
 				err = infosync.UpdateTiFlashProgressCache(d.ID, 1)
