@@ -599,7 +599,7 @@ const (
 		resource_group_name varchar(32) not null,
 		start_time TIMESTAMP NOT NULL,
 		update_time TIMESTAMP NOT NULL,
-		repeats int default 1,
+		repeats BIGINT default 1,
 		match_type varchar(12) NOT NULL,
 		action varchar(64) NOT NULL,
 		sample_sql TEXT NOT NULL,
