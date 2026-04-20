@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -808,6 +809,10 @@ func checkAllEvicted(t *testing.T, statsTbl *statistics.Table) {
 }
 
 func TestInitStatsLite(t *testing.T) {
+	// Clear process-global async-load queue so leftover items from earlier
+	// tests (e.g. TestLoadPredicateColumns) do not affect this test's
+	// bootstrap-load assertions.
+	asyncload.AsyncLoadHistogramNeededItems.Clear()
 	oriVal := config.GetGlobalConfig().Performance.LiteInitStats
 	config.GetGlobalConfig().Performance.LiteInitStats = true
 	defer func() {

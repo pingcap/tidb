@@ -62,6 +62,12 @@ func (n *neededStatsInternalMap) Delete(col model.TableItemID) {
 	n.m.Unlock()
 }
 
+func (n *neededStatsInternalMap) Clear() {
+	n.m.Lock()
+	clear(n.items)
+	n.m.Unlock()
+}
+
 func (n *neededStatsInternalMap) Length() int {
 	n.m.RLock()
 	defer n.m.RUnlock()
@@ -117,4 +123,15 @@ func (n *neededStatsMap) Length() int {
 		result += n.items[i].Length()
 	}
 	return result
+}
+
+// Clear removes every item from every shard. Intended for test isolation:
+// AsyncLoadHistogramNeededItems is a process-wide global, so tests that seed
+// it (e.g. via IsInvalid + priority load) can leak items into later tests if
+// the queue is not explicitly drained. Not safe for concurrent use with a
+// live async-load worker.
+func (n *neededStatsMap) Clear() {
+	for i := range shardCnt {
+		n.items[i].Clear()
+	}
 }

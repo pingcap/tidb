@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -817,6 +818,9 @@ func TestInitStatsForTableWithTopNButNoBuckets(t *testing.T) {
 // - Memory becomes full after TopN load
 // - TopN should be loaded but buckets should be blocked
 func TestInitStatsMemoryFullBlocksBucketsButKeepsTopN(t *testing.T) {
+	// Clear process-global async-load queue so leftover items from earlier
+	// tests do not trigger premature bucket loads here.
+	asyncload.AsyncLoadHistogramNeededItems.Clear()
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
