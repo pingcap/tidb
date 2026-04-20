@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 )
@@ -1534,9 +1535,22 @@ func TestPhysicalApplyIsNotPhysicalJoin(t *testing.T) {
 }
 
 func TestDisableReuseChunk(t *testing.T) {
+	originMemTotal := memory.MemTotal
+	defer func() {
+		memory.MemTotal = originMemTotal
+	}()
+	memory.MemTotal = func() (uint64, error) {
+		return 256 * size.GB, nil
+	}
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	originMaxMemoryLimitForOverlongType := core.MaxMemoryLimitForOverlongType
+	defer func() {
+		core.MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+	}()
+
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
 	tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)

@@ -511,7 +511,7 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
 	var i atomic.Int32
 	i.Store(3)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if job.State != model.JobStateSynced {
 			tk2 := testkit.NewTestKit(t, store)
 			tmp := i.Add(1)

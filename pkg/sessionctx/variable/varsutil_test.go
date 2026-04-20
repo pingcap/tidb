@@ -421,9 +421,18 @@ func TestVarsutil(t *testing.T) {
 	v.StmtCtx.TruncateWarnings(0)
 	require.Len(t, v.StmtCtx.GetWarnings(), 0)
 
+	err = v.SetSystemVar(TiDBAnalyzeVersion, "1")
+	require.NoError(t, err)
+	warn := v.StmtCtx.GetWarnings()[0]
+	require.Error(t, warn.Err)
+	require.Equal(t, "[variable:1287]'tidb_analyze_version=1' is deprecated and will be removed in a future release. Please use tidb_analyze_version=2 instead", warn.Err.Error())
+
+	v.StmtCtx.TruncateWarnings(0)
+	require.Len(t, v.StmtCtx.GetWarnings(), 0)
+
 	err = v.SetSystemVar(TiDBAnalyzeVersion, "4")
 	require.NoError(t, err) // converts to max value
-	warn := v.StmtCtx.GetWarnings()[0]
+	warn = v.StmtCtx.GetWarnings()[0]
 	require.Error(t, warn.Err)
 	require.Contains(t, warn.Err.Error(), "Truncated incorrect tidb_analyze_version value")
 

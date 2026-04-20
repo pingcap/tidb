@@ -921,9 +921,9 @@ func addTableNameInTableIDField(ctx context.Context, tableIDField any, is infosc
 func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
-		for _, item := range mapper {
-			if item.TableID > 0 {
-				s.statsCollector.Update(item.TableID, item.Delta, item.Count)
+		for tableID, item := range mapper {
+			if tableID > 0 {
+				s.statsCollector.Update(tableID, item.Delta, item.Count)
 			}
 		}
 	}
@@ -2815,7 +2815,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 				Info:           fmt.Sprintf("lock %s@%s for consecutive incorrect password", authUser.Username, authUser.Hostname),
 			})
 			// Notification auto unlock.
-			err = domain.GetDomain(s).NotifyUpdatePrivilege()
+			err = domain.GetDomain(s).NotifyUpdatePrivilege([]string{authUser.Username})
 			if err != nil {
 				return err
 			}
@@ -2994,7 +2994,7 @@ func authFailedTracking(s *session, user string, host string) (bool, *privileges
 
 func autolockAction(s *session, passwordLocking *privileges.PasswordLocking, user, host string) error {
 	// Don't want to update the cache frequently, and only trigger the update cache when the lock status is updated.
-	err := domain.GetDomain(s).NotifyUpdatePrivilege()
+	err := domain.GetDomain(s).NotifyUpdatePrivilege([]string{user})
 	if err != nil {
 		return err
 	}

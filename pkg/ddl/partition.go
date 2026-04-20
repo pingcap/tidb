@@ -627,21 +627,12 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 				return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(idxUpdate.Name)
 			}
 			dupCheck[strings.ToLower(idxUpdate.Name)] = struct{}{}
-			tbInfo.Indices[idxOffset].GlobalIndexVersion = 0
 			if idxUpdate.Option != nil && idxUpdate.Option.Global {
 				tbInfo.Indices[idxOffset].Global = true
-				// Only use V1 for non-clustered tables with non-unique global indexes
-				if !tbInfo.Indices[idxOffset].Unique && !tbInfo.HasClusteredIndex() {
-					tbInfo.Indices[idxOffset].GlobalIndexVersion = model.GlobalIndexVersionV1
-					failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
-						if valInt, ok := val.(int); ok {
-							tbInfo.Indices[idxOffset].GlobalIndexVersion = uint8(valInt)
-						}
-					})
-				}
 			} else {
 				tbInfo.Indices[idxOffset].Global = false
 			}
+			setGlobalIndexVersion(tbInfo, tbInfo.Indices[idxOffset])
 			updateIndexes = append(updateIndexes, model.UpdateIndexInfo{IndexName: idxUpdate.Name, Global: tbInfo.Indices[idxOffset].Global})
 			tbInfo.Partition.DDLUpdateIndexes = updateIndexes
 		}
@@ -3311,16 +3302,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			tblInfo.Partition.DDLChangedIndex[index.ID] = false
 			tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
 			newIndex.Global = newGlobal
-			newIndex.GlobalIndexVersion = 0
-			if newGlobal && !newIndex.Unique && !tblInfo.HasClusteredIndex() {
-				// Only use V1 for non-clustered tables with non-unique global indexes
-				newIndex.GlobalIndexVersion = model.GlobalIndexVersionV1
-				failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
-					if valInt, ok := val.(int); ok {
-						newIndex.GlobalIndexVersion = uint8(valInt)
-					}
-				})
-			}
+			setGlobalIndexVersion(tblInfo, newIndex)
 			tblInfo.Indices = append(tblInfo.Indices, newIndex)
 		}
 		failpoint.Inject("reorgPartCancel1", func(val failpoint.Value) {
@@ -3895,7 +3877,7 @@ func (w *reorgPartitionWorker) BackfillData(_ context.Context, handleRange reorg
 			for i := range w.rowRecords {
 				newKeys = append(newKeys, w.rowRecords[i].key)
 			}
-			found, err = txn.BatchGet(ctx, newKeys)
+			found, err = kv.BatchGetValue(ctx, txn, newKeys)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -4152,15 +4134,22 @@ func (w *worker) reorgPartitionDataAndIndex(
 		}
 		if reorgInfo.PhysicalTableID != 0 {
 			reorgInfo.currElement = reorgInfo.elements[0]
-			pid := pi.Definitions[0].ID
-			if _, err = findNextPartitionID(pid, pi.DroppingDefinitions); err == nil {
-				// Skip all dropped partitions
-				pid, err = findNextNonTouchedPartitionID(pid, pi)
-				if err != nil {
-					return errors.Trace(err)
+			// Find the first non-touched partition: one that is NOT in
+			// AddingDefinitions (newly created, already indexed above) and
+			// NOT in DroppingDefinitions (being removed).
+			pid := int64(0)
+			for _, def := range pi.Definitions {
+				if _, addErr := findNextPartitionID(def.ID, pi.AddingDefinitions); addErr == nil {
+					continue
 				}
+				if _, dropErr := findNextPartitionID(def.ID, pi.DroppingDefinitions); dropErr == nil {
+					continue
+				}
+				pid = def.ID
+				break
 			}
-			// if pid == 0 => All partitions will be dropped, nothing more to add to global indexes.
+
+			// if pid == 0 => All partitions will be dropped/added, nothing more to add to global indexes.
 			reorgInfo.PhysicalTableID = pid
 		}
 		if reorgInfo.PhysicalTableID != 0 {

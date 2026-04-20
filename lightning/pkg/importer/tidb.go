@@ -80,7 +80,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		variable.TiDBTxnMode: "optimistic",
 		// disable foreign key checks
 		variable.ForeignKeyChecks:              "0",
-		variable.TiDBExplicitRequestSourceType: util.ExplicitTypeLightning,
+		variable.TiDBExplicitRequestSourceType: util.ExplicitTypeImport,
 	}
 
 	if dsn.Vars != nil {
