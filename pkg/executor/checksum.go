@@ -208,9 +208,12 @@ type checksumContext struct {
 	tableInfo      *model.TableInfo
 	startTs        uint64
 	response       *tipb.ChecksumResponse
-	partitionNames []ast.CIStr // if non-empty, only checksum these partitions
+	// partitionNames restricts the checksum to the named partitions; all partitions are checksummed when empty.
+	partitionNames []ast.CIStr
 }
 
+// newChecksumContext creates a checksumContext for the given table.
+// When partitionNames is non-empty, only those partitions are checksummed.
 func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64, partitionNames []ast.CIStr) *checksumContext {
 	return &checksumContext{
 		dbInfo:         db,

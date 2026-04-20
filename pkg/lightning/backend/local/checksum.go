@@ -88,11 +88,15 @@ func (rc *RemoteChecksum) IsEqual(other *verification.KVChecksum) bool {
 
 // ChecksumManager is a manager that manages checksums.
 type ChecksumManager interface {
+	// Checksum computes the remote checksum for tableInfo.
+	// When partitionName is non-empty, the checksum is scoped to that partition only.
+	// TiKV-backed implementations must reject non-empty partitionName with an error.
 	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, partitionName string) (*RemoteChecksum, error)
 	Close()
 }
 
-// fetch checksum for tidb sql client
+// tidbChecksumExecutor computes checksums via TiDB SQL (ADMIN CHECKSUM TABLE).
+// It supports partition-scoped checksums via the partitionName argument.
 type tidbChecksumExecutor struct {
 	db      *sql.DB
 	manager *gcLifeTimeManager
@@ -108,6 +112,9 @@ func NewTiDBChecksumExecutor(db *sql.DB) ChecksumManager {
 	}
 }
 
+// Checksum implements ChecksumManager by running ADMIN CHECKSUM TABLE via TiDB SQL.
+// When partitionName is non-empty, the statement is scoped to that partition:
+// ADMIN CHECKSUM TABLE t PARTITION (partitionName).
 func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, partitionName string) (*RemoteChecksum, error) {
 	var err error
 	if err = e.manager.addOneJob(ctx, e.db); err != nil {
@@ -376,7 +383,9 @@ func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpo
 
 var retryGetTSInterval = time.Second
 
-// Checksum implements the ChecksumManager interface.
+// Checksum implements the ChecksumManager interface using the TiKV coprocessor.
+// Partition-scoped checksums (non-empty partitionName) are not supported by this
+// implementation; callers must use tidbChecksumExecutor (checksum-via-sql = true) instead.
 func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, partitionName string) (*RemoteChecksum, error) {
 	if partitionName != "" {
 		return nil, errors.Errorf("partition-scoped checksum is not supported by TiKV checksum manager; use tidb checksum manager instead (set checksum-via-sql = true): partition %s", partitionName)

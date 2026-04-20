@@ -62,8 +62,9 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 	return manager, nil
 }
 
-// DoChecksum do checksum for tables.
-// table should be in <db>.<table>, format.  e.g. foo.bar
+// DoChecksum computes the remote checksum for a table using the ChecksumManager stored in ctx.
+// table must be in <db>.<table> format, e.g. foo.bar.
+// When partitionName is non-empty, the checksum is scoped to that partition only.
 func DoChecksum(ctx context.Context, table *checkpoints.TidbTableInfo, partitionName string) (*local.RemoteChecksum, error) {
 	var err error
 	manager, ok := ctx.Value(&checksumManagerKey).(local.ChecksumManager)
