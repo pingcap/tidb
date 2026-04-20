@@ -653,29 +653,52 @@ func TestIndexLookUpPushDownCopTask(t *testing.T) {
 	require.Equal(t, "3", localIndexLookUpRow[2], r.String())
 }
 
-func TestPartitionIndexLookUpMergeSharedLimiterBound(t *testing.T) {
+func TestPartitionIndexLookUpMergeWithSkewedPartitions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=4")
-	tk.MustExec("set @@tidb_session_alias='test_partition_merge_shared_limiter'")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	sessionAlias := "test_partition_merge_skew"
+	tk.MustExec(fmt.Sprintf("set @@tidb_session_alias='%s'", sessionAlias))
+	tk.MustExec("set @@tidb_wait_split_region_finish=0")
 
-	tk.MustExec("drop table if exists t_shared_limiter")
-	tk.MustExec("create table t_shared_limiter(a int, b int, c int, key idx_a(a)) partition by hash(a) partitions 16")
-	values := make([]string, 0, 512)
-	for i := range 512 {
-		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i%97, i%89))
+	tk.MustExec("drop table if exists t_partition_merge_skew")
+	tk.MustExec("create table t_partition_merge_skew(a int, b int, p int, key idx_a(a)) partition by hash(p) partitions 16")
+
+	// Build skewed rows:
+	// - partition p=0 has many small `a` values (hot partition for top-N)
+	// - other partitions have larger `a` values (cold partitions)
+	const hotRows = 2000
+	const coldRowsPerPartition = 200
+	const partitionCount = 16
+	const coldPartitions = partitionCount - 1
+	const totalRows = hotRows + coldPartitions*coldRowsPerPartition
+
+	values := make([]string, 0, totalRows)
+	for a := range hotRows {
+		values = append(values, fmt.Sprintf("(%d, %d, 0)", a, a%23))
 	}
-	tk.MustExec("insert into t_shared_limiter values " + strings.Join(values, ","))
+	for p := 1; p < partitionCount; p++ {
+		for i := range coldRowsPerPartition {
+			a := 1000000 + p*10000 + i
+			values = append(values, fmt.Sprintf("(%d, %d, %d)", a, a%29, p))
+		}
+	}
+	require.Len(t, values, totalRows)
+	tk.MustExec("insert into t_partition_merge_skew values " + strings.Join(values, ","))
 
-	sql := "select /*+ use_index(t_shared_limiter, idx_a) */ b, c from t_shared_limiter where a >= 0 order by a"
+	// Ensure index lookup on each partition has enough tasks
+	tk.MustQuery("split table t_partition_merge_skew index idx_a between (0) and (1200000) regions 32")
+
+	sql := "select b from t_partition_merge_skew force index(idx_a) where a >= 0 order by a limit 300"
 	plan := tk.MustQuery("explain format = 'brief' " + sql).String()
 	require.Contains(t, plan, "IndexLookUp")
 
 	isIndexScanReq := func(req *tikvrpc.Request) bool {
 		copReq, ok := req.Req.(*coprocessor.Request)
-		if !ok || copReq.ConnectionAlias != "test_partition_merge_shared_limiter" {
+		if !ok || copReq.ConnectionAlias != sessionAlias {
 			return false
 		}
 		dagReq := &tipb.DAGRequest{}
@@ -694,12 +717,14 @@ func TestPartitionIndexLookUpMergeSharedLimiterBound(t *testing.T) {
 		return hasIndexScan
 	}
 
+	var indexScanReqCount int64
 	var active int64
 	var maxActive int64
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx", func(req *tikvrpc.Request) {
 		if !isIndexScanReq(req) {
 			return
 		}
+		atomic.AddInt64(&indexScanReqCount, 1)
 		cur := atomic.AddInt64(&active, 1)
 		for {
 			old := atomic.LoadInt64(&maxActive)
@@ -707,21 +732,24 @@ func TestPartitionIndexLookUpMergeSharedLimiterBound(t *testing.T) {
 				break
 			}
 		}
-		time.Sleep(20 * time.Millisecond)
+		time.Sleep(15 * time.Millisecond)
 		atomic.AddInt64(&active, -1)
 	}))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"))
 	}()
-	// Force disable cop lite worker so all cop requests go through the regular sender path
-	// and are consistently governed by the shared send-rate limiter.
+
+	// Force disable cop lite worker so all cop requests go through the regular sender path.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/TryCopLiteWorker"))
 	}()
 
-	rows := tk.MustQuery(sql).Rows()
-	require.Len(t, rows, 512)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	rows := tk.MustQueryWithContext(ctx, sql).Rows()
+	require.Len(t, rows, 300)
+	require.Greater(t, atomic.LoadInt64(&indexScanReqCount), int64(1))
 	require.GreaterOrEqual(t, atomic.LoadInt64(&maxActive), int64(1))
 	require.LessOrEqual(t, atomic.LoadInt64(&maxActive), int64(8))
 }
