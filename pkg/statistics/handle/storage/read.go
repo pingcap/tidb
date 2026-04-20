@@ -17,6 +17,7 @@ package storage
 import (
 	"context"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -144,7 +145,36 @@ func HistogramFromStorageWithPriority(
 	if found {
 		return hg, nil
 	}
+	logLegacyBucketFallbackOnce(tableID, colID, isIndex)
 	return histogramFromLegacyStatsBucketsWithPriority(sctx, selectPrefix, tableID, colID, tp, distinct, isIndex, ver, nullCount, totColSize, corr)
+}
+
+// legacyBucketFallbackLogged tracks (table_id, is_index, hist_id) tuples for
+// which we have already emitted a "falling back to stats_buckets" INFO log.
+// Each migrated-away histogram logs once per process lifetime, bounding log
+// volume at O(histograms with pre-migration data) rather than O(reads).
+var legacyBucketFallbackLogged sync.Map
+
+// logLegacyBucketFallbackOnce logs an INFO line the first time the priority
+// reader falls back to mysql.stats_buckets for this (tableID, isIndex, histID),
+// and is a no-op on subsequent calls. Useful for tracking rolling-upgrade
+// migration progress: the log count decreases over time as ANALYZE writes
+// each histogram's data into mysql.stats_data.
+func logLegacyBucketFallbackOnce(tableID, histID int64, isIndex int) {
+	key := struct {
+		tableID int64
+		histID  int64
+		isIndex int
+	}{tableID, histID, isIndex}
+	if _, loaded := legacyBucketFallbackLogged.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	statslogutil.StatsLogger().Info(
+		"stats_data miss, falling back to legacy stats_buckets for this histogram; will be migrated by next ANALYZE",
+		zap.Int64("table_id", tableID),
+		zap.Int64("hist_id", histID),
+		zap.Int("is_index", isIndex),
+	)
 }
 
 // histogramFromStatsDataWithPriority reads a histogram's buckets from
