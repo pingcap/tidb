@@ -140,7 +140,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	require.Equal(t, rateLimit.GetCapacity(), 4)
 }
 
-func TestBuildCopIteratorWithSharedRateLimit(t *testing.T) {
+func TestBuildCopIteratorWithSharedRequestRateLimit(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer require.NoError(t, store.Close())
@@ -155,25 +155,25 @@ func TestBuildCopIteratorWithSharedRateLimit(t *testing.T) {
 	testCases := []struct {
 		name      string
 		keepOrder bool
-		capacity  int
 	}{
-		{name: "keep-order", keepOrder: true, capacity: 7},
-		{name: "non-keep-order", keepOrder: false, capacity: 5},
+		{name: "keep-order", keepOrder: true},
+		{name: "non-keep-order", keepOrder: false},
 	}
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			shared := tikvutil.NewRateLimit(tc.capacity)
+			shared := tikvutil.NewRateLimit(7)
 			req := &kv.Request{
-				Tp:                  kv.ReqTypeDAG,
-				KeyRanges:           kv.NewNonPartitionedKeyRanges(ranges),
-				Concurrency:         15,
-				KeepOrder:           tc.keepOrder,
-				CoprSharedRateLimit: shared,
+				Tp:                   kv.ReqTypeDAG,
+				KeyRanges:            kv.NewNonPartitionedKeyRanges(ranges),
+				Concurrency:          15,
+				KeepOrder:            tc.keepOrder,
+				CoprRequestRateLimit: shared,
 			}
 			it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
 			require.Nil(t, errRes)
-			require.Same(t, shared, it.GetSendRate())
-			require.Equal(t, tc.capacity, it.GetSendRate().GetCapacity())
+			require.Same(t, shared, it.GetRequestRateLimit())
+			require.Equal(t, 7, it.GetRequestRateLimit().GetCapacity())
 		})
 	}
 }

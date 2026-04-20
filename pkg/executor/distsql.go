@@ -841,7 +841,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	idxID := e.getIndexPlanRootID()
 	needMerge := needMergeSort(e.byItems, len(kvRanges))
 	activeWindowSize := getIndexScanActiveWindow(len(kvRanges), needMerge)
-	sharedCoprRateLimit := getMergeSortSharedCoprRateLimit(needMerge, e.dctx.DistSQLConcurrency)
+	sharedCoprRequestRateLimit := getMergeSortSharedCoprRequestRateLimit(needMerge, e.dctx.DistSQLConcurrency)
 	mergeSortIndexScanConcurrency := e.getMergeSortIndexScanConcurrency(needMerge, len(kvRanges))
 	e.idxWorkerWg.Add(1)
 	e.pool.submit(func() {
@@ -884,7 +884,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 					len(kvRanges),
 					worker.batchSize,
 					mergeSortIndexScanConcurrency,
-					sharedCoprRateLimit,
+					sharedCoprRequestRateLimit,
 				)
 				if err != nil {
 					for _, r := range results {
@@ -963,7 +963,7 @@ func getIndexScanActiveWindow(totalRanges int, needMerge bool) int {
 	return windowSize
 }
 
-func getMergeSortSharedCoprRateLimit(needMerge bool, distSQLConcurrency int) *tikvutil.RateLimit {
+func getMergeSortSharedCoprRequestRateLimit(needMerge bool, distSQLConcurrency int) *tikvutil.RateLimit {
 	if !needMerge {
 		return nil
 	}
@@ -1008,7 +1008,7 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	totalRanges int,
 	batchSize int,
 	indexScanConcurrency int,
-	sharedCoprRateLimit *tikvutil.RateLimit,
+	sharedCoprRequestRateLimit *tikvutil.RateLimit,
 ) (distsql.SelectResult, error) {
 	if tblScanIdxForRewritePartitionID >= 0 {
 		// We should set the TblScan's TableID to the partition physical ID to make sure
@@ -1030,7 +1030,7 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(totalRanges))).
 		SetMemTracker(tracker).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
-		SetCoprSharedRateLimit(sharedCoprRateLimit)
+		SetCoprRequestRateLimit(sharedCoprRequestRateLimit)
 
 	if e.indexLookUpPushDown {
 		// Paging and Cop-cache is not supported in index lookup push down.
