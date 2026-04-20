@@ -729,6 +729,7 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 		-- $(BAZEL_COVERAGE_TARGETS)
 	@echo "==> phase 2: run coverage with lower test concurrency"
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_NO_REMOTE_CACHE_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=$(BAZEL_COVERAGE_TEST_JOBS) --local_test_jobs=$(BAZEL_COVERAGE_TEST_JOBS) --build_tests_only --test_keep_going=false \
+		--bes_backend=grpcs://beplessproxy.hawkingrei.com --bes_results_url=https://bepless.hawkingrei.com/ \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- $(BAZEL_COVERAGE_TARGETS)
