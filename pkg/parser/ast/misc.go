@@ -3833,7 +3833,9 @@ func RedactURL(str string) string {
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
-			"sas-token": {},
+			"account-key":    {},
+			"encryption-key": {},
+			"sas-token":      {},
 		}
 	}
 
