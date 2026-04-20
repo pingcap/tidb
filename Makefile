@@ -715,8 +715,8 @@ bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
-BAZEL_COVERAGE_BUILD_JOBS ?= HOST_CPUS*3
-BAZEL_COVERAGE_TEST_JOBS ?= HOST_CPUS*0.9
+BAZEL_COVERAGE_BUILD_JOBS ?= HOST_CPUS*1
+BAZEL_COVERAGE_TEST_JOBS ?= HOST_CPUS*0.5
 BAZEL_COVERAGE_TARGETS = \
 	//... -//cmd/... -//tests/graceshutdown/... \
 	-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
