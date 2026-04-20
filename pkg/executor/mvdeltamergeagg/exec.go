@@ -2242,6 +2242,7 @@ func markUpdateTouchedRowsByColumn(
 		// Keep update touched detection consistent with updateRecord:
 		// compare with binary collation instead of column collation.
 		binaryCollator := collate.GetBinaryCollator()
+		var oldDatum, newDatum types.Datum
 		for updateOrdinal, rowIdx := range updateRows {
 			oldIsNull := oldCol.IsNull(rowIdx)
 			newIsNull := newCol.IsNull(rowIdx)
@@ -2256,8 +2257,8 @@ func markUpdateTouchedRowsByColumn(
 				}
 				continue
 			}
-			oldDatum := chunkRowColDatum(oldCol, rowIdx, ft)
-			newDatum := chunkRowColDatum(newCol, rowIdx, ft)
+			chunkRowColDatum(oldCol, rowIdx, ft, &oldDatum)
+			chunkRowColDatum(newCol, rowIdx, ft, &newDatum)
 			cmp, err := newDatum.Compare(typeCtx, &oldDatum, binaryCollator)
 			if err != nil {
 				return err
@@ -2356,11 +2357,10 @@ func markUpdateTouchedRowsByColumn(
 	}
 }
 
-func chunkRowColDatum(col *chunk.Column, rowIdx int, ft *types.FieldType) types.Datum {
-	var d types.Datum
+func chunkRowColDatum(col *chunk.Column, rowIdx int, ft *types.FieldType, d *types.Datum) {
 	if col.IsNull(rowIdx) {
 		d.SetNull()
-		return d
+		return
 	}
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
@@ -2403,5 +2403,4 @@ func chunkRowColDatum(col *chunk.Column, rowIdx int, ft *types.FieldType) types.
 	default:
 		d.SetBytes(col.GetRaw(rowIdx))
 	}
-	return d
 }

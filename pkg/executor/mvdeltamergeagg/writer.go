@@ -32,10 +32,10 @@ func (noopWriter) WriteChunk(_ context.Context, _ *ChunkResult) error {
 type tableResultWriter struct {
 	exec *Exec
 
-	writableColIDs        []int
-	writableFieldTypes    []*types.FieldType
-	aggWritableIDs        []int
-	aggWritableInputColID []int
+	writableColIDs     []int
+	writableFieldTypes []*types.FieldType
+	nonAggWritableIDs  []int
+	aggWritableIDs     []int
 
 	oldRow  []types.Datum
 	newRow  []types.Datum
@@ -132,21 +132,24 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 	for i := range writableCols {
 		writableFieldTypes[i] = &writableCols[i].FieldType
 	}
-	aggWritableInputColID := make([]int, len(aggWritableIDs))
-	for i, writableIdx := range aggWritableIDs {
-		aggWritableInputColID[i] = colIDs[writableIdx]
+	nonAggWritableIDs := make([]int, 0, len(writableCols)-len(aggWritableIDs))
+	for writableIdx := range writableCols {
+		if seenWritable[writableIdx] {
+			continue
+		}
+		nonAggWritableIDs = append(nonAggWritableIDs, writableIdx)
 	}
 
 	return &tableResultWriter{
-		exec:                  e,
-		writableColIDs:        colIDs,
-		writableFieldTypes:    writableFieldTypes,
-		aggWritableIDs:        aggWritableIDs,
-		aggWritableInputColID: aggWritableInputColID,
-		oldRow:                make([]types.Datum, len(writableCols)),
-		newRow:                make([]types.Datum, len(writableCols)),
-		touched:               make([]bool, len(writableCols)),
-		prevTouched:           make([]int, 0, len(aggWritableIDs)),
+		exec:               e,
+		writableColIDs:     colIDs,
+		writableFieldTypes: writableFieldTypes,
+		nonAggWritableIDs:  nonAggWritableIDs,
+		aggWritableIDs:     aggWritableIDs,
+		oldRow:             make([]types.Datum, len(writableCols)),
+		newRow:             make([]types.Datum, len(writableCols)),
+		touched:            make([]bool, len(writableCols)),
+		prevTouched:        make([]int, 0, len(aggWritableIDs)),
 	}, nil
 }
 
@@ -287,7 +290,8 @@ func (w *tableResultWriter) validateChunkResult(result *ChunkResult) error {
 			updateCandidateCnt*result.UpdateTouchedStride,
 		)
 	}
-	for _, colID := range w.aggWritableInputColID {
+	for _, writableIdx := range w.aggWritableIDs {
+		colID := w.writableColIDs[writableIdx]
 		if colID < 0 || colID >= len(result.ComputedCols) {
 			return errors.Errorf("agg computed col id %d out of range [0,%d)", colID, len(result.ComputedCols))
 		}
@@ -307,12 +311,13 @@ func (w *tableResultWriter) buildDeleteRow(result *ChunkResult, rowIdx int) {
 
 func (w *tableResultWriter) buildInsertRow(result *ChunkResult, rowIdx int) {
 	row := result.Input.GetRow(rowIdx)
-	for writableIdx, colID := range w.writableColIDs {
+	for _, writableIdx := range w.nonAggWritableIDs {
+		colID := w.writableColIDs[writableIdx]
 		row.DatumWithBuffer(colID, w.writableFieldTypes[writableIdx], &w.newRow[writableIdx])
 	}
-	for aggPos, writableIdx := range w.aggWritableIDs {
-		colID := w.aggWritableInputColID[aggPos]
-		w.newRow[writableIdx] = chunkRowColDatum(result.ComputedCols[colID], rowIdx, w.writableFieldTypes[writableIdx])
+	for _, writableIdx := range w.aggWritableIDs {
+		colID := w.writableColIDs[writableIdx]
+		chunkRowColDatum(result.ComputedCols[colID], rowIdx, w.writableFieldTypes[writableIdx], &w.newRow[writableIdx])
 	}
 }
 
@@ -321,10 +326,12 @@ func (w *tableResultWriter) buildUpdateRows(result *ChunkResult, rowIdx int) {
 	for writableIdx, colID := range w.writableColIDs {
 		row.DatumWithBuffer(colID, w.writableFieldTypes[writableIdx], &w.oldRow[writableIdx])
 	}
-	copy(w.newRow, w.oldRow)
-	for aggPos, writableIdx := range w.aggWritableIDs {
-		colID := w.aggWritableInputColID[aggPos]
-		w.newRow[writableIdx] = chunkRowColDatum(result.ComputedCols[colID], rowIdx, w.writableFieldTypes[writableIdx])
+	for _, writableIdx := range w.nonAggWritableIDs {
+		w.newRow[writableIdx] = w.oldRow[writableIdx]
+	}
+	for _, writableIdx := range w.aggWritableIDs {
+		colID := w.writableColIDs[writableIdx]
+		chunkRowColDatum(result.ComputedCols[colID], rowIdx, w.writableFieldTypes[writableIdx], &w.newRow[writableIdx])
 	}
 }
 
