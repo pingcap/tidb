@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"path/filepath"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -36,8 +37,9 @@ import (
 )
 
 func RunDirNotExist(t *testing.T) {
-	require.True(t, common.IsDirExists("."))
-	require.False(t, common.IsDirExists("not-exists"))
+	dir := t.TempDir()
+	require.True(t, common.IsDirExists(dir))
+	require.False(t, common.IsDirExists(filepath.Join(dir, "not-exists")))
 }
 
 func RunConnect(t *testing.T) {

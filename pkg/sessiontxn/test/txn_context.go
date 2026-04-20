@@ -602,6 +602,7 @@ func RunTxnContextForStaleReadInPrepare(t *testing.T) {
 	is1 := se.GetLatestInfoSchema()
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("set @a=now(6)")
+	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("prepare s1 from 'select * from t1 where id=1'")
 	tk.MustExec("prepare s2 from 'select * from t1 as of timestamp @a where id=1 '")
 

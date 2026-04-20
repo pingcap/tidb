@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"runtime"
 	"runtime/pprof"
 	"strings"
 	"testing"
@@ -35,6 +37,14 @@ import (
 	pd "github.com/tikv/pd/client/http"
 	"go.opencensus.io/stats/view"
 )
+
+func perfSchemaTestDataPath(name string) string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("failed to resolve perfschema testdata path")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "testdata", name)
+}
 
 func RunPredefinedTables(t *testing.T) {
 	require.True(t, perfschema.IsPredefinedTable("EVENTS_statements_summary_by_digest"))
@@ -73,7 +83,7 @@ func RunTiKVProfileCPU(t *testing.T) {
 			terror.Log(err)
 		}
 	}
-	router.HandleFunc("/debug/pprof/profile", copyHandler("testdata/tikv.cpu.profile"))
+	router.HandleFunc("/debug/pprof/profile", copyHandler(perfSchemaTestDataPath("tikv.cpu.profile")))
 
 	// failpoint setting
 	servers := []string{
@@ -144,7 +154,7 @@ func RunTiKVProfileCPU(t *testing.T) {
 	}
 
 	// mock PD profile
-	router.HandleFunc(pd.PProfProfile, copyHandler("testdata/test.pprof"))
+	router.HandleFunc(pd.PProfProfile, copyHandler(perfSchemaTestDataPath("test.pprof")))
 	router.HandleFunc(pd.PProfHeap, handlerFactory("heap"))
 	router.HandleFunc(pd.PProfMutex, handlerFactory("mutex"))
 	router.HandleFunc(pd.PProfAllocs, handlerFactory("allocs"))

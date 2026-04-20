@@ -23,6 +23,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -49,6 +50,19 @@ import (
 type testMydumpLoaderSuite struct {
 	cfg       *config.Config
 	sourceDir string
+}
+
+func mydumpTestDir() string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("failed to resolve mydump test directory")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
+}
+
+func mydumpTestPath(elem ...string) string {
+	parts := append([]string{mydumpTestDir()}, elem...)
+	return filepath.Join(parts...)
 }
 
 func newConfigWithSourceDir(sourceDir string) *config.Config {
@@ -88,12 +102,12 @@ func (s *testMydumpLoaderSuite) mkdir(t *testing.T, dirname string) {
 
 func RunLoader(t *testing.T) {
 	ctx := context.Background()
-	cfg := newConfigWithSourceDir("./not-exists")
+	cfg := newConfigWithSourceDir(mydumpTestPath("not-exists"))
 	_, err := md.NewLoader(ctx, md.NewLoaderCfg(cfg))
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
 
-	cfg = newConfigWithSourceDir("./examples")
+	cfg = newConfigWithSourceDir(mydumpTestPath("examples"))
 	mdl, err := md.NewLoader(ctx, md.NewLoaderCfg(cfg))
 	require.NoError(t, err)
 

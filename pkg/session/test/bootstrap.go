@@ -306,7 +306,6 @@ func RunDDLTableCreateBackfillTable(t *testing.T) {
 	require.NoError(t, err)
 
 	// to upgrade session for create ddl related tables
-	dom.Close()
 	dom, err = sessionpkg.ExportedBootstrapSession(store)
 	require.NoError(t, err)
 

@@ -39,7 +39,7 @@ import (
 TODO : test with specified 'regionBlockSize' ...
 */
 func RunTableRegion(t *testing.T) {
-	cfg := newConfigWithSourceDir("./examples")
+	cfg := newConfigWithSourceDir(mydumpTestPath("examples"))
 	loader, _ := NewLoader(context.Background(), NewLoaderCfg(cfg))
 	dbMeta := loader.GetDatabases()[0]
 
@@ -184,8 +184,8 @@ func RunMakeTableRegionsSplitLargeFile(t *testing.T) {
 			Filter:       []string{"*.*"},
 		},
 	}
-	filePath := "./csv/split_large_file.csv"
-	dataFileInfo, err := os.Stat(filePath)
+	filePath := filepath.Join("csv", "split_large_file.csv")
+	dataFileInfo, err := os.Stat(mydumpTestPath(filePath))
 	require.NoError(t, err)
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV, FileSize: fileSize}}
@@ -198,7 +198,7 @@ func RunMakeTableRegionsSplitLargeFile(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	store, err := objstore.NewLocalStorage(".")
+	store, err := objstore.NewLocalStorage(mydumpTestDir())
 	assert.NoError(t, err)
 
 	meta.DataFiles[0].FileMeta.Compression = CompressionNone
@@ -235,8 +235,8 @@ func RunCompressedMakeSourceFileRegion(t *testing.T) {
 		DB:   "csv",
 		Name: "large_csv_file",
 	}
-	filePath := "./csv/split_large_file.csv.zst"
-	dataFileInfo, err := os.Stat(filePath)
+	filePath := filepath.Join("csv", "split_large_file.csv.zst")
+	dataFileInfo, err := os.Stat(mydumpTestPath(filePath))
 	require.NoError(t, err)
 	fileSize := dataFileInfo.Size()
 
@@ -249,7 +249,7 @@ func RunCompressedMakeSourceFileRegion(t *testing.T) {
 	colCnt := 3
 
 	ctx := context.Background()
-	store, err := objstore.NewLocalStorage(".")
+	store, err := objstore.NewLocalStorage(mydumpTestDir())
 	assert.NoError(t, err)
 	compressRatio, err := SampleFileCompressRatio(ctx, fileInfo.FileMeta, store)
 	require.NoError(t, err)
@@ -293,13 +293,13 @@ func RunSplitLargeFile(t *testing.T) {
 			Filter:       []string{"*.*"},
 		},
 	}
-	filePath := "./csv/split_large_file.csv"
-	dataFileInfo, err := os.Stat(filePath)
+	filePath := filepath.Join("csv", "split_large_file.csv")
+	dataFileInfo, err := os.Stat(mydumpTestPath(filePath))
 	require.NoError(t, err)
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
-	store, err := objstore.NewLocalStorage(".")
+	store, err := objstore.NewLocalStorage(mydumpTestDir())
 	assert.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 3, ioWorker, store, meta)
 	columns := []string{"a", "b", "c"}

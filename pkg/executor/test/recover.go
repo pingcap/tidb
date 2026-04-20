@@ -756,8 +756,14 @@ func RunFlashbackClusterWithManyDBs(t *testing.T) {
 
 	wg.Wait()
 
-	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
-	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
+	require.Eventually(t, func() bool {
+		return len(tk.MustQuery("admin show ddl jobs where state != 'synced'").Rows()) == 0
+	}, 5*time.Second, 50*time.Millisecond)
+	time.Sleep(time.Second)
+
+	ts, err := tk.Session().GetStore().GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	flashbackTs := oracle.GetTimeFromTS(ts)
 
 	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)

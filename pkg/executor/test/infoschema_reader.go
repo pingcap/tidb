@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +77,14 @@ func (client *getTiFlashSystemTableRequestMocker) AsOpt() mockstore.MockTiKVStor
 
 var systemKeyspaceID = uint32(16777214)
 
+func executorTestDataPath(name string) string {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		panic("failed to resolve executor testdata path")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "testdata", name)
+}
+
 func RunTiFlashSystemTableWithTiFlashV620(t *testing.T) {
 	instances := []string{
 		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
@@ -95,7 +105,7 @@ func RunTiFlashSystemTableWithTiFlashV620(t *testing.T) {
 	}
 	mocker.MockQuery(sqlTiFlashSegment, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
 		require.EqualValues(t, req.Sql, sqlTiFlashSegment)
-		data, err := os.ReadFile("testdata/tiflash_v620_dt_segments.json")
+		data, err := os.ReadFile(executorTestDataPath("tiflash_v620_dt_segments.json"))
 		require.NoError(t, err)
 		return &kvrpcpb.TiFlashSystemTableResponse{
 			Data: data,
@@ -109,7 +119,7 @@ func RunTiFlashSystemTableWithTiFlashV620(t *testing.T) {
 	}
 	mocker.MockQuery(sqlTiFlashTable, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
 		require.EqualValues(t, req.Sql, sqlTiFlashTable)
-		data, err := os.ReadFile("testdata/tiflash_v620_dt_tables.json")
+		data, err := os.ReadFile(executorTestDataPath("tiflash_v620_dt_tables.json"))
 		require.NoError(t, err)
 		return &kvrpcpb.TiFlashSystemTableResponse{
 			Data: data,
@@ -155,7 +165,7 @@ func RunTiFlashSystemTableWithTiFlashV630(t *testing.T) {
 	}
 	mocker.MockQuery(sqlTiFlashSegment, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
 		require.EqualValues(t, req.Sql, sqlTiFlashSegment)
-		data, err := os.ReadFile("testdata/tiflash_v630_dt_segments.json")
+		data, err := os.ReadFile(executorTestDataPath("tiflash_v630_dt_segments.json"))
 		require.NoError(t, err)
 		return &kvrpcpb.TiFlashSystemTableResponse{
 			Data: data,
@@ -200,7 +210,7 @@ func RunTiFlashSystemTableWithTiFlashV640(t *testing.T) {
 	}
 	mocker.MockQuery(sqlTiFlashTable, func(req *kvrpcpb.TiFlashSystemTableRequest) (*kvrpcpb.TiFlashSystemTableResponse, error) {
 		require.EqualValues(t, req.Sql, sqlTiFlashTable)
-		data, err := os.ReadFile("testdata/tiflash_v640_dt_tables.json")
+		data, err := os.ReadFile(executorTestDataPath("tiflash_v640_dt_tables.json"))
 		require.NoError(t, err)
 		return &kvrpcpb.TiFlashSystemTableResponse{
 			Data: data,
