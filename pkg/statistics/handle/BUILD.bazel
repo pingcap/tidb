@@ -13,6 +13,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/autoid",
+        "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
@@ -45,6 +46,7 @@ go_library(
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
         "@org_uber_go_zap//:zap",
     ],
 )
