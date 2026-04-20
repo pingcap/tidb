@@ -1119,6 +1119,14 @@ func TestAddPartitionSkipTiFlashReplicaWait(t *testing.T) {
 	require.NotNil(t, tb.Meta().TiFlashReplica)
 	require.False(t, tb.Meta().TiFlashReplica.IsPartitionAvailable(newPartID),
 		"new partition should NOT be in AvailablePartitionIDs immediately after ADD PARTITION with skipWait=true")
+
+	// Regression: with skip=OFF (default), ADD PARTITION still enters StateReplicaOnly
+	// and the background ticker eventually adds the partition to AvailablePartitionIDs.
+	tk.MustExec("SET SESSION tidb_skip_tiflash_replica_wait = OFF")
+	tk.MustExec("ALTER TABLE ddltiflash_skip ADD PARTITION (PARTITION p3 VALUES LESS THAN (40))")
+
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash_skip")
 }
 
 func TestTiFlashGroupIndexWhenStartup(t *testing.T) {

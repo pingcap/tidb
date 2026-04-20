@@ -1803,6 +1803,10 @@ func TestTiDBSkipTiFlashReplicaWait(t *testing.T) {
 	require.NotNil(t, sv)
 	require.Equal(t, Off, sv.Value)
 
+	// Session-only: must not be settable at global scope.
+	require.True(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+
 	vars := NewSessionVars(nil)
 
 	require.NoError(t, sv.SetSessionFromHook(vars, On))
