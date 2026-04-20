@@ -316,6 +316,11 @@ func sparkRebaseTimeZoneID(
 			if _, ok := sparkJulianGregorianRebaseMicrosIndex(timeZoneID); ok {
 				return timeZoneID
 			}
+			// Spark falls back to Java TimeZone calendar rebasing when the
+			// footer timezone is not in its generated rebase table. TiDB keeps
+			// this path deterministic instead of partially emulating Java's
+			// timezone aliases and historical tzdb behavior in Go; use only
+			// zones that exist in the generated Spark table.
 		}
 	}
 

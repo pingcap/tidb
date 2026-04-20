@@ -741,6 +741,42 @@ func TestParquetVariousTypes(t *testing.T) {
 	})
 }
 
+// benchmarkRebasedSparkMicros keeps the rebased value observable so the
+// compiler cannot discard the calculation while optimizing the benchmark.
+var benchmarkRebasedSparkMicros int64
+
+func BenchmarkRebaseSparkJulianToGregorianMicros(b *testing.B) {
+	index, ok := sparkJulianGregorianRebaseMicrosIndex(sparkRebaseDefaultTimeZoneID)
+	require.True(b, ok)
+	switches, _ := sparkJulianGregorianRebaseMicrosSlices(index)
+	require.NotEmpty(b, switches)
+
+	tableMicros := time.Date(1400, 3, 10, 0, 0, 0, 0, time.UTC).UnixMicro()
+	require.GreaterOrEqual(b, tableMicros, switches[0])
+	require.Less(b, tableMicros, legacyTimestampRebaseCutoffMicros)
+
+	for _, tc := range []struct {
+		name   string
+		micros int64
+	}{
+		{name: "Table", micros: tableMicros},
+		{name: "BeforeSwitch", micros: switches[0] - 1},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			var rebased int64
+			for b.Loop() {
+				var err error
+				rebased, err = rebaseSparkJulianToGregorianMicros(sparkRebaseDefaultTimeZoneID, tc.micros)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			benchmarkRebasedSparkMicros = rebased
+		})
+	}
+}
+
 func TestParquetAurora(t *testing.T) {
 	fileName := "test.parquet"
 	parser := newParquetParserForTest(context.TODO(), t, "examples", fileName, ParquetFileMeta{})
