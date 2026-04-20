@@ -85,3 +85,5 @@ var
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
 .worktrees/
+.omc/
+.omx/
