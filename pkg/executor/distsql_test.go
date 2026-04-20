@@ -658,21 +658,21 @@ func TestPartitionIndexLookUpMergeWithSkewedPartitions(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	tk.MustExec("set @@tidb_distsql_scan_concurrency=4")
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=2")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	tk.MustExec("set @@tidb_max_chunk_size = 64")
 	sessionAlias := "test_partition_merge_skew"
 	tk.MustExec(fmt.Sprintf("set @@tidb_session_alias='%s'", sessionAlias))
-	tk.MustExec("set @@tidb_wait_split_region_finish=0")
 
 	tk.MustExec("drop table if exists t_partition_merge_skew")
-	tk.MustExec("create table t_partition_merge_skew(a int, b int, p int, key idx_a(a)) partition by hash(p) partitions 16")
+	tk.MustExec("create table t_partition_merge_skew(a int, b int, p int, key idx_a(a)) partition by hash(p) partitions 100")
 
 	// Build skewed rows:
 	// - partition p=0 has many small `a` values (hot partition for top-N)
 	// - other partitions have larger `a` values (cold partitions)
-	const hotRows = 2000
-	const coldRowsPerPartition = 200
-	const partitionCount = 16
+	const hotRows = 1000
+	const coldRowsPerPartition = 100
+	const partitionCount = 100
 	const coldPartitions = partitionCount - 1
 	const totalRows = hotRows + coldPartitions*coldRowsPerPartition
 
@@ -689,10 +689,7 @@ func TestPartitionIndexLookUpMergeWithSkewedPartitions(t *testing.T) {
 	require.Len(t, values, totalRows)
 	tk.MustExec("insert into t_partition_merge_skew values " + strings.Join(values, ","))
 
-	// Ensure index lookup on each partition has enough tasks
-	tk.MustQuery("split table t_partition_merge_skew index idx_a between (0) and (1200000) regions 32")
-
-	sql := "select b from t_partition_merge_skew force index(idx_a) where a >= 0 order by a limit 300"
+	sql := "select b from t_partition_merge_skew force index(idx_a) where a >= 0 order by a limit 3000"
 	plan := tk.MustQuery("explain format = 'brief' " + sql).String()
 	require.Contains(t, plan, "IndexLookUp")
 
@@ -748,7 +745,7 @@ func TestPartitionIndexLookUpMergeWithSkewedPartitions(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	rows := tk.MustQueryWithContext(ctx, sql).Rows()
-	require.Len(t, rows, 300)
+	require.Len(t, rows, 3000)
 	require.Greater(t, atomic.LoadInt64(&indexScanReqCount), int64(1))
 	require.GreaterOrEqual(t, atomic.LoadInt64(&maxActive), int64(1))
 	require.LessOrEqual(t, atomic.LoadInt64(&maxActive), int64(8))
