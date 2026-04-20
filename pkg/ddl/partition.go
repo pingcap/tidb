@@ -187,7 +187,11 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 		})
 		// Here need do some tiflash replica complement check.
 		// TODO: If a table is with no TiFlashReplica or it is not available, the replica-only state can be eliminated.
-		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+		skipWait := false
+		if val, ok := job.GetSessionVars(variable.TiDBSkipTiFlashReplicaWait); ok {
+			skipWait = variable.TiDBOptOn(val)
+		}
+		if !skipWait && tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			// For available state, the new added partition should wait it's replica to
 			// be finished. Otherwise the query to this partition will be blocked.
 			needRetry, err := checkPartitionReplica(tblInfo.TiFlashReplica.Count, addingDefinitions, jobCtx)

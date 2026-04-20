@@ -384,10 +384,8 @@ func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoin
 	return e.checksumDB(ctx, tableInfo, ts)
 }
 
-// Close closes the TiKVChecksumManager. This function cannot be called concurrently with Checksum.
-func (e *TiKVChecksumManager) Close() {
-	e.manager.close()
-}
+// Close closes the TiKVChecksumManager.
+func (e *TiKVChecksumManager) Close() {}
 
 type tableChecksumTS struct {
 	table    string

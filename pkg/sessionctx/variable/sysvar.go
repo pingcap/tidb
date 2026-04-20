@@ -835,6 +835,15 @@ var defaultSysVars = []*SysVar{
 			return lowerVal, nil
 		},
 	},
+	{Scope: ScopeSession, Name: TiDBSkipTiFlashReplicaWait, Value: BoolToOnOff(DefTiDBSkipTiFlashReplicaWait), Type: TypeBool,
+		SetSession: func(vars *SessionVars, val string) error {
+			vars.SkipTiFlashReplicaWait = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(vars *SessionVars) (string, error) {
+			return BoolToOnOff(vars.SkipTiFlashReplicaWait), nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetEnabled(TiDBOptOn(val))

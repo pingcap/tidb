@@ -569,6 +569,11 @@ const (
 	// TiDBScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	TiDBScatterRegion = "tidb_scatter_region"
 
+	// TiDBSkipTiFlashReplicaWait skips the StateReplicaOnly wait for TiFlash replica readiness
+	// during ADD PARTITION. Use when the caller writes only to TiKV and does not need TiFlash
+	// ready before the partition is made public.
+	TiDBSkipTiFlashReplicaWait = "tidb_skip_tiflash_replica_wait"
+
 	// TiDBWaitSplitRegionFinish defines the split region behaviour is sync or async.
 	TiDBWaitSplitRegionFinish = "tidb_wait_split_region_finish"
 
@@ -1406,6 +1411,7 @@ const (
 	DefTiDBExpensiveQueryTimeThreshold      = 60      // 60s
 	DefTiDBExpensiveTxnTimeThreshold        = 60 * 10 // 10 minutes
 	DefTiDBScatterRegion                    = ScatterOff
+	DefTiDBSkipTiFlashReplicaWait           = false
 	DefTiDBWaitSplitRegionFinish            = true
 	DefWaitSplitRegionTimeout               = 300 // 300s
 	DefTiDBEnableNoopFuncs                  = Off

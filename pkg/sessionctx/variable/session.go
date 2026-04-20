@@ -1715,6 +1715,9 @@ type SessionVars struct {
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
 
+	// SkipTiFlashReplicaWait skips the StateReplicaOnly TiFlash replica wait during ADD PARTITION.
+	SkipTiFlashReplicaWait bool
+
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
 	CacheStmtExecInfo *stmtsummary.StmtExecInfo
 

@@ -2599,7 +2599,7 @@ type AdminStmt struct {
 	LimitSimple     LimitSimple
 	BDRRole         BDRRole
 	AlterJobOptions []*AlterJobOption
-	PartitionNames  []CIStr // for ADMIN CHECKSUM TABLE ... PARTITION (p1, p2)
+	PartitionNames  []model.CIStr // for ADMIN CHECKSUM TABLE ... PARTITION (p1, p2)
 }
 
 // Restore implements Node interface.
