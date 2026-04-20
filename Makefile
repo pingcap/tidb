@@ -725,6 +725,7 @@ BAZEL_COVERAGE_TARGETS = \
 bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 	@echo "==> phase 1: build instrumented test binaries"
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc build $(BAZEL_CMD_CONFIG) $(BAZEL_NO_REMOTE_CACHE_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --collect_code_coverage --jobs=$(BAZEL_COVERAGE_BUILD_JOBS) --build_tests_only \
+		--bes_backend=grpcs://beplessproxy.hawkingrei.com --bes_results_url=https://bepless.hawkingrei.com/ \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- $(BAZEL_COVERAGE_TARGETS)
 	@echo "==> phase 2: run coverage with lower test concurrency"
