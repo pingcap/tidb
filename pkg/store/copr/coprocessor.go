@@ -254,13 +254,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		if it.smallTaskConcurrency > 20 {
 			it.smallTaskConcurrency = 20
 		}
+		it.sendRate = util.NewRateLimit(2 * (it.concurrency + it.smallTaskConcurrency))
 		it.respChan = nil
 	} else {
 		it.respChan = make(chan *copResponse)
-	}
-	if it.req.KeepOrder {
-		it.sendRate = util.NewRateLimit(2 * (it.concurrency + it.smallTaskConcurrency))
-	} else {
 		it.sendRate = util.NewRateLimit(it.concurrency + it.smallTaskConcurrency)
 	}
 	if option.EnableCollectExecutionInfo {
