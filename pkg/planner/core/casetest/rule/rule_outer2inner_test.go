@@ -276,7 +276,7 @@ FROM t0
 		// instead of keeping a separate RunTestUnderCascades wrapper.
 		t.Run("TestOuter2InnerIssue55886", func(t *testing.T) {
 			originCollation := tk.MustQuery("select @@collation_connection").Rows()[0][0].(string)
-			defer tk.MustExec("set collation_connection = '" + originCollation + "'")
+			defer tk.MustExec("set collation_connection = ?", originCollation)
 
 			tk.MustExec("drop table if exists t1")
 			tk.MustExec("drop table if exists t2")

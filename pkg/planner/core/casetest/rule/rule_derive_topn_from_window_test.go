@@ -46,7 +46,7 @@ func TestDerivedTopNSuite(t *testing.T) {
 				Plan []string
 			}
 			suiteData := GetDerivedTopNSuiteData()
-			suiteData.LoadTestCases(t, &input, &output, cascades, "TestPushDerivedTopnFlash")
+			suiteData.LoadTestCasesByName("TestPushDerivedTopnFlash", t, &input, &output, cascades, "TestPushDerivedTopnFlash")
 			for i, sql := range input {
 				plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
 				testdata.OnRecord(func() {
@@ -58,6 +58,9 @@ func TestDerivedTopNSuite(t *testing.T) {
 		})
 
 		t.Run("TestTopNPushdown", func(t *testing.T) {
+			tk.MustExec("set tidb_opt_derive_topn=0")
+			tk.MustExec("set tidb_enforce_mpp=0")
+			tk.MustExec("set @@session.tidb_allow_mpp=OFF")
 			rs := tk.MustQuery(`SELECT /* issue:37986 */ v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).Rows()
 			lastVal := -1.0
 			for _, r := range rs {
