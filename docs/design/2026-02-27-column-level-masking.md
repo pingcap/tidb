@@ -250,7 +250,7 @@ Default-deny behavior is recommended: users/roles not matching allow conditions 
   - `mask_char`: Single character used for masking (e.g., '*', 'X')
   - Example: `MASK_PARTIAL(credit_card, 6, 4, '*')` keeps first 6 and last 4 characters
 
-- `MASK_FULL(col)` - Masks the entire column value by repeating the specified character
+- `MASK_FULL(col)` - Masks entire column value completely
   - `col`: The column to mask (string, datetime, or numeric types)
   - For datetime types: returns '1970-01-01' (date) or '1970-01-01 00:00:00' (datetime)
   - Example: `MASK_FULL(ssn)` returns 'XXXXXXXXX' for a 9-digit SSN
@@ -434,9 +434,9 @@ SELECT phone FROM contacts WHERE id = 1;
 -- Example 2: MASK_FULL - completely mask SSN
 CREATE MASKING POLICY p_mask_ssn
   ON employees(ssn)
-  AS MASK_FULL(ssn, 'X') ENABLE;
+  AS MASK_FULL(ssn) ENABLE;
 
--- Query returns: 'XXXXXXXXX' for any 9-digit SSN
+-- Query returns: masked SSN value
 SELECT ssn FROM employees WHERE id = 1;
 
 -- Example 3: MASK_DATE - normalize birth dates
