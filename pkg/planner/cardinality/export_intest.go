@@ -1,3 +1,5 @@
+//go:build intest
+
 // Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +16,23 @@
 
 package cardinality
 
-// ExportedStatsNode exports the StatsNode type for testing
-type ExportedStatsNode = StatsNode
+import (
+	"sync"
 
-// MockStatsNode creates a StatsNode for testing
-func MockStatsNode(id int64, m int64, num int) *StatsNode {
-	return &StatsNode{ID: id, mask: m, numCols: num}
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
+)
+
+var (
+	cardinalitySuiteData     testdata.TestData
+	cardinalitySuiteDataOnce sync.Once
+)
+
+// GetCardinalitySuiteData returns the selectivity/cardinality suite data for external intest tests.
+func GetCardinalitySuiteData() testdata.TestData {
+	cardinalitySuiteDataOnce.Do(func() {
+		bk := make(testdata.BookKeeper, 1)
+		bk.LoadTestSuiteData("testdata", "cardinality_suite")
+		cardinalitySuiteData = bk["cardinality_suite"]
+	})
+	return cardinalitySuiteData
 }

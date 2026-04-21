@@ -78,7 +78,7 @@ go_library(
         "telemetry.go",
         "trace.go",
         "util.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/planner/core",
     visibility = ["//visibility:public"],
     deps = [
@@ -210,7 +210,10 @@ go_library(
 go_test(
     name = "core_test",
     timeout = "short",
-    srcs = ["logical_plans_test.go"],
+    srcs = [
+        "logical_plans_test.go",
+        "main_test.go",
+    ],
     data = glob(["testdata/**"]),
     embed = [":core"],
     flaky = True,
@@ -235,11 +238,14 @@ go_test(
         "//pkg/planner/util/coretestsdk",
         "//pkg/sessionctx/vardef",
         "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/hint",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

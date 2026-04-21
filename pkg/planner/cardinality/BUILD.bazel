@@ -1,11 +1,14 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
+# gazelle:build_tags intest
+
 go_library(
     name = "cardinality",
     srcs = [
         "cross_estimation.go",
         "exponential.go",
         "export_helper.go",
+        "export_intest.go",
         "join.go",
         "ndv.go",
         "pseudo.go",
@@ -14,7 +17,7 @@ go_library(
         "row_size.go",
         "selectivity.go",
         "trace.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/planner/cardinality",
     visibility = ["//visibility:public"],
     deps = [
@@ -33,6 +36,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/tablecodec",
+        "//pkg/testkit/testdata",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",

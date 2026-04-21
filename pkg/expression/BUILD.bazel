@@ -156,6 +156,7 @@ go_test(
         "builtin_other_vec_generated_test.go",
         "builtin_string_vec_generated_test.go",
         "builtin_time_vec_generated_test.go",
+        "generated_vec_test_helper_test.go",
     ],
     embed = [":expression"],
     flaky = True,
