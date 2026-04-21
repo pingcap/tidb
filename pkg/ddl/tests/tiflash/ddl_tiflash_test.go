@@ -1090,6 +1090,25 @@ func TestAddPartitionSkipTiFlashReplicaWait(t *testing.T) {
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash_skip")
 
+	findPartitionID := func(pi *model.PartitionInfo, name string) int64 {
+		for _, def := range pi.Definitions {
+			if def.Name.L == name {
+				return def.ID
+			}
+		}
+		return 0
+	}
+
+	// Pause the background TiFlash ticker so that the negative assertion below only
+	// tests the DDL worker behavior, not a concurrent ticker update.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickerLoop", `return`))
+	tickerPaused := true
+	defer func() {
+		if tickerPaused {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickerLoop"))
+		}
+	}()
+
 	// Enable skip-wait so the DDL worker bypasses the StateReplicaOnly retry loop.
 	tk.MustExec("SET SESSION tidb_skip_tiflash_replica_wait = ON")
 
@@ -1103,14 +1122,7 @@ func TestAddPartitionSkipTiFlashReplicaWait(t *testing.T) {
 	require.NotNil(t, pi)
 	require.Equal(t, 0, len(pi.AddingDefinitions), "AddingDefinitions should be empty after DDL completes")
 
-	// Find the new partition ID.
-	var newPartID int64
-	for _, def := range pi.Definitions {
-		if def.Name.L == "p2" {
-			newPartID = def.ID
-			break
-		}
-	}
+	newPartID := findPartitionID(pi, "p2")
 	require.NotZero(t, newPartID, "partition p2 should exist in Definitions")
 
 	// The key correctness assertion: with skipWait=true, the DDL worker must NOT
@@ -1120,12 +1132,24 @@ func TestAddPartitionSkipTiFlashReplicaWait(t *testing.T) {
 	require.False(t, tb.Meta().TiFlashReplica.IsPartitionAvailable(newPartID),
 		"new partition should NOT be in AvailablePartitionIDs immediately after ADD PARTITION with skipWait=true")
 
+	// Re-enable the ticker before the regression check.
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickerLoop"))
+	tickerPaused = false
+
 	// Regression: with skip=OFF (default), ADD PARTITION still enters StateReplicaOnly
 	// and the background ticker eventually adds the partition to AvailablePartitionIDs.
 	tk.MustExec("SET SESSION tidb_skip_tiflash_replica_wait = OFF")
 	tk.MustExec("ALTER TABLE ddltiflash_skip ADD PARTITION (PARTITION p3 VALUES LESS THAN (40))")
 
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	tb, err = s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("ddltiflash_skip"))
+	require.NoError(t, err)
+	pi = tb.Meta().GetPartitionInfo()
+	require.NotNil(t, pi)
+	p3ID := findPartitionID(pi, "p3")
+	require.NotZero(t, p3ID, "partition p3 should exist in Definitions")
+	require.True(t, tb.Meta().TiFlashReplica.IsPartitionAvailable(p3ID),
+		"partition p3 should be in AvailablePartitionIDs after background ticker runs with skipWait=false")
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash_skip")
 }
 
