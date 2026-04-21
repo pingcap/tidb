@@ -683,29 +683,16 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
-<<<<<<< HEAD
-		if tf.pipelined {
-			return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS), tikv.WithPipelinedMemDB())
-		}
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
-	} else if config.GetGlobalConfig().Store == "unistore" {
-		return nil, err
-=======
 		options = append(options, tikv.WithStartTS(startTS))
 	} else {
-		if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+		if config.GetGlobalConfig().Store == "unistore" {
 			return nil, err
 		}
 		logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
->>>>>>> 4734c9c2f4a (txn: skips resolving lock in auto commit optimistic statement (#58676))
 	}
 
 	if tf.pipelined {
-<<<<<<< HEAD
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithPipelinedMemDB())
-=======
-		options = append(options, tikv.WithDefaultPipelinedTxn())
->>>>>>> 4734c9c2f4a (txn: skips resolving lock in auto commit optimistic statement (#58676))
+		options = append(options, tikv.WithPipelinedMemDB())
 	}
 
 	return tf.store.Begin(options...)

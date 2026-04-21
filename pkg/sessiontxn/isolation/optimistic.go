@@ -52,14 +52,10 @@ func (p *OptimisticTxnContextProvider) onTxnActive(
 	tp sessiontxn.EnterNewTxnType,
 ) {
 	sessVars := p.sctx.GetSessionVars()
-<<<<<<< HEAD
-	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
+	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp, txn.IsPipelined())
 	failpoint.Inject("injectOptimisticTxnRetryable", func(val failpoint.Value) {
 		sessVars.TxnCtx.CouldRetry = val.(bool)
 	})
-=======
-	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp, txn.IsPipelined())
->>>>>>> 4734c9c2f4a (txn: skips resolving lock in auto commit optimistic statement (#58676))
 }
 
 // isOptimisticTxnRetryable (if returns true) means the transaction could retry.
