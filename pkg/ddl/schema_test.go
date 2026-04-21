@@ -790,7 +790,7 @@ func TestTTLDeleteError(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
-func TestSchemaReadOnlyBlockFKCascadeOnDuplicateKeyUpdate(t *testing.T) {
+func TestSchemaReadOnlyBlockFKCascadeOnDuplicateKeyUpdateAndReplace(t *testing.T) {
 	enableReadOnlyDDLFp(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
