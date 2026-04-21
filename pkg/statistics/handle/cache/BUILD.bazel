@@ -7,7 +7,7 @@ go_library(
         "stats_table_row_cache.go",
         "statscache.go",
         "statscacheinner.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/cache",
     visibility = ["//visibility:public"],
     deps = [

@@ -9,7 +9,9 @@ go_library(
         "sysvar.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ttl/session/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",

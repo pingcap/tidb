@@ -7,7 +7,9 @@ go_library(
         "table.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/table/tblsession/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/infoschema",
         "//pkg/meta/model",

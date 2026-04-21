@@ -11,7 +11,7 @@ go_library(
         "ru_datamodel.go",
         "ru_window_aggregator.go",
         "single_target.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/topsql/reporter",
     visibility = ["//visibility:public"],
     deps = [

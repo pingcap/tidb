@@ -12,7 +12,9 @@ go_library(
         "ttlstatus.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ttl/cache/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",

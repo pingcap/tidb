@@ -17,7 +17,7 @@ go_library(
         "sysvar_cache.go",
         "test_helper.go",
         "topn_slow_query.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/domain",
     visibility = ["//visibility:public"],
     deps = [

@@ -12,7 +12,7 @@ go_library(
         "pool.go",
         "tracker.go",
         "utils.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/memory",
     visibility = ["//visibility:public"],
     deps = [

@@ -22,7 +22,7 @@ go_library(
         "util.go",
         "wait_group_wrapper.go",
         "worker_pool.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util",
     visibility = ["//visibility:public"],
     deps = [

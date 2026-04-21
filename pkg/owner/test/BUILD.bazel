@@ -7,7 +7,9 @@ go_library(
         exclude = ["*_test.go"],
     ),
     importpath = "github.com/pingcap/tidb/pkg/owner/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/meta",
         "//pkg/meta/model",

@@ -12,7 +12,7 @@ go_library(
         "scheduler_manager.go",
         "slots.go",
         "state_transform.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/scheduler",
     visibility = ["//visibility:public"],
     deps = [

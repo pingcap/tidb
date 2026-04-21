@@ -19,7 +19,7 @@ go_library(
         "row_container.go",
         "row_container_reader.go",
         "row_in_disk.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/chunk",
     visibility = ["//visibility:public"],
     deps = [

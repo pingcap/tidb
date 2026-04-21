@@ -6,7 +6,7 @@ go_library(
         "bootstrap.go",
         "export_helper.go",
         "handle.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle",
     visibility = ["//visibility:public"],
     deps = [

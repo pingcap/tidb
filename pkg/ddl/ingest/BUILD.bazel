@@ -16,7 +16,7 @@ go_library(
         "message.go",
         "mock.go",
         "util.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/ddl/ingest",
     visibility = ["//visibility:public"],
     deps = [

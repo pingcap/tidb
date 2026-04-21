@@ -11,7 +11,9 @@ go_library(
         "serializable.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

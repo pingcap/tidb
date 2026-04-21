@@ -5,19 +5,26 @@ go_library(
     srcs = [
         "ddl_syncer.go",
         "executable_checker.go",
+        "executable_checker_intest.go",
+        "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/ddl-checker",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/session/sessionapi",
         "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
         "//pkg/util/dbutil",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_atomic//:atomic",
     ],
 )

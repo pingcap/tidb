@@ -8,7 +8,7 @@ go_library(
         "loader.go",
         "mdl_check.go",
         "syncer.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/infoschema/issyncer",
     visibility = ["//visibility:public"],
     deps = [

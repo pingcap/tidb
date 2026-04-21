@@ -10,7 +10,9 @@ go_library(
         "session_handle.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/bindinfo/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/bindinfo",
         "//pkg/config",

@@ -8,7 +8,9 @@ go_library(
         "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/log/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/lightning/log",
         "//pkg/testkit/mega/register",

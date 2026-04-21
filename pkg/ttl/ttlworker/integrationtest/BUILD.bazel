@@ -1,4 +1,37 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "integrationtest",
+    srcs = [
+        "helpers_intest.go",
+        "manager_job_adapter_intest.go",
+        "register_gen.go",
+        "timer_sync_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ttl/ttlworker/integrationtest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/meta/metadef",
+        "//pkg/metrics",
+        "//pkg/parser/ast",
+        "//pkg/session/syssession",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/timer/api",
+        "//pkg/timer/tablestore",
+        "//pkg/ttl/cache",
+        "//pkg/ttl/ttlworker",
+        "//pkg/util/mock",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
 
 go_test(
     name = "integrationtest_test",

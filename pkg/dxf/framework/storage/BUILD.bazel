@@ -9,7 +9,7 @@ go_library(
         "subtask_state.go",
         "task_state.go",
         "task_table.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/storage",
     visibility = ["//visibility:public"],
     deps = [

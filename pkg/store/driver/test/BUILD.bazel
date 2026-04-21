@@ -7,7 +7,9 @@ go_library(
         "sql_fail.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/store/driver/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/session",
         "//pkg/testkit",

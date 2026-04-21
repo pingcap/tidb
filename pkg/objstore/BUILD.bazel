@@ -19,7 +19,7 @@ go_library(
         "noop.go",
         "parse.go",
         "storage.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/objstore",
     visibility = ["//visibility:public"],
     deps = [

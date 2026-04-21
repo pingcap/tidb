@@ -7,7 +7,9 @@ go_library(
         "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression/exprctx/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/errctx",
         "//pkg/expression/exprctx",

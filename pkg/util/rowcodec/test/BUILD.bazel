@@ -8,7 +8,9 @@ go_library(
         "rowcodec.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/rowcodec/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/kv",
         "//pkg/meta/model",

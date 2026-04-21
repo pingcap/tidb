@@ -21,7 +21,7 @@ go_library(
         "rate_limiter_param.go",
         "region_job.go",
         "tikv_mode.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/lightning/backend/local",
     visibility = ["//visibility:public"],
     deps = [

@@ -8,7 +8,7 @@ go_library(
         "mem.go",
         "memory_limit_tuner.go",
         "tuner.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/gctuner",
     visibility = ["//visibility:public"],
     deps = [

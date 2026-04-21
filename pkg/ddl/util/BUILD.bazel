@@ -6,7 +6,7 @@ go_library(
         "dead_table_lock_checker.go",
         "util.go",
         "watcher.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/ddl/util",
     visibility = ["//visibility:public"],
     deps = [

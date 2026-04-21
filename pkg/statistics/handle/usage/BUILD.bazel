@@ -6,7 +6,7 @@ go_library(
         "index_usage.go",
         "predicate_column.go",
         "session_stats_collect.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/usage",
     visibility = ["//visibility:public"],
     deps = [

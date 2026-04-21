@@ -14,7 +14,7 @@ go_library(
         "topn_chunk_heap.go",
         "topn_spill.go",
         "topn_worker.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/executor/sortexec",
     visibility = ["//visibility:public"],
     deps = [

@@ -6,7 +6,7 @@ go_library(
         "import_mode_switcher.go",
         "misc.go",
         "restorer.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/restore",
     visibility = ["//visibility:public"],
     deps = [

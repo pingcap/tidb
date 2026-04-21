@@ -9,7 +9,7 @@ go_library(
         "constraints.go",
         "errors.go",
         "rule.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/ddl/placement",
     visibility = ["//visibility:public"],
     deps = [

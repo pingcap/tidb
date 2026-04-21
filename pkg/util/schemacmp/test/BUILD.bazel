@@ -9,7 +9,9 @@ go_library(
         "type.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/schemacmp/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/ddl",
         "//pkg/meta/model",

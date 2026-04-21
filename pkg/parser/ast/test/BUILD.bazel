@@ -16,7 +16,9 @@ go_library(
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/parser/ast/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/parser",
         "//pkg/parser/ast",

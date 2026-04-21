@@ -7,7 +7,7 @@ go_library(
         "lock_stats.go",
         "query_lock.go",
         "unlock_stats.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/lockstats",
     visibility = ["//visibility:public"],
     deps = [

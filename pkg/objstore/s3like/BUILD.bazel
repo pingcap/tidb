@@ -8,7 +8,7 @@ go_library(
         "permission.go",
         "retry.go",
         "store.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/objstore/s3like",
     visibility = ["//visibility:public"],
     deps = [

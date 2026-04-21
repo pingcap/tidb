@@ -6,7 +6,7 @@ go_library(
         "export_helper.go",
         "info.go",
         "syncer.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/domain/serverinfo",
     visibility = ["//visibility:public"],
     deps = [

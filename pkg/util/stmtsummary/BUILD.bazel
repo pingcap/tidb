@@ -6,7 +6,7 @@ go_library(
         "evicted.go",
         "reader.go",
         "statement_summary.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/stmtsummary",
     visibility = ["//visibility:public"],
     deps = [

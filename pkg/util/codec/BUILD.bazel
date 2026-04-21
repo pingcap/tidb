@@ -9,7 +9,7 @@ go_library(
         "export_helper.go",
         "float.go",
         "number.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/codec",
     visibility = ["//visibility:public"],
     deps = [

@@ -12,7 +12,9 @@ go_library(
         "table_import_testkit.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/importer/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",

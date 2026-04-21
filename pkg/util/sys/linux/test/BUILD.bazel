@@ -8,7 +8,9 @@ go_library(
         "sys.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/sys/linux/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/testkit/mega/register",
         "//pkg/testkit/testsetup",

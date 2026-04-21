@@ -5,7 +5,7 @@ go_library(
     srcs = [
         "pd.go",
         "utils.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/pdutil",
     visibility = ["//visibility:public"],
     deps = [

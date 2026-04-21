@@ -7,7 +7,9 @@ go_library(
         exclude = ["*_test.go"],
     ),
     importpath = "github.com/pingcap/tidb/pkg/util/context/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/parser/terror",
         "//pkg/testkit/mega/register",

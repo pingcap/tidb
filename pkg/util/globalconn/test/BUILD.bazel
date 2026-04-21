@@ -8,7 +8,9 @@ go_library(
         "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/globalconn/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/testkit/mega/register",
         "//pkg/util/globalconn",

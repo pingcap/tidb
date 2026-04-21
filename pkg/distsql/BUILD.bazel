@@ -6,7 +6,7 @@ go_library(
         "distsql.go",
         "request_builder.go",
         "select_result.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/distsql",
     visibility = ["//visibility:public"],
     deps = [

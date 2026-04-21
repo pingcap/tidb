@@ -11,7 +11,7 @@ go_library(
         "table.go",
         "utils.go",
         "worker.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/workloadrepo",
     visibility = ["//visibility:public"],
     deps = [

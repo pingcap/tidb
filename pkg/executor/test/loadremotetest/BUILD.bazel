@@ -1,4 +1,32 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "loadremotetest",
+    srcs = [
+        "error_intest.go",
+        "main_intest.go",
+        "main_mega_init.go",
+        "multi_file_intest.go",
+        "one_csv_intest.go",
+        "register_gen.go",
+        "util_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/loadremotetest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/terror",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "@com_github_fsouza_fake_gcs_server//fakestorage",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_stretchr_testify//suite",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "loadremotetest_test",

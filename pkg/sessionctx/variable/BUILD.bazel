@@ -16,7 +16,7 @@ go_library(
         "tidb_vars.go",
         "variable.go",
         "varsutil.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/sessionctx/variable",
     visibility = ["//visibility:public"],
     deps = [

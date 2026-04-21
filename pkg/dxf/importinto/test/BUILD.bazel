@@ -11,7 +11,9 @@ go_library(
         "task_executor_testkit.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

@@ -7,7 +7,9 @@ go_library(
         "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/cdcutil/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/testkit/mega/register",
         "//pkg/util/cdcutil",

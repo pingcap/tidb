@@ -7,7 +7,7 @@ go_library(
         "global_stats_async.go",
         "merge_worker.go",
         "topn.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/globalstats",
     visibility = ["//visibility:public"],
     deps = [

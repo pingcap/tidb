@@ -8,7 +8,7 @@ go_library(
         "readcommitted.go",
         "repeatable_read.go",
         "serializable.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/sessiontxn/isolation",
     visibility = ["//visibility:public"],
     deps = [

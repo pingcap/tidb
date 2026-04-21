@@ -11,7 +11,7 @@ go_library(
         "precheck.go",
         "sampler.go",
         "table_import.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/executor/importer",
     visibility = ["//visibility:public"],
     deps = [

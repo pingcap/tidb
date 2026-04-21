@@ -8,7 +8,7 @@ go_library(
         "pool.go",
         "table_info.go",
         "util.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/util",
     visibility = ["//visibility:public"],
     deps = [

@@ -7,7 +7,9 @@ go_library(
         "sync_map.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/generic/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/testkit/mega/register",
         "//pkg/util/generic",

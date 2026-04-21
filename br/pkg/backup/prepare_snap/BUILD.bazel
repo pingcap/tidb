@@ -7,7 +7,7 @@ go_library(
         "errors.go",
         "prepare.go",
         "stream.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/backup/prepare_snap",
     visibility = ["//visibility:public"],
     deps = [

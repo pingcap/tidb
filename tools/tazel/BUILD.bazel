@@ -1,12 +1,13 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "tazel_lib",
     srcs = [
         "ast.go",
         "main.go",
+        "mega.go",
         "util.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/tools/tazel",
     visibility = ["//visibility:private"],
     deps = [
@@ -21,4 +22,14 @@ go_binary(
     name = "tazel",
     embed = [":tazel_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "tazel_test",
+    timeout = "short",
+    srcs = ["mega_test.go"],
+    embed = [":tazel_lib"],
+    flaky = True,
+    shard_count = 3,
+    deps = ["@com_github_bazelbuild_buildtools//build:go_default_library"],
 )

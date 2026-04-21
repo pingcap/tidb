@@ -11,7 +11,9 @@ go_library(
         "session_pool.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/kv",
         "//pkg/parser/terror",

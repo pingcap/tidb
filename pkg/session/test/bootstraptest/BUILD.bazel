@@ -1,4 +1,52 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "bootstraptest",
+    srcs = [
+        "boot_intest.go",
+        "bootstrap_upgrade_intest.go",
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/session/test/bootstraptest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/ddl",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/metadef",
+        "//pkg/meta/model",
+        "//pkg/parser/terror",
+        "//pkg/planner/core",
+        "//pkg/server/handler",
+        "//pkg/session",
+        "//pkg/session/sessionapi",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/statistics",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testenv",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "bootstraptest_test",

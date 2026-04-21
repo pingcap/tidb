@@ -8,7 +8,9 @@ go_library(
         "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/cpu/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/resourcemanager/scheduler",
         "//pkg/resourcemanager/util",

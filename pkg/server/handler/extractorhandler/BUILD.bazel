@@ -2,7 +2,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "extractorhandler",
-    srcs = ["extractor.go"],
+    srcs = [
+        "extractor.go",
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/server/handler/extractorhandler",
     visibility = ["//visibility:public"],
     deps = [

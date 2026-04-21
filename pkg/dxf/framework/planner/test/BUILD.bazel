@@ -8,7 +8,9 @@ go_library(
         "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/planner/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/dxf/framework/mock",
         "//pkg/dxf/framework/planner",

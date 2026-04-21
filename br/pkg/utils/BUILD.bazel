@@ -24,7 +24,7 @@ go_library(
         "store_manager.go",
         "wait.go",
         "worker.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/utils",
     visibility = ["//visibility:public"],
     deps = [

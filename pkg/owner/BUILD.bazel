@@ -6,7 +6,7 @@ go_library(
         "manager.go",
         "mock.go",
         "mock_owner_state.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/owner",
     visibility = ["//visibility:public"],
     deps = [

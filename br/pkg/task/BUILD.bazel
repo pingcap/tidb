@@ -15,7 +15,7 @@ go_library(
         "restore_raw.go",
         "restore_txn.go",
         "stream.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/task",
     visibility = ["//visibility:public"],
     deps = [

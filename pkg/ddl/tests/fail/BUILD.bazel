@@ -1,4 +1,42 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "fail",
+    srcs = [
+        "fail_db_intest.go",
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/tests/fail",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/ddl",
+        "//pkg/ddl/schematracker",
+        "//pkg/ddl/schemaver",
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/parser/ast",
+        "//pkg/session",
+        "//pkg/sessionctx/vardef",
+        "//pkg/store/mockstore",
+        "//pkg/store/mockstore/teststore",
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "fail_test",

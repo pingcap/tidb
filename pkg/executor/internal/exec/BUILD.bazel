@@ -5,7 +5,7 @@ go_library(
     srcs = [
         "executor.go",
         "indexusage.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/exec",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [

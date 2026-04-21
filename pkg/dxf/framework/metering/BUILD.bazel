@@ -6,7 +6,7 @@ go_library(
         "data.go",
         "metering.go",
         "recorder.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/metering",
     visibility = ["//visibility:public"],
     deps = [

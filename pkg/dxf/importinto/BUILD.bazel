@@ -15,7 +15,7 @@ go_library(
         "subtask_executor.go",
         "task_executor.go",
         "wrapper.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/dxf/importinto",
     visibility = ["//visibility:public"],
     deps = [

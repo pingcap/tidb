@@ -8,7 +8,9 @@ go_library(
         "status_testkit.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/handle/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/dxf/framework/handle",

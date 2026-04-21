@@ -9,7 +9,7 @@ go_library(
         "mpp.go",
         "mpp_exec.go",
         "topn.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler",
     visibility = ["//visibility:public"],
     deps = [

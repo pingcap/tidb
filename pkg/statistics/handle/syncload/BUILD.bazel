@@ -2,7 +2,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "syncload",
-    srcs = ["stats_syncload.go"],
+    srcs = [
+        "stats_syncload.go",
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/syncload",
     visibility = ["//visibility:public"],
     deps = [

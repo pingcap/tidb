@@ -6,7 +6,7 @@ go_library(
         "coordinator.go",
         "cross_ks.go",
         "reporter.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/domain/crossks",
     visibility = ["//visibility:public"],
     deps = [

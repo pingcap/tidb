@@ -29,7 +29,7 @@ go_library(
         "row_table_builder.go",
         "semi_join_probe.go",
         "tagged_ptr.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/executor/join",
     visibility = ["//visibility:public"],
     deps = [

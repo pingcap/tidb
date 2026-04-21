@@ -7,7 +7,9 @@ go_library(
         "sys.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/sys/storage/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/testkit/mega/register",
         "//pkg/util/sys/storage",

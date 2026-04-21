@@ -8,7 +8,9 @@ go_library(
         "sql2kv.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/backend/kv/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/ddl",
         "//pkg/kv",

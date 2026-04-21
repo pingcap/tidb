@@ -18,7 +18,7 @@ go_library(
         "metrics_schema.go",
         "sieve.go",
         "tables.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/infoschema",
     visibility = ["//visibility:public"],
     deps = [

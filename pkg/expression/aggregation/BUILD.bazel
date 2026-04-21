@@ -27,7 +27,7 @@ go_library(
         "sum.go",
         "util.go",
         "window_func.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/expression/aggregation",
     visibility = [
         ":aggregation_friend",

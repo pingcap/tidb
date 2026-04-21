@@ -9,7 +9,9 @@ go_library(
         "storage.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/objstore/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/objstore",
         "//pkg/objstore/storeapi",

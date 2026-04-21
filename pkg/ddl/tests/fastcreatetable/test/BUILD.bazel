@@ -7,7 +7,9 @@ go_library(
         exclude = ["*_test.go"],
     ),
     importpath = "github.com/pingcap/tidb/pkg/ddl/tests/fastcreatetable/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config",
         "//pkg/ddl",

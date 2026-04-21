@@ -12,7 +12,9 @@ go_library(
         "utils.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/indexadvisor/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/parser/ast",
         "//pkg/parser/mysql",

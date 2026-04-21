@@ -16,7 +16,7 @@ go_library(
         "storage_unix.go",
         "storage_windows.go",
         "util.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/lightning/common",
     visibility = ["//visibility:public"],
     deps = [

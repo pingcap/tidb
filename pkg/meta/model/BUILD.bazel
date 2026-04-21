@@ -15,7 +15,7 @@ go_library(
         "reorg.go",
         "resource_group.go",
         "table.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/meta/model",
     visibility = ["//visibility:public"],
     deps = [

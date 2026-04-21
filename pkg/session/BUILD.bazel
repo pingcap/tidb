@@ -11,13 +11,13 @@ go_library(
         "nontransactional.go",
         "session.go",
         "sync_upgrade.go",
-        "testutil.go",  #keep
+        "testutil.go",
         "tidb.go",
         "txn.go",
         "txnmanager.go",
         "upgrade_def.go",
         "upgrade_run.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/session",
     visibility = ["//visibility:public"],
     deps = [

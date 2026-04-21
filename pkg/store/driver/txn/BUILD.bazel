@@ -12,7 +12,7 @@ go_library(
         "txn_driver.go",
         "union_iter.go",
         "unionstore_driver.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/store/driver/txn",
     visibility = ["//visibility:public"],
     deps = [

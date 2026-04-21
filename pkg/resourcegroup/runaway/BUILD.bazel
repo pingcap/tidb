@@ -9,7 +9,7 @@ go_library(
         "manager.go",
         "record.go",
         "syncer.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/resourcegroup/runaway",
     visibility = ["//visibility:public"],
     deps = [

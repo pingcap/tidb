@@ -7,7 +7,9 @@ go_library(
         "syncer.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ddl/serverstate/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/ddl/schemaver",
         "//pkg/ddl/serverstate",

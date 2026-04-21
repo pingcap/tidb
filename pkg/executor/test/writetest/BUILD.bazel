@@ -1,4 +1,41 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "writetest",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+        "write_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/writetest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/errctx",
+        "//pkg/executor",
+        "//pkg/kv",
+        "//pkg/lightning/mydump",
+        "//pkg/meta/autoid",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/sessiontxn",
+        "//pkg/store/mockstore",
+        "//pkg/table/tables",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "writetest_test",

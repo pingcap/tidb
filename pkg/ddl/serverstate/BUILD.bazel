@@ -5,7 +5,7 @@ go_library(
     srcs = [
         "mem_syncer.go",
         "syncer.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/ddl/serverstate",
     visibility = ["//visibility:public"],
     deps = [

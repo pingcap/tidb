@@ -10,7 +10,9 @@ go_library(
         "types.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/ranger/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config",
         "//pkg/domain",

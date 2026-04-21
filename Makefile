@@ -392,12 +392,18 @@ failpoint-disable: tools/bin/failpoint-ctl
 	@$(FAILPOINT_DISABLE)
 
 .PHONY: bazel-failpoint-enable
-bazel-failpoint-enable:
-	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
+bazel-failpoint-enable: bazel-failpoint-ctl
+	@dirs="$$(rg -l 'github.com/pingcap/failpoint' -g '*.go' | xargs -r -n1 dirname | sort -u)"; \
+		$(BAZEL_FAILPOINT_CTL) enable $$dirs
 
 .PHONY: bazel-failpoint-disable
-bazel-failpoint-disable:
-	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
+bazel-failpoint-disable: bazel-failpoint-ctl
+	@dirs="$$(rg -l 'github.com/pingcap/failpoint' -g '*.go' | xargs -r -n1 dirname | sort -u)"; \
+		$(BAZEL_FAILPOINT_CTL) disable $$dirs
+
+.PHONY: bazel-failpoint-ctl
+bazel-failpoint-ctl:
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl
 
 .PHONY: tools/bin/ut
 tools/bin/ut: tools/check/ut.go tools/check/longtests.go tools/check/ut_mega.go

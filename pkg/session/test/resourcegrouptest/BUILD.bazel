@@ -1,4 +1,22 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "resourcegrouptest",
+    srcs = [
+        "register_gen.go",
+        "resource_group_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/session/test/resourcegrouptest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
 
 go_test(
     name = "resourcegrouptest_test",

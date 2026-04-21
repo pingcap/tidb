@@ -10,7 +10,9 @@ go_library(
         "stats_read_writer.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/storage/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/domain",
         "//pkg/meta/model",

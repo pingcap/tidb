@@ -18,7 +18,7 @@ go_library(
         "sample.go",
         "scalar.go",
         "table.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics",
     visibility = ["//visibility:public"],
     deps = [

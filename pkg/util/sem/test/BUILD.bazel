@@ -7,7 +7,9 @@ go_library(
         exclude = ["*_test.go"],
     ),
     importpath = "github.com/pingcap/tidb/pkg/util/sem/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/meta/metadef",
         "//pkg/parser/mysql",

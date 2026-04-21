@@ -8,7 +8,9 @@ go_library(
         "task_state.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/storage/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/schstatus",

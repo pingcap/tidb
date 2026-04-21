@@ -12,7 +12,7 @@ go_library(
         "binding_plan_generation.go",
         "session_handle.go",
         "utils.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/bindinfo",
     visibility = ["//visibility:public"],
     deps = [

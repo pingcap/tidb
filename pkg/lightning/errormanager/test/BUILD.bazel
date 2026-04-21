@@ -7,7 +7,9 @@ go_library(
         "resolveconflict.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/errormanager/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/ddl",
         "//pkg/lightning/backend/encode",

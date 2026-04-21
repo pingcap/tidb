@@ -8,7 +8,7 @@ go_library(
         "processor.go",
         "provider.go",
         "util.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/sessiontxn/staleread",
     visibility = ["//visibility:public"],
     deps = [

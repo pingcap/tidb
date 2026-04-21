@@ -7,7 +7,9 @@ go_library(
         "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/testutil",

@@ -8,7 +8,9 @@ go_library(
         "sql.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ttl/sqlbuilder/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/kv",
         "//pkg/meta/model",

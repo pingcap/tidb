@@ -70,7 +70,7 @@ go_library(
         "table_lock.go",
         "table_mode.go",
         "ttl.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/ddl",
     visibility = [
         ":ddl_friend",

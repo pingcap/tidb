@@ -7,7 +7,9 @@ go_library(
         "sessionctx.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression/sessionexpr/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/errctx",
         "//pkg/expression/exprctx",

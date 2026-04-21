@@ -17,7 +17,7 @@ go_library(
         "rule_partition_processor.go",
         "rule_predicate_simplification.go",
         "rule_prune_indexes.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/planner/core/rule",
     visibility = ["//visibility:public"],
     deps = [

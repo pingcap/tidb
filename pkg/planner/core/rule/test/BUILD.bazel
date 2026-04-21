@@ -8,7 +8,9 @@ go_library(
         "rule_partition_pruning.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/rule/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/expression",
         "//pkg/infoschema",

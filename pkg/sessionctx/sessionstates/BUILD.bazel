@@ -6,7 +6,7 @@ go_library(
         "export_helper.go",
         "session_states.go",
         "session_token.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/sessionctx/sessionstates",
     visibility = ["//visibility:public"],
     deps = [

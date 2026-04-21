@@ -34,7 +34,11 @@ func main() {
 	if _, err := os.Stat("WORKSPACE"); errors.Is(err, os.ErrNotExist) {
 		log.Fatal("It should run from the project root")
 	}
-	err := filepath.Walk(".", func(path string, d fs.FileInfo, _ error) error {
+	megaCfg, err := loadMegaConfig()
+	if err != nil {
+		log.Fatal("fail to load mega config", zap.Error(err))
+	}
+	err = filepath.Walk(".", func(path string, d fs.FileInfo, _ error) error {
 		if d.IsDir() || d.Name() != "BUILD.bazel" || skipTazel(path) {
 			return nil
 		}
@@ -69,7 +73,18 @@ func main() {
 				}
 			}
 		}
-		write(path, buildfile)
+		if err := maybeFixMegaBuild(path, buildfile, megaCfg); err != nil {
+			return err
+		}
+		if err := maybeFixMegaImportedPackage(path, buildfile, megaCfg); err != nil {
+			return err
+		}
+		if err := maybeFixFailpointLibraries(path, buildfile); err != nil {
+			return err
+		}
+		if err := write(path, buildfile); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {

@@ -1,4 +1,44 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tiflashtest",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+        "tiflash_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/tiflashtest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/executor/mppcoordmanager",
+        "//pkg/kv",
+        "//pkg/meta/autoid",
+        "//pkg/parser/terror",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/store/mockstore",
+        "//pkg/store/mockstore/unistore",
+        "//pkg/testkit",
+        "//pkg/testkit/external",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/sqlkiller",
+        "//pkg/util/tiflashcompute",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "tiflashtest_test",

@@ -60,7 +60,9 @@ go_library(
         "write_concurrent.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

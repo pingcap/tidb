@@ -7,7 +7,9 @@ go_library(
         exclude = ["*_test.go"],
     ),
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/task/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/planner/cascades/base",
         "//pkg/planner/cascades/task",

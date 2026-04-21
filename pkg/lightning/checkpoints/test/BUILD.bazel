@@ -9,7 +9,9 @@ go_library(
         "register_gen.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/checkpoints/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//br/pkg/version/build",
         "//pkg/lightning/checkpoints",

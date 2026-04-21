@@ -7,7 +7,7 @@ go_library(
         "autoid_service.go",
         "errors.go",
         "memid.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/meta/autoid",
     visibility = ["//visibility:public"],
     deps = [

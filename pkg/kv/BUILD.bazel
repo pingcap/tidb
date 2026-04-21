@@ -20,7 +20,7 @@ go_library(
         "utils.go",
         "variables.go",
         "version.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/kv",
     visibility = ["//visibility:public"],
     deps = [

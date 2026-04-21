@@ -7,7 +7,9 @@ go_library(
         "syncer.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ddl/schemaver/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/ddl/schemaver",

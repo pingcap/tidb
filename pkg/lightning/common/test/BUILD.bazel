@@ -13,7 +13,9 @@ go_library(
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/common/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/autoid_service",
         "//pkg/ddl",

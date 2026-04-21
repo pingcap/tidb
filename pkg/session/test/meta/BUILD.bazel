@@ -1,4 +1,41 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "meta",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+        "session_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/session/test/meta",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/ddl",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/metadef",
+        "//pkg/metrics",
+        "//pkg/session",
+        "//pkg/store/mockstore",
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "//pkg/testkit/external",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "meta_test",

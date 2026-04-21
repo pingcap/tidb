@@ -7,7 +7,9 @@ go_library(
         "tables.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/infoschema/perfschema/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/infoschema/perfschema",
         "//pkg/kv",

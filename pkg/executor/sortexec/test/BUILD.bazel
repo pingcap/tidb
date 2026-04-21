@@ -12,7 +12,9 @@ go_library(
         "topn_spill.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/sortexec/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config",
         "//pkg/executor/internal/exec",

@@ -7,7 +7,9 @@ go_library(
         "worker.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/worker/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/lightning/worker",
         "//pkg/testkit/mega/register",

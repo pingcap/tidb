@@ -7,7 +7,9 @@ go_library(
         "sem_integration.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/sem/compat/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/objstore/s3like",
         "//pkg/parser/auth",

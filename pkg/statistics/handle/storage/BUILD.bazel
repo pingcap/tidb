@@ -9,7 +9,7 @@ go_library(
         "save.go",
         "stats_read_writer.go",
         "update.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/storage",
     visibility = ["//visibility:public"],
     deps = [

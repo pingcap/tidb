@@ -17,7 +17,7 @@ go_library(
         "region.go",
         "router.go",
         "schema_import.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/lightning/mydump",
     visibility = ["//visibility:public"],
     deps = [

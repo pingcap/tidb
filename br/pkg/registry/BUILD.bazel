@@ -5,7 +5,7 @@ go_library(
     srcs = [
         "heartbeat.go",
         "registration.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/registry",
     visibility = ["//visibility:public"],
     deps = [

@@ -80,6 +80,7 @@ UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 
 FAILPOINT_ENABLE  := find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl enable
 FAILPOINT_DISABLE := find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs tools/bin/failpoint-ctl disable
+BAZEL_FAILPOINT_CTL := bazel-bin/external/com_github_pingcap_failpoint/failpoint-ctl/failpoint-ctl_/failpoint-ctl
 
 GITHASH := $(shell git rev-parse HEAD)
 GITBRANCH := $(shell git rev-parse --abbrev-ref HEAD)

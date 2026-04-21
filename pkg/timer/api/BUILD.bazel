@@ -15,7 +15,7 @@ go_library(
         "test_schedule_policy.go",
         "test_store.go",
         "timer.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/timer/api",
     visibility = ["//visibility:public"],
     deps = [

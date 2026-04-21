@@ -7,7 +7,9 @@ go_library(
         "testkit.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ddl/notifier/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/ddl/notifier",

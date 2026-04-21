@@ -2,7 +2,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "topsql",
-    srcs = ["topsql.go"],
+    srcs = [
+        "topsql.go",
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/topsql",
     visibility = ["//visibility:public"],
     deps = [

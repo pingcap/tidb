@@ -8,7 +8,7 @@ go_library(
         "doc.go",
         "handler.go",
         "row_handle.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv",
     visibility = ["//visibility:public"],
     deps = [

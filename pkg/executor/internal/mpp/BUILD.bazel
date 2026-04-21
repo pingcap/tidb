@@ -6,7 +6,7 @@ go_library(
         "executor_with_retry.go",
         "local_mpp_coordinator.go",
         "recovery_handler.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/mpp",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [

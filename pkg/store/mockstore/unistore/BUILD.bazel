@@ -9,7 +9,7 @@ go_library(
         "raw_handler.go",
         "rpc.go",
         "testutil.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore",
     visibility = ["//visibility:public"],
     deps = [

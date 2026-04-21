@@ -8,7 +8,9 @@ go_library(
         "standby.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server/tests/standby/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config",
         "//pkg/metrics",

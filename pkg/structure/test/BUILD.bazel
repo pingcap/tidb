@@ -7,7 +7,9 @@ go_library(
         "structure.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/structure/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/kv",
         "//pkg/parser/mysql",

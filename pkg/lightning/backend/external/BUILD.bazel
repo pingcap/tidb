@@ -20,7 +20,7 @@ go_library(
         "testutil.go",
         "util.go",
         "writer.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/lightning/backend/external",
     visibility = ["//visibility:public"],
     deps = [

@@ -11,7 +11,9 @@ go_library(
         "seq_autoid.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/meta/autoid/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/kv",
         "//pkg/meta",

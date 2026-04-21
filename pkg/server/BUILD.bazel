@@ -18,7 +18,7 @@ go_library(
         "standby.go",
         "stat.go",
         "user_connections.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/server",
     visibility = ["//visibility:public"],
     deps = [

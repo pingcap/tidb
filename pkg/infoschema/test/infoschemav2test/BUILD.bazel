@@ -1,4 +1,36 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "infoschemav2test",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+        "v2_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/infoschema/test/infoschemav2test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/domain",
+        "//pkg/domain/infosync",
+        "//pkg/infoschema",
+        "//pkg/infoschema/context",
+        "//pkg/meta/autoid",
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/sessionctx/vardef",
+        "//pkg/table",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "infoschemav2test_test",

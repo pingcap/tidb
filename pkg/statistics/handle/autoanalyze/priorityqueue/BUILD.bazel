@@ -13,7 +13,7 @@ go_library(
         "queue.go",
         "queue_ddl_handler.go",
         "static_partitioned_table_analysis_job.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue",
     visibility = ["//visibility:public"],
     deps = [

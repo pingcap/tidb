@@ -9,7 +9,9 @@ go_library(
         "statistics_handler.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server/handler/optimizor/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/config",
         "//pkg/domain",

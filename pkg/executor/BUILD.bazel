@@ -92,7 +92,7 @@ go_library(
         "window.go",
         "workloadrepo.go",
         "write.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/executor",
     visibility = ["//visibility:public"],
     deps = [

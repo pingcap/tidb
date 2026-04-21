@@ -7,7 +7,9 @@ go_library(
         "tikv.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/tikv/test",
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//visibility:public",
+    ],
     deps = [
         "//pkg/lightning/tikv",
         "//pkg/testkit/mega/register",

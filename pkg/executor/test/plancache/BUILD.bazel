@@ -1,4 +1,35 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "plancache",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "plan_cache_intest.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/plancache",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/meta/autoid",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core",
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "plancache_test",

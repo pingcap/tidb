@@ -14,7 +14,7 @@ go_library(
         "region_cache.go",
         "ruv2_metrics.go",
         "store.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/store/copr",
     visibility = ["//visibility:public"],
     deps = [
