@@ -692,10 +692,12 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 				return err
 			}
 			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
-			tidblogutil.Logger(ctx).Warn("meet underlying error, will retry ingest",
+			fields := append([]zap.Field{
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),
-				zap.Int("retry", retry))
+				zap.Int("retry", retry),
+			}, ingestDataDiagFields(j.ingestData)...)
+			tidblogutil.Logger(ctx).Warn("meet underlying error, will retry ingest", fields...)
 			lastRetriedErr = err
 			continue
 		}
@@ -1039,14 +1041,15 @@ func (d *dispatcher) run() error {
 			backoff := time.Second * time.Duration(sleepSecond)
 			failpoint.InjectCall("adjustRegionJobRetryBackoff", &backoff)
 			job.waitUntil = time.Now().Add(backoff)
-			tidblogutil.Logger(d.workerCtx).Info("put job back to jobCh to retry later",
+			fields := append([]zap.Field{
 				logutil.Key("startKey", job.keyRange.Start),
 				logutil.Key("endKey", job.keyRange.End),
 				zap.Stringer("stage", job.stage),
 				zap.Int("retryCount", job.retryCount),
 				zap.Time("waitUntil", job.waitUntil),
 				log.ShortError(job.lastRetryableErr),
-			)
+			}, ingestDataDiagFields(job.ingestData)...)
+			tidblogutil.Logger(d.workerCtx).Info("put job back to jobCh to retry later", fields...)
 			if !d.retryer.push(job) {
 				// retryer is closed by worker error
 				job.done(d.jobWg)

@@ -1213,6 +1213,31 @@ var fakeRegionJobs map[[2]string]struct {
 	err  error
 }
 
+type ingestDataDiagnostics interface {
+	DataID() int64
+	LoadedKVCount() int64
+	ImportedKVCount() int64
+	ImportedKVSize() int64
+}
+
+func ingestDataDiag(data engineapi.IngestData) (ingestDataDiagnostics, bool) {
+	diag, ok := data.(ingestDataDiagnostics)
+	return diag, ok
+}
+
+func ingestDataDiagFields(data engineapi.IngestData) []zap.Field {
+	diag, ok := ingestDataDiag(data)
+	if !ok {
+		return nil
+	}
+	return []zap.Field{
+		zap.Int64("dataID", diag.DataID()),
+		zap.Int64("loadedKVs", diag.LoadedKVCount()),
+		zap.Int64("dataImportedKVs", diag.ImportedKVCount()),
+		zap.Int64("dataImportedBytes", diag.ImportedKVSize()),
+	}
+}
+
 // generateJobForRange will scan the region in `keyRange` and generate region jobs.
 // It will retry internally when scan region meet error.
 func (local *Backend) generateJobForRange(
@@ -1246,9 +1271,11 @@ func (local *Backend) generateJobForRange(
 		if _, ok := data.(*external.MemoryIngestData); ok {
 			logFn = tidblogutil.Logger(ctx).Warn
 		}
-		logFn("There is no pairs in range",
+		fields := append(ingestDataDiagFields(data),
 			logutil.Key("startOfAllRanges", startOfAllRanges),
-			logutil.Key("endOfAllRanges", endOfAllRanges))
+			logutil.Key("endOfAllRanges", endOfAllRanges),
+			zap.Int("regionJobCount", 0))
+		logFn("There is no pairs in range", fields...)
 		// trigger cleanup
 		data.IncRef()
 		data.DecRef()
@@ -1267,13 +1294,15 @@ func (local *Backend) generateJobForRange(
 	}
 
 	jobs := newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics)
-	tidblogutil.Logger(ctx).Info("generate region jobs",
+	fields := append(ingestDataDiagFields(data),
+		zap.Int("regionJobCount", len(jobs)),
 		zap.Int("len(jobs)", len(jobs)),
 		zap.String("startOfAllRanges", hex.EncodeToString(startOfAllRanges)),
 		zap.String("endOfAllRanges", hex.EncodeToString(endOfAllRanges)),
 		zap.String("startKeyOfFirstRegion", hex.EncodeToString(regions[0].Region.GetStartKey())),
 		zap.String("endKeyOfLastRegion", hex.EncodeToString(regions[len(regions)-1].Region.GetEndKey())),
 	)
+	tidblogutil.Logger(ctx).Info("generate region jobs", fields...)
 	return jobs, nil
 }
 
@@ -1326,20 +1355,25 @@ func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
 // verifyImportedStatistics verifies the imported statistics for external engines.
 // It checks if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used (which are not yet implemented),
 // and verifies that the imported KV count matches the expected one.
-func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
+func verifyImportedStatistics(ctx context.Context, e engineapi.Engine, importedKVCount int64) error {
 	// Check if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used.
 	// These options are not yet implemented for local backend, so we skip
 	// the statistics verification and return an error to remind future
 	// implementers to add support for this check.
 	if extEngine, ok := e.(*external.Engine); ok {
+		// Verify the imported statistics after import.
+		// For external engine, use the total number of KVs retained by
+		// LoadIngestData after duplicate handling as the expected count.
+		expectedKVCount := extEngine.GetTotalLoadedKVsCount()
+		matched := importedKVCount == expectedKVCount
+		tidblogutil.Logger(ctx).Info("verify external imported statistics",
+			zap.Int64("loadedKVs", expectedKVCount),
+			zap.Int64("importedCount", importedKVCount),
+			zap.Bool("importedLoadedMatch", matched))
 		failpoint.Inject("skipOnDuplicateKeyCheck", func(_ failpoint.Value) {
 			failpoint.Return(nil)
 		})
-		// Verify the imported statistics after import.
-		// For external engine, use the total number of KVs loaded in LoadIngestData
-		// (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
-		expectedKVCount := extEngine.GetTotalLoadedKVsCount()
-		if importedKVCount != expectedKVCount {
+		if !matched {
 			return errors.Errorf("imported length mismatch, expected %d, got %d", expectedKVCount, importedKVCount)
 		}
 	}
@@ -1466,16 +1500,24 @@ func (local *Backend) ImportEngine(
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
 
-		if err := verifyImportedStatistics(e, importedLength); err != nil {
+		if err := verifyImportedStatistics(ctx, e, importedLength); err != nil {
 			return err
 		}
 
-		tidblogutil.Logger(ctx).Info("import engine success",
+		fields := []zap.Field{
 			zap.Stringer("uuid", engineUUID),
 			zap.Int64("size", lfTotalSize),
 			zap.Int64("kvs", lfLength),
 			zap.Int64("importedSize", importedSize),
-			zap.Int64("importedCount", importedLength))
+			zap.Int64("importedCount", importedLength),
+		}
+		if extEngine, ok := e.(*external.Engine); ok {
+			loadedKVs := extEngine.GetTotalLoadedKVsCount()
+			fields = append(fields,
+				zap.Int64("loadedKVs", loadedKVs),
+				zap.Bool("importedLoadedMatch", importedLength == loadedKVs))
+		}
+		tidblogutil.Logger(ctx).Info("import engine success", fields...)
 	}
 	return err
 }

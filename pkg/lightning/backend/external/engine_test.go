@@ -92,6 +92,22 @@ func TestMemoryIngestData(t *testing.T) {
 	testNewIter(t, data, []byte("key0"), []byte("key1"), nil)
 	testNewIter(t, data, []byte("key6"), []byte("key9"), nil)
 
+	importedSize := atomic.NewInt64(0)
+	importedCount := atomic.NewInt64(0)
+	data = &MemoryIngestData{
+		dataID:          7,
+		loadedKVCount:   int64(len(kvs)),
+		importedKVSize:  importedSize,
+		importedKVCount: importedCount,
+	}
+	data.Finish(11, 2)
+	require.EqualValues(t, 7, data.DataID())
+	require.EqualValues(t, len(kvs), data.LoadedKVCount())
+	require.EqualValues(t, 2, data.ImportedKVCount())
+	require.EqualValues(t, 11, data.ImportedKVSize())
+	require.EqualValues(t, 2, importedCount.Load())
+	require.EqualValues(t, 11, importedSize.Load())
+
 	data = &MemoryIngestData{
 		ts: 234,
 	}
@@ -232,6 +248,8 @@ func TestEngineOnDup(t *testing.T) {
 			})
 			require.Len(t, loadDataCh, 1)
 			dataAndRanges := <-loadDataCh
+			data, ok := dataAndRanges.Data.(*MemoryIngestData)
+			require.True(t, ok)
 			allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
 			require.EqualValues(t, []KVPair{
 				{Key: []byte{1}, Value: []byte("aa")},
@@ -239,6 +257,8 @@ func TestEngineOnDup(t *testing.T) {
 				{Key: []byte{3}, Value: []byte("sds")},
 				{Key: []byte{4}, Value: []byte("bbb")},
 			}, allKVs)
+			require.EqualValues(t, len(allKVs), data.LoadedKVCount())
+			require.EqualValues(t, len(allKVs), extEngine.GetTotalLoadedKVsCount())
 			info := extEngine.ConflictInfo()
 			require.Zero(t, info.Count)
 			require.Empty(t, info.Files)
@@ -263,11 +283,15 @@ func TestEngineOnDup(t *testing.T) {
 				})
 				require.Len(t, loadDataCh, 1)
 				dataAndRanges := <-loadDataCh
+				data, ok := dataAndRanges.Data.(*MemoryIngestData)
+				require.True(t, ok)
 				allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
 				require.EqualValues(t, []KVPair{
 					{Key: []byte{2}, Value: []byte("vv")},
 					{Key: []byte{3}, Value: []byte("sds")},
 				}, allKVs)
+				require.EqualValues(t, len(allKVs), data.LoadedKVCount())
+				require.EqualValues(t, len(allKVs), extEngine.GetTotalLoadedKVsCount())
 				info := extEngine.ConflictInfo()
 				if od == engineapi.OnDuplicateKeyRemove {
 					require.Zero(t, info.Count)
@@ -305,8 +329,12 @@ func TestEngineOnDup(t *testing.T) {
 			})
 			require.Len(t, loadDataCh, 1)
 			dataAndRanges := <-loadDataCh
+			data, ok := dataAndRanges.Data.(*MemoryIngestData)
+			require.True(t, ok)
 			allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
 			require.Empty(t, allKVs)
+			require.EqualValues(t, 0, data.LoadedKVCount())
+			require.EqualValues(t, 0, extEngine.GetTotalLoadedKVsCount())
 			info := extEngine.ConflictInfo()
 			if od == engineapi.OnDuplicateKeyRemove {
 				require.Zero(t, info.Count)
@@ -374,10 +402,19 @@ func TestLoadIngestDataMultiBatch(t *testing.T) {
 	require.Len(t, loadDataCh, 2, "expected 2 batches from LoadIngestData")
 
 	var allKVs []KVPair
-	for range 2 {
-		dr := <-loadDataCh
-		allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
-	}
+	dr := <-loadDataCh
+	data, ok := dr.Data.(*MemoryIngestData)
+	require.True(t, ok)
+	require.EqualValues(t, 1, data.DataID())
+	require.EqualValues(t, 4, data.LoadedKVCount())
+	allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
+
+	dr = <-loadDataCh
+	data, ok = dr.Data.(*MemoryIngestData)
+	require.True(t, ok)
+	require.EqualValues(t, 2, data.DataID())
+	require.EqualValues(t, 4, data.LoadedKVCount())
+	allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
 	require.EqualValues(t, []KVPair{
 		{Key: []byte{1}, Value: []byte("v1")},
 		{Key: []byte{2}, Value: []byte("v2")},

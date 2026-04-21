@@ -197,7 +197,9 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				job.convertStageTo(needRescan)
 				return nil
 			}
+			writeStart := time.Now()
 			res, err := w.writeFn(ctx, job)
+			writeDur := time.Since(writeStart)
 			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
@@ -213,9 +215,28 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 					job.convertStageTo(needRescan)
 				}
 				job.lastRetryableErr = err
-				tidblogutil.Logger(ctx).Warn("meet retryable error when writing to TiKV",
-					log.ShortError(err), zap.Stringer("job stage", job.stage))
+				fields := append([]zap.Field{
+					log.ShortError(err),
+					zap.Stringer("job stage", job.stage),
+				}, ingestDataDiagFields(job.ingestData)...)
+				tidblogutil.Logger(ctx).Warn("meet retryable error when writing to TiKV", fields...)
 				return nil
+			}
+			if res != nil {
+				fields := append(ingestDataDiagFields(job.ingestData),
+					zap.Uint64("regionID", job.region.Region.GetId()),
+					logutil.Key("startKey", job.keyRange.Start),
+					logutil.Key("endKey", job.keyRange.End),
+					zap.Bool("emptyJob", res.emptyJob),
+					zap.Int64("writtenKVs", res.count),
+					zap.Int64("writtenBytes", res.totalBytes),
+					zap.Duration("writeDur", writeDur),
+					zap.Uint64("commitTS", job.ingestData.GetTS()),
+				)
+				if len(res.remainingStartKey) > 0 {
+					fields = append(fields, logutil.Key("remainingStartKey", res.remainingStartKey))
+				}
+				tidblogutil.Logger(ctx).Info("region job write summary", fields...)
 			}
 			if res.emptyJob {
 				job.convertStageTo(ingested)
@@ -242,11 +263,14 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				}
 				job.lastRetryableErr = err
 
-				tidblogutil.Logger(ctx).Warn("meet retryable error when ingesting, will handle the job later",
-					log.ShortError(err), zap.Stringer("job stage", job.stage),
+				fields := append([]zap.Field{
+					log.ShortError(err),
+					zap.Stringer("job stage", job.stage),
 					job.region.ToZapFields(),
 					logutil.Key("start", job.keyRange.Start),
-					logutil.Key("end", job.keyRange.End))
+					logutil.Key("end", job.keyRange.End),
+				}, ingestDataDiagFields(job.ingestData)...)
+				tidblogutil.Logger(ctx).Warn("meet retryable error when ingesting, will handle the job later", fields...)
 				return nil
 			}
 			job.convertStageTo(ingested)

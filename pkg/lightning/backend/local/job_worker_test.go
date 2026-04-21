@@ -28,13 +28,43 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	ingestclimock "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mock"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	rcmgrutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
+
+type mockDiagnosticIngestData struct {
+	mockIngestData
+	dataID          int64
+	loadedKVCount   int64
+	importedKVCount int64
+	importedKVSize  int64
+}
+
+func (m mockDiagnosticIngestData) DataID() int64 {
+	return m.dataID
+}
+
+func (m mockDiagnosticIngestData) LoadedKVCount() int64 {
+	return m.loadedKVCount
+}
+
+func (m mockDiagnosticIngestData) ImportedKVCount() int64 {
+	return m.importedKVCount
+}
+
+func (m mockDiagnosticIngestData) ImportedKVSize() int64 {
+	return m.importedKVSize
+}
 
 func newRegionJobWorkerPoolForTest(
 	workerCtx context.Context,
@@ -107,8 +137,9 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		Id: 1, Peers: []*metapb.Peer{{StoreId: 1}}}, Leader: &metapb.Peer{StoreId: 1},
 	}
 
-	prepareAndExecute := func(
+	prepareAndExecuteWithCtx := func(
 		t *testing.T,
+		workerCtx context.Context,
 		generateCount int,
 		job *regionJob,
 		preRunFn func(ctx context.Context, job *regionJob) error,
@@ -119,7 +150,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		testfailpoint.Enable(t,
 			"github.com/pingcap/tidb/pkg/lightning/backend/local/mockJobWgDone",
 			fmt.Sprintf("return(%d)", generateCount))
-		workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		workGroup, workerCtx := util.NewErrorGroupWithRecoverWithCtx(workerCtx)
 		pool, jobWg, jobInCh, jobOutCh := newRegionJobWorkerPoolForTest(workerCtx, preRunFn, writeFn, ingestFn)
 
 		wctx := workerpool.NewContext(workerCtx)
@@ -144,6 +175,98 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		require.Equal(t, 0, len(jobInCh))
 		return jobOutCh, err
 	}
+
+	prepareAndExecute := func(
+		t *testing.T,
+		generateCount int,
+		job *regionJob,
+		preRunFn func(ctx context.Context, job *regionJob) error,
+		writeFn func(ctx context.Context, job *regionJob) (*tikvWriteResult, error),
+		ingestFn func(ctx context.Context, job *regionJob) error) (<-chan *regionJob, error,
+	) {
+		return prepareAndExecuteWithCtx(t, context.Background(), generateCount, job, preRunFn, writeFn, ingestFn)
+	}
+
+	t.Run("diagnostic helper fields", func(t *testing.T) {
+		fields := ingestDataDiagFields(mockDiagnosticIngestData{
+			dataID:          7,
+			loadedKVCount:   4,
+			importedKVCount: 2,
+			importedKVSize:  11,
+		})
+		fieldByKey := make(map[string]zap.Field, len(fields))
+		for _, field := range fields {
+			fieldByKey[field.Key] = field
+		}
+		require.Equal(t, int64(7), fieldByKey["dataID"].Integer)
+		require.Equal(t, int64(4), fieldByKey["loadedKVs"].Integer)
+		require.Equal(t, int64(2), fieldByKey["dataImportedKVs"].Integer)
+		require.Equal(t, int64(11), fieldByKey["dataImportedBytes"].Integer)
+
+		require.Empty(t, ingestDataDiagFields(mockIngestData{}))
+	})
+
+	t.Run("generate jobs log includes diagnostic fields", func(t *testing.T) {
+		core, observedLogs := observer.New(zapcore.InfoLevel)
+		ctx := tidblogutil.WithLogger(context.Background(), zap.New(core))
+		local := &Backend{splitCli: initTestSplitClient([][]byte{{}, []byte("z")}, nil)}
+		data := mockDiagnosticIngestData{
+			mockIngestData: mockIngestData{{[]byte("b"), []byte("b")}},
+			dataID:         9,
+			loadedKVCount:  1,
+		}
+
+		jobs, err := local.generateJobForRange(ctx, data, []engineapi.Range{{Start: []byte("a"), End: []byte("z")}}, 1024, 1024)
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+
+		entries := observedLogs.FilterMessage("generate region jobs").All()
+		require.Len(t, entries, 1)
+		fields := entries[0].ContextMap()
+		require.Equal(t, int64(9), fields["dataID"])
+		require.Equal(t, int64(1), fields["loadedKVs"])
+		require.Equal(t, int64(0), fields["dataImportedKVs"])
+		require.Equal(t, int64(0), fields["dataImportedBytes"])
+		require.Equal(t, int64(1), fields["regionJobCount"])
+	})
+
+	t.Run("verify external import statistics logs comparison", func(t *testing.T) {
+		core, observedLogs := observer.New(zapcore.InfoLevel)
+		ctx := tidblogutil.WithLogger(context.Background(), zap.New(core))
+		extEngine := external.NewExternalEngine(
+			ctx,
+			objstore.NewMemStorage(),
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			nil,
+			1,
+			123,
+			0,
+			0,
+			false,
+			1<<30,
+			engineapi.OnDuplicateKeyError,
+			"",
+		)
+
+		require.NoError(t, verifyImportedStatistics(ctx, extEngine, 0))
+		err := verifyImportedStatistics(ctx, extEngine, 1)
+		require.ErrorContains(t, err, "imported length mismatch, expected 0, got 1")
+
+		entries := observedLogs.FilterMessage("verify external imported statistics").All()
+		require.Len(t, entries, 2)
+		fields := entries[0].ContextMap()
+		require.Equal(t, int64(0), fields["loadedKVs"])
+		require.Equal(t, int64(0), fields["importedCount"])
+		require.Equal(t, true, fields["importedLoadedMatch"])
+		fields = entries[1].ContextMap()
+		require.Equal(t, int64(0), fields["loadedKVs"])
+		require.Equal(t, int64(1), fields["importedCount"])
+		require.Equal(t, false, fields["importedLoadedMatch"])
+	})
 
 	t.Run("send job to out channel after run job", func(t *testing.T) {
 		jobOutCh, err := prepareAndExecute(
@@ -184,6 +307,73 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		require.Equal(t, 1, len(jobOutCh))
 		outJob := <-jobOutCh
 		require.Equal(t, ingested, outJob.stage)
+	})
+
+	t.Run("empty job write summary log includes diagnostic fields", func(t *testing.T) {
+		core, observedLogs := observer.New(zapcore.InfoLevel)
+		ctx := tidblogutil.WithLogger(context.Background(), zap.New(core))
+		writeFn := func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
+			return &tikvWriteResult{emptyJob: true}, nil
+		}
+		jobOutCh, err := prepareAndExecuteWithCtx(
+			t, ctx, 1,
+			&regionJob{
+				keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")},
+				stage:    regionScanned,
+				ingestData: mockDiagnosticIngestData{
+					dataID:        11,
+					loadedKVCount: 3,
+				},
+				region: dummyRegion,
+			},
+			nil, writeFn, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(jobOutCh))
+
+		entries := observedLogs.FilterMessage("region job write summary").All()
+		require.Len(t, entries, 1)
+		fields := entries[0].ContextMap()
+		require.Equal(t, int64(11), fields["dataID"])
+		require.Equal(t, int64(3), fields["loadedKVs"])
+		require.Equal(t, uint64(1), fields["regionID"])
+		require.Equal(t, true, fields["emptyJob"])
+		require.Equal(t, int64(0), fields["writtenKVs"])
+		require.Equal(t, int64(0), fields["writtenBytes"])
+	})
+
+	t.Run("non-empty job write summary log includes write result", func(t *testing.T) {
+		core, observedLogs := observer.New(zapcore.InfoLevel)
+		ctx := tidblogutil.WithLogger(context.Background(), zap.New(core))
+		writeFn := func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
+			return &tikvWriteResult{count: 3, totalBytes: 12}, nil
+		}
+		jobOutCh, err := prepareAndExecuteWithCtx(
+			t, ctx, 1,
+			&regionJob{
+				keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")},
+				stage:    regionScanned,
+				ingestData: mockDiagnosticIngestData{
+					dataID:          12,
+					loadedKVCount:   5,
+					importedKVCount: 1,
+					importedKVSize:  6,
+				},
+				region: dummyRegion,
+			},
+			nil, writeFn, nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(jobOutCh))
+
+		entries := observedLogs.FilterMessage("region job write summary").All()
+		require.Len(t, entries, 1)
+		fields := entries[0].ContextMap()
+		require.Equal(t, int64(12), fields["dataID"])
+		require.Equal(t, int64(5), fields["loadedKVs"])
+		require.Equal(t, int64(1), fields["dataImportedKVs"])
+		require.Equal(t, int64(6), fields["dataImportedBytes"])
+		require.Equal(t, false, fields["emptyJob"])
+		require.Equal(t, int64(3), fields["writtenKVs"])
+		require.Equal(t, int64(12), fields["writtenBytes"])
 	})
 
 	t.Run("meet non-retryable error during ingest", func(t *testing.T) {
