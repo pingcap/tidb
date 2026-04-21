@@ -95,10 +95,10 @@ func TestMemoryIngestData(t *testing.T) {
 	importedSize := atomic.NewInt64(0)
 	importedCount := atomic.NewInt64(0)
 	data = &MemoryIngestData{
-		dataID:          7,
-		loadedKVCount:   int64(len(kvs)),
-		importedKVSize:  importedSize,
-		importedKVCount: importedCount,
+		dataID:                7,
+		loadedKVCount:         int64(len(kvs)),
+		engineImportedKVSize:  importedSize,
+		engineImportedKVCount: importedCount,
 	}
 	data.Finish(11, 2)
 	require.EqualValues(t, 7, data.DataID())

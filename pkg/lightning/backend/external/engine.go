@@ -594,8 +594,8 @@ func (e *Engine) buildIngestData(ctx context.Context, kvs []KVPair, buf []*membu
 		refCnt:        atomic.NewInt64(0),
 		logger:        logutil.Logger(ctx),
 
-		importedKVSize:  e.importedKVSize,
-		importedKVCount: e.importedKVCount,
+		engineImportedKVSize:  e.importedKVSize,
+		engineImportedKVCount: e.importedKVCount,
 	}
 }
 
@@ -728,17 +728,19 @@ type MemoryIngestData struct {
 	kvs []KVPair
 	ts  uint64
 
-	dataID              int64
-	loadedKVCount       int64
+	dataID        int64
+	loadedKVCount int64
+	// dataImportedKVSize and dataImportedKVCount track this ingest-data batch only.
 	dataImportedKVSize  atomic.Int64
 	dataImportedKVCount atomic.Int64
 	logger              *zap.Logger
 
-	memBuf          []*membuf.Buffer
-	released        *atomic.Bool
-	refCnt          *atomic.Int64
-	importedKVSize  *atomic.Int64
-	importedKVCount *atomic.Int64
+	memBuf   []*membuf.Buffer
+	released *atomic.Bool
+	refCnt   *atomic.Int64
+	// engineImportedKVSize and engineImportedKVCount point to the parent engine totals.
+	engineImportedKVSize  *atomic.Int64
+	engineImportedKVCount *atomic.Int64
 }
 
 var _ engineapi.IngestData = (*MemoryIngestData)(nil)
@@ -905,8 +907,8 @@ func (m *MemoryIngestData) DecRef() {
 
 // Finish implements IngestData.Finish.
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
-	m.importedKVSize.Add(totalBytes)
-	m.importedKVCount.Add(totalCount)
+	m.engineImportedKVSize.Add(totalBytes)
+	m.engineImportedKVCount.Add(totalCount)
 	m.dataImportedKVSize.Add(totalBytes)
 	m.dataImportedKVCount.Add(totalCount)
 }
