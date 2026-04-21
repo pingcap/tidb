@@ -20,8 +20,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	mockimport "github.com/pingcap/tidb/lightning/pkg/importinto/mock"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"

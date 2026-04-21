@@ -32,7 +32,7 @@ import (
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints/checkpointspb"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/importdef"
