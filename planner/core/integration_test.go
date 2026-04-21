@@ -119,6 +119,33 @@ func TestBitColErrorMessage(t *testing.T) {
 	tk.MustGetErrCode("create table bit_col_t (a bit(65))", mysql.ErrTooBigDisplaywidth)
 }
 
+func TestPartitionTableRowIDWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("drop table if exists t_partition_rowid_warn, t_plain_rowid_warn")
+	tk.MustExec(`create table t_partition_rowid_warn(a int)
+		partition by range(a) (
+			partition p0 values less than (10),
+			partition p1 values less than (20))`)
+	tk.MustExec("create table t_plain_rowid_warn(a int)")
+
+	tk.MustQuery("select _tidb_rowid from t_partition_rowid_warn").Rows()
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 `_tidb_rowid` in a partitioned table is not globally unique; combine it with the partition ID to guarantee uniqueness",
+	))
+
+	tk.MustQuery("select _tidb_rowid from t_partition_rowid_warn where _tidb_rowid >= 0").Rows()
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 `_tidb_rowid` in a partitioned table is not globally unique; combine it with the partition ID to guarantee uniqueness",
+	))
+
+	tk.MustQuery("select _tidb_rowid from t_plain_rowid_warn").Rows()
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
 func TestAggPushDownLeftJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
