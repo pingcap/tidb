@@ -17,6 +17,7 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/big"
@@ -63,6 +64,17 @@ func newParquetParserForTest(
 		require.NoError(t, parser.Close())
 	})
 	return parser
+}
+
+func newInt96FromUnixNanos(nanoseconds int64) parquet.Int96 {
+	nanosPerDay := int64(24 * time.Hour)
+	dayOffset := floorDivInt64(nanoseconds, nanosPerDay)
+	nanosOfDay := floorModInt64(nanoseconds, nanosPerDay)
+	day := uint32(dayOffset + julianDayOfUnixEpoch)
+	var b [12]byte
+	binary.LittleEndian.PutUint64(b[:8], uint64(nanosOfDay))
+	binary.LittleEndian.PutUint32(b[8:], day)
+	return parquet.Int96(b)
 }
 
 func TestParquetParser(t *testing.T) {
@@ -319,6 +331,32 @@ func TestParquetVariousTypes(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, expectedDatum, row[i])
 		}
+	})
+
+	t.Run("int96_rounds_sub_microsecond_precision", func(t *testing.T) {
+		input := time.Date(2020, 10, 29, 9, 27, 52, 999999500, time.UTC)
+		pc := []ParquetColumn{
+			{
+				Name:      "timestampint96",
+				Type:      parquet.Types.Int96,
+				Converted: schema.ConvertedTypes.None,
+				Gen: func(_ int) (any, []int16) {
+					return []parquet.Int96{newInt96FromUnixNanos(input.UnixNano())}, []int16{1}
+				},
+			},
+		}
+
+		dir := t.TempDir()
+		name := "int96-rounds-sub-microsecond.parquet"
+		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+		require.Equal(t, "", reader.colTypes[0].sparkRebaseMicros.timeZoneID)
+		require.NoError(t, reader.ReadRow())
+
+		gotTime, err := reader.lastRow.Row[0].GetMysqlTime().GoTime(time.UTC)
+		require.NoError(t, err)
+		require.Equal(t, time.Date(2020, 10, 29, 9, 27, 53, 0, time.UTC), gotTime)
 	})
 
 	t.Run("spark_legacy_datetime_rebase", func(t *testing.T) {

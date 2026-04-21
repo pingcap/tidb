@@ -329,21 +329,33 @@ func setInt96Data(
 	// two parts: the first 8 bytes is the nanoseconds within the day, and the last 4 bytes
 	// is the Julian Day (days since noon on January 1, 4713 BC). And it will be converted it to UTC by
 	// subtracting the Julian day of the Unix epoch (1970-01-01 00:00:00).
-	micros := int96ToUnixMicros(val)
-	if rebaseMicros.timeZoneID != "" {
+	var t time.Time
+	if rebaseMicros.timeZoneID == "" {
+		// Preserve INT96 nanoseconds until FromGoTime so TIMESTAMP(6) keeps
+		// TiDB's existing nearest-microsecond rounding instead of truncating.
+		t = int96ToGoTime(val)
+	} else {
+		micros := int96ToUnixMicros(val)
 		rebased, err := rebaseMicros.rebase(micros)
 		if err != nil {
 			return err
 		}
-		micros = rebased
+		t = arrow.Timestamp(rebased).ToTime(arrow.Microsecond)
 	}
-	t := arrow.Timestamp(micros).ToTime(arrow.Microsecond)
 	if adjustToUTC {
 		t = t.In(loc)
 	}
 	mysqlTime := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, 6)
 	d.SetMysqlTime(mysqlTime)
 	return nil
+}
+
+func int96ToGoTime(val parquet.Int96) time.Time {
+	nanosOfDay := int64(binary.LittleEndian.Uint64(val[:8]))
+	julianDay := int64(binary.LittleEndian.Uint32(val[8:]))
+	seconds := (julianDay-julianDayOfUnixEpoch)*int64(24*time.Hour/time.Second) + nanosOfDay/int64(time.Second)
+	nanoseconds := nanosOfDay % int64(time.Second)
+	return time.Unix(seconds, nanoseconds).UTC()
 }
 
 func int96ToUnixMicros(val parquet.Int96) int64 {
