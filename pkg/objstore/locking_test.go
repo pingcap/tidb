@@ -380,6 +380,41 @@ func TestStartRenewalPanicsOnDoubleCall(t *testing.T) {
 	}, "second StartRenewal must panic")
 }
 
+func TestUnlockWithoutRenewalIsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+	requireFileExists(t, filepath.Join(pth, "test.lock"))
+
+	// No StartRenewal called; Unlock should still work.
+	require.NoError(t, lock.Unlock(ctx))
+	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+}
+
+func TestUnlockWaitsForRenewalGoroutine(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(1*time.Second, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+	lock.StartRenewal(ctx, nil)
+
+	// Let renewal run for a few ticks so a WriteFile is likely in flight.
+	time.Sleep(60 * time.Millisecond)
+
+	// Unlock must wait for the renewal goroutine to exit before deleting.
+	// After Unlock returns, no further WriteFile can happen, so the lock
+	// file stays deleted.
+	require.NoError(t, lock.Unlock(ctx))
+	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+
+	// Give any (incorrectly-still-running) goroutine a moment to misbehave.
+	time.Sleep(60 * time.Millisecond)
+	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+}
+
 func TestLockMetaBackwardCompatZeroExpireAt(t *testing.T) {
 	oldJSON := `{
 		"locked_at": "2024-01-01T00:00:00Z",

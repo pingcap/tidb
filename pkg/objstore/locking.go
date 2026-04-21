@@ -304,7 +304,20 @@ func TryLockRemote(ctx context.Context, storage storeapi.Storage, path, hint str
 
 // Unlock  removes the lock file at the specified path.
 // Removing that file will release the lock.
+//
+// If StartRenewal was previously invoked, Unlock first signals the renewal
+// goroutine to stop and waits for it to exit. This ordering is important:
+// without the wait, an in-flight tryRenew WriteFile could land after our
+// DeleteFile below, recreating a zombie lock file on remote storage.
 func (l *RemoteLock) Unlock(ctx context.Context) error {
+	l.mu.Lock()
+	started := l.renewalStarted
+	l.mu.Unlock()
+	if started {
+		close(l.stopCh)
+		<-l.done
+	}
+
 	meta, err := getLockMeta(ctx, l.storage, l.path)
 	if err != nil {
 		return err
