@@ -860,7 +860,7 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 ) ([]*import_sstpb.SSTMeta, error) {
 	var mu sync.Mutex
 	downloadReqs := make([]*import_sstpb.DownloadRequest, 0, len(filesGroup))
-	resultMetas := make([]*import_sstpb.SSTMeta, 0, len(filesGroup)*2)
+	resultMetasMap := make(map[string][]*import_sstpb.SSTMeta)
 	for _, files := range filesGroup {
 		var downloadReq *import_sstpb.DownloadRequest = nil
 		hasWriteCF := false
@@ -951,13 +951,17 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 				mu.Lock()
 				// For TiKV server, the input is req.Ssts and the output target is resp.Ssts. Therefore, get
 				// the resp.Ssts as the output of merged SST file.
-				for _, sstMeta := range resp.Ssts {
-					sstMeta.Range = &import_sstpb.Range{
-						Start: restoreutils.TruncateTS(resp.Range.GetStart()),
-						End:   restoreutils.TruncateTS(resp.Range.GetEnd()),
+				if _, ok := resultMetasMap[downloadReq.Name]; !ok {
+					resultMetas := make([]*import_sstpb.SSTMeta, 0, len(resp.Ssts))
+					for _, sstMeta := range resp.Ssts {
+						sstMeta.Range = &import_sstpb.Range{
+							Start: restoreutils.TruncateTS(resp.Range.GetStart()),
+							End:   restoreutils.TruncateTS(resp.Range.GetEnd()),
+						}
+						sstMeta.ApiVersion = apiVersion
+						resultMetas = append(resultMetas, sstMeta)
 					}
-					sstMeta.ApiVersion = apiVersion
-					resultMetas = append(resultMetas, sstMeta)
+					resultMetasMap[downloadReq.Name] = resultMetas
 				}
 				mu.Unlock()
 			}
@@ -967,7 +971,11 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-	return resultMetas, nil
+	finalResultMetas := make([]*import_sstpb.SSTMeta, 0, len(resultMetasMap)*2)
+	for _, sstMetas := range resultMetasMap {
+		finalResultMetas = append(finalResultMetas, sstMetas...)
+	}
+	return finalResultMetas, nil
 }
 
 func (importer *SnapFileImporter) downloadSST(
