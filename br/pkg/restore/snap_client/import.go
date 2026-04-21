@@ -863,6 +863,7 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 	resultMetas := make([]*import_sstpb.SSTMeta, 0, len(filesGroup)*2)
 	for _, files := range filesGroup {
 		var downloadReq *import_sstpb.DownloadRequest = nil
+		hasWriteCF := false
 		for _, file := range files.SSTFiles {
 			req, sstMeta, err := importer.buildDownloadRequest(file, files.RewriteRules, regionInfo, cipher)
 			if err != nil {
@@ -887,10 +888,19 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 			// check the rewrite rule the same
 			if !(bytes.Equal(downloadReq.RewriteRule.NewKeyPrefix, req.RewriteRule.NewKeyPrefix) &&
 				bytes.Equal(downloadReq.RewriteRule.OldKeyPrefix, req.RewriteRule.OldKeyPrefix) &&
-				downloadReq.RewriteRule.IgnoreAfterTimestamp == req.RewriteRule.IgnoreAfterTimestamp &&
-				downloadReq.RewriteRule.IgnoreBeforeTimestamp == req.RewriteRule.IgnoreBeforeTimestamp) {
+				downloadReq.RewriteRule.IgnoreAfterTimestamp == req.RewriteRule.IgnoreAfterTimestamp) {
 				log.Error("rewrite rule mismatch", zap.Reflect("cfReq", downloadReq.RewriteRule), zap.Reflect("req", req.RewriteRule))
 				return nil, errors.Errorf("rewrite rules mismatch from the overlapped SST files")
+			}
+			if strings.Contains(file.Cf, restoreutils.WriteCFName) {
+				if hasWriteCF && downloadReq.RewriteRule.IgnoreBeforeTimestamp != req.RewriteRule.IgnoreBeforeTimestamp {
+					log.Error("rewrite rule mismatch", zap.Reflect("cfReq", downloadReq.RewriteRule), zap.Reflect("req", req.RewriteRule))
+					return nil, errors.Errorf("rewrite rules mismatch from write CF SST files")
+				}
+				// In BatchDownloadLatestMVCC, the request-level rewrite rule should carry write CF's
+				// lower-bound timestamp, because write CF decides MVCC version visibility.
+				downloadReq.RewriteRule.IgnoreBeforeTimestamp = req.RewriteRule.IgnoreBeforeTimestamp
+				hasWriteCF = true
 			}
 			downloadReq.Ssts[req.Name] = &sstMeta
 		}
