@@ -82,14 +82,11 @@ type CheckpointManager interface {
 	// Remove removes the checkpoint for a specific table.
 	Remove(ctx context.Context, tableName string) error
 	// IgnoreError resets failed checkpoints to Pending.
-	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// an error matching common.ErrCheckpointTableNotFound when the target
-	// checkpoint does not exist.
+	// IgnoreError and DestroyError accept `all` or `db`.`table`; table-scoped
+	// calls return an error matching common.ErrCheckpointTableNotFound when the
+	// target checkpoint does not exist.
 	IgnoreError(ctx context.Context, tableName string) error
 	// DestroyError removes the checkpoint for a specific table if it is in Failed state.
-	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// an error matching common.ErrCheckpointTableNotFound when the target
-	// checkpoint does not exist.
 	// It returns the list of checkpoints that were removed.
 	DestroyError(ctx context.Context, tableName string) ([]*TableCheckpoint, error)
 	// DumpTables dumps the table checkpoints to a writer.

@@ -615,14 +615,11 @@ type DB interface {
 	// currently only meaningful for local backend
 	GetLocalStoringTables(ctx context.Context) (map[string][]int32, error)
 	// IgnoreErrorCheckpoint resets failed checkpoints so import can resume.
-	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// an error matching common.ErrCheckpointTableNotFound when the target
-	// checkpoint does not exist.
+	// IgnoreErrorCheckpoint and DestroyErrorCheckpoint accept `all` or
+	// `db`.`table`; table-scoped calls return an error matching
+	// common.ErrCheckpointTableNotFound when the target checkpoint does not exist.
 	IgnoreErrorCheckpoint(ctx context.Context, tableName string) error
 	// DestroyErrorCheckpoint removes failed checkpoints and returns removed tables.
-	// tableName accepts `all` or `db`.`table`. A table-scoped call returns
-	// an error matching common.ErrCheckpointTableNotFound when the target
-	// checkpoint does not exist.
 	DestroyErrorCheckpoint(ctx context.Context, tableName string) ([]DestroyedTableCheckpoint, error)
 	DumpTables(ctx context.Context, csv io.Writer) error
 	DumpEngines(ctx context.Context, csv io.Writer) error
