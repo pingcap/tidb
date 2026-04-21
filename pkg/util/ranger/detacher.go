@@ -548,12 +548,15 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		return res, nil
 	}
 	for _, cond := range newConditions {
-		isAccessCond, _ := checker.check(cond)
+		isAccessCond, shouldReserve := checker.check(cond)
 		if !isAccessCond {
 			filterConds = append(filterConds, cond)
 			continue
 		}
 		accessConds = append(accessConds, cond)
+		if shouldReserve {
+			filterConds = append(filterConds, cond)
+		}
 		// TODO: if it's prefix column, we need to add cond to filterConds?
 	}
 	ranges, accessConds, remainedConds, err = d.buildCNFIndexRange(newTpSlice, eqOrInCount, accessConds)
@@ -1079,8 +1082,10 @@ func (d *rangeDetacher) detachCondAndBuildRangeForCols() (*DetachRangeResult, er
 // It will find the point query column firstly and then extract the range query column.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit. If you ask that all conditions must be used
 // for building ranges, set rangeMemQuota to 0 to avoid range fallback.
+// The returned remainedConds are conditions that must be re-applied as filters (e.g. when a
+// collation mismatch makes the range approximate but the condition is still needed for correctness).
 func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, conditions []expression.Expression,
-	cols []*expression.Column, lengths []int, rangeMaxSize int64) (Ranges, []expression.Expression, error) {
+	cols []*expression.Column, lengths []int, rangeMaxSize int64) (ranges Ranges, accessConds []expression.Expression, remainedConds []expression.Expression, err error) {
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
@@ -1094,8 +1099,16 @@ func DetachSimpleCondAndBuildRangeForIndex(sctx *rangerctx.RangerContext, condit
 		convertToSortKey: true,
 		rangeMaxSize:     rangeMaxSize,
 	}
+<<<<<<< HEAD
 	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, newTpSlice, false)
 	return res.Ranges, res.AccessConds, err
+=======
+	res, err := d.detachCNFCondAndBuildRangeForIndex(conditions, false)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return res.Ranges, res.AccessConds, res.RemainedConds, nil
+>>>>>>> 4a6574e456a (planner: Fix CAST AS BINARY index usage (#67898))
 }
 
 func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []expression.Expression) []expression.Expression {
