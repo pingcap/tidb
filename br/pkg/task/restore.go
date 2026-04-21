@@ -1960,11 +1960,16 @@ func fallbackStatsTables(tables []*metautil.Table) []*metautil.Table {
 }
 
 func shouldForceRestoreMaskingPolicySchema(cfg *RestoreConfig, dbName string) bool {
-	return cfg.WithSysTable && strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O)
+	return cfg.WithSysTable && !cfg.NoSchema && strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O)
 }
 
 func shouldForceRestoreMaskingPolicyTable(cfg *RestoreConfig, dbName, tableName string) bool {
 	return shouldForceRestoreMaskingPolicySchema(cfg, dbName) && strings.EqualFold(tableName, "tidb_masking_policy")
+}
+
+func isTemporaryMaskingPolicyTable(dbName, tableName string) bool {
+	return strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O) &&
+		strings.EqualFold(tableName, "tidb_masking_policy")
 }
 
 // filterRestoreFiles filters out dbs and tables.
@@ -2647,7 +2652,7 @@ func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestore
 	if cfg.ExplicitFilter && isPiTR && !isIncremental {
 		for i, table := range tables {
 			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
-			if table.Info.IsSequence() {
+			if table.Info.IsSequence() || isTemporaryMaskingPolicyTable(table.DB.Name.O, table.Info.Name.O) {
 				continue
 			}
 			tableCopy := *table
