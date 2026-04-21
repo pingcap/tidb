@@ -34,11 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
->>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -302,11 +298,9 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
-<<<<<<< HEAD
-=======
 	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
-		kvs := make([]KVPair, 0)
-		kvs = append(kvs, KVPair{[]byte{}, []byte{}})
+		kvs := make([]kvPair, 0)
+		kvs = append(kvs, kvPair{key: []byte{}, value: []byte{}})
 		data := e.buildIngestData(kvs, nil)
 		data.IncRef()
 		select {
@@ -315,12 +309,10 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		case outCh <- engineapi.DataAndRanges{
 			Data: data,
 		}:
-			e.activeIngestDataFlags = append(e.activeIngestDataFlags, data.released)
 			failpoint.Return(nil)
 		}
 	})
 
->>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()

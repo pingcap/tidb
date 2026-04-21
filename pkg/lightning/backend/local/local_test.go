@@ -69,7 +69,6 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
-	atomic2 "go.uber.org/atomic"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -2614,7 +2613,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 	ctx := context.Background()
 	local := &Backend{
 		BackendConfig: BackendConfig{
-			WorkerConcurrency: *atomic2.NewInt32(2),
+			WorkerConcurrency: 2,
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
 		splitCli: initTestSplitClient([][]byte{[]byte("a"), []byte("z")}, nil),

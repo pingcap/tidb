@@ -1252,8 +1252,6 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	return nil
 }
 
-<<<<<<< HEAD
-=======
 // GetExternalEngine returns the external engine by uuid.
 // If the engine is not found or not an external engine, it returns nil.
 // It's used to dynamically update the resource used by the external engine
@@ -1298,7 +1296,6 @@ func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
 	return nil
 }
 
->>>>>>> 5810fff4e56 (*: ref all the jobs before sending to jobToWorkerCh (#64767))
 // ImportEngine imports an engine to TiKV.
 func (local *Backend) ImportEngine(
 	ctx context.Context,
