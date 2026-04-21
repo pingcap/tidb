@@ -1115,3 +1115,30 @@ WHERE `f` >= 1753632000
   AND `f` <= 1753718399
   AND `g` = 0
 GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+
+# Test for issue #67605: AVG float64 precision should be consistent
+# regardless of join expansion duplicating rows.
+DROP TABLE IF EXISTS t_avg_prec1, t_avg_prec2;
+CREATE TABLE t_avg_prec1 (c0 BLOB NOT NULL);
+CREATE TABLE t_avg_prec2 (c0 TINYBLOB NOT NULL);
+
+INSERT INTO t_avg_prec2 (c0) VALUES (0x302E36373033313336383532353434373535);
+INSERT INTO t_avg_prec2 (c0) VALUES (0x55755F6CE9BC9031733F);
+INSERT INTO t_avg_prec2 (c0) VALUES ('');
+INSERT INTO t_avg_prec2 (c0) VALUES ('');
+INSERT INTO t_avg_prec2 (c0) VALUES ('');
+INSERT INTO t_avg_prec1 (c0) VALUES (0x32303639303530303736);
+
+--sorted_result
+SELECT AVG((t_avg_prec1.c0) * (t_avg_prec1.c0)) AS r1 FROM t_avg_prec1;
+--sorted_result
+SELECT AVG((t_avg_prec1.c0) * (t_avg_prec1.c0)) AS r2 FROM t_avg_prec2, t_avg_prec1;
+
+# Both queries must return the same result.
+SELECT
+  (SELECT AVG((t_avg_prec1.c0) * (t_avg_prec1.c0)) FROM t_avg_prec1)
+  =
+  (SELECT AVG((t_avg_prec1.c0) * (t_avg_prec1.c0)) FROM t_avg_prec2, t_avg_prec1)
+AS results_match;
+
+DROP TABLE t_avg_prec1, t_avg_prec2;
