@@ -27,6 +27,7 @@ type Event struct {
 	IndexInfo      *model.IndexInfo
 	ColumnInfos    []*model.ColumnInfo
 	DroppedTableID int64
+	TableIDs       []int64
 	Tp             model.ActionType
 }
 
@@ -38,6 +39,9 @@ func (e *Event) String() string {
 	}
 	if e.DroppedTableID != 0 {
 		ret += fmt.Sprintf(", Dropped Table ID: %d", e.DroppedTableID)
+	}
+	if len(e.TableIDs) > 0 {
+		ret += fmt.Sprintf(", Table IDs: %v", e.TableIDs)
 	}
 	if e.PartInfo != nil {
 		ids := make([]int64, 0, len(e.PartInfo.Definitions))

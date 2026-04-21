@@ -73,6 +73,8 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+	case model.ActionDropSchema:
+		return h.UpdateStatsMetaVersionForGC(t.TableIDs)
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
 	}
