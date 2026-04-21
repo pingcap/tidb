@@ -80,6 +80,10 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 		}
 	} else if proj, isProj := p.(*logicalop.LogicalProjection); isProj && p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughProj {
 		// Best-effort: look through a safe Projection on top of a Join when enabled.
+		// TODO: This only handles a single projection directly on top of a join. A stacked pattern
+		// like Proj -> Proj -> Join still falls back here because the outer projection cannot reuse
+		// the inner projection's join-group extraction/inlining result yet. Optimize this in a
+		// follow-up if we want better support for double-projection pipelines.
 		if result, handled := tryInlineProjectionForJoinGroup(p, proj); handled {
 			return result
 		}
@@ -776,10 +780,22 @@ func canReuseInjectedJoinExpr(expr expression.Expression) bool {
 	return !expression.IsMutableEffectsExpr(expr) && !expression.CheckNonDeterministic(expr)
 }
 
+// injectExpr materializes expr as a column on top of p so rewritten join edges can keep using
+// column arguments only.
+//
+// If p is already a projection, we append/reuse the expression there. Otherwise we wrap p in a
+// pass-through projection first, so the new derived column stays local to this branch and the
+// branch's output schema remains explicit for later join construction.
+//
+// When possible, we reuse an existing semantically equivalent deterministic expression instead of
+// appending a duplicate column. This keeps the rewritten join tree smaller and prevents repeated
+// materialization when multiple join edges need the same derived expression.
 func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
 	originalPlanID := p.ID()
 	proj, ok := p.(*logicalop.LogicalProjection)
 	if !ok {
+		// Build a pass-through projection so the injected expression has a stable output column
+		// without changing the child's original outputs.
 		proj = logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
 		proj.SetSchema(p.Schema().Clone())
 		proj.SetChildren(p)
@@ -787,6 +803,8 @@ func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr exp
 	}
 	// Avoid injecting duplicate expressions into the same projection.
 	// This keeps plans smaller when multiple join edges need the same deterministic expression.
+	// We substitute through the current projection first so reuse works even when proj already
+	// contains previously injected expressions or pass-through aliases.
 	substituted := expression.ColumnSubstitute(proj.SCtx().GetExprCtx(), expr, proj.Schema(), proj.Exprs)
 	if canReuseInjectedJoinExpr(substituted) {
 		for i, e := range proj.Exprs {

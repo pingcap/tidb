@@ -316,6 +316,80 @@ MergeJoin	root		inner join, left key:planner__core__join_reorder_through_project
 │     └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+drop table if exists jt_mp, jt_ms, jt_ch, jt_ab;
+create table jt_mp(
+id int primary key,
+ms_id int,
+user_id int,
+site_code int,
+pay_receive_id int,
+payline_id int,
+key(user_id, site_code),
+key(ms_id),
+key(pay_receive_id, payline_id)
+);
+create table jt_ms(id int primary key, note varchar(10));
+create table jt_ch(channel_id int, pay_kind int, key(channel_id, pay_kind));
+create table jt_ab(user_id int, site_code int, regpkgid int, key(user_id, site_code));
+insert into jt_mp values (1, 1, 10, 1, 100, 2), (2, 2, 20, 1, 200, 3);
+insert into jt_ms values (1, 'm1'), (2, 'm2');
+insert into jt_ch values (100, 200), (200, 300);
+insert into jt_ab values (10, 1, 1), (20, 1, 2);
+analyze table jt_mp, jt_ms, jt_ch, jt_ab;
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select /*+ leading(ab) */ mp.id, ms.note
+from jt_mp mp
+left join jt_ms ms
+on mp.ms_id = ms.id
+left join jt_ch ch
+on mp.pay_receive_id = ch.channel_id
+and mp.payline_id * 100 = ch.pay_kind
+left join jt_ab ab
+on ab.user_id = mp.user_id
+and ab.site_code = mp.site_code
+where ab.regpkgid = 1;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:HashJoin, equal:[eq(planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ch.channel_id) eq(Column, planner__core__join_reorder_through_projection.jt_ch.pay_kind)]
+├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.jt_ab.user_id, planner__core__join_reorder_through_projection.jt_mp.user_id) eq(planner__core__join_reorder_through_projection.jt_ab.site_code, planner__core__join_reorder_through_projection.jt_mp.site_code)]
+│ ├─TableReader(Build)	root		data:Selection
+│ │ └─Selection	cop[tikv]		eq(planner__core__join_reorder_through_projection.jt_ab.regpkgid, 1), not(isnull(planner__core__join_reorder_through_projection.jt_ab.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_ab.user_id))
+│ │   └─TableFullScan	cop[tikv]	table:ab	keep order:false
+│ └─Projection(Probe)	root		planner__core__join_reorder_through_projection.jt_mp.id, planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_mp.site_code, planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ms.note, mul(planner__core__join_reorder_through_projection.jt_mp.payline_id, 100)->Column
+│   └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__join_reorder_through_projection.jt_mp.ms_id, planner__core__join_reorder_through_projection.jt_ms.id)]
+│     ├─TableReader(Build)	root		data:TableFullScan
+│     │ └─TableFullScan	cop[tikv]	table:ms	keep order:false
+│     └─TableReader(Probe)	root		data:Selection
+│       └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_mp.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_mp.user_id))
+│         └─TableFullScan	cop[tikv]	table:mp	keep order:false
+└─IndexReader(Probe)	root		index:IndexFullScan
+  └─IndexFullScan	cop[tikv]	table:ch, index:channel_id(channel_id, pay_kind)	keep order:false
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select /*+ leading(ab) */ mp.id, ms.note
+from jt_mp mp
+left join jt_ms ms
+on mp.ms_id = ms.id
+left join jt_ch ch
+on mp.pay_receive_id = ch.channel_id
+and mp.payline_id * 100 = ch.pay_kind
+left join jt_ab ab
+on ab.user_id = mp.user_id
+and ab.site_code = mp.site_code
+where ab.regpkgid = 1;
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:HashJoin, equal:[eq(planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ch.channel_id) eq(Column, planner__core__join_reorder_through_projection.jt_ch.pay_kind)]
+├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__join_reorder_through_projection.jt_ab.user_id, planner__core__join_reorder_through_projection.jt_mp.user_id) eq(planner__core__join_reorder_through_projection.jt_ab.site_code, planner__core__join_reorder_through_projection.jt_mp.site_code)]
+│ ├─TableReader(Build)	root		data:Selection
+│ │ └─Selection	cop[tikv]		eq(planner__core__join_reorder_through_projection.jt_ab.regpkgid, 1), not(isnull(planner__core__join_reorder_through_projection.jt_ab.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_ab.user_id))
+│ │   └─TableFullScan	cop[tikv]	table:ab	keep order:false
+│ └─Projection(Probe)	root		planner__core__join_reorder_through_projection.jt_mp.id, planner__core__join_reorder_through_projection.jt_mp.user_id, planner__core__join_reorder_through_projection.jt_mp.site_code, planner__core__join_reorder_through_projection.jt_mp.pay_receive_id, planner__core__join_reorder_through_projection.jt_ms.note, mul(planner__core__join_reorder_through_projection.jt_mp.payline_id, 100)->Column
+│   └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__join_reorder_through_projection.jt_mp.ms_id, planner__core__join_reorder_through_projection.jt_ms.id)]
+│     ├─TableReader(Build)	root		data:TableFullScan
+│     │ └─TableFullScan	cop[tikv]	table:ms	keep order:false
+│     └─TableReader(Probe)	root		data:Selection
+│       └─Selection	cop[tikv]		not(isnull(planner__core__join_reorder_through_projection.jt_mp.site_code)), not(isnull(planner__core__join_reorder_through_projection.jt_mp.user_id))
+│         └─TableFullScan	cop[tikv]	table:mp	keep order:false
+└─IndexReader(Probe)	root		index:IndexFullScan
+  └─IndexFullScan	cop[tikv]	table:ch, index:channel_id(channel_id, pay_kind)	keep order:false
 set tidb_opt_join_reorder_through_proj = on;
 set tidb_opt_join_reorder_threshold = 3;
 select count(*) from (

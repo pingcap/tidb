@@ -229,6 +229,73 @@ explain format = 'plan_tree' select t1.a, dt.const_one from t1 join (
 ) dt on t1.a = dt.a2;
 
 # =============================================================================
+# Current Limitation: Injected Projection Carries Null-Extended Pass-Through Columns
+# =============================================================================
+# This reproduces the legacy-path limitation discussed in the code comments around
+# canInlineProjection().
+#
+# Query shape:
+# - mp LEFT JOIN ms first, so `ms.note` is from the null-extended side.
+# - Then `mp` joins `ch` on `mp.payline_id * 100 = ch.pay_kind`.
+# - The expression join key forces updateEQCond() to inject a Projection on top of
+#   the whole `(mp LEFT JOIN ms)` left child.
+# - That injected Projection forwards `ms.note` together with mp columns and the
+#   derived join key `mp.payline_id * 100`.
+#
+# `ms.note` is only a pure pass-through column, but today the through-proj safety
+# check rejects the entire Projection as soon as any expression references
+# nullExtendedCols. As a result, turning tidb_opt_join_reorder_through_proj ON does
+# not inline this Projection, and `leading(ab)` can only start from the whole
+# projected subtree instead of from bare `mp`.
+drop table if exists jt_mp, jt_ms, jt_ch, jt_ab;
+create table jt_mp(
+  id int primary key,
+  ms_id int,
+  user_id int,
+  site_code int,
+  pay_receive_id int,
+  payline_id int,
+  key(user_id, site_code),
+  key(ms_id),
+  key(pay_receive_id, payline_id)
+);
+create table jt_ms(id int primary key, note varchar(10));
+create table jt_ch(channel_id int, pay_kind int, key(channel_id, pay_kind));
+create table jt_ab(user_id int, site_code int, regpkgid int, key(user_id, site_code));
+
+insert into jt_mp values (1, 1, 10, 1, 100, 2), (2, 2, 20, 1, 200, 3);
+insert into jt_ms values (1, 'm1'), (2, 'm2');
+insert into jt_ch values (100, 200), (200, 300);
+insert into jt_ab values (10, 1, 1), (20, 1, 2);
+analyze table jt_mp, jt_ms, jt_ch, jt_ab;
+
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select /*+ leading(ab) */ mp.id, ms.note
+from jt_mp mp
+left join jt_ms ms
+  on mp.ms_id = ms.id
+left join jt_ch ch
+  on mp.pay_receive_id = ch.channel_id
+ and mp.payline_id * 100 = ch.pay_kind
+left join jt_ab ab
+  on ab.user_id = mp.user_id
+ and ab.site_code = mp.site_code
+where ab.regpkgid = 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select /*+ leading(ab) */ mp.id, ms.note
+from jt_mp mp
+left join jt_ms ms
+  on mp.ms_id = ms.id
+left join jt_ch ch
+  on mp.pay_receive_id = ch.channel_id
+ and mp.payline_id * 100 = ch.pay_kind
+left join jt_ab ab
+  on ab.user_id = mp.user_id
+ and ab.site_code = mp.site_code
+where ab.regpkgid = 1;
+
+# =============================================================================
 # DP Reorder: Preserve Single-Node Predicates After Projection Inlining
 # =============================================================================
 # After projection inlining, join conditions can become single-table predicates.

@@ -186,8 +186,30 @@ func canInlineProjection(proj *logicalop.LogicalProjection, childResult *joinGro
 		}
 		if childResult.nullExtendedCols != nil && expression.ExprReferenceSchema(checkExpr, childResult.nullExtendedCols) {
 			// Expressions that reference the null-extended side of an outer join must stay above
-			// that outer join. Inlining them would let later join reorder treat them as normal
-			// single-leaf connectors and can change outer-join semantics.
+			// that outer join. Their value can depend on the outer join having already produced
+			// a NULL-extended row, so they are not ordinary "leaf-local" expressions.
+			//
+			// Example:
+			//   SELECT * FROM (
+			//     SELECT t1.id, IFNULL(t2.v, 0) AS k
+			//     FROM t1 LEFT JOIN t2 ON t1.id = t2.id
+			//   ) dt JOIN t3 ON dt.k = t3.v;
+			//
+			// Here `IFNULL(t2.v, 0)` only becomes `0` after the LEFT JOIN has manufactured the
+			// null-extended t2 row for an unmatched t1 row. If we inline such an expression here,
+			// later join reorder may treat it as a normal single-leaf connector and move joins or
+			// filters below the outer join, which can change SQL semantics.
+			//
+			// The current legacy through-proj implementation is intentionally conservative:
+			// projection inline is all-or-nothing, and once a projection is accepted we globally
+			// substitute derived columns through colExprMap before restoring the output schema.
+			// Blocking every reference to nullExtendedCols is therefore a coarse correctness fence.
+			//
+			// TODO: Relax this for provably-harmless cases. In particular, an injected projection
+			// created for join-key materialization may carry identity pass-through columns from the
+			// null-extended side even though those columns keep their original UniqueIDs and never
+			// participate in colExprMap substitution. More precise options include partial inline or
+			// materializing join keys on the minimal subtree instead of on the whole child.
 			return false
 		}
 
