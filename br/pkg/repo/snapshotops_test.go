@@ -22,9 +22,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -116,7 +118,8 @@ func TestDiscardPendingSnapshotUnfinishedRejectsUnsupportedStorage(t *testing.T)
 
 	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(t, ctx, storage, backupID))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "does not support WalkDir StartAfter")
+	require.ErrorContains(t, err, "repo-v1 snapshot operations")
+	require.True(t, errors.ErrorEqual(err, berrors.ErrUnsupportedOperation))
 	require.Equal(t, backupID, result.BackupID)
 	require.Zero(t, result.MetadataDeleted)
 	require.Zero(t, result.DataDeleted)
@@ -184,7 +187,8 @@ func TestDeleteSnapshotRejectsUnsupportedStorage(t *testing.T) {
 
 	result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "does not support WalkDir StartAfter")
+	require.ErrorContains(t, err, "repo-v1 snapshot operations")
+	require.True(t, errors.ErrorEqual(err, berrors.ErrUnsupportedOperation))
 	require.Equal(t, backupID, result.BackupID)
 	require.Zero(t, result.MetadataDeleted)
 	require.Zero(t, result.DataDeleted)
@@ -192,56 +196,6 @@ func TestDeleteSnapshotRejectsUnsupportedStorage(t *testing.T) {
 	requireFileExists(t, ctx, storage, repo.SnapshotMetadataFile(backupID))
 	requireFileExists(t, ctx, storage, repo.SnapshotStoreDataPrefix(1, backupID)+"/a.sst")
 	requireFileExists(t, ctx, storage, repo.PendingFile([]byte("hash"), backupID))
-}
-
-func TestListAndDeleteSnapshotOrphans(t *testing.T) {
-	ctx := context.Background()
-	storage := objstore.NewMemStorage()
-	snapshotOps := repo.SnapshotOpsExtension(storage)
-
-	completedID := repo.BackupID(0x5678)
-	orphanID := repo.BackupID(0x6789)
-	createBackupMeta(t, ctx, storage, completedID)
-	createDataFile(t, ctx, storage, 1, completedID, "keep.sst")
-	createDataFile(t, ctx, storage, 1, orphanID, "orphan-a.sst")
-	createDataFile(t, ctx, storage, 2, orphanID, "orphan-b.sst")
-
-	backupIDs, err := repo.ListCompletedSnapshotIDs(ctx, storage)
-	require.NoError(t, err)
-	require.Equal(t, []repo.BackupID{completedID}, backupIDs)
-
-	orphans, err := snapshotOps.ListSnapshotOrphans(ctx)
-	require.NoError(t, err)
-	require.ElementsMatch(t, []string{
-		repo.SnapshotStoreDataPrefix(1, orphanID) + "/orphan-a.sst",
-		repo.SnapshotStoreDataPrefix(2, orphanID) + "/orphan-b.sst",
-	}, orphans)
-
-	deleted, err := snapshotOps.DeleteSnapshotOrphans(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 2, deleted)
-	requireFileExists(t, ctx, storage, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep.sst")
-	requireFileMissing(t, ctx, storage, repo.SnapshotStoreDataPrefix(1, orphanID)+"/orphan-a.sst")
-	requireFileMissing(t, ctx, storage, repo.SnapshotStoreDataPrefix(2, orphanID)+"/orphan-b.sst")
-}
-
-func TestWalkSnapshotOrphansStreamsPaths(t *testing.T) {
-	ctx := context.Background()
-	storage := objstore.NewMemStorage()
-	snapshotOps := repo.SnapshotOpsExtension(storage)
-
-	completedID := repo.BackupID(0x7777)
-	orphanID := repo.BackupID(0x8888)
-	createBackupMeta(t, ctx, storage, completedID)
-	createDataFile(t, ctx, storage, 1, completedID, "keep.sst")
-	createDataFile(t, ctx, storage, 1, orphanID, "orphan.sst")
-
-	var orphanPaths []string
-	for err, orphanPath := range snapshotOps.WalkSnapshotOrphans(ctx) {
-		require.NoError(t, err)
-		orphanPaths = append(orphanPaths, orphanPath)
-	}
-	require.Equal(t, []string{repo.SnapshotStoreDataPrefix(1, orphanID) + "/orphan.sst"}, orphanPaths)
 }
 
 func TestListAndDeleteSnapshotOrphansUsesStartAfterWhenAvailable(t *testing.T) {

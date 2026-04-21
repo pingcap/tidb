@@ -20,13 +20,16 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,43 +139,73 @@ func TestCollectResumablePendingBackups(t *testing.T) {
 }
 
 func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
-	ctx := context.Background()
-	storage := objstore.NewMemStorage()
-	backupID := repo.BackupID(0x1234)
-	cipherInfo := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
-	rootBackend := &backuppb.StorageBackend{
-		Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: "/tmp/repo"}},
-	}
+	t.Run("load_backup_meta_from_repo_snapshot_storage", func(t *testing.T) {
+		ctx := context.Background()
+		baseDir := t.TempDir()
+		storage, err := objstore.NewLocalStorage(baseDir)
+		require.NoError(t, err)
+		backupID := repo.BackupID(0x1234)
+		cipherInfo := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+		rootBackend := &backuppb.StorageBackend{
+			Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: baseDir}},
+		}
 
-	_, err := repo.EnsureRepo(ctx, storage, "test")
-	require.NoError(t, err)
+		_, err = repo.EnsureRepo(ctx, storage, "test")
+		require.NoError(t, err)
 
-	metaWriter := metautil.NewMetaWriter(
-		repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID)),
-		metautil.MetaFileSize,
-		false,
-		"",
-		&cipherInfo,
-	)
-	metaWriter.Update(func(m *backuppb.BackupMeta) {
-		m.ClusterId = 42
+		metaWriter := metautil.NewMetaWriter(
+			repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID)),
+			metautil.MetaFileSize,
+			false,
+			"",
+			&cipherInfo,
+		)
+		metaWriter.Update(func(m *backuppb.BackupMeta) {
+			m.ClusterId = 42
+		})
+		require.NoError(t, metaWriter.FlushBackupMeta(ctx))
+
+		resolved := &SnapshotStorageRef{
+			BackupID:    backupID,
+			RootBackend: rootBackend,
+			RootStorage: storage,
+		}
+		require.NoError(t, resolved.Validate(ctx))
+		backupMeta, err := resolved.LoadBackupMeta(ctx, &cipherInfo)
+		require.NoError(t, err)
+		require.Equal(t, backupID, resolved.BackupID)
+		require.Equal(t, uint64(42), backupMeta.ClusterId)
+
+		exists, err := storage.FileExists(ctx, metautil.MetaFile)
+		require.NoError(t, err)
+		require.False(t, exists)
 	})
-	require.NoError(t, metaWriter.FlushBackupMeta(ctx))
 
-	resolved := &SnapshotStorageRef{
-		BackupID:    backupID,
-		RootBackend: rootBackend,
-		RootStorage: storage,
-	}
-	require.NoError(t, resolved.Validate(ctx))
-	backupMeta, err := resolved.LoadBackupMeta(ctx, &cipherInfo)
-	require.NoError(t, err)
-	require.Equal(t, backupID, resolved.BackupID)
-	require.Equal(t, uint64(42), backupMeta.ClusterId)
+	t.Run("validate_rejects_repo_without_startafter_support", func(t *testing.T) {
+		ctx := context.Background()
+		storage := &uriOverrideStorage{
+			Storage: objstore.NewMemStorage(),
+			uri:     "azure://bucket/prefix",
+		}
+		rootBackend := &backuppb.StorageBackend{
+			Backend: &backuppb.StorageBackend_AzureBlobStorage{
+				AzureBlobStorage: &backuppb.AzureBlobStorage{Bucket: "bucket", Prefix: "prefix"},
+			},
+		}
 
-	exists, err := storage.FileExists(ctx, metautil.MetaFile)
-	require.NoError(t, err)
-	require.False(t, exists)
+		_, err := repo.EnsureRepo(ctx, storage, "test")
+		require.NoError(t, err)
+
+		resolved := &SnapshotStorageRef{
+			BackupID:    repo.BackupID(0x1234),
+			RootBackend: rootBackend,
+			RootStorage: storage,
+		}
+		err = resolved.Validate(ctx)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "does not support WalkDir StartAfter")
+		require.True(t, errors.ErrorEqual(err, berrors.ErrUnsupportedOperation))
+	})
 }
 
 func TestPrepareRepoV1SnapshotBackupOnPendingNoneStartsNew(t *testing.T) {
@@ -377,4 +410,13 @@ func TestPrepareRepoV1SnapshotBackupNewStartsFreshDespitePending(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, repo.BackupID(0x1111), resolved.BackupID)
 	require.Equal(t, repo.PendingFile(cfgHash, repo.BackupID(0x1111)), resolved.PendingMarkerPath)
+}
+
+type uriOverrideStorage struct {
+	storeapi.Storage
+	uri string
+}
+
+func (s *uriOverrideStorage) URI() string {
+	return s.uri
 }

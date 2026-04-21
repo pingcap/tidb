@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/task"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -120,12 +121,16 @@ func (s *snapshotRepoSuite) restoreConfig(backupID repo.BackupID) task.RestoreCo
 	return cfg
 }
 
-func (s *snapshotRepoSuite) taskConfig() task.Config {
+func (s *snapshotRepoSuite) taskConfig() taskrepo.Config {
 	s.t.Helper()
 	cfg := task.DefaultConfig()
-	task.ApplyTiDBRuntimeConfig(&cfg)
-	cfg.Storage = s.repoURI
-	return cfg
+	return taskrepo.Config{
+		BackendOptions: cfg.BackendOptions,
+		Storage:        s.repoURI,
+		CipherInfo:     cfg.CipherInfo,
+		NoCreds:        cfg.NoCreds,
+		SendCreds:      cfg.SendCreds,
+	}
 }
 
 func (s *snapshotRepoSuite) runBackup(cfg task.BackupConfig) (repo.BackupID, error) {
@@ -290,11 +295,11 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 	cfg := suite.taskConfig()
 	ctx := context.Background()
 
-	backupIDs, err := task.RunRepoSnapshotList(ctx, nil, task.RepoSnapshotListConfig{Config: cfg})
+	backupIDs, err := taskrepo.RunRepoSnapshotList(ctx, nil, taskrepo.RepoSnapshotListConfig{Config: cfg})
 	require.NoError(t, err)
 	require.Equal(t, []repo.BackupID{backupID1, backupID2}, backupIDs)
 
-	tablesPayload, err := task.RunRepoSnapshotGet(ctx, nil, task.RepoSnapshotGetConfig{
+	tablesPayload, err := taskrepo.RunRepoSnapshotGet(ctx, nil, taskrepo.RepoSnapshotGetConfig{
 		Config:   cfg,
 		BackupID: backupID2,
 		View:     "tables",
@@ -317,7 +322,7 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 		TableName: "t",
 	}, tables[0])
 
-	result, err := task.RunRepoSnapshotDelete(ctx, nil, task.RepoSnapshotDeleteConfig{
+	result, err := taskrepo.RunRepoSnapshotDelete(ctx, nil, taskrepo.RepoSnapshotDeleteConfig{
 		Config:   cfg,
 		BackupID: backupID1,
 	})
@@ -331,7 +336,7 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 	suite.requirePathExists(repo.SnapshotMetadataFile(backupID2))
 	require.NotEmpty(t, suite.sstFiles(backupID2))
 
-	backupIDs, err = task.RunRepoSnapshotList(ctx, nil, task.RepoSnapshotListConfig{Config: cfg})
+	backupIDs, err = taskrepo.RunRepoSnapshotList(ctx, nil, taskrepo.RepoSnapshotListConfig{Config: cfg})
 	require.NoError(t, err)
 	require.Equal(t, []repo.BackupID{backupID2}, backupIDs)
 
@@ -411,7 +416,7 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 
 	resumeCfg := suite.backupConfig()
 	resumeCfg.RateLimit = 1 << 20
-	require.NoError(t, json.Unmarshal([]byte(`{"on-pending":"resume"}`), &resumeCfg.SnapshotRepoBackupOptions))
+	resumeCfg.SnapshotBackupOptions.OnPending = taskrepo.OnPendingResume
 	_, err := suite.runBackup(resumeCfg)
 	require.ErrorContains(t, err, "another BR")
 	assertSingleBackupPath(failedBackupID)

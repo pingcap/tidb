@@ -264,11 +264,19 @@ func (ref *SnapshotStorageRef) Validate(ctx context.Context) error {
 	if ref.BackupID.IsZero() {
 		return nil
 	}
+	// validateRepoV1Backend is the coarse "can repo-v1 address this backend at
+	// all?" gate. A resolved snapshot reference needs one more runtime-capability
+	// check: repo-v1 snapshot operations later rely on WalkDir StartAfter, and
+	// that support is determined by the opened storage implementation/URI rather
+	// than the protobuf backend kind alone.
 	if err := validateRepoV1Backend(ref.RootBackend); err != nil {
 		return errors.Trace(err)
 	}
 	if _, err := repo.LoadRepoMeta(ctx, ref.RootStorage); err != nil {
 		return errors.Annotate(err, "load repo-v1 metadata")
+	}
+	if err := repo.ValidateRepoV1StartAfterSupport(ref.RootStorage); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -381,6 +389,10 @@ func joinObjectStorageKey(base, suffix string) string {
 	}
 }
 
+// validateRepoV1Backend validates repo-v1 backend kinds before storage is
+// opened. It intentionally does not validate WalkDir StartAfter support,
+// because that depends on the resolved storeapi.Storage implementation and is
+// checked later by SnapshotStorageRef.Validate.
 func validateRepoV1Backend(backend *backuppb.StorageBackend) error {
 	switch {
 	case backend.GetLocal() != nil:

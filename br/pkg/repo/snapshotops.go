@@ -335,19 +335,34 @@ func (ops SnapshotOps) DeleteSnapshot(
 	return result, nil
 }
 
+func supportsRepoStartAfter(storage storeapi.Storage) bool {
+	uri := strings.ToLower(storage.URI())
+	return strings.HasPrefix(uri, "s3://") ||
+		strings.HasPrefix(uri, "ks3://") ||
+		strings.HasPrefix(uri, "gcs://") ||
+		strings.HasPrefix(uri, "file://")
+}
+
+// ValidateRepoV1StartAfterSupport checks whether the resolved storage exposes
+// WalkDir StartAfter, which repo-v1 snapshot operations use to scan one backup's
+// data files without rewalking unrelated snapshot objects.
+func ValidateRepoV1StartAfterSupport(storage storeapi.Storage) error {
+	if supportsRepoStartAfter(storage) {
+		return nil
+	}
+	return errors.Annotatef(
+		berrors.ErrUnsupportedOperation,
+		"storage %s does not support WalkDir StartAfter required by repo-v1 snapshot operations",
+		storage.URI(),
+	)
+}
+
 func (ops SnapshotOps) supportsRepoStartAfter() bool {
-	uri := strings.ToLower(ops.Storage.URI())
-	return strings.HasPrefix(uri, "s3://") || strings.HasPrefix(uri, "ks3://") || strings.HasPrefix(uri, "file://")
+	return supportsRepoStartAfter(ops.Storage)
 }
 
 func (ops SnapshotOps) requireRepoStartAfter() error {
-	if ops.supportsRepoStartAfter() {
-		return nil
-	}
-	return errors.Errorf(
-		"storage %s does not support WalkDir StartAfter required by repo-v1 snapshot deletion",
-		ops.Storage.URI(),
-	)
+	return ValidateRepoV1StartAfterSupport(ops.Storage)
 }
 
 func (ops SnapshotOps) DiscardPendingSnapshot(
