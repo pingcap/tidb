@@ -107,12 +107,12 @@ var optRuleList = []base.LogicalOptRule{
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
 	&rule.OuterJoinToSemiJoin{},
+	&CorrelateSolver{},
 	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
 	&EmptySelectionEliminator{},
 	&ResolveExpand{},
-	&CorrelateSolver{},
 }
 
 // Interaction Rule List
@@ -364,12 +364,9 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	}
 	// FlagCorrelate is added by the correlate alternative round's flag adjuster,
 	// not here. EnableCorrelateSubquery is an internal flag toggled by the round.
-	// Recompute FlagPruneColumnsAgain after all conditional flag mutations so
-	// that conditionally-added flags (FlagCorrelate, FlagPartitionProcessor, …)
-	// are taken into account. A second column-prune pass is worthwhile when
-	// any rule above column pruning is enabled.
+	// A second column-prune pass is worthwhile when any rule above column
+	// pruning is enabled.
 	if flag&rule.FlagPruneColumns != 0 {
-		// Mask of all flag bits strictly above FlagPruneColumns.
 		const abovePruneColumns = ^(rule.FlagPruneColumns | (rule.FlagPruneColumns - 1))
 		if flag&abovePruneColumns != 0 {
 			flag |= rule.FlagPruneColumnsAgain

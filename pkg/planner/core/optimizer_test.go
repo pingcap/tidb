@@ -620,7 +620,7 @@ func TestOptRuleListFlagAlignment(t *testing.T) {
 	// added/removed without updating the other.
 	//
 	// bits.Len64(lastFlag) == bit-position + 1 == expected list length.
-	numFlags := bits.Len64(rule.FlagCorrelate)
+	numFlags := bits.Len64(rule.FlagResolveExpand)
 	require.Equalf(t, numFlags, len(optRuleList),
 		"optRuleList length (%d) does not match Flag* count (%d); "+
 			"did you add a rule without a flag or vice versa? "+
