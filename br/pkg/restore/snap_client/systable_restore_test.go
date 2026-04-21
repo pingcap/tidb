@@ -441,6 +441,34 @@ VALUES
 		Check(testkit.Rows("0"))
 }
 
+func TestRestoreMaskingPoliciesFromTemporaryTableSkipWhenTempTableNotExists(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+	tk := testkit.NewTestKit(t, cluster.Storage)
+
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS __TiDB_BR_Temporary_mysql")
+	tk.MustExec("DROP TABLE IF EXISTS __TiDB_BR_Temporary_mysql.tidb_masking_policy")
+
+	execCount := 0
+	execSQL := func(execCtx context.Context, sql string) error {
+		execCount++
+		_, err := tk.Session().ExecuteInternal(execCtx, sql)
+		return err
+	}
+	allowAllFilter, parseErr := filter.Parse([]string{"*.*"})
+	require.NoError(t, parseErr)
+	err := snapclient.RestoreMaskingPoliciesFromTemporaryTable(
+		ctx,
+		tk.Session().GetRestrictedSQLExecutor(),
+		"__TiDB_BR_Temporary_mysql",
+		true,
+		allowAllFilter,
+		execSQL,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 0, execCount)
+}
+
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
 //
 // - IF it is an unrecoverable table, please add the table name into `unRecoverableTable`.

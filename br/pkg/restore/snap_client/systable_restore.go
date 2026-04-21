@@ -338,6 +338,13 @@ ORDER BY p.table_id, p.column_id, p.policy_id`,
 		readPoliciesSQL,
 	)
 	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+			log.Info("skip restoring masking policies because temporary table doesn't exist",
+				zap.String("table", tempTable),
+				logutil.ShortError(err),
+			)
+			return nil
+		}
 		return errors.Trace(err)
 	}
 
