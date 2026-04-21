@@ -525,7 +525,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 	return engineChunks, nil
 }
 
-// a simplified version of EstimateCompactionThreshold
+// a simplified version of the compaction threshold estimate.
 func (ti *TableImporter) getTotalRawFileSize(indexCnt int64) int64 {
 	var totalSize int64
 	for _, file := range ti.dataFiles {
