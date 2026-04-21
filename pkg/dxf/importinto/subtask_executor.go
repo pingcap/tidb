@@ -68,8 +68,8 @@ func (e *importMinimalTaskExecutor) Run(
 	failpoint.InjectCall("syncBeforeSortChunk")
 	sharedVars := e.mTtask.SharedVars
 
-	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
-	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
+	chunk := e.mTtask.Chunk
+	chunk.ParquetMeta = mydump.ParquetFileMeta{
 		Loc: sharedVars.TableImporter.Location,
 	}
 
@@ -77,7 +77,7 @@ func (e *importMinimalTaskExecutor) Run(
 	if sharedVars.TableImporter.IsLocalSort() {
 		if err := importer.ProcessChunk(
 			ctx,
-			&chunkCheckpoint,
+			&chunk,
 			sharedVars.TableImporter,
 			sharedVars.DataEngine,
 			sharedVars.IndexEngine,
@@ -90,7 +90,7 @@ func (e *importMinimalTaskExecutor) Run(
 	} else {
 		if err := importer.ProcessChunkWithWriter(
 			ctx,
-			&chunkCheckpoint,
+			&chunk,
 			sharedVars.TableImporter,
 			dataWriter,
 			indexWriter,
