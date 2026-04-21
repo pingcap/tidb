@@ -1,1 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
+go_test(
+    name = "rule_test",
+    timeout = "short",
+    srcs = ["rule_correlate_test.go"],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "@com_github_stretchr_testify//require",
+    ],
+)
