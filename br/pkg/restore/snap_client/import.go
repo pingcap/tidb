@@ -748,7 +748,6 @@ func (importer *SnapFileImporter) batchDownloadSST(
 			if req == nil {
 				continue
 			}
-			sstMeta.ApiVersion = apiVersion
 			cfReq, exists := downloadReqMap[file.Cf]
 			if !exists {
 				cfReq = &import_sstpb.DownloadRequest{
@@ -838,6 +837,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						Start: restoreutils.TruncateTS(resp.Range.GetStart()),
 						End:   restoreutils.TruncateTS(resp.Range.GetEnd()),
 					}
+					sstMeta.ApiVersion = apiVersion
 					resultMetasMap[req.Name] = &sstMeta
 					mu.Unlock()
 				}
@@ -871,7 +871,6 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 			if req == nil {
 				continue
 			}
-			sstMeta.ApiVersion = apiVersion
 			if downloadReq == nil {
 				downloadReq = &import_sstpb.DownloadRequest{
 					Sst:            req.Sst,
@@ -947,6 +946,7 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 						Start: restoreutils.TruncateTS(resp.Range.GetStart()),
 						End:   restoreutils.TruncateTS(resp.Range.GetEnd()),
 					}
+					sstMeta.ApiVersion = apiVersion
 					resultMetas = append(resultMetas, sstMeta)
 				}
 				mu.Unlock()
