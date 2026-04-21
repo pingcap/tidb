@@ -603,6 +603,11 @@ type alternativeRound struct {
 	cleanup    func(*variable.SessionVars)
 }
 
+// savedEnableCorrelateSubquery holds the pre-round value of
+// EnableCorrelateSubquery so setup/cleanup can share it without a closure
+// wrapper. Safe because optimize is single-threaded per session.
+var savedEnableCorrelateSubquery bool
+
 var alternativeRounds = [...]alternativeRound{
 	{
 		name:       "non-decorrelate",
@@ -614,21 +619,18 @@ var alternativeRounds = [...]alternativeRound{
 		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
 		enabled:    shouldTryOrderAwareReorderRound,
 	},
-	func() alternativeRound {
-		var old bool
-		return alternativeRound{
-			name:       "correlate",
-			adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
-			enabled:    shouldTryCorrelateRound,
-			setup: func(sv *variable.SessionVars) {
-				old = sv.EnableCorrelateSubquery
-				sv.EnableCorrelateSubquery = true
-			},
-			cleanup: func(sv *variable.SessionVars) {
-				sv.EnableCorrelateSubquery = old
-			},
-		}
-	}(),
+	{
+		name:       "correlate",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
+		enabled:    shouldTryCorrelateRound,
+		setup: func(sv *variable.SessionVars) {
+			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
+			sv.EnableCorrelateSubquery = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+		},
+	},
 }
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
