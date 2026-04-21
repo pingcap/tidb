@@ -228,6 +228,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		require.Equal(t, int64(0), fields["dataImportedKVs"])
 		require.Equal(t, int64(0), fields["dataImportedBytes"])
 		require.Equal(t, int64(1), fields["regionJobCount"])
+		require.NotContains(t, fields, "len(jobs)")
 	})
 
 	t.Run("verify external import statistics logs comparison", func(t *testing.T) {

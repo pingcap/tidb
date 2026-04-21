@@ -1296,7 +1296,6 @@ func (local *Backend) generateJobForRange(
 	jobs := newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics)
 	fields := append(ingestDataDiagFields(data),
 		zap.Int("regionJobCount", len(jobs)),
-		zap.Int("len(jobs)", len(jobs)),
 		zap.String("startOfAllRanges", hex.EncodeToString(startOfAllRanges)),
 		zap.String("endOfAllRanges", hex.EncodeToString(endOfAllRanges)),
 		zap.String("startKeyOfFirstRegion", hex.EncodeToString(regions[0].Region.GetStartKey())),
