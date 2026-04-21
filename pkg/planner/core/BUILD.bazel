@@ -53,8 +53,12 @@ go_library(
         "rule_aggregation_elimination.go",
         "rule_aggregation_push_down.go",
         "rule_aggregation_skew_rewrite.go",
+<<<<<<< HEAD
         "rule_collect_plan_stats.go",
         "rule_column_pruning.go",
+=======
+        "rule_correlate.go",
+>>>>>>> 7357a2e2f90 (planner: correlate subquery rule (#66206))
         "rule_decorrelate.go",
         "rule_derive_topn_from_window.go",
         "rule_eliminate_projection.go",

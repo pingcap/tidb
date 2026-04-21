@@ -39,6 +39,11 @@ const (
 	FlagPushDownTopN
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
+<<<<<<< HEAD
+=======
+	FlagOuterJoinToSemiJoin
+	FlagCorrelate
+>>>>>>> 7357a2e2f90 (planner: correlate subquery rule (#66206))
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagResolveExpand

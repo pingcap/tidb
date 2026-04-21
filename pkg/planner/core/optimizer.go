@@ -98,7 +98,13 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownTopNOptimizer{},
 	&SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
+<<<<<<< HEAD
 	&ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+=======
+	&rule.OuterJoinToSemiJoin{},
+	&CorrelateSolver{},
+	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+>>>>>>> 7357a2e2f90 (planner: correlate subquery rule (#66206))
 	&PushDownSequenceSolver{},
 	&ResolveExpand{},
 }
@@ -304,10 +310,6 @@ func doOptimize(
 }
 
 func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
-	// If there is something after flagPrunColumns, do FlagPruneColumnsAgain.
-	if flag&rule.FlagPruneColumns > 0 && flag-rule.FlagPruneColumns > rule.FlagPruneColumns {
-		flag |= rule.FlagPruneColumnsAgain
-	}
 	if checkStableResultMode(logic.SCtx()) {
 		flag |= rule.FlagStabilizeResults
 	}
@@ -322,6 +324,16 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 	}
 	if !logic.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode {
 		flag |= rule.FlagPartitionProcessor // apply partition pruning under static mode
+	}
+	// FlagCorrelate is added by the correlate alternative round's flag adjuster,
+	// not here. EnableCorrelateSubquery is an internal flag toggled by the round.
+	// A second column-prune pass is worthwhile when any rule above column
+	// pruning is enabled.
+	if flag&rule.FlagPruneColumns != 0 {
+		const abovePruneColumns = ^(rule.FlagPruneColumns | (rule.FlagPruneColumns - 1))
+		if flag&abovePruneColumns != 0 {
+			flag |= rule.FlagPruneColumnsAgain
+		}
 	}
 	return flag
 }

@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"math/bits"
 	"reflect"
 	"strings"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -558,3 +560,71 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	start(hashJoin, 0, 3, 0)
 	require.NoError(t, failpoint.Disable(fpName2))
 }
+<<<<<<< HEAD
+=======
+
+func TestCanTiFlashUseHashJoinV2(t *testing.T) {
+	sctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	col0 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	cond, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col0)
+	require.True(t, err == nil)
+	sf, isSF := cond.(*expression.ScalarFunction)
+	require.True(t, isSF)
+	hashJoin := &physicalop.PhysicalHashJoin{}
+	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+
+	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
+	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 0
+	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 0
+	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can use hash join v2
+	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionOptimized
+	require.True(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can not use hash join v2 due to enabling join spill
+	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 1
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can use hash join v2 due to TiFlashMaxQueryMemoryPerNode * TiFlashQuerySpillRatio = 0
+	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 0
+	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 1
+	require.True(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can not use hash join v2 due to enabling join spill
+	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0.7
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+
+	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 0
+	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0
+	hashJoin = &physicalop.PhysicalHashJoin{}
+	// can not use hash join v2 due to cross join
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+
+	hashJoin = &physicalop.PhysicalHashJoin{}
+	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+	hashJoin.IsNullEQ = append(hashJoin.IsNullEQ, true)
+	// can not use hash join v2 due to null eq
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+}
+
+func TestOptRuleListFlagAlignment(t *testing.T) {
+	// Each position i in optRuleList is gated by the flag bit 1<<i.
+	// The Flag* constants in rule/logical_rules.go are declared via iota in the
+	// same order. This test catches silent misalignment when a rule or flag is
+	// added/removed without updating the other.
+	//
+	// bits.Len64(lastFlag) == bit-position + 1 == expected list length.
+	numFlags := bits.Len64(rule.FlagResolveExpand)
+	require.Equalf(t, numFlags, len(optRuleList),
+		"optRuleList length (%d) does not match Flag* count (%d); "+
+			"did you add a rule without a flag or vice versa? "+
+			"Update both optRuleList and the Flag* iota block in rule/logical_rules.go.",
+		len(optRuleList), numFlags)
+}
+>>>>>>> 7357a2e2f90 (planner: correlate subquery rule (#66206))
