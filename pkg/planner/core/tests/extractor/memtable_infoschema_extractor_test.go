@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type colPredicates struct {
@@ -400,7 +401,12 @@ func cleanDataSequences(tk *testkit.TestKit) {
 
 func testMemtableInfoschemaExtractor(t *testing.T, tcs []testCase) {
 	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	var tk *testkit.TestKit
+	if intest.InTest && intest.EnableAssert {
+		tk = testkit.NewTestKit(t, store)
+	} else {
+		tk = testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
+	}
 
 	tk.MustExec("set global tidb_enable_check_constraint = true")
 	countSQL := 0
@@ -450,16 +456,19 @@ func TestMemtableInfoschemaExtractorPart2(t *testing.T) {
 			memTableName: infoschema.TableKeyColumn,
 			prepareData:  prepareDataKeyColumnUsage,
 			cleanData:    cleanDataKeyColumnUsage,
+			buildConds:   buildRepresentativeConditions,
 		},
 		{
 			memTableName: infoschema.TableConstraints,
 			prepareData:  prepareDataKeyColumnUsage,
 			cleanData:    cleanDataKeyColumnUsage,
+			buildConds:   buildRepresentativeConditions,
 		},
 		{
 			memTableName: infoschema.TablePartitions,
 			prepareData:  prepareDataPartitions,
 			cleanData:    cleanDataPartitions,
+			buildConds:   buildRepresentativeConditions,
 		},
 	}
 	testMemtableInfoschemaExtractor(t, tcs)
