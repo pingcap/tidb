@@ -24,6 +24,17 @@ var (
 	CoprCacheCounterEvict prometheus.Counter
 	CoprCacheCounterHit   prometheus.Counter
 	CoprCacheCounterMiss  prometheus.Counter
+
+	// EMASendCold counts cop RPCs dispatched while the per-logical-scan EMA
+	// was not yet ready; the request carries PredictedReadBytes=0 and PD
+	// skips pre-charge. Denominator is all cop RPC sends, so
+	// (EMASendCold + EMASendReady) is the authoritative "total read RPCs"
+	// basis for pre-charge coverage ratios at the TiDB side.
+	EMASendCold prometheus.Counter
+	// EMASendReady counts cop RPCs dispatched while the per-logical-scan EMA
+	// was already ready; PredictedReadBytes > 0 is shipped as a pre-charge
+	// hint to PD.
+	EMASendReady prometheus.Counter
 )
 
 func init() {
@@ -35,4 +46,7 @@ func InitMetricsVars() {
 	CoprCacheCounterEvict = metrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
 	CoprCacheCounterHit = metrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
 	CoprCacheCounterMiss = metrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
+
+	EMASendCold = metrics.DistSQLCoprEMASend.WithLabelValues("cold")
+	EMASendReady = metrics.DistSQLCoprEMASend.WithLabelValues("ready")
 }

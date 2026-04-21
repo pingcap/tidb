@@ -210,6 +210,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
+		ema:              newRUEMA(),
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -1000,6 +1001,11 @@ type copIterator struct {
 
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
+
+	// ema refines the RC paging pre-charge from observed per-RPC read bytes.
+	// One EMA per copIterator (logical scan) so samples from every copTask
+	// under the same request converge a single estimate.
+	ema *ruEMA
 }
 
 type liteCopIteratorWorker struct {
@@ -1030,6 +1036,10 @@ type copIteratorWorker struct {
 	storeBatchedNum         *atomic.Uint64
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
+
+	// ema is a shared pointer into the owning copIterator's EMA so every
+	// worker updates the same learned estimate.
+	ema *ruEMA
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -1224,6 +1234,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		storeBatchedNum:         &it.storeBatchedNum,
 		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
 		stats:                   it.stats,
+		ema:                     it.ema,
 	}
 }
 
@@ -1691,6 +1702,18 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
+	// Supply a learned RC pre-charge hint when the per-logical-scan EMA has
+	// converged. Until it has, leave PredictedReadBytes at 0 so PD skips the
+	// pre-charge and bills by actual read bytes only.
+	// The send-side counters below are the authoritative basis for pre-charge
+	// coverage ratios: every outgoing cop RPC increments exactly one of
+	// (cold, ready).
+	if worker.ema.IsReady() {
+		req.PredictedReadBytes = worker.ema.Predict()
+		copr_metrics.EMASendReady.Inc()
+	} else {
+		copr_metrics.EMASendCold.Inc()
+	}
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
@@ -1841,6 +1864,24 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
+// pagingResponseReadBytes returns the MVCC bytes read to serve a paging cop
+// response. It mirrors client-go's resourcecontrol.MakeResponseInfo so the
+// TiDB-side EMA observes the same quantity PD bills against. Falls back to
+// 0 when ScanDetailV2 is absent (e.g. TiFlash responses); the caller then
+// skips the observation.
+//
+// TODO: for NextGen, PD bills max(TotalVersionsSize, ProcessedVersionsSize).
+// Mirror that here once a TiDB-side NextGen gate is available in this pkg.
+func pagingResponseReadBytes(pbResp *coprocessor.Response) uint64 {
+	if pbResp == nil {
+		return 0
+	}
+	if scanDetail := pbResp.GetExecDetailsV2().GetScanDetailV2(); scanDetail != nil {
+		return scanDetail.GetProcessedVersionsSize()
+	}
+	return 0
+}
+
 func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
 	if err != nil {
@@ -1859,6 +1900,10 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 		// If the storage engine doesn't support paging protocol, it should have return all the region data.
 		// So we finish here.
 		return result, nil
+	}
+
+	if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
+		worker.ema.Observe(readBytes, time.Now())
 	}
 
 	// calculate next ranges and grow the paging size
