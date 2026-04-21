@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -370,6 +371,100 @@ func (l *RemoteLock) tryRenew(ctx context.Context) error {
 		return errors.Annotatef(err, "tryRenew: WriteFile %s", l.path)
 	}
 	return nil
+}
+
+// StartRenewal launches a background goroutine that periodically refreshes
+// this lock's ExpireAt until Unlock is called. onLeaseLost is invoked if the
+// renewal goroutine discovers the lease has been permanently lost (TxnID
+// mismatch, ExpireAt already past, or renewal retries exhausted); callers
+// typically pass a context.CancelFunc to tear down business work.
+//
+// StartRenewal must be called at most once per *RemoteLock. A second call
+// panics; this surfaces ownership-discipline bugs rather than silently
+// double-starting a pair of conflicting renewal goroutines.
+func (l *RemoteLock) StartRenewal(ctx context.Context, onLeaseLost func()) {
+	l.mu.Lock()
+	if l.renewalStarted {
+		l.mu.Unlock()
+		log.Panic("StartRenewal called twice on the same lock; each RemoteLock has exactly one owner.",
+			zap.Stringer("lock", l))
+	}
+	l.renewalStarted = true
+	l.stopCh = make(chan struct{})
+	l.done = make(chan struct{})
+	l.mu.Unlock()
+
+	go l.renewalLoop(ctx, onLeaseLost)
+}
+
+// renewalLoop runs until stopCh is closed, retries are exhausted, or the
+// lease is permanently lost. It always closes l.done before returning so
+// that Unlock can wait for full teardown before deleting the lock file.
+func (l *RemoteLock) renewalLoop(ctx context.Context, onLeaseLost func()) {
+	defer close(l.done)
+
+	invokeLost := func() {
+		if onLeaseLost != nil {
+			onLeaseLost()
+		}
+	}
+
+	for {
+		select {
+		case <-l.stopCh:
+			return
+		case <-time.After(renewInterval):
+		}
+
+		// First attempt at this tick. If terminal, exit; if transient, retry.
+		err := l.tryRenew(ctx)
+		if err == nil {
+			continue
+		}
+		if stderrors.Is(err, errRenewTxnIDMismatch) || stderrors.Is(err, errRenewLeaseExpired) {
+			log.Warn("Lock renewal detected lease lost; calling onLeaseLost.",
+				zap.Stringer("lock", l), logutil.ShortError(err))
+			invokeLost()
+			return
+		}
+
+		// Transient error: exponential-backoff retry.
+		log.Warn("Lock renewal hit transient error; will retry with exponential backoff.",
+			zap.Stringer("lock", l), logutil.ShortError(err))
+		backoff := renewBaseBackoff
+		lastErr := err
+		recovered := false
+		for attempt := 1; attempt <= renewMaxRetries; attempt++ {
+			select {
+			case <-l.stopCh:
+				return
+			case <-time.After(backoff):
+			}
+			retryErr := l.tryRenew(ctx)
+			if retryErr == nil {
+				recovered = true
+				break
+			}
+			if stderrors.Is(retryErr, errRenewTxnIDMismatch) || stderrors.Is(retryErr, errRenewLeaseExpired) {
+				log.Warn("Lock renewal retry detected lease lost.",
+					zap.Stringer("lock", l), zap.Int("attempt", attempt),
+					logutil.ShortError(retryErr))
+				invokeLost()
+				return
+			}
+			lastErr = retryErr
+			backoff *= 2
+		}
+		if !recovered {
+			log.Warn("Lock renewal retries exhausted; calling onLeaseLost.",
+				zap.Stringer("lock", l),
+				zap.Int("max_retries", renewMaxRetries),
+				logutil.ShortError(lastErr))
+			invokeLost()
+			return
+		}
+		// recovered → wait for the next tick.
+	}
 }
 
 // UnlockOnCleanUp unlock the lock on clean up.

@@ -282,6 +282,104 @@ func TestTryRenewWriteError(t *testing.T) {
 	require.Contains(t, err.Error(), "simulated S3 outage")
 }
 
+func TestStartRenewalRefreshesLeasePeriodically(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(200*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+	defer objstore.TEST_StopRenewal(lock)
+
+	// Capture original ExpireAt.
+	getExpireAt := func() time.Time {
+		data, err := strg.ReadFile(ctx, "test.lock")
+		require.NoError(t, err)
+		var meta objstore.LockMeta
+		require.NoError(t, json.Unmarshal(data, &meta))
+		return meta.ExpireAt
+	}
+	orig := getExpireAt()
+
+	lock.StartRenewal(ctx, nil)
+
+	// Wait for at least two renewal ticks (interval=30ms → 100ms is plenty).
+	require.Eventually(t, func() bool {
+		return getExpireAt().After(orig)
+	}, 500*time.Millisecond, 10*time.Millisecond,
+		"ExpireAt should advance past the original within a few renewal ticks")
+}
+
+func TestStartRenewalCallsOnLeaseLostOnTxnIDMismatch(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(200*time.Millisecond, 20*time.Millisecond, 3, 5*time.Millisecond)()
+
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+	defer objstore.TEST_StopRenewal(lock)
+
+	lostCh := make(chan struct{}, 1)
+	lock.StartRenewal(ctx, func() { lostCh <- struct{}{} })
+
+	// Hijack the lock with a different TxnID.
+	hijacked := objstore.MakeLockMeta("hijacker")
+	hijacked.TxnID = []byte{99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99}
+	hijackedData, err := json.Marshal(hijacked)
+	require.NoError(t, err)
+	require.NoError(t, strg.WriteFile(ctx, "test.lock", hijackedData))
+
+	select {
+	case <-lostCh:
+		// expected
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("onLeaseLost was not invoked within the expected window after TxnID mismatch")
+	}
+}
+
+func TestStartRenewalCallsOnLeaseLostAfterRetryExhaustion(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	// Tight timing: 5 retries × ~5ms backoff = ~155ms tail. TTL = 1s gives margin.
+	defer objstore.TEST_SetLeaseConstants(1*time.Second, 20*time.Millisecond, 5, 5*time.Millisecond)()
+
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+	defer objstore.TEST_StopRenewal(lock)
+
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/objstore/local_write_file_err",
+		`return("simulated outage")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err"))
+	}()
+
+	lostCh := make(chan struct{}, 1)
+	lock.StartRenewal(ctx, func() { lostCh <- struct{}{} })
+
+	select {
+	case <-lostCh:
+		// expected
+	case <-time.After(2 * time.Second):
+		t.Fatal("onLeaseLost was not invoked after persistent renewal failures")
+	}
+}
+
+func TestStartRenewalPanicsOnDoubleCall(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(1*time.Second, 100*time.Millisecond, 3, 5*time.Millisecond)()
+
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+	defer objstore.TEST_StopRenewal(lock)
+
+	lock.StartRenewal(ctx, nil)
+	require.Panics(t, func() {
+		lock.StartRenewal(ctx, nil)
+	}, "second StartRenewal must panic")
+}
+
 func TestLockMetaBackwardCompatZeroExpireAt(t *testing.T) {
 	oldJSON := `{
 		"locked_at": "2024-01-01T00:00:00Z",
