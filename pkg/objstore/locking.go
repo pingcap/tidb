@@ -24,6 +24,7 @@ import (
 	"math/rand"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -587,18 +588,30 @@ const (
 )
 
 // LockWithRetry lock with retry.
-func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, path, hint string) (*RemoteLock, error) {
+//
+// On each conflict it first invokes tryReclaimStaleConflict to opportunistically
+// delete any stale (ExpireAt-past + double-confirmed) lock files in the family
+// rooted at `lockPath`. A successful reclaim retries acquire immediately
+// without consuming a backoff attempt; otherwise the standard exponential
+// backoff applies.
+func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, lockPath, hint string) (*RemoteLock, error) {
 	const JitterMs = 5000
 
 	retry := utils.InitialRetryState(lockRetryTimes, 1*time.Second, 60*time.Second)
 	jitter := time.Duration(rand.Uint32()%JitterMs+(JitterMs/2)) * time.Millisecond
 	var err error
 	for {
-		lock, lockErr := locker(ctx, storage, path, hint)
+		lock, lockErr := locker(ctx, storage, lockPath, hint)
 		if lockErr == nil {
 			return lock, nil
 		}
 		err = lockErr
+
+		if tryReclaimStaleConflict(ctx, storage, lockPath) {
+			log.Info("Stale conflicting lock reclaimed; retrying acquire immediately.",
+				zap.String("path", lockPath))
+			continue
+		}
 
 		if !retry.ShouldRetry() {
 			return nil, errors.Annotatef(err, "failed to acquire lock after %d retries", lockRetryTimes)
@@ -608,7 +621,7 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 		log.Info(
 			"Encountered lock, will retry",
 			logutil.ShortError(err),
-			zap.String("path", path),
+			zap.String("path", lockPath),
 			zap.Duration("retry-after", retryAfter),
 			zap.Int("remaining-attempts", retry.RemainingAttempts()),
 		)
@@ -619,6 +632,52 @@ func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage,
 		case <-time.After(retryAfter):
 		}
 	}
+}
+
+// tryReclaimStaleConflict scans the lock-file family rooted at basePath
+// (basePath itself, basePath.WRIT, basePath.READ.*) and attempts to reclaim
+// any whose ExpireAt has expired beyond the double-confirmation window.
+// Returns true if at least one file was successfully reclaimed.
+//
+// Intent files (.INTENT.*) are skipped here; they are handled by the intent
+// expiry mechanism (separate phase).
+func tryReclaimStaleConflict(ctx context.Context, storage storeapi.Storage, basePath string) bool {
+	fileName := path.Base(basePath)
+	dirName := path.Dir(basePath)
+	if dirName == "." {
+		dirName = ""
+	}
+
+	var candidates []string
+	walkErr := storage.WalkDir(ctx, &storeapi.WalkOption{
+		SubDir:    dirName,
+		ObjPrefix: fileName,
+	}, func(p string, _ int64) error {
+		if strings.Contains(p, ".INTENT.") {
+			return nil
+		}
+		candidates = append(candidates, p)
+		return nil
+	})
+	if walkErr != nil {
+		log.Warn("Stale-lock cleanup: WalkDir failed; skipping reclaim attempt.",
+			zap.String("base", basePath), logutil.ShortError(walkErr))
+		return false
+	}
+
+	anyReclaimed := false
+	for _, p := range candidates {
+		reclaimed, err := CleanUpStaleLock(ctx, storage, p)
+		if err != nil {
+			log.Warn("Stale-lock cleanup: CleanUpStaleLock failed; continuing with next candidate.",
+				zap.String("path", p), logutil.ShortError(err))
+			continue
+		}
+		if reclaimed {
+			anyReclaimed = true
+		}
+	}
+	return anyReclaimed
 }
 
 // TryLockRemoteWrite try lock.

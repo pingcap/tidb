@@ -542,6 +542,141 @@ func TestCleanUpStaleLockRefreshedDuringWait(t *testing.T) {
 	requireFileExists(t, filepath.Join(pth, "racing.lock"))
 }
 
+func TestLockWithRetryReclaimsStaleWriteLock(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	// Plant a stale write lock at v1/LOCK.WRIT.
+	now := time.Now()
+	writeLockMeta(t, strg, "v1/LOCK.WRIT", objstore.LockMeta{
+		LockedAt: now.Add(-time.Hour),
+		ExpireAt: now.Add(-time.Hour), // long past
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "crashed-prior-truncate",
+	})
+	requireFileExists(t, filepath.Join(pth, "v1/LOCK.WRIT"))
+
+	lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "new truncate")
+	require.NoError(t, err, "LockWithRetry should reclaim the stale lock and succeed")
+	require.NotNil(t, lock)
+	require.NoError(t, lock.Unlock(ctx))
+}
+
+func TestLockWithRetryReclaimsStaleReadLockBeforeWrite(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	// Plant a stale READ lock under v1/LOCK.READ.{xxxx}.
+	now := time.Now()
+	writeLockMeta(t, strg, "v1/LOCK.READ.cafef00d12345678", objstore.LockMeta{
+		LockedAt: now.Add(-time.Hour),
+		ExpireAt: now.Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "crashed-prior-restore",
+	})
+
+	// Without reclaim the write would fail (stale read blocks write). With
+	// reclaim, LockWithRetry should clean it up and succeed.
+	lock, err := objstore.LockWithRetry(ctx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "new compaction")
+	require.NoError(t, err)
+	require.NotNil(t, lock)
+	require.NoError(t, lock.Unlock(ctx))
+}
+
+func TestLockWithRetryDoesNotReclaimAliveLock(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	// Acquire a real read lock (alive, ExpireAt in the future).
+	aliveLock, err := objstore.TryLockRemoteRead(ctx, strg, "v1/LOCK", "alive reader")
+	require.NoError(t, err)
+	defer func() { _ = aliveLock.Unlock(ctx) }()
+
+	// Try to acquire a write lock with a tight retry budget. Since the alive
+	// reader's lock is not stale, reclaim must NOT delete it. LockWithRetry
+	// should backoff-retry until exhausted and return error.
+	type result struct {
+		lock *objstore.RemoteLock
+		err  error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		// Use a short context to bound the test if backoff somehow becomes infinite.
+		shortCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+		l, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "wants write")
+		resCh <- result{l, err}
+	}()
+	res := <-resCh
+	require.Error(t, res.err, "alive reader must keep the writer blocked")
+	require.Nil(t, res.lock)
+
+	// And the alive lock file is still there.
+	meta, err := getLockMetaForTest(t, strg, aliveLockPath(t, strg, "v1/LOCK"))
+	require.NoError(t, err)
+	require.False(t, meta.ExpireAt.IsZero(), "alive lock should still have its ExpireAt")
+}
+
+func TestLockWithRetryBackwardCompatOldFormatLock(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	// Plant an old-format lock (no ExpireAt) — must not be auto-reclaimed.
+	writeLockMeta(t, strg, "v1/LOCK.WRIT", objstore.LockMeta{
+		LockedAt: time.Now().Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "old-binary",
+	})
+
+	type result struct {
+		lock *objstore.RemoteLock
+		err  error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		shortCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+		l, err := objstore.LockWithRetry(shortCtx, objstore.TryLockRemoteWrite, strg, "v1/LOCK", "wants write")
+		resCh <- result{l, err}
+	}()
+	res := <-resCh
+	require.Error(t, res.err, "old-format lock must NOT be auto-reclaimed; must fall through to backoff retry then fail")
+	require.Nil(t, res.lock)
+	requireFileExists(t, filepath.Join(pth, "v1/LOCK.WRIT"))
+}
+
+// getLockMetaForTest is a small helper that reads and unmarshals a LockMeta
+// from a known path. Used by alive-lock test to inspect post-state.
+func getLockMetaForTest(t *testing.T, strg storeapi.Storage, p string) (objstore.LockMeta, error) {
+	t.Helper()
+	data, err := strg.ReadFile(context.Background(), p)
+	if err != nil {
+		return objstore.LockMeta{}, err
+	}
+	var meta objstore.LockMeta
+	err = json.Unmarshal(data, &meta)
+	return meta, err
+}
+
+// aliveLockPath finds the single READ lock file under base path. Test helper.
+func aliveLockPath(t *testing.T, strg storeapi.Storage, base string) string {
+	t.Helper()
+	var found string
+	require.NoError(t, strg.WalkDir(context.Background(), &storeapi.WalkOption{
+		SubDir:    "v1",
+		ObjPrefix: "LOCK.READ.",
+	}, func(p string, _ int64) error {
+		found = p
+		return nil
+	}))
+	require.NotEmpty(t, found, "expected exactly one read lock under %s", base)
+	return found
+}
+
 func TestLockMetaBackwardCompatZeroExpireAt(t *testing.T) {
 	oldJSON := `{
 		"locked_at": "2024-01-01T00:00:00Z",
