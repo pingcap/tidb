@@ -16,10 +16,12 @@ package objstore_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
@@ -161,4 +163,31 @@ func TestUnlockOnCleanUp(t *testing.T) {
 	cancel()
 	lock.UnlockOnCleanUp(ctx)
 	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
+}
+
+func TestMakeLockMetaHasExpireAt(t *testing.T) {
+	before := time.Now()
+	meta := objstore.MakeLockMeta("test hint")
+	after := time.Now()
+
+	require.False(t, meta.ExpireAt.IsZero(), "ExpireAt must be set on new locks")
+	require.Equal(t, meta.LockedAt.Add(objstore.LeaseTTL), meta.ExpireAt,
+		"ExpireAt must equal LockedAt + LeaseTTL")
+	require.False(t, meta.LockedAt.Before(before) || meta.LockedAt.After(after),
+		"LockedAt must be within test window")
+}
+
+func TestLockMetaBackwardCompatZeroExpireAt(t *testing.T) {
+	oldJSON := `{
+		"locked_at": "2024-01-01T00:00:00Z",
+		"locker_host": "oldhost",
+		"locker_pid": 123,
+		"txn_id": "AAECAwQFBgcICQoLDA0ODw==",
+		"hint": "old"
+	}`
+	var meta objstore.LockMeta
+	require.NoError(t, json.Unmarshal([]byte(oldJSON), &meta))
+	require.True(t, meta.ExpireAt.IsZero(),
+		"old-format LockMeta (no expire_at key) must deserialize with zero ExpireAt")
+	require.Equal(t, "oldhost", meta.LockerHost, "other fields deserialize as usual")
 }

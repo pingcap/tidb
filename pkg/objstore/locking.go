@@ -151,6 +151,33 @@ func (cx VerifyWriteContext) assertOnlyMyIntent() error {
 	return cx.assertNoOtherOfPrefixExpect(cx.Target, cx.IntentFileName())
 }
 
+// Lease-based lock expiration parameters. Declared as var (not const) so
+// tests may temporarily scale them down via export_test helpers; production
+// callers treat them as immutable.
+var (
+	// LeaseTTL is how long a newly-acquired or just-renewed lock remains valid
+	// before other processes may consider it stale and attempt to reclaim it.
+	LeaseTTL = 5 * time.Minute
+
+	// renewInterval is the cadence at which a StartRenewal-tracked lock
+	// refreshes its ExpireAt. Renewing at TTL/3 leaves 2*TTL/3 for retry
+	// backoff before the lease would actually expire.
+	renewInterval = LeaseTTL / 3
+
+	// renewMaxRetries and renewBaseBackoff define the exponential-backoff
+	// retry schedule used by the renewal goroutine after a tryRenew failure.
+	// With base 5s and 5 attempts the schedule is 5→10→20→40→80s (155s total).
+	renewMaxRetries  = 5
+	renewBaseBackoff = 5 * time.Second
+
+	// reclaimWaitMultiplier × LeaseTTL is the observation window, starting
+	// from ExpireAt, that a reclaimer waits before deleting a stale lock.
+	reclaimWaitMultiplier = time.Duration(1)
+
+	// nowFunc is indirected so tests can inject deterministic time.
+	nowFunc = time.Now
+)
+
 // LockMeta is the meta information of a lock.
 type LockMeta struct {
 	LockedAt   time.Time `json:"locked_at"`
@@ -158,6 +185,11 @@ type LockMeta struct {
 	LockerPID  int       `json:"locker_pid"`
 	TxnID      []byte    `json:"txn_id"`
 	Hint       string    `json:"hint"`
+	// ExpireAt is the wall-clock time after which this lock is considered
+	// stale and may be reclaimed by another process. Zero value means the
+	// lock was written by a pre-lease version of the code; such locks are
+	// treated as valid and never auto-reclaimed (backward compat).
+	ExpireAt time.Time `json:"expire_at,omitempty"`
 }
 
 // String implements fmt.Stringer interface.
@@ -182,12 +214,13 @@ func MakeLockMeta(hint string) LockMeta {
 	if err != nil {
 		hname = fmt.Sprintf("UnknownHost(err=%s)", err)
 	}
-	now := time.Now()
+	now := nowFunc()
 	meta := LockMeta{
 		LockedAt:   now,
 		LockerHost: hname,
 		Hint:       hint,
 		LockerPID:  os.Getpid(),
+		ExpireAt:   now.Add(LeaseTTL),
 	}
 	return meta
 }
