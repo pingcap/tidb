@@ -245,11 +245,11 @@ type convertedType struct {
 	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types
 	IsAdjustedToUTC bool
 
-	// sparkRebaseTimeZoneID is non-empty when the file footer says the column was
+	// sparkRebaseMicros is non-empty when the file footer says the column was
 	// written by a Spark release that used the legacy hybrid Julian/Gregorian
-	// calendar for ancient DATE/TIMESTAMP values. The value is a Spark timezone
-	// table key, not necessarily a Go-loadable location.
-	sparkRebaseTimeZoneID string
+	// calendar for ancient DATE/TIMESTAMP values. It also caches the generated
+	// Spark timezone rebase table for TIMESTAMP and INT96 value conversion.
+	sparkRebaseMicros sparkRebaseMicrosLookup
 }
 
 func sparkVersionFromMetadata(fileMeta *metadata.FileMetaData) *metadata.AppVersion {
@@ -335,6 +335,19 @@ func sparkRebaseTimeZoneID(
 	// the encoded instant without introducing an extra local-time shift, and
 	// DATE rebasing ignores the location entirely.
 	return sparkRebaseDefaultTimeZoneID
+}
+
+func sparkRebaseMicrosFromMetadata(
+	fileMeta *metadata.FileMetaData,
+	cutoff *metadata.AppVersion,
+	legacyKey string,
+	fallback *time.Location,
+) (sparkRebaseMicrosLookup, error) {
+	timeZoneID := sparkRebaseTimeZoneID(fileMeta, cutoff, legacyKey, fallback)
+	if timeZoneID == "" {
+		return sparkRebaseMicrosLookup{}, nil
+	}
+	return newSparkRebaseMicrosLookup(timeZoneID)
 }
 
 // rowGroupParser parses rows from one parquet row group.
@@ -735,12 +748,17 @@ func NewParquetParser(
 		return nil, errors.Trace(err)
 	}
 
-	fileSchema := reader.MetaData().Schema
+	fileMeta := reader.MetaData()
+	fileSchema := fileMeta.Schema
 	colTypes := make([]convertedType, fileSchema.NumColumns())
 	colNames := make([]string, 0, fileSchema.NumColumns())
+	effectiveLoc := meta.Loc
+	if effectiveLoc == nil {
+		effectiveLoc = timeutil.SystemLocation()
+	}
 
 	for i := range colTypes {
-		desc := reader.MetaData().Schema.Column(i)
+		desc := fileSchema.Column(i)
 		colNames = append(colNames, strings.ToLower(desc.Name()))
 
 		logicalType := desc.LogicalType()
@@ -765,21 +783,27 @@ func NewParquetParser(
 		switch desc.PhysicalType() {
 		case parquet.Types.Int32:
 			if colTypes[i].converted == schema.ConvertedTypes.Date {
-				colTypes[i].sparkRebaseTimeZoneID = sparkRebaseTimeZoneID(
-					reader.MetaData(), sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, meta.Loc,
-				)
+				colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
+					fileMeta, sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, effectiveLoc)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 		case parquet.Types.Int64:
 			if colTypes[i].converted == schema.ConvertedTypes.TimestampMillis ||
 				colTypes[i].converted == schema.ConvertedTypes.TimestampMicros {
-				colTypes[i].sparkRebaseTimeZoneID = sparkRebaseTimeZoneID(
-					reader.MetaData(), sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, meta.Loc,
-				)
+				colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
+					fileMeta, sparkDatetimeRebaseCutoff, sparkLegacyDateTimeMetadataKey, effectiveLoc)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 		case parquet.Types.Int96:
-			colTypes[i].sparkRebaseTimeZoneID = sparkRebaseTimeZoneID(
-				reader.MetaData(), sparkINT96RebaseCutoff, sparkLegacyINT96MetadataKey, meta.Loc,
-			)
+			colTypes[i].sparkRebaseMicros, err = sparkRebaseMicrosFromMetadata(
+				fileMeta, sparkINT96RebaseCutoff, sparkLegacyINT96MetadataKey, effectiveLoc)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 
@@ -789,7 +813,7 @@ func NewParquetParser(
 	})
 
 	parser := &ParquetParser{
-		fileMeta: reader.MetaData(),
+		fileMeta: fileMeta,
 		colTypes: colTypes,
 		colNames: colNames,
 		ctx:      ctx,
@@ -800,7 +824,7 @@ func NewParquetParser(
 		logger:   logger,
 		rowPool:  &pool,
 	}
-	if err := parser.Init(meta.Loc); err != nil {
+	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)
 	}
 

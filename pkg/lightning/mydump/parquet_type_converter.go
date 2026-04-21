@@ -28,6 +28,12 @@ import (
 
 type setter[T parquet.ColumnTypes] func(T, *types.Datum) error
 
+type sparkRebaseMicrosLookup struct {
+	timeZoneID string
+	switches   []int64
+	diffs      []int64
+}
+
 var (
 	zeroMyDecimal = types.MyDecimal{}
 	// Spark's legacy timestamp rebasing only applies to instants before
@@ -293,34 +299,55 @@ func rebaseSparkJulianToGregorianMicrosBeforeSwitch(micros, firstSwitch, firstDi
 	return gregorianLocalMicros - targetOffset
 }
 
-func rebaseSparkJulianToGregorianMicros(timeZoneID string, micros int64) (int64, error) {
-	if micros >= legacyTimestampRebaseCutoffMicros {
-		return micros, nil
-	}
-
+func newSparkRebaseMicrosLookup(timeZoneID string) (sparkRebaseMicrosLookup, error) {
 	index, ok := sparkJulianGregorianRebaseMicrosIndex(timeZoneID)
 	if !ok {
 		// This should not happen for production callers: sparkRebaseTimeZoneID
 		// only returns IDs that exist in the generated Spark rebase table, and
 		// falls back to UTC, which is also generated.
-		return 0, errors.Errorf("unknown Spark legacy timestamp rebase timezone %q", timeZoneID)
+		return sparkRebaseMicrosLookup{}, errors.Errorf("unknown Spark legacy timestamp rebase timezone %q", timeZoneID)
 	}
 
 	switches, diffs := sparkJulianGregorianRebaseMicrosSlices(index)
 	if len(switches) == 0 {
 		// This should not happen unless the generated Spark rebase table is
 		// malformed. Every generated timezone record has at least one switch.
-		return 0, errors.Errorf("empty Spark legacy timestamp rebase table for timezone %q", timeZoneID)
+		return sparkRebaseMicrosLookup{}, errors.Errorf("empty Spark legacy timestamp rebase table for timezone %q", timeZoneID)
 	}
-	if micros < switches[0] {
-		return rebaseSparkJulianToGregorianMicrosBeforeSwitch(micros, switches[0], diffs[0]), nil
+	return sparkRebaseMicrosLookup{
+		timeZoneID: timeZoneID,
+		switches:   switches,
+		diffs:      diffs,
+	}, nil
+}
+
+func (lookup *sparkRebaseMicrosLookup) rebase(micros int64) (int64, error) {
+	if micros >= legacyTimestampRebaseCutoffMicros {
+		return micros, nil
+	}
+	if len(lookup.switches) == 0 {
+		return 0, errors.Errorf("empty Spark legacy timestamp rebase table for timezone %q", lookup.timeZoneID)
+	}
+	if micros < lookup.switches[0] {
+		return rebaseSparkJulianToGregorianMicrosBeforeSwitch(micros, lookup.switches[0], lookup.diffs[0]), nil
 	}
 
-	i := len(switches)
-	for i > 1 && micros < switches[i-1] {
+	i := len(lookup.switches)
+	for i > 1 && micros < lookup.switches[i-1] {
 		i--
 	}
-	return micros + diffs[i-1], nil
+	return micros + lookup.diffs[i-1], nil
+}
+
+func rebaseSparkJulianToGregorianMicros(timeZoneID string, micros int64) (int64, error) {
+	if micros >= legacyTimestampRebaseCutoffMicros {
+		return micros, nil
+	}
+	lookup, err := newSparkRebaseMicrosLookup(timeZoneID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return lookup.rebase(micros)
 }
 
 //nolint:all_revive
@@ -342,7 +369,7 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 		}
 	case schema.ConvertedTypes.Date:
 		return func(val int32, d *types.Datum) error {
-			if converted.sparkRebaseTimeZoneID != "" {
+			if converted.sparkRebaseMicros.timeZoneID != "" {
 				val = int32(rebaseJulianToGregorianDays(int(val)))
 			}
 			t := arrow.Date32(val).ToTime()
@@ -402,8 +429,8 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 		}
 	case schema.ConvertedTypes.TimestampMillis:
 		return func(val int64, d *types.Datum) error {
-			if converted.sparkRebaseTimeZoneID != "" {
-				rebased, err := rebaseSparkJulianToGregorianMicros(converted.sparkRebaseTimeZoneID, val*1000)
+			if converted.sparkRebaseMicros.timeZoneID != "" {
+				rebased, err := converted.sparkRebaseMicros.rebase(val * 1000)
 				if err != nil {
 					return err
 				}
@@ -419,8 +446,8 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 		}
 	case schema.ConvertedTypes.TimestampMicros:
 		return func(val int64, d *types.Datum) error {
-			if converted.sparkRebaseTimeZoneID != "" {
-				rebased, err := rebaseSparkJulianToGregorianMicros(converted.sparkRebaseTimeZoneID, val)
+			if converted.sparkRebaseMicros.timeZoneID != "" {
+				rebased, err := converted.sparkRebaseMicros.rebase(val)
 				if err != nil {
 					return err
 				}
@@ -464,7 +491,7 @@ func setInt96Data(
 	d *types.Datum,
 	loc *time.Location,
 	adjustToUTC bool,
-	rebaseTimeZoneID string,
+	rebaseMicros sparkRebaseMicrosLookup,
 ) error {
 	// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 	// INT96 timestamp layout
@@ -479,8 +506,8 @@ func setInt96Data(
 	// is the Julian Day (days since noon on January 1, 4713 BC). And it will be converted it to UTC by
 	// subtracting the Julian day of the Unix epoch (1970-01-01 00:00:00).
 	micros := int96ToUnixMicros(val)
-	if rebaseTimeZoneID != "" {
-		rebased, err := rebaseSparkJulianToGregorianMicros(rebaseTimeZoneID, micros)
+	if rebaseMicros.timeZoneID != "" {
+		rebased, err := rebaseMicros.rebase(micros)
 		if err != nil {
 			return err
 		}
@@ -503,7 +530,7 @@ func int96ToUnixMicros(val parquet.Int96) int64 {
 
 func getInt96Setter(converted *convertedType, loc *time.Location) setter[parquet.Int96] {
 	return func(val parquet.Int96, d *types.Datum) error {
-		return setInt96Data(val, d, loc, converted.IsAdjustedToUTC, converted.sparkRebaseTimeZoneID)
+		return setInt96Data(val, d, loc, converted.IsAdjustedToUTC, converted.sparkRebaseMicros)
 	}
 }
 
