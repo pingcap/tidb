@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -35,12 +36,24 @@ var (
 	megaTestCount int
 )
 
+func defaultMegaParallelism(maxProcs int) int {
+	if maxProcs <= 0 {
+		return 1
+	}
+	parallel := maxProcs * 9 / 10
+	if parallel < 1 {
+		return 1
+	}
+	return parallel
+}
+
 // cmdMegaRun runs tests using the mega test framework.
 // Only runs the mega binary — build is handled by Makefile (bazel build).
 func cmdMegaRun(args ...string) bool {
 	// Set mega binary path (built by Makefile's bazel build step)
 	workDir, _ := os.Getwd()
 	megaBinary = filepath.Join(workDir, "bazel-bin/pkg/testkit/mega/mega_test_/mega_test")
+	parallel := defaultMegaParallelism(runtime.GOMAXPROCS(0))
 
 	if _, err := os.Stat(megaBinary); err != nil {
 		log.Fatalf("mega test binary not found at %s — run 'make ut-mega' which handles building", megaBinary)
@@ -87,14 +100,14 @@ func cmdMegaRun(args ...string) bool {
 		tasks = tmp
 	}
 
-	fmt.Printf("=== Running %d mega tests (%d parallel, 3min timeout) ===\n", len(tasks), p)
+	fmt.Printf("=== Running %d mega tests (%d parallel, 3min timeout) ===\n", len(tasks), parallel)
 
 	if len(tasks) == 0 {
 		fmt.Println("No mega tests to run")
 		return true
 	}
 
-	return runMegaTests(tasks)
+	return runMegaTests(tasks, parallel)
 }
 
 // buildMegaTestBinary compiles the mega test binary
@@ -337,14 +350,16 @@ func filterMegaTests(tests []megaTask, args []string) []megaTask {
 }
 
 // runMegaTests runs tests using the mega test binary with concurrency
-func runMegaTests(tasks []megaTask) bool {
+func runMegaTests(tasks []megaTask, testWorkerCount int) bool {
 	if len(tasks) == 0 {
 		fmt.Println("no tests to run")
 		return true
 	}
 
 	// Create workers for concurrent execution — one task per process, just like ut
-	testWorkerCount := p
+	if testWorkerCount < 1 {
+		testWorkerCount = 1
+	}
 	taskCh := make(chan megaTask, 100)
 	works := make([]megaWorker, testWorkerCount)
 	var wg sync.WaitGroup
