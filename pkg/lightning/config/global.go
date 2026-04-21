@@ -56,9 +56,9 @@ type GlobalTiDB struct {
 type GlobalMydumper struct {
 	SourceDir      string           `toml:"data-source-dir" json:"data-source-dir"`
 	IgnoreDataCols AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	NoSchema       bool             `toml:"no-schema" json:"no-schema"`
+	Filter         []string         `toml:"filter" json:"filter"`
 	// Deprecated: use IgnoreDataCols instead.
-	NoSchema      bool             `toml:"no-schema" json:"no-schema"`
-	Filter        []string         `toml:"filter" json:"filter"`
 	IgnoreColumns []*IgnoreColumns `toml:"ignore-columns" json:"ignore-columns"`
 }
 

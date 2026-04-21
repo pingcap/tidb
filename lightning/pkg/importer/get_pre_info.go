@@ -241,7 +241,15 @@ func (g *TargetInfoGetterImpl) IsPartitionEmpty(ctx context.Context, schemaName 
 		common.SprintfWithIdentifiers("SELECT 1 FROM %s.%s PARTITION (%s) USE INDEX() LIMIT 1", schemaName, tableName, partitionName),
 		&dump,
 	)
+	isNoSuchTableErr := false
+	if rootErr := errors.Cause(err); rootErr != nil {
+		if mysqlErr, ok := rootErr.(*mysql_sql_driver.MySQLError); ok && mysqlErr.Number == errno.ErrNoSuchTable {
+			isNoSuchTableErr = true
+		}
+	}
 	switch {
+	case isNoSuchTableErr:
+		result = true
 	case errors.ErrorEqual(err, sql.ErrNoRows):
 		result = true
 	case err != nil:
