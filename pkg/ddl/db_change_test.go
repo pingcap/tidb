@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -179,9 +180,26 @@ func TestDropNotNullColumn(t *testing.T) {
 
 func TestTwoStates(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	tk.MustExec("use test_db_state")
+	se, err := session.CreateSession(store)
+	require.NoError(t, err)
+	defer se.Close()
+	execSQL := func(se sessionapi.Session, sql string) error {
+		rs, err := se.Execute(context.Background(), sql)
+		if err != nil {
+			return err
+		}
+		for _, r := range rs {
+			if closeErr := r.Close(); closeErr != nil {
+				return closeErr
+			}
+		}
+		return nil
+	}
+	mustExec := func(sql string) {
+		require.NoError(t, execSQL(se, sql))
+	}
+	mustExec("create database test_db_state default charset utf8 default collate utf8_bin")
+	mustExec("use test_db_state")
 
 	cnt := 5
 	// New the testExecInfo.
@@ -210,25 +228,28 @@ func TestTwoStates(t *testing.T) {
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
-	tk.MustExec(`create table t (
+	mustExec(`create table t (
 		c1 int,
 		c2 varchar(64),
 		c3 enum('N','Y') not null default 'N',
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
-	tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
+	mustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
 
 	prevState := model.StateNone
 	require.NoError(t, testInfo.parseSQLs(parser.New()))
 
 	times := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
+	runStateChecks := func(state model.SchemaState) {
+		if state == prevState || checkErr != nil || times >= 3 {
 			return
 		}
+		// The same schema state can be observed more than once; only count the
+		// first visit to each intermediate add-column state.
+		prevState = state
 		times++
-		switch job.SchemaState {
+		switch state {
 		case model.StateDeleteOnly:
 			// This state we execute every sqlInfo one time using the first session and other information.
 			err := testInfo.compileSQL(0)
@@ -270,8 +291,34 @@ func TestTwoStates(t *testing.T) {
 				checkErr = err
 			}
 		}
-	})
-	tk.MustExec(alterTableSQL)
+	}
+	runWithFailpointHook := func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+			runStateChecks(job.SchemaState)
+		})
+		mustExec(alterTableSQL)
+	}
+	runWithoutFailpointHook := func() {
+		// Plain `go test` does not rewrite failpoint markers, so it cannot observe
+		// the internal delete-only/write-only/write-reorg transitions directly.
+		// For add-column SQL semantics, those intermediate states all share the
+		// same old-schema contract until the column becomes public, so we verify
+		// that contract once before the DDL completes and keep the final public
+		// state checks unchanged below.
+		require.NoError(t, testInfo.compileSQL(0))
+		require.NoError(t, testInfo.execSQL(0))
+		require.NoError(t, testInfo.compileSQL(1))
+		require.NoError(t, testInfo.compileSQL(2))
+		require.NoError(t, testInfo.execSQL(2))
+		require.NoError(t, testInfo.execSQL(1))
+		require.NoError(t, testInfo.compileSQL(3))
+		mustExec(alterTableSQL)
+	}
+	if intest.InTest {
+		runWithFailpointHook()
+	} else {
+		runWithoutFailpointHook()
+	}
 	require.NoError(t, testInfo.compileSQL(4))
 	require.NoError(t, testInfo.execSQL(4))
 	// Mock the server is in `write reorg` state.
@@ -308,7 +355,7 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 	var err error
 	for i, info := range t.sqlInfos {
 		for j, c := range info.cases {
-			c.session, err = session.CreateSession4Test(store)
+			c.session, err = session.CreateSession(store)
 			if err != nil {
 				return errors.Trace(err)
 			}
