@@ -17,6 +17,7 @@ package statstest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
@@ -306,22 +308,25 @@ func TestStatsCacheMemTracker(t *testing.T) {
 
 func TestStatsStoreAndLoad(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 int)")
+	se := session.CreateSessionAndSetID(t, store)
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "create table t (c1 int, c2 int)")
 	recordCount := 1000
+	vals := make([]string, 0, recordCount)
 	for i := range recordCount {
-		testKit.MustExec("insert into t values (?, ?)", i, i+1)
+		vals = append(vals, fmt.Sprintf("(%d, %d)", i, i+1))
 	}
-	testKit.MustExec("create index idx_t on t(c2)")
-	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1")
+	session.MustExec(t, se, "insert into t values "+strings.Join(vals, ","))
+	session.MustExec(t, se, "create index idx_t on t(c2)")
+	session.MustExec(t, se, "select * from t where c1 = '1'")
+	require.NoError(t, dom.StatsHandle().DumpColStatsUsageToKV())
 	do := dom
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 
-	testKit.MustExec("analyze table t")
+	session.MustExec(t, se, "analyze table t")
 	statsTbl1 := do.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
 
 	do.StatsHandle().Clear()
