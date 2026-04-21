@@ -41,13 +41,15 @@ func main() {
 // main_test.go override exit to pass unit test.
 var exit = os.Exit
 
+const checkpointTableNotFoundUsage = "valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'"
+
 func formatFatalError(err error) string {
 	// Keep stack traces for debugging unexpected failures, but avoid stack noise for
 	// the user-facing "checkpoint table not found" guidance error.
 	// If users later need this stack for troubleshooting, we can add a `-v` option
 	// to print verbose output (including stack traces) for this path too.
 	if err != nil && common.ErrCheckpointTableNotFound.Equal(err) {
-		return err.Error()
+		return fmt.Sprintf("%s; %s", err.Error(), checkpointTableNotFoundUsage)
 	}
 	return errors.ErrorStack(err)
 }

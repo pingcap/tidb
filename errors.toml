@@ -403,7 +403,7 @@ checkpoint not found
 
 ["Lightning:Checkpoint:ErrCheckpointTableNotFound"]
 error = '''
-checkpoint for table %s not found; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'
+checkpoint for table %s not found
 '''
 
 ["Lightning:Checkpoint:ErrCleanCheckpoint"]

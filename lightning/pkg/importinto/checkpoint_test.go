@@ -107,8 +107,9 @@ func TestFileCheckpointManager(t *testing.T) {
 				err := mgr.IgnoreError(ctx, "db.t404")
 				require.Error(t, err)
 				require.True(t, perrors.IsNotFound(err))
-				require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
-				require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")
+				require.Contains(t, err.Error(), "checkpoint for table db.t404 not found")
+				require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+				require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 			},
 		},
 		{
@@ -140,8 +141,9 @@ func TestFileCheckpointManager(t *testing.T) {
 				require.Error(t, err)
 				require.True(t, perrors.IsNotFound(err))
 				require.Nil(t, destroyed)
-				require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
-				require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")
+				require.Contains(t, err.Error(), "checkpoint for table db.t404 not found")
+				require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+				require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 			},
 		},
 		{
@@ -373,8 +375,9 @@ func TestMySQLCheckpointManager(t *testing.T) {
 				err := mgr.IgnoreError(ctx, "db.t404")
 				require.Error(t, err)
 				require.True(t, perrors.IsNotFound(err))
-				require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
-				require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")
+				require.Contains(t, err.Error(), "checkpoint for table db.t404 not found")
+				require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+				require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 			},
 		},
 		{
@@ -428,8 +431,9 @@ func TestMySQLCheckpointManager(t *testing.T) {
 				require.Error(t, err)
 				require.True(t, perrors.IsNotFound(err))
 				require.Nil(t, destroyed)
-				require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
-				require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")
+				require.Contains(t, err.Error(), "checkpoint for table db.t404 not found")
+				require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+				require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 			},
 		},
 		{

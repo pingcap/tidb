@@ -585,8 +585,9 @@ func TestIgnoreOneErrorCheckpointNotFound(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.IsNotFound(err))
 	require.True(t, common.ErrCheckpointTableNotFound.Equal(err))
-	require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
-	require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")
+	require.Contains(t, err.Error(), "checkpoint for table db1.t2 not found")
+	require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+	require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 }
 
 func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
@@ -676,8 +677,9 @@ func TestDestroyOneErrorCheckpointsNotFound(t *testing.T) {
 	require.True(t, errors.IsNotFound(err))
 	require.True(t, common.ErrCheckpointTableNotFound.Equal(err))
 	require.Nil(t, dtc)
-	require.Contains(t, err.Error(), "--checkpoint-error-ignore='`db`.`table`'")
-	require.Contains(t, err.Error(), "--checkpoint-error-destroy='`db`.`table`'")
+	require.Contains(t, err.Error(), "checkpoint for table db1.t2 not found")
+	require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+	require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 }
 
 func TestDump(t *testing.T) {

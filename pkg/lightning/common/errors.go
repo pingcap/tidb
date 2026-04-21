@@ -64,7 +64,7 @@ var (
 	// ErrCheckpointTableNotFound is the stable identity for table-scoped
 	// checkpoint operations when the checkpoint row does not exist.
 	ErrCheckpointTableNotFound = errors.Normalize(
-		"checkpoint for table %s not found; valid examples: --checkpoint-error-ignore='`db`.`table`', --checkpoint-error-destroy='`db`.`table`', or 'all'",
+		"checkpoint for table %s not found",
 		errors.RFCCodeText("Lightning:Checkpoint:ErrCheckpointTableNotFound"),
 	)
 	ErrInitCheckpoint  = errors.Normalize("init checkpoint error", errors.RFCCodeText("Lightning:Checkpoint:ErrInitCheckpoint"))
