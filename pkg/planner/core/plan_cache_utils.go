@@ -840,7 +840,9 @@ func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *util.AccessPath) 
 	// TODO: enable this fix control switch by default after more test cases are added.
 	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
 		fixControlOK := fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44830, false)
-		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) ||
+			isSafePointGetPath4PlanCacheScenario3(path) ||
+			isSafePointGetPath4PlanCacheScenario4(path)) {
 			return true
 		}
 	}
@@ -914,6 +916,40 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 		}
 	}
 	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario4(path *util.AccessPath) bool {
+	// safe scenario 4: each key column corresponds to a single EQ, except one column that corresponds
+	// to a single IN. The IN can appear at the beginning, in the middle, or at the end of the key,
+	// like `a in (1, 2) and b=3 and c=4`, `a=1 and b in (2, 3) and c=4`, or
+	// `a=1 and b=2 and c in (3, 4)`.
+	// This currently supports exactly one IN predicate only.
+	// TODO: support multiple IN predicates, like `a in (1, 2) and b in (3, 4)`, after the plan-cache
+	// safety check and rebuild path can verify the cartesian-product case safely.
+	if len(path.Ranges) <= 0 || len(path.AccessConds) < 2 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	var inExpr *expression.ScalarFunction
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ:
+		case ast.In:
+			// Only one IN predicate is supported in this scenario for now.
+			if inExpr != nil {
+				return false
+			}
+			inExpr = f
+		default:
+			return false
+		}
+	}
+	// The range builder deduplicates IN values, so len(path.Ranges) < len(args)-1 when duplicates exist.
+	// The equality check below relies on that invariant to reject duplicate IN values from plan cache.
+	return inExpr != nil && len(path.Ranges) == len(inExpr.GetArgs())-1
 }
 
 // parseParamTypes get parameters' types in PREPARE statement
