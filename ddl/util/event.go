@@ -22,11 +22,12 @@ import (
 
 // Event is an event that a ddl operation happened.
 type Event struct {
-	TableInfo   *model.TableInfo
-	PartInfo    *model.PartitionInfo
-	IndexInfo   *model.IndexInfo
-	ColumnInfos []*model.ColumnInfo
-	Tp          model.ActionType
+	TableInfo      *model.TableInfo
+	PartInfo       *model.PartitionInfo
+	IndexInfo      *model.IndexInfo
+	ColumnInfos    []*model.ColumnInfo
+	DroppedTableID int64
+	Tp             model.ActionType
 }
 
 // String implements fmt.Stringer interface.
@@ -34,6 +35,9 @@ func (e *Event) String() string {
 	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
 	if e.TableInfo != nil {
 		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.TableInfo.ID, e.TableInfo.Name)
+	}
+	if e.DroppedTableID != 0 {
+		ret += fmt.Sprintf(", Dropped Table ID: %d", e.DroppedTableID)
 	}
 	if e.PartInfo != nil {
 		ids := make([]int64, 0, len(e.PartInfo.Definitions))

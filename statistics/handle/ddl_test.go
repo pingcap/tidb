@@ -84,6 +84,10 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	rows := testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", tableInfo.ID).Rows()
+	require.Len(t, rows, 1)
+	oldTableID := tableInfo.ID
+	oldVersion := rows[0][0].(string)
 
 	testKit.MustExec("truncate table t1")
 	is = do.InfoSchema()
@@ -95,6 +99,9 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	rows = testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", oldTableID).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, oldVersion, rows[0][0].(string))
 }
 
 func TestDDLHistogram(t *testing.T) {
