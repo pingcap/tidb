@@ -726,6 +726,7 @@ BAZEL_COVERAGE_TARGETS = \
 bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 	@curl http://metadata.google.internal/computeMetadata/v1/instance/machineType -H "Metadata-Flavor: Google" || true
 	@echo "==> phase 1: build instrumented test binaries"
+	bazel --version
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc build $(BAZEL_CMD_CONFIG) $(BAZEL_NO_REMOTE_CACHE_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --collect_code_coverage --jobs=$(BAZEL_COVERAGE_BUILD_JOBS) --build_tests_only \
 		--bes_backend=grpcs://beplessproxy.channel9.ai  --bes_results_url=https://bepless.hawkingrei.com/ --remote_build_event_upload=all \
 		--define gotags=$(UNIT_TEST_TAGS) \
