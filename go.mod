@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.25.8
+go 1.25.5
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -352,9 +352,9 @@ require (
 
 replace github.com/pingcap/kvproto => git.pingcap.net/pingkai/kvproto v0.0.0-20260420075637-38aef268e3c4
 
-replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260417082301-3cc4736ad2e2
+replace github.com/tikv/client-go/v2 => git.pingcap.net/pingkai/client-go/v2 v2.0.8-0.20260420110641-0f4e1628df14
 
-replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260417065116-5d9cbc7f890a
+replace github.com/tikv/pd/client => git.pingcap.net/pingkai/pd/client v0.0.0-20260421030337-cdb12e958471
 
 replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
