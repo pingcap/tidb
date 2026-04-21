@@ -375,14 +375,9 @@ func runMegaTests(tasks []megaTask) bool {
 	}
 
 	if coverprofile != "" {
-		// Mega tests use a single binary, so coverage is already in one file
-		// We need to rename it to the target location
-		srcCover := megaBinary + ".coverprofile"
-		if _, err := os.Stat(srcCover); err == nil {
-			if err := os.Rename(srcCover, coverprofile); err != nil {
-				fmt.Println("rename cover file error:", err)
-			}
-		}
+		// Mega tests run one case per process, so merge the per-case temp files
+		// into the final profile, the same way regular ut does.
+		collectCoverProfileFile()
 	}
 
 	for _, work := range works {
