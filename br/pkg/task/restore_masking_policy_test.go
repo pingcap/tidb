@@ -71,3 +71,22 @@ func TestSetTablesRestoreModeSkipsTemporaryMaskingPolicy(t *testing.T) {
 	require.Equal(t, model.TableModeRestore, tables[1].Info.Mode)
 	require.Equal(t, model.TableModeNormal, tables[2].Info.Mode)
 }
+
+func TestEnsureDBMapCoversTables(t *testing.T) {
+	dbInfo := &model.DBInfo{ID: 42, Name: pmodel.NewCIStr("test")}
+	tableMap := map[int64]*metautil.Table{
+		100: {
+			DB: dbInfo,
+			Info: &model.TableInfo{
+				ID:   100,
+				Name: pmodel.NewCIStr("t"),
+			},
+		},
+	}
+	dbMap := map[int64]*metautil.Database{}
+
+	ensureDBMapCoversTables(tableMap, dbMap)
+
+	require.Contains(t, dbMap, int64(42))
+	require.Equal(t, dbInfo, dbMap[42].Info)
+}

@@ -1404,6 +1404,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			return errors.Trace(err)
 		}
 	}
+	ensureDBMapCoversTables(tableMap, dbMap)
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
 
@@ -2123,6 +2124,23 @@ func processLogBackupTableHistory(
 				}
 			}
 		}
+	}
+}
+
+func ensureDBMapCoversTables(tableMap map[int64]*metautil.Table, dbMap map[int64]*metautil.Database) {
+	for tableID, table := range tableMap {
+		if table == nil || table.DB == nil || table.Info == nil {
+			continue
+		}
+		if _, ok := dbMap[table.DB.ID]; ok {
+			continue
+		}
+		dbMap[table.DB.ID] = &metautil.Database{Info: table.DB}
+		log.Warn("database missing after filtering, adding back from selected table",
+			zap.Int64("dbID", table.DB.ID),
+			zap.String("dbName", table.DB.Name.O),
+			zap.Int64("tableID", tableID),
+			zap.String("tableName", table.Info.Name.O))
 	}
 }
 
