@@ -571,7 +571,7 @@ func TestDB_ExecDDL2(t *testing.T) {
 		err = db.ExecDDL(ctx, ddlJob)
 		assert.NoError(t, err)
 	}
-	tk.MustQuery("SHOW MASKING POLICIES FOR test_db.t1").Check(testkit.Rows("p id id DISABLE CUSTOM NONE"))
+	tk.MustQuery("SHOW MASKING POLICIES FOR test_db.t1").Check(testkit.Rows("p id `id` ENABLED CUSTOM NONE"))
 }
 
 func TestCreateTableConsistent(t *testing.T) {

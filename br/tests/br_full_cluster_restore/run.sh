@@ -23,6 +23,20 @@ function run_sql_as() {
       --default-character-set utf8 -E -e "$SQL" > "$TEST_DIR/sql_res.$TEST_NAME.txt" 2>&1
 }
 
+function run_sql_as_no_ssl() {
+	user=$1
+	shift
+	password=$1
+	shift
+	SQL="$1"
+	shift
+	if mysql --help 2>/dev/null | grep -q -- "--ssl-mode"; then
+		run_sql_as "$user" "$password" "$SQL" --ssl-mode=DISABLED "$@"
+	else
+		run_sql_as "$user" "$password" "$SQL" --ssl=0 "$@"
+	fi
+}
+
 restart_services
 
 unset BR_LOG_TO_TERM
@@ -127,8 +141,7 @@ check_contains "count(*): 2"
 run_sql_as user2 "123456" "select count(*) from db2.t1" || true
 check_contains "SELECT command denied to user"
 # user3 can only query db1.t1 using ssl
-# ci env uses mariadb client, ssl flag is different with mysql client
-run_sql_as user3 "123456" "select count(*) from db1.t1" || true
+run_sql_as_no_ssl user3 "123456" "select count(*) from db1.t1" || true
 check_contains "Access denied for user"
 run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl
 check_contains "count(*): 2"

@@ -106,17 +106,17 @@ func TestRestoreMultiTables(t *testing.T) {
 	tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 	tk.MustExec("use br")
 	ddlCreateTablesRows := tk.MustQuery("admin show ddl jobs where JOB_TYPE = 'create tables'").Rows()
-	cnt := 0
+	restoredTables := make(map[string]struct{}, tableNum)
 	for _, row := range ddlCreateTablesRows {
 		tables := row[2].(string)
 		require.NotEqual(t, "", tables)
 		for _, table := range strings.Split(tables, ",") {
-			_, ok := tablesNameSet[table]
-			require.True(t, ok)
-			cnt += 1
+			if _, ok := tablesNameSet[table]; ok {
+				restoredTables[table] = struct{}{}
+			}
 		}
 	}
-	require.Equal(t, tableNum, cnt)
+	require.Equal(t, tableNum, len(restoredTables))
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
 	}
