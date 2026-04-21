@@ -27,7 +27,16 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-func TestSetVarTimestampHintsWorks(t *testing.T) {
+func TestHintSuite(t *testing.T) {
+	t.Run("TestSetVarTimestampHintsWorks", testSetVarTimestampHintsWorks)
+	t.Run("TestSetVarTimestampHintsWorksWithBindings", testSetVarTimestampHintsWorksWithBindings)
+	t.Run("TestSetVarInQueriesAndBindingsWorkTogether", testSetVarInQueriesAndBindingsWorkTogether)
+	t.Run("TestSetVarHintsWithExplain", testSetVarHintsWithExplain)
+	t.Run("TestWriteSlowLogHint", testWriteSlowLogHint)
+	t.Run("TestSetVarPartialOrderedIndexForTopN", testSetVarPartialOrderedIndexForTopN)
+}
+
+func testSetVarTimestampHintsWorks(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec(`use test`)
 
@@ -47,7 +56,7 @@ func TestSetVarTimestampHintsWorks(t *testing.T) {
 	})
 }
 
-func TestSetVarTimestampHintsWorksWithBindings(t *testing.T) {
+func testSetVarTimestampHintsWorksWithBindings(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec(`use test`)
 		testKit.MustExec(`create session binding for select @@timestamp + 41 using select /*+ set_var(timestamp=1) */ @@timestamp + 41;`)
@@ -70,7 +79,7 @@ func TestSetVarTimestampHintsWorksWithBindings(t *testing.T) {
 	})
 }
 
-func TestSetVarInQueriesAndBindingsWorkTogether(t *testing.T) {
+func testSetVarInQueriesAndBindingsWorkTogether(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec(`use test`)
 		testKit.MustExec(`set @@max_execution_time=2000;`)
@@ -82,7 +91,7 @@ func TestSetVarInQueriesAndBindingsWorkTogether(t *testing.T) {
 	})
 }
 
-func TestSetVarHintsWithExplain(t *testing.T) {
+func testSetVarHintsWithExplain(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec(`use test`)
 
@@ -102,7 +111,7 @@ func TestSetVarHintsWithExplain(t *testing.T) {
 	})
 }
 
-func TestWriteSlowLogHint(t *testing.T) {
+func testWriteSlowLogHint(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec(`use test`)
 		testKit.MustExec(`create table t(a int);`)
@@ -139,7 +148,7 @@ func TestWriteSlowLogHint(t *testing.T) {
 	})
 }
 
-func TestSetVarPartialOrderedIndexForTopN(t *testing.T) {
+func testSetVarPartialOrderedIndexForTopN(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec(`use test`)
 

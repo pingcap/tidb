@@ -45,8 +45,19 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name, cascades st
 	}
 }
 
+func TestJoinReorderSuite(t *testing.T) {
+	t.Run("TestOptEnableHashJoin", testOptEnableHashJoin)
+	t.Run("TestJoinOrderHint4TiFlash", testJoinOrderHint4TiFlash)
+	t.Run("TestJoinOrderHint4DynamicPartitionTable", testJoinOrderHint4DynamicPartitionTable)
+	t.Run("TestJoinOrderHint4NestedLeading", testJoinOrderHint4NestedLeading)
+	t.Run("TestJoinOrderHint4NestedLeadingPK", testJoinOrderHint4NestedLeadingPK)
+	t.Run("TestLeadingHintInapplicableKeepsOtherConds", testLeadingHintInapplicableKeepsOtherConds)
+	t.Run("TestLeadingHintWithNonEqJoinUnderOuterJoin", testLeadingHintWithNonEqJoinUnderOuterJoin)
+	t.Run("TestOuterJoinReorderNullExtendedNonEqSafety", testOuterJoinReorderNullExtendedNonEqSafety)
+}
+
 // test the global/session variable tidb_opt_enable_hash_join being set to no
-func TestOptEnableHashJoin(t *testing.T) {
+func testOptEnableHashJoin(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("set tidb_opt_enable_hash_join=off")
@@ -58,7 +69,7 @@ func TestOptEnableHashJoin(t *testing.T) {
 	})
 }
 
-func TestJoinOrderHint4TiFlash(t *testing.T) {
+func testJoinOrderHint4TiFlash(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t, t1, t2, t3;")
@@ -85,7 +96,7 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 	})
 }
 
-func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
+func testJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
@@ -104,7 +115,7 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 	})
 }
 
-func TestJoinOrderHint4NestedLeading(t *testing.T) {
+func testJoinOrderHint4NestedLeading(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6;")
@@ -119,7 +130,7 @@ func TestJoinOrderHint4NestedLeading(t *testing.T) {
 	})
 }
 
-func TestJoinOrderHint4NestedLeadingPK(t *testing.T) {
+func testJoinOrderHint4NestedLeadingPK(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t1, t2, t3, t4;")
@@ -131,7 +142,7 @@ func TestJoinOrderHint4NestedLeadingPK(t *testing.T) {
 	})
 }
 
-func TestLeadingHintInapplicableKeepsOtherConds(t *testing.T) {
+func testLeadingHintInapplicableKeepsOtherConds(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("set @@tidb_enable_outer_join_reorder=true")
@@ -157,7 +168,7 @@ func TestLeadingHintInapplicableKeepsOtherConds(t *testing.T) {
 // The leading hint is processed through connectJoinNodes, then the greedy
 // solver's checkConnectionAndMakeJoin handles remaining tables.
 // Regression test for https://github.com/pingcap/tidb/issues/56513
-func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
+func testLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("set @@tidb_enable_outer_join_reorder=true")
@@ -200,7 +211,7 @@ func TestLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 	})
 }
 
-func TestOuterJoinReorderNullExtendedNonEqSafety(t *testing.T) {
+func testOuterJoinReorderNullExtendedNonEqSafety(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t1_66213, t2_66213, t3_66213;")
