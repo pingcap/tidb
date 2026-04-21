@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/bazelbuild/buildtools/build"
@@ -42,6 +43,32 @@ go_test(
 	want := []string{"//pkg/a", "//pkg/b"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("unexpected deps: got %v, want %v", got, want)
+	}
+}
+
+func TestValidateMegaBuildFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "BUILD.bazel")
+	mustWriteFile(t, path, `
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "mega_test",
+    deps = [
+        "//pkg/a",
+        "//pkg/b",
+    ],
+)
+`)
+
+	cfg := &megaConfig{deps: []string{"//pkg/a", "//pkg/b"}}
+	if err := validateMegaBuildFile(path, cfg); err != nil {
+		t.Fatalf("validateMegaBuildFile failed: %v", err)
+	}
+
+	cfg.deps = []string{"//pkg/a"}
+	err := validateMegaBuildFile(path, cfg)
+	if err == nil || !strings.Contains(err.Error(), "deps mismatch") {
+		t.Fatalf("expected deps mismatch error, got %v", err)
 	}
 }
 

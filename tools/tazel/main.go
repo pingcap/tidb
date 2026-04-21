@@ -90,4 +90,7 @@ func main() {
 	if err != nil {
 		log.Fatal("fail to filepath.Walk", zap.Error(err))
 	}
+	if err := validateMegaBuild(megaCfg); err != nil {
+		log.Fatal("mega BUILD out of sync", zap.Error(err))
+	}
 }

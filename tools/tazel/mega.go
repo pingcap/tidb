@@ -15,10 +15,12 @@
 package main
 
 import (
+	"fmt"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -128,6 +130,33 @@ func maybeFixMegaBuild(path string, buildfile *build.File, cfg *megaConfig) erro
 		return nil
 	}
 	rule.SetAttr("deps", stringListExpr(cfg.deps))
+	return nil
+}
+
+func validateMegaBuild(cfg *megaConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	return validateMegaBuildFile(megaBuildPath, cfg)
+}
+
+func validateMegaBuildFile(path string, cfg *megaConfig) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	buildfile, err := build.ParseBuild(path, data)
+	if err != nil {
+		return err
+	}
+	rule := buildfile.RuleNamed("mega_test")
+	if rule == nil {
+		return fmt.Errorf("mega_test rule not found in %s", path)
+	}
+	got := rule.AttrStrings("deps")
+	if !slices.Equal(got, cfg.deps) {
+		return fmt.Errorf("mega_test deps mismatch in %s: got %v want %v", path, got, cfg.deps)
+	}
 	return nil
 }
 

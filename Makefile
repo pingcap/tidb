@@ -209,11 +209,11 @@ ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
 bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run the CI mega-test flow; target name is kept for CI compatibility. Produces bazel.xml and bazel-out/_coverage/_coverage_report.dat unless SKIP_MEGA_RUN=1.
 	@echo "=== Enabling failpoints ==="
 	@tools/bin/failpoint-ctl enable
-	@echo "=== Updating BUILD.bazel files (gazelle) ==="
+	@echo "=== Preparing BUILD.bazel files (gazelle + tazel) ==="
 	@if [ "$(SKIP_GAZELLE)" != "1" ]; then \
-		bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle; \
+		$(MAKE) bazel_ci_simple_prepare; \
 	else \
-		echo "=== Skip gazelle because SKIP_GAZELLE=1 ==="; \
+		echo "=== Skip bazel_ci_simple_prepare because SKIP_GAZELLE=1 ==="; \
 	fi
 	@echo "=== Building mega binary ==="
 	@$(MAKE) bazel-mega-binary
@@ -246,7 +246,7 @@ ut-mega-cleanup:
 .PHONY: ut-mega-test
 ut-mega-test: tools/bin/ut tools/bin/failpoint-ctl ## Run specific mega tests (usage: make ut-mega-test X=ddl/Options)
 	@tools/bin/failpoint-ctl enable
-	@bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
+	@$(MAKE) bazel_ci_simple_prepare
 	@$(MAKE) bazel-mega-binary
 	@tools/bin/ut --mega run '$(X)' \
 		; RET=$$?; $(MAKE) ut-mega-cleanup; exit $$RET
@@ -742,13 +742,13 @@ bazel_ci_simple_prepare:
 bazel_prepare: ## Update and generate BUILD.bazel files. Please run this before commit.
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
-	bazel $(BAZEL_GLOBAL_CONFIG) run \
-		--run_under="cd $(CURDIR) && " \
-		 //tools/tazel:tazel
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
 
 .PHONY: bazel_ci_prepare_rbe
 bazel_ci_prepare_rbe:

@@ -30,6 +30,6 @@ go_test(
     srcs = ["mega_test.go"],
     embed = [":tazel_lib"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = ["@com_github_bazelbuild_buildtools//build:go_default_library"],
 )
