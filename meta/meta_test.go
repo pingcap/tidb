@@ -151,6 +151,48 @@ func TestBackupAndRestoreAutoIDs(t *testing.T) {
 	require.Equal(t, mustGet(acc2.RandomID()), 101)
 }
 
+func TestMergeEmptyRegionsMinTableID(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+
+	tableID, ok, err := m.GetMergeEmptyRegionsMinTableID()
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Equal(t, int64(0), tableID)
+
+	require.NoError(t, m.SetMergeEmptyRegionsMinTableID(42))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMeta(txn)
+
+	tableID, ok, err = m.GetMergeEmptyRegionsMinTableID()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, int64(42), tableID)
+
+	require.NoError(t, m.SetMergeEmptyRegionsMinTableID(0))
+	require.NoError(t, txn.Commit(context.Background()))
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	m = meta.NewMeta(txn)
+
+	tableID, ok, err = m.GetMergeEmptyRegionsMinTableID()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, int64(1), tableID)
+	require.NoError(t, txn.Rollback())
+}
+
 func TestMeta(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

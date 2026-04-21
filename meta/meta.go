@@ -59,26 +59,27 @@ var (
 //
 
 var (
-	mMetaPrefix       = []byte("m")
-	mNextGlobalIDKey  = []byte("NextGlobalID")
-	mSchemaVersionKey = []byte("SchemaVersionKey")
-	mDBs              = []byte("DBs")
-	mDBPrefix         = "DB"
-	mTablePrefix      = "Table"
-	mSequencePrefix   = "SID"
-	mSeqCyclePrefix   = "SequenceCycle"
-	mTableIDPrefix    = "TID"
-	mIncIDPrefix      = "IID"
-	mRandomIDPrefix   = "TARID"
-	mBootstrapKey     = []byte("BootstrapKey")
-	mSchemaDiffPrefix = "Diff"
-	mPolicies         = []byte("Policies")
-	mPolicyPrefix     = "Policy"
-	mPolicyGlobalID   = []byte("PolicyGlobalID")
-	mPolicyMagicByte  = CurrentMagicByteVer
-	mDDLTableVersion  = []byte("DDLTableVersion")
-	mConcurrentDDL    = []byte("concurrentDDL")
-	mMetaDataLock     = []byte("metadataLock")
+	mMetaPrefix                  = []byte("m")
+	mNextGlobalIDKey             = []byte("NextGlobalID")
+	mSchemaVersionKey            = []byte("SchemaVersionKey")
+	mDBs                         = []byte("DBs")
+	mDBPrefix                    = "DB"
+	mTablePrefix                 = "Table"
+	mSequencePrefix              = "SID"
+	mSeqCyclePrefix              = "SequenceCycle"
+	mTableIDPrefix               = "TID"
+	mIncIDPrefix                 = "IID"
+	mRandomIDPrefix              = "TARID"
+	mBootstrapKey                = []byte("BootstrapKey")
+	mSchemaDiffPrefix            = "Diff"
+	mPolicies                    = []byte("Policies")
+	mPolicyPrefix                = "Policy"
+	mPolicyGlobalID              = []byte("PolicyGlobalID")
+	mPolicyMagicByte             = CurrentMagicByteVer
+	mDDLTableVersion             = []byte("DDLTableVersion")
+	mConcurrentDDL               = []byte("concurrentDDL")
+	mMetaDataLock                = []byte("metadataLock")
+	mMergeEmptyRegionsMinTableID = []byte("mergeEmptyRegionsMinTableID")
 )
 
 const (
@@ -695,6 +696,29 @@ func (m *Meta) GetMetadataLock() (enable bool, isNull bool, err error) {
 		return false, true, nil
 	}
 	return bytes.Equal(val, []byte("1")), false, nil
+}
+
+// SetMergeEmptyRegionsMinTableID stores the smallest unprocessed table ID for
+// the background merge-empty-regions scan.
+func (m *Meta) SetMergeEmptyRegionsMinTableID(tableID int64) error {
+	if tableID < 1 {
+		tableID = 1
+	}
+	return errors.Trace(m.txn.Set(mMergeEmptyRegionsMinTableID, []byte(strconv.FormatInt(tableID, 10))))
+}
+
+// GetMergeEmptyRegionsMinTableID gets the smallest unprocessed table ID for
+// the background merge-empty-regions scan.
+func (m *Meta) GetMergeEmptyRegionsMinTableID() (tableID int64, ok bool, err error) {
+	val, err := m.txn.Get(mMergeEmptyRegionsMinTableID)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return 0, false, nil
+	}
+	tableID, err = strconv.ParseInt(string(val), 10, 64)
+	return tableID, true, errors.Trace(err)
 }
 
 // CreateTableAndSetAutoID creates a table with tableInfo in database,
