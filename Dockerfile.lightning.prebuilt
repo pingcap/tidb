@@ -1,0 +1,5 @@
+FROM quay.io/rockylinux/rockylinux:9-minimal
+COPY tidb-lightning-linux-arm64 /tidb-lightning
+RUN chmod +x /tidb-lightning
+WORKDIR /
+ENTRYPOINT ["/tidb-lightning"]

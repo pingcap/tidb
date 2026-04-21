@@ -1,0 +1,6 @@
+FROM quay.io/rockylinux/rockylinux:9-minimal
+COPY tidb-server-linux-arm64 /tidb-server
+RUN chmod +x /tidb-server
+WORKDIR /
+EXPOSE 4000
+ENTRYPOINT ["/tidb-server"]
