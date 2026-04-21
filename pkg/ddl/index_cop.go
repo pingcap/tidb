@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -36,10 +37,14 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
+
+const tableScanCopID = 1
 
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	err := se.Begin(context.Background())
@@ -59,28 +64,60 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 	return err
 }
 
-func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
-	dagPB, err := buildDAGPB(c.ExprCtx, c.DistSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos)
+func buildTableScan(ctx context.Context, c *copr.CopContextBase, distSQLCtx *distsqlctx.DistSQLContext, startTS uint64, start, end kv.Key, selectExpr expression.Expression) (distsql.SelectResult, bool, error) {
+	dagPB, conditionPushed, err := buildDAGPB(ctx, c.ExprCtx, distSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos, selectExpr)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.
+	builder.
 		SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
-		SetFromSessionVars(c.DistSQLCtx).
-		SetConcurrency(1).
+		SetFromSessionVars(distSQLCtx).
+		SetConcurrency(1)
+	if selectExpr != nil {
+		// DDL will not push down to TiFlash currently, so we can just specify `kv.TiKV` here to make it clearer.
+		builder.SetStoreType(kv.TiKV)
+	}
+	kvReq, err := builder.
 		Build()
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = getDDLRequestSource(model.ActionAddIndex)
 	kvReq.RequestSource.ExplicitRequestSourceType = kvutil.ExplicitTypeDDL
 	if err != nil {
-		return nil, err
+		return nil, conditionPushed, err
 	}
-	return distsql.Select(ctx, c.DistSQLCtx, kvReq, c.FieldTypes)
+
+	if distSQLCtx.RuntimeStatsColl == nil {
+		result, err := distsql.Select(ctx, distSQLCtx, kvReq, c.FieldTypes)
+		return result, conditionPushed, err
+	}
+	// The plan ID of the table scan is always `tableScanCopID`, so we can read the stats of `tableScanCopID` executor to know
+	// how many rows have been scanned.
+	//
+	// The following logic assumes that the DAG has a structure like:
+	// TableScan -> Executor1 -> Executor2 -> ... -> ExecutorN
+	// So the plan IDs are assigned like:
+	// TableScan: tableScanCopID
+	// Executor1: tableScanCopID + 1
+	// Executor2: tableScanCopID + 2
+	// ...
+	// ExecutorN: tableScanCopID + N
+	copPlanIDs := make([]int, 0, 2)
+	copPlanIDs = append(copPlanIDs, tableScanCopID)
+	rootPlanID := tableScanCopID
+	for i := range dagPB.Executors {
+		if i == 0 {
+			continue
+		}
+		copPlanIDs = append(copPlanIDs, tableScanCopID+i)
+		rootPlanID = tableScanCopID + i
+	}
+	result, err := distsql.SelectWithRuntimeStats(ctx, distSQLCtx, kvReq, c.FieldTypes, copPlanIDs, rootPlanID)
+	return result, conditionPushed, err
 }
 
 func fetchTableScanResult(
@@ -136,20 +173,45 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 	return dtToRestored
 }
 
-func buildDAGPB(exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
+func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
+	conditionPushed := false
+
 	dagReq := &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(exprCtx.GetEvalCtx().Location())
 	dagReq.Flags = pushDownFlags
 	for i := range colInfos {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	execPB, err := constructTableScanPB(exprCtx, tblInfo, colInfos)
+	tblScanPB, err := constructTableScanPB(exprCtx, tblInfo, colInfos)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	dagReq.Executors = append(dagReq.Executors, execPB)
+
+	var selectionPB *tipb.Executor
+	if selectExpr != nil {
+		selectionPB, err = constructSelectionPB(exprCtx, selectExpr, distSQLCtx, tblScanPB)
+	}
+
+	// Now, the partial index doesn't support pushing down part of the condition.
+	// So if we cannot push down the whole condition, we just ignore it.
+	if err == nil && selectionPB != nil {
+		conditionPushed = true
+		dagReq.Executors = append(dagReq.Executors, tblScanPB, selectionPB)
+	} else {
+		if selectExpr != nil {
+			selectExprStr := selectExpr.StringWithCtx(exprCtx.GetEvalCtx(), errors.RedactLogDisable)
+			logutil.Logger(ctx).Info("fail to push down the selection expression for index condition",
+				zap.String("table", tblInfo.Name.O),
+				zap.String("expr", selectExprStr),
+				zap.Error(err))
+		}
+		dagReq.Executors = append(dagReq.Executors, tblScanPB)
+	}
+
 	distsql.SetEncodeType(distSQLCtx, dagReq)
-	return dagReq, nil
+	collExec := true
+	dagReq.CollectExecutionSummaries = &collExec
+	return dagReq, conditionPushed, nil
 }
 
 func constructTableScanPB(ctx exprctx.BuildContext, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
@@ -157,6 +219,32 @@ func constructTableScanPB(ctx exprctx.BuildContext, tblInfo *model.TableInfo, co
 	tblScan.TableId = tblInfo.ID
 	err := tables.SetPBColumnsDefaultValue(ctx, tblScan.Columns, colInfos)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
+}
+
+func constructSelectionPB(ctx exprctx.BuildContext, expr expression.Expression, distSQLCtx *distsqlctx.DistSQLContext, child *tipb.Executor) (*tipb.Executor, error) {
+	// Just use the default `vardef.DefGroupConcatMaxLen`, it only affects the AGG functions, so it doesn't matter here.
+	pc := expression.NewPushDownContext(ctx.GetEvalCtx(), distSQLCtx.Client, false, nil, nil, vardef.DefGroupConcatMaxLen)
+	// DDL will not push down to TiFlash currently, so we can just specify `kv.TiKV` here.
+	// If we want to support TiFlash in the future, we need to try to push down to both TiKV and TiFlash.
+	pushed, _ := expression.PushDownExprs(pc, []expression.Expression{expr}, kv.TiKV)
+	if len(pushed) == 0 {
+		// If no expression is pushed down, return nil to indicate that push down is not supported.
+		return nil, errors.New("cannot push down the selection expression")
+	}
+
+	// As we have only one expression, the pushed expressions should be the same as the original expression.
+	pbExpr, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), pushed, distSQLCtx.Client)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tipb.Executor{
+		Tp: tipb.ExecType_TypeSelection,
+		Selection: &tipb.Selection{
+			Conditions: pbExpr,
+			Child:      child,
+		},
+	}, nil
 }
 
 // ExtractDatumByOffsets is exported for test.

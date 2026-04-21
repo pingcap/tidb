@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/disjointset"
 )
 
@@ -157,32 +156,6 @@ func resolveIndices4PhysicalSelection(pp base.PhysicalPlan) (err error) {
 	return nil
 }
 
-// resolveIndicesForSort is a helper function to resolve indices for sort operators.
-func resolveIndicesForSort(pp base.PhysicalPlan) (err error) {
-	p := pp.(*physicalop.BasePhysicalPlan)
-	err = p.ResolveIndices()
-	if err != nil {
-		return err
-	}
-
-	var byItems []*util.ByItems
-	switch x := p.Self.(type) {
-	case *physicalop.PhysicalSort:
-		byItems = x.ByItems
-	case *physicalop.NominalSort:
-		byItems = x.ByItems
-	default:
-		return errors.Errorf("expect PhysicalSort or NominalSort, but got %s", p.TP())
-	}
-	for _, item := range byItems {
-		item.Expr, err = item.Expr.ResolveIndices(p.Children()[0].Schema())
-		if err != nil {
-			return err
-		}
-	}
-	return err
-}
-
 // resolveIndexForInlineProjection ensures that during the execution of the physical plan, the column index can
 // be correctly mapped to the column in its subplan.
 func resolveIndexForInlineProjection(p *physicalop.PhysicalSchemaProducer) error {
@@ -236,6 +209,13 @@ func resolveIndices4PhysicalTopN(pp base.PhysicalPlan) (err error) {
 	if err := resolveIndexForInlineProjection(&p.PhysicalSchemaProducer); err != nil {
 		return err
 	}
+	if p.PrefixCol != nil {
+		newCol, err := p.PrefixCol.ResolveIndices(p.Children()[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PrefixCol = newCol.(*expression.Column)
+	}
 	return
 }
 
@@ -255,6 +235,13 @@ func resolveIndices4PhysicalLimit(pp base.PhysicalPlan) (err error) {
 	}
 	if err := resolveIndexForInlineProjection(&p.PhysicalSchemaProducer); err != nil {
 		return err
+	}
+	if p.PrefixCol != nil {
+		newCol, err := p.PrefixCol.ResolveIndices(p.Children()[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PrefixCol = newCol.(*expression.Column)
 	}
 	return
 }

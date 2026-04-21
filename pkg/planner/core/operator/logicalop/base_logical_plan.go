@@ -26,7 +26,6 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -57,8 +56,8 @@ type BaseLogicalPlan struct {
 	// including eliminating unnecessary DISTINCT operators, simplifying ORDER BY columns,
 	// removing Max1Row operators, and mapping semi-joins to inner-joins.
 	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
-	fdSet *fd.FDSet
-
+	fdSet      *fd.FDSet
+	hasTiFlash bool
 	// Flag is with that each bit has its meaning to mark this logical plan for special handling.
 	Flag uint64
 }
@@ -150,11 +149,6 @@ func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) (bas
 		return nil, err
 	}
 	return p.self, nil
-}
-
-// FindBestTask implements LogicalPlan.<3rd> interface.
-func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty) (bestTask base.Task, err error) {
-	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop)
 }
 
 // BuildKeyInfo implements LogicalPlan.<4th> interface.
@@ -260,13 +254,17 @@ func (*BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expressi
 }
 
 // PreparePossibleProperties implements LogicalPlan.<13th> interface.
-func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	return nil
-}
-
-// ExhaustPhysicalPlans implements LogicalPlan.<14th> interface.
-func (*BaseLogicalPlan) ExhaustPhysicalPlans(*property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	panic("baseLogicalPlan.ExhaustPhysicalPlans() should never be called.")
+func (p *BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, info ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiFlash := len(info) > 0
+	for _, childInfo := range info {
+		if childInfo == nil {
+			hasTiFlash = false
+			continue
+		}
+		hasTiFlash = hasTiFlash && childInfo.HasTiFlash
+	}
+	p.hasTiFlash = hasTiFlash
+	return &base.PossiblePropertiesInfo{HasTiFlash: p.hasTiFlash}
 }
 
 // ExtractCorrelatedCols implements LogicalPlan.<15th> interface.

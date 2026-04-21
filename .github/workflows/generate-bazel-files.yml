@@ -1,0 +1,90 @@
+name: Generate Bazel Files
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+
+concurrency:
+  group: generate-bazel-files-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: Generate Bazel Files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build Prepare
+        uses: pingcap/tidb/.github/actions/tidb_build@fb17a419f54d51f45fd031d8e5069b7022ecec92
+        with:
+          bazelrc: ""
+          gcp_sa_key: ""
+          go-version: 1.25
+      - name: Run Bazel Prepare
+        shell: bash
+        run: |
+          #!/bin/bash
+          unset CI
+          sed -i '/bazel-cache/d' DEPS.bzl
+          sed -i '/ats.apps.svc/d' DEPS.bzl
+          sed -i '/bazel-cache/d' WORKSPACE
+          sed -i '/ats.apps.svc/d' WORKSPACE
+          make bazel_prepare
+      - name: Restore non-generated files
+        shell: bash
+        run: |
+          git restore --worktree --source=HEAD -- WORKSPACE
+      - name: Create Bazel Patch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -t tracked_changes < <(git diff --name-only --no-renames HEAD -- .)
+          mapfile -t untracked_changes < <(git ls-files --others --exclude-standard)
+          changed_files=("${tracked_changes[@]}" "${untracked_changes[@]}")
+
+          for path in "${changed_files[@]}"; do
+            if [[ -z "${path}" ]]; then
+              continue
+            fi
+
+            case "${path}" in
+              DEPS.bzl|*.bazel|*.bzl)
+                ;;
+              *)
+                echo "Unexpected file changed by bazel_prepare: ${path}" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          if ((${#untracked_changes[@]} > 0)); then
+            git add -N -- "${untracked_changes[@]}"
+          fi
+
+          mkdir -p bazel-artifact
+          git diff --binary --full-index --no-ext-diff -- \
+            DEPS.bzl \
+            ':(glob)**/*.bazel' \
+            ':(glob)**/*.bzl' \
+            > bazel-artifact/bazel.patch
+      - name: Upload Bazel Files Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bazel-files
+          path: bazel-artifact/bazel.patch
+          if-no-files-found: error
+          retention-days: 1

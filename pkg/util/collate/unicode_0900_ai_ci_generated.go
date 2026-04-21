@@ -18,11 +18,7 @@
 
 package collate
 
-import (
-	"unicode/utf8"
-
-	"github.com/pingcap/tidb/pkg/util/hack"
-)
+import "unicode/utf8"
 
 // unicode0900AICICollator implements UCA. see http://unicode.org/reports/tr10/
 type unicode0900AICICollator struct {
@@ -51,8 +47,12 @@ func (uc *unicode0900AICICollator) Compare(a, b string) int {
 		if an == 0 {
 			if as == 0 {
 				for an == 0 && ai < len(a) {
-					ar, arLen = utf8.DecodeRune(hack.Slice(a[ai:]))
-					if ar == utf8.RuneError {
+					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+					// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+					ar, arLen = utf8.DecodeRuneInString(a[ai:])
+					invalid := ar == utf8.RuneError && arLen == 1
+					if invalid {
 						return 0
 					}
 					ai = ai + arLen
@@ -67,8 +67,12 @@ func (uc *unicode0900AICICollator) Compare(a, b string) int {
 		if bn == 0 {
 			if bs == 0 {
 				for bn == 0 && bi < len(b) {
-					br, brLen = utf8.DecodeRune(hack.Slice(b[bi:]))
-					if br == utf8.RuneError {
+					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+					// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+					br, brLen = utf8.DecodeRuneInString(b[bi:])
+					invalid := br == utf8.RuneError && brLen == 1
+					if invalid {
 						return 0
 					}
 					bi = bi + brLen
@@ -118,9 +122,9 @@ func (uc *unicode0900AICICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	rLen := 0
 
 	for si < len(str) {
-		r, rLen = utf8.DecodeRune(hack.Slice(str[si:]))
-
-		if r == utf8.RuneError {
+		r, rLen = utf8.DecodeRuneInString(str[si:])
+		invalid := r == utf8.RuneError && rLen == 1
+		if invalid {
 			return buf
 		}
 
@@ -142,4 +146,9 @@ func (uc *unicode0900AICICollator) KeyWithoutTrimRightSpace(str string) []byte {
 // Pattern implements Collator interface.
 func (uc *unicode0900AICICollator) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
+}
+
+// MaxKeyLen implements Collator interface.
+func (uc *unicode0900AICICollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 16
 }

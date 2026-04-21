@@ -49,18 +49,6 @@ type ResourcePool struct {
 	maxUnusedBlocks int64  // max unused-blocks*alloc-align size before shrinking budget
 }
 
-// NoteActionState wraps the arguments of a note action
-type NoteActionState struct {
-	Pool      *ResourcePool
-	Allocated int64
-}
-
-// NoteAction represents the action to be taken when the allocated size exceeds the threshold
-type NoteAction struct {
-	CB        func(NoteActionState)
-	Threshold int64
-}
-
 // OutOfCapacityActionArgs wraps the arguments for out of capacity action
 type OutOfCapacityActionArgs struct {
 	Pool    *ResourcePool
@@ -71,7 +59,6 @@ type OutOfCapacityActionArgs struct {
 type PoolActions struct {
 	OutOfCapacityActionCB func(OutOfCapacityActionArgs) error // Called when the resource pool is out of capacity
 	OutOfLimitActionCB    func(*ResourcePool) error           // Called when the resource pool is out of limit
-	NoteAction            NoteAction
 }
 
 // ResourcePoolState represents the state of a resource pool
@@ -296,14 +283,9 @@ func (p *ResourcePool) MaxAllocated() (res int64) {
 // Allocated returns the allocated bytes
 func (p *ResourcePool) Allocated() (res int64) {
 	p.mu.Lock()
-	res = p.mu.allocated
+	res = p.allocated()
 	p.mu.Unlock()
 	return
-}
-
-// ApproxAllocated returns the approximate allocated bytes
-func (p *ResourcePool) ApproxAllocated() int64 {
-	return p.allocated()
 }
 
 // Budget represents the budget of a resource pool
@@ -340,12 +322,6 @@ func (b *Budget) Capacity() int64 {
 
 func (b *Budget) available() int64 {
 	return b.cap - b.used
-}
-
-func (b *Budget) release() (reclaimed int64) {
-	reclaimed = b.available()
-	b.cap = b.used
-	return
 }
 
 // CreateBudget creates a new budget from the resource pool
@@ -490,40 +466,21 @@ func (p *ResourcePool) ExplicitReserve(request int64) (err error) {
 }
 
 func (p *ResourcePool) allocate(request int64) error {
-	{
-		p.mu.Lock()
+	p.mu.Lock()
 
-		if err := p.doAlloc(request); err != nil {
-			p.mu.Unlock()
-			return err
-		}
+	err := p.doAlloc(request)
 
-		p.mu.Unlock()
-	}
+	p.mu.Unlock()
 
-	if p.actions.NoteAction.CB != nil {
-		if allocated := p.allocated(); allocated > p.actions.NoteAction.Threshold {
-			p.actions.NoteAction.CB(NoteActionState{
-				Pool:      p,
-				Allocated: allocated,
-			})
-		}
-	}
-
-	return nil
+	return err
 }
 
 func (p *ResourcePool) allocated() int64 {
-	return atomic.LoadInt64(&p.mu.allocated)
+	return p.mu.allocated
 }
 
 func (p *ResourcePool) capacity() int64 {
 	return p.mu.budget.cap
-}
-
-// ApproxAvailable returns the approximate available budget
-func (p *ResourcePool) ApproxAvailable() int64 {
-	return p.mu.budget.available()
 }
 
 // ApproxCap returns the approximate capacity of the resource pool
@@ -565,8 +522,12 @@ func (p *ResourcePool) doRelease(sz int64) {
 // It is called when the resource pool is out of capacity
 func (p *ResourcePool) SetOutOfCapacityAction(f func(OutOfCapacityActionArgs) error) {
 	p.mu.Lock()
-	p.actions.OutOfCapacityActionCB = f
+	p.doSetOutOfCapacityAction(f)
 	p.mu.Unlock()
+}
+
+func (p *ResourcePool) doSetOutOfCapacityAction(f func(OutOfCapacityActionArgs) error) {
+	p.actions.OutOfCapacityActionCB = f
 }
 
 // SetOutOfLimitAction sets the out of limit action

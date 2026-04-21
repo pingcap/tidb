@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -121,7 +122,7 @@ func (t *RootTask) GetPlan() base.PhysicalPlan {
 	return t.p
 }
 
-// SetPlan sets the root task' plan.
+// SetPlan sets the root task's plan.
 func (t *RootTask) SetPlan(p base.PhysicalPlan) {
 	t.p = p
 }
@@ -314,6 +315,14 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
 	collectPartitionInfosFromMPPPlan(p, t.p)
+	// Preserve partition pruning metadata for single-table readers.
+	// The metadata is produced on the DataSource side and already aligned with
+	// ds.TblCols, so it can be reused by root-task fallback paths.
+	if len(p.TableScanAndPartitionInfos) == 1 {
+		if pi := p.TableScanAndPartitionInfos[0].PhysPlanPartInfo; pi != nil {
+			p.PlanPartInfo = pi.CloneForPlanCache()
+		}
+	}
 	rt = &RootTask{}
 	rt.SetPlan(p)
 
@@ -332,7 +341,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
 			return base.InvalidTask.(*RootTask)
 		}
-		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.RootTaskConds, nil)
+		selectivity, err := cardinality.Selectivity(ctx, t.tblColHists, t.RootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
@@ -357,9 +366,10 @@ func (t *MppTask) SetPlan(p base.PhysicalPlan) {
 // CopTask is a task that runs in a distributed kv store.
 // TODO: In future, we should split copTask to indexTask and tableTask.
 type CopTask struct {
-	IndexPlan           base.PhysicalPlan
-	TablePlan           base.PhysicalPlan
-	IndexLookUpPushDown bool
+	IndexPlan base.PhysicalPlan
+	TablePlan base.PhysicalPlan
+	// Whether tries to push down index lookup to TiKV and where this action comes
+	IndexLookUpPushDownBy util.IndexLookUpPushDownByType
 	// IndexPlanFinished means we have finished index plan.
 	IndexPlanFinished bool
 	// KeepOrder indicates if the plan scans data by order.
@@ -397,6 +407,10 @@ type CopTask struct {
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
+
+	// PartialOrderMatchResult stores the match result for partial order optimization.
+	// Set by convertToIndexScan when a prefix index provides partial order for TopN.
+	PartialOrderMatchResult *property.PartialOrderMatchResult
 
 	// Warnings passed through different task copy attached with more upper operator specific Warnings. (not concurrent safe)
 	Warnings SimpleWarnings

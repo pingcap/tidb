@@ -319,37 +319,6 @@ func TestActions(t *testing.T) {
 		require.Equal(t, p1.Capacity(), root.allocAlignSize*2)
 		pb1.Clear()
 	}
-	{
-		name := "root"
-		noteActionTriggerCnt := 0
-		root := NewResourcePool(
-			newPoolUID(),
-			name, math.MaxInt64,
-			1,
-			DefMaxUnusedBlocks,
-			PoolActions{
-				NoteAction: NoteAction{
-					Threshold: 101,
-					CB: func(s NoteActionState) {
-						require.Equal(t, s.Pool.name, name)
-						noteActionTriggerCnt += 1
-					},
-				},
-			},
-		)
-		root.Start(nil /* pool */, (math.MaxInt64))
-		root.maxUnusedBlocks = 0
-
-		b := root.CreateBudget()
-		require.NoError(t, b.Grow(100))
-
-		require.Equal(t, b.Used(), int64(100))
-		require.Equal(t, noteActionTriggerCnt, 0)
-
-		require.NoError(t, b.Grow(2))
-		require.Equal(t, b.Used(), int64(102))
-		require.Equal(t, noteActionTriggerCnt, 1)
-	}
 
 	{
 		name := "root"
@@ -381,8 +350,6 @@ func TestActions(t *testing.T) {
 		require.NoError(t, b.Grow(10))
 
 		require.Equal(t, outOfCapacityActionNum, 2)
-
-		root.ApproxAvailable()
 
 		require.Equal(t, root.mu.budget.used, b.Used())
 

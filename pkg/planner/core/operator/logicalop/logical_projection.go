@@ -290,10 +290,12 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		RowCount: childProfile.RowCount,
 		ColNDVs:  make(map[int64]float64, len(p.Exprs)),
 	})
+	cols := make([]*expression.Column, 0, 8)
 	for i, expr := range p.Exprs {
-		cols := expression.ExtractColumns(expr)
+		cols = expression.ExtractAllColumnsFromExpressionsInUsedSlices(cols, nil, expr)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(
 			p.SCtx(), cols, childSchema[0], childProfile)
+		cols = cols[:0]
 	}
 	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
 	return p.StatsInfo(), true, nil
@@ -329,7 +331,7 @@ func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	childProperties := childrenProperties[0]
 	oldCols := make([]*expression.Column, 0, p.Schema().Len())
 	newCols := make([]*expression.Column, 0, p.Schema().Len())
@@ -339,9 +341,10 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 			oldCols = append(oldCols, col)
 		}
 	}
+	p.hasTiFlash = childProperties.HasTiFlash
 	tmpSchema := expression.NewSchema(oldCols...)
-	newProperties := make([][]*expression.Column, 0, len(childProperties))
-	for _, childProperty := range childProperties {
+	newProperties := make([][]*expression.Column, 0, len(childProperties.Orders))
+	for _, childProperty := range childProperties.Orders {
 		newChildProperty := make([]*expression.Column, 0, len(childProperty))
 		for _, col := range childProperty {
 			pos := tmpSchema.ColumnIndex(col)
@@ -354,7 +357,10 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 			newProperties = append(newProperties, newChildProperty)
 		}
 	}
-	return newProperties
+	return &base.PossiblePropertiesInfo{
+		Orders:     newProperties,
+		HasTiFlash: p.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
@@ -453,7 +459,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x, true)
+			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -517,18 +523,66 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
 	newProp := prop.CloneEssentialFields()
-	newCols := make([]property.SortItem, 0, len(prop.SortItems))
-	for _, col := range prop.SortItems {
-		idx := p.Schema().ColumnIndex(col.Col)
+	// First, transform SortItems (common for both cases)
+	if prop.SortItems != nil {
+		newSortItems, ok := p.tryTransformSortItems(prop.SortItems)
+		if !ok {
+			return nil, false
+		}
+		newProp.SortItems = newSortItems
+	}
+
+	// If PartialOrderInfo is present, check if it can be passed through this projection.
+	// All columns in PartialOrderInfo must be simple column references (not scalar functions).
+	if prop.PartialOrderInfo != nil {
+		newPartialOrderItems, ok := p.tryTransformSortItemPtrs(prop.PartialOrderInfo.SortItems)
+		if !ok {
+			return nil, false
+		}
+		newProp.PartialOrderInfo = &property.PartialOrderInfo{
+			SortItems: newPartialOrderItems,
+		}
+	}
+
+	return newProp, true
+}
+
+// tryTransformSortItems tries to transform []SortItem through projection.
+// Returns the transformed items and true if successful, or nil and false if any
+// sort column is replaced by a scalar function (which cannot preserve order).
+func (p *LogicalProjection) tryTransformSortItems(items []property.SortItem) ([]property.SortItem, bool) {
+	newItems := make([]property.SortItem, 0, len(items))
+	for _, item := range items {
+		idx := p.Schema().ColumnIndex(item.Col)
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
-			newCols = append(newCols, property.SortItem{Col: expr, Desc: col.Desc})
+			newItems = append(newItems, property.SortItem{Col: expr, Desc: item.Desc})
 		case *expression.ScalarFunction:
 			return nil, false
 		}
 	}
-	newProp.SortItems = newCols
-	return newProp, true
+	return newItems, true
+}
+
+// tryTransformSortItemPtrs tries to transform []*SortItem through projection.
+// Returns the transformed items and true if successful, or nil and false if any
+// sort column is replaced by a scalar function (which cannot preserve order).
+func (p *LogicalProjection) tryTransformSortItemPtrs(items []*property.SortItem) ([]*property.SortItem, bool) {
+	newItems := make([]*property.SortItem, 0, len(items))
+	for _, item := range items {
+		idx := p.Schema().ColumnIndex(item.Col)
+		if idx == -1 {
+			// Column not found in projection schema, skip it (constant case)
+			continue
+		}
+		switch expr := p.Exprs[idx].(type) {
+		case *expression.Column:
+			newItems = append(newItems, &property.SortItem{Col: expr, Desc: item.Desc})
+		case *expression.ScalarFunction:
+			return nil, false
+		}
+	}
+	return newItems, true
 }
 
 func (p *LogicalProjection) getGroupNDVs(childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
@@ -622,4 +676,15 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 		}
 	}
 	return true
+}
+
+// InjectExpr injects the expr into a projection above p, and returns the new projection and the new column.
+func InjectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*LogicalProjection)
+	if !ok {
+		proj = LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+	}
+	return proj, proj.AppendExpr(expr)
 }

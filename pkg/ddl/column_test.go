@@ -49,11 +49,11 @@ func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context,
 	tk.MustExec(sql)
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
-	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
-	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+
+	checkJobWithHistory(t, ctx, id, nil, tblInfo.Meta())
 	return id
 }
 
@@ -72,11 +72,10 @@ func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context
 	tk.MustExec(sql)
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
-	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
-	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+	checkJobWithHistory(t, ctx, id, nil, tblInfo.Meta())
 	return id
 }
 
@@ -91,11 +90,10 @@ func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Co
 
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
-	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
-	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+	checkJobWithHistory(t, ctx, id, nil, tblInfo.Meta())
 	return id
 }
 
@@ -122,11 +120,10 @@ func testCreateIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
-	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
-	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+	checkJobWithHistory(t, ctx, id, nil, tblInfo.Meta())
 	return id
 }
 
@@ -147,11 +144,10 @@ func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
-	v := getSchemaVer(t, ctx)
 	require.NoError(t, dom.Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
-	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+	checkJobWithHistory(t, ctx, id, nil, tblInfo.Meta())
 	return id
 }
 
@@ -167,7 +163,7 @@ func TestColumnBasic(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d)", i, 10*i, 100*i))
 	}
 
-	ctx := testNewContext(t, store)
+	ctx := testkit.NewSession(t, store)
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 
@@ -324,7 +320,7 @@ func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle,
 		}
 	}()
 	key := tablecodec.EncodeRecordKey(t.RecordPrefix(), handle)
-	data, err := txn.Get(context.TODO(), key)
+	data, err := kv.GetValue(context.TODO(), txn, key)
 	if !isExist {
 		if terror.ErrorEqual(err, kv.ErrNotExist) {
 			return nil
@@ -514,9 +510,8 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	txn, err = newTxn(ctx)
+	_, err = newTxn(ctx)
 	require.NoError(t, err)
-
 	rows := [][]types.Datum{row, newRow}
 
 	i = 0
@@ -539,7 +534,7 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	txn, err = newTxn(ctx)
+	_, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	i = 0
@@ -624,7 +619,7 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 }
 
 func checkAddColumn(t *testing.T, state model.SchemaState, tableID int64, handle kv.Handle, newCol *table.Column, oldRow []types.Datum, columnValue any, dom *domain.Domain, store kv.Storage, columnCnt int) {
-	ctx := testNewContext(t, store)
+	ctx := testkit.NewSession(t, store)
 	switch state {
 	case model.StateNone:
 		checkNoneColumn(t, ctx, tableID, handle, newCol, columnValue, dom)
@@ -666,7 +661,7 @@ func TestAddColumn(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(t, store)
+	ctx := testkit.NewSession(t, store)
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -731,7 +726,7 @@ func TestAddColumns(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(t, store)
+	ctx := testkit.NewSession(t, store)
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -788,7 +783,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(t, store)
+	ctx := testkit.NewSession(t, store)
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -842,7 +837,7 @@ func TestDropColumns(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(t, store)
+	ctx := testkit.NewSession(t, store)
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 
@@ -926,25 +921,25 @@ func TestModifyColumnWithIndex(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int,
+	tk.MustExec(`create table t (a varchar(4), b int,
 		index idx1 (a), index idx2 (a), index idx3 (a),
 		index idx4 (b), index idx5 (b), index idx6 (b),
 		index idx7 (a, b), index idx8 (a, b), index idx9 (a, b));`)
-	tk.MustExec("insert into t values (1, 1)")
+	tk.MustExec("insert into t values ('a ', 1)")
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 1")
 
 	cnt := 0
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/addIndexTxnWorkerBackfillData", func(idxRecordNum int) {
 		cnt += idxRecordNum
 	})
-	tk.MustExec("alter table t modify column a bigint")
-	require.Equal(t, 0, cnt)
-	tk.MustExec("alter table t modify column a int")
+	tk.MustExec("alter table t modify column a char(4)")
 	require.Equal(t, 6, cnt)
 
 	cnt = 0
-	tk.MustExec("alter table t modify column a bigint, modify column b bigint")
+	tk.MustExec("alter table t modify column b bigint")
 	require.Equal(t, 0, cnt)
-	tk.MustExec("alter table t modify column a int, modify column b int")
-	require.Equal(t, 12, cnt)
+	tk.MustExec("alter table t modify column b int UNSIGNED")
+	require.Equal(t, 6, cnt)
+	tk.MustExec("alter table t modify column a varchar(2), modify column b int")
+	require.Equal(t, 18, cnt)
 }

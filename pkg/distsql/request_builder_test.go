@@ -325,7 +325,7 @@ func TestRequestBuilder1(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -409,7 +409,7 @@ func TestRequestBuilder2(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -459,7 +459,7 @@ func TestRequestBuilder3(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -508,7 +508,7 @@ func TestRequestBuilder4(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -618,7 +618,7 @@ func TestRequestBuilder7(t *testing.T) {
 				ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 			}
 			expect.Paging.MinPagingSize = paging.MinPagingSize
-			expect.Paging.MaxPagingSize = paging.MaxPagingSize
+			expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 			actual.ResourceGroupTagger = nil
 			require.Equal(t, expect, actual)
 		})
@@ -646,7 +646,7 @@ func TestRequestBuilder8(t *testing.T) {
 		ResourceGroupName: "test",
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -673,7 +673,7 @@ func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
 		ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -700,7 +700,7 @@ func TestRequestBuilderMaxExecutionTime(t *testing.T) {
 		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
-	expect.Paging.MaxPagingSize = paging.MaxPagingSize
+	expect.Paging.MaxPagingSize = paging.MinAllowedMaxPagingSize
 	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
@@ -778,6 +778,48 @@ func TestScanLimitConcurrency(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tt.concurrency, actual.Concurrency)
 			require.Equal(t, actual.LimitSize, tt.limit)
+		})
+	}
+}
+
+func TestIndexLookUpPushDownScanConcurrency(t *testing.T) {
+	dctx := NewDistSQLContextForTest()
+	for _, tt := range []struct {
+		name        string
+		limit       uint64
+		concurrency int
+	}{
+		{"1", 1, 1},
+		{"1000000", 1000000, dctx.DistSQLConcurrency},
+	} {
+		indexLookUpIndex := uint32(3)
+		t.Run(tt.name, func(t *testing.T) {
+			executors := []*tipb.Executor{
+				{
+					Tp:      tipb.ExecType_TypeIndexScan,
+					IdxScan: &tipb.IndexScan{},
+				},
+				{
+					Tp:        tipb.ExecType_TypeLimit,
+					Limit:     &tipb.Limit{Limit: tt.limit},
+					ParentIdx: &indexLookUpIndex,
+				},
+				{
+					Tp:      tipb.ExecType_TypeTableScan,
+					TblScan: &tipb.TableScan{},
+				},
+				{
+					Tp:          tipb.ExecType_TypeIndexLookUp,
+					IndexLookup: &tipb.IndexLookUp{},
+				},
+			}
+			dag := &tipb.DAGRequest{Executors: executors}
+			actual, err := (&RequestBuilder{}).
+				SetDAGRequest(dag).
+				SetFromSessionVars(dctx).
+				Build()
+			require.NoError(t, err)
+			require.Equal(t, tt.concurrency, actual.Concurrency)
 		})
 	}
 }

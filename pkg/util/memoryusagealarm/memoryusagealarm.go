@@ -125,6 +125,7 @@ type memoryUsageAlarm struct {
 	lastCheckTime                 time.Time
 	lastUpdateVariableTime        time.Time
 	err                           error
+	configProvider                ConfigProvider
 	baseRecordDir                 string
 	lastRecordDirName             []string
 	lastRecordMemUsed             uint64
@@ -133,7 +134,6 @@ type memoryUsageAlarm struct {
 	serverMemoryLimit             uint64
 	isServerMemoryLimitSet        bool
 	initialized                   bool
-	configProvider                ConfigProvider
 }
 
 func (record *memoryUsageAlarm) updateVariable() {
@@ -183,6 +183,9 @@ func (record *memoryUsageAlarm) initMemoryUsageAlarmRecord() {
 // If Performance.ServerMemoryQuota is set, use `ServerMemoryQuota * MemoryUsageAlarmRatio` to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use `system total memory size * MemoryUsageAlarmRatio` to check oom risk.
 func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm sessmgr.Manager) {
+	if memory.UsingGlobalMemArbitration() {
+		return
+	}
 	if !record.initialized {
 		record.initMemoryUsageAlarmRecord()
 		if record.err != nil {
@@ -294,11 +297,11 @@ func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 func getPlanString(info *sessmgr.ProcessInfo) string {
 	var buf strings.Builder
 	rows, _ := plancodec.DecodeBinaryPlan4Connection(info.BriefBinaryPlan, types.ExplainFormatROW, true)
-	buf.WriteString(fmt.Sprintf("|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info"))
+	fmt.Fprintf(&buf, "|%v|%v|%v|%v|%v|", "id", "estRows", "task", "access object", "operator info")
 	for _, row := range rows {
 		buf.WriteString("\n|")
 		for _, col := range row {
-			buf.WriteString(fmt.Sprintf("%v|", col))
+			fmt.Fprintf(&buf, "%v|", col)
 		}
 	}
 	return buf.String()
@@ -329,7 +332,7 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *sessmgr.ProcessIn
 	serverMemoryLimit := memory.ServerMemoryLimit.Load()
 	for i, totalCnt := 0, 10; i < len(list) && totalCnt > 0; i++ {
 		info := list[i]
-		buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
+		fmt.Fprintf(&buf, "SQL %v: \n", i)
 		fields := util.GenLogFields(record.lastCheckTime.Sub(info.Time), info, false)
 		if fields == nil {
 			continue

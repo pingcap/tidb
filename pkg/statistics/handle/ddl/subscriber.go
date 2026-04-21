@@ -113,7 +113,7 @@ func (h subscriber) handle(
 		}
 	case model.ActionModifyColumn:
 		newTableInfo, modifiedColumnInfo, analyzed := change.GetModifyColumnInfo()
-		// since tidb_enable_ddl_analyze will do analyze in ddl, skip col init here.
+		// since tidb_stats_update_during_ddl will do analyze in ddl, skip col init here.
 		if analyzed {
 			return nil
 		}

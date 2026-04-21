@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -135,13 +133,6 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column) (base.
 // DeriveStats inherits BaseLogicalPlan.LogicalPlan.<11th> implementation.
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
-
-// PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalExpand) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalExpand(p, prop)
-}
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
 func (p *LogicalExpand) ExtractCorrelatedCols() []*expression.CorrelatedColumn {

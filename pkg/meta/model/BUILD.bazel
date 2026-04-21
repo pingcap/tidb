@@ -10,6 +10,7 @@ go_library(
         "index.go",
         "job.go",
         "job_args.go",
+        "masking_policy.go",
         "placement.go",
         "reorg.go",
         "resource_group.go",
@@ -19,6 +20,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config/kerneltype",
+        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/charset",
@@ -28,6 +30,7 @@ go_library(
         "//pkg/parser/types",
         "//pkg/planner/cascades/base",
         "//pkg/sessionctx/vardef",
+        "//pkg/types",
         "//pkg/util/intest",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
@@ -50,6 +53,7 @@ go_test(
         "table_test.go",
     ],
     embed = [":model"],
+    embedsrcs = ["job.go"],
     flaky = True,
     shard_count = 50,
     deps = [

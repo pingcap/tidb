@@ -39,12 +39,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -59,59 +60,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
-
-func findBestTask4LogicalTableDual(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalTableDual](super)
-	// If the required property is not empty and the row count > 1,
-	// we cannot ensure this required property.
-	// But if the row count is 0 or 1, we don't need to care about the property.
-	if !prop.IsSortItemEmpty() && p.RowCount > 1 {
-		return base.InvalidTask, nil
-	}
-	dual := physicalop.PhysicalTableDual{
-		RowCount: p.RowCount,
-	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
-	dual.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(dual)
-	return rt, nil
-}
-
-func findBestTask4LogicalShow(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShow](super)
-	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, nil
-	}
-	pShow := physicalop.PhysicalShow{ShowContents: p.ShowContents, Extractor: p.Extractor}.Init(p.SCtx())
-	pShow.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(pShow)
-	return rt, nil
-}
-
-func findBestTask4LogicalShowDDLJobs(super base.LogicalPlan, prop *property.PhysicalProperty) (base.Task, error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalShowDDLJobs](super)
-	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, nil
-	}
-	pShow := physicalop.PhysicalShowDDLJobs{JobNumber: p.JobNumber}.Init(p.SCtx())
-	pShow.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(pShow)
-	return rt, nil
-}
 
 func prepareIterationDownElems(super base.LogicalPlan) (*memo.GroupExpression, *logicalop.BaseLogicalPlan, int, iterFunc, base.LogicalPlan) {
 	// get the possible group expression and logical operator from common lp pointer.
@@ -138,20 +86,84 @@ type enumerateState struct {
 	limitCopExist bool
 }
 
-// @first: indicates the best task returned.
-// @second: indicates the plan cnt in this subtree.
-// @third: indicates whether this plan apply the hint.
-// @fourth: indicates error
+func buildPhysPlanPartInfo(ds *logicalop.DataSource) *physicalop.PhysPlanPartInfo {
+	columnNames, err := rule.ReconstructTableColNames(ds)
+	if err != nil {
+		// Keep planning resilient. If reconstructing names fails, fall back to output
+		// names to avoid aborting optimization.
+		columnNames = ds.OutputNames()
+	}
+	return &physicalop.PhysPlanPartInfo{
+		PruningConds:   ds.AllConds,
+		PartitionNames: ds.PartitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    columnNames,
+	}
+}
+
+// The reason the physical plan is a slice of slices is to allow preferring a specific type of plan within a slice,
+// while still performing cost comparison between slices.
+// There are three types of task in the following code: hintTask, normalPreferTask, and normalIterTask.
+// The purpose of hintTask is to always have the highest priority, both **within and across slices**,
+// meaning it will always be chosen if available, regardless of cost comparison.
+// For non-hint tasks, i.e., normalIterTask and normalPreferTask, normalPreferTask has the highest priority **within** a slice.
+// normalIterTask has the lowest priority and always depends on cost comparison to choose the least expensive task.
 func enumeratePhysicalPlans4Task(
+	super base.LogicalPlan,
+	physicalPlansSlice [][]base.PhysicalPlan,
+	prop *property.PhysicalProperty,
+	addEnforcer bool,
+) (base.Task, bool, error) {
+	if len(physicalPlansSlice) == 0 {
+		return base.InvalidTask, false, nil
+	}
+
+	var normalTask, hintTask = base.InvalidTask, base.InvalidTask
+	for _, ops := range physicalPlansSlice {
+		if len(ops) == 0 {
+			continue
+		}
+		curTask, curHintCanWork, curErr := enumeratePhysicalPlans4TaskHelper(super, ops, prop, addEnforcer)
+		if curErr != nil {
+			return nil, false, curErr
+		}
+
+		if curHintCanWork {
+			if hintTask.Invalid() {
+				hintTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				hintTask = curTask
+			}
+		} else {
+			if normalTask.Invalid() {
+				normalTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalTask = curTask
+			}
+		}
+	}
+	if !hintTask.Invalid() {
+		return hintTask, true, nil
+	}
+	return normalTask, false, nil
+}
+
+func enumeratePhysicalPlans4TaskHelper(
 	super base.LogicalPlan,
 	physicalPlans []base.PhysicalPlan,
 	prop *property.PhysicalProperty,
 	addEnforcer bool,
 ) (base.Task, bool, error) {
-	var bestTask, preferTask = base.InvalidTask, base.InvalidTask
 	var err error
+	var normalIterTask, normalPreferTask, hintTask = base.InvalidTask, base.InvalidTask, base.InvalidTask
+	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
+
 	var fd *funcdep.FDSet
 	if addEnforcer && len(physicalPlans) != 0 {
 		switch logicalPlan := baseLP.Self().(type) {
@@ -160,10 +172,7 @@ func enumeratePhysicalPlans4Task(
 			fd = logicalPlan.ExtractFD()
 		}
 	}
-	if len(physicalPlans) == 0 {
-		return base.InvalidTask, false, nil
-	}
-	initState := &enumerateState{}
+
 	for _, pp := range physicalPlans {
 		childTasks, err = iteration(iterObj, pp, childTasks, prop)
 		if err != nil {
@@ -189,11 +198,11 @@ func enumeratePhysicalPlans4Task(
 		// we need to check the hint is applicable before enforcing the property. otherwise
 		// what we get is Sort ot Exchanger kind of operators.
 		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		hintApplicable := applyLogicalHintVarEigen(baseLP.Self(), initState, pp, childTasks)
+		hintApplicable := applyLogicalHintVarEigen(baseLP.Self(), pp, childTasks)
 
 		// Enforce curTask property
 		if addEnforcer {
-			curTask = enforceProperty(prop, curTask, baseLP.Plan.SCtx(), fd)
+			curTask = physicalop.EnforceProperty(prop, curTask, baseLP.Plan.SCtx(), fd)
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
@@ -202,43 +211,64 @@ func enumeratePhysicalPlans4Task(
 			curTask = optimizeByShuffle(curTask, baseLP.Plan.SCtx())
 		}
 
-		// Get the most efficient one only by low-cost priority among all valid plans.
-		if curIsBetter, err := compareTaskCost(curTask, bestTask); err != nil {
-			return nil, false, err
-		} else if curIsBetter {
-			bestTask = curTask
-		}
-
 		if hintApplicable {
-			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
-			if curIsBetter, err := compareTaskCost(curTask, preferTask); err != nil {
+			if hintTask.Invalid() {
+				hintTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
-				preferTask = curTask
+				hintTask = curTask
+			}
+		}
+
+		if hintTask.Invalid() && hasNormalPreferTask(baseLP.Self(), initState, pp, childTasks) {
+			if normalPreferTask.Invalid() {
+				normalPreferTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalPreferTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalPreferTask = curTask
+			}
+		}
+
+		if hintTask.Invalid() && normalPreferTask.Invalid() {
+			if normalIterTask.Invalid() {
+				normalIterTask = curTask
+			} else if curIsBetter, err := compareTaskCost(curTask, normalIterTask); err != nil {
+				return nil, false, err
+			} else if curIsBetter {
+				normalIterTask = curTask
 			}
 		}
 	}
-	// there is a valid preferred low-cost physical one, return it.
-	if !preferTask.Invalid() {
-		return preferTask, true, nil
+
+	returnedTask := base.InvalidTask
+	var hintCanWork bool
+	if !hintTask.Invalid() {
+		returnedTask = hintTask
+		hintCanWork = true
+	} else if !normalPreferTask.Invalid() {
+		returnedTask = normalPreferTask
+	} else if !normalIterTask.Invalid() {
+		returnedTask = normalIterTask
 	}
-	// if there is no valid preferred low-cost physical one, return the normal low one.
-	// if the hint is specified without any valid plan, we should also record the warnings.
-	if !bestTask.Invalid() {
+
+	if !hintCanWork && returnedTask != nil && !returnedTask.Invalid() {
+		// It means there is no hint or hint is not applicable.
+		// So record hint warning if necessary.
 		if warn := recordWarnings(baseLP.Self(), prop, addEnforcer); warn != nil {
-			bestTask.AppendWarning(warn)
+			returnedTask.AppendWarning(warn)
 		}
 	}
-	// return the normal lowest-cost physical one.
-	return bestTask, false, nil
+	return returnedTask, hintCanWork, nil
 }
 
 // TODO: remove the taskTypeSatisfied function, it is only used to check the task type in the root, cop, mpp task.
 func taskTypeSatisfied(propRequired *property.PhysicalProperty, childTask base.Task) bool {
 	// check the root, cop, mpp task type matched the required property.
 	if childTask == nil || propRequired == nil {
-		// index join v1 may occur that propRequired is nil, and return task is nil too. Return true
-		// to make sure let it walk through the following logic.
+		// Some callers defer building a concrete child task until later, so treat the
+		// requirement as satisfied here and let the follow-up logic decide.
 		return true
 	}
 	_, isRoot := childTask.(*physicalop.RootTask)
@@ -310,7 +340,7 @@ func iteratePhysicalPlan4BaseLogical(
 	childTasks = childTasks[:0]
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, err := child.FindBestTask(childProp)
+		childTask, err := physicalop.FindBestTask(child, childProp)
 		if err != nil {
 			return nil, err
 		}
@@ -402,7 +432,7 @@ func iterateChildPlan4LogicalSequence(
 	for j := range lastIdx {
 		child := p.Children()[j]
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		childTask, err := child.FindBestTask(childProp)
+		childTask, err := physicalop.FindBestTask(child, childProp)
 		if err != nil {
 			return nil, err
 		}
@@ -428,7 +458,7 @@ func iterateChildPlan4LogicalSequence(
 	if lastChildProp.IsFlashProp() {
 		lastChildProp.CTEProducerStatus = property.AllCTECanMpp
 	}
-	lastChildTask, err := p.Children()[lastIdx].FindBestTask(lastChildProp)
+	lastChildTask, err := physicalop.FindBestTask(p.Children()[lastIdx], lastChildProp)
 	if err != nil {
 		return nil, err
 	}
@@ -591,7 +621,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(self)
+		pass := admitIndexJoinInnerChildPattern(self, prop.IndexJoinProp)
 		if !pass {
 			// even enforce hint can not work with this.
 			return base.InvalidTask, nil
@@ -621,7 +651,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 	// for childProp := prop.CloneEssentialFields(), we do not clone indexJoinProp childProp for by default.
 	// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	newProp.IndexJoinProp = prop.IndexJoinProp
-	var plansFitsProp, plansNeedEnforce []base.PhysicalPlan
+	var plansFitsProp, plansNeedEnforce [][]base.PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
 	// so we try to get the task without the enforced sort first.
@@ -674,8 +704,9 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 				// If the original property is not enforced and hint cannot
 				// work anyway, we give up `plansNeedEnforce` for efficiency.
 				//
-				// for special case, once we empty the sort item here, the more possible index join can be enumerated, which
-				// may lead the hint work only after child is built up under index join build mode v2. so here we tried
+				// Once we empty the sort item here, more index join candidates can be
+				// enumerated and a hint may only become applicable after the full inner
+				// plan tree is built, so keep the enforced branch in that case.
 				plansNeedEnforce = nil
 			}
 		}
@@ -713,61 +744,6 @@ END:
 	return bestTask, nil
 }
 
-func findBestTask4LogicalMemTable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalMemTable](super)
-	if prop.MPPPartitionTp != property.AnyType {
-		return base.InvalidTask, nil
-	}
-
-	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for p.findBestTask.
-	// Before function return, reset it for enforcing task prop.
-	oldProp := prop.CloneEssentialFields()
-	if prop.CanAddEnforcer {
-		// First, get the bestTask without enforced prop
-		prop.CanAddEnforcer = false
-		// still use the super.
-		t, err = super.FindBestTask(prop)
-		if err != nil {
-			return nil, err
-		}
-		prop.CanAddEnforcer = true
-		if t != base.InvalidTask {
-			return
-		}
-		// Next, get the bestTask with enforced prop
-		prop.SortItems = []property.SortItem{}
-	}
-	defer func() {
-		if err != nil {
-			return
-		}
-		if prop.CanAddEnforcer {
-			*prop = *oldProp
-			t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
-			prop.CanAddEnforcer = true
-		}
-	}()
-
-	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, nil
-	}
-	memTable := physicalop.PhysicalMemTable{
-		DBName:         p.DBName,
-		Table:          p.TableInfo,
-		Columns:        p.Columns,
-		Extractor:      p.Extractor,
-		QueryTimeRange: p.QueryTimeRange,
-	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
-	memTable.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(memTable)
-	return rt, nil
-}
-
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
 func tryToGetDualTask(ds *logicalop.DataSource) (base.Task, error) {
 	for _, cond := range ds.PushedDownConds {
@@ -794,6 +770,12 @@ type candidatePath struct {
 	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
 	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
 	matchPropResult   property.PhysicalPropMatchResult
+	// partialOrderMatch records the partial order match result for TopN optimization.
+	// When the matched is true, it means this path can provide partial order using prefix index.
+	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
+	indexJoinCols           int                              // how many index columns are used in access conditions in this IndexJoin.
+	isFullRange             bool                             // cached result of whether this path covers the full scan range.
+	eqOrInCount             int                              // cached result of equalPredicateCount().
 }
 
 func compareBool(l, r bool) int {
@@ -829,17 +811,33 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 	// MaxCountAfterAccess tracks the worst case "CountAfterAccess", accounting for scenarios that could
 	// increase our row estimation, thus lhs/rhsRiskRatio represents the "risk" of the CountAfterAccess value.
 	// Lower value means less risk that the actual row count is higher than the estimated one.
-	if lhs.path.MaxCountAfterAccess > 0 && rhs.path.MaxCountAfterAccess > 0 {
+	if lhs.path.MaxCountAfterAccess > lhs.path.CountAfterAccess && lhs.path.CountAfterAccess > 0 {
 		lhsRiskRatio = lhs.path.MaxCountAfterAccess / lhs.path.CountAfterAccess
+	}
+	if rhs.path.MaxCountAfterAccess > rhs.path.CountAfterAccess && rhs.path.CountAfterAccess > 0 {
 		rhsRiskRatio = rhs.path.MaxCountAfterAccess / rhs.path.CountAfterAccess
 	}
+	sumLHS := lhs.path.CountAfterAccess + lhs.path.MaxCountAfterAccess
+	sumRHS := rhs.path.CountAfterAccess + rhs.path.MaxCountAfterAccess
 	// lhs has lower risk
-	if lhsRiskRatio < rhsRiskRatio && lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
-		return 1, lhsRiskRatio
+	if lhsRiskRatio < rhsRiskRatio {
+		if lhs.path.CountAfterAccess <= rhs.path.CountAfterAccess {
+			return 1, lhsRiskRatio
+		}
+		if sumLHS < sumRHS && lhs.path.MinCountAfterAccess > 0 &&
+			(lhs.path.MinCountAfterAccess <= rhs.path.MinCountAfterAccess || lhs.path.CountAfterIndex <= rhs.path.CountAfterIndex) {
+			return 1, lhsRiskRatio
+		}
 	}
 	// rhs has lower risk
-	if rhsRiskRatio < lhsRiskRatio && rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
-		return -1, rhsRiskRatio
+	if rhsRiskRatio < lhsRiskRatio {
+		if rhs.path.CountAfterAccess <= lhs.path.CountAfterAccess {
+			return -1, rhsRiskRatio
+		}
+		if sumRHS < sumLHS && rhs.path.MinCountAfterAccess > 0 &&
+			(rhs.path.MinCountAfterAccess <= lhs.path.MinCountAfterAccess || rhs.path.CountAfterIndex <= lhs.path.CountAfterIndex) {
+			return -1, rhsRiskRatio
+		}
 	}
 	return 0, 0
 }
@@ -847,7 +845,7 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 // The 2nd return value indicates whether the "better path" is missing statistics or not.
-func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableInfo *model.TableInfo, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) {
+func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) {
 	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
@@ -863,13 +861,9 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// over a table scan. Allowing indexes without statistics to survive means they can win via heuristics where
 	// they otherwise would have lost on cost.
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
-	lhsFullScan := lhs.path.IsFullScanRange(tableInfo)
-	rhsFullScan := rhs.path.IsFullScanRange(tableInfo)
-	lhsFullMatch := !lhsFullScan && isFullIndexMatch(lhs)
-	rhsFullMatch := !rhsFullScan && isFullIndexMatch(rhs)
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
-		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, lhsFullScan, rhsFullScan, statsTbl)
+		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
 	}
 	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
 	// globalResult: comparison result of global index vs local index preference (1=LHS better, -1=RHS better, 0=equal)
@@ -885,19 +879,26 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	// riskResult: comparison result of risk factor (1=LHS better, -1=RHS better, 0=equal)
 	riskResult, _ := compareRiskRatio(lhs, rhs)
 	// eqOrInResult: comparison result of equal/IN predicate coverage (1=LHS better, -1=RHS better, 0=equal)
-	eqOrInResult, lhsEqOrInCount, rhsEqOrInCount := compareEqOrIn(lhs, rhs)
+	eqOrInResult := compareEqOrIn(lhs, rhs)
+
+	// predicateResult is separated out. An index may "win" because it has a better
+	// accessResult - but that access has high risk.
+	// accessResult does not differentiate between range or equal/IN predicates.
+	// Summing these 3 metrics ensures that a "high risk" index wont win ONLY on
+	// accessResult. The high risk will negate that accessResult with erOrIn being the
+	// tiebreaker or equalizer.
+	predicateResult := accessResult + riskResult + eqOrInResult
 
 	// totalSum is the aggregate score of all comparison metrics
-	// riskResult is excluded because more work is required.
-	// TODO: - extend riskResult such that risk factors can be integrated into the aggregate score. Risk should
-	// consider what "type" of risk is being evaluated (eg. out of range, implied independence, data skew, whether a
-	// bound was applied, etc.)
-	totalSum := accessResult + scanResult + matchResult + globalResult + eqOrInResult
+	totalSum := accessResult + scanResult + matchResult + globalResult
 
 	pseudoResult := 0
 	// Determine winner if one index doesn't have statistics and another has statistics
-	if (lhsPseudo || rhsPseudo) && !tablePseudo { // At least one index doesn't have statistics
-		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhsEqOrInCount, rhsEqOrInCount, preferRange)
+	if (lhsPseudo || rhsPseudo) && !tablePseudo && // At least one index doesn't have statistics
+		(lhs.eqOrInCount > 0 || rhs.eqOrInCount > 0) { // At least one index has equal/IN predicates
+		lhsFullMatch := isFullIndexMatch(lhs)
+		rhsFullMatch := isFullIndexMatch(rhs)
+		pseudoResult = comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch, eqOrInResult, lhs.eqOrInCount, rhs.eqOrInCount, preferRange)
 		if pseudoResult > 0 && totalSum >= 0 {
 			return pseudoResult, lhsPseudo
 		}
@@ -925,29 +926,47 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		}
 	}
 
-	if !comparable1 && !comparable2 {
+	leftDidNotLose := predicateResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0
+	rightDidNotLose := predicateResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0
+	if !comparable1 || !comparable2 {
+		// These aren't comparable - meaning that they have different combinations of columns in
+		// the access conditions or filters.
+		// One or more predicates could carry high risk - so we want to compare that risk and other
+		// metrics to see if we can determine a clear winner.
+		// The 2 key metrics here are riskResult and predicateResult.
+		// - riskResult tells us which candidate has lower risk
+		// - predicateResult already includes risk - we need ">1" or "<-1" to counteract the risk factor.
+		// "DidNotLose" and totalSum are also factored in to ensure that the winner is better overall."
+		if riskResult > 0 && leftDidNotLose && totalSum >= 0 && predicateResult > 1 {
+			return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
+		}
+		if riskResult < 0 && rightDidNotLose && totalSum <= 0 && predicateResult < -1 {
+			return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
+		}
 		return 0, false // No winner (0). Do not return the pseudo result
 	}
-	if accessResult >= 0 && scanResult >= 0 && matchResult >= 0 && globalResult >= 0 && eqOrInResult >= 0 && totalSum > 0 {
+	// leftDidNotLose, but one of the metrics is a win
+	if leftDidNotLose && totalSum > 0 {
 		return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 	}
-	if accessResult <= 0 && scanResult <= 0 && matchResult <= 0 && globalResult <= 0 && eqOrInResult <= 0 && totalSum < 0 {
+	// rightDidNotLose, but one of the metrics is a win
+	if rightDidNotLose && totalSum < 0 {
 		return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 	}
 	return 0, false // No winner (0). Do not return the pseudo result
 }
 
-func isCandidatesPseudo(lhs, rhs *candidatePath, lhsFullScan, rhsFullScan bool, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
+func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
 	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-		if !lhsFullScan && lhs.path.Index != nil {
+		if !lhs.path.IsTablePath() && lhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true) {
 				lhsPseudo = false // We have statistics for the lhs index
 			} else {
 				lhsPseudo = true
 			}
 		}
-		if !rhsFullScan && rhs.path.Index != nil {
+		if !rhs.path.IsTablePath() && rhs.path.Index != nil {
 			if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true) {
 				rhsPseudo = false // We have statistics on the rhs index
 			} else {
@@ -984,27 +1003,25 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 	return 0
 }
 
-// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
-// and the count for each. For example:
+// Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie).
+// For example:
 //
 //	where a=1 and b=1 and c=1 and d=1
 //	lhs == idx(a, b, e) <-- lhsEqOrInCount == 2 (loser)
 //	rhs == idx(d, c, b) <-- rhsEqOrInCount == 3 (winner)
-func compareEqOrIn(lhs, rhs *candidatePath) (predCompare, lhsEqOrInCount, rhsEqOrInCount int) {
+func compareEqOrIn(lhs, rhs *candidatePath) (predCompare int) {
 	if len(lhs.path.PartialIndexPaths) > 0 || len(rhs.path.PartialIndexPaths) > 0 {
 		// If either path has partial index paths, we cannot reliably compare EqOrIn conditions.
-		return 0, 0, 0
+		return 0
 	}
-	lhsEqOrInCount = lhs.equalPredicateCount()
-	rhsEqOrInCount = rhs.equalPredicateCount()
-	if lhsEqOrInCount > rhsEqOrInCount {
-		return 1, lhsEqOrInCount, rhsEqOrInCount
+	if lhs.eqOrInCount > rhs.eqOrInCount {
+		return 1
 	}
-	if lhsEqOrInCount < rhsEqOrInCount {
-		return -1, lhsEqOrInCount, rhsEqOrInCount
+	if lhs.eqOrInCount < rhs.eqOrInCount {
+		return -1
 	}
-	// We didn't find a winner, but return both counts for use by the caller
-	return 0, lhsEqOrInCount, rhsEqOrInCount
+	// We didn't find a winner
+	return 0
 }
 
 func isFullIndexMatch(candidate *candidatePath) bool {
@@ -1016,15 +1033,30 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 	return candidate.path.EqOrInCondCount > 0 && len(candidate.indexCondsColMap) >= len(candidate.path.Index.Columns)
 }
 
+// hasV0NewCollationStringHandle reports whether ds has CommonHandleVersion == 0
+// with new collation enabled and at least one non-binary string column in the
+// handle. In this combination the handle bytes stored in the index are collation
+// sortKey weights, not original values, so collation-aware comparison on those
+// bytes during merge-sort would be incorrect.
+func hasV0NewCollationStringHandle(ds *logicalop.DataSource) bool {
+	if ds.TableInfo.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
+		return false
+	}
+	for _, col := range ds.CommonHandleCols {
+		if col != nil && col.RetType.EvalType() == types.ETString &&
+			!mysql.HasBinaryFlag(col.RetType.GetFlag()) {
+			return true
+		}
+	}
+	return false
+}
+
 func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) property.PhysicalPropMatchResult {
 	if ds.Table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
 		// TableScan with cluster table can't keep order.
 		return property.PropNotMatched
 	}
 	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
-		if path.Index == nil || path.Index.VectorInfo == nil {
-			return property.PropNotMatched
-		}
 		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
 			return property.PropNotMatched
 		}
@@ -1046,14 +1078,62 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		}
 		return property.PropMatched
 	}
+
+	// Match SortItems physical property.
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
 	// it needs not to keep order for index scan.
-	if prop.IsSortItemEmpty() || !all || len(path.IdxCols) < len(prop.SortItems) {
+	if prop.IsSortItemEmpty() || !all {
 		return property.PropNotMatched
 	}
 
-	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then the property is matched.
+	// For non-unique secondary indexes on CommonHandle tables, the index physically
+	// stores (index_cols, PK_cols). Build an effective column list that includes the
+	// PK suffix so that ORDER BY on PK columns can be recognised.
+	//
+	// Skip this when CommonHandleVersion == 0 with new collation enabled and
+	// the handle contains non-binary string columns. In v0, string handle columns
+	// are stored as sortKey bytes (collation weight), not original values. If we
+	// extend idxCols and the query triggers PropMatchedNeedMergeSort (e.g. IN
+	// predicate), the merge-sort comparator would apply the column's collation to
+	// sortKey bytes, producing incorrect ordering.
+	idxCols := path.IdxCols
+	idxColLens := path.IdxColLens
+	if path.Index != nil && !path.Index.Unique && !path.Index.Primary &&
+		ds.TableInfo.IsCommonHandle && len(ds.CommonHandleCols) > 0 &&
+		len(path.Index.Columns) == len(path.IdxCols) &&
+		!hasV0NewCollationStringHandle(ds) {
+		extended := false
+		for i, handleCol := range ds.CommonHandleCols {
+			if handleCol == nil {
+				continue
+			}
+			alreadyInIndex := false
+			for _, col := range idxCols {
+				if col != nil && col.EqualColumn(handleCol) {
+					alreadyInIndex = true
+					break
+				}
+			}
+			if !alreadyInIndex {
+				if !extended {
+					idxCols = make([]*expression.Column, len(path.IdxCols), len(path.IdxCols)+len(ds.CommonHandleCols))
+					copy(idxCols, path.IdxCols)
+					idxColLens = make([]int, len(path.IdxColLens), len(path.IdxColLens)+len(ds.CommonHandleCols))
+					copy(idxColLens, path.IdxColLens)
+					extended = true
+				}
+				idxCols = append(idxCols, handleCol)
+				idxColLens = append(idxColLens, ds.CommonHandleLens[i])
+			}
+		}
+	}
+
+	if len(idxCols) < len(prop.SortItems) {
+		return property.PropNotMatched
+	}
+
+	// Basically, if `prop.SortItems` is the prefix of `idxCols`, then the property is matched.
 	// However, we need to consider the situations when some columns of `path.IdxCols` are evaluated as constant.
 	// For example:
 	// ```
@@ -1075,9 +1155,9 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	colIdx := 0
 	for _, sortItem := range prop.SortItems {
 		found := false
-		for ; colIdx < len(path.IdxCols); colIdx++ {
+		for ; colIdx < len(idxCols); colIdx++ {
 			// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
-			if path.IdxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[colIdx]) {
+			if idxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(idxCols[colIdx]) {
 				found = true
 				colIdx++
 				break
@@ -1144,6 +1224,106 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		}
 	}
 	return matchResult
+}
+
+// matchPartialOrderProperty checks if the index can provide partial order for TopN optimization.
+// Unlike matchProperty, this function allows prefix index to match ORDER BY columns.
+// partialOrderInfo being non-nil indicates that partial order optimization is enabled.
+// The current implementation primarily supports cases where
+// the index can **completely match** the **prefix** of the order by column.
+// Case 1: Prefix index INDEX idx(col(N)) matches ORDER BY col
+// For example:
+//
+//	query: order by a, b
+//	index: a(10)
+//	index: a, b(10)
+//
+// On success, this function will return `PartialOrderMatchResult.Matched`= true, `PartialOrderMatchResult.PrefixCol` and `PartialOrderMatchResult.PrefixLen`.
+// Otherwise it returns false and not initialize `PrefixCol and PrefixLen`.
+// TODO
+// Case 2: Composite index INDEX idx(a, b) matches ORDER BY a, b, c (index provides order for a, b)
+// In fact, there is a Case3 that can also be supported, but it will not be explained in detail here.
+// Please refer to the design document for details.
+func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property.PartialOrderInfo) property.PartialOrderMatchResult {
+	emptyResult := property.PartialOrderMatchResult{Matched: false}
+
+	if partialOrderInfo == nil || path.Index == nil || len(path.IdxCols) == 0 {
+		return emptyResult
+	}
+
+	sortItems := partialOrderInfo.SortItems
+	if len(sortItems) == 0 {
+		return emptyResult
+	}
+
+	allSameOrder, _ := partialOrderInfo.AllSameOrder()
+	if !allSameOrder {
+		return emptyResult
+	}
+
+	// Case 1: Prefix index INDEX idx(col(N)) matches ORDER BY col
+	// Check if index columns can match ORDER BY columns (allowing prefix index)
+	//
+	// NOTE: We use path.Index.Columns to get the actual index definition columns count,
+	// because path.FullIdxCols may include additional handle columns (e.g., primary key `id`)
+	// appended for non-unique indexes on tables with PKIsHandle.
+	// For example, for `index idx_name_prefix (name(10))` on a table with `id int primary key`,
+	// path.FullIdxCols = [name, id] but path.Index.Columns only contains [name].
+	// We should only consider the actual index definition columns for partial order matching.
+	indexColCount := len(path.Index.Columns)
+
+	// Constraint 0: The full idx cols length must >= all the index definition columns length, no matter column is pruned or not
+	// Theoretically, the preceding function logic ”IndexInfo2FullCols“ can guarantee that this constraint will always hold.
+	// Therefore, this is merely a defensive check to prevent the array from going out of bounds in the subsequent for loop.
+	if len(path.FullIdxCols) < indexColCount || len(path.FullIdxColLens) < indexColCount {
+		return emptyResult
+	}
+
+	// Constraint 1: The number of index definition columns must be <= the number of ORDER BY columns
+	if indexColCount > len(sortItems) {
+		return emptyResult
+	}
+	// Constraint 2: The last column of the index definition must be a prefix column
+	lastIdxColLen := path.Index.Columns[indexColCount-1].Length
+	if lastIdxColLen == types.UnspecifiedLength {
+		// The last column is not a prefix column, skip this index
+		return emptyResult
+	}
+	// Extract ORDER BY columns
+	orderByCols := make([]*expression.Column, 0, len(sortItems))
+	for _, item := range sortItems {
+		orderByCols = append(orderByCols, item.Col)
+	}
+
+	// Only iterate over the actual index definition columns, not the appended handle columns
+	for i := range indexColCount {
+		idxCol := path.FullIdxCols[i]
+		if idxCol == nil {
+			return emptyResult
+		}
+		// check if the same column
+		if !orderByCols[i].EqualColumn(idxCol) {
+			return emptyResult
+		}
+
+		// meet prefix index column, match termination
+		if path.FullIdxColLens[i] != types.UnspecifiedLength {
+			// If we meet a prefix column but it's not the last index definition column, it's not supported.
+			// e.g. prefix(a), b cannot provide partial order for ORDER BY a, b.
+			if i != indexColCount-1 {
+				return emptyResult
+			}
+			// Encountered a prefix index column.
+			// This prefix index column can provide partial order, but subsequent columns cannot match.
+			return property.PartialOrderMatchResult{
+				Matched:   true,
+				PrefixCol: idxCol,
+				PrefixLen: path.FullIdxColLens[i],
+			}
+		}
+	}
+
+	return emptyResult
 }
 
 // GroupRangesByCols groups the ranges by the values of the columns specified by groupByColIdxs.
@@ -1310,13 +1490,24 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, property.PropNotMatched
 	}
+
+	// check if any of the partial paths is not cacheable.
+	notCachableReason := ""
+	for _, p := range determinedIndexPartialPaths {
+		if p.NoncacheableReason != "" {
+			notCachableReason = p.NoncacheableReason
+			break
+		}
+	}
+
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
 		IndexMergeAccessMVIndex:  useMVIndex,
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
 		// inherit those determined can't pushed-down table filters.
-		TableFilters: path.TableFilters,
+		TableFilters:       path.TableFilters,
+		NoncacheableReason: notCachableReason,
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
@@ -1363,14 +1554,42 @@ func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
+	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
 func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
+	// Because the skyline pruning already prune the indexes that cannot provide partial order
+	// when prop has PartialOrderInfo physical property,
+	// So here we just need to record the partial order match result(prefixCol, prefixLen).
+	// The partialOrderMatchResult.Matched() will be always true after skyline pruning.
+	if ds.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() && prop.PartialOrderInfo != nil {
+		candidate.partialOrderMatchResult = matchPartialOrderProperty(path, prop.PartialOrderInfo)
+	}
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 	candidate.indexCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
+	return candidate
+}
+
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int) *candidatePath {
+	candidate := &candidatePath{path: path, indexJoinCols: indexJoinCols}
+	candidate.matchPropResult = property.PropNotMatched
+	candidate.accessCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+	candidate.indexCondsColMap = util.ExtractCol2Len(sctx.GetExprCtx().GetEvalCtx(), append(path.AccessConds, path.IndexFilters...), path.FullIdxCols, path.FullIdxColLens)
+	// AccessConds could miss some predicates since the DataSource can't see join predicates.
+	// For example, `where t1.a=t2.a and t2.b=1`, `t1=a=t2.a` is not pushed down to t2's accessConds since it's a join
+	// predicate. We need to set columns used as join keys to accessCondsColMap/indexCondsColMap manually.
+	for i := range indexJoinCols {
+		candidate.accessCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+	}
+	candidate.isFullRange = ranger.HasFullRange(path.Ranges, false)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
@@ -1381,12 +1600,16 @@ func convergeIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath
 		return nil
 	}
 	candidate := &candidatePath{path: possiblePath, matchPropResult: match}
+	candidate.isFullRange = possiblePath.IsFullScanRange(ds.TableInfo)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
 func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = isMatchPropForIndexMerge(ds, path, prop)
+	candidate.isFullRange = path.IsFullScanRange(ds.TableInfo)
+	candidate.eqOrInCount = candidate.equalPredicateCount()
 	return candidate
 }
 
@@ -1420,16 +1643,45 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
-			currentCandidate = getTableCandidate(ds, path, prop)
-		} else {
-			if !(len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan) {
+			if prop.PartialOrderInfo != nil {
+				// skyline pruning table path with partial order property is not supported yet.
+				// TODO: support it in the future after we support prefix column as partial order.
 				continue
 			}
+			currentCandidate = getTableCandidate(ds, path, prop)
+		} else {
+			// Check if this path can be used for partial order optimization
+			var matchPartialOrderIndex bool
+			if ds.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() &&
+				prop.PartialOrderInfo != nil {
+				if !matchPartialOrderProperty(path, prop.PartialOrderInfo).Matched {
+					// skyline pruning all indexes that cannot provide partial order when we are looking for
+					continue
+				}
+				matchPartialOrderIndex = true
+				// If the index can match partial order requirement and user use "use/force index" in hint.
+				// If the index can't match partial order requirement and use use "use/force index" and enable partial order optimization together,
+				// the behavior will degenerate into normal index use behavior without considering partial order optimization.
+				// If path is force but it use the hint /no_order_index/ which ForceNoKeepOrder is true,
+				// we won't consider it for partial order optimization, and it will be treated as normal forced index.
+				if path.Forced && !path.ForceNoKeepOrder {
+					path.ForcePartialOrder = true
+				}
+			}
+
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
 			// 1. This path's access cond is not nil.
 			// 2. We have a non-empty prop to match.
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
+			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex
+			if !keepIndex {
+				// If none of the above conditions are met, this index will be directly pruned here.
+				continue
+			}
+
+			// After passing the check, generate the candidate
 			currentCandidate = getIndexCandidate(ds, path, prop)
 		}
 		pruned := false
@@ -1437,7 +1689,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
+			result, missingStats := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate, preferRange)
 			if missingStats {
 				idxMissingStats = true // Ensure that we track idxMissingStats across all iterations
 			}
@@ -1457,11 +1709,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	}
 
 	// If we've forced an index merge - we want to keep these plans
-	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
-		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
-		fixcontrol.Fix52869,
-		false,
-	)
+	preferMerge := rule.ShouldPreferIndexMerge(ds)
 	if preferRange {
 		// Override preferRange with the following limitations to scope
 		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
@@ -1479,10 +1727,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
-			if !c.path.IsFullScanRange(ds.TableInfo) {
-				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.equalPredicateCount() > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
+			// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
+			indexFilters := c.eqOrInCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+			if preferMerge || ((c.path.IsSingleScan || indexFilters) && (prop.IsSortItemEmpty() || c.matchPropResult.Matched())) {
+				if !c.isFullRange {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
@@ -1541,6 +1789,15 @@ func (c *candidatePath) hasOnlyEqualPredicatesInDNF() bool {
 }
 
 func (c *candidatePath) equalPredicateCount() int {
+	if c.indexJoinCols > 0 { // this candidate path is for Index Join
+		// Specially handle indexes under Index Join, since these indexes can't see the join key themselves, we can't
+		// use path.EqOrInCondCount here.
+		// For example, for "where t1.a=t2.a and t2.b=1" and index "idx(t2, a, b)", since the DataSource of t2 can't
+		// see the join key "t1.a=t2.a", it only considers "t2.b=1" as access condition, so its EqOrInCondCount is 0,
+		// but actually it should be 2.
+		return c.indexJoinCols
+	}
+
 	// Exit if this isn't a DNF condition or has no access conditions
 	if !c.path.IsDNFCond || len(c.path.AccessConds) == 0 {
 		return c.path.EqOrInCondCount
@@ -1623,7 +1880,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	if prop == nil {
 		return nil, nil
 	}
-	if ds.IsForUpdateRead && ds.SCtx().GetSessionVars().TxnCtx.IsExplicit {
+	sessionVars := ds.SCtx().GetSessionVars()
+	_, isolationReadEnginesHasTiKV := sessionVars.GetIsolationReadEngines()[kv.TiKV]
+	if ds.IsForUpdateRead && sessionVars.TxnCtx.IsExplicit && isolationReadEnginesHasTiKV {
 		hasPointGetPath := false
 		for _, path := range ds.PossibleAccessPaths {
 			if isPointGetPath(ds, path) {
@@ -1656,7 +1915,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(ds)
+		pass := admitIndexJoinInnerChildPattern(ds, prop.IndexJoinProp)
 		if !pass {
 			// even enforce hint can not work with this.
 			return base.InvalidTask, nil
@@ -1665,10 +1924,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		defer func() {
 			ds.StoreTask(prop, t)
 		}()
-		// when datasource leaf is in index join's inner side, build the task out with old
-		// index join build logic, we can't merge this with normal datasource's index range
-		// because normal index range is built on expression EQ/IN. while index join's inner
-		// has its special runtime constants detecting and filling logic.
+		// When a datasource is on the inner side of an index join, build it with the
+		// indexJoinProp-specific range logic instead of the normal EQ/IN range path,
+		// because the runtime constants are filled by the outer side at execution time.
 		return getBestIndexJoinInnerTaskByProp(ds, prop)
 	}
 	var unenforcedTask base.Task
@@ -1678,7 +1936,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	if prop.CanAddEnforcer {
 		// First, get the bestTask without enforced prop
 		prop.CanAddEnforcer = false
-		unenforcedTask, err = ds.FindBestTask(prop)
+		unenforcedTask, err = physicalop.FindBestTask(ds, prop)
 		if err != nil {
 			return nil, err
 		}
@@ -1703,7 +1961,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, ds.Plan.SCtx(), nil)
+			t = physicalop.EnforceProperty(prop, t, ds.Plan.SCtx(), nil)
 			prop.CanAddEnforcer = true
 		}
 
@@ -1747,7 +2005,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			// prefer tiflash, while current table path is tikv, skip it.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+			if ds.PreferStoreType&h.PreferTiFlash != 0 && (path.StoreType == kv.TiKV || super.SCtx().GetSessionVars().IsMPPAllowed()) {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
@@ -1875,6 +2133,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}
+			if !ds.HasTiFlash() && path.StoreType == kv.TiFlash {
+				continue
+			}
 			var tblTask base.Task
 			if ds.SampleInfo != nil {
 				tblTask, err = convertToSampleTable(ds, prop, candidate)
@@ -1948,12 +2209,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		IndexPlanFinished: false,
 		TblColHists:       ds.TblColHists,
 	}
-	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	// Add sort items for index scan for merge-sort operation between partitions.
 	byItems := make([]*util.ByItems, 0, len(prop.SortItems))
 	for _, si := range prop.SortItems {
@@ -1985,23 +2241,32 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	if (prop.ExpectedCnt + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
 		totalRowCount *= prop.ExpectedCnt / ds.StatsInfo().RowCount
 	}
-	ts, remainingFilters2, moreColumn, err := physicalop.BuildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.matchPropResult == property.PropMatched)
-	if err != nil {
-		return base.InvalidTask, err
+	needTableScan := !canBuildSingleMVIndexOnlyIndexMerge(ds, path)
+	var ts base.PhysicalPlan
+	if needTableScan {
+		var remainingFilters2 []expression.Expression
+		var moreColumn bool
+		ts, remainingFilters2, moreColumn, err = physicalop.BuildIndexMergeTableScan(ds, path.TableFilters, totalRowCount, candidate.matchPropResult == property.PropMatched)
+		if err != nil {
+			return base.InvalidTask, err
+		}
+		if prop.TaskTp != property.RootTaskType && len(remainingFilters2) > 0 {
+			return base.InvalidTask, nil
+		}
+		globalRemainingFilters = append(globalRemainingFilters, remainingFilters2...)
+		if moreColumn {
+			cop.NeedExtraProj = true
+			cop.OriginSchema = ds.Schema()
+		}
+	} else if len(path.TableFilters) > 0 {
+		// For index-only index-merge path, table filters can only be evaluated at root.
+		globalRemainingFilters = append(globalRemainingFilters, path.TableFilters...)
 	}
-	if prop.TaskTp != property.RootTaskType && len(remainingFilters2) > 0 {
-		return base.InvalidTask, nil
-	}
-	globalRemainingFilters = append(globalRemainingFilters, remainingFilters2...)
 	cop.KeepOrder = candidate.matchPropResult == property.PropMatched
 	cop.TablePlan = ts
 	cop.IdxMergePartPlans = scans
 	cop.IdxMergeIsIntersection = path.IndexMergeIsIntersection
 	cop.IdxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
-	if moreColumn {
-		cop.NeedExtraProj = true
-		cop.OriginSchema = ds.Schema()
-	}
 	if len(globalRemainingFilters) != 0 {
 		cop.RootTaskConds = globalRemainingFilters
 	}
@@ -2014,13 +2279,40 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		cop.IndexPlanFinished = true
 		task = cop.ConvertToRootTask(ds.SCtx())
 	} else {
-		_, pureTableScan := ts.(*physicalop.PhysicalTableScan)
-		if !pureTableScan {
+		if ts == nil {
+			cop.IndexPlanFinished = true
+		} else if _, pureTableScan := ts.(*physicalop.PhysicalTableScan); !pureTableScan {
 			cop.IndexPlanFinished = true
 		}
 		task = cop
 	}
 	return task, nil
+}
+
+func canBuildSingleMVIndexOnlyIndexMerge(ds *logicalop.DataSource, path *util.AccessPath) bool {
+	stmtCtx := ds.SCtx().GetSessionVars().StmtCtx
+	// Limit this planner-only optimization to plain EXPLAIN before executor support is added.
+	if !stmtCtx.InExplainStmt || stmtCtx.InExplainAnalyzeStmt {
+		return false
+	}
+	if path.IndexMergeIsIntersection || !path.IndexMergeAccessMVIndex || len(path.PartialIndexPaths) != 1 {
+		return false
+	}
+	partialPath := path.PartialIndexPaths[0]
+	if partialPath == nil || partialPath.IsTablePath() || partialPath.Index == nil || !partialPath.Index.MVIndex {
+		return false
+	}
+	// Requirement 1: all predicates are covered by the partial index path.
+	// Non-empty TableFilters means there are predicates left after partial paths.
+	if len(path.TableFilters) > 0 {
+		return false
+	}
+	// Requirement 2: selected columns are covered by this partial index path.
+	selectedCols := ds.ColsRequiringFullLen
+	if selectedCols == nil {
+		selectedCols = ds.Schema().Columns
+	}
+	return ds.IsIndexCoveringColumns(selectedCols, partialPath.FullIdxCols, partialPath.FullIdxColLens)
 }
 
 func checkColinSchema(cols []*expression.Column, schema *expression.Schema) bool {
@@ -2055,7 +2347,7 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 		ts.ByItems = byItems
 	}
 	if len(ts.FilterCondition) > 0 {
-		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.FilterCondition, nil)
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.FilterCondition, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
@@ -2072,7 +2364,19 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.PhysicalTableScan) {
 	handleCols := ds.HandleCols
 	if handleCols == nil {
-		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+		if (ds.TableInfo.PKIsHandle || ds.TableInfo.IsCommonHandle) && ds.UnMutableHandleCols != nil {
+			handleCols = ds.UnMutableHandleCols
+		} else if ds.Table.Type().IsClusterTable() {
+			// For cluster tables without handles, use the first column from the schema.
+			// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.
+			if len(ds.Columns) > 0 && len(ds.Schema().Columns) > 0 {
+				ts.SetSchema(expression.NewSchema(ds.Schema().Columns[0]))
+				ts.Columns = []*model.ColumnInfo{ds.Columns[0]}
+			}
+			return
+		} else {
+			handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+		}
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
@@ -2088,119 +2392,6 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 	}
 	ts.SetSchema(expression.NewSchema(exprCols...))
 	ts.Columns = infoCols
-}
-
-func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	for i, indexCol := range indexCols {
-		if indexCol == nil || !col.EqualByExprAndID(sctx, indexCol) {
-			continue
-		}
-		if ignoreLen || idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.GetFlen() {
-			return true
-		}
-	}
-	return false
-}
-
-func indexCoveringColumn(ds *logicalop.DataSource, column *expression.Column, indexColumns []*expression.Column, idxColLens []int, ignoreLen bool) bool {
-	handleCoveringState := handleCoveringColumn(ds, column, ignoreLen)
-	// Original int pk can always cover the column.
-	if handleCoveringState == stateCoveredByIntHandle {
-		return true
-	}
-	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
-	if !coveredByPlainIndex && handleCoveringState != stateCoveredByCommonHandle {
-		return false
-	}
-	isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
-		column.GetType(evalCtx).EvalType() == types.ETString &&
-		!mysql.HasBinaryFlag(column.GetType(evalCtx).GetFlag())
-	if !coveredByPlainIndex && handleCoveringState == stateCoveredByCommonHandle && isClusteredNewCollationIdx && ds.Table.Meta().CommonHandleVersion == 0 {
-		return false
-	}
-	return true
-}
-
-type handleCoverState uint8
-
-const (
-	stateNotCoveredByHandle handleCoverState = iota
-	stateCoveredByIntHandle
-	stateCoveredByCommonHandle
-)
-
-// handleCoveringColumn checks if the column is covered by the primary key or extra handle columns.
-func handleCoveringColumn(ds *logicalop.DataSource, column *expression.Column, ignoreLen bool) handleCoverState {
-	if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
-		return stateCoveredByIntHandle
-	}
-	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
-		return stateCoveredByIntHandle
-	}
-	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
-	if coveredByClusteredIndex {
-		return stateCoveredByCommonHandle
-	}
-	return stateNotCoveredByHandle
-}
-
-func isIndexCoveringColumns(ds *logicalop.DataSource, columns, indexColumns []*expression.Column, idxColLens []int) bool {
-	for _, col := range columns {
-		if !indexCoveringColumn(ds, col, indexColumns, idxColLens, false) {
-			return false
-		}
-	}
-	return true
-}
-
-func isHandleCoveringColumns(ds *logicalop.DataSource, columns []*expression.Column) bool {
-	for _, col := range columns {
-		if pkCoveringState := handleCoveringColumn(ds, col, false); pkCoveringState == stateNotCoveredByHandle {
-			return false
-		}
-	}
-	return true
-}
-
-func isIndexCoveringCondition(ds *logicalop.DataSource, condition expression.Expression, indexColumns []*expression.Column, idxColLens []int) bool {
-	switch v := condition.(type) {
-	case *expression.Column:
-		return indexCoveringColumn(ds, v, indexColumns, idxColLens, false)
-	case *expression.ScalarFunction:
-		// Even if the index only contains prefix `col`, the index can cover `col is null`.
-		if v.FuncName.L == ast.IsNull {
-			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
-				return indexCoveringColumn(ds, col, indexColumns, idxColLens, true)
-			}
-		}
-		for _, arg := range v.GetArgs() {
-			if !isIndexCoveringCondition(ds, arg, indexColumns, idxColLens) {
-				return false
-			}
-		}
-		return true
-	}
-	return true
-}
-
-func isSingleScan(lp base.LogicalPlan, indexColumns []*expression.Column, idxColLens []int) bool {
-	ds := lp.(*logicalop.DataSource)
-	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
-		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
-		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
-		return isIndexCoveringColumns(ds, ds.Schema().Columns, indexColumns, idxColLens)
-	}
-	if !isIndexCoveringColumns(ds, ds.ColsRequiringFullLen, indexColumns, idxColLens) {
-		return false
-	}
-	for _, cond := range ds.AllConds {
-		if !isIndexCoveringCondition(ds, cond, indexColumns, idxColLens) {
-			return false
-		}
-	}
-	return true
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
@@ -2221,17 +2412,29 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// If it's parent requires double read task, return max cost.
 		return base.InvalidTask, nil
 	}
+	// Check if sort items can be matched. If not, return Invalid task
 	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask, nil
 	}
 	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
-	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
+	if !prop.NeedKeepOrder() && candidate.path.ForceKeepOrder {
 		return base.InvalidTask, nil
 	}
 	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
-	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
+	if prop.NeedKeepOrder() && candidate.path.ForceNoKeepOrder {
 		return base.InvalidTask, nil
 	}
+	// If we want to force partial order, then we should remove all others property candidate path such as: full order and no order.
+	if candidate.path.ForcePartialOrder && prop.PartialOrderInfo == nil {
+		return base.InvalidTask, nil
+	}
+	// For partial order property
+	// We **don't need to check** the partial order property is matched in here.
+	// Because if the index scan cannot satisfy partial order, it will be pruned at the SkylinePruning phase
+	// (which is the previous phase before this function).
+	// So, if an index can enter this function and also contains the requirement of a partial order property,
+	// then it must meet the requirements.
+
 	path := candidate.path
 	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan)
 	cop := &physicalop.CopTask{
@@ -2240,12 +2443,12 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		TblCols:     ds.TblCols,
 		ExpectCnt:   uint64(prop.ExpectedCnt),
 	}
-	cop.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
+	// Store partial order match result in CopTask for use in attach2Task
+	if candidate.partialOrderMatchResult.Matched {
+		cop.PartialOrderMatchResult = &candidate.partialOrderMatchResult
 	}
+	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
+
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
 		ts := physicalop.PhysicalTableScan{
@@ -2268,7 +2471,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.UsedStatsInfo = usedStats.GetUsedInfo(ts.PhysicalTableID)
 		}
 		cop.TablePlan = ts
-		cop.IndexLookUpPushDown = candidate.path.IsIndexLookUpPushDown
+		cop.IndexLookUpPushDownBy = candidate.path.IndexLookUpPushDownBy
 	}
 	task = cop
 	if cop.TablePlan != nil && ds.TableInfo.IsCommonHandle {
@@ -2283,7 +2486,8 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 		}
 	}
-	if candidate.matchPropResult.Matched() {
+	// handles both normal sort (SortItems) and partial order (PartialOrderInfo)
+	if prop.NeedKeepOrder() {
 		cop.KeepOrder = true
 		if cop.TablePlan != nil && !ds.TableInfo.IsCommonHandle {
 			col, isNew := cop.TablePlan.(*physicalop.PhysicalTableScan).AppendExtraHandleCol(ds)
@@ -2298,8 +2502,9 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// Case 3: both
 		if (ds.TableInfo.GetPartitionInfo() != nil && !is.Index.Global) ||
 			candidate.matchPropResult == property.PropMatchedNeedMergeSort {
-			byItems := make([]*util.ByItems, 0, len(prop.SortItems))
-			for _, si := range prop.SortItems {
+			sortItems := prop.GetSortItemsForKeepOrder()
+			byItems := make([]*util.ByItems, 0, len(sortItems))
+			for _, si := range sortItems {
 				byItems = append(byItems, &util.ByItems{
 					Expr: si.Col,
 					Desc: si.Desc,
@@ -2348,7 +2553,11 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, copTask *physicalop.CopTask, p *logicalop.DataSource, path *util.AccessPath, finalStats *property.StatsInfo) error {
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.IndexFilters, path.TableFilters
-	tableConds, copTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
+	var rootTaskConds []expression.Expression
+	tableConds, rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(tableConds)
+	// Preserve pre-collected root conditions (for example, large IN / NOT IN filters moved
+	// from IndexJoin probe side) instead of overwriting them.
+	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 
 	var newRootConds []expression.Expression
 	pctx := util.GetPushDownCtx(is.SCtx())
@@ -2380,7 +2589,7 @@ func addPushedDownSelection4PhysicalIndexScan(is *physicalop.PhysicalIndexScan, 
 		copTask.FinishIndexPlan()
 		tableSel := physicalop.PhysicalSelection{Conditions: tableConds}.Init(is.SCtx(), finalStats, is.QueryBlockOffset())
 		if len(copTask.RootTaskConds) != 0 {
-			selectivity, _, err := cardinality.Selectivity(is.SCtx(), copTask.TblColHists, tableConds, nil)
+			selectivity, err := cardinality.Selectivity(is.SCtx(), copTask.TblColHists, tableConds, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
@@ -2399,9 +2608,9 @@ func splitIndexFilterConditions(ds *logicalop.DataSource, conditions []expressio
 	for _, cond := range conditions {
 		var covered bool
 		if ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan {
-			covered = isIndexCoveringCondition(ds, cond, indexColumns, idxColLens)
+			covered = ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens)
 		} else {
-			covered = isIndexCoveringColumns(ds, expression.ExtractColumns(cond), indexColumns, idxColLens)
+			covered = ds.IsIndexCoveringColumns(expression.ExtractColumns(cond), indexColumns, idxColLens)
 		}
 		if covered {
 			indexConditions = append(indexConditions, cond)
@@ -2460,13 +2669,16 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
 		return base.InvalidTask, nil
 	}
+	hasTiFlash := ds.HasTiFlash()
+	mppAllowed := ds.SCtx().GetSessionVars().IsMPPAllowed()
+	hasTiFlashForMPP := hasTiFlash && mppAllowed
 	ts, _ := physicalop.GetOriginalPhysicalTableScan(ds, prop, candidate.path, candidate.matchPropResult.Matched())
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
-	isTiFlashPath := ts.StoreType == kv.TiFlash
-	canMppConvertToRoot := prop.TaskTp == property.RootTaskType && ds.SCtx().GetSessionVars().IsMPPAllowed() && isTiFlashPath
-	canMppConvertToRootForDisaggregatedTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
-	canMppConvertToRootForWhenTiFlashCopIsBanned := ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
+	isTiFlashPath := hasTiFlash && ts.StoreType == kv.TiFlash
+	canMppConvertToRoot := hasTiFlashForMPP && prop.TaskTp == property.RootTaskType && isTiFlashPath
+	canMppConvertToRootForDisaggregatedTiFlash := hasTiFlashForMPP && config.GetGlobalConfig().DisaggregatedTiFlash && canMppConvertToRoot
+	canMppConvertToRootForWhenTiFlashCopIsBanned := hasTiFlashForMPP && ds.SCtx().GetSessionVars().IsTiFlashCopBanned() && canMppConvertToRoot
 
 	// Fast checks
 	if isTiFlashPath && ts.KeepOrder && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
@@ -2496,7 +2708,8 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 
 	// MPP task
-	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
+	useMPP := prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned
+	if useMPP {
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
 			// Only the corresponding index can generate a valid task.
 			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
@@ -2537,31 +2750,28 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			return base.InvalidTask, nil
 		}
 		// ********************************** future deprecated end **************************/
-		mppTask := physicalop.NewMppTask(ts, property.AnyType, nil, ds.TblColHists, nil)
-		ts.PlanPartInfo = &physicalop.PhysPlanPartInfo{
-			PruningConds:   ds.AllConds,
-			PartitionNames: ds.PartitionNames,
-			Columns:        ds.TblCols,
-			ColumnNames:    ds.OutputNames(),
-		}
-		mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
-		var task base.Task = mppTask
-		if !mppTask.Invalid() {
-			if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
-				// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
-				// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
-				task = base.InvalidTask
-			} else if prop.TaskTp == property.RootTaskType {
-				// When got here, canMppConvertToRootX is true.
-				// This is for situations like cannot generate mppTask for some operators.
-				// Such as when the build side of HashJoin is Projection,
-				// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
-				// So HashJoin cannot pushdown to tiflash. But we still want TableScan to run on tiflash.
-				task = mppTask
-				task = task.ConvertToRootTask(ds.SCtx())
+		if useMPP {
+			mppTask := physicalop.NewMppTask(ts, property.AnyType, nil, ds.TblColHists, nil)
+			ts.PlanPartInfo = buildPhysPlanPartInfo(ds)
+			mppTask = addPushedDownSelectionToMppTask4PhysicalTableScan(ts, mppTask, ds.StatsInfo().ScaleByExpectCnt(ts.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
+			var task base.Task = mppTask
+			if !mppTask.Invalid() {
+				if prop.TaskTp == property.MppTaskType && len(mppTask.RootTaskConds) > 0 {
+					// If got filters cannot be pushed down to tiflash, we have to make sure it will be executed in TiDB,
+					// So have to return a rootTask, but prop requires mppTask, cannot meet this requirement.
+					task = base.InvalidTask
+				} else if prop.TaskTp == property.RootTaskType {
+					// When got here, canMppConvertToRootX is true.
+					// This is for situations like cannot generate mppTask for some operators.
+					// Such as when the build side of HashJoin is Projection,
+					// which cannot pushdown to tiflash(because TiFlash doesn't support some expr in Proj)
+					// So HashJoin cannot pushdown to tiflash. But we still want TableScan to run on tiflash.
+					task = mppTask
+					task = task.ConvertToRootTask(ds.SCtx())
+				}
 			}
+			return task, nil
 		}
-		return task, nil
 	}
 	// Cop task
 	copTask := &physicalop.CopTask{
@@ -2569,12 +2779,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		IndexPlanFinished: true,
 		TblColHists:       ds.TblColHists,
 	}
-	copTask.PhysPlanPartInfo = &physicalop.PhysPlanPartInfo{
-		PruningConds:   ds.AllConds,
-		PartitionNames: ds.PartitionNames,
-		Columns:        ds.TblCols,
-		ColumnNames:    ds.OutputNames(),
-	}
+	copTask.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 	ts.PlanPartInfo = copTask.PhysPlanPartInfo
 	var task base.Task = copTask
 	if candidate.matchPropResult.Matched() {
@@ -2686,6 +2891,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		}
 	} else {
 		pointGetPlan.IndexInfo = candidate.path.Index
+		pointGetPlan.SetNoncacheableReason(candidate.path.NoncacheableReason)
 		pointGetPlan.IdxCols = candidate.path.IdxCols
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
@@ -2764,6 +2970,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		}
 	} else {
 		batchPointGetPlan.IndexInfo = candidate.path.Index
+		batchPointGetPlan.SetNoncacheableReason(candidate.path.NoncacheableReason)
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
 		for _, ran := range candidate.path.Ranges {
@@ -2816,7 +3023,11 @@ func addPushedDownSelectionToMppTask4PhysicalTableScan(ts *physicalop.PhysicalTa
 }
 
 func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, copTask *physicalop.CopTask, stats *property.StatsInfo, indexHints []*ast.IndexHint) {
-	ts.FilterCondition, copTask.RootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
+	var rootTaskConds []expression.Expression
+	ts.FilterCondition, rootTaskConds = physicalop.SplitSelCondsWithVirtualColumn(ts.FilterCondition)
+	// Preserve pre-collected root conditions (for example, large IN / NOT IN filters moved
+	// from IndexJoin probe side) instead of overwriting them.
+	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
 	var newRootConds []expression.Expression
 	ts.FilterCondition, newRootConds = expression.PushDownExprs(util.GetPushDownCtx(ts.SCtx()), ts.FilterCondition, ts.StoreType)
 	copTask.RootTaskConds = append(copTask.RootTaskConds, newRootConds...)
@@ -2829,7 +3040,7 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 			return
 		}
 		if len(copTask.RootTaskConds) != 0 {
-			selectivity, _, err := cardinality.Selectivity(ts.SCtx(), copTask.TblColHists, sel.Conditions, nil)
+			selectivity, err := cardinality.Selectivity(ts.SCtx(), copTask.TblColHists, sel.Conditions, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 				selectivity = cost.SelectionFactor
@@ -2839,67 +3050,6 @@ func addPushedDownSelection4PhysicalTableScan(ts *physicalop.PhysicalTableScan, 
 		sel.SetChildren(ts)
 		copTask.TablePlan = sel
 	}
-}
-
-func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	var childLen int
-	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTE](super)
-	if ge != nil {
-		childLen = ge.InputsLen()
-	} else {
-		childLen = p.ChildLen()
-	}
-	if childLen > 0 {
-		// pass the super here to iterate among ge or logical plan both.
-		return utilfuncp.FindBestTask4BaseLogicalPlan(super, prop)
-	}
-	if !checkOpSelfSatisfyPropTaskTypeRequirement(p, prop) {
-		// Currently all plan cannot totally push down to TiKV.
-		return base.InvalidTask, nil
-	}
-	if !prop.IsSortItemEmpty() && !prop.CanAddEnforcer {
-		return base.InvalidTask, nil
-	}
-	// The physical plan has been build when derive stats.
-	pcte := physicalop.PhysicalCTE{SeedPlan: p.Cte.SeedPartPhysicalPlan, RecurPlan: p.Cte.RecursivePartPhysicalPlan, CTE: p.Cte, CteAsName: p.CteAsName, CteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
-	pcte.SetSchema(p.Schema())
-	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
-		pcte.ReaderReceiver = physicalop.PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
-		if prop.MPPPartitionTp != property.AnyType {
-			return base.InvalidTask, nil
-		}
-		t = physicalop.NewMppTask(pcte, prop.MPPPartitionTp, prop.MPPPartitionCols, p.StatsInfo().HistColl, nil)
-	} else {
-		rt := &physicalop.RootTask{}
-		rt.SetPlan(pcte)
-		t = rt
-	}
-	if prop.CanAddEnforcer {
-		t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
-	}
-	return t, nil
-}
-
-func findBestTask4LogicalCTETable(super base.LogicalPlan, prop *property.PhysicalProperty) (t base.Task, err error) {
-	if prop.IndexJoinProp != nil {
-		// even enforce hint can not work with this.
-		return base.InvalidTask, nil
-	}
-	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalCTETable](super)
-	if !prop.IsSortItemEmpty() {
-		return base.InvalidTask, nil
-	}
-
-	pcteTable := physicalop.PhysicalCTETable{IDForStorage: p.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
-	pcteTable.SetSchema(p.Schema())
-	rt := &physicalop.RootTask{}
-	rt.SetPlan(pcteTable)
-	t = rt
-	return t, nil
 }
 
 func validateTableSamplePlan(ds *logicalop.DataSource, t base.Task, err error) error {
@@ -2956,8 +3106,8 @@ func (p *mockLogicalPlan4Test) getPhysicalPlan2(prop *property.PhysicalProperty)
 	return physicalPlan2
 }
 
-// ExhaustPhysicalPlans implements LogicalPlan interface.
-func (p *mockLogicalPlan4Test) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+// ExhaustPhysicalPlans4MockLogicalPlan iterate physical implementation over mock logic plan.
+func ExhaustPhysicalPlans4MockLogicalPlan(p *mockLogicalPlan4Test, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	plan1 := make([]base.PhysicalPlan, 0, 1)
 	plan2 := make([]base.PhysicalPlan, 0, 1)
 	if prop.IsSortItemEmpty() && p.canGeneratePlan2 {

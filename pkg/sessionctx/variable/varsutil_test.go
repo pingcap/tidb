@@ -56,11 +56,9 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefIndexJoinBatchSize, vars.IndexJoinBatchSize)
 	require.Equal(t, vardef.DefIndexLookupSize, vars.IndexLookupSize)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupConcurrency)
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.indexSerialScanConcurrency)
 	require.Equal(t, vardef.ConcurrencyUnset, vars.indexLookupJoinConcurrency)
 	require.Equal(t, vardef.DefTiDBHashJoinConcurrency, vars.hashJoinConcurrency)
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupConcurrency())
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.IndexSerialScanConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.HashJoinConcurrency())
 	require.Equal(t, vardef.DefTiDBAllowBatchCop, vars.AllowBatchCop)
@@ -93,6 +91,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, vardef.DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
 	require.Equal(t, int64(vardef.DefTiDBTmpTableMaxSize), vars.TMPTableSize)
+	require.Equal(t, vardef.DefOptEnableAlternativeLogicalPlans, vars.EnableAlternativeLogicalPlans)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -158,7 +157,7 @@ func TestVarsutil(t *testing.T) {
 		err          error
 	}{
 		{"Europe/Helsinki", "Europe/Helsinki", true, -2 * time.Hour, nil},
-		{"US/Eastern", "US/Eastern", true, 5 * time.Hour, nil},
+		{"America/New_York", "America/New_York", true, 5 * time.Hour, nil},
 		// TODO: Check it out and reopen this case.
 		// {"SYSTEM", "Local", false, 0},
 		{"+10:00", "", true, -10 * time.Hour, nil},
@@ -206,17 +205,16 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes, v.SQLMode)
 
-	// Test case for tidb_index_serial_scan_concurrency.
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, v.IndexSerialScanConcurrency())
-	err = v.SetSystemVar(vardef.TiDBIndexSerialScanConcurrency, "4")
-	require.NoError(t, err)
-	require.Equal(t, 4, v.IndexSerialScanConcurrency())
-
 	// Test case for tidb_batch_insert.
 	require.False(t, v.BatchInsert)
 	err = v.SetSystemVar(vardef.TiDBBatchInsert, "1")
 	require.NoError(t, err)
 	require.True(t, v.BatchInsert)
+
+	require.False(t, v.EnableAlternativeLogicalPlans)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAlternativeLogicalPlans, "1")
+	require.NoError(t, err)
+	require.True(t, v.EnableAlternativeLogicalPlans)
 
 	require.Equal(t, 32, v.InitChunkSize)
 	require.Equal(t, 1024, v.MaxChunkSize)
@@ -238,6 +236,11 @@ func TestVarsutil(t *testing.T) {
 	err = v.SetSystemVar(vardef.TiDBOptimizerSelectivityLevel, "1")
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
+
+	require.Equal(t, vardef.DefTiDBOptIndexPruneThreshold, v.OptIndexPruneThreshold)
+	err = v.SetSystemVar(vardef.TiDBOptIndexPruneThreshold, "1")
+	require.NoError(t, err)
+	require.Equal(t, 1, v.OptIndexPruneThreshold)
 
 	require.Equal(t, vardef.DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
 	err = v.SetSystemVar(vardef.TiDBOptimizerEnableOuterJoinReorder, "OFF")
@@ -266,6 +269,14 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "5", val)
 	require.Equal(t, 5, v.TiDBOptJoinReorderThreshold)
+
+	require.Equal(t, vardef.DefTiDBOptEnableAdvancedJoinReorder, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAdvancedJoinReorder, "OFF")
+	require.NoError(t, err)
+	require.Equal(t, false, v.TiDBOptEnableAdvancedJoinReorder)
+	err = v.SetSystemVar(vardef.TiDBOptEnableAdvancedJoinReorder, "ON")
+	require.NoError(t, err)
+	require.Equal(t, true, v.TiDBOptEnableAdvancedJoinReorder)
 
 	err = v.SetSystemVar(vardef.TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)

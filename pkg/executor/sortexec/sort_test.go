@@ -32,8 +32,11 @@ import (
 // TODO remove spill as it should be tested in sort_spill_test.go
 // TODO add some new fail points, as some fail point may be aborted after the refine
 func TestSortInDisk(t *testing.T) {
-	testSortInDisk(t, false)
-	testSortInDisk(t, true)
+	for i, v := range []bool{false, true} {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			testSortInDisk(t, v)
+		})
+	}
 }
 
 // TODO remove failpoint

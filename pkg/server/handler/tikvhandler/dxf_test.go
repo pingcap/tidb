@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/disttask/framework/schstatus"
+	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/stretchr/testify/require"
 )
 

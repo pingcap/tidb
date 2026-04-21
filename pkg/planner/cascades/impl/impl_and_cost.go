@@ -20,9 +20,9 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
@@ -65,10 +65,6 @@ import (
 // ImplementMemoAndCost is the cascades physicalization and cost PORTAL, it's quite same as physicalOptimize().
 func ImplementMemoAndCost(rootGroup *memo.Group) (plan base.PhysicalPlan, cost float64, err error) {
 	sctx := rootGroup.GetLogicalExpressions().Front().Value.(base.LogicalPlan).SCtx()
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
 	// currently, we will derive each node's stats regardless of group logical prop's stats in memo.copyIn, so
 	// we don't have to prepare logical op's stats each as what we do in the previous way.
 
@@ -91,6 +87,10 @@ func ImplementMemoAndCost(rootGroup *memo.Group) (plan base.PhysicalPlan, cost f
 		}
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
+
+	// collect the warnings from task.
+	sctx.GetSessionVars().StmtCtx.AppendWarnings(task.(*physicalop.RootTask).Warnings.GetWarnings())
+
 	if err = task.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
@@ -124,10 +124,10 @@ func ImplementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, c
 		// for each group expression inside un-optimized group, try to find the best physical plan prop-accordingly.
 		// GroupExpression overrides the base.LogicalPlan's FindBestTask to do the router job, And this is because
 		// if we call ge.LogicalOperator.FindBestTask, the function receiver will be logical operator himself rather
-		// than the group expression as we expected. ge.FindBestTask will directly call the logicalOp's findBestTask4xxx
+		// than the group expression as we expected. physicalop.FindBestTask will directly call the logicalOp's findBestTask4xxx
 		// for the same effect while pass the ge as the first the parameter because ge also implement the LogicalPlan
 		// interface as well.
-		task, err := ge.FindBestTask(prop)
+		task, err := physicalop.FindBestTask(ge, prop)
 		if err != nil {
 			implErr = err
 			return false

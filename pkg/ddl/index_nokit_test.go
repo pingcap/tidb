@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/errors"
 	ddlmock "github.com/pingcap/tidb/pkg/ddl/mock"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
-	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -143,7 +143,7 @@ func TestModifyTaskParamLoop(t *testing.T) {
 		modifyParam := &proto.ModifyParam{
 			PrevState: proto.TaskStateRunning,
 			Modifications: []proto.Modification{
-				{Type: proto.ModifyConcurrency, To: 4},
+				{Type: proto.ModifyRequiredSlots, To: 4},
 				{Type: proto.ModifyBatchSize, To: 5},
 				{Type: proto.ModifyMaxWriteSpeed, To: 6},
 			},
@@ -172,7 +172,7 @@ func TestModifyTaskParamLoop(t *testing.T) {
 		modifyParam := &proto.ModifyParam{
 			PrevState: proto.TaskStateRunning,
 			Modifications: []proto.Modification{
-				{Type: proto.ModifyConcurrency, To: 4},
+				{Type: proto.ModifyRequiredSlots, To: 4},
 				{Type: proto.ModifyBatchSize, To: 5},
 				{Type: proto.ModifyMaxWriteSpeed, To: 6},
 			},
@@ -192,7 +192,7 @@ func TestModifyTaskParamLoop(t *testing.T) {
 		modifyParam2 := &proto.ModifyParam{
 			PrevState: proto.TaskStateRunning,
 			Modifications: []proto.Modification{
-				{Type: proto.ModifyConcurrency, To: 7},
+				{Type: proto.ModifyRequiredSlots, To: 7},
 				{Type: proto.ModifyBatchSize, To: 8},
 				{Type: proto.ModifyMaxWriteSpeed, To: 9},
 			},

@@ -25,6 +25,9 @@ import (
 	reporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/pingcap/tipb/go-tipb"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
+	"github.com/wangjohn/quickselect"
 	"go.uber.org/zap"
 )
 
@@ -67,6 +70,7 @@ type TopSQLReporter interface {
 
 var _ TopSQLReporter = &RemoteTopSQLReporter{}
 var _ DataSinkRegisterer = &RemoteTopSQLReporter{}
+var _ stmtstats.RUCollector = &RemoteTopSQLReporter{}
 
 // RemoteTopSQLReporter implements TopSQLReporter that sends data to a remote agent.
 // This should be called periodically to collect TopSQL resource usage metrics.
@@ -77,7 +81,9 @@ type RemoteTopSQLReporter struct {
 	sqlCPUCollector         *collector.SQLCPUCollector
 	collectCPUTimeChan      chan []collector.SQLCPUTimeRecord
 	collectStmtStatsChan    chan stmtstats.StatementStatsMap
+	collectRUIncrementsChan chan ruBatch
 	collecting              *collecting
+	ruAggregator            *ruWindowAggregator // Online 15s RU aggregation (400->200->100 pipeline)
 	normalizedSQLMap        *normalizedSQLMap
 	normalizedPlanMap       *normalizedPlanMap
 	stmtStatsBuffer         map[uint64]stmtstats.StatementStatsMap // timestamp => stmtstats.StatementStatsMap
@@ -87,6 +93,15 @@ type RemoteTopSQLReporter struct {
 	compressPlan planBinaryCompressFunc
 	DefaultDataSinkRegisterer
 	keyspaceName []byte
+}
+
+// ruBatch carries RU increments with producer-side timestamp.
+// timestamping at enqueue side keeps RU bucket attribution independent
+// from downstream scheduling delay.
+type ruBatch struct {
+	data      stmtstats.RUIncrementMap
+	timestamp uint64
+	version   rmclient.RUVersion
 }
 
 // NewRemoteTopSQLReporter creates a new RemoteTopSQLReporter.
@@ -100,8 +115,10 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc, compressPlan planB
 		cancel:                    cancel,
 		collectCPUTimeChan:        make(chan []collector.SQLCPUTimeRecord, collectChanBufferSize),
 		collectStmtStatsChan:      make(chan stmtstats.StatementStatsMap, collectChanBufferSize),
+		collectRUIncrementsChan:   make(chan ruBatch, collectChanBufferSize),
 		reportCollectedDataChan:   make(chan collectedData, 1),
 		collecting:                newCollecting(),
+		ruAggregator:              newRUWindowAggregator(),
 		normalizedSQLMap:          newNormalizedSQLMap(),
 		normalizedPlanMap:         newNormalizedPlanMap(),
 		stmtStatsBuffer:           map[uint64]stmtstats.StatementStatsMap{},
@@ -161,6 +178,35 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 	}
 }
 
+// CollectRUIncrements implements stmtstats.RUCollector.
+// It receives merged RU increments from aggregator every second.
+// Best-effort window contract: RU is timestamped when collected here. For
+// boundary cases, RU can be attributed to the next report window instead of
+// backfilling an already closed window.
+//
+// WARN: It will drop the data if the processing is not in time.
+// This function is thread-safe and efficient.
+func (tsr *RemoteTopSQLReporter) CollectRUIncrements(data stmtstats.RUIncrementMap, version rmclient.RUVersion) {
+	if len(data) == 0 {
+		return
+	}
+	batch := ruBatch{
+		timestamp: uint64(nowFunc().Unix()),
+		data:      data,
+		version:   version,
+	}
+	select {
+	case tsr.collectRUIncrementsChan <- batch:
+	default:
+		reporter_metrics.IgnoreCollectRUChannelFullCounter.Inc()
+	}
+}
+
+// OnRUVersionChange clears reporter-side RU state for an aggregator-detected handover.
+func (tsr *RemoteTopSQLReporter) OnRUVersionChange(version rmclient.RUVersion) {
+	tsr.ruAggregator.resetForHandover(version, uint64(nowFunc().Unix()))
+}
+
 // RegisterSQL implements TopSQLReporter.
 //
 // This function is thread-safe and efficient.
@@ -186,8 +232,7 @@ func (tsr *RemoteTopSQLReporter) Close() {
 func (tsr *RemoteTopSQLReporter) collectWorker() {
 	defer util.Recover("top-sql", "collectWorker", nil, false)
 
-	currentReportInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load()
-	reportTicker := time.NewTicker(time.Second * time.Duration(currentReportInterval))
+	reportTicker := newReportTicker()
 	defer reportTicker.Stop()
 	for {
 		select {
@@ -199,14 +244,12 @@ func (tsr *RemoteTopSQLReporter) collectWorker() {
 		case data := <-tsr.collectStmtStatsChan:
 			timestamp := uint64(nowFunc().Unix())
 			tsr.stmtStatsBuffer[timestamp] = data
+		case batch := <-tsr.collectRUIncrementsChan:
+			tsr.ruAggregator.addBatch(batch)
 		case <-reportTicker.C:
+			timestamp := uint64(nowFunc().Unix())
 			tsr.processStmtStatsData()
-			tsr.takeDataAndSendToReportChan()
-			// Update `reportTicker` if report interval changed.
-			if newInterval := topsqlstate.GlobalState.ReportIntervalSeconds.Load(); newInterval != currentReportInterval {
-				currentReportInterval = newInterval
-				reportTicker.Reset(time.Second * time.Duration(currentReportInterval))
-			}
+			tsr.takeDataAndSendToReportChan(timestamp)
 		}
 	}
 }
@@ -242,26 +285,76 @@ func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRe
 func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 	defer util.Recover("top-sql", "processStmtStatsData", nil, false)
 
+	maxLen := 0
+	for _, data := range tsr.stmtStatsBuffer {
+		maxLen = max(maxLen, len(data))
+	}
+	u64Slice := make([]uint64, 0, maxLen)
+	k := int(topsqlstate.GlobalState.MaxStatementCount.Load())
 	for timestamp, data := range tsr.stmtStatsBuffer {
+		kthNetworkBytes := findKthNetworkBytes(data, k, u64Slice)
 		for digest, item := range data {
 			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
-			if tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
-				// This timestamp+sql+plan has been evicted due to low CPUTime.
+			// Note, by filtering with the kthNetworkBytes, we get fewer than N records(N - 1 records, at most time). The actual picked records
+			// count is decided by the count of duplicated kthNetworkBytes，if kthNetworkBytes is unique,
+			// For performance reason, do not convert the whole map into a slice and pick exactly topN records.
+			if item.NetworkInBytes+item.NetworkOutBytes > kthNetworkBytes || !tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
+				tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
+			} else {
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
-				continue
 			}
-			tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
 		}
 	}
 	tsr.stmtStatsBuffer = map[uint64]stmtstats.StatementStatsMap{}
 }
 
+// The uint64Slice type attaches the QuickSelect interface to an array of uint64s. It
+// implements Interface so that you can call QuickSelect(k) on any IntSlice.
+type uint64Slice []uint64
+
+func (t uint64Slice) Len() int {
+	return len(t)
+}
+
+func (t uint64Slice) Less(i, j int) bool {
+	return t[i] > t[j]
+}
+
+func (t uint64Slice) Swap(i, j int) {
+	t[i], t[j] = t[j], t[i]
+}
+
+// findKthNetworkBytes finds the k-th largest network bytes in data using quickselect algorithm.
+func findKthNetworkBytes(data stmtstats.StatementStatsMap, k int, u64Slice []uint64) uint64 {
+	var kthNetworkBytes uint64
+	if len(data) > k {
+		u64Slice = u64Slice[:0]
+		for _, item := range data {
+			u64Slice = append(u64Slice, item.NetworkInBytes+item.NetworkOutBytes)
+		}
+		_ = quickselect.QuickSelect(uint64Slice(u64Slice), k)
+		kthNetworkBytes = u64Slice[0]
+		for i := range k {
+			kthNetworkBytes = min(kthNetworkBytes, u64Slice[i])
+		}
+	}
+	return kthNetworkBytes
+}
+
 // takeDataAndSendToReportChan takes records data and then send to the report channel for reporting.
-func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan() {
+// TopRU extraction runs on the same report tick path.
+// Each call emits at most one aligned closed 60s RU window.
+func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(timestamp uint64) {
+	ruRecords := tsr.ruAggregator.takeReportRecords(
+		timestamp,
+		uint64(topsqlstate.GetTopRUItemInterval()),
+		tsr.keyspaceName,
+	)
 	// Send to report channel. When channel is full, data will be dropped.
 	select {
 	case tsr.reportCollectedDataChan <- collectedData{
 		collected:         tsr.collecting.take(),
+		ruRecords:         ruRecords,
 		normalizedSQLMap:  tsr.normalizedSQLMap.take(),
 		normalizedPlanMap: tsr.normalizedPlanMap.take(),
 	}:
@@ -287,6 +380,7 @@ func (tsr *RemoteTopSQLReporter) reportWorker() {
 			// Convert to protobuf data and do report.
 			tsr.doReport(&ReportData{
 				DataRecords: rs.toProto(tsr.keyspaceName),
+				RURecords:   data.ruRecords,
 				SQLMetas:    data.normalizedSQLMap.toProto(tsr.keyspaceName),
 				PlanMetas:   data.normalizedPlanMap.toProto(tsr.keyspaceName, tsr.decodePlan, tsr.compressPlan),
 			})
@@ -306,7 +400,7 @@ func (tsr *RemoteTopSQLReporter) doReport(data *ReportData) {
 	timeout := reportTimeout
 	failpoint.Inject("resetTimeoutForTest", func(val failpoint.Value) {
 		if val.(bool) {
-			interval := time.Duration(topsqlstate.GlobalState.ReportIntervalSeconds.Load()) * time.Second
+			interval := time.Duration(topsqlstate.DefTiDBTopSQLReportIntervalSeconds) * time.Second
 			if interval < timeout {
 				timeout = interval
 			}
@@ -347,4 +441,5 @@ type collectedData struct {
 	collected         *collecting
 	normalizedSQLMap  *normalizedSQLMap
 	normalizedPlanMap *normalizedPlanMap
+	ruRecords         []tipb.TopRURecord
 }

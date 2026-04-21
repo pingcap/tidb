@@ -171,7 +171,7 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 		reqKeyspaceID = keyspaceMeta.Id
 	}
 
-	opts := mockstore.WithKeyspaceMeta(keyspaceMeta)
+	opts := mockstore.WithCurrentKeyspaceMeta(keyspaceMeta)
 	store, dom := testkit.CreateMockStoreAndDomain(t, opts)
 	tk := testkit.NewTestKit(t, store)
 	cli := MockForTest(store)

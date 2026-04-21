@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
+	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 const (
@@ -725,9 +726,10 @@ func (*RuntimeStatsWithConcurrencyInfo) Merge(RuntimeStats) {}
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
-	Commit   *util.CommitDetails
-	LockKeys *util.LockKeysDetails
-	TxnCnt   int
+	Commit         *util.CommitDetails
+	LockKeys       *util.LockKeysDetails
+	SharedLockKeys *util.LockKeysDetails
+	TxnCnt         int
 }
 
 // Tp implements the RuntimeStats interface.
@@ -769,6 +771,13 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 		}
 		e.LockKeys.Merge(tmp.LockKeys)
 	}
+
+	if tmp.SharedLockKeys != nil {
+		if e.SharedLockKeys == nil {
+			e.SharedLockKeys = &util.LockKeysDetails{}
+		}
+		e.SharedLockKeys.Merge(tmp.SharedLockKeys)
+	}
 }
 
 // Clone implements the RuntimeStats interface.
@@ -781,6 +790,9 @@ func (e *RuntimeStatsWithCommit) Clone() RuntimeStats {
 	}
 	if e.LockKeys != nil {
 		newRs.LockKeys = e.LockKeys.Clone()
+	}
+	if e.SharedLockKeys != nil {
+		newRs.SharedLockKeys = e.SharedLockKeys.Clone()
 	}
 	return &newRs
 }
@@ -874,64 +886,8 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		buf.WriteString("}")
 	}
-	if e.LockKeys != nil {
-		if buf.Len() > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString("lock_keys: {")
-		if e.LockKeys.TotalTime > 0 {
-			buf.WriteString("time:")
-			buf.WriteString(FormatDuration(e.LockKeys.TotalTime))
-		}
-		if e.LockKeys.RegionNum > 0 {
-			buf.WriteString(", region:")
-			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.RegionNum), 10))
-		}
-		if e.LockKeys.LockKeys > 0 {
-			buf.WriteString(", keys:")
-			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.LockKeys), 10))
-		}
-		if e.LockKeys.ResolveLock.ResolveLockTime > 0 {
-			buf.WriteString(", resolve_lock:")
-			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLock.ResolveLockTime)))
-		}
-		e.LockKeys.Mu.Lock()
-		if e.LockKeys.BackoffTime > 0 {
-			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
-			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
-				buf.WriteString(", type: ")
-				e.formatBackoff(buf, e.LockKeys.Mu.BackoffTypes)
-			}
-			buf.WriteString("}")
-		}
-		if e.LockKeys.Mu.SlowestReqTotalTime > 0 {
-			buf.WriteString(", slowest_rpc: {total: ")
-			buf.WriteString(strconv.FormatFloat(e.LockKeys.Mu.SlowestReqTotalTime.Seconds(), 'f', 3, 64))
-			buf.WriteString("s, region_id: ")
-			buf.WriteString(strconv.FormatUint(e.LockKeys.Mu.SlowestRegion, 10))
-			buf.WriteString(", store: ")
-			buf.WriteString(e.LockKeys.Mu.SlowestStoreAddr)
-			buf.WriteString(", ")
-			buf.WriteString(e.LockKeys.Mu.SlowestExecDetails.String())
-			buf.WriteString("}")
-		}
-		e.LockKeys.Mu.Unlock()
-		if e.LockKeys.LockRPCTime > 0 {
-			buf.WriteString(", lock_rpc:")
-			buf.WriteString(time.Duration(e.LockKeys.LockRPCTime).String())
-		}
-		if e.LockKeys.LockRPCCount > 0 {
-			buf.WriteString(", rpc_count:")
-			buf.WriteString(strconv.FormatInt(e.LockKeys.LockRPCCount, 10))
-		}
-		if e.LockKeys.RetryCount > 0 {
-			buf.WriteString(", retry_count:")
-			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.RetryCount), 10))
-		}
-
-		buf.WriteString("}")
-	}
+	e.formatLockKeysDetails(buf, "lock_keys", e.LockKeys)
+	e.formatLockKeysDetails(buf, "shared_lock_keys", e.SharedLockKeys)
 	return buf.String()
 }
 
@@ -960,35 +916,143 @@ func (*RuntimeStatsWithCommit) formatBackoff(buf *bytes.Buffer, backoffTypes []s
 	buf.WriteByte(']')
 }
 
-// RURuntimeStats is a wrapper of util.RUDetails,
-// which implements the RuntimeStats interface.
+func (e *RuntimeStatsWithCommit) formatLockKeysDetails(buf *bytes.Buffer, label string, lockKeys *util.LockKeysDetails) {
+	if lockKeys == nil {
+		return
+	}
+	if buf.Len() > 0 {
+		buf.WriteString(", ")
+	}
+	buf.WriteString(label)
+	buf.WriteString(": {")
+	if lockKeys.TotalTime > 0 {
+		buf.WriteString("time:")
+		buf.WriteString(FormatDuration(lockKeys.TotalTime))
+	}
+	if lockKeys.RegionNum > 0 {
+		buf.WriteString(", region:")
+		buf.WriteString(strconv.FormatInt(int64(lockKeys.RegionNum), 10))
+	}
+	if lockKeys.LockKeys > 0 {
+		buf.WriteString(", keys:")
+		buf.WriteString(strconv.FormatInt(int64(lockKeys.LockKeys), 10))
+	}
+	if lockKeys.ResolveLock.ResolveLockTime > 0 {
+		buf.WriteString(", resolve_lock:")
+		buf.WriteString(FormatDuration(time.Duration(lockKeys.ResolveLock.ResolveLockTime)))
+	}
+	lockKeys.Mu.Lock()
+	if lockKeys.BackoffTime > 0 {
+		buf.WriteString(", backoff: {time: ")
+		buf.WriteString(FormatDuration(time.Duration(lockKeys.BackoffTime)))
+		if len(lockKeys.Mu.BackoffTypes) > 0 {
+			buf.WriteString(", type: ")
+			e.formatBackoff(buf, lockKeys.Mu.BackoffTypes)
+		}
+		buf.WriteString("}")
+	}
+	if lockKeys.Mu.SlowestReqTotalTime > 0 {
+		buf.WriteString(", slowest_rpc: {total: ")
+		buf.WriteString(strconv.FormatFloat(lockKeys.Mu.SlowestReqTotalTime.Seconds(), 'f', 3, 64))
+		buf.WriteString("s, region_id: ")
+		buf.WriteString(strconv.FormatUint(lockKeys.Mu.SlowestRegion, 10))
+		buf.WriteString(", store: ")
+		buf.WriteString(lockKeys.Mu.SlowestStoreAddr)
+		buf.WriteString(", ")
+		buf.WriteString(lockKeys.Mu.SlowestExecDetails.String())
+		buf.WriteString("}")
+	}
+	lockKeys.Mu.Unlock()
+	if lockKeys.LockRPCTime > 0 {
+		buf.WriteString(", lock_rpc:")
+		buf.WriteString(time.Duration(lockKeys.LockRPCTime).String())
+	}
+	if lockKeys.LockRPCCount > 0 {
+		buf.WriteString(", rpc_count:")
+		buf.WriteString(strconv.FormatInt(lockKeys.LockRPCCount, 10))
+	}
+	if lockKeys.RetryCount > 0 {
+		buf.WriteString(", retry_count:")
+		buf.WriteString(strconv.FormatInt(int64(lockKeys.RetryCount), 10))
+	}
+	buf.WriteString("}")
+}
+
+// RURuntimeStats wraps RU details and statement-level RU v2 metrics for EXPLAIN output.
+// RUVersion controls which RU accounting version produces output:
+//   - 1 (v1): shows RRU + WRU
+//   - 2 (v2): shows total RU from v2 metrics
+//   - 0 / unknown: defaults to v1
 type RURuntimeStats struct {
 	*util.RUDetails
+	Metrics   *RUV2Metrics
+	Weights   RUV2Weights
+	RUVersion rmclient.RUVersion
 }
 
 // String implements the RuntimeStats interface.
 func (e *RURuntimeStats) String() string {
-	if e.RUDetails != nil {
+	switch e.RUVersion {
+	case rmclient.RUVersionV2:
+		var tiKVRU, tiFlashRU float64
+		if e.RUDetails != nil {
+			tiKVRU = e.RUDetails.TiKVRUV2()
+			tiFlashRU = e.RUDetails.TiflashRU()
+		}
+		totalRU := e.Metrics.TotalRU(e.Weights, tiKVRU, tiFlashRU)
+		if totalRU == 0 {
+			return ""
+		}
 		buf := bytes.NewBuffer(make([]byte, 0, 8))
 		buf.WriteString("RU:")
-		buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+		buf.WriteString(strconv.FormatFloat(totalRU, 'f', 2, 64))
 		return buf.String()
+	default: // v1 or unknown
+		if e.RUDetails != nil {
+			buf := bytes.NewBuffer(make([]byte, 0, 8))
+			buf.WriteString("RU:")
+			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+			return buf.String()
+		}
 	}
 	return ""
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *RURuntimeStats) Clone() RuntimeStats {
-	return &RURuntimeStats{RUDetails: e.RUDetails.Clone()}
+	if e == nil {
+		return &RURuntimeStats{}
+	}
+	var ruDetails *util.RUDetails
+	if e.RUDetails != nil {
+		ruDetails = e.RUDetails.Clone()
+	}
+	return &RURuntimeStats{
+		RUDetails: ruDetails,
+		Metrics:   e.Metrics.Clone(),
+		Weights:   e.Weights,
+		RUVersion: e.RUVersion,
+	}
 }
 
 // Merge implements the RuntimeStats interface.
 func (e *RURuntimeStats) Merge(other RuntimeStats) {
 	if tmp, ok := other.(*RURuntimeStats); ok {
-		if e.RUDetails != nil {
+		if e.RUDetails != nil && tmp.RUDetails != nil {
 			e.RUDetails.Merge(tmp.RUDetails)
-		} else {
+		} else if e.RUDetails == nil && tmp.RUDetails != nil {
 			e.RUDetails = tmp.RUDetails.Clone()
+		}
+		if e.Metrics != nil {
+			e.Metrics.Merge(tmp.Metrics)
+		} else {
+			e.Metrics = tmp.Metrics.Clone()
+		}
+		if e.Weights == (RUV2Weights{}) {
+			e.Weights = tmp.Weights
+		}
+		if e.RUVersion == 0 {
+			e.RUVersion = tmp.RUVersion
 		}
 	}
 }

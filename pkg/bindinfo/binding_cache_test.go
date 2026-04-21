@@ -15,6 +15,8 @@
 package bindinfo
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,7 @@ func bindingNoDBDigest(t *testing.T, b *Binding) string {
 }
 
 func TestCrossDBBindingCache(t *testing.T) {
-	fbc := newBindCache().(*bindingCache)
+	fbc := newBindingCache(context.Background(), 1000000000).(*bindingCache)
 	b1 := &Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
 	fDigest1 := bindingNoDBDigest(t, b1)
 	b2 := &Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
@@ -71,14 +72,38 @@ func TestCrossDBBindingCache(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestDuplicatedBinding(t *testing.T) {
+	// 3 bindings with the same noDBDigest
+	bindingDB1 := &Binding{BindSQL: "SELECT * FROM db1.t1"}
+	bindingDB2 := &Binding{BindSQL: "SELECT * FROM db2.t1"}
+	bindingDB3 := &Binding{BindSQL: "SELECT * FROM db3.t1"}
+	c := newBindingCache(context.Background(), 1000000000).(*bindingCache)
+	require.Nil(t, c.SetBinding("db1", bindingDB1))
+	require.Nil(t, c.SetBinding("db2", bindingDB2))
+	require.Nil(t, c.SetBinding("db3", bindingDB3))
+
+	digestMap := c.digestBiMap.(*digestBiMapImpl)
+	var noDBDigest string
+	for digest := range digestMap.noDBDigest2SQLDigest {
+		noDBDigest = digest
+	}
+	require.True(t, noDBDigest != "")
+	require.Equal(t, 3, len(digestMap.noDBDigest2SQLDigest[noDBDigest]))
+	require.Equal(t, 3, len(digestMap.sqlDigest2noDBDigest))
+
+	// put 3 duplicated bindings again
+	require.Nil(t, c.SetBinding("db1", bindingDB1))
+	require.Nil(t, c.SetBinding("db2", bindingDB2))
+	require.Nil(t, c.SetBinding("db3", bindingDB3))
+	require.True(t, noDBDigest != "")
+	require.Equal(t, 3, len(digestMap.noDBDigest2SQLDigest[noDBDigest]))
+	require.Equal(t, 3, len(digestMap.sqlDigest2noDBDigest))
+}
+
 func TestBindCache(t *testing.T) {
 	binding := &Binding{BindSQL: "SELECT * FROM t1"}
 	kvSize := int(binding.size())
-	defer func(v int64) {
-		vardef.MemQuotaBindingCache.Store(v)
-	}(vardef.MemQuotaBindingCache.Load())
-	vardef.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
-	bindCache := newBindCache()
+	bindCache := newBindingCache(context.Background(), int64(kvSize*3)-1).(*bindingCache)
 	defer bindCache.Close()
 
 	err := bindCache.SetBinding("digest1", binding)
@@ -104,16 +129,45 @@ func TestBindCache(t *testing.T) {
 	}, time.Second*5, time.Millisecond*100)
 }
 
-func getTableName(n []*ast.TableName) []string {
-	result := make([]string, 0, len(n))
-	for _, v := range n {
-		var sb strings.Builder
-		restoreFlags := format.RestoreKeyWordLowercase
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		v.Restore(restoreCtx)
-		result = append(result, sb.String())
+func TestBindingCacheEvictLog(t *testing.T) {
+	callbackCnt := 0
+	ctx := context.WithValue(context.Background(),
+		bindingCacheTestKey, func(binding *Binding) { callbackCnt++ })
+
+	largeBinding := &Binding{BindSQL: fmt.Sprintf("SELECT * FROM t1 WHERE c = '%v'", strings.Repeat("a", 200))}
+	binding := &Binding{BindSQL: "SELECT * FROM t1"}
+	bindingCache := newBindingCache(ctx, int64(binding.size())*3-1).(*bindingCache)
+	defer bindingCache.Close()
+
+	bindingCache.SetBinding("0", largeBinding)
+	require.Equal(t, callbackCnt, 1) // large binding, reject directly
+	bindingCache.SetBinding("0", largeBinding)
+	require.Equal(t, callbackCnt, 2) // large binding, reject directly
+	callbackCnt = 0                  // reset callback count
+
+	bindingCache.SetBinding("1", binding) // insert the first binding four times
+	bindingCache.SetBinding("1", binding)
+	bindingCache.SetBinding("1", binding)
+	bindingCache.SetBinding("1", binding)
+	require.Equal(t, bindingCache.Size(), 1)
+	require.Equal(t, bindingCache.GetMemUsage(), int64(binding.size()))
+	require.Equal(t, callbackCnt, 0) // duplicated binding should not trigger eviction
+
+	bindingCache.SetBinding("2", binding) // insert the second binding
+	bindingCache.SetBinding("2", binding)
+	require.Equal(t, callbackCnt, 0) // cache size is enough
+
+	bindingCache.SetBinding("3", binding) // insert the third binding, trigger eviction
+	require.Equal(t, callbackCnt, 1)
+
+	for i := 1; i <= 10; i++ {
+		bindingCache.SetBinding(fmt.Sprintf("3-%d", i), binding)
+		require.Equal(t, callbackCnt, 1+i)
 	}
-	return result
+
+	require.Equal(t, callbackCnt, 11)
+	bindingCache.Close() // close doesn't trigger eviction log
+	require.Equal(t, callbackCnt, 11)
 }
 
 func TestExtractTableName(t *testing.T) {
@@ -150,7 +204,22 @@ func TestExtractTableName(t *testing.T) {
 		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		require.NoErrorf(t, err, "sql: %s", tt.sql)
 		rs := CollectTableNames(stmt)
-		result := getTableName(rs)
+		result, err := getTableName(rs)
+		require.NoErrorf(t, err, "sql: %s", tt.sql)
 		require.Equalf(t, tt.tables, result, "sql: %s", tt.sql)
 	}
+}
+
+func getTableName(n []*ast.TableName) ([]string, error) {
+	result := make([]string, 0, len(n))
+	for _, v := range n {
+		var sb strings.Builder
+		restoreFlags := format.RestoreKeyWordLowercase
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		if err := v.Restore(restoreCtx); err != nil {
+			return nil, err
+		}
+		result = append(result, sb.String())
+	}
+	return result, nil
 }

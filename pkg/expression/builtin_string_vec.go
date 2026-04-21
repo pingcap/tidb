@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 //revive:disable:defer
@@ -1127,6 +1128,30 @@ func (b *builtinFindInSetSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err := b.args[0].VecEvalString(ctx, input, str); err != nil {
 		return err
 	}
+	result.ResizeInt64(n, false)
+	result.MergeNulls(str)
+	res := result.Int64s()
+
+	if b.args[1].ConstLevel() >= ConstOnlyInContext {
+		cached, err := b.getConstStrlistLookup(ctx)
+		if err != nil {
+			return err
+		}
+		if cached.isNull {
+			result.ResizeInt64(n, true)
+			return nil
+		}
+		for i := range n {
+			if result.IsNull(i) {
+				continue
+			}
+			if pos, exists := cached.lookup[string(hack.String(b.ctor.KeyWithoutTrimRightSpace(str.GetString(i))))]; exists {
+				res[i] = pos
+			}
+		}
+		return nil
+	}
+
 	strlist, err := b.bufAllocator.get()
 	if err != nil {
 		return err
@@ -1135,9 +1160,7 @@ func (b *builtinFindInSetSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err := b.args[1].VecEvalString(ctx, input, strlist); err != nil {
 		return err
 	}
-	result.ResizeInt64(n, false)
-	result.MergeNulls(str, strlist)
-	res := result.Int64s()
+	result.MergeNulls(strlist)
 	for i := range n {
 		if result.IsNull(i) {
 			continue
@@ -1147,11 +1170,7 @@ func (b *builtinFindInSetSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 			res[i] = 0
 			continue
 		}
-		for j, strInSet := range strings.Split(strlistI, ",") {
-			if b.ctor.Compare(str.GetString(i), strInSet) == 0 {
-				res[i] = int64(j + 1)
-			}
-		}
+		res[i] = findInSetByKey(b.ctor.KeyWithoutTrimRightSpace(str.GetString(i)), strlistI, b.ctor)
 	}
 	return nil
 }
@@ -2989,29 +3008,33 @@ func formatDecimal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result 
 		}
 
 		locale := "en_US"
+		isNull := false
 		if localeBuf == nil {
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
+			isNull = true
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
-			// TODO: support other locales.
-			tc := typeCtx(ctx)
-
+		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
 		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
-
-		formatString, err := localeFormatFunction(xStr, dStr)
+		formatString, found, err := mysql.FormatByLocale(xStr, dStr, locale)
 		if err != nil {
 			return err
+		}
+		// Check 'found' flag, only warn for unknown locales
+		if !isNull && !found {
+			tc := typeCtx(ctx)
+			if localeBuf != nil {
+				locale = strings.Clone(localeBuf.GetString(i))
+			}
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 		result.AppendString(formatString)
 	}
@@ -3035,29 +3058,33 @@ func formatReal(ctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *ch
 		}
 
 		locale := "en_US"
+		isNull := false
 		if localeBuf == nil {
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
+			isNull = true
 			tc := typeCtx(ctx)
 			tc.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
-		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
-			// TODO: support other locales.
-			tc := typeCtx(ctx)
-
+		} else {
 			// force copy of the string
 			// https://github.com/pingcap/tidb/issues/56193
-			locale := strings.Clone(localeBuf.GetString(i))
-			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
+			locale = strings.Clone(localeBuf.GetString(i))
 		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))
 		dStr := strconv.FormatInt(d, 10)
-		localeFormatFunction := mysql.GetLocaleFormatFunction(locale)
 
-		formatString, err := localeFormatFunction(xStr, dStr)
+		formatString, found, err := mysql.FormatByLocale(xStr, dStr, locale)
 		if err != nil {
 			return err
+		}
+		if !isNull && !found {
+			tc := typeCtx(ctx)
+			if localeBuf != nil {
+				locale = strings.Clone(localeBuf.GetString(i))
+			}
+			tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale))
 		}
 		result.AppendString(formatString)
 	}

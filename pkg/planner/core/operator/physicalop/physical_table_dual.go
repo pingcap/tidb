@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -72,4 +73,36 @@ func (p *PhysicalTableDual) ExplainInfo() string {
 	str.WriteString("rows:")
 	str.WriteString(strconv.Itoa(p.RowCount))
 	return str.String()
+}
+
+// findBestTask4LogicalTableDual will be called by LogicalTableDual in logicalOp pkg.
+func findBestTask4LogicalTableDual(super *logicalop.LogicalTableDual, prop *property.PhysicalProperty) (base.Task, error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, nil
+	}
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalTableDual](super)
+	// If the required property is not empty and the row count > 1,
+	// we cannot ensure this required property.
+	// But if the row count is 0 or 1, we don't need to care about the property.
+	if !prop.IsSortItemEmpty() && p.RowCount > 1 {
+		return base.InvalidTask, nil
+	}
+	dual := PhysicalTableDual{
+		RowCount: p.RowCount,
+	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+	dual.SetSchema(p.Schema())
+	rt := &RootTask{}
+	rt.SetPlan(dual)
+	return rt, nil
+}
+
+// findBestTask4LogicalMockDatasource will be called by LogicalMockDataSource in logicalOp pkg.
+func findBestTask4LogicalMockDatasource(e *logicalop.MockDataSource, _ *property.PhysicalProperty) (base.Task, error) {
+	// It can satisfy any of the property!
+	// Just use a TableDual for convenience.
+	p := PhysicalTableDual{}.Init(e.SCtx(), &property.StatsInfo{RowCount: 1}, 0)
+	task := &RootTask{}
+	task.SetPlan(p)
+	return task, nil
 }

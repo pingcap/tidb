@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -132,7 +133,7 @@ func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexReader) LoadTableStats(ctx sessionctx.Context) {
 	is := p.IndexPlans[0].(*PhysicalIndexScan)
-	utilfuncp.LoadTableStats(ctx, is.Table, is.PhysicalTableID)
+	stats.LoadTableStats(ctx, is.Table, is.PhysicalTableID)
 }
 
 // AccessObject implements PartitionAccesser interface.

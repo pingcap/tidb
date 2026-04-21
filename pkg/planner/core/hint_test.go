@@ -138,3 +138,53 @@ func TestWriteSlowLogHint(t *testing.T) {
 		checkWriteSlowLog(true)
 	})
 }
+
+func TestSetVarPartialOrderedIndexForTopN(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec(`use test`)
+
+		// Test default value
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+
+		// Test set_var hint changes the value during query execution
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
+		testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("COST"))
+		// Value should be restored after query
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+
+		// Test set_var hint with OFF
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = COST`)
+		testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=DISABLE) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+		// Value should be restored after query
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("COST"))
+
+		// Test set_var hint with multiple queries
+		testKit.MustExec(`create table t(a int, b varchar(10), index idx_b(b(5)));`)
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
+		testKit.MustExec(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ * from t order by b limit 10;`)
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+
+		// Test with EXPLAIN (should not change the value)
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
+		testKit.MustExec(`explain select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ * from t order by b limit 10;`)
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+
+		// Regression test: the partial-order prefix column must be resolved against
+		// the child schema even when the index's last column is a prefix column.
+		testKit.MustExec(`create table t_multi(a int, b varchar(30), c varchar(30), key idx_ab_prefix(a, b(15)))`)
+		testKit.MustExec(`insert into t_multi values
+			(1, 'alpha', 'first'),
+			(1, 'beta', 'second'),
+			(1, 'gamma', 'third'),
+			(2, 'alpha', 'fourth'),
+			(2, 'beta', 'fifth'),
+			(2, 'gamma', 'sixth')`)
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = COST`)
+		testKit.MustQuery(`select /*+ use_index(t_multi, idx_ab_prefix) */ * from t_multi order by a, b limit 3 offset 2`).
+			Check(testkit.Rows(
+				"1 gamma third",
+				"2 alpha fourth",
+				"2 beta fifth",
+			))
+	})
+}

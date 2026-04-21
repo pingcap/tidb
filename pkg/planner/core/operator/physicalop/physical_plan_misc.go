@@ -212,12 +212,13 @@ func NewRuntimeFilter(rfIDGenerator *util.IDGenerator, eqPredicate *expression.S
 	rightSideIsBuild := buildNode.RightIsBuildSide()
 	var srcExprList []*expression.Column
 	var targetExprUniqueID int64
+	l, r := expression.ExtractColumnsFromColOpCol(eqPredicate)
 	if rightSideIsBuild {
-		srcExprList = append(srcExprList, eqPredicate.GetArgs()[1].(*expression.Column))
-		targetExprUniqueID = eqPredicate.GetArgs()[0].(*expression.Column).UniqueID
+		srcExprList = append(srcExprList, r)
+		targetExprUniqueID = l.UniqueID
 	} else {
-		srcExprList = append(srcExprList, eqPredicate.GetArgs()[0].(*expression.Column))
-		targetExprUniqueID = eqPredicate.GetArgs()[1].(*expression.Column).UniqueID
+		srcExprList = append(srcExprList, l)
+		targetExprUniqueID = r.UniqueID
 	}
 
 	rfTypes := buildNode.SCtx().GetSessionVars().GetRuntimeFilterTypes()
@@ -250,7 +251,7 @@ func (rf *RuntimeFilter) Assign(targetNode *PhysicalTableScan,
 }
 
 // ExplainInfo explain info of runtime filter
-func (rf *RuntimeFilter) ExplainInfo(isBuildNode bool) string {
+func (rf *RuntimeFilter) ExplainInfo(isBuildNode bool, ctx expression.EvalContext) string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "%d[%s]", rf.id, rf.rfType)
 	if isBuildNode {
@@ -259,7 +260,7 @@ func (rf *RuntimeFilter) ExplainInfo(isBuildNode bool) string {
 			if i != 0 {
 				fmt.Fprintf(&builder, ",")
 			}
-			fmt.Fprintf(&builder, "%s", srcExpr.String())
+			fmt.Fprintf(&builder, "%s", srcExpr.ExplainInfo(ctx))
 		}
 	} else {
 		fmt.Fprintf(&builder, " -> ")
@@ -267,7 +268,7 @@ func (rf *RuntimeFilter) ExplainInfo(isBuildNode bool) string {
 			if i != 0 {
 				fmt.Fprintf(&builder, ",")
 			}
-			fmt.Fprintf(&builder, "%s", targetExpr.String())
+			fmt.Fprintf(&builder, "%s", targetExpr.ExplainInfo(ctx))
 		}
 	}
 	return builder.String()

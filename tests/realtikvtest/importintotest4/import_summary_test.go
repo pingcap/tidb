@@ -21,9 +21,9 @@ import (
 	"strconv"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -84,12 +84,12 @@ func (s *mockGCSSuite) TestGlobalSortSummary() {
 	require.NoError(s.T(), err)
 
 	sql := `
-		SELECT step, summary 
-		FROM mysql.tidb_background_subtask 
+		SELECT step, summary
+		FROM mysql.tidb_background_subtask
 		WHERE task_key = ?
 		UNION ALL
-		SELECT step, summary 
-		FROM mysql.tidb_background_subtask_history 
+		SELECT step, summary
+		FROM mysql.tidb_background_subtask_history
 		WHERE task_key = ?
 		`
 	rs = s.tk.MustQuery(sql, id, id).Rows()

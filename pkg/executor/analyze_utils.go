@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"strconv"
 	"sync"
 
@@ -103,6 +104,18 @@ func getAnalyzePanicErr(r any) error {
 		return err
 	}
 	return errors.Trace(errAnalyzeWorkerPanic)
+}
+
+func normalizeCtxErrWithCause(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+	}
+	return err
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup

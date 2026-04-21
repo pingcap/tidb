@@ -17,7 +17,6 @@ package collate
 import (
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -26,28 +25,7 @@ type generalCICollator struct {
 
 // Compare implements Collator interface.
 func (*generalCICollator) Compare(a, b string) int {
-	a = truncateTailingSpace(a)
-	b = truncateTailingSpace(b)
-	r1, r2 := rune(0), rune(0)
-	ai, bi := 0, 0
-	r1Len, r2Len := 0, 0
-	for ai < len(a) && bi < len(b) {
-		r1, r1Len = utf8.DecodeRune(hack.Slice(a[ai:]))
-		r2, r2Len = utf8.DecodeRune(hack.Slice(b[bi:]))
-
-		if r1 == utf8.RuneError || r2 == utf8.RuneError {
-			return 0
-		}
-
-		ai = ai + r1Len
-		bi = bi + r2Len
-
-		cmp := int(convertRuneGeneralCI(r1)) - int(convertRuneGeneralCI(r2))
-		if cmp != 0 {
-			return sign(cmp)
-		}
-	}
-	return sign((len(a) - ai) - (len(b) - bi))
+	return compareCommon(a, b, convertRuneGeneralCI)
 }
 
 // Key implements Collator interface.
@@ -66,9 +44,12 @@ func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	i, rLen := 0, 0
 	r := rune(0)
 	for i < len(str) {
-		r, rLen = utf8.DecodeRune(hack.Slice(str[i:]))
-
-		if r == utf8.RuneError {
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		r, rLen = utf8.DecodeRuneInString(str[i:])
+		invalid := r == utf8.RuneError && rLen == 1
+		if invalid {
 			return buf
 		}
 
@@ -77,6 +58,11 @@ func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 		buf = append(buf, byte(u16>>8), byte(u16))
 	}
 	return buf
+}
+
+// MaxKeyLen implements Collator interface.
+func (*generalCICollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 2
 }
 
 // Pattern implements Collator interface.
@@ -106,15 +92,15 @@ func (p *ciPattern) DoMatch(str string) bool {
 	})
 }
 
-func convertRuneGeneralCI(r rune) uint16 {
+func convertRuneGeneralCI(r rune) uint32 {
 	if r > 0xFFFF {
 		return 0xFFFD
 	}
 	plane := planeTable[r>>8]
 	if plane == nil {
-		return uint16(r)
+		return uint32(r)
 	}
-	return plane[r&0xFF]
+	return uint32(plane[r&0xFF])
 }
 
 var (

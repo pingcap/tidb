@@ -782,7 +782,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
-			defer trace.StartRegion(ctx, "IndexMergeTableScanWorker").End()
+			defer trace.StartRegion(ctx, tableScanWorkerType).End()
 			var task *indexMergeTableTask
 			util.WithRecovery(
 				// Note we use the address of `task` as the argument of both `pickAndExecTask` and `handleTableScanWorkerPanic`
@@ -2017,9 +2017,9 @@ type IndexMergeRuntimeStat struct {
 func (e *IndexMergeRuntimeStat) String() string {
 	var buf bytes.Buffer
 	if e.FetchIdxTime != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{fetch_handle:%s", time.Duration(e.FetchIdxTime)))
+		fmt.Fprintf(&buf, "index_task:{fetch_handle:%s", time.Duration(e.FetchIdxTime))
 		if e.IndexMergeProcess != 0 {
-			buf.WriteString(fmt.Sprintf(", merge:%s", e.IndexMergeProcess))
+			fmt.Fprintf(&buf, ", merge:%s", e.IndexMergeProcess)
 		}
 		buf.WriteByte('}')
 	}

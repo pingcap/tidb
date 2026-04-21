@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -47,11 +46,6 @@ func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable
 // PredicatePushDown inherits BaseLogicalPlan.LogicalPlan.<1st> implementation.
 
 // PruneColumns inherits BaseLogicalPlan.LogicalPlan.<2nd> implementation.
-
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalCTETable) FindBestTask(prop *property.PhysicalProperty) (t base.Task, err error) {
-	return utilfuncp.FindBestTask4LogicalCTETable(p, prop)
-}
 
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
 

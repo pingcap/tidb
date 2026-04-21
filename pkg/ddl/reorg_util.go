@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -53,10 +53,12 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		setReorgParam = true
 		setDistTaskParam = true
+	case model.ActionModifyColumn:
+		setReorgParam = true
+		setDistTaskParam = job.NeedReorg
 	case model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning,
-		model.ActionModifyColumn:
+		model.ActionAlterTablePartitioning:
 		setReorgParam = true
 	case model.ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -66,9 +68,13 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 				setDistTaskParam = true
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
-				model.ActionAlterTablePartitioning,
-				model.ActionModifyColumn:
+				model.ActionAlterTablePartitioning:
 				setReorgParam = true
+			case model.ActionModifyColumn:
+				setReorgParam = true
+				if !setDistTaskParam {
+					setDistTaskParam = sub.NeedReorg
+				}
 			}
 		}
 	default:
@@ -106,7 +112,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			return err
 		}
 		calc := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, factors)
-		autoConc = calc.CalcConcurrency()
+		autoConc = calc.CalcRequiredSlots()
 		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
 		factorField = zap.Float64("amplifyFactor", factors.AmplifyFactor)
 	}
@@ -154,6 +160,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			return dbterror.ErrUnsupportedDistTask
 		}
 	}
+	failpoint.InjectCall("beforeInitReorgMeta", m)
 	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
 		zap.Int64("jobID", job.ID),
@@ -231,7 +238,11 @@ func estimateTableSizeByID(ctx context.Context, pdCli pdhttp.Client, store helpe
 			break
 		}
 		for _, r := range regionInfos.Regions {
-			totalSize += r.ApproximateSize * units.MiB
+			// ApproximateSize is SST/blob file size (can reflect compression), while
+			// ApproximateKvSize is KV data size and usually better tracks logical table size.
+			// Use max() because ApproximateKvSize can be zero when TiKV does not report it.
+			sizeInMiB := max(r.ApproximateSize, r.ApproximateKvSize)
+			totalSize += sizeInMiB * units.MiB
 		}
 		lastKey := regionInfos.Regions[len(regionInfos.Regions)-1].EndKey
 		start, err = hex.DecodeString(lastKey)

@@ -22,6 +22,7 @@ import (
 
 // errors of ingest API
 var (
+	ErrNoLeader              = errors.Normalize("region has no leader, region '%d'", errors.RFCCodeText("KV:ErrNoLeader"))
 	ErrKVEpochNotMatch       = errors.Normalize("epoch not match", errors.RFCCodeText("Ingest:EpochNotMatch"))
 	ErrKVNotLeader           = errors.Normalize("not leader", errors.RFCCodeText("Ingest:NotLeader"))
 	ErrKVServerIsBusy        = errors.Normalize("server is busy", errors.RFCCodeText("Ingest:ServerIsBusy"))

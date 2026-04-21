@@ -16,6 +16,7 @@ package physicalop
 
 import (
 	"context"
+	"math"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -26,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -310,6 +313,30 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		return copyColumn
 	}
 	return expandVirtualColumn(schema, copyColumn, colsInfo)
+}
+
+// CalcChildExpectedCnt computes the expected row count for a child of an
+// ordered join given the parent's ExpectedCnt. It accounts for the
+// OptOrderingIdxSelRatio to model extra rows that may need to be scanned
+// before enough matching rows are produced. The ordering penalty
+// (rowsToMeetFirst) is only applied when the property requires ordered output.
+func CalcChildExpectedCnt(sctx base.PlanContext, prop *property.PhysicalProperty, childRowCount, estimatedRowCount float64) float64 {
+	hasOrder := !prop.IsSortItemEmpty()
+	var orderRatio float64
+	if hasOrder {
+		orderRatio = sctx.GetSessionVars().OptOrderingIdxSelRatio
+		sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptOrderingIdxSelRatio)
+	}
+	if (prop.ExpectedCnt < estimatedRowCount) ||
+		(hasOrder && orderRatio > 0 && childRowCount > estimatedRowCount && prop.ExpectedCnt < childRowCount && estimatedRowCount > 0) {
+		var rowsToMeetFirst float64
+		if hasOrder && orderRatio > 0 {
+			rowsToMeetFirst = max(0.0, (childRowCount-estimatedRowCount)*orderRatio)
+		}
+		expCntScale := prop.ExpectedCnt / estimatedRowCount
+		return (childRowCount * expCntScale) + rowsToMeetFirst
+	}
+	return math.MaxFloat64
 }
 
 // expandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.

@@ -51,6 +51,10 @@ const (
 	// https://github.com/tikv/pd/blob/c40e319f50822678cda71ae62ee2fd70a9cac010/pkg/core/store.go#L523
 
 	storeDisconnectionDuration = 100 * time.Second
+
+	// LabelRuleBatchSize is the batch size for getting/putting label rules to/from PD
+	// to avoid overwhelming PD with too many requests at once
+	LabelRuleBatchSize = 50
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
@@ -60,16 +64,17 @@ const (
 // - target's flen and decimal should be bigger or equals to src's
 // - elements in target is superset of elements in src if they're enum or set type
 // - same charset and collate if they're string types
-func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
+func IsTypeCompatible(src types.FieldType, target types.FieldType) (typeEq, collateEq bool) {
+	collateEq = src.GetCollate() == target.GetCollate()
 	if mysql.HasNotNullFlag(src.GetFlag()) != mysql.HasNotNullFlag(target.GetFlag()) {
-		return false
+		return false, collateEq
 	}
 	if mysql.HasUnsignedFlag(src.GetFlag()) != mysql.HasUnsignedFlag(target.GetFlag()) {
-		return false
+		return false, collateEq
 	}
 	srcEType, dstEType := src.EvalType(), target.EvalType()
 	if srcEType != dstEType {
-		return false
+		return false, collateEq
 	}
 
 	getFLenAndDecimal := func(tp types.FieldType) (int, int) {
@@ -87,7 +92,7 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 	srcFLen, srcDecimal := getFLenAndDecimal(src)
 	targetFLen, targetDecimal := getFLenAndDecimal(target)
 	if srcFLen > targetFLen || srcDecimal > targetDecimal {
-		return false
+		return false, collateEq
 	}
 
 	// if they're not enum or set type, elems will be empty
@@ -96,7 +101,7 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 	srcElems := src.GetElems()
 	targetElems := target.GetElems()
 	if len(srcElems) > len(targetElems) {
-		return false
+		return false, collateEq
 	}
 	targetElemSet := make(map[string]struct{})
 	for _, item := range targetElems {
@@ -104,11 +109,10 @@ func IsTypeCompatible(src types.FieldType, target types.FieldType) bool {
 	}
 	for _, item := range srcElems {
 		if _, ok := targetElemSet[item]; !ok {
-			return false
+			return false, collateEq
 		}
 	}
-	return src.GetCharset() == target.GetCharset() &&
-		src.GetCollate() == target.GetCollate()
+	return src.GetCharset() == target.GetCharset(), collateEq
 }
 
 func GRPCConn(ctx context.Context, storeAddr string, tlsConf *tls.Config, opts ...grpc.DialOption) (*grpc.ClientConn, error) {

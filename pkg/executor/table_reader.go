@@ -215,7 +215,7 @@ func (e *TableReaderExecutor) setDummy() {
 }
 
 func (e *TableReaderExecutor) memUsage() int64 {
-	const sizeofTableReaderExecutor = int64(unsafe.Sizeof(*(*TableReaderExecutor)(nil)))
+	const sizeofTableReaderExecutor = int64(unsafe.Sizeof(*e))
 
 	res := sizeofTableReaderExecutor
 	res += size.SizeOfPointer * int64(cap(e.ranges))
@@ -690,7 +690,7 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	if !tr.optionalFinished {
 		data, err = tr.optionalResult.NextRaw(ctx)
 		if err != nil {
-			return nil, err
+			return nil, normalizeCtxErrWithCause(ctx, err)
 		}
 		if data != nil {
 			return data, nil
@@ -699,7 +699,7 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	}
 	data, err = tr.result.NextRaw(ctx)
 	if err != nil {
-		return nil, err
+		return nil, normalizeCtxErrWithCause(ctx, err)
 	}
 	return data, nil
 }

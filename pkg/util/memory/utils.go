@@ -17,13 +17,20 @@ package memory
 import (
 	"container/list"
 	"math/bits"
+	"runtime"
+	"runtime/metrics"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sys/cpu"
 )
 
 const (
-	byteSize = 1
-	kilo     = 1000
+	byteSize   = 1
+	byteSizeKB = 1 << 10
+	byteSizeMB = 1 << 20
+	byteSizeGB = 1 << 30
+	kilo       = 1000
 )
 
 // list with cache to avoid the cost of allocating and deallocating list elements.
@@ -55,10 +62,14 @@ func (l *wrapList[V]) moveToFront(e wrapListElement) {
 	l.base.MoveToFront(e.base)
 }
 
+func (l *wrapList[V]) doAddNum(x int64) {
+	l.num += x
+}
+
 func (l *wrapList[V]) remove(e wrapListElement) {
 	e.base.Value = nil
 	l.base.MoveToBack(e.base)
-	atomic.AddInt64(&l.num, -1)
+	l.doAddNum(-1)
 }
 
 func (l *wrapList[V]) front() (res V) {
@@ -79,11 +90,21 @@ func (l *wrapList[V]) popFront() (res V) {
 }
 
 func (l *wrapList[V]) size() int64 {
-	return atomic.LoadInt64(&l.num)
+	return l.num
 }
 
 func (l *wrapList[V]) empty() bool {
 	return l.size() == 0
+}
+
+//go:norace
+func (l *wrapList[V]) approxSize() int64 {
+	return l.size()
+}
+
+//go:norace
+func (l *wrapList[V]) approxEmpty() bool {
+	return l.empty()
 }
 
 func (l *wrapList[V]) pushBack(v V) wrapListElement {
@@ -95,7 +116,7 @@ func (l *wrapList[V]) pushBack(v V) wrapListElement {
 		l.base.MoveBefore(x, l.end.base)
 		x.Value = v
 	}
-	atomic.AddInt64(&l.num, 1)
+	l.doAddNum(1)
 	return wrapListElement{x}
 }
 
@@ -190,7 +211,11 @@ func getQuotaShard(quota int64, maxQuotaShard int) int {
 }
 
 func nowUnixMilli() int64 {
-	return time.Now().UnixMilli()
+	return now().UnixMilli()
+}
+
+func nowUnixSec() int64 {
+	return now().Unix()
 }
 
 func now() time.Time {
@@ -224,4 +249,69 @@ func multiRatio(x, yMilli int64) int64 {
 func intoRatio(x float64) (zMilli int64) {
 	zMilli = int64(x * kilo)
 	return
+}
+
+type cpuCacheLinePad cpu.CacheLinePad
+
+// RuntimeMemStats represents the runtime memory statistics
+type RuntimeMemStats struct {
+	HeapAlloc, HeapInuse, TotalFree, MemOffHeap, NumGC uint64
+}
+
+var gcTracker struct {
+	lastGCTime atomic.Int64 // approximate time of last GC in unix nano
+	lastNumGC  atomic.Uint64
+}
+
+func approxLastGCTime() int64 {
+	return gcTracker.lastGCTime.Load()
+}
+
+// SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW
+func SampleRuntimeMemStats() (s RuntimeMemStats) {
+	heapSample := [7]metrics.Sample{
+		// heap alloc
+		{Name: "/memory/classes/heap/objects:bytes"},
+		// heap available
+		{Name: "/memory/classes/heap/unused:bytes"}, // unused
+		{Name: "/memory/classes/heap/free:bytes"},
+		{Name: "/memory/classes/heap/released:bytes"},
+		// memory total
+		{Name: "/memory/classes/total:bytes"},
+		// total free
+		{Name: "/gc/heap/frees:bytes"},
+		// total GC cycles
+		{Name: "/gc/cycles/total:gc-cycles"},
+	}
+	metrics.Read(heapSample[:])
+	s = RuntimeMemStats{
+		HeapAlloc: heapSample[0].Value.Uint64(),
+		HeapInuse: heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64(), // inuse = alloc + unused
+		TotalFree: heapSample[5].Value.Uint64(),
+		NumGC:     heapSample[6].Value.Uint64(),
+	}
+
+	total := heapSample[4].Value.Uint64()
+	heap := heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64() + heapSample[2].Value.Uint64() + heapSample[3].Value.Uint64()
+	if total > heap {
+		s.MemOffHeap = total - heap
+	}
+
+	if s.NumGC > gcTracker.lastNumGC.Load() {
+		gcTracker.lastGCTime.Store(now().UnixNano())
+		gcTracker.lastNumGC.Store(s.NumGC)
+	}
+
+	return s
+}
+
+// IntoRuntimeMemStats converts runtime.MemStats to RuntimeMemStats
+func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
+	return RuntimeMemStats{
+		HeapAlloc:  s.HeapAlloc,
+		HeapInuse:  s.HeapInuse,
+		TotalFree:  s.TotalAlloc - s.Alloc,
+		MemOffHeap: s.Sys - s.HeapSys,
+		NumGC:      uint64(s.NumGC),
+	}
 }

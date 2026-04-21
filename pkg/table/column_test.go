@@ -16,6 +16,7 @@ package table
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -524,4 +525,51 @@ func newCol(name string) *Column {
 		Name:  ast.NewCIStr(name),
 		State: model.StatePublic,
 	})
+}
+
+func TestCastValueStrict(t *testing.T) {
+	// signed -> unsigned, fail
+	input := types.NewIntDatum(-1)
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	ft.AddFlag(mysql.UnsignedFlag)
+	v, err := CastColumnValueWithStrictMode(input, ft)
+	require.Error(t, err)
+	require.EqualValues(t, 0, v.GetUint64()) // we get truncated value
+
+	// signed -> signed, succeed
+	input = types.NewIntDatum(1)
+	ft = types.NewFieldType(mysql.TypeLonglong)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.NoError(t, err)
+	require.EqualValues(t, input.GetInt64(), v.GetInt64())
+
+	// bigint -> int, fail
+	input = types.NewIntDatum(1 << 40)
+	ft = types.NewFieldType(mysql.TypeLong)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.Error(t, err)
+	require.EqualValues(t, math.MaxInt32, v.GetInt64()) // we get truncated value
+
+	// int -> bigint, succeed
+	input = types.NewIntDatum(1 << 16)
+	ft = types.NewFieldType(mysql.TypeLonglong)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.NoError(t, err)
+	require.EqualValues(t, input.GetInt64(), v.GetInt64())
+
+	// char(4) -> char(2), fail
+	input = types.NewStringDatum("abcd")
+	ft = types.NewFieldType(mysql.TypeString)
+	ft.SetFlen(2)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.Error(t, err)
+	require.Equal(t, "ab", v.GetString()) // we get truncated value
+
+	// varchar(4) -> char(2), succeed
+	input = types.NewStringDatum("a   ")
+	ft = types.NewFieldType(mysql.TypeString)
+	ft.SetFlen(2)
+	v, err = CastColumnValueWithStrictMode(input, ft)
+	require.NoError(t, err)
+	require.Equal(t, "a", v.GetString())
 }
