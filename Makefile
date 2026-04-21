@@ -727,12 +727,12 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 	@curl http://metadata.google.internal/computeMetadata/v1/instance/machineType -H "Metadata-Flavor: Google" || true
 	@echo "==> phase 1: build instrumented test binaries"
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc build $(BAZEL_CMD_CONFIG) $(BAZEL_NO_REMOTE_CACHE_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --collect_code_coverage --jobs=$(BAZEL_COVERAGE_BUILD_JOBS) --build_tests_only \
-		--bes_backend=grpcs://beplessproxy.channel9.ai  --bes_results_url=https://bepless.hawkingrei.com/ \
+		--bes_backend=grpcs://beplessproxy.channel9.ai  --bes_results_url=https://bepless.hawkingrei.com/ --remote_build_event_upload=all \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- $(BAZEL_COVERAGE_DDL_TARGETS)
 	@echo "==> phase 2: run coverage with lower test concurrency"
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_NO_REMOTE_CACHE_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=$(BAZEL_COVERAGE_TEST_JOBS) --local_test_jobs=$(BAZEL_COVERAGE_TEST_JOBS) --build_tests_only --test_keep_going=false \
-		--bes_backend=grpcs://beplessproxy.channel9.ai  --bes_results_url=https://bepless.hawkingrei.com/ \
+		--bes_backend=grpcs://beplessproxy.channel9.ai  --bes_results_url=https://bepless.hawkingrei.com/ --remote_build_event_upload=all \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- $(BAZEL_COVERAGE_DDL_TARGETS)
