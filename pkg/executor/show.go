@@ -2756,6 +2756,20 @@ func runWithSystemSession(ctx context.Context, sctx sessionctx.Context, fn func(
 	if err = loadSnapshotInfoSchemaIfNeeded(sysCtx, sctx.GetSessionVars().SnapshotTS); err != nil {
 		return err
 	}
+	for _, varName := range []string{
+		variable.SQLModeVar,
+		variable.CharacterSetClient,
+		variable.CharacterSetConnection,
+		variable.CollationConnection,
+	} {
+		val, ok := sctx.GetSessionVars().GetSystemVar(varName)
+		if !ok {
+			return errors.Errorf("can not find %s", varName)
+		}
+		if err = sysCtx.GetSessionVars().SetSystemVar(varName, val); err != nil {
+			return err
+		}
+	}
 	// `fn` may use KV transaction, so initialize the txn here
 	if err = sessiontxn.NewTxn(ctx, sysCtx); err != nil {
 		return err

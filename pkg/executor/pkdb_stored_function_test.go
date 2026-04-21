@@ -249,3 +249,74 @@ end`)
 	tk.MustExec("drop function sf_view_query")
 	tk.MustGetErrCode("select * from v_sf_view_query", mysql.ErrViewInvalid)
 }
+
+func TestCrossDatabaseViewQueryWithStoredFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop view if exists v_sf_view_cross_db")
+	tk.MustExec("drop function if exists sf_view_cross_db")
+	tk.MustExec("drop table if exists t_sf_view_cross_db")
+
+	tk.MustExec("create table t_sf_view_cross_db(id int primary key, f2 varchar(100))")
+	tk.MustExec("insert into t_sf_view_cross_db values (1, 'abc')")
+	tk.MustExec(`create function sf_view_cross_db(prm_spell varchar(100)) returns varchar(100)
+begin
+	return concat(prm_spell, '123');
+end`)
+	tk.MustExec("create view v_sf_view_cross_db as select id, sf_view_cross_db(f2) as newf2 from t_sf_view_cross_db")
+
+	tk.MustExec("use mysql")
+	tk.MustQuery("select * from test.v_sf_view_cross_db").Check(testkit.Rows("1 abc123"))
+}
+
+func TestShowFieldsFromViewWithStoredFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop view if exists v_sf_view_show_fields")
+	tk.MustExec("drop function if exists sf_view_show_fields")
+	tk.MustExec("drop table if exists t_sf_view_show_fields")
+
+	tk.MustExec("create table t_sf_view_show_fields(id int primary key, f2 varchar(100))")
+	tk.MustExec("insert into t_sf_view_show_fields values (1, 'abc')")
+	tk.MustExec(`create function sf_view_show_fields(prm_spell varchar(100)) returns varchar(100)
+begin
+	return concat(prm_spell, '123');
+end`)
+	tk.MustExec("create view v_sf_view_show_fields as select id, sf_view_show_fields(f2) as newf2 from t_sf_view_show_fields")
+
+	rows := tk.MustQuery("show fields from v_sf_view_show_fields").Rows()
+	require.Len(t, rows, 2)
+	require.Equal(t, "id", rows[0][0])
+	require.Equal(t, "newf2", rows[1][0])
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestInformationSchemaColumnsFromViewWithStoredFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop view if exists v_sf_view_info_schema")
+	tk.MustExec("drop function if exists sf_view_info_schema")
+	tk.MustExec("drop table if exists t_sf_view_info_schema")
+
+	tk.MustExec("create table t_sf_view_info_schema(id int primary key, f2 varchar(100))")
+	tk.MustExec("insert into t_sf_view_info_schema values (1, 'abc')")
+	tk.MustExec(`create function sf_view_info_schema(prm_spell varchar(100)) returns varchar(100)
+begin
+	return concat(prm_spell, '123');
+end`)
+	tk.MustExec("create view v_sf_view_info_schema as select id, sf_view_info_schema(f2) as newf2 from t_sf_view_info_schema")
+
+	tk.MustQuery(`select column_name from information_schema.columns
+where table_schema = 'test' and table_name = 'v_sf_view_info_schema'
+order by ordinal_position`).Check(testkit.Rows("id", "newf2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}

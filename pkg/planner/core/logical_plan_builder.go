@@ -5082,9 +5082,20 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 	}
 	defer deferFunc()
 
-	charset, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+	sessionVars := b.ctx.GetSessionVars()
+	originalCurrentDB, originalCurrentDBCI := sessionVars.CurrentDB, sessionVars.CurrentDBCI
+	if dbName.L != "" {
+		sessionVars.CurrentDB = dbName.O
+		sessionVars.CurrentDBCI = dbName
+		defer func() {
+			sessionVars.CurrentDB = originalCurrentDB
+			sessionVars.CurrentDBCI = originalCurrentDBCI
+		}()
+	}
+
+	charset, collation := sessionVars.GetCharsetInfo()
 	viewParser := parser.New()
-	viewParser.SetParserConfig(b.ctx.GetSessionVars().BuildParserConfig())
+	viewParser.SetParserConfig(sessionVars.BuildParserConfig())
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err
