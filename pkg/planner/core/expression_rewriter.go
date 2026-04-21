@@ -2627,6 +2627,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
+		if er.planCtx != nil && er.planCtx.builder != nil {
+			er.planCtx.builder.appendPartitionRowIDWarningByFieldName(er.names[idx])
+		}
 		er.ctxStackAppend(column, er.names[idx])
 		columnVisited = er.names[idx]
 		return
@@ -2654,6 +2657,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		er.err = err
 		return
 	} else if col != nil {
+		if er.planCtx != nil && er.planCtx.builder != nil {
+			er.planCtx.builder.appendPartitionRowIDWarningByFieldName(name)
+		}
 		er.ctxStackAppend(col, name)
 		columnVisited = name
 		return
@@ -2663,6 +2669,9 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		idx, err = expression.FindFieldName(outerName, v)
 		if idx >= 0 {
 			column := outerSchema.Columns[idx]
+			if er.planCtx != nil && er.planCtx.builder != nil {
+				er.planCtx.builder.appendPartitionRowIDWarningByFieldName(outerName[idx])
+			}
 			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, outerName[idx])
 			columnVisited = outerName[idx]
 			return
@@ -2921,20 +2930,18 @@ func (b *PlanBuilder) appendColumnsToLBACVisitInfo(columnVisited []*ast.ColumnNa
 }
 
 func (er *expressionRewriter) appendColumnVisited(columnVisited *types.FieldName) {
-	colName := &ast.ColumnName{
-		Name:   columnVisited.OrigColName,
-		Table:  columnVisited.OrigTblName,
-		Schema: columnVisited.DBName,
-	}
 	b := er.planCtx.builder
-	if b != nil && b.is != nil && infoschema.TableIsView(b.is, columnVisited.DBName, columnVisited.TblName) {
-		colName.Name = columnVisited.ColName
-		colName.Table = columnVisited.TblName
+	colName := b.fieldNameToColumnName(columnVisited)
+	if colName == nil {
+		return
 	}
 
 	// When checking a derived table, its colName.Schema.L would be empty, we can just skip it.
 	// Because the column privilege is checked in the definition of derived table.
 	if len(colName.Name.L) > 0 && len(colName.Table.L) > 0 && len(colName.Schema.L) > 0 {
+		if b != nil {
+			b.appendPartitionRowIDWarning(colName)
+		}
 		// The column privilege is checked in the definition of CTE.
 		for i := len(b.outerCTEs) - 1; i >= 0; i-- {
 			if colName.Table.L == b.outerCTEs[i].def.Name.L {
@@ -2980,4 +2987,64 @@ func (er *expressionRewriter) assembleConstant(d types.Datum, retType *types.Fie
 	value := &expression.Constant{Value: *datum, RetType: retType}
 	initConstantRepertoire(er.sctx.GetEvalCtx(), value)
 	return value
+}
+
+func (b *PlanBuilder) fieldNameToColumnName(fieldName *types.FieldName) *ast.ColumnName {
+	if b == nil {
+		return nil
+	}
+	colNameCI := fieldName.OrigColName
+	if colNameCI.L == "" {
+		colNameCI = fieldName.ColName
+	}
+	tblNameCI := fieldName.OrigTblName
+	if tblNameCI.L == "" {
+		tblNameCI = fieldName.TblName
+	}
+	colName := &ast.ColumnName{
+		Name:   colNameCI,
+		Table:  tblNameCI,
+		Schema: fieldName.DBName,
+	}
+	if b.is != nil && infoschema.TableIsView(b.is, fieldName.DBName, fieldName.TblName) {
+		colName.Name = fieldName.ColName
+		colName.Table = fieldName.TblName
+	} else if b.is != nil {
+		// When a view is accessed (possibly with an alias like SELECT * FROM view t1),
+		// buildProjUponView sets DBName to the view's database and OrigTblName to the
+		// underlying table's name. If the view and underlying table are in different
+		// databases, this creates an invalid (DBName, OrigTblName) combination.
+		// Verify the table actually exists in DBName; if not, skip the privilege check
+		// since it was already handled during the inner view plan building.
+		if _, err := b.is.TableByName(context.Background(), fieldName.DBName, tblNameCI); err != nil {
+			return nil
+		}
+	}
+	return colName
+}
+
+func (b *PlanBuilder) appendPartitionRowIDWarningByFieldName(fieldName *types.FieldName) {
+	colName := b.fieldNameToColumnName(fieldName)
+	if colName == nil {
+		return
+	}
+	b.appendPartitionRowIDWarning(colName)
+}
+
+func (b *PlanBuilder) appendPartitionRowIDWarning(colName *ast.ColumnName) {
+	if b == nil || b.is == nil || colName.Name.L != model.ExtraHandleName.L {
+		return
+	}
+	tbl, err := b.is.TableByName(context.Background(), colName.Schema, colName.Table)
+	if err != nil || tbl.Meta().GetPartitionInfo() == nil {
+		return
+	}
+	key := colName.Schema.L + "." + colName.Table.L
+	if b.partitionRowIDWarningTables.Exist(key) {
+		return
+	}
+	b.partitionRowIDWarningTables.Insert(key)
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+		"`_tidb_rowid` in a partitioned table is not globally unique; combine it with the partition ID to guarantee uniqueness",
+	))
 }

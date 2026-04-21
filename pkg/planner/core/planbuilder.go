@@ -235,6 +235,9 @@ type PlanBuilder struct {
 	visitInfo     []visitInfo
 	lbacVisitInfo []ColumnVisitInfo
 	tableHintInfo []*hint.PlanHints
+	// partitionRowIDWarningTables deduplicates `_tidb_rowid` warnings for partitioned
+	// tables within a single statement build.
+	partitionRowIDWarningTables set.StringSet
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
@@ -549,10 +552,11 @@ func (PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 	builder := &PlanBuilder{
-		outerCTEs:           make([]*cteInfo, 0),
-		colMapper:           make(map[*ast.ColumnNameExpr]int),
-		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
-		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		outerCTEs:                   make([]*cteInfo, 0),
+		colMapper:                   make(map[*ast.ColumnNameExpr]int),
+		handleHelper:                &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
+		correlatedAggMapper:         make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		partitionRowIDWarningTables: set.NewStringSet(),
 	}
 	for _, opt := range opts {
 		opt.Apply(builder)
@@ -601,6 +605,8 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	for k := range saveCorrelateAggMapper {
 		delete(saveCorrelateAggMapper, k)
 	}
+	savePartitionRowIDWarningTables := b.partitionRowIDWarningTables
+	savePartitionRowIDWarningTables.Clear()
 
 	// Reset ALL the fields.
 	*b = PlanBuilder{}
@@ -611,6 +617,7 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
+	b.partitionRowIDWarningTables = savePartitionRowIDWarningTables
 	b.noDecorrelate = false
 
 	// Add more fields if they are safe to be reused.
