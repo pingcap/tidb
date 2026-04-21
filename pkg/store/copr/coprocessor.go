@@ -1730,8 +1730,14 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	// Supply a learned RC pre-charge hint when the per-logical-scan EMA has
 	// converged. Until it has, leave PredictedReadBytes at 0 so PD falls back
 	// to PagingSizeBytes (the worst-case cap) as the pre-charge basis.
+	// The send-side counters below are the authoritative basis for pre-charge
+	// coverage ratios: every outgoing cop RPC increments exactly one of
+	// (cold, ready).
 	if worker.ema.IsReady() {
 		req.PredictedReadBytes = worker.ema.Predict()
+		copr_metrics.EMASendReady.Inc()
+	} else {
+		copr_metrics.EMASendCold.Inc()
 	}
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
@@ -1907,13 +1913,6 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	}
 
 	if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
-		// Classify before Observe so the counter reflects the regime that
-		// gated the just-completed RPC's pre-charge, not the post-update one.
-		if worker.ema.IsReady() {
-			copr_metrics.EMAObservationReady.Inc()
-		} else {
-			copr_metrics.EMAObservationCold.Inc()
-		}
 		worker.ema.Observe(readBytes, time.Now())
 	}
 
