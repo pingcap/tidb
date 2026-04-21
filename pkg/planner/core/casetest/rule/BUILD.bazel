@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "rule_correlate_test.go",
         "rule_derive_topn_from_window_test.go",
         "rule_eliminate_projection_test.go",
         "rule_inject_extra_projection_test.go",
