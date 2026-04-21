@@ -50,6 +50,7 @@ go_library(
         "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
+        "//pkg/lightning/importdef",
         "//pkg/lightning/log",
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",

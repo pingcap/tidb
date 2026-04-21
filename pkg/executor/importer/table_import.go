@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -209,7 +210,7 @@ func NewTableImporter(
 		id:                 id,
 		backend:            localBackend,
 		kvStore:            kvStore,
-		tableInfo: &checkpoints.TidbTableInfo{
+		tableInfo: &importdef.TableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),
@@ -237,7 +238,7 @@ type TableImporter struct {
 	id        string
 	backend   *local.Backend
 	kvStore   tidbkv.Storage
-	tableInfo *checkpoints.TidbTableInfo
+	tableInfo *importdef.TableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
 	encTable table.Table
 	dbID     int64
@@ -292,7 +293,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
-		tableInfo: &checkpoints.TidbTableInfo{
+		tableInfo: &importdef.TableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
 			Core: e.Table.Meta(),

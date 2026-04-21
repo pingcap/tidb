@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -64,8 +65,8 @@ import (
 type TableImporter struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
-	dbInfo    *checkpoints.TidbDBInfo
-	tableInfo *checkpoints.TidbTableInfo
+	dbInfo    *importdef.DBInfo
+	tableInfo *importdef.TableInfo
 	tableMeta *mydump.MDTableMeta
 	encTable  table.Table
 	alloc     autoid.Allocators
@@ -84,8 +85,8 @@ type TableImporter struct {
 func NewTableImporter(
 	tableName string,
 	tableMeta *mydump.MDTableMeta,
-	dbInfo *checkpoints.TidbDBInfo,
-	tableInfo *checkpoints.TidbTableInfo,
+	dbInfo *importdef.DBInfo,
+	tableInfo *importdef.TableInfo,
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
