@@ -14,7 +14,22 @@
 
 package objstore
 
-import "time"
+import (
+	"context"
+	"time"
+)
+
+// Re-exports of internal sentinel errors so tests in objstore_test can match
+// them with errors.Is.
+var (
+	TEST_ErrRenewTxnIDMismatch = errRenewTxnIDMismatch
+	TEST_ErrRenewLeaseExpired  = errRenewLeaseExpired
+)
+
+// TEST_TryRenew exposes the unexported tryRenew primitive for direct testing.
+func TEST_TryRenew(l *RemoteLock, ctx context.Context) error {
+	return l.tryRenew(ctx)
+}
 
 // TEST_SetLeaseConstants overrides the lease-related timing knobs for a test.
 // The returned restore function must be called (typically via t.Cleanup) so

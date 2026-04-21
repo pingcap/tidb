@@ -196,6 +196,92 @@ func TestTESTSetNowRestores(t *testing.T) {
 	require.True(t, m2.LockedAt.After(fixed), "after restore, time must advance past the injected past value")
 }
 
+func TestTryRenewSuccess(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+
+	// Read back original ExpireAt.
+	origData, err := strg.ReadFile(ctx, "test.lock")
+	require.NoError(t, err)
+	var origMeta objstore.LockMeta
+	require.NoError(t, json.Unmarshal(origData, &origMeta))
+
+	// Advance clock and renew.
+	advanced := origMeta.LockedAt.Add(time.Minute)
+	restoreNow := objstore.TEST_SetNow(func() time.Time { return advanced })
+	defer restoreNow()
+
+	require.NoError(t, objstore.TEST_TryRenew(lock, ctx))
+
+	newData, err := strg.ReadFile(ctx, "test.lock")
+	require.NoError(t, err)
+	var newMeta objstore.LockMeta
+	require.NoError(t, json.Unmarshal(newData, &newMeta))
+	require.Equal(t, advanced.Add(objstore.LeaseTTL), newMeta.ExpireAt,
+		"renewed ExpireAt must be nowFunc + LeaseTTL")
+	require.Equal(t, origMeta.TxnID, newMeta.TxnID, "TxnID must stay unchanged across renewal")
+}
+
+func TestTryRenewTxnIDMismatch(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+
+	// Overwrite the lock file with a different TxnID, simulating that another
+	// process has reclaimed and re-acquired the lock.
+	hijacked := objstore.MakeLockMeta("hijacker")
+	hijacked.TxnID = []byte{99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99}
+	hijackedData, err := json.Marshal(hijacked)
+	require.NoError(t, err)
+	require.NoError(t, strg.WriteFile(ctx, "test.lock", hijackedData))
+
+	err = objstore.TEST_TryRenew(lock, ctx)
+	require.ErrorIs(t, err, objstore.TEST_ErrRenewTxnIDMismatch)
+}
+
+func TestTryRenewLeaseExpired(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+
+	// Advance the clock far past the lease expiry.
+	origData, err := strg.ReadFile(ctx, "test.lock")
+	require.NoError(t, err)
+	var origMeta objstore.LockMeta
+	require.NoError(t, json.Unmarshal(origData, &origMeta))
+
+	wayLate := origMeta.ExpireAt.Add(time.Hour)
+	restoreNow := objstore.TEST_SetNow(func() time.Time { return wayLate })
+	defer restoreNow()
+
+	err = objstore.TEST_TryRenew(lock, ctx)
+	require.ErrorIs(t, err, objstore.TEST_ErrRenewLeaseExpired)
+}
+
+func TestTryRenewWriteError(t *testing.T) {
+	ctx := context.Background()
+	strg, _ := createMockStorage(t)
+	lock, err := objstore.TryLockRemote(ctx, strg, "test.lock", "owner")
+	require.NoError(t, err)
+
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/pkg/objstore/local_write_file_err",
+		`return("simulated S3 outage")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err"))
+	}()
+
+	err = objstore.TEST_TryRenew(lock, ctx)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, objstore.TEST_ErrRenewTxnIDMismatch)
+	require.NotErrorIs(t, err, objstore.TEST_ErrRenewLeaseExpired)
+	require.Contains(t, err.Error(), "simulated S3 outage")
+}
+
 func TestLockMetaBackwardCompatZeroExpireAt(t *testing.T) {
 	oldJSON := `{
 		"locked_at": "2024-01-01T00:00:00Z",

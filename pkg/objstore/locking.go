@@ -324,6 +324,54 @@ func (l *RemoteLock) Unlock(ctx context.Context) error {
 	return nil
 }
 
+// errRenewTxnIDMismatch is returned by tryRenew when the lock file on remote
+// storage carries a different TxnID than ours, meaning some other process has
+// reclaimed the lock and acquired a new one. This is permanent — the renewal
+// loop must call onLeaseLost and exit.
+var errRenewTxnIDMismatch = errors.New("renewal: txn id mismatch (lock was taken by another holder)")
+
+// errRenewLeaseExpired is returned by tryRenew when the on-disk ExpireAt is
+// already in the past relative to nowFunc(). The renewal goroutine reached
+// this read too late to refresh; the lease is irrecoverably gone.
+var errRenewLeaseExpired = errors.New("renewal: lease already expired")
+
+// tryRenew performs one Read → Verify → Write cycle to refresh ExpireAt.
+//
+// Returns:
+//   - nil on successful refresh.
+//   - errRenewTxnIDMismatch if the lock file's TxnID no longer matches ours.
+//   - errRenewLeaseExpired if the on-disk ExpireAt is already past.
+//   - any other error → transient (network/storage); caller should retry.
+//
+// Crucially, the GET-Verify-PUT order ensures we never write a refreshed
+// ExpireAt onto a lock that has already been reclaimed by another holder.
+func (l *RemoteLock) tryRenew(ctx context.Context) error {
+	data, err := l.storage.ReadFile(ctx, l.path)
+	if err != nil {
+		return errors.Annotatef(err, "tryRenew: ReadFile %s", l.path)
+	}
+	var meta LockMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return errors.Annotatef(err, "tryRenew: unmarshal LockMeta from %s", l.path)
+	}
+	if !bytes.Equal(meta.TxnID, l.txnID[:]) {
+		return errRenewTxnIDMismatch
+	}
+	if !meta.ExpireAt.IsZero() && nowFunc().After(meta.ExpireAt) {
+		return errRenewLeaseExpired
+	}
+	meta.ExpireAt = nowFunc().Add(LeaseTTL)
+	newData, err := json.Marshal(meta)
+	if err != nil {
+		log.Panic("Unreachable: LockMeta JSON marshal failed during renewal.",
+			zap.String("path", l.path), logutil.ShortError(err))
+	}
+	if err := l.storage.WriteFile(ctx, l.path, newData); err != nil {
+		return errors.Annotatef(err, "tryRenew: WriteFile %s", l.path)
+	}
+	return nil
+}
+
 // UnlockOnCleanUp unlock the lock on clean up.
 func (l *RemoteLock) UnlockOnCleanUp(ctx context.Context) {
 	const cleanUpContextTimeOut = 30 * time.Second
