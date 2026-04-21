@@ -1252,21 +1252,6 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	return nil
 }
 
-// GetExternalEngine returns the external engine by uuid.
-// If the engine is not found or not an external engine, it returns nil.
-// It's used to dynamically update the resource used by the external engine
-func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *external.Engine {
-	e, ok := local.engineMgr.getExternalEngine(engineUUID)
-	if !ok {
-		return nil
-	}
-	ext, ok := e.(*external.Engine)
-	if !ok {
-		return nil
-	}
-	return ext
-}
-
 // verifyImportedStatistics verifies the imported statistics for external engines.
 // It checks if OnDuplicateKeyRecord or OnDuplicateKeyRemove is used (which are not yet implemented),
 // and verifies that the imported KV count matches the expected one.

@@ -298,21 +298,6 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
-	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
-		kvs := make([]kvPair, 0)
-		kvs = append(kvs, kvPair{key: []byte{}, value: []byte{}})
-		data := e.buildIngestData(kvs, nil)
-		data.IncRef()
-		select {
-		case <-ctx.Done():
-			failpoint.Return(ctx.Err())
-		case outCh <- engineapi.DataAndRanges{
-			Data: data,
-		}:
-			failpoint.Return(nil)
-		}
-	})
-
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
