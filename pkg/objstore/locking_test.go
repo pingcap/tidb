@@ -415,6 +415,133 @@ func TestUnlockWaitsForRenewalGoroutine(t *testing.T) {
 	requireFileNotExists(t, filepath.Join(pth, "test.lock"))
 }
 
+// writeLockMeta is a small test helper that places a custom LockMeta JSON at a
+// given path on the storage, simulating what a (possibly long-dead) holder
+// would have written. Used by CleanUpStaleLock tests to plant scenarios.
+func writeLockMeta(t *testing.T, strg storeapi.Storage, path string, meta objstore.LockMeta) {
+	t.Helper()
+	data, err := json.Marshal(meta)
+	require.NoError(t, err)
+	require.NoError(t, strg.WriteFile(context.Background(), path, data))
+}
+
+func TestCleanUpStaleLockOverdueWithinTTL(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	// Plant a lock that expired 30ms ago. With LeaseTTL=100ms and
+	// reclaimWaitMultiplier=1, total window is 100ms; remaining wait is 70ms.
+	now := time.Now()
+	writeLockMeta(t, strg, "stale.lock", objstore.LockMeta{
+		LockedAt: now.Add(-2 * time.Minute),
+		ExpireAt: now.Add(-30 * time.Millisecond),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "stale-overdue-within-ttl",
+	})
+	requireFileExists(t, filepath.Join(pth, "stale.lock"))
+
+	start := time.Now()
+	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "stale.lock")
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.True(t, reclaimed, "stale lock must be reclaimed")
+	requireFileNotExists(t, filepath.Join(pth, "stale.lock"))
+	require.GreaterOrEqual(t, elapsed, 50*time.Millisecond,
+		"reclaim should wait roughly the remaining double-confirmation window")
+}
+
+func TestCleanUpStaleLockOverduePastTTL(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	// Lock expired well over a full TTL ago — no wait needed.
+	now := time.Now()
+	writeLockMeta(t, strg, "stale.lock", objstore.LockMeta{
+		LockedAt: now.Add(-time.Hour),
+		ExpireAt: now.Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "stale-overdue-past-ttl",
+	})
+
+	start := time.Now()
+	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "stale.lock")
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	require.True(t, reclaimed)
+	requireFileNotExists(t, filepath.Join(pth, "stale.lock"))
+	require.Less(t, elapsed, 30*time.Millisecond, "deeply overdue locks should reclaim immediately")
+}
+
+func TestCleanUpStaleLockAlive(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	// Fresh lock with ExpireAt comfortably in the future.
+	now := time.Now()
+	writeLockMeta(t, strg, "alive.lock", objstore.LockMeta{
+		LockedAt: now,
+		ExpireAt: now.Add(50 * time.Millisecond),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "alive",
+	})
+
+	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "alive.lock")
+	require.NoError(t, err)
+	require.False(t, reclaimed, "alive lock must NOT be reclaimed")
+	requireFileExists(t, filepath.Join(pth, "alive.lock"))
+}
+
+func TestCleanUpStaleLockZeroExpireAt(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+
+	// Old-format lock without ExpireAt.
+	writeLockMeta(t, strg, "old.lock", objstore.LockMeta{
+		LockedAt: time.Now().Add(-time.Hour),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "old-format",
+	})
+
+	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "old.lock")
+	require.NoError(t, err)
+	require.False(t, reclaimed, "zero ExpireAt locks must NOT be auto-reclaimed (backward compat)")
+	requireFileExists(t, filepath.Join(pth, "old.lock"))
+}
+
+func TestCleanUpStaleLockRefreshedDuringWait(t *testing.T) {
+	ctx := context.Background()
+	strg, pth := createMockStorage(t)
+	defer objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)()
+
+	// Plant a lock that expired 20ms ago. Remaining wait will be ~80ms.
+	now := time.Now()
+	original := objstore.LockMeta{
+		LockedAt: now.Add(-time.Minute),
+		ExpireAt: now.Add(-20 * time.Millisecond),
+		TxnID:    []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		Hint:     "to-be-refreshed",
+	}
+	writeLockMeta(t, strg, "racing.lock", original)
+
+	// During the cleanup wait, simulate the holder coming back and refreshing.
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		refreshed := original
+		refreshed.ExpireAt = time.Now().Add(time.Minute) // far-future ExpireAt
+		writeLockMeta(t, strg, "racing.lock", refreshed)
+	}()
+
+	reclaimed, err := objstore.CleanUpStaleLock(ctx, strg, "racing.lock")
+	require.NoError(t, err)
+	require.False(t, reclaimed, "reclaim must abort when holder refreshes ExpireAt during wait")
+	requireFileExists(t, filepath.Join(pth, "racing.lock"))
+}
+
 func TestLockMetaBackwardCompatZeroExpireAt(t *testing.T) {
 	oldJSON := `{
 		"locked_at": "2024-01-01T00:00:00Z",

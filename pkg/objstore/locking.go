@@ -338,6 +338,76 @@ func (l *RemoteLock) Unlock(ctx context.Context) error {
 	return nil
 }
 
+// CleanUpStaleLock checks whether the lock file at `path` has an expired
+// ExpireAt and, if so, performs double-confirmation (wait for the rest of the
+// observation window starting at ExpireAt, then re-read) before deleting it.
+//
+// Returns:
+//   - reclaimed=true  : the stale lock was deleted; caller may retry acquire.
+//   - reclaimed=false : the lock is alive, was refreshed during the wait, was
+//     written by an old client (no ExpireAt), or its file disappeared mid-flow.
+//     Caller treats this as "no action needed by us, conflict (if any) is
+//     genuine".
+//
+// The function never returns an error for the "lock not found" case (someone
+// else cleaned up); it surfaces only unexpected I/O failures.
+func CleanUpStaleLock(ctx context.Context, storage storeapi.Storage, path string) (reclaimed bool, err error) {
+	meta, err := getLockMeta(ctx, storage, path)
+	if err != nil {
+		// Lock file may have been deleted between caller's observation and
+		// our read. That's not an error from this helper's perspective.
+		return false, err
+	}
+	if meta.ExpireAt.IsZero() {
+		log.Warn("Encountered lock without ExpireAt (old client); will not auto-reclaim. "+
+			"Use `br log unlock --force` to clear manually if needed.",
+			zap.String("path", path), zap.Stringer("meta", meta))
+		return false, nil
+	}
+	now := nowFunc()
+	if !now.After(meta.ExpireAt) {
+		// Still alive.
+		return false, nil
+	}
+
+	overdue := now.Sub(meta.ExpireAt)
+	totalWindow := time.Duration(reclaimWaitMultiplier) * LeaseTTL
+	waitDuration := totalWindow - overdue
+	if waitDuration < 0 {
+		waitDuration = 0
+	}
+
+	if waitDuration > 0 {
+		log.Info("Encountered stale lock; waiting for double-confirmation before reclaim.",
+			zap.String("path", path),
+			zap.Duration("wait", waitDuration),
+			zap.Stringer("meta", meta))
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(waitDuration):
+		}
+	}
+
+	// Re-read: if ExpireAt changed, the holder is alive — abort.
+	meta2, err := getLockMeta(ctx, storage, path)
+	if err != nil {
+		// File vanished during wait — treat as "already reclaimed by someone else".
+		return false, err
+	}
+	if !meta2.ExpireAt.Equal(meta.ExpireAt) {
+		log.Info("Stale-lock reclaim aborted: holder refreshed ExpireAt during wait.",
+			zap.String("path", path))
+		return false, nil
+	}
+	if err := storage.DeleteFile(ctx, path); err != nil {
+		return false, errors.Annotatef(err, "CleanUpStaleLock: DeleteFile %s", path)
+	}
+	log.Info("Reclaimed stale lock.",
+		zap.String("path", path), zap.Stringer("original_meta", meta))
+	return true, nil
+}
+
 // errRenewTxnIDMismatch is returned by tryRenew when the lock file on remote
 // storage carries a different TxnID than ours, meaning some other process has
 // reclaimed the lock and acquired a new one. This is permanent — the renewal
