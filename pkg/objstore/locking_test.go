@@ -177,6 +177,25 @@ func TestMakeLockMetaHasExpireAt(t *testing.T) {
 		"LockedAt must be within test window")
 }
 
+func TestTESTSetLeaseConstantsRestores(t *testing.T) {
+	origTTL := objstore.LeaseTTL
+	restore := objstore.TEST_SetLeaseConstants(100*time.Millisecond, 30*time.Millisecond, 3, 5*time.Millisecond)
+	require.Equal(t, 100*time.Millisecond, objstore.LeaseTTL, "override must take effect")
+	restore()
+	require.Equal(t, origTTL, objstore.LeaseTTL, "restore must revert the override")
+}
+
+func TestTESTSetNowRestores(t *testing.T) {
+	fixed := time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC)
+	restore := objstore.TEST_SetNow(func() time.Time { return fixed })
+	m1 := objstore.MakeLockMeta("t")
+	require.Equal(t, fixed, m1.LockedAt)
+	require.Equal(t, fixed.Add(objstore.LeaseTTL), m1.ExpireAt)
+	restore()
+	m2 := objstore.MakeLockMeta("t")
+	require.True(t, m2.LockedAt.After(fixed), "after restore, time must advance past the injected past value")
+}
+
 func TestLockMetaBackwardCompatZeroExpireAt(t *testing.T) {
 	oldJSON := `{
 		"locked_at": "2024-01-01T00:00:00Z",
