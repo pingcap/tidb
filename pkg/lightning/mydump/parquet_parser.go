@@ -47,9 +47,6 @@ const (
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
-	// sparkRebaseDefaultTimeZoneID must exist in the generated Spark rebase
-	// table. Tests assert this invariant so the parser can return it directly.
-	sparkRebaseDefaultTimeZoneID = "UTC"
 )
 
 var (
@@ -67,32 +64,6 @@ var (
 	// readBatchSize is the number of rows to read in a single batch
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
-
-	// This literal identifies footer metadata written by Spark. Keep it in one
-	// place because Arrow's AppVersion comparison is app-sensitive: LessThan
-	// returns false when the parsed writer app and the cutoff app differ. That
-	// matters here because the cutoffs below are Spark-specific calendar
-	// boundaries; non-Spark writers like parquet-mr, Hive, or Aurora snapshots
-	// should not match them and therefore will not trigger Spark-version-based
-	// rebasing. The same term must be used both when parsing
-	// "org.apache.spark.version" and when constructing the Spark cutoffs below,
-	// otherwise legacy Spark files could be skipped silently.
-	sparkAppName            = "spark"
-	sparkVersionMetadataKey = "org.apache.spark.version"
-	// Spark writes this file-level footer key alongside its legacy rebase markers
-	// and reads it back only to choose the timezone for legacy date/timestamp
-	// rebasing. It is Spark-specific metadata, not Parquet's column-level
-	// TIMESTAMP semantics, so its presence does not mean an INT64
-	// TIMESTAMP_MICROS value is a "timestamp with timezone".
-	sparkTimeZoneMetadataKey       = "org.apache.spark.timeZone"
-	sparkLegacyDateTimeMetadataKey = "org.apache.spark.legacyDateTime"
-	sparkLegacyINT96MetadataKey    = "org.apache.spark.legacyINT96"
-	// see https://spark.apache.org/docs/3.5.7/sql-data-sources-parquet.html for
-	// the cutoff versions.
-	// Spark 3.0.0 switched to Proleptic Gregorian calendar for DATE and TIMESTAMP,
-	// and Spark 3.1.0 switched to a new INT96 timestamp rebasing.
-	sparkDatetimeRebaseCutoff = metadata.NewAppVersionExplicit(sparkAppName, 3, 0, 0)
-	sparkINT96RebaseCutoff    = metadata.NewAppVersionExplicit(sparkAppName, 3, 1, 0)
 )
 
 func estimateRowSize(row []types.Datum) int {
@@ -250,104 +221,6 @@ type convertedType struct {
 	// calendar for ancient DATE/TIMESTAMP values. It also caches the generated
 	// Spark timezone rebase table for TIMESTAMP and INT96 value conversion.
 	sparkRebaseMicros sparkRebaseMicrosLookup
-}
-
-func sparkVersionFromMetadata(fileMeta *metadata.FileMetaData) *metadata.AppVersion {
-	if fileMeta == nil {
-		return nil
-	}
-
-	if kv := fileMeta.KeyValueMetadata(); kv != nil {
-		if version := kv.FindValue(sparkVersionMetadataKey); version != nil {
-			return sparkAppVersion(*version)
-		}
-	}
-
-	return metadata.NewAppVersion(fileMeta.GetCreatedBy())
-}
-
-func sparkAppVersion(version string) *metadata.AppVersion {
-	version = strings.TrimSpace(version)
-	if version == "" {
-		return nil
-	}
-
-	appVersion := metadata.NewAppVersion(sparkAppName + " version " + version)
-	if appVersion.App != sparkAppName {
-		return nil
-	}
-	return appVersion
-}
-
-func sparkRebaseTimeZoneID(
-	fileMeta *metadata.FileMetaData,
-	cutoff *metadata.AppVersion,
-	legacyKey string,
-	fallback *time.Location,
-) string {
-	if fileMeta == nil {
-		return ""
-	}
-
-	kv := fileMeta.KeyValueMetadata()
-	legacy := false
-	if kv != nil {
-		if kv.FindValue(legacyKey) != nil {
-			legacy = true
-		}
-	}
-
-	if !legacy {
-		version := sparkVersionFromMetadata(fileMeta)
-		if version != nil && version.App == sparkAppName && version.LessThan(cutoff) {
-			legacy = true
-		}
-	}
-
-	if !legacy {
-		// Empty string means this file should stay on the normal Proleptic
-		// Gregorian read path, without Spark's legacy hybrid-calendar correction.
-		return ""
-	}
-
-	if kv != nil {
-		if tzName := kv.FindValue(sparkTimeZoneMetadataKey); tzName != nil {
-			timeZoneID := strings.TrimSpace(*tzName)
-			if _, ok := sparkJulianGregorianRebaseMicrosIndex(timeZoneID); ok {
-				return timeZoneID
-			}
-			// Spark falls back to Java TimeZone calendar rebasing when the
-			// footer timezone is not in its generated rebase table. TiDB keeps
-			// this path deterministic instead of partially emulating Java's
-			// timezone aliases and historical tzdb behavior in Go; use only
-			// zones that exist in the generated Spark table.
-		}
-	}
-
-	if fallback != nil {
-		timeZoneID := fallback.String()
-		if _, ok := sparkJulianGregorianRebaseMicrosIndex(timeZoneID); ok {
-			return timeZoneID
-		}
-	}
-	// Spark's timezone footer is optional, but timestamp rebasing still needs a
-	// deterministic location. UTC is the safest last resort because it preserves
-	// the encoded instant without introducing an extra local-time shift, and
-	// DATE rebasing ignores the location entirely.
-	return sparkRebaseDefaultTimeZoneID
-}
-
-func sparkRebaseMicrosFromMetadata(
-	fileMeta *metadata.FileMetaData,
-	cutoff *metadata.AppVersion,
-	legacyKey string,
-	fallback *time.Location,
-) (sparkRebaseMicrosLookup, error) {
-	timeZoneID := sparkRebaseTimeZoneID(fileMeta, cutoff, legacyKey, fallback)
-	if timeZoneID == "" {
-		return sparkRebaseMicrosLookup{}, nil
-	}
-	return newSparkRebaseMicrosLookup(timeZoneID)
 }
 
 // rowGroupParser parses rows from one parquet row group.

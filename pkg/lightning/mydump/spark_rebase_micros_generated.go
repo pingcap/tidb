@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Code generated from Apache Spark's julian-gregorian-rebase-micros.json; DO NOT EDIT.
-// Source: https://github.com/apache/spark/blob/v3.5.7/sql/api/src/main/resources/julian-gregorian-rebase-micros.json
+// Code generated from Apache Spark legacy rebase data; DO NOT EDIT.
+// Timestamp source: https://github.com/apache/spark/blob/v3.5.7/sql/api/src/main/resources/julian-gregorian-rebase-micros.json
+// Date source: https://github.com/apache/spark/blob/v3.5.7/sql/api/src/main/scala/org/apache/spark/sql/catalyst/util/RebaseDateTime.scala
 //
 // The source data is licensed to the Apache Software Foundation under the Apache License, Version 2.0.
-// Spark stores switch points and diffs in seconds; these generated Go tables store microseconds.
+// Spark timestamp data stores switch points and diffs in seconds; these generated
+// Go timestamp tables store microseconds.
+// Spark date rebase data stores switch points and diffs in days.
 
 package mydump
 
@@ -26,6 +29,30 @@ type sparkRebaseIndex struct {
 	offset uint32
 	length uint16
 }
+
+var (
+	// The entries here are copied from Spark's RebaseDateTime.rebaseJulianToGregorianDays.
+	// Each element in sparkLegacyDateRebaseSwitchDays is the first stored legacy
+	// Spark DATE day count in an interval; the diff at the same index in
+	// sparkLegacyDateRebaseDiffs applies until the next switch day.
+	sparkLegacyDateRebaseDiffs      = [...]int{2, 1, 0, -1, -2, -3, -4, -5, -6, -7, -8, -9, -10, 0}
+	sparkLegacyDateRebaseSwitchDays = [...]int{
+		-719164, // 0001-01-01: first positive-year legacy DATE Spark handles with the switch table
+		-682945, // 0100-03-01: switch from a +2-day to a +1-day rebase
+		-646420, // 0200-03-01: start of Spark's zero-delta legacy DATE interval
+		-609895, // 0300-03-02: switch from 0 days to -1 day
+		-536845, // 0500-03-03: switch from -1 day to -2 days
+		-500320, // 0600-03-04: switch from -2 days to -3 days
+		-463795, // 0700-03-05: switch from -3 days to -4 days
+		-390745, // 0900-03-06: switch from -4 days to -5 days
+		-354220, // 1000-03-07: switch from -5 days to -6 days
+		-317695, // 1100-03-08: switch from -6 days to -7 days
+		-244645, // 1300-03-09: switch from -7 days to -8 days
+		-208120, // 1400-03-10: switch from -8 days to -9 days
+		-171595, // 1500-03-11: switch from -9 days to -10 days
+		-141427, // 1582-10-15: Gregorian cutover day; Spark stops shifting dates from here onward
+	}
+)
 
 var (
 	// Lazily build the lookup map so ordinary Parquet reads do not pay the

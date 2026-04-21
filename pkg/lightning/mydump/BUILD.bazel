@@ -17,6 +17,7 @@ go_library(
         "region.go",
         "router.go",
         "schema_import.go",
+        "spark_rebase.go",
         "spark_rebase_micros_generated.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/mydump",
