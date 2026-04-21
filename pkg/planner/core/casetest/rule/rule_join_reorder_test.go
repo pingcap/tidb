@@ -51,7 +51,9 @@ func TestJoinReorderSuite(t *testing.T) {
 		t.Run("PlainCases", func(t *testing.T) {
 			// test the global/session variable tidb_opt_enable_hash_join being set to no
 			t.Run("TestOptEnableHashJoin", func(t *testing.T) {
+				testKit.MustExec("drop table if exists t1, t2, t3, t4;")
 				testKit.MustExec("set tidb_opt_enable_hash_join=off")
+				defer testKit.MustExec("set tidb_opt_enable_hash_join=on")
 				testKit.MustExec("create table t1(a int, b int, key(a));")
 				testKit.MustExec("create table t2(a int, b int, key(a));")
 				testKit.MustExec("create table t3(a int, b int, key(a));")
@@ -61,7 +63,8 @@ func TestJoinReorderSuite(t *testing.T) {
 
 			t.Run("TestJoinOrderHint4DynamicPartitionTable", func(t *testing.T) {
 				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-				testKit.MustExec("drop table if exists t, t1, t2, t3;")
+				testKit.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6;")
+				testKit.MustExec("set tidb_opt_enable_hash_join=on")
 				testKit.MustExec(`create table t(a int, b int) partition by hash(a) partitions 3`)
 				testKit.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
 				testKit.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
@@ -177,11 +180,13 @@ func TestJoinReorderSuite(t *testing.T) {
 				testkit.SetTiFlashReplica(t, dom, "test", "t6")
 
 				testKit.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+				defer testKit.MustExec("set @@tidb_allow_mpp=0; set @@tidb_enforce_mpp=0;")
 				runJoinReorderTestData(t, testKit, "TestJoinOrderHint4TiFlash", cascades)
 			})
 
 			t.Run("TestJoinOrderHint4NestedLeading", func(t *testing.T) {
 				testKit.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6;")
+				testKit.MustExec("set @@tidb_allow_mpp=0; set @@tidb_enforce_mpp=0;")
 				testKit.MustExec("create table t(a int, b int, key(a));")
 				testKit.MustExec("create table t1(a int, b int, key(a));")
 				testKit.MustExec("create table t2(a int, b int, key(a));")
@@ -194,6 +199,7 @@ func TestJoinReorderSuite(t *testing.T) {
 
 			t.Run("TestJoinOrderHint4NestedLeadingPK", func(t *testing.T) {
 				testKit.MustExec("drop table if exists t1, t2, t3, t4;")
+				testKit.MustExec("set @@tidb_allow_mpp=0; set @@tidb_enforce_mpp=0;")
 				testKit.MustExec("create table t1(a int not null, b int, key(a));")
 				testKit.MustExec("create table t2(a int not null, b int, key(a));")
 				testKit.MustExec("create table t3(a int not null, b int not null, primary key(a));")
