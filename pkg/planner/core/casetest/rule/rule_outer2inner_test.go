@@ -100,6 +100,20 @@ func TestOuter2Inner(t *testing.T) {
   from t1 left join t0 on t0.c0 <> t1.c0
   where (null and t1.c0) <=> (t0.c0 is not null)`).Check(testkit.Rows("1"))
 
+		// Issue #66833: outer-join constant propagation must not turn a WHERE predicate
+		// into an inner-side join filter and remove the matched row before null extension.
+		tk.MustExec("drop table if exists t0, t1")
+		tk.MustExec("create table t0(c0 int)")
+		tk.MustExec("create table t1 like t0")
+		tk.MustExec("insert into t0 values (1)")
+		tk.MustExec("insert into t1 values (1)")
+		tk.MustQuery(`explain format = 'plan_tree' select t1.c0 as ref0, t0.c0 as ref1
+  from t1 left join t0 on t1.c0 = t0.c0
+  where coalesce(t0.c0 < t1.c0, t1.c0)`).CheckContain("left outer join")
+		tk.MustQuery(`select t1.c0 as ref0, t0.c0 as ref1
+  from t1 left join t0 on t1.c0 = t0.c0
+  where coalesce(t0.c0 < t1.c0, t1.c0)`).Check(testkit.Rows())
+
 		tk.MustExec("drop table if exists t_outer, t")
 		tk.MustExec(`CREATE TABLE t_outer (
 			id bigint(20) NOT NULL,

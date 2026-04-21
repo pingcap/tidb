@@ -283,6 +283,86 @@ func TestPreparedPlanCacheWarningRegressions(t *testing.T) {
 	runPreparedPlanCacheForUpdateInTxn(t, tk)
 }
 
+func TestPreparedPlanCacheBatchPointGetEqAndInFixControl(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	fixControl := tk.MustQuery("select @@session.tidb_opt_fix_control").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_fix_control='%v'", fixControl))
+	}()
+
+	tk.MustExec("set @@tidb_opt_fix_control = '44830:ON'")
+
+	checkBatchPointGetExplain := func() {
+		t.Helper()
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*sessmgr.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+		require.NotEmpty(t, rows)
+		require.Contains(t, fmt.Sprint(rows[0][0]), "Batch_Point_Get")
+	}
+
+	tk.MustExec("drop table if exists t_eq_in_batch_point_get")
+	tk.MustExec("create table t_eq_in_batch_point_get (id int, coin varchar(32), primary key (id, coin))")
+	tk.MustExec("insert into t_eq_in_batch_point_get values (1, '1'), (1, '2'), (2, '1'), (2, '2')")
+
+	// issue:67852
+	tk.MustExec("prepare st from 'select * from t_eq_in_batch_point_get where id=? and coin in (?, ?)'")
+	tk.MustExec("set @a=1, @b='1', @c='2'")
+	tk.MustQuery("execute st using @a, @b, @c").Sort().Check(testkit.Rows("1 1", "1 2"))
+	checkBatchPointGetExplain()
+
+	tk.MustQuery("execute st using @a, @b, @c").Sort().Check(testkit.Rows("1 1", "1 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Verify cache hit with changed EQ param
+	tk.MustExec("set @a=2, @b='1', @c='2'")
+	tk.MustQuery("execute st using @a, @b, @c").Sort().Check(testkit.Rows("2 1", "2 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// Verify cache recovers after the duplicate-IN miss
+	tk.MustExec("set @a=1, @b='1', @c='2'")
+	tk.MustQuery("execute st using @a, @b, @c").Sort().Check(testkit.Rows("1 1", "1 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("set @a=1, @b='1', @c='1'")
+	tk.MustQuery("execute st using @a, @b, @c").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	tk.MustExec("deallocate prepare st")
+
+	tk.MustExec("drop table if exists t_eq_in_batch_point_get_abc")
+	tk.MustExec("create table t_eq_in_batch_point_get_abc (a int, b int, c int, primary key (a, b, c))")
+	tk.MustExec("insert into t_eq_in_batch_point_get_abc values (1, 1, 1), (2, 1, 1), (1, 2, 1), (1, 3, 1)")
+
+	// `IN` at the beginning of the key.
+	tk.MustExec("prepare st_begin from 'select * from t_eq_in_batch_point_get_abc where a in (?, ?) and b=? and c=?'")
+	tk.MustExec("set @a1=1, @a2=2, @b1=1, @c1=1")
+	tk.MustQuery("execute st_begin using @a1, @a2, @b1, @c1").Sort().Check(testkit.Rows("1 1 1", "2 1 1"))
+	checkBatchPointGetExplain()
+	tk.MustQuery("execute st_begin using @a1, @a2, @b1, @c1").Sort().Check(testkit.Rows("1 1 1", "2 1 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @a1=1, @a2=1, @b1=1, @c1=1")
+	tk.MustQuery("execute st_begin using @a1, @a2, @b1, @c1").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("deallocate prepare st_begin")
+
+	// `IN` in the middle of the key.
+	tk.MustExec("prepare st_middle from 'select * from t_eq_in_batch_point_get_abc where a=? and b in (?, ?) and c=?'")
+	tk.MustExec("set @a3=1, @b2=2, @b3=3, @c2=1")
+	tk.MustQuery("execute st_middle using @a3, @b2, @b3, @c2").Sort().Check(testkit.Rows("1 2 1", "1 3 1"))
+	checkBatchPointGetExplain()
+	tk.MustQuery("execute st_middle using @a3, @b2, @b3, @c2").Sort().Check(testkit.Rows("1 2 1", "1 3 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @a3=1, @b2=2, @b3=2, @c2=1")
+	tk.MustQuery("execute st_middle using @a3, @b2, @b3, @c2").Check(testkit.Rows("1 2 1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("deallocate prepare st_middle")
+}
+
 func runPreparedPlanCacheGroupByParamProjection(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tableName := "t_group_by_param"
