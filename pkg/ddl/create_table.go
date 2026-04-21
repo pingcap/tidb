@@ -1302,6 +1302,11 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	if s.TemporaryKeyword != ast.TemporaryNone {
 		// temporary table does not support affinity, we should remove it
 		tblInfo.Affinity = nil
+	} else if s.ExcludePartitions {
+		// partition-level affinity is meaningless on a non-partitioned table; clear it.
+		if tblInfo.Affinity != nil && tblInfo.Affinity.Level == ast.TableAffinityLevelPartition {
+			tblInfo.Affinity = nil
+		}
 	} else if referTblInfo.Affinity != nil {
 		tblInfo.Affinity = referTblInfo.Affinity.Clone()
 	}
