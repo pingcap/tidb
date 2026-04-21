@@ -1490,3 +1490,22 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 		})
 	}
 }
+
+func TestModifyColumnLoadTableRangeError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists modifycol;")
+	tk.MustExec("create database modifycol;")
+	tk.MustExec("use modifycol;")
+
+	// Use a type conversion that definitely requires reorg.
+	tk.MustExec("create table t (a int primary key, b int, c int);")
+	batchInsert(tk, "t", 0, 100)
+
+	// Simulate transient PD errors (e.g. "All returned regions have no leaders") when splitting table ranges.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/loadTableRangesFromPDErr",
+		`1*return("All returned regions have no leaders, limit: 1")`)
+
+	tk.MustExec("alter table t change column b b varchar(16);")
+	tk.MustExec("admin check table t;")
+}
