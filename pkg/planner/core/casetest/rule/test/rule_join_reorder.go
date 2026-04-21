@@ -49,7 +49,9 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name, cascades st
 func RunOptEnableHashJoin(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
+		testKit.MustExec("drop table if exists t1, t2, t3, t4;")
 		testKit.MustExec("set tidb_opt_enable_hash_join=off")
+		defer testKit.MustExec("set tidb_opt_enable_hash_join=on")
 		testKit.MustExec("create table t1(a int, b int, key(a));")
 		testKit.MustExec("create table t2(a int, b int, key(a));")
 		testKit.MustExec("create table t3(a int, b int, key(a));")
@@ -61,7 +63,7 @@ func RunOptEnableHashJoin(t *testing.T) {
 func RunJoinOrderHint4TiFlash(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t, t1, t2, t3;")
+		testKit.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6;")
 		testKit.MustExec("create table t(a int, b int, key(a));")
 		testKit.MustExec("create table t1(a int, b int, key(a));")
 		testKit.MustExec("create table t2(a int, b int, key(a));")
@@ -71,7 +73,6 @@ func RunJoinOrderHint4TiFlash(t *testing.T) {
 		testKit.MustExec("create table t6(a int, b int, key(a));")
 		testKit.MustExec("set @@tidb_enable_outer_join_reorder=true")
 
-		// Create virtual tiflash replica info.
 		testkit.SetTiFlashReplica(t, dom, "test", "t")
 		testkit.SetTiFlashReplica(t, dom, "test", "t1")
 		testkit.SetTiFlashReplica(t, dom, "test", "t2")
@@ -81,6 +82,7 @@ func RunJoinOrderHint4TiFlash(t *testing.T) {
 		testkit.SetTiFlashReplica(t, dom, "test", "t6")
 
 		testKit.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+		defer testKit.MustExec("set @@tidb_allow_mpp=0; set @@tidb_enforce_mpp=0;")
 		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4TiFlash", cascades)
 	})
 }
@@ -89,7 +91,8 @@ func RunJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
-		testKit.MustExec("drop table if exists t, t1, t2, t3;")
+		testKit.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6;")
+		testKit.MustExec("set tidb_opt_enable_hash_join=on")
 		testKit.MustExec(`create table t(a int, b int) partition by hash(a) partitions 3`)
 		testKit.MustExec(`create table t1(a int, b int) partition by hash(a) partitions 4`)
 		testKit.MustExec(`create table t2(a int, b int) partition by hash(a) partitions 5`)
@@ -108,6 +111,7 @@ func RunJoinOrderHint4NestedLeading(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t, t1, t2, t3, t4, t5, t6;")
+		testKit.MustExec("set @@tidb_allow_mpp=0; set @@tidb_enforce_mpp=0;")
 		testKit.MustExec("create table t(a int, b int, key(a));")
 		testKit.MustExec("create table t1(a int, b int, key(a));")
 		testKit.MustExec("create table t2(a int, b int, key(a));")
@@ -123,6 +127,7 @@ func RunJoinOrderHint4NestedLeadingPK(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t1, t2, t3, t4;")
+		testKit.MustExec("set @@tidb_allow_mpp=0; set @@tidb_enforce_mpp=0;")
 		testKit.MustExec("create table t1(a int not null, b int, key(a));")
 		testKit.MustExec("create table t2(a int not null, b int, key(a));")
 		testKit.MustExec("create table t3(a int not null, b int not null, primary key(a));")
@@ -168,17 +173,12 @@ func RunLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 
 		orCond := "or(eq(test.t1_56513.a, test.t2_56513.a), eq(test.t1_56513.a, test.t2_56513.b))"
 
-		// No leading hint: greedy solver (checkConnectionAndMakeJoin) picks the
-		// join order autonomously. The OR condition must be preserved.
 		testKit.MustQuery("explain format = 'plan_tree' " +
 			"select * from t1_56513 " +
 			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
 			"left join t3_56513 on t1_56513.a = t3_56513.b;").
 			CheckContain(orCond)
 
-		// With leading(t1, t3, t2): the leading hint path (connectJoinNodes)
-		// joins t1 with t3 first via the left join eq edge, then the greedy
-		// solver joins the result with t2 via the OR condition.
 		plan132 := testKit.MustQuery("explain format = 'plan_tree' " +
 			"select /*+ leading(t1_56513, t3_56513, t2_56513) */ * from t1_56513 " +
 			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
@@ -186,8 +186,6 @@ func RunLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 		plan132.CheckContain(orCond)
 		testKit.MustQuery("show warnings").CheckNotContain("leading hint is inapplicable")
 
-		// With leading(t1, t2, t3): connectJoinNodes joins t1 with t2 via the
-		// OR condition (non-equijoin bypass), then joins with t3 via the eq edge.
 		plan123 := testKit.MustQuery("explain format = 'plan_tree' " +
 			"select /*+ leading(t1_56513, t2_56513, t3_56513) */ * from t1_56513 " +
 			"join t2_56513 on (t1_56513.a = t2_56513.a or t1_56513.a = t2_56513.b) " +
@@ -195,7 +193,6 @@ func RunLeadingHintWithNonEqJoinUnderOuterJoin(t *testing.T) {
 		plan123.CheckContain(orCond)
 		testKit.MustQuery("show warnings").CheckNotContain("leading hint is inapplicable")
 
-		// The two plans should be different since different join orders are specified
 		require.NotEqual(t, plan132.Rows(), plan123.Rows(), caller)
 	})
 }
@@ -218,13 +215,11 @@ func RunOuterJoinReorderNullExtendedNonEqSafety(t *testing.T) {
 			"order by t1_66213.a, t2_66213.b, t3_66213.b"
 		expectRows := testkit.Rows("1 5 5", "2 <nil> 5")
 
-		// Greedy reorder path must preserve semantics for non-eq predicates on null-extended columns.
 		testKit.MustExec("set @@tidb_enable_outer_join_reorder=off")
 		testKit.MustQuery(query).Check(expectRows)
 		testKit.MustExec("set @@tidb_enable_outer_join_reorder=on")
 		testKit.MustQuery(query).Check(expectRows)
 
-		// LEADING should not force an invalid reassociation across the null-extended side.
 		testKit.MustQuery("select /*+ leading(t2_66213, t3_66213, t1_66213) */ " +
 			"t1_66213.a, t2_66213.b, t3_66213.b from t1_66213 " +
 			"left join t2_66213 on t1_66213.a = t2_66213.a " +

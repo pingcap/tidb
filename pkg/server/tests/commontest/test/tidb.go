@@ -3048,7 +3048,7 @@ func (p *mockProxyProtocolProxy) onConn(conn net.Conn) {
 		fmt.Println(err)
 	}
 	defer bconn.Close()
-	ppHeader := p.generateProxyProtocolHeaderV2("tcp4", p.clientAddr, p.frontend)
+	ppHeader := p.generateProxyProtocolHeaderV2("tcp4", p.clientAddr, p.ListenAddr().String())
 	bconn.Write(ppHeader)
 	p.proxyPipe(conn, bconn)
 }
@@ -3123,7 +3123,6 @@ func RunProxyProtocolWithIpFallbackable(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
 	defer func() {
 		server.Close()
 	}()
@@ -3137,7 +3136,6 @@ func RunProxyProtocolWithIpFallbackable(t *testing.T) {
 	go func() {
 		ppProxy.Run()
 	}()
-	time.Sleep(time.Millisecond * 100)
 	defer func() {
 		ppProxy.Close()
 	}()

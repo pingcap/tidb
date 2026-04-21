@@ -246,7 +246,7 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
-	return common.IsRetryableError(err) || isRetryableError(err)
+	return common.IsRetryableError(err) || isRetryableError(err, true)
 }
 
 func (s *backfillDistExecutor) Close() {

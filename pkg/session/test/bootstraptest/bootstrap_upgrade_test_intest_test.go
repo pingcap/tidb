@@ -7,6 +7,14 @@ package bootstraptest
 
 import "testing"
 
+func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {
+	RunAnalyzeDistsqlConcurrencyByUpgrade750To850(t)
+}
+
+func TestAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t *testing.T) {
+	RunAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t)
+}
+
 func TestBootstrapInNextGenInvalidSystemTable(t *testing.T) {
 	RunBootstrapInNextGenInvalidSystemTable(t)
 }

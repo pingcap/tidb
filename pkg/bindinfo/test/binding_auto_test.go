@@ -29,6 +29,10 @@ func TestIsSimplePointPlan(t *testing.T) {
 	RunIsSimplePointPlan(t)
 }
 
+func TestRelevantOptVarsCorrelateSubquery(t *testing.T) {
+	RunRelevantOptVarsCorrelateSubquery(t)
+}
+
 func TestRelevantOptVarsAndFixes(t *testing.T) {
 	RunRelevantOptVarsAndFixes(t)
 }

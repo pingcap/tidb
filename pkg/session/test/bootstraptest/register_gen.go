@@ -9,8 +9,10 @@ import "github.com/pingcap/tidb/pkg/testkit/mega/register"
 
 func init() {
 	register.Register("session/test/bootstraptest", "ANSISQLMode", RunANSISQLMode)
+	register.Register("session/test/bootstraptest", "AnalyzeDistsqlConcurrencyByUpgrade750To850", RunAnalyzeDistsqlConcurrencyByUpgrade750To850)
 	register.Register("session/test/bootstraptest", "AnalyzeVersionUpgradeFrom300To500", RunAnalyzeVersionUpgradeFrom300To500)
 	register.Register("session/test/bootstraptest", "AnalyzeVersionUpgradeRewritesLegacyV1To2", RunAnalyzeVersionUpgradeRewritesLegacyV1To2)
+	register.Register("session/test/bootstraptest", "AutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap", RunAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap)
 	register.Register("session/test/bootstraptest", "BootstrapInNextGenInvalidSystemTable", RunBootstrapInNextGenInvalidSystemTable)
 	register.Register("session/test/bootstraptest", "DDLTableCreateDDLNotifierTable", RunDDLTableCreateDDLNotifierTable)
 	register.Register("session/test/bootstraptest", "IndexJoinMultiPatternByUpgrade650To840", RunIndexJoinMultiPatternByUpgrade650To840)

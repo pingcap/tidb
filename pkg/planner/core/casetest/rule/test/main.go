@@ -35,6 +35,7 @@ func InitForMega() {
 	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification", true)
 	testDataMap.LoadTestSuiteData("testdata", "outer_to_semi_join_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "correlate_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "cdc_join_reorder_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "order_aware_join_reorder_suite", true)
 }
@@ -81,6 +82,10 @@ func GetPredicateSimplificationSuiteData() testdata.TestData {
 
 func GetOuterToSemiJoinSuiteData() testdata.TestData {
 	return testDataMap["outer_to_semi_join_suite"]
+}
+
+func GetCorrelateSuiteData() testdata.TestData {
+	return testDataMap["correlate_suite"]
 }
 
 func GetCDCJoinReorderSuiteData() testdata.TestData {

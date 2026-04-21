@@ -46,6 +46,7 @@ func init() {
 	register.Register("bindinfo", "ExplainExploreIndexHintWithAlias", RunExplainExploreIndexHintWithAlias)
 	register.Register("bindinfo", "ExplainExploreNoDecorrelateHint", RunExplainExploreNoDecorrelateHint)
 	register.Register("bindinfo", "IsSimplePointPlan", RunIsSimplePointPlan)
+	register.Register("bindinfo", "RelevantOptVarsCorrelateSubquery", RunRelevantOptVarsCorrelateSubquery)
 	register.Register("bindinfo", "RelevantOptVarsAndFixes", RunRelevantOptVarsAndFixes)
 	register.Register("bindinfo", "ExplainExploreAnalyze", RunExplainExploreAnalyze)
 	register.Register("bindinfo", "ExplainExploreVerifyAndBind", RunExplainExploreVerifyAndBind)

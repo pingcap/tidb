@@ -43,7 +43,7 @@ func RunOuter2Inner(t *testing.T) {
 			Plan []string
 		}
 		suiteData := GetOuter2InnerSuiteData()
-		suiteData.LoadTestCasesByName("TestOuter2Inner", t, &input, &output, cascades, caller)
+		suiteData.LoadTestCasesByName("TestOuter2Inner", t, &input, &output, cascades, "TestOuter2Inner")
 		for i, sql := range input {
 			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
@@ -263,7 +263,7 @@ func RunOuter2InnerLateralSelection(t *testing.T) {
 			Plan []string
 		}
 		suiteData := GetOuter2InnerSuiteData()
-		suiteData.LoadTestCasesByName("TestOuter2InnerLateralSelection", t, &input, &output, cascades, caller)
+		suiteData.LoadTestCasesByName("TestOuter2InnerLateralSelection", t, &input, &output, cascades, "TestOuter2InnerLateralSelection")
 		for i, sql := range input {
 			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
@@ -279,6 +279,9 @@ func RunOuter2InnerLateralSelection(t *testing.T) {
 func RunOuter2InnerIssue55886(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
+		originCollation := tk.MustQuery("select @@collation_connection").Rows()[0][0].(string)
+		defer tk.MustExec("set collation_connection = ?", originCollation)
+
 		tk.MustExec("drop table if exists t1")
 		tk.MustExec("drop table if exists t2")
 		tk.MustExec("create table t1(c_foveoe text, c_jbb text, c_cz text not null)")
@@ -291,7 +294,7 @@ func RunOuter2InnerIssue55886(t *testing.T) {
 			Plan []string
 		}
 		suiteData := GetOuter2InnerSuiteData()
-		suiteData.LoadTestCasesByName("TestOuter2InnerIssue55886", t, &input, &output, cascades, caller)
+		suiteData.LoadTestCasesByName("TestOuter2InnerIssue55886", t, &input, &output, cascades, "TestOuter2InnerIssue55886")
 		for i, sql := range input {
 			plan := tk.MustQuery("explain format = 'plan_tree' " + sql)
 			testdata.OnRecord(func() {
