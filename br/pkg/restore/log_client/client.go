@@ -676,7 +676,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 
 type LockedMigrations struct {
 	Migs     []*backuppb.Migration
-	ReadLock objstore.RemoteLock
+	ReadLock *objstore.RemoteLock
 }
 
 func (rc *LogClient) GetLockedMigrations(ctx context.Context) (ret *LockedMigrations, retErr error) {

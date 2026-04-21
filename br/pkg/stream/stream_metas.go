@@ -652,7 +652,7 @@ type Migrations struct {
 }
 
 // GetReadLock locks the storage and make sure there won't be other one modify this backup.
-func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (objstore.RemoteLock, error) {
+func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (*objstore.RemoteLock, error) {
 	return objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint)
 }
 
@@ -769,11 +769,11 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []objstore.Effect {
 // 1. Acquire read lock on main path (allows coexistence with restore)
 // 2. Acquire write lock on append path (prevents concurrent appends)
 func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
-	readLock, appendLock objstore.RemoteLock, err error) {
+	readLock, appendLock *objstore.RemoteLock, err error) {
 	// Phase 1: Acquire read lock on main path to coexist with restore but conflict with truncate
 	readLock, err = objstore.LockWithRetry(ctx, objstore.TryLockRemoteRead, m.s, lockPrefix, hint+" (read)")
 	if err != nil {
-		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err,
+		return nil, nil, errors.Annotate(err,
 			"failed to acquire read lock for append operation")
 	}
 
@@ -782,7 +782,7 @@ func (m MigrationExt) lockForAppend(ctx context.Context, hint string) (
 	if err != nil {
 		// If append lock fails, release the read lock
 		readLock.UnlockOnCleanUp(ctx)
-		return objstore.RemoteLock{}, objstore.RemoteLock{}, errors.Annotate(err, "failed to acquire append lock")
+		return nil, nil, errors.Annotate(err, "failed to acquire append lock")
 	}
 
 	return readLock, appendLock, nil
