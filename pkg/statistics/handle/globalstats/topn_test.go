@@ -278,3 +278,30 @@ func TestMergePartTopNAndHistToGlobalCountPreservation(t *testing.T) {
 	require.InDelta(t, inputTotal, outputTotal, inputTotal*0.01,
 		"total count should be preserved: input=%.0f, output=%.0f", inputTotal, outputTotal)
 }
+
+// TestMergePartTopNAndHistToGlobalNoHistograms verifies that the combined
+// merge rejects inputs with no non-nil partition histogram, since the
+// column metadata (type, ID, last-update version) cannot otherwise be
+// recovered for the global Histogram.
+func TestMergePartTopNAndHistToGlobalNoHistograms(t *testing.T) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	killer := sqlkiller.SQLKiller{}
+
+	// Empty hists slice.
+	_, _, err := statistics.MergePartTopNAndHistToGlobal(
+		nil, nil, 2, 10, false, &killer, sc,
+	)
+	require.Error(t, err)
+
+	// All-nil hists slice paired with populated TopNs.
+	topN := statistics.NewTopN(2)
+	key, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(1))
+	require.NoError(t, err)
+	topN.AppendTopN(key, 5)
+	_, _, err = statistics.MergePartTopNAndHistToGlobal(
+		[]*statistics.TopN{topN, topN},
+		[]*statistics.Histogram{nil, nil},
+		2, 10, false, &killer, sc,
+	)
+	require.Error(t, err)
+}

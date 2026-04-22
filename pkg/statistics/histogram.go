@@ -1725,6 +1725,12 @@ func MergePartTopNAndHistToGlobal(
 	// same key format as globalTopNMap. For index histograms the bounds
 	// are already encoded; for columns we call codec.EncodeKey with a
 	// reusable buffer (~256 calls, once per unique upper-bound group).
+	//
+	// NOTE: encodeBuf is reused across calls. hack.String(encodeBuf) is
+	// safe only because the resulting string escapes no further than the
+	// map lookup below — the hash is computed immediately and no
+	// reference outlives the call. Do NOT insert the key into a map or
+	// otherwise persist it; the next call will overwrite the bytes.
 	var encodeBuf []byte
 	isGlobalTopNVal := func(histIdx, bucketIdx int) bool {
 		if isIndex {
