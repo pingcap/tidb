@@ -3022,12 +3022,22 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 	aggMapper := make(map[*ast.AggregateFuncExpr]int)
 	for _, agg := range aggFuncs {
 		for _, arg := range agg.Args {
-			expr, _, err := b.rewrite(ctx, arg, p, aggMapper, true)
-			if err != nil {
-				return nil, err
+			hasOuterCols, hasLocalCols, classifyErr := b.classifyCorrelatedAggArg(p, arg)
+			if classifyErr != nil {
+				expr, _, err := b.rewrite(ctx, arg, p, aggMapper, true)
+				if err != nil {
+					return nil, err
+				}
+				corCols = append(corCols, expression.ExtractCorColumns(expr)...)
+				cols = append(cols, expression.ExtractColumns(expr)...)
+				continue
 			}
-			corCols = append(corCols, expression.ExtractCorColumns(expr)...)
-			cols = append(cols, expression.ExtractColumns(expr)...)
+			if hasOuterCols {
+				corCols = append(corCols, &expression.CorrelatedColumn{})
+			}
+			if hasLocalCols {
+				cols = append(cols, &expression.Column{})
+			}
 		}
 		// If decorrelation is disabled, don't extract correlated aggregates
 		if b.noDecorrelate && len(corCols) > 0 {
@@ -3040,6 +3050,78 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 		corCols, cols = corCols[:0], cols[:0]
 	}
 	return
+}
+
+type correlatedAggArgColumnClassifier struct {
+	p            base.LogicalPlan
+	outerNames   [][]*types.FieldName
+	hasOuterCols bool
+	hasLocalCols bool
+	err          error
+}
+
+func (c *correlatedAggArgColumnClassifier) Enter(n ast.Node) (ast.Node, bool) {
+	switch n.(type) {
+	case *ast.SelectStmt, *ast.SetOprStmt, *ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr:
+		return n, true
+	case *ast.ColumnNameExpr:
+		return n, false
+	default:
+		return n, false
+	}
+}
+
+func (c *correlatedAggArgColumnClassifier) Leave(n ast.Node) (ast.Node, bool) {
+	if c.err != nil {
+		return n, false
+	}
+	colExpr, ok := n.(*ast.ColumnNameExpr)
+	if !ok {
+		return n, true
+	}
+	idx, err := expression.FindFieldName(c.p.OutputNames(), colExpr.Name)
+	if err != nil {
+		c.err = err
+		return n, false
+	}
+	if idx >= 0 {
+		c.hasLocalCols = true
+		return n, true
+	}
+	col, _, err := findFieldNameFromNaturalUsingJoin(c.p, colExpr.Name)
+	if err != nil {
+		c.err = err
+		return n, false
+	}
+	if col != nil {
+		c.hasLocalCols = true
+		return n, true
+	}
+	for i := len(c.outerNames) - 1; i >= 0; i-- {
+		idx, err = expression.FindFieldName(c.outerNames[i], colExpr.Name)
+		if err != nil {
+			c.err = err
+			return n, false
+		}
+		if idx >= 0 {
+			c.hasOuterCols = true
+			return n, true
+		}
+	}
+	c.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(colExpr.Name.OrigColName(), clauseMsg[whereClause])
+	return n, false
+}
+
+func (b *PlanBuilder) classifyCorrelatedAggArg(p base.LogicalPlan, arg ast.ExprNode) (hasOuterCols, hasLocalCols bool, err error) {
+	classifier := &correlatedAggArgColumnClassifier{
+		p:          p,
+		outerNames: b.outerNames,
+	}
+	_, ok := arg.Accept(classifier)
+	if !ok {
+		return false, false, classifier.err
+	}
+	return classifier.hasOuterCols, classifier.hasLocalCols, nil
 }
 
 // resolveWindowFunction will process window functions and resolve the columns that don't exist in select fields.
