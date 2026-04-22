@@ -549,6 +549,41 @@ func TestStringToMysqlBit(t *testing.T) {
 	}
 }
 
+// TestDatumEqualsCollation pins the canonical-id semantics of Datum.Equals
+// for collation. Datums with collation names that differ only in case or
+// alias (e.g. "UTF8MB4_BIN" vs "utf8mb4_bin") resolve to the same MySQL
+// collation id and must compare equal; distinct canonical collations must
+// compare unequal. This is a deliberate shift from the pre-shrink byte-equal
+// string compare, aligning with MySQL's case-insensitive collation names.
+func TestDatumEqualsCollation(t *testing.T) {
+	mk := func(name string) Datum {
+		var d Datum
+		d.SetString("abc", name)
+		return d
+	}
+
+	// Same canonical collation, different name casing → equal.
+	a := mk("UTF8MB4_BIN")
+	b := mk("utf8mb4_bin")
+	require.Equal(t, a.CollationID(), b.CollationID())
+	require.True(t, a.Equals(&b))
+
+	// Different canonical collations → not equal.
+	c := mk(charset.CollationUTF8MB4)
+	d := mk(charset.CollationASCII)
+	require.NotEqual(t, c.CollationID(), d.CollationID())
+	require.False(t, c.Equals(&d))
+
+	// Unknown names both collapse to id 0. The resulting equality is a
+	// documented consequence of lossy name → id storage; pin it so a
+	// future change doesn't accidentally flip it back to string compare.
+	u1 := mk("nonexistent_one")
+	u2 := mk("nonexistent_two")
+	require.Equal(t, uint16(0), u1.CollationID())
+	require.Equal(t, uint16(0), u2.CollationID())
+	require.True(t, u1.Equals(&u2))
+}
+
 func TestMarshalDatum(t *testing.T) {
 	e, err := ParseSetValue([]string{"a", "b", "c", "d", "e"}, uint64(1))
 	require.NoError(t, err)

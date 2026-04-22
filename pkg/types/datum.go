@@ -134,8 +134,12 @@ func (d *Datum) CollationID() uint16 {
 	return d.collationID
 }
 
-// SetCollation sets the collation of the datum by name. Unknown or empty
-// names are stored as id 0 to preserve prior "use default" behavior.
+// SetCollation sets the collation of the datum by name. The name is
+// resolved to its canonical MySQL collation id, so names that differ only
+// in case or alias ("UTF8MB4_BIN" / "utf8mb4_bin") become indistinguishable
+// once stored; Datum.Equals compares the ids, not the original strings.
+// Unknown or empty names are stored as id 0 to preserve prior "use default"
+// behavior.
 func (d *Datum) SetCollation(collation string) {
 	d.collationID = collationNameToID(collation)
 }
