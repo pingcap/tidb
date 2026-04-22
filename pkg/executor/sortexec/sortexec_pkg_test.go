@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -120,24 +121,24 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */, testFuncName)
 	defer sp.close()
 	sp.getMemTracker().AttachTo(rootTracker)
+	totalRows := int64(sz * 10240)
 	for range 10240 {
 		canadd := sp.add(chk)
 		require.True(t, canadd)
 	}
 	err := sp.sort()
 	require.NoError(t, err)
-	var cancelTime time.Time
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `1*sleep(1500)->return(false)`)
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
-		cancelTime = time.Now()
 		wg.Done()
 	}()
 	err = sp.spillToDisk()
 	wg.Wait()
-	cancelDuration := time.Since(cancelTime)
-	require.Less(t, cancelDuration, 1*time.Second)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))
+	require.Greater(t, sp.numRowInDiskForTest(), int64(0))
+	require.Less(t, sp.numRowInDiskForTest(), totalRows)
 }
