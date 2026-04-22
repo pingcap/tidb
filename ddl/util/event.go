@@ -26,8 +26,8 @@ type Event struct {
 	PartInfo       *model.PartitionInfo
 	IndexInfo      *model.IndexInfo
 	ColumnInfos    []*model.ColumnInfo
-	DroppedTableID int64
 	TableIDs       []int64
+	DroppedTableID int64
 	Tp             model.ActionType
 }
 
