@@ -53,8 +53,9 @@ var (
 )
 
 type rowToEncode struct {
-	row   []types.Datum
-	rowID int64
+	row      []types.Datum
+	skipCast []bool
+	rowID    int64
 	// endOffset represents the offset of lower level reader after parsing the
 	// current row , it mostly > the offset where parser has parsed.
 	// we use this offset for progress reporting, we meet a case in lightning
@@ -95,6 +96,7 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 		lastRow := parser.LastRow()
 		data = rowToEncode{
 			row:       lastRow.Row,
+			skipCast:  lastRow.SkipCast,
 			rowID:     lastRow.RowID,
 			endOffset: currOffset,
 			startPos:  readPos,
@@ -352,7 +354,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
-		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID)
+		kvs, encodeErr := p.encoder.Encode(data.row, data.skipCast, data.rowID)
 		currOffset = data.endOffset
 		data.resetFn()
 		if encodeErr != nil {

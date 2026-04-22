@@ -17,6 +17,7 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/big"
@@ -36,6 +37,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newInt96 creates a parquet.Int96 from microseconds since Unix epoch (test helper).
+func newInt96(microseconds int64) parquet.Int96 {
+	day := uint32(microseconds/(86400*1e6) + 2440588)
+	nanoOfDay := uint64(microseconds % (86400 * 1e6) * 1e3)
+	var b [12]byte
+	binary.LittleEndian.PutUint64(b[:8], nanoOfDay)
+	binary.LittleEndian.PutUint32(b[8:], day)
+	return parquet.Int96(b)
+}
 
 func newParquetParserForTest(
 	ctx context.Context,
@@ -380,11 +391,11 @@ func TestParquetVariousTypes(t *testing.T) {
 		// because we always reuse the datums in reader.lastRow.Row, so we can't directly
 		// compare will `DeepEqual` here
 		assert.NoError(t, reader.ReadRow())
-		assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
-		assert.Equal(t, uint64(0), reader.lastRow.Row[0].GetValue())
+		assert.Equal(t, types.KindInt64, reader.lastRow.Row[0].Kind())
+		assert.Equal(t, int64(0), reader.lastRow.Row[0].GetValue())
 		assert.NoError(t, reader.ReadRow())
-		assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
-		assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
+		assert.Equal(t, types.KindInt64, reader.lastRow.Row[0].Kind())
+		assert.Equal(t, int64(1), reader.lastRow.Row[0].GetValue())
 	})
 }
 

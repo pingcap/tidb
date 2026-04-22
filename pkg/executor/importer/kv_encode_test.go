@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -53,7 +54,7 @@ func TestKVEncoderForDupResolve(t *testing.T) {
 		encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
 		require.NoError(t, err)
 		for range 10 {
-			pairs, err := encoder.Encode([]types.Datum{types.NewDatum(1)}, 1)
+			pairs, err := encoder.Encode([]types.Datum{types.NewDatum(1)}, nil, 1)
 			require.NoError(t, err)
 			require.Len(t, pairs.Pairs, 2)
 			var metRecordKey bool
@@ -116,9 +117,64 @@ func TestKVEncoderCastErrorMessage(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, encoder.Close()) })
 
-	_, err = encoder.Encode([]types.Datum{types.NewIntDatum(10000000)}, 1)
+	_, err = encoder.Encode([]types.Datum{types.NewIntDatum(10000000)}, nil, 1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: 10000000. Reason: [types:1690]constant 10000000 overflows tinyint")
+}
+
+// TestKVEncoderNotNullInsertColumn verifies that the insert-column loop still
+// enforces NOT-NULL via CheckNotNull / HandleBadNull after the single-pass
+// buildRecord refactor. This is the common path for parquet imports because
+// definition-level NULL cells produce skipCast=true, so the bypass path must
+// not skip NOT-NULL enforcement.
+func TestKVEncoderNotNullInsertColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 int not null)")
+
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	run := func(t *testing.T, sqlMode mysql.SQLMode, input types.Datum, skipCast []bool) (*kv.Pairs, error) {
+		encodeCfg := &encode.EncodingConfig{
+			Table:  tbl,
+			Logger: log.L(),
+			SessionOptions: encode.SessionOptions{
+				SQLMode:   sqlMode,
+				Timestamp: 1234567890,
+			},
+		}
+		controller := &importer.LoadDataController{
+			ASTArgs: &importer.ASTArgs{},
+			Plan:    &importer.Plan{},
+			Table:   tbl,
+		}
+		encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, encoder.Close()) })
+		return encoder.Encode([]types.Datum{input}, skipCast, 1)
+	}
+
+	t.Run("strict mode rejects null via cast", func(t *testing.T) {
+		_, err := run(t, mysql.ModeStrictAllTables, types.NewDatum(nil), nil)
+		require.Error(t, err)
+	})
+
+	t.Run("strict mode rejects null via skipCast", func(t *testing.T) {
+		// skipCast=true simulates the parquet NULL path; the encoder must
+		// still enforce NOT-NULL instead of silently storing NULL.
+		_, err := run(t, mysql.ModeStrictAllTables, types.NewDatum(nil), []bool{true})
+		require.Error(t, err)
+	})
+
+	t.Run("non-strict mode substitutes zero value via skipCast", func(t *testing.T) {
+		pairs, err := run(t, mysql.SQLMode(0), types.NewDatum(nil), []bool{true})
+		require.NoError(t, err)
+		require.NotEmpty(t, pairs.Pairs)
+	})
 }
 
 func TestKVEncoderCastEnumErrorMessage(t *testing.T) {
@@ -149,7 +205,7 @@ func TestKVEncoderCastEnumErrorMessage(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, encoder.Close()) })
 
-	_, err = encoder.Encode([]types.Datum{types.NewStringDatum("c")}, 1)
+	_, err = encoder.Encode([]types.Datum{types.NewStringDatum("c")}, nil, 1)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: enum('a','b'), received value: \"c\". Reason:")
 	require.Contains(t, err.Error(), "Data truncated")

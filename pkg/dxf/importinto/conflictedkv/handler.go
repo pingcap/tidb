@@ -154,7 +154,7 @@ func (h *BaseHandler) encodeAndHandleRow(ctx context.Context,
 	if !tblMeta.HasClusteredIndex() {
 		autoRowID = handle.IntValue()
 	}
-	kvPairs, err := h.encoder.Encode(decodedData, autoRowID)
+	kvPairs, err := h.encoder.Encode(decodedData, nil, autoRowID)
 	if err != nil {
 		return errors.Trace(err)
 	}

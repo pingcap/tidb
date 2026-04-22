@@ -129,9 +129,10 @@ type Row struct {
 	// RowID is the row id of the row.
 	// as objects of this struct is reused, this RowID is increased when reading
 	// next row.
-	RowID  int64
-	Row    []types.Datum
-	Length int
+	RowID    int64
+	Row      []types.Datum
+	Length   int
+	SkipCast []bool // nil means "cast everything" (CSV/SQL default)
 }
 
 // MarshalLogArray implements the zapcore.ArrayMarshaler interface

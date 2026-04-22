@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -93,10 +94,16 @@ type MDTableMeta struct {
 	IsRowOrdered bool
 }
 
-// ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
+// ParquetFileMeta holds runtime-only configuration for parquet parsing.
+// Fields are populated at execution time
 type ParquetFileMeta struct {
 	allocator memory.Allocator
 	Loc       *time.Location
+	// TargetColumns holds target column metadata indexed by parquet file
+	// column position. Each entry corresponds to the parquet schema column
+	// at the same index. nil entries indicate unmapped columns. When
+	// TargetColumns itself is nil, no skip-cast optimization is applied.
+	TargetColumns []*model.ColumnInfo
 }
 
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.

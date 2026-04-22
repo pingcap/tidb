@@ -122,7 +122,7 @@ func TestHandler(t *testing.T) {
 				dupID := 100
 				row := []types.Datum{types.NewDatum(dupID), types.NewDatum(dupID), types.NewDatum(dupID)}
 				localEncoder := getEncoder(t, tbl)
-				dupPairs, err2 := localEncoder.Encode(row, int64(dupID))
+				dupPairs, err2 := localEncoder.Encode(row, nil, int64(dupID))
 				require.NoError(t, err2)
 				for _, pair := range dupPairs.Pairs {
 					if !tablecodec.IsRecordKey(pair.Key) {
@@ -210,7 +210,7 @@ func TestHandler(t *testing.T) {
 					ukVal := (id + 1) / 2
 					row := []types.Datum{types.NewDatum(id), types.NewDatum(id), types.NewDatum(ukVal)}
 					localEncoder := getEncoder(t, tbl)
-					dupPairs, err2 := localEncoder.Encode(row, int64(id))
+					dupPairs, err2 := localEncoder.Encode(row, nil, int64(id))
 					require.NoError(t, err2)
 					for _, pair := range dupPairs.Pairs {
 						if tablecodec.IsRecordKey(pair.Key) {

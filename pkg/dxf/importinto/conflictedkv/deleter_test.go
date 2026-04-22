@@ -66,7 +66,7 @@ func TestDeleter(t *testing.T) {
 		for i := range endID {
 			dupID := i + 1
 			row := []types.Datum{types.NewDatum(dupID), types.NewDatum(dupID), types.NewDatum(dupID)}
-			dupPairs, err2 := localEncoder.Encode(row, int64(dupID))
+			dupPairs, err2 := localEncoder.Encode(row, nil, int64(dupID))
 			require.NoError(t, err2)
 			for _, pair := range dupPairs.Pairs {
 				if kvGroup == external.DataKVGroup {

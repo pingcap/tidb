@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -89,7 +90,9 @@ type innerReader[T parquet.ColumnTypes] interface {
 type iterator interface {
 	SetReader(colReader file.ColumnChunkReader)
 
-	Next(*types.Datum) error
+	// Next reads the next value into the datum. The returned bool indicates
+	// whether the column value can skip CastColumnValue safely.
+	Next(*types.Datum) (bool, error)
 
 	Close() error
 }
@@ -109,6 +112,8 @@ type columnIterator[T parquet.ColumnTypes, R innerReader[T]] struct {
 	values         []T
 
 	setter setter[T]
+
+	maxDefLevel int16 // cached from Descriptor().MaxDefinitionLevel()
 }
 
 // newColumnIterator creates a new generic column iterator
@@ -130,6 +135,7 @@ func newColumnIterator[T parquet.ColumnTypes, R innerReader[T]](
 func (it *columnIterator[T, R]) SetReader(colReader file.ColumnChunkReader) {
 	it.baseReader = colReader
 	it.reader, _ = colReader.(R)
+	it.maxDefLevel = colReader.Descriptor().MaxDefinitionLevel()
 }
 
 func (it *columnIterator[T, R]) Close() error {
@@ -159,14 +165,14 @@ func (it *columnIterator[T, R]) readNextBatch() error {
 }
 
 // Next reads the next value with proper level handling.
-func (it *columnIterator[T, R]) Next(d *types.Datum) error {
+func (it *columnIterator[T, R]) Next(d *types.Datum) (bool, error) {
 	if it.levelOffset == it.levelsBuffered {
 		err := it.readNextBatch()
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if it.levelsBuffered == 0 {
-			return io.EOF
+			return false, io.EOF
 		}
 	}
 
@@ -174,9 +180,9 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 	defLevel := it.defLevels[it.levelOffset]
 	it.levelOffset++
 
-	if defLevel < it.baseReader.Descriptor().MaxDefinitionLevel() {
+	if defLevel < it.maxDefLevel {
 		d.SetNull()
-		return nil
+		return true, nil
 	}
 
 	value := it.values[it.valueOffset]
@@ -184,33 +190,40 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 	return it.setter(value, d)
 }
 
-func createColumnIterator(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) iterator {
+func createColumnIterator(
+	tp parquet.Type,
+	converted *columnType,
+	loc *time.Location,
+	target *model.ColumnInfo,
+	batchSize int,
+) iterator {
 	switch tp {
 	case parquet.Types.Boolean:
-		return newColumnIterator[bool, *file.BooleanColumnChunkReader](batchSize, getBoolDataSetter)
+		return newColumnIterator[bool, *file.BooleanColumnChunkReader](batchSize, getBoolSetter(target))
 	case parquet.Types.Int32:
-		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(converted, loc))
+		return newColumnIterator[int32, *file.Int32ColumnChunkReader](batchSize, getInt32Setter(converted, loc, target))
 	case parquet.Types.Int64:
-		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(converted, loc))
+		return newColumnIterator[int64, *file.Int64ColumnChunkReader](batchSize, getInt64Setter(converted, loc, target))
 	case parquet.Types.Float:
-		return newColumnIterator[float32, *file.Float32ColumnChunkReader](batchSize, setFloat32Data)
+		return newColumnIterator[float32, *file.Float32ColumnChunkReader](batchSize, getFloat32Setter(target))
 	case parquet.Types.Double:
-		return newColumnIterator[float64, *file.Float64ColumnChunkReader](batchSize, setFloat64Data)
+		return newColumnIterator[float64, *file.Float64ColumnChunkReader](batchSize, getFloat64Setter(target))
 	case parquet.Types.Int96:
-		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(converted, loc))
+		return newColumnIterator[parquet.Int96, *file.Int96ColumnChunkReader](batchSize, getInt96Setter(converted, loc, target))
 	case parquet.Types.ByteArray:
-		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getByteArraySetter(converted))
+		return newColumnIterator[parquet.ByteArray, *file.ByteArrayColumnChunkReader](batchSize, getBytesSetter[parquet.ByteArray](converted, target))
 	case parquet.Types.FixedLenByteArray:
-		return newColumnIterator[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getFixedLenByteArraySetter(converted))
+		return newColumnIterator[parquet.FixedLenByteArray, *file.FixedLenByteArrayColumnChunkReader](batchSize, getBytesSetter[parquet.FixedLenByteArray](converted, target))
 	default:
 		return nil
 	}
 }
 
-// convertedType is older representation of the logical type in parquet
+// columnType stores both logical/physical types for parquet columns.
 // ref: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md
-type convertedType struct {
+type columnType struct {
 	converted   schema.ConvertedType
+	physical    parquet.Type
 	decimalMeta schema.DecimalMetadata
 
 	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types
@@ -228,9 +241,9 @@ type rowGroupParser struct {
 }
 
 // init creates column iterators for each column.
-func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location) (err error) {
+func (rgp *rowGroupParser) init(colTypes []columnType, loc *time.Location, targetCols []*model.ColumnInfo) (err error) {
 	meta := rgp.readers[0].MetaData()
-	numCols := meta.Schema.NumColumns()
+	numCols := len(colTypes)
 	rgp.iterators = make([]iterator, numCols)
 
 	defer func() {
@@ -245,7 +258,7 @@ func (rgp *rowGroupParser) init(colTypes []convertedType, loc *time.Location) (e
 
 	for idx := range numCols {
 		tp := meta.Schema.Column(idx).PhysicalType()
-		iter := createColumnIterator(tp, &colTypes[idx], loc, readBatchSize)
+		iter := createColumnIterator(tp, &colTypes[idx], loc, targetCols[idx], readBatchSize)
 		if iter == nil {
 			return errors.Errorf("unsupported parquet type %s", tp.String())
 		}
@@ -266,13 +279,14 @@ func (rgp *rowGroupParser) isDone() bool {
 	return rgp == nil || rgp.readRows == rgp.totalRows
 }
 
-func (rgp *rowGroupParser) readRow(row []types.Datum) error {
+func (rgp *rowGroupParser) readRow(row []types.Datum, skipCast []bool) (err error) {
 	if rgp.isDone() {
 		return io.EOF
 	}
 
 	for col, iter := range rgp.iterators {
-		if err := iter.Next(&row[col]); err != nil {
+		skipCast[col], err = iter.Next(&row[col])
+		if err != nil {
 			return errors.Annotate(err, "parquet read column failed")
 		}
 	}
@@ -296,8 +310,11 @@ func (rgp *rowGroupParser) Close() error {
 // ParquetParser parses a parquet file for import
 type ParquetParser struct {
 	fileMeta *metadata.FileMetaData
-	colTypes []convertedType
+	colTypes []columnType
 	colNames []string
+
+	targetCols []*model.ColumnInfo
+	skipCast   []bool
 
 	ctx   context.Context
 	store storeapi.Storage
@@ -349,7 +366,7 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 		return errors.Trace(err)
 	}
 
-	readers := make([]*file.Reader, pp.fileMeta.NumColumns())
+	readers := make([]*file.Reader, len(pp.colTypes))
 	defer func() {
 		if err != nil {
 			for _, r := range readers {
@@ -360,7 +377,7 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 		}
 	}()
 
-	for i := range pp.fileMeta.NumColumns() {
+	for i := range pp.colTypes {
 		eg.Go(func() error {
 			wrapper, err := builder(i)
 			if err != nil {
@@ -389,7 +406,7 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 		rowGroup: pp.curRowGroup,
 		readers:  readers,
 	}
-	if err := rgp.init(pp.colTypes, pp.loc); err != nil {
+	if err := rgp.init(pp.colTypes, pp.loc, pp.targetCols); err != nil {
 		return errors.Trace(err)
 	}
 	pp.rowGroup = rgp
@@ -446,21 +463,22 @@ func (pp *ParquetParser) moveToNextRowGroup() error {
 // readSingleRow read one row internally and store them in the row buffer.
 // The data read is shallow copied from the internal buffer of parquet reader,
 // so copy it if you need to keep the data before the next read.
-func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
+func (pp *ParquetParser) readSingleRow(row []types.Datum) (int, error) {
 	// Move to next row group
 	if pp.rowGroup.isDone() {
 		if err := pp.moveToNextRowGroup(); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
-	if err := pp.rowGroup.readRow(row); err != nil {
-		return err
+	if err := pp.rowGroup.readRow(row, pp.skipCast); err != nil {
+		return 0, err
 	}
 
-	pp.totalReadBytes += estimateRowSize(row)
+	size := estimateRowSize(row)
+	pp.totalReadBytes += size
 	pp.totalReadRows++
-	return nil
+	return size, nil
 }
 
 // Pos returns the currently row number of the parquet file
@@ -479,7 +497,7 @@ func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
 	// For now it's ok, since only UTs use this interface
 	toRead := pos - pp.lastRow.RowID
 	for range toRead {
-		if err := pp.readSingleRow(row); err != nil {
+		if _, err := pp.readSingleRow(row); err != nil {
 			return err
 		}
 	}
@@ -522,13 +540,15 @@ func (pp *ParquetParser) ReadRow() error {
 	pp.lastRow.Length = 0
 
 	row := pp.rowPool.Get()
-	if err := pp.readSingleRow(row); err != nil {
+	size, err := pp.readSingleRow(row)
+	if err != nil {
 		pp.rowPool.Put(row)
 		return err
 	}
 
 	pp.lastRow.Row = row
-	pp.lastRow.Length = estimateRowSize(row)
+	pp.lastRow.Length = size
+	pp.lastRow.SkipCast = pp.skipCast
 	return nil
 }
 
@@ -615,14 +635,20 @@ func NewParquetParser(
 		return nil, errors.Trace(err)
 	}
 
-	fileSchema := reader.MetaData().Schema
-	colTypes := make([]convertedType, fileSchema.NumColumns())
-	colNames := make([]string, 0, fileSchema.NumColumns())
+	fileMeta := reader.MetaData()
+	fileSchema := fileMeta.Schema
+	numColumns := fileSchema.NumColumns()
+	if meta.TargetColumns != nil {
+		numColumns = min(numColumns, len(meta.TargetColumns))
+	}
+	colTypes := make([]columnType, numColumns)
+	colNames := make([]string, 0, numColumns)
 
 	for i := range colTypes {
-		desc := reader.MetaData().Schema.Column(i)
+		desc := fileSchema.Column(i)
 		colNames = append(colNames, strings.ToLower(desc.Name()))
 
+		colTypes[i].physical = desc.PhysicalType()
 		logicalType := desc.LogicalType()
 		if logicalType.IsValid() {
 			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
@@ -643,13 +669,12 @@ func NewParquetParser(
 		}
 	}
 
-	numColumns := len(colTypes)
 	pool := zeropool.New(func() []types.Datum {
 		return make([]types.Datum, numColumns)
 	})
 
 	parser := &ParquetParser{
-		fileMeta: reader.MetaData(),
+		fileMeta: fileMeta,
 		colTypes: colTypes,
 		colNames: colNames,
 		ctx:      ctx,
@@ -659,6 +684,12 @@ func NewParquetParser(
 		alloc:    allocator,
 		logger:   logger,
 		rowPool:  &pool,
+		skipCast: make([]bool, numColumns),
+	}
+	if meta.TargetColumns != nil {
+		parser.targetCols = meta.TargetColumns
+	} else {
+		parser.targetCols = make([]*model.ColumnInfo, numColumns)
 	}
 	if err := parser.Init(meta.Loc); err != nil {
 		return nil, errors.Trace(err)

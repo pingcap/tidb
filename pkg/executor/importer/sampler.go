@@ -371,7 +371,7 @@ func (s *kvSizeSampler) sampleOneFile(
 		lastRow := parser.LastRow()
 		sourceSize += s.sampledRowSourceSize(parser, startPos, lastRow)
 
-		kvs, encodeErr := encoder.Encode(lastRow.Row, lastRow.RowID)
+		kvs, encodeErr := encoder.Encode(lastRow.Row, nil, lastRow.RowID)
 		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
 			return 0, 0, 0, common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(chunk.GetKey(), startPos)
