@@ -379,17 +379,23 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 	//   p1: TopN b=2 count=3.  Histogram: [1, 3] count=2, repeat=1. [4, 4] count=repeat=1
 	//   p2: TopN b=1 count=2.  No histogram (fully covered by TopN)
 	//
-	// Global TopN merge (both separate and combined produce same result):
-	//   b=2 wins with count=4 (p1 TopN=3 + p0 hist upper-bound b=2 repeat=1)
-	//   leftTopN b=3 count=4 (p0 TopN=3 + p1 hist upper-bound b=3 repeat=1),
-	//            b=1 count=2 (p2 TopN=2), b=4 count=1 (p1 hist repeat=1)
-	//   These leftTopN + remaining hist buckets merge into global b: [1, 4] count=8, repeat=1
+	// Combined global TopN merge: b=2 wins (p1 TopN=3 + p0 hist upper-bound
+	// repeat=1 = 4). Leftover TopN entries (b=3 count=4 pulling p1 hist
+	// upper-bound repeat=1, b=1 count=2, b=4 count=1) merge with the
+	// remaining hist buckets into the global histogram. With 3 expected
+	// buckets and totCount=8, the equi-depth builder picks cut points near
+	// cumCount 2, 7, 8, giving three buckets:
+	//   [1,1] count=2 repeat=2  ← leftTopN b=1
+	//   [1,3] count=7 repeat=4  ← b=3 leftTopN + p1 [1,3] hist
+	//   [4,4] count=8 repeat=1  ← p1 [4,4] hist
 	//
 	// show stats_buckets format: db table partition col is_index bucket_id count repeats lower upper ndv
 	testKit.MustQuery("show stats_buckets where table_name='t'").Sort().Check(testkit.Rows(
 		"test t global a 0 0 4 4 0 0 0", // global a bucket 0: [0, 0] count=4, repeat=4
 		"test t global a 0 1 6 2 2 2 0", // global a bucket 1: [2, 2] cumulative=6, repeat=2
-		"test t global b 0 0 8 1 1 4 0", // global b bucket 0: [1, 4] count=8, repeat=1 (merged from leftTopN + hist)
+		"test t global b 0 0 2 2 1 1 0", // global b bucket 0: [1, 1] count=2, repeat=2
+		"test t global b 0 1 7 4 1 3 0", // global b bucket 1: [1, 3] cumulative=7, repeat=4
+		"test t global b 0 2 8 1 4 4 0", // global b bucket 2: [4, 4] cumulative=8, repeat=1
 		"test t p0 b 0 0 1 1 2 2 0",     // p0 hist: [2, 2] count=1, repeat=1
 		"test t p1 b 0 0 2 1 1 3 0",     // p1 hist bucket 0: [1, 3] count=2, repeat=1
 		"test t p1 b 0 1 3 1 4 4 0",     // p1 hist bucket 1: [4, 4] cumulative=3, repeat=1
