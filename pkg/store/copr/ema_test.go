@@ -24,16 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRUEMAColdStart(t *testing.T) {
+func TestRUEMASeedAndConverge(t *testing.T) {
 	e := newRUEMA()
-	require.False(t, e.IsReady(), "fresh EMA: no samples => not ready")
 	require.Zero(t, e.Predict(), "fresh EMA: no prediction")
 
 	now := time.Now()
 	e.Observe(1_000_000, now)
-	require.True(t, e.IsReady(), "any observation makes the EMA ready")
 	require.Equal(t, uint64(1_000_000), e.Predict(),
-		"first sample seeds the EMA and is returned directly")
+		"first sample seeds the EMA via a ~infinite dt (alpha≈1)")
 
 	e.Observe(1_000_000, now.Add(100*time.Millisecond))
 	require.InDelta(t, float64(1_000_000), float64(e.Predict()), 1,
@@ -98,14 +96,13 @@ func TestRUEMAConcurrentObserveAndPredict(t *testing.T) {
 	const iters = 200
 	done := make(chan struct{})
 	go func() {
-		// Reader: hammer Predict/IsReady while writers fan in samples.
+		// Reader: hammer Predict while writers fan in samples.
 		for {
 			select {
 			case <-done:
 				return
 			default:
 				_ = e.Predict()
-				_ = e.IsReady()
 			}
 		}
 	}()
@@ -123,7 +120,6 @@ func TestRUEMAConcurrentObserveAndPredict(t *testing.T) {
 	}
 	wg.Wait()
 	close(done)
-	require.True(t, e.IsReady(), "after N*M observations the EMA must be ready")
 	require.Greater(t, e.Predict(), uint64(0), "prediction must be positive after observations")
 }
 

@@ -1698,8 +1698,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	if worker.ema.IsReady() {
-		req.PredictedReadBytes = worker.ema.Predict()
+	if predicted := worker.ema.Predict(); predicted > 0 {
+		req.PredictedReadBytes = predicted
 		copr_metrics.EMASendReady.Inc()
 	} else {
 		copr_metrics.EMASendCold.Inc()
