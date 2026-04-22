@@ -1319,47 +1319,62 @@ type bucketRef struct {
 }
 
 // bucketMergeEntry is one partition's current head in the k-way merge.
-// The upper bound Datum is cached at insertion time — comparisons during
-// heap sift use the cached value, avoiding repeated Chunk indirection.
+// The upper and lower bound Datums are cached at insertion time so heap
+// sift compares directly against cached values, avoiding repeated Chunk
+// indirection.
 type bucketMergeEntry struct {
-	upper types.Datum // cached, extracted once when entering the heap
-	lower types.Datum // cached, extracted once when entering the heap
-	sc    *stmtctx.StatementContext
-	hists []*Histogram
+	upper     types.Datum
+	lower     types.Datum
 	histIdx   uint16
 	bucketIdx uint16
 }
 
 // bucketMergeHeap implements container/heap for k-way merging of
-// pre-sorted partition histograms. Each entry is one partition's
-// current (smallest unprocessed) bucket.
-type bucketMergeHeap []bucketMergeEntry
+// pre-sorted partition histograms. Shared state (StatementContext, any
+// compare error observed during sift) lives on the heap rather than
+// being duplicated onto every entry.
+type bucketMergeHeap struct {
+	entries []bucketMergeEntry
+	sc      *stmtctx.StatementContext
+	cmpErr  error
+}
 
-func (h bucketMergeHeap) Len() int { return len(h) }
-func (h bucketMergeHeap) Less(i, j int) bool {
-	res, _ := h[i].upper.Compare(h[i].sc.TypeCtx(), &h[j].upper, collate.GetBinaryCollator())
+func (h *bucketMergeHeap) Len() int { return len(h.entries) }
+func (h *bucketMergeHeap) Less(i, j int) bool {
+	if h.cmpErr != nil {
+		return false
+	}
+	res, err := h.entries[i].upper.Compare(h.sc.TypeCtx(), &h.entries[j].upper, collate.GetBinaryCollator())
+	if err != nil {
+		h.cmpErr = err
+		return false
+	}
 	if res != 0 {
 		return res < 0
 	}
 	// Secondary sort by lower bound for deterministic ordering.
-	res, _ = h[i].lower.Compare(h[i].sc.TypeCtx(), &h[j].lower, collate.GetBinaryCollator())
+	res, err = h.entries[i].lower.Compare(h.sc.TypeCtx(), &h.entries[j].lower, collate.GetBinaryCollator())
+	if err != nil {
+		h.cmpErr = err
+		return false
+	}
 	return res < 0
 }
-func (h bucketMergeHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
-func (h *bucketMergeHeap) Push(x any)   { *h = append(*h, x.(bucketMergeEntry)) }
+func (h *bucketMergeHeap) Swap(i, j int) { h.entries[i], h.entries[j] = h.entries[j], h.entries[i] }
+func (h *bucketMergeHeap) Push(x any)    { h.entries = append(h.entries, x.(bucketMergeEntry)) }
 func (h *bucketMergeHeap) Pop() any {
-	old := *h
+	old := h.entries
 	n := len(old)
 	x := old[n-1]
-	*h = old[:n-1]
+	h.entries = old[:n-1]
 	return x
 }
 func (h *bucketMergeHeap) init() { heap.Init(h) }
 func (h *bucketMergeHeap) peek() *bucketMergeEntry {
-	if len(*h) == 0 {
+	if len(h.entries) == 0 {
 		return nil
 	}
-	return &(*h)[0]
+	return &h.entries[0]
 }
 
 // topNEntry is a flattened TopN value from one partition, used for sorting.
@@ -1382,8 +1397,7 @@ type topNEntry struct {
 // per-bucket Repeat subtracted; leftover TopN values are injected at
 // their sorted position.
 //
-// Memory: ~8 MB pointer array + ~4 KB heap on 8000-partition tables,
-// vs ~1.4 GB of bucket4Merging in the previous implementation.
+// Memory: ~8 MB pointer array + ~4 KB heap on 8000-partition tables.
 // Time: O((N+T) log(N+T)) for the sorts + O(N+T) for the walks,
 // where N = total histogram buckets, T = total TopN entries.
 func MergePartTopNAndHistToGlobal(
@@ -1452,6 +1466,9 @@ func MergePartTopNAndHistToGlobal(
 	var totCount, totNull, totColSize int64
 	totalBuckets := 0
 	for _, hist := range hists {
+		if hist == nil {
+			continue
+		}
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
 		histLen := hist.Len()
@@ -1462,27 +1479,34 @@ func MergePartTopNAndHistToGlobal(
 	}
 
 	// Initialize the merge heap with each partition's first non-empty bucket.
-	mergeHeap := make(bucketMergeHeap, 0, len(hists))
+	mergeHeap := bucketMergeHeap{
+		entries: make([]bucketMergeEntry, 0, len(hists)),
+		sc:      sc,
+	}
 	for hi, hist := range hists {
+		if hist == nil {
+			continue
+		}
 		for bi := range hist.Len() {
 			count := hist.Buckets[bi].Count
 			if bi > 0 {
 				count -= hist.Buckets[bi-1].Count
 			}
 			if count > 0 {
-				mergeHeap = append(mergeHeap, bucketMergeEntry{
+				mergeHeap.entries = append(mergeHeap.entries, bucketMergeEntry{
 					histIdx:   uint16(hi),
 					bucketIdx: uint16(bi),
 					upper:     *hist.GetUpper(bi),
 					lower:     *hist.GetLower(bi),
-					sc:        sc,
-					hists:     hists,
 				})
 				break
 			}
 		}
 	}
 	mergeHeap.init()
+	if mergeHeap.cmpErr != nil {
+		return nil, nil, mergeHeap.cmpErr
+	}
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1b: built k-way merge heap",
 		zap.Int("heapSize", mergeHeap.Len()),
 		zap.Int("totalBuckets", totalBuckets))
@@ -1536,8 +1560,6 @@ func MergePartTopNAndHistToGlobal(
 					bucketIdx: uint16(bi),
 					upper:     *h.GetUpper(bi),
 					lower:     *h.GetLower(bi),
-					sc:        sc,
-					hists:     hists,
 				})
 				break
 			}
@@ -1622,6 +1644,9 @@ func MergePartTopNAndHistToGlobal(
 			topNHeap.Add(entry)
 		}
 	}
+	if mergeHeap.cmpErr != nil {
+		return nil, nil, mergeHeap.cmpErr
+	}
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1c: merge-walked TopN + buckets",
 		zap.Int("sortedRefs", len(sortedRefs)))
 
@@ -1679,7 +1704,7 @@ func MergePartTopNAndHistToGlobal(
 	// sorted refs and allTopN together. Both are sorted in the same
 	// order. TopN entries in globalTopNMap are skipped (their rows are
 	// in the TopN); others are injected into the histogram at their
-	// sorted position. Single pass, no bucket4Merging.
+	// sorted position. Single pass.
 	// ---------------------------------------------------------------
 	var globalHist *Histogram
 	if firstHist != nil {
@@ -1754,24 +1779,31 @@ func MergePartTopNAndHistToGlobal(
 		lastUpper = upper.Clone()
 	}
 
-	addToBucket := func(lower *types.Datum, count, repeat int64) {
+	addToBucket := func(lower *types.Datum, count, repeat int64) error {
 		cumCount += count
 		lastRepeat += repeat
 		lo := lower
 		if lowerFloor != nil {
-			c, _ := lo.Compare(sc.TypeCtx(), lowerFloor, collate.GetBinaryCollator())
+			c, err := lo.Compare(sc.TypeCtx(), lowerFloor, collate.GetBinaryCollator())
+			if err != nil {
+				return err
+			}
 			if c < 0 {
 				lo = lowerFloor
 			}
 		}
 		if bucketLower == nil {
 			bucketLower = lo.Clone()
-		} else {
-			c, _ := lo.Compare(sc.TypeCtx(), bucketLower, collate.GetBinaryCollator())
-			if c < 0 {
-				bucketLower = lo.Clone()
-			}
+			return nil
 		}
+		c, err := lo.Compare(sc.TypeCtx(), bucketLower, collate.GetBinaryCollator())
+		if err != nil {
+			return err
+		}
+		if c < 0 {
+			bucketLower = lo.Clone()
+		}
+		return nil
 	}
 
 	// Pass 2 iterates sortedRefs (produced in sorted order by Pass 1's
@@ -1823,7 +1855,9 @@ func MergePartTopNAndHistToGlobal(
 				}
 			}
 			startNewGroup(&topNDatum)
-			addToBucket(&topNDatum, topNCount, topNCount)
+			if err := addToBucket(&topNDatum, topNCount, topNCount); err != nil {
+				return nil, nil, err
+			}
 			emitGroup()
 			continue
 		}
@@ -1840,7 +1874,9 @@ func MergePartTopNAndHistToGlobal(
 				ti2++
 			}
 			if _, inGlobal := globalTopNMap[hack.String(key)]; !inGlobal && topNCount > 0 {
-				addToBucket(&topNDatum, topNCount, topNCount)
+				if err := addToBucket(&topNDatum, topNCount, topNCount); err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 
@@ -1875,7 +1911,9 @@ func MergePartTopNAndHistToGlobal(
 					continue
 				}
 			}
-			addToBucket(h.GetLower(int(sortedRefs[k].bucketIdx)), count, repeat)
+			if err := addToBucket(h.GetLower(int(sortedRefs[k].bucketIdx)), count, repeat); err != nil {
+				return nil, nil, err
+			}
 		}
 
 		ri = j
