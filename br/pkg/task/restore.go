@@ -562,7 +562,7 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagReplicationStoragePhase)
 	}
-	cfg.FromReplicationStorage = flags.Changed(FlagReplicationStoragePhase)
+	cfg.FromReplicationStorage = flags.Changed(FlagReplicationStoragePhase) || cfg.ReplicationStoragePhase > 0
 	if cfg.FromReplicationStorage && cfg.ReplicationStoragePhase != 1 && cfg.ReplicationStoragePhase != 2 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v is an invalid value, please specify 1 or 2",
 			FlagReplicationStoragePhase)

@@ -44,6 +44,7 @@ go_library(
         "//br/pkg/restore/utils",
         "//br/pkg/rtree",
         "//br/pkg/stream",
+        "//br/pkg/stream/crr/service",
         "//br/pkg/streamhelper",
         "//br/pkg/streamhelper/config",
         "//br/pkg/streamhelper/daemon",

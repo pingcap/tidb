@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"sort"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -132,74 +131,4 @@ func DecodeMetaFile(
 		})
 	}
 	return eg.Wait()
-}
-
-// CheckBackupFilesExists checks whether all files referenced in backup metadata
-// exist in object storage.
-func CheckBackupFilesExists(
-	ctx context.Context,
-	s storeapi.Storage,
-	backupMeta *backuppb.BackupMeta,
-	cipher *backuppb.CipherInfo,
-) (total int, missing []string, err error) {
-	referencedFiles := make(map[string]struct{})
-	appendFile := func(name string) {
-		if len(name) == 0 {
-			return
-		}
-		referencedFiles[name] = struct{}{}
-	}
-	appendStatsFiles := func(schemas []*backuppb.Schema) {
-		for _, schema := range schemas {
-			for _, statsIndex := range schema.GetStatsIndex() {
-				appendFile(statsIndex.GetName())
-			}
-		}
-	}
-
-	for _, file := range backupMeta.GetFiles() {
-		appendFile(file.GetName())
-	}
-	appendStatsFiles(backupMeta.GetSchemas())
-
-	collectFromMetaIndex := func(index *backuppb.MetaFile) error {
-		if index == nil {
-			return nil
-		}
-		for _, node := range index.GetMetaFiles() {
-			appendFile(node.GetName())
-		}
-		return walkLeafMetaFile(ctx, s, index, cipher, func(m *backuppb.MetaFile) {
-			for _, file := range m.GetDataFiles() {
-				appendFile(file.GetName())
-			}
-			appendStatsFiles(m.GetSchemas())
-		})
-	}
-
-	if err := collectFromMetaIndex(backupMeta.GetFileIndex()); err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	if err := collectFromMetaIndex(backupMeta.GetSchemaIndex()); err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	if err := collectFromMetaIndex(backupMeta.GetRawRangeIndex()); err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	if err := collectFromMetaIndex(backupMeta.GetDdlIndexes()); err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-
-	total = len(referencedFiles)
-	for name := range referencedFiles {
-		exists, err := s.FileExists(ctx, name)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		if !exists {
-			missing = append(missing, name)
-		}
-	}
-	sort.Strings(missing)
-	return total, missing, nil
 }
