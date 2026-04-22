@@ -26,27 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
-
-func shouldCheckSchemaReadOnlyForFKCascade(ctx base.PlanContext) bool {
-	vars := ctx.GetSessionVars()
-	// Allow replication threads with explicitly granted RESTRICTED_REPLICA_WRITER_ADMIN to bypass.
-	//
-	// Gate on User != nil so that internal/unauthenticated sessions (including mock-store
-	// test sessions where SkipWithGrant is true) are still blocked.
-	if vars.User == nil {
-		return true
-	}
-
-	pm := privilege.GetPrivilegeManager(ctx)
-	if pm == nil {
-		return true
-	}
-	return !pm.HasExplicitlyGrantedDynamicPrivilege(vars.ActiveRoles, "RESTRICTED_REPLICA_WRITER_ADMIN", false)
-}
 
 // FKCheck indicates the foreign key constraint checker.
 type FKCheck struct {
@@ -182,7 +164,7 @@ func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 			fkCascades = append(fkCascades, referredFKCascades...)
 			for _, fk := range referredFKCascades {
 				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
-				if ok && fkDBInfo.ReadOnly && shouldCheckSchemaReadOnlyForFKCascade(ctx) {
+				if ok && fkDBInfo.ReadOnly {
 					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
 				}
 			}
@@ -199,7 +181,7 @@ func (p *Insert) buildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 			fkCascades = append(fkCascades, referredFKCascades...)
 			for _, fk := range referredFKCascades {
 				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
-				if ok && fkDBInfo.ReadOnly && shouldCheckSchemaReadOnlyForFKCascade(ctx) {
+				if ok && fkDBInfo.ReadOnly {
 					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
 				}
 			}
@@ -281,7 +263,7 @@ func (updt *Update) buildOnUpdateFKTriggers(ctx base.PlanContext, is infoschema.
 			fkCascades[tid] = append(fkCascades[tid], referredFKCascades...)
 			for _, fk := range referredFKCascades {
 				fkDBInfo, ok := infoschema.SchemaByTable(is, fk.ChildTable.Meta())
-				if ok && fkDBInfo.ReadOnly && shouldCheckSchemaReadOnlyForFKCascade(ctx) {
+				if ok && fkDBInfo.ReadOnly {
 					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
 				}
 			}
@@ -325,7 +307,7 @@ func (del *Delete) buildOnDeleteFKTriggers(ctx base.PlanContext, is infoschema.I
 			if fkCascade != nil {
 				fkCascades[tid] = append(fkCascades[tid], fkCascade)
 				fkDBInfo, ok := infoschema.SchemaByTable(is, fkCascade.ChildTable.Meta())
-				if ok && fkDBInfo.ReadOnly && shouldCheckSchemaReadOnlyForFKCascade(ctx) {
+				if ok && fkDBInfo.ReadOnly {
 					return errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(fkDBInfo.Name.O))
 				}
 			}
