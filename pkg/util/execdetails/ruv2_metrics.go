@@ -23,7 +23,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/metrics"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 type ruv2MetricsKeyType struct{}
@@ -56,6 +58,70 @@ func RUV2MetricsFromContext(ctx context.Context) *RUV2Metrics {
 	}
 	metrics, _ := ctx.Value(RUV2MetricsCtxKey).(*RUV2Metrics)
 	return metrics
+}
+
+// UpdateRUV2MetricsFromRUV2 adds raw RUv2 counters into the statement-level metrics snapshot.
+func UpdateRUV2MetricsFromRUV2(metrics *RUV2Metrics, ru *kvrpcpb.RUV2) {
+	if metrics == nil || ru == nil {
+		return
+	}
+	if ru.ReadRpcCount != 0 {
+		metrics.AddResourceManagerReadCnt(int64(ru.ReadRpcCount))
+	}
+	if ru.WriteRpcCount != 0 {
+		metrics.AddResourceManagerWriteCnt(int64(ru.WriteRpcCount))
+	}
+	if ru.KvEngineCacheMiss != 0 {
+		metrics.AddTiKVKVEngineCacheMiss(int64(ru.KvEngineCacheMiss))
+	}
+	if ru.CoprocessorExecutorIterations != 0 {
+		metrics.AddTiKVCoprocessorExecutorIterations(int64(ru.CoprocessorExecutorIterations))
+	}
+	if ru.CoprocessorResponseBytes != 0 {
+		metrics.AddTiKVCoprocessorResponseBytes(int64(ru.CoprocessorResponseBytes))
+	}
+	if ru.RaftstoreStoreWriteTriggerWbBytes != 0 {
+		metrics.AddTiKVRaftstoreStoreWriteTriggerWB(int64(ru.RaftstoreStoreWriteTriggerWbBytes))
+	}
+	if ru.StorageProcessedKeysBatchGet != 0 {
+		metrics.AddTiKVStorageProcessedKeysBatchGet(int64(ru.StorageProcessedKeysBatchGet))
+	}
+	if ru.StorageProcessedKeysGet != 0 {
+		metrics.AddTiKVStorageProcessedKeysGet(int64(ru.StorageProcessedKeysGet))
+	}
+	if inputs := ru.ExecutorInputs; inputs != nil {
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchIndexScan", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchIndexScan))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchTableScan != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchTableScan", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchTableScan))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchSelection != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchSelection", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchSelection))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchTopN != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchTopN))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchLimit != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchLimit", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchLimit))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchSimpleAggr", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchSimpleAggr))
+		}
+		if inputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr != 0 {
+			metrics.AddTiKVCoprocessorWorkTotal("BatchFastHashAggr", int64(inputs.TikvCoprocessorExecutorWorkTotalBatchFastHashAggr))
+		}
+	}
+}
+
+// SyncRUV2MetricsFromRUDetails drains the raw RUv2 counters accumulated in
+// RUDetails since the last drain and adds them into the statement-level metrics.
+// It is safe to call multiple times; each call transfers only the delta.
+func SyncRUV2MetricsFromRUDetails(metrics *RUV2Metrics, ruDetails *tikvutil.RUDetails) {
+	if metrics == nil || ruDetails == nil || metrics.Bypass() {
+		return
+	}
+	UpdateRUV2MetricsFromRUV2(metrics, ruDetails.DrainRUV2())
 }
 
 // RUV2Metrics stores statement-level RUv2 metrics.
