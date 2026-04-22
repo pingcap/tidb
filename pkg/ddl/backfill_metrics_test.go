@@ -234,7 +234,7 @@ func TestBackfillMetricsCleanupPartitionedTable(t *testing.T) {
 				label:       metrics.LblMergeTmpIdxRate,
 				expectTable: testPhysicalTableID,
 			},
-					{
+			{
 				name:        "cleanup-index-rate-keeps-physical-id-for-non-partition-ddl",
 				actionType:  model.ActionAddIndex,
 				label:       metrics.LblCleanupIdxRate,
