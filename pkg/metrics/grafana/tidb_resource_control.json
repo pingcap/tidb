@@ -2725,6 +2725,20 @@
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-{{resource_group}}-50",
                      "refId": "C"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.1, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-10",
+                     "refId": "D"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.01, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-01",
+                     "refId": "E"
                   }
                ],
                "thresholds": [ ],
@@ -2918,6 +2932,20 @@
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}-{{resource_group}}-50",
                      "refId": "C"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.1, sum(rate(resource_manager_client_request_paging_settlement_ru_delta_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-10",
+                     "refId": "D"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.01, sum(rate(resource_manager_client_request_paging_settlement_ru_delta_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-01",
+                     "refId": "E"
                   }
                ],
                "thresholds": [ ],
