@@ -1397,9 +1397,11 @@ type topNEntry struct {
 // per-bucket Repeat subtracted; leftover TopN values are injected at
 // their sorted position.
 //
-// Memory: ~8 MB pointer array + ~4 KB heap on 8000-partition tables.
 // Time: O((N+T) log(N+T)) for the sorts + O(N+T) for the walks,
 // where N = total histogram buckets, T = total TopN entries.
+// Allocation is O(N) bytes — dominated by per-bucket Datum clones
+// and codec encoding, not by the algorithm's own bookkeeping
+// (sortedRefs + bounded min-heap are a few MB at 8k partitions).
 func MergePartTopNAndHistToGlobal(
 	topNs []*TopN,
 	hists []*Histogram,
