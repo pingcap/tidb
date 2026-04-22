@@ -114,12 +114,12 @@ BR prints the user-facing `<backup-id>` (`uint64`) on success.
 Repo-v1 models each snapshot backup as one per-backup namespace rooted at `_meta/snapshot/<backup-id>/...`.
 
 Lifecycle:
-- A new repo-v1 backup begins by allocating a fresh `<backup-id>` and establishing its per-backup namespace: metadata under `_meta/snapshot/<backup-id>/...` and data under `_data/snapshot/<store-id>/<backup-id>/...`.
+- A new repo-v1 backup begins by either allocating a fresh `<backup-id>` or resuming exactly one unfinished backup selected through `--on-pending`, then establishing or reusing its per-backup namespace: metadata under `_meta/snapshot/<backup-id>/...` and data under `_data/snapshot/<store-id>/<backup-id>/...`.
 - While the backup is running, checkpoint artifacts and temporary metadata accumulate under that per-backup metadata namespace. This namespace is the canonical record of the backup's in-progress state.
 - The backup remains unfinished until its final `backupmeta` is durable. Checkpoint cleanup is part of the success path, not a separate logical backup.
 - Once the final `backupmeta` is durable and checkpoint cleanup has finished, the backup is complete and becomes a normal historical snapshot in the repo.
 - If execution is interrupted before completion, the partially written per-backup metadata and data remain attributable to the same `<backup-id>`, so later resume, inspection, or cleanup can target one concrete backup attempt.
-- If metadata is contradictory or incomplete in a way that does not clearly indicate either a valid unfinished backup or a completed one, BR must surface an operator-visible error instead of guessing.
+- Current implementation classifies pending state by probing this namespace: final `backupmeta` means a stale pending marker, checkpoint metadata without final `backupmeta` means an unfinished resumable backup, and marker-only leftovers are treated as stale cleanup leftovers rather than as resumable state.
 
 ### Checkpoints
 
@@ -132,7 +132,9 @@ Config hash:
 Pending index:
 - For unfinished backups, BR also keeps a small pointer file at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
 - This lets routine startup find relevant unfinished attempts by enumerating `_meta/pending/<config-hash-hex>/` instead of scanning all historical backups.
-- Stale pending pointers left behind after a completed backup should be treated as cleanup leftovers.
+- Current implementation stores checkpoint state under `_meta/snapshot/<backup-id>/checkpoints/backup/...` and classifies each pending marker by checking `backupmeta` first, then `checkpoints/backup/checkpoint.meta`.
+- Stale pending pointers left behind after a completed backup are treated as cleanup leftovers and removed automatically when BR scans that config-hash directory.
+- Marker-only pending leftovers are also treated as stale cleanup leftovers: when BR scans that config-hash directory, it removes the marker and any checkpoint debris instead of surfacing a special error.
 
 This keeps “find unfinished backup” cost proportional to the number of unfinished backups, not the number of historical backups in the repo.
 
@@ -163,21 +165,23 @@ SST format remains RocksDB SST (per CF), with existing compression/encryption be
 #### Backup
 
 Command:
-- `br backup full -s <repo> --storage-layout=repo-v1 [--on-pending=error|resume|new] ...`
+- `br backup full|db|table -s <repo> --storage-layout=repo-v1 [--on-pending=error|resume|new] ...`
 
 Semantics:
 - `repo-v1` treats `--storage` as a repository root instead of a legacy single-backup directory.
 - On first use, creates `_meta/repo.json` and `backup.lock`.
+- Current implementation requires checkpoint mode for repo-v1 snapshot backup; `--use-checkpoint=false` is rejected.
 - Creates a new snapshot backup in the repo and allocates a fresh PD TSO `<backup-id>` for this run.
 - Computes `<config-hash-hex>` for the current logical backup configuration and creates `_meta/pending/<config-hash-hex>/<backup-id>.json` before issuing TiKV backup requests.
 - Writes metadata under `_meta/snapshot/<backup-id>/` and SSTs under `_data/snapshot/<store-id>/<backup-id>/`.
-- Removes `_meta/pending/<config-hash-hex>/<backup-id>.json` after the backup finishes successfully and its checkpoint artifacts are cleaned up.
+- Removes `_meta/pending/<config-hash-hex>/<backup-id>.json` on the success path after final `backupmeta` is durable and checkpoint artifacts are cleaned up.
 - Prints `<backup-id>` on success.
 
 Pending backup behavior:
-- `--on-pending=error` is the default. If no pending backup exists, the command starts a new backup. If one matching pending backup exists, the command fails and asks the user to choose `resume` or `new`. If multiple matching pending backups exist, the command fails with an ambiguity error.
-- `--on-pending=resume` resumes the matching unfinished backup when exactly one pending backup exists for the same logical backup configuration. If none exists, the command starts a new backup. If multiple matching pending backups exist, the command fails with an ambiguity error.
-- `--on-pending=new` always allocates a fresh `<backup-id>` and starts a new backup instead of reusing a matching pending backup. Existing pending backups are left in place for later inspection or explicit discard.
+- Before applying `--on-pending`, current implementation cleans stale pending markers for the same config hash.
+- `--on-pending=error` is the default. If no unfinished backup exists, the command starts a new backup. If one matching unfinished backup exists, the command fails and asks the user to choose `resume` or `new`. If multiple matching unfinished backups exist, the command fails with an ambiguity error.
+- `--on-pending=resume` resumes the matching unfinished backup when exactly one pending backup with checkpoint metadata exists for the same logical backup configuration. If none exists, the command starts a new backup. If multiple matching unfinished backups exist, the command fails with an ambiguity error.
+- `--on-pending=new` always allocates a fresh `<backup-id>` and starts a new backup instead of reusing a matching unfinished backup. Existing unfinished backups are left in place for later inspection or explicit discard.
 
 #### Controller-Friendly Retry Semantics
 
@@ -195,10 +199,14 @@ This keeps the repo state machine explicit while letting Operator express retry 
 #### Restore
 
 Command:
-- `br restore full -s <repo> --storage-layout=repo-v1 --backup-id <backup-id> ...`
+- `br restore full|db|table -s <repo> --storage-layout=repo-v1 --backup-id <backup-id> ...`
+- `br restore point --full-backup-storage <repo> --storage-layout=repo-v1 --backup-id <backup-id> ...`
 
 Semantics:
 - Restores the snapshot backup identified by the user-facing `backup-id` (`uint64`) from the repo.
+- Repo-v1 readers resolve metadata from `_meta/snapshot/<backup-id>/backupmeta[.XXXXXXX]` while still using the repo root backend for data files.
+- Current implementation validates WalkDir `StartAfter` support for repo-v1 snapshot references, so repo-v1 restore only works on storage backends that satisfy that capability gate.
+- Other snapshot readers such as `br operator checksum-as -s <repo> --storage-layout=repo-v1 --backup-id <backup-id>` resolve metadata from the same per-backup namespace.
 
 #### Discard Pending Backup
 
@@ -206,14 +214,13 @@ Command:
 - `br repo snapshot pending discard -s <repo> [--backup-id <backup-id>]`
 
 Semantics:
-- Discards one unfinished snapshot backup and frees the repo to start a new checkpointed backup.
+- Discards one repo-v1 pending snapshot entry and, for unfinished backups, frees the repo to start a new checkpointed backup.
 - If there is exactly one pending backup, `--backup-id` may be omitted.
 - If multiple pending backups exist, `--backup-id` is required.
-- Removes `_meta/pending/<config-hash-hex>/<backup-id>.json`.
-- Removes `_meta/snapshot/<backup-id>/checkpoints/...`.
-- Removes unfinished per-backup metadata under `_meta/snapshot/<backup-id>/...` when final `backupmeta` is absent.
-- Removes partial SST data under `_data/snapshot/<store-id>/<backup-id>/...`.
-- Must not delete a completed backup identified by a durable final `backupmeta`; stale pending files for completed backups should be cleaned as stale metadata rather than treated as discard targets.
+- Current implementation first classifies the target as `stale` or `unfinished`.
+- For `stale`, it removes pending markers and leftover checkpoint files only; completed snapshot metadata and data files, if present, are kept.
+- For `unfinished`, it removes `_meta/pending/<config-hash-hex>/<backup-id>.json`, per-backup metadata under `_meta/snapshot/<backup-id>/...`, and partial SST data under `_data/snapshot/<store-id>/<backup-id>/...`.
+- Discarding unfinished data currently relies on WalkDir `StartAfter` support on the underlying storage.
 
 #### List
 
@@ -223,7 +230,7 @@ Command:
 Semantics:
 - Lists completed snapshot backups in the repo.
 - Outputs the user-facing `backup-id` (`uint64`), physical time of this backup id.
-- This shouldn't read backupmeta, only `list_objects` for performance.
+- Current implementation identifies completed backups by scanning `_meta/snapshot/` for `backupmeta[.XXXXXXX]` path names and does not read backupmeta contents.
 
 #### Backupmeta of a Backup
 
@@ -232,9 +239,12 @@ Command:
 - `br repo snapshot delete -s <repo> --backup-id <backup-id>`
 
 Semantics:
-- `get` prints the backupmeta json fields of `backupmeta`.
-- `delete` deletes the SST objects that belong to the specified backup and also removes `_meta/snapshot/<backup-id>/...` if present.
-- `delete` still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the upper-case hex `<backup-id>` subprefix in each shard; while `get` doesn't, `get` reads `backupmeta`.
+- `get` supports `--view basic|tables|files`.
+- `get --view basic` prints a summary JSON object derived from `backupmeta`.
+- `get --view tables` streams one JSON object per backed-up table and is unavailable for raw backups.
+- `get --view files` streams one JSON object per SST/file entry recorded in `backupmeta`.
+- `delete` removes the specified backup's snapshot metadata, snapshot data, and any pending markers for that `<backup-id>`.
+- `delete` still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the upper-case hex `<backup-id>` subprefix in each shard. This data scan currently requires WalkDir `StartAfter` support.
 
 #### Orphans
 
@@ -243,17 +253,20 @@ Command:
 - `br repo snapshot orphans delete -s <repo>`
 
 Semantics:
-- `orphans list` prints SST objects whose `<backup-id>` is not present under `_meta/snapshot/`.
-- `orphans delete` deletes SST objects whose `<backup-id>` is not present under `_meta/snapshot/`.
-- Can be implemented by comparing `_meta/snapshot/` entries with upper-case hex `<backup-id>` subprefixes found under each store shard in `_data/snapshot/`.
+- `orphans list` prints SST objects whose `<backup-id>` is not present as a completed snapshot metadata entry under `_meta/snapshot/<backup-id>/backupmeta[.XXXXXXX]`.
+- `orphans delete` deletes SST objects whose `<backup-id>` is not present as a completed snapshot metadata entry.
+- Current implementation finds orphans by comparing completed snapshot IDs with upper-case hex `<backup-id>` subprefixes found under each store shard in `_data/snapshot/`.
+- Unfinished backups without final `backupmeta` therefore look like orphans to this command family; `pending discard` is the more targeted cleanup path when pending markers still exist.
+- These commands currently require WalkDir `StartAfter` support.
 - This is still expected to be more expensive than listing known backups.
-  - You should only call `list_objects` to finish this. A proper way is to enumerate all backup ids and skip-scanning backup ids in each 
 
 ### Compatibility
 
 - BR: new `--storage-layout=repo-v1`, `--on-pending`, `br repo` subcommands, and layout helper.
 - TiKV: repo-v1 does not require a new TiKV-side path hook. The baseline deployment path relies on BR rewriting the per-request `StorageBackend` prefix per store.
 - PD: backup ID allocation via TSO.
+- Current implementation rejects repo-v1 snapshot backup on HDFS and noop storage.
+- Current implementation recognizes WalkDir `StartAfter` support only for `s3://`, `ks3://`, `gcs://`, and `file://` storages. Repo-v1 restore and the data-scanning repo admin paths (`snapshot delete`, unfinished `pending discard`, `orphans list/delete`) are therefore limited to those storages today.
 - Upgrade: legacy layout remains supported; repo-v1 is opt-in.
 - Downgrade: avoid writing repo-v1 from older BR; repo marker signals layout.
 - External tools: restore/list/delete/orphan-cleanup/pending-discard must use repo-v1-aware logic.
@@ -264,17 +277,16 @@ Semantics:
 
 The backend-prefix-rewrite compatibility path is not equally suitable for all storage backends.
 
-Expected to work well:
-- S3 and S3-compatible backends such as KS3 and OSS, because the backend already models a bucket plus a mutable object prefix.
-- GCS, because the backend already models a bucket plus object prefix.
-- Azure Blob Storage, because the backend already models a container plus blob prefix.
-- Local storage, by treating the rewritten target as a different local root path.
+Current implementation splits compatibility into two layers:
+- The backup write path can rewrite per-store prefixes for local, S3/KS3-compatible, GCS, and Azure Blob Storage backends.
+- The repo-v1 snapshot-reference and data-scanning paths additionally require WalkDir `StartAfter` support from the resolved storage implementation. Today that gate is recognized only for `s3://`, `ks3://`, `gcs://`, and `file://` storages.
 
 Not a good fit today:
 - HDFS, because BR's current HDFS storage support is limited and does not provide the full metadata/checkpoint/list/delete capabilities that repo-v1 relies on for snapshot backup management.
 - Noop storage, because it is not a real persistence target and already disables checkpoint-oriented behavior.
+- Azure Blob Storage for repo-v1 restore/admin flows, because the current WalkDir `StartAfter` capability gate does not admit Azure-backed snapshot references even though the write-path prefix rewrite is implemented.
 
-Therefore, if repo-v1 relies on backend-prefix rewriting as a strong-compatibility path, the intended practical scope should be the main object-storage backends rather than every backend type accepted by BR.
+Therefore, the current practical scope is narrower than the pure prefix-rewrite design: repo-v1 backup writing reaches more backends than repo-v1 restore and data-scanning admin commands do.
 
 #### Future: Snapshot + Log in One Repo
 
@@ -302,16 +314,19 @@ Repo-v1 behavior:
 - Verify the rewritten backend prefix preserves `<store-id>` as the leading path component.
 - Verify SST objects are written under `_data/snapshot/<store-id>/<backup-id>/` while keeping legacy TiKV naming within that subprefix.
 - Verify `<store-id>` remains the leading data prefix and `<backup-id>` is not moved ahead of it.
+- Verify repo-v1 rejects `--use-checkpoint=false`.
 - Verify `br repo snapshot list` returns completed backups only.
 - Verify unfinished-backup lookup only enumerates `_meta/pending/<config-hash-hex>/` in the normal path.
 - Verify a stale pending file for a completed backup is removed instead of forcing a resume.
-- Verify `--on-pending=error|resume|new` follows the documented single-pending and multiple-pending behaviors.
-- Verify `pending discard` removes pending pointer, checkpoint data, unfinished metadata, and partial SST data.
-- Verify `snapshot files list` outputs correct keys.
-- Verify `snapshot files delete` deletes matching objects and metadata.
+- Verify marker-only pending leftovers are treated as stale cleanup leftovers rather than as resumable backups.
+- Verify `--on-pending=error|resume|new` follows the documented single-unfinished and multiple-unfinished behaviors.
+- Verify `pending discard` distinguishes stale vs unfinished targets and deletes the correct scope for each.
+- Verify `snapshot get --view basic|tables|files` returns the documented metadata views.
+- Verify `snapshot delete` deletes matching data, metadata, and pending markers, and still works by data-prefix scan when metadata is missing.
 - Verify `snapshot orphans list` outputs only orphan SSTs.
 - Verify `snapshot orphans delete` deletes only orphan SSTs.
-- Verify checkpoint artifacts are stored under `_meta/snapshot/<backup-id>/checkpoints/...`.
+- Verify checkpoint artifacts are stored under `_meta/snapshot/<backup-id>/checkpoints/backup/...`.
+- Verify repo-v1 reader and destructive admin paths enforce the current WalkDir `StartAfter` capability gate.
 
 ### Scenario Tests
 
@@ -323,22 +338,23 @@ Repo-v1 scenarios:
 - Multiple unfinished backups with different config-hash directories coexist in the same repo; each new backup only matches or resumes the entries under its own config-hash directory.
 - A controller retries the same failed backup CR through its existing retry mechanism and invokes BR with `--on-pending=resume`; the unfinished backup continues instead of being replaced.
 - A controller observes a fresh-attempt signal, such as CR recreation or changed retry annotation/token, and invokes BR with `--on-pending=new`; a new backup starts without resuming the old unfinished backup.
-- Metadata loss for a backup: `snapshot files delete` still deletes by prefix.
-- Orphan scan detects unexpected per-backup subprefixes under store shards (simulate interrupted backup).
+- Metadata loss for a backup: `snapshot delete` still deletes by prefix.
+- Orphan scan detects unexpected per-backup subprefixes under store shards, including unfinished backups that have data files but no final `backupmeta`.
 
 ### Compatibility Tests
 
 Compatibility coverage:
-- BR repo-v1 with different storage backends (S3/GCS/Azure/HDFS/local).
+- BR repo-v1 backup write path with supported and rejected backends (S3/GCS/Azure/local supported; HDFS and noop rejected).
 - Upgrade from legacy backup usage without repo-v1.
 - Restore and cleanup behavior when repo-v1 SST placement is achieved through per-request backend-prefix rewriting.
-- Backend-by-backend validation of the prefix-rewrite compatibility path on S3/KS3/OSS/GCS/Azure, with explicit exclusion or documented limitation for HDFS and noop.
+- Backend-by-backend validation of the prefix-rewrite compatibility path on S3/KS3-compatible/GCS/Azure/local, with explicit exclusion or documented limitation for HDFS and noop.
+- Backend-by-backend validation of the current WalkDir `StartAfter` gate on repo-v1 restore/admin flows (`s3://`, `ks3://`, `gcs://`, `file://` supported; Azure currently excluded).
 - Compatibility with BR `--use-backupmeta-v2`.
 - Compatibility with external stats.
 
 ### Benchmark Tests
 
-- Prefix listing cost for `snapshot files list` on large repos.
+- Prefix scan cost for `snapshot delete` when metadata is missing and BR must enumerate per-store backup subprefixes.
 - Listing cost for `snapshot orphans list` over many store shards and per-backup subprefixes, and its impact on API rate limits.
 
 ## Impacts & Risks
