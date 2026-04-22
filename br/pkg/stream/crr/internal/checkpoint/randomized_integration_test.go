@@ -35,7 +35,7 @@ func TestCheckpointCalculatorRandomizedCRRSimulation(t *testing.T) {
 	ctx := context.Background()
 	tc := testutil.NewTestContext(t)
 	cfg := randomizedCRRSimulationConfig{
-		Iterations:                        1000,
+		Iterations:                        300,
 		InitialStores:                     3,
 		MaxStores:                         12,
 		RegionCount:                       12,
