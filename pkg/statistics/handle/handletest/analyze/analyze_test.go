@@ -233,8 +233,12 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	tk.MustExec("insert into t values (3)")
 	tk.MustExec("analyze table t partition p0 index a with 1 topn, 2 buckets")
 	rows = tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "6", rows[0][6])
+	// The combined merge keeps the natural gap between p0's [1-3] cluster
+	// and p1's [10-11] cluster as two separate buckets instead of
+	// collapsing them into a single wider [1-11] bucket. Total row count
+	// is preserved (cumulative=6 at the last bucket).
+	require.Len(t, rows, 2)
+	require.Equal(t, "6", rows[1][6])
 	tk.MustExec("set @@global.tidb_enable_auto_analyze=DEFAULT")
 }
 
