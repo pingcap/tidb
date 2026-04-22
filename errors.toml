@@ -216,6 +216,11 @@ error = '''
 failed to update PD
 '''
 
+["BR:PiTR:ErrCheckpointWatchRestart"]
+error = '''
+checkpoint watch needs restart
+'''
+
 ["BR:PiTR:ErrInvalidTaskInfo"]
 error = '''
 task info is invalid
@@ -334,6 +339,11 @@ stream task already exists
 ["BR:Stream:ErrStreamLogTaskHasNoStorage"]
 error = '''
 stream task has no storage
+'''
+
+["Import:ErrCastValue"]
+error = '''
+Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
 '''
 
 ["Ingest:EpochNotMatch"]
@@ -2699,6 +2709,11 @@ Argument %s of GROUPING function is not in GROUP BY
 ["planner:3637"]
 error = '''
 Variable '%s' might not be affected by SET_VAR hint.
+'''
+
+["planner:3809"]
+error = '''
+Invalid use of LATERAL: %s
 '''
 
 ["planner:8006"]

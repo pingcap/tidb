@@ -94,13 +94,17 @@ func MergeOverlappingFilesV2(
 		SetOnCloseFunc(onWriterClose).
 		BuildOneFile(store, newFilePrefix, writerID)
 	defer func() {
-		err = splitter.Close()
-		if err != nil {
-			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err))
+		if closeErr := splitter.Close(); closeErr != nil {
+			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(closeErr))
+			if err == nil {
+				err = closeErr
+			}
 		}
-		err = writer.Close(ctx)
-		if err != nil {
-			logutil.Logger(ctx).Warn("close writer failed", zap.Error(err))
+		if closeErr := writer.Close(ctx); closeErr != nil {
+			logutil.Logger(ctx).Warn("close writer failed", zap.Error(closeErr))
+			if err == nil {
+				err = closeErr
+			}
 		}
 	}()
 
@@ -121,7 +125,16 @@ func MergeOverlappingFilesV2(
 		if len(endKeyOfGroup) == 0 {
 			curEnd = kv.Key(endKey).Clone()
 		}
+
 		now := time.Now()
+
+		var readRanges [][]uint64
+		readRanges, err = getReadRangeFromProps(
+			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
+		if err != nil {
+			return err
+		}
+
 		err1 = readAllData(
 			ctx,
 			store,
@@ -129,6 +142,8 @@ func MergeOverlappingFilesV2(
 			statFilesOfGroup,
 			curStart,
 			curEnd,
+			readRanges[0],
+			readRanges[1],
 			bufPool,
 			bufPool,
 			loaded,

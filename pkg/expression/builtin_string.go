@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -2628,23 +2629,96 @@ func (c *findInSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 		return nil, err
 	}
 	bf.tp.SetFlen(3)
-	sig := &builtinFindInSetSig{bf}
+	sig := &builtinFindInSetSig{baseBuiltinFunc: bf}
 	sig.setPbCode(tipb.ScalarFuncSig_FindInSet)
 	return sig, nil
 }
 
+type findInSetCachedLookup struct {
+	lookup   map[string]int64
+	isNull   bool
+	memUsage int64
+}
+
 type builtinFindInSetSig struct {
 	baseBuiltinFunc
-
 	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
 	// as this expression may be shared across sessions.
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+	constStrlistLookupCache builtinFuncCache[findInSetCachedLookup]
 }
 
 func (b *builtinFindInSetSig) Clone() builtinFunc {
 	newSig := &builtinFindInSetSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+func buildFindInSetLookup(strlist string, collator collate.Collator) (map[string]int64, int64) {
+	if len(strlist) == 0 {
+		return nil, 0
+	}
+	lookup := make(map[string]int64, strings.Count(strlist, ",")+1)
+	memUsage := int64(0)
+	position := int64(1)
+	for {
+		strInSet, remain, found := strings.Cut(strlist, ",")
+		key := string(collator.KeyWithoutTrimRightSpace(strInSet))
+		if _, exists := lookup[key]; !exists {
+			lookup[key] = position
+			memUsage += size.SizeOfString + size.SizeOfInt64 + int64(len(key))
+		}
+		if !found {
+			break
+		}
+		position++
+		strlist = remain
+	}
+	return lookup, memUsage
+}
+
+func findInSetByKey(strKey []byte, strlist string, collator collate.Collator) int64 {
+	position := int64(1)
+	for {
+		strInSet, remain, found := strings.Cut(strlist, ",")
+		if bytes.Equal(strKey, collator.KeyWithoutTrimRightSpace(strInSet)) {
+			return position
+		}
+		if !found {
+			break
+		}
+		position++
+		strlist = remain
+	}
+	return 0
+}
+
+func (b *builtinFindInSetSig) getConstStrlistLookup(ctx EvalContext) (findInSetCachedLookup, error) {
+	return b.constStrlistLookupCache.getOrInitCache(ctx, func() (findInSetCachedLookup, error) {
+		var cached findInSetCachedLookup
+		strlist, isNull, err := b.args[1].EvalString(ctx, chunk.Row{})
+		if err != nil {
+			return cached, err
+		}
+		if isNull {
+			cached.isNull = true
+			return cached, nil
+		}
+		cached.lookup, cached.memUsage = buildFindInSetLookup(strlist, b.ctor)
+		return cached, nil
+	})
+}
+
+// MemoryUsage returns memory usage of builtinFindInSetSig.
+func (b *builtinFindInSetSig) MemoryUsage() (sum int64) {
+	if b == nil {
+		return
+	}
+	sum = b.baseBuiltinFunc.MemoryUsage()
+	if cached := b.constStrlistLookupCache.cached.Load(); cached != nil {
+		sum += cached.item.memUsage
+	}
+	return
 }
 
 // evalInt evals FIND_IN_SET(str,strlist).
@@ -2657,6 +2731,23 @@ func (b *builtinFindInSetSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 		return 0, isNull, err
 	}
 
+	if b.args[1].ConstLevel() >= ConstOnlyInContext {
+		cached, err := b.getConstStrlistLookup(ctx)
+		if err != nil {
+			return 0, false, err
+		}
+		if cached.isNull {
+			return 0, true, nil
+		}
+		if len(cached.lookup) == 0 {
+			return 0, false, nil
+		}
+		if pos, exists := cached.lookup[string(hack.String(b.ctor.KeyWithoutTrimRightSpace(str)))]; exists {
+			return pos, false, nil
+		}
+		return 0, false, nil
+	}
+
 	strlist, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -2666,12 +2757,7 @@ func (b *builtinFindInSetSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 		return 0, false, nil
 	}
 
-	for i, strInSet := range strings.Split(strlist, ",") {
-		if b.ctor.Compare(str, strInSet) == 0 {
-			return int64(i + 1), false, nil
-		}
-	}
-	return 0, false, nil
+	return findInSetByKey(b.ctor.KeyWithoutTrimRightSpace(str), strlist, b.ctor), false, nil
 }
 
 type fieldFunctionClass struct {

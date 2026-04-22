@@ -32,6 +32,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -364,16 +365,25 @@ type StepSummary struct {
 	RowCnt int64 `json:"input-rows,omitempty"`
 }
 
-// Summary records the amount of data needed to be processed in each step of the import job.
-// And this information will be saved into tidb_import_jobs table after the job is finished.
+// Summary records the amount of data to be processed in each import job step.
+// This information will be saved into tidb_import_jobs table after the job is finished.
 type Summary struct {
-	// EncodeSummary stores the bytes and rows needed to be processed in encode step.
-	// Same for other summaries.
+	// EncodeSummary stores source bytes and row counts for the encode step.
 	EncodeSummary StepSummary `json:"encode-summary,omitempty"`
 
+	// MergeSummary stores merged bytes and row counts for the merge step.
 	MergeSummary StepSummary `json:"merge-summary,omitempty"`
 
+	// IngestSummary stores bytes and row counts for the ingest step.
 	IngestSummary StepSummary `json:"ingest-summary,omitempty"`
+
+	// CollectConflictsSummary stores conflict KV pair counts for the
+	// collect-conflicts step. RowCnt is used as the counter.
+	CollectConflictsSummary StepSummary `json:"collect-conflicts-summary,omitempty"`
+
+	// ResolveConflictsSummary stores conflict KV pair counts for the
+	// resolve-conflicts step. RowCnt is used as the counter.
+	ResolveConflictsSummary StepSummary `json:"resolve-conflicts-summary,omitempty"`
 
 	// ImportedRows is the number of rows imported into TiKV.
 	// conflicted rows are excluded from this count if using global-sort.
@@ -927,8 +937,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 			if err != nil {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
-			// only support s3 and gcs now.
-			if b.GetS3() == nil && b.GetGcs() == nil {
+			if !isSupportedCloudStorageBackend(b) {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
 		}
@@ -1002,6 +1011,10 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 	}
 }
 
+func isSupportedCloudStorageBackend(backend *backuppb.StorageBackend) bool {
+	return backend != nil && (backend.GetS3() != nil || backend.GetGcs() != nil || backend.GetAzureBlobStorage() != nil)
+}
+
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	redactURL := ast.RedactURL(p.Path)
 	var columnsAndVars, setClause string
@@ -1055,8 +1068,8 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	return nil
 }
 
-func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []string) {
-	tableCols := e.Table.VisibleCols()
+func tableVisCols2FieldMappings(tbl table.Table) ([]*FieldMapping, []string) {
+	tableCols := tbl.VisibleCols()
 	mappings := make([]*FieldMapping, 0, len(tableCols))
 	names := make([]string, 0, len(tableCols))
 	for _, v := range tableCols {
@@ -1070,101 +1083,96 @@ func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []st
 	return mappings, names
 }
 
+func buildFieldMappings(
+	tbl table.Table,
+	columnsAndUserVars []*ast.ColumnNameOrUserVar,
+) ([]*FieldMapping, []string) {
+	columns := make([]string, 0, len(columnsAndUserVars))
+	tableCols := tbl.VisibleCols()
+
+	if len(columnsAndUserVars) == 0 {
+		return tableVisCols2FieldMappings(tbl)
+	}
+
+	mappings := make([]*FieldMapping, 0, len(columnsAndUserVars))
+	for _, v := range columnsAndUserVars {
+		var column *table.Column
+		if v.ColumnName != nil {
+			column = table.FindCol(tableCols, v.ColumnName.Name.O)
+			columns = append(columns, v.ColumnName.Name.O)
+		}
+
+		mappings = append(mappings, &FieldMapping{
+			Column:  column,
+			UserVar: v.UserVar,
+		})
+	}
+	return mappings, columns
+}
+
+func reorderColumnsByNames(cols []*table.Column, columnNames []string) ([]*table.Column, error) {
+	if len(cols) != len(columnNames) {
+		return nil, exeerrors.ErrColumnsNotMatched
+	}
+	if columnNames == nil {
+		return cols, nil
+	}
+
+	reorderedColumns := make([]*table.Column, len(cols))
+	mapping := make(map[string]int, len(columnNames))
+	for idx, colName := range columnNames {
+		mapping[strings.ToLower(colName)] = idx
+	}
+	for _, col := range cols {
+		idx := mapping[col.Name.L]
+		reorderedColumns[idx] = col
+	}
+	return reorderedColumns, nil
+}
+
+func buildInsertColumns(
+	tbl table.Table,
+	columnNames []string,
+	columnAssignments []*ast.Assignment,
+) ([]*table.Column, error) {
+	tableCols := tbl.VisibleCols()
+	if len(columnNames) != len(tableCols) {
+		for _, v := range columnAssignments {
+			columnNames = append(columnNames, v.Column.Name.O)
+		}
+	}
+
+	cols, missingColName := table.FindCols(tableCols, columnNames, tbl.Meta().PKIsHandle)
+	if missingColName != "" {
+		return nil, dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
+	}
+
+	reorderedColumns, err := reorderColumnsByNames(cols, columnNames)
+	if err != nil {
+		return nil, err
+	}
+	if err = table.CheckOnce(cols); err != nil {
+		return nil, err
+	}
+	return reorderedColumns, nil
+}
+
 // initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
 // the slice's order is the same as the order of the input fields.
 // Returns a slice of same ordered column names without user defined variable names.
 func (e *LoadDataController) initFieldMappings() []string {
-	columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
-	tableCols := e.Table.VisibleCols()
-
-	if len(e.ColumnsAndUserVars) == 0 {
-		e.FieldMappings, columns = e.tableVisCols2FieldMappings()
-
-		return columns
-	}
-
-	var column *table.Column
-
-	for _, v := range e.ColumnsAndUserVars {
-		if v.ColumnName != nil {
-			column = table.FindCol(tableCols, v.ColumnName.Name.O)
-			columns = append(columns, v.ColumnName.Name.O)
-		} else {
-			column = nil
-		}
-
-		fieldMapping := &FieldMapping{
-			Column:  column,
-			UserVar: v.UserVar,
-		}
-		e.FieldMappings = append(e.FieldMappings, fieldMapping)
-	}
-
+	fieldMappings, columns := buildFieldMappings(e.Table, e.ColumnsAndUserVars)
+	e.FieldMappings = fieldMappings
 	return columns
 }
 
 // initLoadColumns sets columns which the input fields loaded to.
 func (e *LoadDataController) initLoadColumns(columnNames []string) error {
-	var cols []*table.Column
-	var missingColName string
-	var err error
-	tableCols := e.Table.VisibleCols()
-
-	if len(columnNames) != len(tableCols) {
-		for _, v := range e.ColumnAssignments {
-			columnNames = append(columnNames, v.Column.Name.O)
-		}
-	}
-
-	cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
-	if missingColName != "" {
-		return dbterror.ErrBadField.GenWithStackByArgs(missingColName, "field list")
-	}
-
-	e.InsertColumns = append(e.InsertColumns, cols...)
-
-	// e.InsertColumns is appended according to the original tables' column sequence.
-	// We have to reorder it to follow the use-specified column order which is shown in the columnNames.
-	if err = e.reorderColumns(columnNames); err != nil {
-		return err
-	}
-
-	// Check column whether is specified only once.
-	err = table.CheckOnce(cols)
+	insertColumns, err := buildInsertColumns(e.Table, columnNames, e.ColumnAssignments)
 	if err != nil {
 		return err
 	}
-
-	return nil
-}
-
-// reorderColumns reorder the e.InsertColumns according to the order of columnNames
-// Note: We must ensure there must be one-to-one mapping between e.InsertColumns and columnNames in terms of column name.
-func (e *LoadDataController) reorderColumns(columnNames []string) error {
-	cols := e.InsertColumns
-
-	if len(cols) != len(columnNames) {
-		return exeerrors.ErrColumnsNotMatched
-	}
-
-	reorderedColumns := make([]*table.Column, len(cols))
-
-	if columnNames == nil {
-		return nil
-	}
-
-	mapping := make(map[string]int)
-	for idx, colName := range columnNames {
-		mapping[strings.ToLower(colName)] = idx
-	}
-
-	for _, col := range cols {
-		idx := mapping[col.Name.L]
-		reorderedColumns[idx] = col
-	}
-
-	e.InsertColumns = reorderedColumns
-
+	e.InsertColumns = append(e.InsertColumns[:0], insertColumns...)
 	return nil
 }
 
@@ -1174,26 +1182,36 @@ func (e *LoadDataController) GetFieldCount() int {
 }
 
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
-func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
+func generateCSVConfig(
+	fieldNullDef []string,
+	lineFieldsInfo plannercore.LineFieldsInfo,
+	inImportInto bool,
+	nullValueOptEnclosed bool,
+) *config.CSVConfig {
 	csvConfig := &config.CSVConfig{
-		FieldsTerminatedBy: e.FieldsTerminatedBy,
+		FieldsTerminatedBy: lineFieldsInfo.FieldsTerminatedBy,
 		// ignore optionally enclosed
-		FieldsEnclosedBy:   e.FieldsEnclosedBy,
-		LinesTerminatedBy:  e.LinesTerminatedBy,
+		FieldsEnclosedBy:   lineFieldsInfo.FieldsEnclosedBy,
+		LinesTerminatedBy:  lineFieldsInfo.LinesTerminatedBy,
 		NotNull:            false,
-		FieldNullDefinedBy: e.FieldNullDef,
+		FieldNullDefinedBy: fieldNullDef,
 		Header:             false,
 		TrimLastEmptyField: false,
-		FieldsEscapedBy:    e.FieldsEscapedBy,
-		LinesStartingBy:    e.LinesStartingBy,
+		FieldsEscapedBy:    lineFieldsInfo.FieldsEscapedBy,
+		LinesStartingBy:    lineFieldsInfo.LinesStartingBy,
 	}
-	if !e.InImportInto {
+	if !inImportInto {
 		// for load data
 		csvConfig.AllowEmptyLine = true
-		csvConfig.QuotedNullIsText = !e.NullValueOptEnclosed
+		csvConfig.QuotedNullIsText = !nullValueOptEnclosed
 		csvConfig.UnescapedQuote = true
 	}
 	return csvConfig
+}
+
+// GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
+func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
+	return generateCSVConfig(e.FieldNullDef, e.LineFieldsInfo, e.InImportInto, e.NullValueOptEnclosed)
 }
 
 // InitDataStore initializes the data store.
@@ -1651,9 +1669,14 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 	return result
 }
 
-// GetParser returns a parser for the data file.
-func (e *LoadDataController) GetParser(
+func newLoadDataParser(
 	ctx context.Context,
+	logger *zap.Logger,
+	format string,
+	sqlMode mysql.SQLMode,
+	charset *string,
+	csvConfig *config.CSVConfig,
+	dataStore storeapi.Storage,
 	dataFileInfo LoadDataReaderInfo,
 ) (parser mydump.Parser, err error) {
 	reader, err2 := dataFileInfo.Opener(ctx)
@@ -1662,26 +1685,23 @@ func (e *LoadDataController) GetParser(
 	}
 	defer func() {
 		if err != nil {
-			if err3 := reader.Close(); err3 != nil {
-				e.logger.Warn("failed to close reader", zap.Error(err3))
+			if err3 := reader.Close(); err3 != nil && logger != nil {
+				logger.Warn("failed to close reader", zap.Error(err3))
 			}
 		}
 	}()
-	switch e.Format {
+	switch format {
 	case DataFormatDelimitedData, DataFormatCSV:
 		var charsetConvertor *mydump.CharsetConvertor
-		if e.Charset != nil {
-			charsetConvertor, err = mydump.NewCharsetConvertor(*e.Charset, string(utf8.RuneError))
+		if charset != nil {
+			charsetConvertor, err = mydump.NewCharsetConvertor(*charset, string(utf8.RuneError))
 			if err != nil {
 				return nil, err
 			}
 		}
-		if err != nil {
-			return nil, err
-		}
 		parser, err = mydump.NewCSVParser(
 			ctx,
-			e.GenerateCSVConfig(),
+			csvConfig,
 			reader,
 			LoadDataReadBlockSize,
 			nil,
@@ -1690,7 +1710,7 @@ func (e *LoadDataController) GetParser(
 	case DataFormatSQL:
 		parser = mydump.NewChunkParser(
 			ctx,
-			e.SQLMode,
+			sqlMode,
 			reader,
 			LoadDataReadBlockSize,
 			nil,
@@ -1698,22 +1718,40 @@ func (e *LoadDataController) GetParser(
 	case DataFormatParquet:
 		parser, err = mydump.NewParquetParser(
 			ctx,
-			e.dataStore,
+			dataStore,
 			reader,
 			dataFileInfo.Remote.Path,
 			dataFileInfo.Remote.ParquetMeta,
 		)
+	default:
+		return nil, exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(format)
 	}
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
 	}
 	parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
-
 	return parser, nil
 }
 
+// GetParser returns a parser for the data file.
+func (e *LoadDataController) GetParser(
+	ctx context.Context,
+	dataFileInfo LoadDataReaderInfo,
+) (parser mydump.Parser, err error) {
+	return newLoadDataParser(
+		ctx,
+		e.logger,
+		e.Format,
+		e.SQLMode,
+		e.Charset,
+		e.GenerateCSVConfig(),
+		e.dataStore,
+		dataFileInfo,
+	)
+}
+
 // HandleSkipNRows skips the first N rows of the data file.
-func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
+func HandleSkipNRows(parser mydump.Parser, ignoreLines uint64) error {
 	// handle IGNORE N LINES
 	ignoreOneLineFn := parser.ReadRow
 	if csvParser, ok := parser.(*mydump.CSVParser); ok {
@@ -1723,7 +1761,7 @@ func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
 		}
 	}
 
-	ignoreLineCnt := e.IgnoreLines
+	ignoreLineCnt := ignoreLines
 	for ignoreLineCnt > 0 {
 		err := ignoreOneLineFn()
 		if err != nil {
@@ -1777,16 +1815,22 @@ func (p *Plan) checkNonCSVFormatOptions() error {
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
-func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
+func createColAssignExprs(
+	assignments []*ast.Assignment,
+	planCtx planctx.PlanContext,
+	mu *sync.Mutex,
+) (
 	_ []expression.Expression,
 	_ []contextutil.SQLWarn,
 	retErr error,
 ) {
-	e.colAssignMu.Lock()
-	defer e.colAssignMu.Unlock()
-	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	res := make([]expression.Expression, 0, len(assignments))
 	allWarnings := []contextutil.SQLWarn{}
-	for _, assign := range e.ColumnAssignments {
+	for _, assign := range assignments {
 		newExpr, err := plannerutil.RewriteAstExprWithPlanCtx(planCtx, assign.Expr, nil, nil, false)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
@@ -1800,6 +1844,15 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 	return res, allWarnings, nil
 }
 
+// CreateColAssignExprs creates the column assignment expressions using session context.
+func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
+	_ []expression.Expression,
+	_ []contextutil.SQLWarn,
+	retErr error,
+) {
+	return createColAssignExprs(e.ColumnAssignments, planCtx, &e.colAssignMu)
+}
+
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 // This method does not support:
 //   - Subquery
@@ -1807,12 +1860,18 @@ func (e *LoadDataController) CreateColAssignExprs(planCtx planctx.PlanContext) (
 //   - Window functions
 //   - Aggregate functions
 //   - Other special functions used in some specified queries such as `GROUPING`, `VALUES` ...
-func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	e.colAssignMu.Lock()
-	defer e.colAssignMu.Unlock()
-	res := make([]expression.Expression, 0, len(e.ColumnAssignments))
+func createColAssignSimpleExprs(
+	assignments []*ast.Assignment,
+	ctx expression.BuildContext,
+	mu *sync.Mutex,
+) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	res := make([]expression.Expression, 0, len(assignments))
 	var allWarnings []contextutil.SQLWarn
-	for _, assign := range e.ColumnAssignments {
+	for _, assign := range assignments {
 		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
@@ -1825,6 +1884,11 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 		res = append(res, newExpr)
 	}
 	return res, allWarnings, nil
+}
+
+// CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
+func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
+	return createColAssignSimpleExprs(e.ColumnAssignments, ctx, &e.colAssignMu)
 }
 
 func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {

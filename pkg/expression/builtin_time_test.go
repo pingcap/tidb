@@ -3069,6 +3069,14 @@ func TestTimeFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, true, v.IsNull())
 
+	// issue:59445
+	args = []types.Datum{types.NewStringDatum("12:34:56"), types.NewStringDatum("")}
+	f, err = fc.getFunction(ctx, datumsToConstants(args))
+	require.NoError(t, err)
+	v, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, v.IsNull())
+
 	tblDate := []struct {
 		Input  []string
 		Expect any
@@ -3251,8 +3259,8 @@ func TestConvertTz(t *testing.T) {
 		{"2021-10-22 10:00:00", "SYSTEM", "Europe/Tallinn", true, t2.In(loc1).Format("2006-01-02 15:04:00")},
 
 		// TestIssue30081
-		{"2007-03-11 2:00:00", "US/Eastern", "US/Central", true, "2007-03-11 01:00:00"},
-		{"2007-03-11 3:00:00", "US/Eastern", "US/Central", true, "2007-03-11 01:00:00"},
+		{"2007-03-11 2:00:00", "America/New_York", "America/Chicago", true, "2007-03-11 01:00:00"},
+		{"2007-03-11 3:00:00", "America/New_York", "America/Chicago", true, "2007-03-11 01:00:00"},
 
 		{"2004-10-00 12:00:00", "GMT", "MET", true, ""},
 		{"2004-00-01 12:00:00", "GMT", "MET", true, ""},

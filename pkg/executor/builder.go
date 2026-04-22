@@ -1443,6 +1443,11 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) exec.Executor {
 			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
 	}
+	// EXPLAIN FOR CONNECTION can render directly from the stored brief binary plan without
+	// rebuilding the target executor, which may no longer have live parameter values.
+	if !v.Analyze && v.BriefBinaryPlan != "" {
+		return explainExec
+	}
 	// Needs to build the target plan, even if not executing it
 	// to get partition pruning.
 	explainExec.analyzeExec = b.build(v.TargetPlan)
@@ -2729,6 +2734,14 @@ func (b *executorBuilder) buildTopN(v *physicalop.PhysicalTopN) exec.Executor {
 		// return nil
 	}
 	t.ColumnIdxsUsedByChild = columnIdxsUsedByChild
+
+	// init partial order params
+	if v.PrefixCol != nil {
+		t.RankInfo.TruncateKeyExprs = make([]expression.Expression, 0, 1)
+		t.RankInfo.TruncateKeyExprs = append(t.RankInfo.TruncateKeyExprs, v.PrefixCol)
+		t.RankInfo.TruncateKeyPrefixCharCounts = make([]int, 0, 1)
+		t.RankInfo.TruncateKeyPrefixCharCounts = append(t.RankInfo.TruncateKeyPrefixCharCounts, v.PrefixLen)
+	}
 	return t
 }
 
@@ -3284,100 +3297,6 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task pl
 	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(context.Background(), b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(
-	task plannercore.AnalyzeColumnsTask,
-	opts map[ast.AnalyzeOptionType]uint64,
-	autoAnalyze string,
-	schemaForVirtualColEval *expression.Schema,
-) *analyzeTask {
-	if task.StatsVersion == statistics.Version2 {
-		return b.buildAnalyzeSamplingPushdown(task, opts, schemaForVirtualColEval)
-	}
-	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze columns"}
-	cols := task.ColsInfo
-	if hasPkHist(task.HandleCols) {
-		colInfo := task.TblInfo.Columns[task.HandleCols.GetCol(0).Index]
-		cols = append([]*model.ColumnInfo{colInfo}, cols...)
-	} else if task.HandleCols != nil && !task.HandleCols.IsInt() {
-		cols = make([]*model.ColumnInfo, 0, len(task.ColsInfo)+task.HandleCols.NumCols())
-		for col := range task.HandleCols.IterColumns() {
-			cols = append(cols, task.TblInfo.Columns[col.Index])
-		}
-		cols = append(cols, task.ColsInfo...)
-		task.ColsInfo = cols
-	}
-
-	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
-	sc := b.ctx.GetSessionVars().StmtCtx
-	startTS, err := b.getSnapshotTS()
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
-		startTS = uint64(val.(int))
-	})
-	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
-	base := baseAnalyzeExec{
-		ctx:         b.ctx,
-		tableID:     task.TableID,
-		concurrency: concurrency,
-		analyzePB: &tipb.AnalyzeReq{
-			Tp:             tipb.AnalyzeType_TypeColumn,
-			Flags:          sc.PushDownFlags(),
-			TimeZoneOffset: offset,
-		},
-		opts:     opts,
-		job:      job,
-		snapshot: startTS,
-	}
-	e := &AnalyzeColumnsExec{
-		baseAnalyzeExec: base,
-		tableInfo:       task.TblInfo,
-		colsInfo:        task.ColsInfo,
-		handleCols:      task.HandleCols,
-		AnalyzeInfo:     task.AnalyzeInfo,
-	}
-	depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
-	width := int32(opts[ast.AnalyzeOptCMSketchWidth])
-	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
-		SampleSize:    MaxRegionSampleSize,
-		SketchSize:    statistics.MaxSketchSize,
-		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt(), false, false),
-		CmsketchDepth: &depth,
-		CmsketchWidth: &width,
-	}
-	if task.TblInfo != nil {
-		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
-		if task.TblInfo.IsCommonHandle {
-			e.analyzePB.ColReq.PrimaryPrefixColumnIds = tables.PrimaryPrefixColumnIDs(task.TblInfo)
-		}
-	}
-	if task.CommonHandleInfo != nil {
-		topNSize := new(int32)
-		*topNSize = int32(opts[ast.AnalyzeOptNumTopN])
-		statsVersion := new(int32)
-		*statsVersion = int32(task.StatsVersion)
-		e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-			BucketSize: int64(opts[ast.AnalyzeOptNumBuckets]),
-			NumColumns: int32(len(task.CommonHandleInfo.Columns)),
-			TopNSize:   topNSize,
-			Version:    statsVersion,
-		}
-		depth := int32(opts[ast.AnalyzeOptCMSketchDepth])
-		width := int32(opts[ast.AnalyzeOptCMSketchWidth])
-		e.analyzePB.IdxReq.CmsketchDepth = &depth
-		e.analyzePB.IdxReq.CmsketchWidth = &width
-		e.analyzePB.IdxReq.SketchSize = statistics.MaxSketchSize
-		e.analyzePB.ColReq.PrimaryColumnIds = tables.TryGetCommonPkColumnIds(task.TblInfo)
-		e.analyzePB.Tp = tipb.AnalyzeType_TypeMixed
-		e.commonHandle = task.CommonHandleInfo
-	}
-	b.err = tables.SetPBColumnsDefaultValue(b.ctx.GetExprCtx(), e.analyzePB.ColReq.ColumnsInfo, cols)
-	return &analyzeTask{taskType: colTask, colExec: e, job: job}
-}
-
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	gp := domain.GetDomain(b.ctx).StatsHandle().GPool()
 	e := &AnalyzeExec{
@@ -3417,7 +3336,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			return nil
 		}
 		schema := expression.NewSchema(columns...)
-		e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze, schema))
+		e.tasks = append(e.tasks, b.buildAnalyzeSamplingPushdown(task, v.Opts, schema))
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
@@ -4659,6 +4578,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 		idxCols:                    is.IdxCols,
 		colLens:                    is.IdxColLens,
 		idxPlans:                   v.IndexPlans,
+		idxPlanUnNatureOrders:      v.IndexPlansUnNatureOrders,
 		tblPlans:                   v.TablePlans,
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
@@ -4862,6 +4782,14 @@ func (b *executorBuilder) buildIndexMergeReader(v *physicalop.PhysicalIndexMerge
 			b.Ti.UseIndexMerge = true
 			b.Ti.UseTableLookUp.Store(true)
 		})
+	}
+	if len(v.TablePlans) == 0 {
+		if b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.ctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt {
+			// Plain EXPLAIN doesn't execute the target plan, allow displaying planner output here.
+			return nil
+		}
+		b.err = errors.New("IndexMerge executor requires a table scan under IndexMerge")
+		return nil
 	}
 	ts := v.TablePlans[0].(*physicalop.PhysicalTableScan)
 	assertByItemsAreColumns(ts.ByItems)

@@ -172,7 +172,24 @@ func (e *RevokeExec) revokeOneUser(ctx context.Context, internalSession sessionc
 			return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on database %s", user, host, dbName)
 		}
 	case ast.GrantLevelTable:
-		ok, err := tableUserExists(internalSession, user, host, dbName, e.Level.TableName)
+		tblName := e.Level.TableName
+		if len(dbName) > 0 {
+			// Normalize db/table names before checking mysql.tables_priv.
+			// Different input case should still map to the same object.
+			dbNameCI := ast.NewCIStr(dbName)
+			if db, succ := e.is.SchemaByName(dbNameCI); succ {
+				dbName = db.Name.O
+			}
+			tbl, err := e.is.TableByName(ctx, dbNameCI, ast.NewCIStr(e.Level.TableName))
+			if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
+				return err
+			}
+			if err == nil {
+				// Use the real table name from schema metadata.
+				tblName = tbl.Meta().Name.O
+			}
+		}
+		ok, err := tableUserExists(internalSession, user, host, dbName, tblName)
 		if err != nil {
 			return err
 		}

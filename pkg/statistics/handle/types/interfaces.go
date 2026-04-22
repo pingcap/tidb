@@ -77,8 +77,9 @@ type StatsUsage interface {
 	// ResetSessionStatsList resets the sessions stats list.
 	ResetSessionStatsList()
 
-	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
-	DumpStatsDeltaToKV(dumpAll bool) error
+	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then dumps the selected table deltas to KV.
+	// If tableIDs is empty, it dumps every table that held in the map.
+	DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) error
 
 	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 	DumpColStatsUsageToKV() error
@@ -181,8 +182,10 @@ type StatsAnalyze interface {
 	// It also analyzes newly created tables and newly added indexes.
 	HandleAutoAnalyze() (analyzed bool)
 
-	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
-	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
+	// AnalyzeVersionMatchesForTable reports whether the table already matches the requested
+	// session version. For partitioned tables it checks the global stats and every partition;
+	// for non-partitioned tables it checks the table stats alone.
+	AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool
 
 	// GetPriorityQueueSnapshot returns the stats priority queue.
 	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)

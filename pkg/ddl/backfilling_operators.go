@@ -532,6 +532,16 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
+	// Local ingest may trigger partial import/reset while the scan transaction is
+	// still open, so only the global-sort path can stream results immediately.
+	enableStreaming := w.reorgMeta.UseCloudStorage
+	sendResult := func(idxResult IndexRecordChunk) {
+		sender(idxResult)
+		if w.cpOp != nil {
+			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), idxResult.Done)
+		}
+		w.totalCount.Add(idxResult.tableScanRowCount)
+	}
 	var scanCtx context.Context = w.ctx
 	if scanCtx.Value(kvutil.ExecDetailsKey) == nil {
 		scanCtx = context.WithValue(w.ctx, kvutil.ExecDetailsKey, &execDetails)
@@ -565,6 +575,11 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			failpoint.InjectCall("beforeGetChunk")
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(scanCtx, w.copCtx.GetBase(), rs, srcChk)
+			failpoint.Inject("mockScanRecordPartialError", func(val failpoint.Value) {
+				if shouldFail, _ := val.(bool); shouldFail {
+					err = errors.New("mock partial scan error")
+				}
+			})
 			if err != nil || scanCtx.Err() != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
@@ -574,19 +589,21 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			execDetails = kvutil.ExecDetails{}
 
 			_, tableScanRowCount := distsqlCtx.RuntimeStatsColl.GetCopCountAndRows(tableScanCopID)
-			idxResults = append(idxResults, IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed})
+			idxResult := IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx, tableScanRowCount: tableScanRowCount - lastTableScanRowCount, conditionPushed: conditionPushed}
 			lastTableScanRowCount = tableScanRowCount
+			if enableStreaming {
+				sendResult(idxResult)
+			} else {
+				idxResults = append(idxResults, idxResult)
+			}
 		}
 		return rs.Close()
 	})
 
-	for i, idxResult := range idxResults {
-		sender(idxResult)
-		if w.cpOp != nil {
-			done := i == len(idxResults)-1
-			w.cpOp.UpdateChunk(task.ID, int(idxResult.tableScanRowCount), done)
+	if !enableStreaming {
+		for _, idxResult := range idxResults {
+			sendResult(idxResult)
 		}
-		w.totalCount.Add(idxResult.tableScanRowCount)
 	}
 
 	return err

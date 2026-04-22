@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -104,7 +105,8 @@ func TestHandler(t *testing.T) {
 				kvPairCnt += int64(len(kvPairs.Pairs))
 				return nil
 			})
-			baseHdl := conflictedkv.NewBaseHandler(tbl, external.DataKVGroup, encoder, mockEncodedKVHdl, logger)
+			progressCollector := &execute.TestCollector{}
+			baseHdl := conflictedkv.NewBaseHandler(tbl, external.DataKVGroup, encoder, mockEncodedKVHdl, progressCollector, logger)
 			dataKVHdl := conflictedkv.NewDataKVHandler(baseHdl)
 			t.Cleanup(func() {
 				require.NoError(t, dataKVHdl.Close(ctx))
@@ -137,6 +139,7 @@ func TestHandler(t *testing.T) {
 			require.NoError(t, eg.Wait())
 			require.EqualValues(t, 10, rowCnt)
 			require.EqualValues(t, expectedKVs, kvPairCnt)
+			require.EqualValues(t, 10, progressCollector.ProcessedCnt.Load())
 		}
 
 		t.Run("clustered pk table", func(t *testing.T) {
@@ -177,7 +180,8 @@ func TestHandler(t *testing.T) {
 				return nil
 			})
 			var targetIndexID int64 = 2
-			baseHdl := conflictedkv.NewBaseHandler(tbl, external.IndexID2KVGroup(targetIndexID), encoder, mockEncodedKVHdl, logger)
+			progressCollector := &execute.TestCollector{}
+			baseHdl := conflictedkv.NewBaseHandler(tbl, external.IndexID2KVGroup(targetIndexID), encoder, mockEncodedKVHdl, progressCollector, logger)
 			trafficRec := &mockTrafficRecorder{}
 			indexKVHdl := conflictedkv.NewIndexKVHandler(
 				baseHdl,
@@ -228,6 +232,7 @@ func TestHandler(t *testing.T) {
 			require.EqualValues(t, 3, rowCnt)
 			require.EqualValues(t, expectedKVs, kvPairCnt)
 			require.EqualValues(t, map[string]struct{}{"2": {}, "4": {}, "5": {}}, handledHandles)
+			require.EqualValues(t, 16, progressCollector.ProcessedCnt.Load())
 		}
 
 		t.Run("clustered pk table", func(t *testing.T) {

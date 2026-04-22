@@ -315,6 +315,11 @@ func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 	return ti.kvStore
 }
 
+// EstimateParquetReaderMemory estimates parser memory for the parquet file path.
+func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string) (int64, error) {
+	return mydump.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path)
+}
+
 func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
@@ -332,10 +337,19 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.C
 	if err != nil {
 		return nil, err
 	}
+	parserReady := false
+	defer func() {
+		if parserReady {
+			return
+		}
+		if err2 := parser.Close(); err2 != nil {
+			e.logger.Warn("close parser failed", zap.Error(err2))
+		}
+	}()
 	if chunk.Chunk.Offset == 0 {
 		// if data file is split, only the first chunk need to do skip.
 		// see check in initOptions.
-		if err = e.HandleSkipNRows(parser); err != nil {
+		if err = HandleSkipNRows(parser, e.IgnoreLines); err != nil {
 			return nil, err
 		}
 		parser.SetRowID(chunk.Chunk.PrevRowIDMax)
@@ -345,6 +359,7 @@ func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.C
 			return nil, err
 		}
 	}
+	parserReady = true
 	return parser, nil
 }
 

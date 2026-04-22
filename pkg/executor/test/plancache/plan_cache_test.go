@@ -683,7 +683,7 @@ func testPreparedNullParam(t *testing.T, tk *testkit.TestKit) {
 		tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
 		attachSessionManagerForExplain(tk)
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tk.Session().ShowProcess().ID)).Check(testkit.Rows(
-			"TableDual_7 0.00 root  rows:0"))
+			"TableDual_6 0.00 root  rows:0"))
 	}
 }
 
@@ -731,7 +731,7 @@ func testIssue29850(t *testing.T, tk *testkit.TestKit) {
 	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
 	attachSessionManagerForExplain(tk)
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tk.Session().ShowProcess().ID)).Check(testkit.Rows(
-		`Point_Get_6 1.00 root table:t handle:1`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
@@ -739,7 +739,7 @@ func testIssue29850(t *testing.T, tk *testkit.TestKit) {
 	tk.MustQuery(`execute stmt using @a1, @a1`).Check(testkit.Rows("1"))
 	attachSessionManagerForExplain(tk)
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tk.Session().ShowProcess().ID)).Check(testkit.Rows(
-		`Point_Get_6 1.00 root table:t handle:1`))
+		`Point_Get_5 1.00 root table:t handle:1`))
 	tk.MustQuery(`execute stmt using @a1, @a2`).Check(testkit.Rows("1", "2"))
 }
 
@@ -762,9 +762,9 @@ func testIssue28064(t *testing.T, tk *testkit.TestKit) {
 	attachSessionManagerForExplain(tk)
 	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tk.Session().ShowProcess().ID))
 	rows.Check(testkit.Rows(
-		"IndexLookUp_8 1.25 root  ",
-		"├─IndexRangeScan_6(Build) 1.25 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
+		"IndexLookUp_7 1.25 root  ",
+		"├─IndexRangeScan_5(Build) 1.25 cop[tikv] table:t28064, index:iabc(a, b, c) range:[123 234 345,123 234 345], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_6(Probe) 1.25 cop[tikv] table:t28064 keep order:false, stats:pseudo"))
 	tk.MustExec("execute stmt1 using @a, @b, @c;")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
@@ -803,12 +803,12 @@ func testIssue29101(t *testing.T, tk *testkit.TestKit) {
 	attachSessionManagerForExplain(tk)
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tk.Session().ShowProcess().ID)).Check(testkit.Rows(
 		`Projection_6 1.00 root  test.customer.c_discount, test.customer.c_last, test.customer.c_credit, test.warehouse.w_tax`,
-		`└─IndexJoin_18 1.00 root  inner join, inner:IndexLookUp_34, outer key:test.warehouse.w_id, inner key:test.customer.c_w_id, equal cond:eq(test.warehouse.w_id, test.customer.c_w_id)`,
-		`  ├─Point_Get_35(Build) 1.00 root table:warehouse handle:936`,
-		`  └─IndexLookUp_34(Probe) 1.00 root  `,
-		`    ├─Selection_33(Build) 1.00 cop[tikv]  eq(test.customer.c_w_id, 936)`,
-		`    │ └─IndexRangeScan_31 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range: decided by [eq(test.customer.c_w_id, test.warehouse.w_id) eq(test.customer.c_d_id, 7) eq(test.customer.c_id, 158)], keep order:false, stats:pseudo`,
-		`    └─TableRowIDScan_32(Probe) 1.00 cop[tikv] table:customer keep order:false, stats:pseudo`))
+		`└─IndexJoin_16 1.00 root  inner join, inner:IndexLookUp_32, outer key:test.warehouse.w_id, inner key:test.customer.c_w_id, equal cond:eq(test.warehouse.w_id, test.customer.c_w_id)`,
+		`  ├─Point_Get_33(Build) 1.00 root table:warehouse handle:936`,
+		`  └─IndexLookUp_32(Probe) 1.00 root  `,
+		`    ├─Selection_31(Build) 1.00 cop[tikv]  eq(test.customer.c_w_id, 936)`,
+		`    │ └─IndexRangeScan_29 1.00 cop[tikv] table:customer, index:PRIMARY(c_w_id, c_d_id, c_id) range: decided by [eq(test.customer.c_w_id, test.warehouse.w_id) eq(test.customer.c_d_id, 7) eq(test.customer.c_id, 158)], keep order:false, stats:pseudo`,
+		`    └─TableRowIDScan_30(Probe) 1.00 cop[tikv] table:customer keep order:false, stats:pseudo`))
 	tk.MustQuery(`execute s1 using @a,@b,@c`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
