@@ -93,8 +93,8 @@ github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117 h1:+OqGGFc2YHFd
 github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117/go.mod h1:bMGIq3AGbytbaMwf8wdv5Phdxz0FWHTIYMSzyrYgnQs=
 github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260421095055-f0e16ed01d81 h1:AaBfnghHZjDfg5BrHL+Zy8pA5qu4HvjmXOzA7KhlKug=
 github.com/YuhaoZhang00/client-go/v2 v2.0.8-0.20260421095055-f0e16ed01d81/go.mod h1:rg9c3yf9lfQdj9rt5FvwRP9xDubUY6C9hyH4g9zFH1s=
-github.com/YuhaoZhang00/pd/client v0.0.0-20260421083137-6ebc843849da h1:nXEbNCon9+QmLC8rX7qCO/+Ei4etdTM2wkWhJVF6tPw=
-github.com/YuhaoZhang00/pd/client v0.0.0-20260421083137-6ebc843849da/go.mod h1:I2yRx/Yf8Y8kgM5f3VNp4a8fWpnjPC4TxWk554AY8bM=
+github.com/YuhaoZhang00/pd/client v0.0.0-20260422074559-ded66bf8f5d8 h1:w8g1yjcDKRRo2u70bwU92YfqfxXzUCGTRYTzrbunnIc=
+github.com/YuhaoZhang00/pd/client v0.0.0-20260422074559-ded66bf8f5d8/go.mod h1:I2yRx/Yf8Y8kgM5f3VNp4a8fWpnjPC4TxWk554AY8bM=
 github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d h1:licZJFw2RwpHMqeKTCYkitsPqHNxTmd4SNR5r94FGM8=
 github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d/go.mod h1:asat636LX7Bqt5lYEZ27JNDcqxfjdBQuJ/MM4CN/Lzo=
 github.com/alecthomas/units v0.0.0-20231202071711-9a357b53e9c9 h1:ez/4by2iGztzR4L0zgAOR8lTQK9VlyBVVd7G4omaOQs=
