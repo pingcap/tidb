@@ -3,7 +3,7 @@
 aliases:
   sig-critical-approvers-tidb-server:
     - yudongusa
-    - BenMeadowcroft
+    - terry1purcell
   sig-critical-approvers-tidb-lightning:
     - yudongusa
     - BenMeadowcroft
