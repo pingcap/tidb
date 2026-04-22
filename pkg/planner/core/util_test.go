@@ -358,3 +358,44 @@ func TestCheckMViewUpdatable(t *testing.T) {
 	require.NoError(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
 	require.NoError(t, CheckMViewUpdatable(vars, shadow, "", "INSERT"))
 }
+
+func TestCheckMViewReadable(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	mvReady := &metamodel.TableInfo{
+		Name: model.NewCIStr("mv_ready"),
+		MaterializedView: &metamodel.MaterializedViewInfo{
+			InitBuildState: metamodel.MVInitBuildReady,
+		},
+	}
+	mvLegacy := &metamodel.TableInfo{
+		Name:             model.NewCIStr("mv_legacy"),
+		MaterializedView: &metamodel.MaterializedViewInfo{},
+	}
+	mvBuilding := &metamodel.TableInfo{
+		Name: model.NewCIStr("mv_building"),
+		MaterializedView: &metamodel.MaterializedViewInfo{
+			InitBuildState: metamodel.MVInitBuildBuilding,
+		},
+	}
+	mvDeferred := &metamodel.TableInfo{
+		Name: model.NewCIStr("mv_deferred"),
+		MaterializedView: &metamodel.MaterializedViewInfo{
+			InitBuildState: metamodel.MVInitBuildDeferred,
+		},
+	}
+	base := &metamodel.TableInfo{Name: model.NewCIStr("t")}
+
+	require.NoError(t, CheckMViewReadable(vars, base, ""))
+	require.NoError(t, CheckMViewReadable(vars, mvReady, ""))
+	require.NoError(t, CheckMViewReadable(vars, mvLegacy, ""))
+	require.ErrorContains(t, CheckMViewReadable(vars, mvBuilding, ""), "initial build is in progress")
+	require.ErrorContains(t, CheckMViewReadable(vars, mvDeferred, ""), "is not ready: initial build has not completed")
+
+	vars.InMaterializedViewMaintenance = true
+	vars.InRestrictedSQL = false
+	require.ErrorContains(t, CheckMViewReadable(vars, mvBuilding, ""), "materialized view maintenance should only run in restricted SQL mode")
+
+	vars.InRestrictedSQL = true
+	require.NoError(t, CheckMViewReadable(vars, mvBuilding, ""))
+	require.NoError(t, CheckMViewReadable(vars, mvDeferred, ""))
+}

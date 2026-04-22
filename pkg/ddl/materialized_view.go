@@ -334,6 +334,7 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	mvTableInfo.MaterializedView = &model.MaterializedViewInfo{
 		BaseTableIDs:      []int64{baseTableID},
+		InitBuildState:    model.MVInitBuildBuilding,
 		SQLContent:        selectSQL,
 		RefreshMethod:     refreshMethod,
 		RefreshStartWith:  refreshStartWith,

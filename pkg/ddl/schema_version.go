@@ -251,6 +251,15 @@ func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx 
 		diff.TableID = 0
 		return nil
 	}
+	if job.Type == model.ActionCreateMaterializedView {
+		if job.SchemaState == model.StateWriteReorganization {
+			// CREATE MATERIALIZED VIEW phase-2 only updates MV metadata
+			// (for example InitBuildState: Building -> Ready), so infoschema
+			// should reload the existing table rather than treat it as a second create.
+			diff.OldTableID = job.TableID
+		}
+		return nil
+	}
 	if job.Type != model.ActionCreateTable && job.Type != model.ActionCreateMaterializedViewShadow {
 		return nil
 	}

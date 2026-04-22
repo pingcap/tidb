@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -425,13 +426,11 @@ func CheckMViewUpdatable(
 		return nil
 	}
 
-	if sv.InMaterializedViewMaintenance {
-		// All MV maintenance work should uses internal sessions (restricted SQL).
-		if !sv.InRestrictedSQL {
-			return plannererrors.ErrInternal.GenWithStack(
-				"materialized view maintenance should only run in restricted SQL mode",
-			)
-		}
+	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+	if err != nil {
+		return err
+	}
+	if allowMaintenance {
 		return nil
 	}
 
@@ -440,4 +439,42 @@ func CheckMViewUpdatable(
 	}
 
 	return plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(aliasName, op)
+}
+
+func allowMViewMaintenanceBypass(sv *variable.SessionVars) (bool, error) {
+	if !sv.InMaterializedViewMaintenance {
+		return false, nil
+	}
+	// All MV maintenance work should uses internal sessions (restricted SQL).
+	if !sv.InRestrictedSQL {
+		return false, plannererrors.ErrInternal.GenWithStack(
+			"materialized view maintenance should only run in restricted SQL mode",
+		)
+	}
+	return true, nil
+}
+
+// CheckMViewReadable checks whether a read on a materialized view should be rejected because
+// its initial build is not ready yet.
+func CheckMViewReadable(sv *variable.SessionVars, tableInfo *model.TableInfo, aliasName string) error {
+	if tableInfo == nil || tableInfo.MaterializedView == nil {
+		return nil
+	}
+	initBuildState := tableInfo.MaterializedView.GetInitBuildState()
+	if initBuildState.IsReady() {
+		return nil
+	}
+
+	allowMaintenance, err := allowMViewMaintenanceBypass(sv)
+	if err != nil {
+		return err
+	}
+	if allowMaintenance {
+		return nil
+	}
+
+	if aliasName == "" {
+		aliasName = tableInfo.Name.O
+	}
+	return errors.New(initBuildState.AccessErrorMessage(aliasName))
 }

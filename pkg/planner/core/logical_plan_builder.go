@@ -4485,6 +4485,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
+	if err := CheckMViewReadable(sessionVars, tableInfo, tblName.O); err != nil {
+		return nil, err
+	}
 
 	if tableInfo.GetPartitionInfo() != nil {
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`

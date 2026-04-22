@@ -435,7 +435,6 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		args.CreatedSchemaVersion = ver
 		createTableEvent := notifier.NewCreateTableEvent(mvTblInfo)
 		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
 		if err != nil {
@@ -516,7 +515,16 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			}
 		})
 
-		ver = args.CreatedSchemaVersion
+		mvTblInfo.MaterializedView.InitBuildState = model.MVInitBuildReady
+		if err := updateTable(jobCtx.metaMut, job.SchemaID, mvTblInfo); err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+		ver, err = updateSchemaVersion(jobCtx, job)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
 		finishedTableInfos := make([]*model.TableInfo, 0, len(baseTableIDs)+1)
 		finishedTableInfos = append(finishedTableInfos, mvTblInfo)
 		for _, baseTableID := range baseTableIDs {
@@ -606,15 +614,12 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 		return ver, errors.Trace(err)
 	}
 	var mlogTableIDs []int64
-	var createdSchemaVersion int64
 	if args, ok := jobCtx.jobArgs.(*model.CreateMaterializedViewArgs); ok && args != nil {
 		mlogTableIDs = args.MLogTableIDs
-		createdSchemaVersion = args.CreatedSchemaVersion
 	}
 	job.FillArgs(&model.CreateMaterializedViewArgs{
-		TableInfo:            mvTblInfo,
-		MLogTableIDs:         mlogTableIDs,
-		CreatedSchemaVersion: createdSchemaVersion,
+		TableInfo:    mvTblInfo,
+		MLogTableIDs: mlogTableIDs,
 	})
 	return ver, nil
 }
@@ -739,6 +744,12 @@ func (w *worker) hasCreateMaterializedViewBuildRows(ctx context.Context, schemaN
 	if ctx == nil {
 		ctx = w.workCtx
 	}
+	origInMaterializedViewMaintenance := w.sess.GetSessionVars().InMaterializedViewMaintenance
+	w.sess.GetSessionVars().InMaterializedViewMaintenance = true
+	defer func() {
+		w.sess.GetSessionVars().InMaterializedViewMaintenance = origInMaterializedViewMaintenance
+	}()
+
 	checkSQL := sqlescape.MustEscapeSQL("SELECT 1 FROM %n.%n LIMIT 1", schemaName, mvTableName)
 	rows, err := w.sess.Execute(ctx, checkSQL, "create-materialized-view-check-build-rows")
 	if err != nil {

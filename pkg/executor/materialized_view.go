@@ -3689,7 +3689,25 @@ func (e *RefreshMaterializedViewExec) resolveRefreshMaterializedViewTarget(
 	if len(tblInfo.MaterializedView.SQLContent) == 0 {
 		return pmodel.CIStr{}, nil, errors.New("refresh materialized view: invalid select sql")
 	}
+	if err := checkRefreshMaterializedViewReady(schemaName, tblInfo); err != nil {
+		return pmodel.CIStr{}, nil, err
+	}
 	return schemaName, tblInfo, nil
+}
+
+func checkRefreshMaterializedViewReady(schemaName pmodel.CIStr, tblInfo *model.TableInfo) error {
+	if tblInfo == nil || tblInfo.MaterializedView == nil {
+		return nil
+	}
+	initBuildState := tblInfo.MaterializedView.GetInitBuildState()
+	if initBuildState.IsReady() {
+		return nil
+	}
+	objectName := tblInfo.Name.O
+	if schemaName.O != "" {
+		objectName = schemaName.O + "." + objectName
+	}
+	return errors.New(initBuildState.AccessErrorMessage(objectName))
 }
 
 func lockRefreshInfoRow(
