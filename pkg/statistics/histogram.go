@@ -1557,8 +1557,8 @@ func MergePartTopNAndHistToGlobal(
 				mergeHeap.entries = append(mergeHeap.entries, bucketMergeEntry{
 					histIdx:   uint16(hi),
 					bucketIdx: uint16(bi),
-					upper:     hist.Bounds.GetRow(2*bi + 1).GetDatum(0, hist.Tp),
-					lower:     hist.Bounds.GetRow(2 * bi).GetDatum(0, hist.Tp),
+					upper:     hist.Bounds.GetRow(2*bi+1).GetDatum(0, hist.Tp),
+					lower:     hist.Bounds.GetRow(2*bi).GetDatum(0, hist.Tp),
 				})
 				break
 			}
@@ -1604,12 +1604,7 @@ func MergePartTopNAndHistToGlobal(
 			return bucketMergeEntry{}, false
 		}
 		entry := mergeHeap.popMin()
-		sortedRefs = append(sortedRefs, bucketRef{
-			histIdx:   entry.histIdx,
-			bucketIdx: entry.bucketIdx,
-			upper:     entry.upper,
-			lower:     entry.lower,
-		})
+		sortedRefs = append(sortedRefs, bucketRef(entry))
 		// Advance this partition to the next non-empty bucket.
 		h := hists[entry.histIdx]
 		for bi := int(entry.bucketIdx) + 1; bi < h.Len(); bi++ {
@@ -1621,8 +1616,8 @@ func MergePartTopNAndHistToGlobal(
 				mergeHeap.pushEntry(bucketMergeEntry{
 					histIdx:   entry.histIdx,
 					bucketIdx: uint16(bi),
-					upper:     h.Bounds.GetRow(2*bi + 1).GetDatum(0, h.Tp),
-					lower:     h.Bounds.GetRow(2 * bi).GetDatum(0, h.Tp),
+					upper:     h.Bounds.GetRow(2*bi+1).GetDatum(0, h.Tp),
+					lower:     h.Bounds.GetRow(2*bi).GetDatum(0, h.Tp),
 				})
 				break
 			}
