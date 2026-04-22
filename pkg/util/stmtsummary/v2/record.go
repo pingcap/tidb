@@ -432,15 +432,16 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	} else {
 		r.MinResultRows = 0
 	}
-	r.SumKVTotal += time.Duration(info.TiKVExecDetails.WaitKVRespDuration)
-	r.SumPDTotal += time.Duration(info.TiKVExecDetails.WaitPDRespDuration)
-	r.SumBackoffTotal += time.Duration(info.TiKVExecDetails.BackoffDuration)
+	tikvExecDetails := execdetails.LoadTiKVExecDetails(info.TiKVExecDetails)
+	r.SumKVTotal += time.Duration(tikvExecDetails.WaitKVRespDuration)
+	r.SumPDTotal += time.Duration(tikvExecDetails.WaitPDRespDuration)
+	r.SumBackoffTotal += time.Duration(tikvExecDetails.BackoffDuration)
 	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
 	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
 	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
 
 	// Networks
-	r.StmtNetworkTrafficSummary.Add(info.TiKVExecDetails)
+	r.StmtNetworkTrafficSummary.Add(&tikvExecDetails)
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail, info.TotalRUV2)
 
