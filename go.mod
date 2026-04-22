@@ -124,8 +124,13 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.8-0.20260401083018-b7f9a9e9d2ab
 	github.com/tikv/pd/client v0.0.0-20260401072359-048f0d8f6f71
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20260414033830-1adc54c38a51
+	github.com/tikv/pd/client v0.0.0-20260404141330-8a6813497b52
+>>>>>>> 52602444112 (session,store: remove RUv2 rpc interceptor (#67508))
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
