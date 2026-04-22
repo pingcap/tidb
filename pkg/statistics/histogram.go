@@ -1413,8 +1413,9 @@ func MergePartTopNAndHistToGlobal(
 		return nil, nil, errors.Errorf("expBucketNumber can not be zero")
 	}
 
-	// Find the first non-nil histogram for metadata (ID, Tp, etc.).
-	// If none exist, we can still merge TopN-only data.
+	// Need at least one non-nil histogram to recover column type, ID, and
+	// last-update version for the global stats. Empty-but-non-nil histograms
+	// are fine (TopN-only columns still carry a Histogram wrapper).
 	var firstHist *Histogram
 	for _, h := range hists {
 		if h != nil {
@@ -1422,20 +1423,17 @@ func MergePartTopNAndHistToGlobal(
 			break
 		}
 	}
-	if firstHist == nil && len(topNs) == 0 {
-		return nil, nil, nil
+	if firstHist == nil {
+		return nil, nil, errors.Errorf("MergePartTopNAndHistToGlobal: no partition histograms provided")
 	}
 
 	tz := sc.TimeZone()
-	var tp byte
-	if firstHist != nil {
-		tp = firstHist.Tp.GetType()
-		statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal start",
-			zap.Int64("histID", firstHist.ID),
-			zap.Bool("isIndex", isIndex),
-			zap.Int("hists", len(hists)),
-			zap.Int("topNs", len(topNs)))
-	}
+	tp := firstHist.Tp.GetType()
+	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal start",
+		zap.Int64("histID", firstHist.ID),
+		zap.Bool("isIndex", isIndex),
+		zap.Int("hists", len(hists)),
+		zap.Int("topNs", len(topNs)))
 
 	// ---------------------------------------------------------------
 	// Pass 1: Determine global TopN via sorted merge of TopN entries
@@ -1512,11 +1510,8 @@ func MergePartTopNAndHistToGlobal(
 		zap.Int("totalBuckets", totalBuckets))
 
 	if len(allTopN) == 0 && mergeHeap.Len() == 0 {
-		if firstHist != nil {
-			return nil, NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
-				firstHist.Tp, 0, totColSize), nil
-		}
-		return nil, nil, nil
+		return nil, NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
+			firstHist.Tp, 0, totColSize), nil
 	}
 
 	// 1c. Merge-walk both sorted sequences. For each unique value,
@@ -1706,13 +1701,8 @@ func MergePartTopNAndHistToGlobal(
 	// in the TopN); others are injected into the histogram at their
 	// sorted position. Single pass.
 	// ---------------------------------------------------------------
-	var globalHist *Histogram
-	if firstHist != nil {
-		globalHist = NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
-			firstHist.Tp, int(expBucketNumber), totColSize)
-	} else {
-		globalHist = NewHistogram(0, 0, totNull, 0, types.NewFieldType(mysql.TypeNull), 0, totColSize)
-	}
+	globalHist := NewHistogram(firstHist.ID, 0, totNull, firstHist.LastUpdateVersion,
+		firstHist.Tp, int(expBucketNumber), totColSize)
 
 	if totCount <= 0 || (len(sortedRefs) == 0 && len(allTopN) == 0) {
 		statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 2: empty histogram (early return)")
