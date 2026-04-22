@@ -95,12 +95,11 @@ func (d *Datum) Copy(dst *Datum) {
 		dst.b = make([]byte, len(d.b))
 		copy(dst.b, d.b)
 	}
-	switch dst.Kind() {
-	case KindMysqlDecimal:
+	// Time is stored inline in d.i, so the bitwise copy above already
+	// produced an independent value; no KindMysqlTime branch needed.
+	if dst.Kind() == KindMysqlDecimal {
 		d := *d.GetMysqlDecimal()
 		dst.SetMysqlDecimal(&d)
-	case KindMysqlTime:
-		dst.SetMysqlTime(d.GetMysqlTime())
 	}
 }
 
@@ -424,15 +423,18 @@ func (d *Datum) GetVectorFloat32() VectorFloat32 {
 	return v
 }
 
-// GetMysqlTime gets types.Time value
+// GetMysqlTime gets types.Time value. Time is a bit-packed CoreTime
+// (uint64) so it lives directly in d.i, avoiding the per-set heap
+// allocation that storing it via d.x (interface{}) would otherwise pay.
 func (d *Datum) GetMysqlTime() Time {
-	return d.x.(Time)
+	return Time{coreTime: CoreTime(uint64(d.i))}
 }
 
-// SetMysqlTime sets types.Time value
+// SetMysqlTime sets types.Time value. Keep the representation inside
+// d.i (8 bytes) rather than boxing through d.x; see GetMysqlTime.
 func (d *Datum) SetMysqlTime(b Time) {
 	d.k = KindMysqlTime
-	d.x = b
+	d.i = int64(uint64(b.coreTime))
 }
 
 // SetRaw sets raw value.

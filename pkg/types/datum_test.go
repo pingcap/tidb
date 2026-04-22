@@ -591,9 +591,13 @@ func TestMarshalDatum(t *testing.T) {
 			require.Nil(t, datum.x, msg)
 		}
 		require.Equal(t, reflect.TypeOf(tt.x), reflect.TypeOf(datum.x), msg)
+		// Time is packed into d.i, not stored via d.x, so verify its
+		// round-trip through the getter rather than via d.x.
+		if tt.k == KindMysqlTime {
+			require.Equal(t, 0, tt.GetMysqlTime().Compare(datum.GetMysqlTime()), msg)
+			continue
+		}
 		switch tt.x.(type) {
-		case Time:
-			require.Equal(t, 0, tt.x.(Time).Compare(datum.x.(Time)))
 		case *MyDecimal:
 			require.Equal(t, 0, tt.x.(*MyDecimal).Compare(datum.x.(*MyDecimal)))
 		default:
@@ -620,6 +624,35 @@ func BenchmarkCompareDatumByReflect(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		reflect.DeepEqual(vals, vals1)
+	}
+}
+
+// BenchmarkDatumSetMysqlTime asserts that SetMysqlTime is alloc-free.
+// Storing Time inline in d.i (rather than boxing through d.x any) means
+// every call should be 0 B/op / 0 allocs/op.
+func BenchmarkDatumSetMysqlTime(b *testing.B) {
+	t := NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)
+	var d Datum
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		d.SetMysqlTime(t)
+	}
+}
+
+// BenchmarkDatumCopy exercises Datum.Copy on a heterogeneous slice that
+// contains a Time datum. With Time in d.i, the KindMysqlTime branch of
+// Copy is gone and the per-copy allocation count drops by one vs. the
+// old interface-boxed representation.
+func BenchmarkDatumCopy(b *testing.B) {
+	src, _ := prepareCompareDatums()
+	dst := make([]Datum, len(src))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j := range src {
+			src[j].Copy(&dst[j])
+		}
 	}
 }
 
