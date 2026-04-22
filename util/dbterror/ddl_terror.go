@@ -430,3 +430,39 @@ var (
 	// ErrUnsupportedTTLReferencedByFK returns when the TTL config is set for a table referenced by foreign key
 	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
 )
+<<<<<<< HEAD:util/dbterror/ddl_terror.go
+=======
+
+// ReorgRetryableErrCodes are the error codes that are retryable for reorganization.
+var ReorgRetryableErrCodes = map[uint16]struct{}{
+	mysql.ErrPDServerTimeout:           {},
+	mysql.ErrTiKVServerTimeout:         {},
+	mysql.ErrTiKVServerBusy:            {},
+	mysql.ErrResolveLockTimeout:        {},
+	mysql.ErrRegionUnavailable:         {},
+	mysql.ErrTxnAbortedByGC:            {},
+	mysql.ErrWriteConflict:             {},
+	mysql.ErrTiKVStoreLimit:            {},
+	mysql.ErrTiKVStaleCommand:          {},
+	mysql.ErrTiKVMaxTimestampNotSynced: {},
+	mysql.ErrTiFlashServerTimeout:      {},
+	mysql.ErrTiFlashServerBusy:         {},
+	mysql.ErrInfoSchemaExpired:         {},
+	mysql.ErrInfoSchemaChanged:         {},
+	mysql.ErrWriteConflictInTiDB:       {},
+	mysql.ErrTxnRetryable:              {},
+	mysql.ErrNotOwner:                  {},
+	mysql.ErrInvalidSplitRegionRanges:  {}, // PD client returns regions with no leader.
+
+	// Temporary network partitioning may cause pk commit failure.
+	uint16(terror.CodeResultUndetermined): {},
+}
+
+// ReorgRetryableErrMsgs are the error messages that are retryable for reorganization.
+var ReorgRetryableErrMsgs = []string{
+	"context deadline exceeded",
+	"requested lease not found",
+	"mvcc: required revision has been compacted",
+	"All returned regions have no leaders",
+}
+>>>>>>> d15bed39426 (ddl: retry modify column reorg on transient errors (#67713)):pkg/util/dbterror/ddl_terror.go
