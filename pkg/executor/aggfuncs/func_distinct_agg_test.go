@@ -25,128 +25,64 @@ import (
 
 func TestParallelDistinctCount(t *testing.T) {
 	dataTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeNewDecimal), types.NewFieldType(mysql.TypeVarString), types.NewFieldType(mysql.TypeDuration)}
-	for range 10 {
-		var testCase *parallelDistinctAggTestCase
-		randNum := rand.Intn(100)
-		if randNum < 10 {
-			// Empty input
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, 0, 0, false, false)
-		} else if randNum < 20 {
-			// Some input are null
-			rowNum := rand.Intn(10000) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, rowNum, rand.Intn(rowNum)+1, true, false)
-		} else if randNum < 30 {
-			// All input are null
-			rowNum := rand.Intn(10000) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, rowNum, rand.Intn(rowNum)+1, true, true)
-		} else {
-			// All input are not null
-			rowNum := rand.Intn(10000) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, rowNum, rand.Intn(rowNum)+1, false, false)
-		}
-
-		testParallelDistinctAggFunc(t, *testCase, false)
-	}
+	testParallelDistinctAggCases(t, ast.AggFuncCount, dataTypes, 10000, false)
 
 	// Test countPartialWithDistinct and countOriginalWithDistinct
 	dataTypes = []*types.FieldType{types.NewFieldType(mysql.TypeVarString), types.NewFieldType(mysql.TypeVarString)}
-	for range 10 {
-		var testCase *parallelDistinctAggTestCase
-		randNum := rand.Intn(100)
-		if randNum < 10 {
-			// Empty input
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes, 0, 0, false, false)
-		} else if randNum < 20 {
-			// Some input are null
-			rowNum := rand.Intn(100) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes, rowNum, rand.Intn(rowNum)+1, true, false)
-		} else if randNum < 30 {
-			// All input are null
-			rowNum := rand.Intn(100) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes, rowNum, rand.Intn(rowNum)+1, true, true)
-		} else {
-			// All input are not null
-			rowNum := rand.Intn(100) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncCount, dataTypes, rowNum, rand.Intn(rowNum)+1, false, false)
-		}
-
-		testParallelDistinctAggFunc(t, *testCase, true)
-	}
+	testParallelDistinctAggCases(t, ast.AggFuncCount, dataTypes, 100, true)
 }
 
 func TestParallelDistinctSum(t *testing.T) {
 	dataTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeNewDecimal)}
-	for range 10 {
-		var testCase *parallelDistinctAggTestCase
-		randNum := rand.Intn(100)
-		if randNum < 10 {
-			// Empty input
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncSum, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, 0, 0, false, false)
-		} else if randNum < 20 {
-			// Some input are null
-			rowNum := rand.Intn(10000) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncSum, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, rowNum, rand.Intn(rowNum)+1, true, false)
-		} else if randNum < 30 {
-			// All input are null
-			rowNum := rand.Intn(10000) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncSum, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, rowNum, rand.Intn(rowNum)+1, true, true)
-		} else {
-			// All input are not null
-			rowNum := rand.Intn(10000) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncSum, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, rowNum, rand.Intn(rowNum)+1, false, false)
-		}
-
-		testParallelDistinctAggFunc(t, *testCase, false)
-	}
+	testParallelDistinctAggCases(t, ast.AggFuncSum, dataTypes, 10000, false)
 }
 
 func TestParallelDistinctAvg(t *testing.T) {
 	dataTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble), types.NewFieldType(mysql.TypeNewDecimal)}
-	for range 10 {
-		var testCase *parallelDistinctAggTestCase
-		randNum := rand.Intn(100)
-		if randNum < 10 {
-			// Empty input
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncAvg, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, 0, 0, false, false)
-		} else if randNum < 20 {
-			// Some input are null
-			rowNum := rand.Intn(10000) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncAvg, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, rowNum, rand.Intn(rowNum)+1, true, false)
-		} else if randNum < 30 {
-			// All input are null
-			rowNum := rand.Intn(10000) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncAvg, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, rowNum, rand.Intn(rowNum)+1, true, true)
-		} else {
-			// All input are not null
-			rowNum := rand.Intn(10000) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncAvg, []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}, rowNum, rand.Intn(rowNum)+1, false, false)
-		}
-		testParallelDistinctAggFunc(t, *testCase, false)
+	testParallelDistinctAggCases(t, ast.AggFuncAvg, dataTypes, 10000, false)
+}
+
+func TestParallelDistinctVarAndStddev(t *testing.T) {
+	for _, funcName := range []string{ast.AggFuncVarPop, ast.AggFuncVarSamp, ast.AggFuncStddevPop, ast.AggFuncStddevSamp} {
+		t.Run(funcName, func(t *testing.T) {
+			dataTypes := []*types.FieldType{types.NewFieldType(mysql.TypeDouble)}
+			testParallelDistinctAggCases(t, funcName, dataTypes, 10000, false)
+		})
 	}
 }
 
 func TestParallelDistinctGroupConcat(t *testing.T) {
 	dataTypes := []*types.FieldType{types.NewFieldType(mysql.TypeVarString), types.NewFieldType(mysql.TypeVarString)}
+	testParallelDistinctAggCases(t, ast.AggFuncGroupConcat, dataTypes, 100, true)
+}
+
+func testParallelDistinctAggCases(t *testing.T, funcName string, dataTypes []*types.FieldType, maxRows int, multiArgs bool) {
+	t.Helper()
+
 	for range 10 {
 		var testCase *parallelDistinctAggTestCase
 		randNum := rand.Intn(100)
+		inputTypes := dataTypes
+		if !multiArgs {
+			inputTypes = []*types.FieldType{dataTypes[rand.Intn(len(dataTypes))]}
+		}
 		if randNum < 10 {
 			// Empty input
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, 0, 0, false, false)
+			testCase = newParallelDistinctAggTestCase(funcName, inputTypes, 0, 0, false, false)
 		} else if randNum < 20 {
 			// Some input are null
-			rowNum := rand.Intn(100) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, rowNum, rand.Intn(rowNum)+1, true, false)
+			rowNum := rand.Intn(maxRows) + 1
+			testCase = newParallelDistinctAggTestCase(funcName, inputTypes, rowNum, rand.Intn(rowNum)+1, true, false)
 		} else if randNum < 30 {
 			// All input are null
-			rowNum := rand.Intn(100) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, rowNum, rand.Intn(rowNum)+1, true, true)
+			rowNum := rand.Intn(maxRows) + 1
+			testCase = newParallelDistinctAggTestCase(funcName, inputTypes, rowNum, rand.Intn(rowNum)+1, true, true)
 		} else {
 			// All input are not null
-			rowNum := rand.Intn(100) + 1
-			testCase = newParallelDistinctAggTestCase(ast.AggFuncGroupConcat, dataTypes, rowNum, rand.Intn(rowNum)+1, false, false)
+			rowNum := rand.Intn(maxRows) + 1
+			testCase = newParallelDistinctAggTestCase(funcName, inputTypes, rowNum, rand.Intn(rowNum)+1, false, false)
 		}
 
-		testParallelDistinctAggFunc(t, *testCase, true)
+		testParallelDistinctAggFunc(t, *testCase, multiArgs)
 	}
 }

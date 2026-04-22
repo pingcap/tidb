@@ -118,8 +118,12 @@ func (*varPop4Float64) MergePartialResult(_ AggFuncUpdateContext, src, dst Parti
 	return 0, nil
 }
 
-type varPop4DistinctFloat64 struct {
+type varPopOriginal4DistinctFloat64 struct {
 	baseVarPopAggFunc
+}
+
+type varPopPartial4DistinctFloat64 struct {
+	varPopOriginal4DistinctFloat64
 }
 
 type partialResult4VarPopDistinctFloat64 struct {
@@ -129,7 +133,7 @@ type partialResult4VarPopDistinctFloat64 struct {
 	valSet   set.Float64SetWithMemoryUsage
 }
 
-func (*varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*varPopOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4VarPopDistinctFloat64)
 	p.count = 0
 	p.sum = 0
@@ -139,7 +143,7 @@ func (*varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta 
 	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size + setSize
 }
 
-func (*varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
+func (*varPopOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	p.count = 0
 	p.sum = 0
@@ -147,7 +151,7 @@ func (*varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
-func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *varPopOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
@@ -158,7 +162,7 @@ func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext,
 	return nil
 }
 
-func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *varPopOriginal4DistinctFloat64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -177,4 +181,25 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx AggFuncUpdateContext, 
 		}
 	}
 	return memDelta, nil
+}
+
+func mergePartialResult4VarPopDistinctFloat64(src, dst *partialResult4VarPopDistinctFloat64) (memDelta int64) {
+	for val := range src.valSet.M {
+		if dst.valSet.Exist(val) {
+			continue
+		}
+
+		memDelta += dst.valSet.Insert(val)
+		dst.count++
+		dst.sum += val
+		if dst.count > 1 {
+			dst.variance = calculateIntermediate(dst.count, dst.sum, val, dst.variance)
+		}
+	}
+	return memDelta
+}
+
+func (*varPopPartial4DistinctFloat64) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+	s, d := (*partialResult4VarPopDistinctFloat64)(src), (*partialResult4VarPopDistinctFloat64)(dst)
+	return mergePartialResult4VarPopDistinctFloat64(s, d), nil
 }

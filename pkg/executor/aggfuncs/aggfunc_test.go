@@ -16,6 +16,7 @@ package aggfuncs_test
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"slices"
 	"strconv"
@@ -258,6 +259,11 @@ func newParallelDistinctAggTestCase(funcName string, dataTypes []*types.FieldTyp
 			// So it's needless to test them in the ut.
 			panic("Not supported in test")
 		}
+	case ast.AggFuncVarPop, ast.AggFuncVarSamp, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
+		if dataTypes[0].GetType() != mysql.TypeDouble {
+			panic("Not supported in test")
+		}
+		testCase.result = buildParallelDistinctVarianceResult(funcName, insertedIdxs, datumsForNDV)
 	case ast.AggFuncSum:
 		if len(insertedIdxs) == 0 {
 			testCase.result = types.NewDatum(nil)
@@ -307,6 +313,44 @@ func newParallelDistinctAggTestCase(funcName string, dataTypes []*types.FieldTyp
 		panic("Not supported")
 	}
 	return testCase
+}
+
+func buildParallelDistinctVarianceResult(funcName string, insertedIdxs map[int]struct{}, datumsForNDV [][]types.Datum) types.Datum {
+	if len(insertedIdxs) == 0 {
+		return types.NewDatum(nil)
+	}
+
+	values := make([]float64, 0, len(insertedIdxs))
+	sum := float64(0)
+	for idx := range insertedIdxs {
+		val := datumsForNDV[idx][0].GetFloat64()
+		values = append(values, val)
+		sum += val
+	}
+
+	if (funcName == ast.AggFuncVarSamp || funcName == ast.AggFuncStddevSamp) && len(values) <= 1 {
+		return types.NewDatum(nil)
+	}
+
+	mean := sum / float64(len(values))
+	variance := float64(0)
+	for _, val := range values {
+		diff := val - mean
+		variance += diff * diff
+	}
+
+	switch funcName {
+	case ast.AggFuncVarPop:
+		return types.NewFloat64Datum(variance / float64(len(values)))
+	case ast.AggFuncVarSamp:
+		return types.NewFloat64Datum(variance / float64(len(values)-1))
+	case ast.AggFuncStddevPop:
+		return types.NewFloat64Datum(math.Sqrt(variance / float64(len(values))))
+	case ast.AggFuncStddevSamp:
+		return types.NewFloat64Datum(math.Sqrt(variance / float64(len(values)-1)))
+	default:
+		panic("Not supported")
+	}
 }
 
 type multiArgsAggTest struct {

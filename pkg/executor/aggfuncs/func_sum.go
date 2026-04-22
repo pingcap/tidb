@@ -26,8 +26,6 @@ import (
 )
 
 const (
-	pointerSize = int64(unsafe.Sizeof(&types.MyDecimal{}))
-
 	// DefPartialResult4SumFloat64Size is the size of partialResult4SumFloat64
 	DefPartialResult4SumFloat64Size = int64(unsafe.Sizeof(partialResult4SumFloat64{}))
 	// DefPartialResult4SumDecimalSize is the size of partialResult4SumDecimal
@@ -436,7 +434,7 @@ func (e *baseSumDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext,
 		if p.valSet.Exist(keyStr) {
 			continue
 		}
-		memDelta += p.valSet.Insert(keyStr, input.Clone()) + int64(len(keyStr))
+		memDelta += p.valSet.Insert(keyStr, input.Clone()) + int64(len(keyStr)) + types.MyDecimalStructSize
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
