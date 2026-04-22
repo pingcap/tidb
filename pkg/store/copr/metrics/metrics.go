@@ -25,11 +25,9 @@ var (
 	CoprCacheCounterHit   prometheus.Counter
 	CoprCacheCounterMiss  prometheus.Counter
 
-	// EMASendCold counts cop RPCs sent with PredictedReadBytes=0 (EMA
-	// not yet ready).
-	EMASendCold prometheus.Counter
-	// EMASendReady counts cop RPCs sent with PredictedReadBytes>0.
-	EMASendReady prometheus.Counter
+	// Per-RPC PredictedReadBytes hint attached / absent.
+	PredictHintAbsent   prometheus.Counter
+	PredictHintAttached prometheus.Counter
 )
 
 func init() {
@@ -42,6 +40,6 @@ func InitMetricsVars() {
 	CoprCacheCounterHit = metrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
 	CoprCacheCounterMiss = metrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
 
-	EMASendCold = metrics.DistSQLCoprEMASend.WithLabelValues("cold")
-	EMASendReady = metrics.DistSQLCoprEMASend.WithLabelValues("ready")
+	PredictHintAbsent = metrics.DistSQLCoprPredictHintSend.WithLabelValues("absent")
+	PredictHintAttached = metrics.DistSQLCoprPredictHintSend.WithLabelValues("attached")
 }

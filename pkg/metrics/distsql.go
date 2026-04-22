@@ -28,7 +28,7 @@ var (
 	DistSQLCoprCacheCounter         *prometheus.CounterVec
 	DistSQLCoprClosestReadCounter   *prometheus.CounterVec
 	DistSQLCoprRespBodySize         *prometheus.HistogramVec
-	DistSQLCoprEMASend              *prometheus.CounterVec
+	DistSQLCoprPredictHintSend      *prometheus.CounterVec
 )
 
 // InitDistSQLMetrics initializes distsql metrics.
@@ -94,11 +94,11 @@ func InitDistSQLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 10),
 		}, []string{LblStore})
 
-	DistSQLCoprEMASend = metricscommon.NewCounterVec(
+	DistSQLCoprPredictHintSend = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "distsql",
-			Name:      "copr_ema_send_total",
-			Help:      "Counter of cop RPC sends labelled by whether the per-logical-scan EMA was ready (ready: hint dispatched to PD pre-charge; cold: hint=0, PD skips pre-charge).",
+			Name:      "copr_predict_hint_send_total",
+			Help:      "Counter of cop RPC sends labelled by whether a PredictedReadBytes hint was attached to the RPC.",
 		}, []string{LblType})
 }

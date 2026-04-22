@@ -153,7 +153,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DistSQLCoprCacheCounter)
 	prometheus.MustRegister(DistSQLCoprClosestReadCounter)
 	prometheus.MustRegister(DistSQLCoprRespBodySize)
-	prometheus.MustRegister(DistSQLCoprEMASend)
+	prometheus.MustRegister(DistSQLCoprPredictHintSend)
 	prometheus.MustRegister(DistSQLQueryHistogram)
 	prometheus.MustRegister(DistSQLScanKeysHistogram)
 	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)

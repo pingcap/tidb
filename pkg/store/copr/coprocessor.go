@@ -1700,9 +1700,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	req.InputRequestSource = task.requestSource.GetRequestSource()
 	if predicted := worker.ema.Predict(); predicted > 0 {
 		req.PredictedReadBytes = predicted
-		copr_metrics.EMASendReady.Inc()
+		copr_metrics.PredictHintAttached.Inc()
 	} else {
-		copr_metrics.EMASendCold.Inc()
+		copr_metrics.PredictHintAbsent.Inc()
 	}
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType

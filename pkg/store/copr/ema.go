@@ -20,16 +20,12 @@ import (
 	"time"
 )
 
-// defaultRUEMATau is the EMA decay time constant (τ): a sample's weight
-// drops to 1/e after τ.
+// defaultRUEMATau is the decay time constant τ: sample weight drops to
+// 1/e after τ.
 const defaultRUEMATau = time.Second
 
 // ruEMA is a time-aware EMA weighting older samples by exp(-Δt/τ) so long
 // gaps decay stale samples. Safe for concurrent Observe/Predict.
-//
-// A fresh ruEMA has value=0 and a zero lastObsAt; the first Observe then
-// computes a dt of many years, alpha saturates to 1, and value is seeded
-// to the sample — no special cold-start branch required.
 type ruEMA struct {
 	mu        sync.Mutex
 	tau       time.Duration
@@ -50,16 +46,13 @@ func (e *ruEMA) Observe(bytes uint64, now time.Time) {
 	}
 	alpha := 1 - math.Exp(-float64(dt)/float64(e.tau))
 	e.value += alpha * (float64(bytes) - e.value)
-	// Guard against out-of-order concurrent Observes rewinding the clock,
-	// which would inflate the next dt and overweight the next sample.
+	// Don't rewind on out-of-order Observes.
 	if now.After(e.lastObsAt) {
 		e.lastObsAt = now
 	}
 }
 
-// Predict returns the current EMA estimate. 0 means either "no sample
-// yet" or "EMA has converged to zero"; both are treated as "no useful
-// hint" by callers.
+// Predict returns the current estimate.
 func (e *ruEMA) Predict() uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
