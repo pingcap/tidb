@@ -15,6 +15,7 @@
 package printer
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -49,4 +50,9 @@ func TestPrintResult(t *testing.T) {
 	result, ok = GetPrintResult(cols, datas)
 	require.False(t, ok)
 	require.Equal(t, "", result)
+}
+
+func TestGetTiDBInfoIncludesRuntimeVersion(t *testing.T) {
+	info := GetTiDBInfo()
+	require.Contains(t, info, "GoVersion: "+runtime.Version())
 }

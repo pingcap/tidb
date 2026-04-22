@@ -34,10 +34,22 @@ import (
 // HandleDDLEvent begins to process a ddl task.
 func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	switch t.Tp {
-	case model.ActionCreateTable, model.ActionTruncateTable:
+	case model.ActionCreateTable:
 		ids := h.getInitStateTableIDs(t.TableInfo)
 		for _, id := range ids {
 			if err := h.insertTableStats2KV(t.TableInfo, id); err != nil {
+				return err
+			}
+		}
+	case model.ActionTruncateTable:
+		ids := h.getInitStateTableIDs(t.TableInfo)
+		for _, id := range ids {
+			if err := h.insertTableStats2KV(t.TableInfo, id); err != nil {
+				return err
+			}
+		}
+		if t.DroppedTableID != 0 {
+			if err := h.UpdateStatsMetaVersionForGC([]int64{t.DroppedTableID}); err != nil {
 				return err
 			}
 		}
@@ -61,6 +73,8 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 				return err
 			}
 		}
+	case model.ActionDropSchema:
+		return h.UpdateStatsMetaVersionForGC(t.TableIDs)
 	case model.ActionFlashbackCluster:
 		return h.updateStatsVersion()
 	}

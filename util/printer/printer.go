@@ -18,8 +18,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	_ "runtime" // import link package
-	_ "unsafe"  // required by go:linkname
+	"runtime"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -168,5 +167,4 @@ func GetPrintResult(cols []string, datas [][]string) (string, bool) {
 	return string(value), true
 }
 
-//go:linkname buildVersion runtime.buildVersion
-var buildVersion string
+var buildVersion = runtime.Version()

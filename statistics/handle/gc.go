@@ -138,6 +138,37 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 	return nil
 }
 
+// UpdateStatsMetaVersionForGC updates the stats_meta version so GC can remove dropped-table stats
+// only after other TiDB nodes have had time to observe the schema change.
+func (h *Handle) UpdateStatsMetaVersionForGC(statsIDs []int64) (err error) {
+	if len(statsIDs) == 0 {
+		return nil
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, err = exec.ExecuteInternal(ctx, "begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	startTS := txn.StartTS()
+	for _, statsID := range statsIDs {
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
 	h.mu.Lock()
