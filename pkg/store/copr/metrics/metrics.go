@@ -25,15 +25,10 @@ var (
 	CoprCacheCounterHit   prometheus.Counter
 	CoprCacheCounterMiss  prometheus.Counter
 
-	// EMASendCold counts cop RPCs dispatched while the per-logical-scan EMA
-	// was not yet ready; the request carries PredictedReadBytes=0 and PD
-	// skips pre-charge. Denominator is all cop RPC sends, so
-	// (EMASendCold + EMASendReady) is the authoritative "total read RPCs"
-	// basis for pre-charge coverage ratios at the TiDB side.
+	// EMASendCold counts cop RPCs sent with PredictedReadBytes=0 (EMA
+	// not yet ready).
 	EMASendCold prometheus.Counter
-	// EMASendReady counts cop RPCs dispatched while the per-logical-scan EMA
-	// was already ready; PredictedReadBytes > 0 is shipped as a pre-charge
-	// hint to PD.
+	// EMASendReady counts cop RPCs sent with PredictedReadBytes>0.
 	EMASendReady prometheus.Counter
 )
 

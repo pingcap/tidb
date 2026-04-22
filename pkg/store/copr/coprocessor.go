@@ -1002,9 +1002,7 @@ type copIterator struct {
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
 
-	// ema refines the RC paging pre-charge from observed per-RPC read bytes.
-	// One EMA per copIterator (logical scan) so samples from every copTask
-	// under the same request converge a single estimate.
+	// One EMA per copIterator (logical scan), shared across workers.
 	ema *ruEMA
 }
 
@@ -1037,8 +1035,6 @@ type copIteratorWorker struct {
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
 
-	// ema is a shared pointer into the owning copIterator's EMA so every
-	// worker updates the same learned estimate.
 	ema *ruEMA
 }
 
@@ -1702,12 +1698,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	// Supply a learned RC pre-charge hint when the per-logical-scan EMA has
-	// converged. Until it has, leave PredictedReadBytes at 0 so PD skips the
-	// pre-charge and bills by actual read bytes only.
-	// The send-side counters below are the authoritative basis for pre-charge
-	// coverage ratios: every outgoing cop RPC increments exactly one of
-	// (cold, ready).
 	if worker.ema.IsReady() {
 		req.PredictedReadBytes = worker.ema.Predict()
 		copr_metrics.EMASendReady.Inc()
@@ -1864,14 +1854,12 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
-// pagingResponseReadBytes returns the MVCC bytes read to serve a paging cop
-// response. It mirrors client-go's resourcecontrol.MakeResponseInfo so the
-// TiDB-side EMA observes the same quantity PD bills against. Falls back to
-// 0 when ScanDetailV2 is absent (e.g. TiFlash responses); the caller then
-// skips the observation.
+// pagingResponseReadBytes returns the MVCC bytes basis the EMA observes.
+// Mirrors client-go's resourcecontrol.MakeResponseInfo so the EMA learns
+// the same quantity PD bills against.
 //
 // TODO: for NextGen, PD bills max(TotalVersionsSize, ProcessedVersionsSize).
-// Mirror that here once a TiDB-side NextGen gate is available in this pkg.
+// Mirror that here once a TiDB-side NextGen gate is available.
 func pagingResponseReadBytes(pbResp *coprocessor.Response) uint64 {
 	if pbResp == nil {
 		return 0

@@ -21,20 +21,14 @@ import (
 )
 
 // defaultRUEMATau is the EMA decay time constant (τ): a sample's weight
-// drops to 1/e after τ; half-life ≈ 0.69·τ.
+// drops to 1/e after τ.
 const defaultRUEMATau = time.Second
 
-// ruEMAMinSamples is the cold-start threshold. Below it Predict returns 0
-// so callers leave the PredictedReadBytes hint unset and PD skips pre-charge.
+// ruEMAMinSamples is the cold-start threshold. Below it Predict returns 0.
 const ruEMAMinSamples = 2
 
-// ruEMA is a time-aware EMA over per-RPC MVCC read bytes, weighting older
-// samples by exp(-Δt/τ) so long gaps decay stale samples automatically.
-//
-// One EMA is shared across all copTasks of a single copIterator (a logical
-// coprocessor request), so multiple workers may Observe/Predict concurrently.
-// Access is serialized by an internal mutex; contention is a non-issue in
-// practice because updates fire at most once per paging RPC per worker.
+// ruEMA is a time-aware EMA weighting older samples by exp(-Δt/τ) so long
+// gaps decay stale samples. Safe for concurrent Observe/Predict.
 type ruEMA struct {
 	mu        sync.Mutex
 	tau       time.Duration
@@ -43,12 +37,10 @@ type ruEMA struct {
 	samples   int
 }
 
-// newRUEMA returns an EMA with the default half-life.
 func newRUEMA() *ruEMA {
 	return &ruEMA{tau: defaultRUEMATau}
 }
 
-// Observe folds a new read-bytes sample into the EMA with time-aware decay.
 func (e *ruEMA) Observe(bytes uint64, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -60,7 +52,6 @@ func (e *ruEMA) Observe(bytes uint64, now time.Time) {
 		if dt < 0 {
 			dt = 0
 		}
-		// alpha = 1 - exp(-Δt/τ): new sample's weight grows with the gap.
 		alpha := 1 - math.Exp(-float64(dt)/float64(e.tau))
 		e.value += alpha * (x - e.value)
 	}
@@ -68,14 +59,14 @@ func (e *ruEMA) Observe(bytes uint64, now time.Time) {
 	e.samples++
 }
 
-// IsReady reports whether enough samples have been seen to trust Predict.
 func (e *ruEMA) IsReady() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.samples >= ruEMAMinSamples
 }
 
-// Predict returns the current EMA estimate, or 0 before readiness.
+// Predict returns the current EMA estimate, or 0 before ruEMAMinSamples
+// samples have been observed.
 func (e *ruEMA) Predict() uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
