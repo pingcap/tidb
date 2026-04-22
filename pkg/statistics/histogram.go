@@ -1452,9 +1452,10 @@ type topNEntry struct {
 //
 // Time: O((N+T) log(N+T)) for the sorts + O(N+T) for the walks,
 // where N = total histogram buckets, T = total TopN entries.
-// Allocation is O(N) bytes — dominated by per-bucket Datum clones
-// and codec encoding, not by the algorithm's own bookkeeping
-// (sortedRefs + bounded min-heap are a few MB at 8k partitions).
+// Allocation is ~O(N) bytes, dominated by sortedRefs (one bucketRef
+// per bucket, ~88 B) and allTopN (one topNEntry per partition TopN
+// entry). Per-call alloc count is effectively constant (no per-bucket
+// allocation in the hot loops).
 func MergePartTopNAndHistToGlobal(
 	topNs []*TopN,
 	hists []*Histogram,
