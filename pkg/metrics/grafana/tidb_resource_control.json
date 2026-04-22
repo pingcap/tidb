@@ -2481,7 +2481,7 @@
                "fillGradient": 0,
                "gridPos": {
                   "h": 7,
-                  "w": 12,
+                  "w": 24,
                   "x": 0,
                   "y": 0
                },
@@ -2575,8 +2575,8 @@
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 12,
-                  "y": 0
+                  "x": 0,
+                  "y": 7
                },
                "id": 63,
                "legend": {
@@ -2675,7 +2675,7 @@
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 0,
+                  "x": 12,
                   "y": 7
                },
                "id": 64,
@@ -2730,7 +2730,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Paging Prediction Residual Bytes",
+               "title": "Paging Prediction Residual (Bytes)",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -2775,8 +2775,8 @@
                "gridPos": {
                   "h": 7,
                   "w": 12,
-                  "x": 12,
-                  "y": 7
+                  "x": 0,
+                  "y": 14
                },
                "id": 65,
                "legend": {
@@ -2867,8 +2867,8 @@
                "fillGradient": 0,
                "gridPos": {
                   "h": 7,
-                  "w": 24,
-                  "x": 0,
+                  "w": 12,
+                  "x": 12,
                   "y": 14
                },
                "id": 66,
@@ -2923,7 +2923,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Paging Settlement RU Delta",
+               "title": "Paging Settlement Residual (RU)",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
