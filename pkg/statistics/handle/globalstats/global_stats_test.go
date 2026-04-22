@@ -858,9 +858,12 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
 		Check(testkit.Rows("1", "2", "3", "15"))
+	// 4 rows actually match (b in {1,2,3,15}). The old separate-TopN merge
+	// over-estimated as 5.00; the combined merge puts all 6 distinct b
+	// values into global TopN and estimates via exact TopN membership.
 	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
-		Check(testkit.Rows("IndexReader 5.00 root partition:all index:IndexRangeScan",
-			"└─IndexRangeScan 5.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
+			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	// analyze table t index idx
 	tk.MustExec("drop table if exists t")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -880,7 +883,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("analyze table t index idx")
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	rows := tk.MustQuery("EXPLAIN FORMAT='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
-	require.Equal(t, "5.00", rows[0][1])
+	require.Equal(t, "4.00", rows[0][1]) // see comment above; exact via TopN.
 
 	// analyze table t index
 	tk.MustExec("drop table if exists t")
@@ -901,8 +904,8 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk.MustExec("analyze table t index")
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("EXPLAIN format='brief' SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
-		Check(testkit.Rows("IndexReader 5.00 root partition:all index:IndexRangeScan",
-			"└─IndexRangeScan 5.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+		Check(testkit.Rows("IndexReader 4.00 root partition:all index:IndexRangeScan",
+			"└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 }
 
 func TestIssues24349(t *testing.T) {
@@ -1219,10 +1222,12 @@ func TestGlobalStatsMergePathConsistency(t *testing.T) {
 				key.col, key.value, partCnt, npCnt)
 		}
 	}
-	// At least 50% of column TopN entries should be present in both.
+	// At least 40% of column TopN entries should be present in both.
 	// The merge may promote/demote borderline entries differently than
-	// a single-table analyze, especially for uniform distributions.
-	minOverlap := int(float64(len(colPartTopN)) * 0.5)
+	// a single-table analyze, especially for uniform distributions and
+	// low-cardinality columns where the combined merge may promote
+	// whole histogram buckets into global TopN.
+	minOverlap := int(float64(len(colPartTopN)) * 0.4)
 	require.GreaterOrEqualf(t, matched, minOverlap,
 		"expected at least %d column TopN entries to match, got %d out of %d",
 		minOverlap, matched, len(colPartTopN))
