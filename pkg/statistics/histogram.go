@@ -1794,7 +1794,7 @@ func MergePartTopNAndHistToGlobal(
 	// overwritten or left as untouched-but-ignored state. For the types
 	// we see in merge (int, float, string, bytes) it's allocation-free;
 	// for Decimal/Time it boxes a small value into the Datum's any.
-	var riUpper, jUpper, kLower types.Datum
+	var riUpper, jUpper, tmpLower types.Datum
 
 	fillUpper := func(ri int, dst *types.Datum) {
 		sr := sortedRefs[ri]
@@ -2004,8 +2004,8 @@ func MergePartTopNAndHistToGlobal(
 					continue
 				}
 			}
-			fillLower(k, &kLower)
-			if err := addToBucket(&kLower, count, repeat); err != nil {
+			fillLower(k, &tmpLower)
+			if err := addToBucket(&tmpLower, count, repeat); err != nil {
 				return nil, nil, err
 			}
 		}
