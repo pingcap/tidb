@@ -395,9 +395,11 @@ func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 	d.x = b
 }
 
-// GetMysqlDuration gets Duration value
+// GetMysqlDuration gets Duration value. The int8 round-trip preserves
+// UnspecifiedFsp (-1), which callers use as a "no explicit fsp" sentinel;
+// a plain int(d.decimal) would surface it as 255 and crash formatters.
 func (d *Datum) GetMysqlDuration() Duration {
-	return Duration{Duration: time.Duration(d.i), Fsp: int(d.decimal)}
+	return Duration{Duration: time.Duration(d.i), Fsp: int(int8(d.decimal))}
 }
 
 // SetMysqlDuration sets Duration value
