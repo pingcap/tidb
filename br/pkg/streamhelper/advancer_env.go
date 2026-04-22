@@ -141,10 +141,11 @@ func (t clusterEnv) ClearCache(ctx context.Context, storeID uint64) error {
 
 // CliEnv creates the Env for CLI usage.
 func CliEnv(cli *utils.StoreManager, tikvStore tikv.Storage, etcdCli *clientv3.Client) Env {
+	cli.ResetPDClientCallerComponent(caller.Pitr)
 	return clusterEnv{
 		clis:                 cli,
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner:      PDRegionScanner{cli.PDClient().WithCallerComponent(caller.Pitr)},
+		PDRegionScanner:      PDRegionScanner{cli.PDClient()},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
 	}
 }
@@ -155,13 +156,14 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 	if err != nil {
 		return nil, err
 	}
+	pitrPDClient := pdCli.WithCallerComponent(caller.Pitr)
 	env := clusterEnv{
-		clis: utils.NewStoreManager(pdCli, keepalive.ClientParameters{
+		clis: utils.NewStoreManager(pitrPDClient, keepalive.ClientParameters{
 			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 		}, tconf),
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner:      PDRegionScanner{Client: pdCli.WithCallerComponent(caller.Pitr)},
+		PDRegionScanner:      PDRegionScanner{Client: pitrPDClient},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
 	}
 
