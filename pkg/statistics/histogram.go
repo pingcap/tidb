@@ -1311,14 +1311,13 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	return nil
 }
 
-// bucketRef is a partition histogram bucket reference with cached
-// bound Datums. Upper and lower are copied out of the chunk once in
-// Pass 1 so Pass 2 never re-allocates through Histogram.GetUpper /
-// GetLower. Each entry is ~88 B; 4 M entries at 8k partitions cost
-// ~350 MB retained but eliminate roughly 2 GB of transient allocation.
+// bucketRef identifies a partition bucket. Pass 2 reads upper/lower
+// bounds on demand via chunk.Row.DatumWithBuffer into a reusable
+// scratch Datum (see fillUpper/fillLower below) — no heap allocation
+// for int/float/string/bytes types, a small interface box for Decimal
+// or Time. Keeping the ref itself tiny means sortedRefs stays ~32 MB
+// at 8 k partitions × 500 buckets (vs ~350 MB if we inlined Datums).
 type bucketRef struct {
-	upper     types.Datum
-	lower     types.Datum
 	histIdx   uint16
 	bucketIdx uint16
 }
@@ -1452,10 +1451,11 @@ type topNEntry struct {
 //
 // Time: O((N+T) log(N+T)) for the sorts + O(N+T) for the walks,
 // where N = total histogram buckets, T = total TopN entries.
-// Allocation is ~O(N) bytes, dominated by sortedRefs (one bucketRef
-// per bucket, ~88 B) and allTopN (one topNEntry per partition TopN
-// entry). Per-call alloc count is effectively constant (no per-bucket
-// allocation in the hot loops).
+// Allocation and peak memory are both ~O(N) bytes, dominated by
+// sortedRefs (4 B per bucket) and allTopN (32 B per partition TopN
+// entry). Per-call alloc count is effectively constant; Pass 2 reads
+// bucket bounds via DatumWithBuffer into reusable scratch Datums so
+// the hot loop allocates nothing for common column types.
 func MergePartTopNAndHistToGlobal(
 	topNs []*TopN,
 	hists []*Histogram,
@@ -1604,7 +1604,10 @@ func MergePartTopNAndHistToGlobal(
 			return bucketMergeEntry{}, false
 		}
 		entry := mergeHeap.popMin()
-		sortedRefs = append(sortedRefs, bucketRef(entry))
+		sortedRefs = append(sortedRefs, bucketRef{
+			histIdx:   entry.histIdx,
+			bucketIdx: entry.bucketIdx,
+		})
 		// Advance this partition to the next non-empty bucket.
 		h := hists[entry.histIdx]
 		for bi := int(entry.bucketIdx) + 1; bi < h.Len(); bi++ {
@@ -1786,6 +1789,22 @@ func MergePartTopNAndHistToGlobal(
 		prevRepeat     int64
 	)
 
+	// Scratch Datums reused across extractions. DatumWithBuffer is a
+	// setter-only fill: the previous call's fields (k, i, b, x) are
+	// overwritten or left as untouched-but-ignored state. For the types
+	// we see in merge (int, float, string, bytes) it's allocation-free;
+	// for Decimal/Time it boxes a small value into the Datum's any.
+	var riUpper, jUpper, kLower types.Datum
+
+	fillUpper := func(ri int, dst *types.Datum) {
+		sr := sortedRefs[ri]
+		hists[sr.histIdx].Bounds.GetRow(int(sr.bucketIdx)*2+1).DatumWithBuffer(0, hists[sr.histIdx].Tp, dst)
+	}
+	fillLower := func(ri int, dst *types.Datum) {
+		sr := sortedRefs[ri]
+		hists[sr.histIdx].Bounds.GetRow(int(sr.bucketIdx)*2).DatumWithBuffer(0, hists[sr.histIdx].Tp, dst)
+	}
+
 	// Check if an upper bound is a global TopN value by encoding to the
 	// same key format as globalTopNMap. For index histograms the bounds
 	// are already encoded; for columns we call codec.EncodeKey with a
@@ -1797,13 +1816,14 @@ func MergePartTopNAndHistToGlobal(
 	// reference outlives the call. Do NOT insert the key into a map or
 	// otherwise persist it; the next call will overwrite the bytes.
 	var encodeBuf []byte
-	isGlobalTopNVal := func(ref *bucketRef) bool {
+	isGlobalTopNVal := func(ri int, upper *types.Datum) bool {
 		if isIndex {
-			encoded := hists[ref.histIdx].Bounds.GetRow(int(ref.bucketIdx)*2 + 1).GetBytes(0)
+			sr := sortedRefs[ri]
+			encoded := hists[sr.histIdx].Bounds.GetRow(int(sr.bucketIdx)*2 + 1).GetBytes(0)
 			_, ok := globalTopNMap[hack.String(encoded)]
 			return ok
 		}
-		encodeBuf, _ = codec.EncodeKey(tz, encodeBuf[:0], ref.upper)
+		encodeBuf, _ = codec.EncodeKey(tz, encodeBuf[:0], *upper)
 		_, ok := globalTopNMap[hack.String(encodeBuf)]
 		return ok
 	}
@@ -1892,8 +1912,9 @@ func MergePartTopNAndHistToGlobal(
 			if err != nil {
 				return nil, nil, err
 			}
+			fillUpper(ri, &riUpper)
 			mergeOrd, err = topNDatum.Compare(sc.TypeCtx(),
-				&sortedRefs[ri].upper,
+				&riUpper,
 				collate.GetBinaryCollator())
 			if err != nil {
 				return nil, nil, err
@@ -1930,7 +1951,13 @@ func MergePartTopNAndHistToGlobal(
 		}
 
 		// Hist group (alone, or merged with a topN entry at the same key).
-		startNewGroup(&sortedRefs[ri].upper)
+		// riUpper was filled above in the compare branch when both sides
+		// are live; when we took the ti2-exhausted path (mergeOrd == 1),
+		// re-fill it here.
+		if ti2 >= len(allTopN) {
+			fillUpper(ri, &riUpper)
+		}
+		startNewGroup(&riUpper)
 
 		if mergeOrd == 0 {
 			key := allTopN[ti2].encoded
@@ -1947,12 +1974,12 @@ func MergePartTopNAndHistToGlobal(
 			}
 		}
 
-		topNMatch := isGlobalTopNVal(&sortedRefs[ri])
+		topNMatch := isGlobalTopNVal(ri, &riUpper)
 
 		j := ri + 1
 		for j < len(sortedRefs) {
-			c, err := sortedRefs[j].upper.Compare(sc.TypeCtx(),
-				&sortedRefs[ri].upper, collate.GetBinaryCollator())
+			fillUpper(j, &jUpper)
+			c, err := jUpper.Compare(sc.TypeCtx(), &riUpper, collate.GetBinaryCollator())
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1977,7 +2004,8 @@ func MergePartTopNAndHistToGlobal(
 					continue
 				}
 			}
-			if err := addToBucket(&sortedRefs[k].lower, count, repeat); err != nil {
+			fillLower(k, &kLower)
+			if err := addToBucket(&kLower, count, repeat); err != nil {
 				return nil, nil, err
 			}
 		}
