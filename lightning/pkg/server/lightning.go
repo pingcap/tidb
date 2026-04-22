@@ -68,7 +68,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/shurcooL/httpgzip"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -253,17 +252,6 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/pause", httpHandleWrapper(l.handlePause))
 	mux.HandleFunc("/resume", httpHandleWrapper(l.handleResume))
 	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
-
-	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
-		IndexHTML: true,
-		ServeError: func(w http.ResponseWriter, req *http.Request, err error) {
-			if os.IsNotExist(err) && !strings.Contains(req.URL.Path, ".") {
-				http.Redirect(w, req, "/web/", http.StatusFound)
-			} else {
-				httpgzip.NonSpecific(w, req, err)
-			}
-		},
-	})))
 
 	listener, err := net.Listen("tcp", statusAddr)
 	if err != nil {

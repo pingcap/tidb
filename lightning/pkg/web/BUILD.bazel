@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "progress.go",
         "res.go",  #keep
-        "res_vfsdata.go",
     ],
     importpath = "github.com/pingcap/tidb/lightning/pkg/web",
     visibility = ["//visibility:public"],
