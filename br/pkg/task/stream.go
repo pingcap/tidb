@@ -1924,12 +1924,8 @@ func getLogInfo(
 
 func getLogInfoFromStorage(
 	ctx context.Context,
-<<<<<<< HEAD
 	s storage.ExternalStorage,
-=======
-	s storeapi.Storage,
 	checkRequirements bool,
->>>>>>> 65d9fb6334e (BR: support detect unrecognized pattern (#67408))
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)

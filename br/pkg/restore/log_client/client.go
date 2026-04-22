@@ -236,6 +236,7 @@ func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
 }
 
+// SetCheckRequirements controls whether backup metadata compatibility checks are enforced.
 func (rc *LogClient) SetCheckRequirements(checkRequirements bool) {
 	rc.checkRequirements = checkRequirements
 }

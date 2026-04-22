@@ -1571,14 +1571,14 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 
 	t.Run("reject newer backup schema version", func(t *testing.T) {
 		client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
-		backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+		backend, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
 		require.NoError(t, err)
-		storage, err := objstore.New(ctx, backend, nil)
+		stg, err := storage.New(ctx, backend, nil)
 		require.NoError(t, err)
 		err = client.SetStorage(ctx, backend, nil)
 		require.NoError(t, err)
 		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
-		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), data))
+		require.NoError(t, stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), data))
 
 		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
 		require.ErrorContains(t, err, "requires schema version")

@@ -178,7 +178,7 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	var fullBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := storage.NewLocalStorage(testDir)
+	stg, err := storage.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -187,23 +187,19 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	data, err := proto.Marshal(&m)
 	require.Nil(t, err)
 
-	err = storage.WriteFile(context.TODO(), metautil.MetaFile, data)
+	err = stg.WriteFile(context.TODO(), metautil.MetaFile, data)
 	require.Nil(t, err)
 
 	cfg := Config{
 		Storage: testDir,
 	}
 	_, err = getLogInfo(context.TODO(), &cfg)
-<<<<<<< HEAD
-	require.Error(t, err, errors.Annotate(berrors.ErrStorageUnknown,
-		"the storage has been used for full backup"))
-=======
 	require.ErrorIs(t, err, berrors.ErrStorageUnknown)
 	require.ErrorContains(t, err, "the storage has been used for full backup")
 
 	t.Run("full backup ts checks backupmeta compatibility", func(t *testing.T) {
 		testDir := t.TempDir()
-		storage, err := objstore.NewLocalStorage(testDir)
+		stg, err := storage.NewLocalStorage(testDir)
 		require.NoError(t, err)
 
 		const fullBackupTS uint64 = 223344
@@ -217,7 +213,7 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 		}
 		data, err := proto.Marshal(&m)
 		require.NoError(t, err)
-		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
+		require.NoError(t, stg.WriteFile(context.TODO(), metautil.MetaFile, data))
 
 		restoreCfg := &RestoreConfig{
 			Config: Config{
@@ -234,13 +230,12 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 		require.Equal(t, fullBackupTS, startTS)
 		require.Equal(t, fullClusterID, clusterID)
 	})
->>>>>>> 65d9fb6334e (BR: support detect unrecognized pattern (#67408))
 }
 
 func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	var startLogBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := storage.NewLocalStorage(testDir)
+	stg, err := storage.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -249,7 +244,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	data, err := proto.Marshal(&m)
 	require.Nil(t, err)
 
-	err = storage.WriteFile(context.TODO(), metautil.MetaFile, data)
+	err = stg.WriteFile(context.TODO(), metautil.MetaFile, data)
 	require.Nil(t, err)
 
 	cfg := Config{
@@ -261,7 +256,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 
 	t.Run("log info checks backupmeta compatibility", func(t *testing.T) {
 		testDir := t.TempDir()
-		storage, err := objstore.NewLocalStorage(testDir)
+		stg, err := storage.NewLocalStorage(testDir)
 		require.NoError(t, err)
 
 		m := backuppb.BackupMeta{
@@ -272,7 +267,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 		}
 		data, err := proto.Marshal(&m)
 		require.NoError(t, err)
-		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
+		require.NoError(t, stg.WriteFile(context.TODO(), metautil.MetaFile, data))
 
 		cfg := Config{
 			Storage:           testDir,
