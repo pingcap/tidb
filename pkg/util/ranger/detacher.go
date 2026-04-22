@@ -654,7 +654,7 @@ func allSinglePoints(typeCtx types.Context, points []*point) []*point {
 			return nil
 		}
 		// Since the point's collations are equal to the column's collation, we can use any of them.
-		cmp, err := left.value.Compare(typeCtx, &right.value, collate.GetCollator(left.value.Collation()))
+		cmp, err := left.value.Compare(typeCtx, &right.value, collate.GetCollatorByID(int(left.value.CollationID())))
 		if err != nil || cmp != 0 {
 			return nil
 		}
