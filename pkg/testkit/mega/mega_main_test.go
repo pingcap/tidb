@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -33,8 +34,10 @@ var (
 	flagMegaRun  = flag.String("mega.run", "", "Run tests matching pattern (e.g., 'ddl/*', '*/GetTimeZone')")
 	flagMegaList = flag.Bool("mega.list", false, "List all registered tests and exit")
 	// Legacy -ut flag removed, use "mega.test run" instead
-	flagMegaP       = flag.Int("mega.p", 8, "Number of parallel workers in orchestrator mode")
-	flagMegaTimeout = flag.Duration("mega.timeout", 3*time.Minute, "Per-test timeout in orchestrator mode")
+	flagMegaP        = flag.Int("mega.p", 8, "Number of parallel workers in orchestrator mode")
+	flagMegaTimeout  = flag.Duration("mega.timeout", 3*time.Minute, "Per-test timeout in orchestrator mode")
+				flagJUnitFile    = flag.String("junitfile", "", "Write JUnit XML results to this file (orchestrator mode)")
+	flagCoverProfile = flag.String("coverprofile", "", "Write merged coverage profile to this file (orchestrator mode)")
 )
 
 var helpCalled = false
@@ -85,6 +88,8 @@ PATTERNS:
 OPTIONS (for orchestrator mode):
     -mega.p N           Number of parallel workers (default: 8)
     -mega.timeout D      Per-test timeout (default: 3m)
+    --junitfile FILE     Write JUnit XML results to FILE
+    --coverprofile FILE  Write merged coverage profile to FILE
 
 EXAMPLES:
     mega.test help
@@ -93,6 +98,7 @@ EXAMPLES:
     mega.test run ddl/*
     mega.test run */GetTimeZone
     mega.test run executor/InspectionResult -mega.p 16
+    mega.test run --junitfile bazel.xml --coverprofile coverage.dat
 
 INTERNAL FLAGS (used by orchestrator subprocesses):
     -test.run          Internal: go test filter
@@ -314,9 +320,21 @@ func runTests(binary string, tasks []task) bool {
 	workers := make([]worker, *flagMegaP)
 	var wg sync.WaitGroup
 
+	// Set up coverage collection if requested
+	var covCollector *CoverageCollector
+	if *flagCoverProfile != "" {
+		var err error
+		covCollector, err = NewCoverageCollector()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "create coverage temp dir:", err)
+			os.Exit(1)
+		}
+		defer covCollector.Cleanup()
+	}
+
 	for i := range workers {
 		wg.Add(1)
-		go workers[i].run(&wg, binary, taskCh)
+		go workers[i].run(&wg, binary, taskCh, covCollector)
 	}
 
 	// Shuffle for better load distribution
@@ -330,6 +348,30 @@ func runTests(binary string, tasks []task) bool {
 	wg.Wait()
 
 	fmt.Printf("\n=== Done: %d tests in %v ===\n", len(tasks), time.Since(start).Round(time.Second))
+
+	// Collect results from all workers
+	var allResults []orchResult
+	for _, w := range workers {
+		allResults = append(allResults, w.results...)
+	}
+
+	// Write JUnit XML if requested
+	if *flagJUnitFile != "" {
+		if err := writeOrchestratorJUnit(allResults, *flagJUnitFile); err != nil {
+			fmt.Fprintln(os.Stderr, "write junit file:", err)
+			return false
+		}
+		fmt.Println("JUnit results written to", *flagJUnitFile)
+	}
+
+	// Merge coverage profiles if requested
+	if *flagCoverProfile != "" {
+		if err := covCollector.MergeProfiles(*flagCoverProfile); err != nil {
+			fmt.Fprintln(os.Stderr, "merge coverage profiles:", err)
+			return false
+		}
+		fmt.Println("Coverage profile written to", *flagCoverProfile)
+	}
 
 	var failures int
 	for _, w := range workers {
@@ -349,9 +391,11 @@ func shuffle(tasks []task) {
 
 type worker struct {
 	failures int
+	results  []orchResult
 }
 
-type result struct {
+// orchResult is a test result from the orchestrator, used for JUnit output.
+type orchResult struct {
 	pkg      string
 	name     string
 	duration time.Duration
@@ -359,10 +403,11 @@ type result struct {
 	output   string
 }
 
-func (w *worker) run(wg *sync.WaitGroup, binary string, ch chan task) {
+func (w *worker) run(wg *sync.WaitGroup, binary string, ch chan task, covCollector *CoverageCollector) {
 	defer wg.Done()
 	for t := range ch {
-		res := w.runOne(binary, t)
+		res := w.runOne(binary, t, covCollector)
+		w.results = append(w.results, res)
 		if res.err != nil {
 			w.failures++
 			fmt.Printf("[FAIL]     %s/%s  %.2fs\n", t.pkg, t.name, res.duration.Seconds())
@@ -376,7 +421,7 @@ func (w *worker) run(wg *sync.WaitGroup, binary string, ch chan task) {
 	}
 }
 
-func (w *worker) runOne(binary string, t task) result {
+func (w *worker) runOne(binary string, t task, covCollector *CoverageCollector) orchResult {
 	pattern := "^" + regexp.QuoteMeta(t.pkg+"/"+t.name) + "$"
 	start := time.Now()
 
@@ -385,8 +430,16 @@ func (w *worker) runOne(binary string, t task) result {
 	timedOut := false
 
 	for range 3 {
+		args := []string{"-test.run", "^TestMega$", "-mega.run", pattern}
+
+		// Add per-test coverprofile if coverage collection is enabled
+		if covCollector != nil {
+			tmpFile := covCollector.TempFile(t.pkg, t.name)
+			args = append(args, "-test.coverprofile", tmpFile)
+		}
+
 		//nolint:gosec
-		cmd := exec.Command(binary, "-test.run", "^TestMega$", "-mega.run", pattern)
+		cmd := exec.Command(binary, args...)
 		cmd.Dir = tryDir(t.pkg)
 		var buf buffer
 		cmd.Stdout = &buf
@@ -414,7 +467,7 @@ func (w *worker) runOne(binary string, t task) result {
 		break
 	}
 
-	result := result{
+	res := orchResult{
 		pkg:      t.pkg,
 		name:     t.name,
 		duration: time.Since(start),
@@ -423,10 +476,10 @@ func (w *worker) runOne(binary string, t task) result {
 	}
 
 	if timedOut {
-		fmt.Printf("[TIMEOUT]  %s/%s  %.2fs\n", t.pkg, t.name, result.duration.Seconds())
+		fmt.Printf("[TIMEOUT]  %s/%s  %.2fs\n", t.pkg, t.name, res.duration.Seconds())
 	}
 
-	return result
+	return res
 }
 
 // buffer is a simple thread-safe byte buffer.
@@ -482,6 +535,53 @@ func filterOutput(output string) string {
 		filtered = filtered[len(filtered)-80:]
 	}
 	return strings.Join(filtered, "\n")
+}
+
+// writeOrchestratorJUnit writes JUnit XML results for the orchestrator run.
+func writeOrchestratorJUnit(results []orchResult, filename string) error {
+	version := goVersion()
+
+	// Group results by package for per-suite output
+	pkgs := make(map[string][]JUnitTestCase)
+	durations := make(map[string]time.Duration)
+
+	for _, res := range results {
+		classname := filepath.Join(modulePath, res.pkg)
+		tc := JUnitTestCase{
+			Classname: classname,
+			Name:      res.name,
+			Time:      formatDurationAsSeconds(res.duration),
+		}
+		if res.err != nil {
+			tc.Failure = &JUnitFailure{
+				Message:  "Failed",
+				Contents: res.output,
+			}
+		}
+		pkgs[classname] = append(pkgs[classname], tc)
+		durations[classname] = durations[classname] + res.duration
+	}
+
+	suites := JUnitTestSuites{}
+	for pkg, cases := range pkgs {
+		suite := JUnitTestSuite{
+			Tests:      len(cases),
+			Failures:   failureCases(cases),
+			Time:       formatDurationAsSeconds(durations[pkg]),
+			Name:       pkg,
+			Properties: packageProperties(version),
+			TestCases:  cases,
+		}
+		suites.Suites = append(suites.Suites, suite)
+	}
+
+	f, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	return writeJUnitXML(f, suites)
 }
 
 // listTests prints all registered tests in a formatted way.
@@ -560,6 +660,53 @@ var knownSubcommands = map[string]bool{
 	"--help": true,
 }
 
+// extractFlagValue finds a --flag value in args, sets the flag pointer, and returns
+// the remaining args with the flag and its value removed.
+func extractFlagValue(args []string, flagName string, flagPtr *string) ([]string, bool) {
+	for i, arg := range args {
+		if arg == flagName && i+1 < len(args) {
+			*flagPtr = args[i+1]
+			remaining := make([]string, 0, len(args)-2)
+			remaining = append(remaining, args[:i]...)
+			remaining = append(remaining, args[i+2:]...)
+			return remaining, true
+		}
+	}
+	return args, false
+}
+
+// extractFlagInt finds a -flag value in args, parses it as int, and returns remaining args.
+func extractFlagInt(args []string, flagName string, flagPtr *int) []string {
+	for i, arg := range args {
+		if arg == flagName && i+1 < len(args) {
+			if v, err := strconv.Atoi(args[i+1]); err == nil {
+				*flagPtr = v
+				remaining := make([]string, 0, len(args)-2)
+				remaining = append(remaining, args[:i]...)
+				remaining = append(remaining, args[i+2:]...)
+				return remaining
+			}
+		}
+	}
+	return args
+}
+
+// extractFlagDuration finds a -flag value in args, parses it as duration, and returns remaining args.
+func extractFlagDuration(args []string, flagName string, flagPtr *time.Duration) []string {
+	for i, arg := range args {
+		if arg == flagName && i+1 < len(args) {
+			if v, err := time.ParseDuration(args[i+1]); err == nil {
+				*flagPtr = v
+				remaining := make([]string, 0, len(args)-2)
+				remaining = append(remaining, args[:i]...)
+				remaining = append(remaining, args[i+2:]...)
+				return remaining
+			}
+		}
+	}
+	return args
+}
+
 // HandleCLI is called from TestMain before m.Run().
 //
 // It intercepts subcommands (help, list, run) and returns whether the caller
@@ -569,8 +716,18 @@ func HandleCLI() (shouldRunTests bool, exitCode int) {
 	// Parse flags first to access -mega.list and -mega.run (used internally by subprocess)
 	flag.Parse()
 
-	// Check for subcommand (first positional arg after flags)
+		// Extract --junitfile and --coverprofile from positional args after the subcommand.
+	// flag.Parse() stops at the first non-flag argument (the subcommand), so these
+	// flags end up in flag.Args(). We need to handle them manually.
 	args := flag.Args()
+	args, _ = extractFlagValue(args, "--junitfile", flagJUnitFile)
+	args, _ = extractFlagValue(args, "--coverprofile", flagCoverProfile)
+
+	// Also extract -mega.p and -mega.timeout from positional args (same issue)
+	// so they don't get confused with test patterns.
+	args = extractFlagInt(args, "-mega.p", flagMegaP)
+	args = extractFlagDuration(args, "-mega.timeout", flagMegaTimeout)
+
 	if len(args) == 0 {
 		// No subcommand — proceed with normal go test execution
 		return true, 0
@@ -671,6 +828,8 @@ PATTERNS:
 OPTIONS (for orchestrator mode):
     -mega.p N           Number of parallel workers (default: 8)
     -mega.timeout D      Per-test timeout (default: 3m)
+    --junitfile FILE     Write JUnit XML results to FILE
+    --coverprofile FILE  Write merged coverage profile to FILE
 
 EXAMPLES:
     mega.test list
@@ -678,6 +837,7 @@ EXAMPLES:
     mega.test run ddl/*
     mega.test run */GetTimeZone
     mega.test run executor/InspectionResult -mega.p 16
+    mega.test run --junitfile bazel.xml --coverprofile coverage.dat
 
 INTERNAL FLAGS (used by orchestrator subprocesses):
     -test.run          Internal: go test filter

@@ -206,7 +206,7 @@ ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(CLEAN_UT_BINARY)
 
 .PHONY: bazel_coverage_test
-bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run the CI mega-test flow; target name is kept for CI compatibility. Produces bazel.xml and bazel-out/_coverage/_coverage_report.dat unless SKIP_MEGA_RUN=1.
+bazel_coverage_test: tools/bin/failpoint-ctl ## Run the CI mega-test flow; target name is kept for CI compatibility. Produces bazel.xml and bazel-out/_coverage/_coverage_report.dat unless SKIP_MEGA_RUN=1.
 	@echo "=== Enabling failpoints ==="
 	@tools/bin/failpoint-ctl enable
 	@echo "=== Preparing BUILD.bazel files (gazelle + tazel) ==="
@@ -217,13 +217,13 @@ bazel_coverage_test: tools/bin/ut tools/bin/failpoint-ctl ## Run the CI mega-tes
 	fi
 	@echo "=== Building mega binary ==="
 	@$(MAKE) bazel-mega-binary
-	@echo "=== Running mega tests ==="
+		@echo "=== Running mega tests ==="
 	@if [ "$(SKIP_MEGA_RUN)" = "1" ]; then \
 		echo "=== Skip mega tests because SKIP_MEGA_RUN=1 ==="; \
 	else \
 		rm -f bazel.xml bazel-out/_coverage/_coverage_report.dat; \
 		mkdir -p bazel-out/_coverage; \
-		tools/bin/ut --mega run --junitfile bazel.xml --coverprofile bazel-out/_coverage/_coverage_report.dat; \
+		./bazel-bin/pkg/testkit/mega/mega_test_/mega_test run --junitfile bazel.xml --coverprofile bazel-out/_coverage/_coverage_report.dat; \
 		MEGA_RUN_RET=$$?; \
 		if [ "$$MEGA_RUN_RET" -ne 0 ]; then \
 			if [ "$(MEGA_RUN_STRICT)" = "1" ]; then \

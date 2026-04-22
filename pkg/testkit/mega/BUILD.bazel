@@ -3,13 +3,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "mega_test",
     timeout = "short",
-    srcs = [
+        srcs = [
+        "coverage.go",
+        "junit.go",
         "main_test.go",
         "mega_imports_test.go",
         "mega_main_test.go",
     ],
     flaky = True,
-    deps = [
+        deps = [
+        "@org_golang_x_tools//cover",
         "//pkg/autoid_service/test",
         "//pkg/bindinfo/test",
         "//pkg/bindinfo/tests/test",
