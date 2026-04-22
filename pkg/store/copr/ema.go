@@ -24,9 +24,6 @@ import (
 // drops to 1/e after τ.
 const defaultRUEMATau = time.Second
 
-// ruEMAMinSamples is the cold-start threshold. Below it Predict returns 0.
-const ruEMAMinSamples = 2
-
 // ruEMA is a time-aware EMA weighting older samples by exp(-Δt/τ) so long
 // gaps decay stale samples. Safe for concurrent Observe/Predict.
 type ruEMA struct {
@@ -34,7 +31,7 @@ type ruEMA struct {
 	tau       time.Duration
 	value     float64
 	lastObsAt time.Time
-	samples   int
+	hasSample bool
 }
 
 func newRUEMA() *ruEMA {
@@ -45,8 +42,9 @@ func (e *ruEMA) Observe(bytes uint64, now time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	x := float64(bytes)
-	if e.samples == 0 {
+	if !e.hasSample {
 		e.value = x
+		e.hasSample = true
 	} else {
 		dt := now.Sub(e.lastObsAt)
 		if dt < 0 {
@@ -56,24 +54,21 @@ func (e *ruEMA) Observe(bytes uint64, now time.Time) {
 		e.value += alpha * (x - e.value)
 	}
 	e.lastObsAt = now
-	e.samples++
 }
 
 func (e *ruEMA) IsReady() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.samples >= ruEMAMinSamples
+	return e.hasSample
 }
 
-// Predict returns the current EMA estimate, or 0 before ruEMAMinSamples
-// samples have been observed.
+// Predict returns the current EMA estimate, or 0 before any sample has
+// been observed. Callers should gate on IsReady to distinguish "no data"
+// from a genuine zero-byte estimate.
 func (e *ruEMA) Predict() uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.samples < ruEMAMinSamples {
-		return 0
-	}
-	if e.value < 0 {
+	if !e.hasSample || e.value < 0 {
 		return 0
 	}
 	return uint64(e.value)

@@ -31,13 +31,13 @@ func TestRUEMAColdStart(t *testing.T) {
 
 	now := time.Now()
 	e.Observe(1_000_000, now)
-	require.False(t, e.IsReady(), "1 sample is below the readiness threshold")
-	require.Zero(t, e.Predict(), "still no prediction with 1 sample")
+	require.True(t, e.IsReady(), "any observation makes the EMA ready")
+	require.Equal(t, uint64(1_000_000), e.Predict(),
+		"first sample seeds the EMA and is returned directly")
 
 	e.Observe(1_000_000, now.Add(100*time.Millisecond))
-	require.True(t, e.IsReady(), "2 samples meets readiness threshold")
 	require.InDelta(t, float64(1_000_000), float64(e.Predict()), 1,
-		"steady input: prediction should converge to the input")
+		"steady input: prediction stays at the input")
 }
 
 func TestRUEMATracksShift(t *testing.T) {
