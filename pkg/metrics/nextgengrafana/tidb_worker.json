@@ -2259,7 +2259,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "count(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"} == 1)",
+              "expr": "count(max(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}) by (instance) == 1)",
               "format": "time_series",
               "hide": false,
               "interval": "",
@@ -2270,7 +2270,7 @@
             },
             {
               "exemplar": true,
-              "expr": "count(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"} == 0)",
+              "expr": "count(max(up{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"worker-tidb\"}) by (instance) == 0)",
               "hide": false,
               "interval": "",
               "legendFormat": "Down",

@@ -383,6 +383,41 @@ func TestPubSubWhenReporterIsStopped(t *testing.T) {
 	require.Error(t, err, "reporter is closed")
 }
 
+func TestTopRUOnlyRegistersSQLAndPlan(t *testing.T) {
+	for topsqlstate.TopRUEnabled() {
+		topsqlstate.DisableTopRU()
+	}
+	topsqlstate.DisableTopSQL()
+	t.Cleanup(func() {
+		for topsqlstate.TopRUEnabled() {
+			topsqlstate.DisableTopRU()
+		}
+		topsqlstate.DisableTopSQL()
+	})
+
+	collector := mock.NewTopSQLCollector()
+	topsql.SetupTopProfilingForTest(collector)
+
+	topsqlstate.EnableTopRU()
+	require.True(t, topsqlstate.TopProfilingEnabled())
+	require.False(t, topsqlstate.TopSQLEnabled())
+
+	ctx := context.Background()
+	sql := "select * from t where a=?"
+	plan := "point-get"
+	sqlDigest := mock.GenSQLDigest(sql)
+	planDigest := genDigest(plan)
+
+	if topsqlstate.TopProfilingEnabled() {
+		topsql.AttachAndRegisterSQLInfo(ctx, sql, sqlDigest, false)
+		topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+		topsql.RegisterPlan(plan, planDigest)
+	}
+
+	require.Equal(t, sql, collector.GetSQL(sqlDigest.Bytes()))
+	require.Equal(t, plan, collector.GetPlan(planDigest.Bytes()))
+}
+
 func mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)

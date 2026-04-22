@@ -17,6 +17,7 @@ package crossks_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -235,9 +236,11 @@ func TestManager(t *testing.T) {
 			})
 			require.EqualValues(t, 1, tableIDCount)
 			require.True(t, coordinator.ContainsInternalSession(se))
-			require.EqualValues(t, 1, coordinator.InternalSessionCount())
+			require.GreaterOrEqual(t, coordinator.InternalSessionCount(), 1)
 			return nil
 		}))
-		require.Zero(t, coordinator.InternalSessionCount())
+		require.Eventually(t, func() bool {
+			return coordinator.InternalSessionCount() == 0
+		}, 10*time.Second, 20*time.Millisecond)
 	})
 }

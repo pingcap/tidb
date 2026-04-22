@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
 
 func TestCorrelatedSubquery(t *testing.T) {
@@ -68,6 +69,35 @@ WHERE NOT (tlc07c2a51.col_1>=
               WHERE ISNULL(tc4cf4a6b.col_3)
               group by tlc07c2a51.col_6
               HAVING tlc07c2a51.col_6>0)) ;`).Check(testkit.Rows("1", "1", "1", "1", "1", "1", "1", "1", "1", "1"))
+	})
+}
+
+func TestNaturalJoinWithCorrelatedSubquery(tt *testing.T) {
+	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int)")
+		// Keep duplicate and NULL rows so the regression also pins multiplicity
+		// and NULL-handling for the correlated EXISTS predicate.
+		tk.MustExec("insert into t values (1), (1), (2), (null)")
+
+		var input []string
+		var output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+		suite := GetCorrelatedSubquerySuiteData()
+		suite.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + sql).Rows())
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+			})
+			tk.MustQuery("explain format='brief' " + sql).Check(testkit.Rows(output[i].Plan...))
+			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+		}
 	})
 }
 

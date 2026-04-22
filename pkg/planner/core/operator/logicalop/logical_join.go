@@ -90,6 +90,10 @@ type LogicalJoin struct {
 	// (*PlanBuilder).unfoldWildStar() handles the schema for such case.
 	FullSchema *expression.Schema
 	FullNames  types.NameSlice
+	// RedundantColsToOutputIdx maps a redundant column unique-id introduced by USING/NATURAL JOIN
+	// to the canonical visible output column index in Join.Schema()/OutputNames().
+	// It is built once during join construction and then treated as immutable.
+	RedundantColsToOutputIdx map[int64]int
 
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
@@ -843,6 +847,53 @@ func (p *LogicalJoin) IsNAAJ() bool {
 func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p
 	return join.Init(p.SCtx(), p.QueryBlockOffset())
+}
+
+// RegisterRedundantColumnMapping records a canonical mapping from a redundant USING/NATURAL JOIN
+// column to the visible output column.
+func (p *LogicalJoin) RegisterRedundantColumnMapping(redundantCol, visibleCol *expression.Column) {
+	if p == nil || redundantCol == nil || visibleCol == nil || p.Schema() == nil {
+		return
+	}
+	visibleIdx := p.Schema().ColumnIndex(visibleCol)
+	if visibleIdx < 0 {
+		return
+	}
+	if p.RedundantColsToOutputIdx == nil {
+		p.RedundantColsToOutputIdx = make(map[int64]int)
+	}
+	p.RedundantColsToOutputIdx[redundantCol.UniqueID] = visibleIdx
+}
+
+func redundantColumnRemapTypesMatch(redundantCol, visibleCol *expression.Column) bool {
+	if redundantCol == nil || visibleCol == nil || redundantCol.RetType == nil || visibleCol.RetType == nil {
+		return false
+	}
+	return redundantCol.RetType.Equal(visibleCol.RetType)
+}
+
+// ResolveRedundantColumn maps a redundant USING/NATURAL JOIN column to the canonical visible output.
+func (p *LogicalJoin) ResolveRedundantColumn(col *expression.Column) (*expression.Column, *types.FieldName) {
+	if p == nil || col == nil || len(p.RedundantColsToOutputIdx) == 0 || p.Schema() == nil {
+		return nil, nil
+	}
+	// Remapping redundant USING/NATURAL columns is only valid for inner join.
+	// For outer joins, preserving original side semantics is required.
+	if p.JoinType != base.InnerJoin {
+		return nil, nil
+	}
+	visibleIdx, ok := p.RedundantColsToOutputIdx[col.UniqueID]
+	if !ok {
+		return nil, nil
+	}
+	if visibleIdx < 0 || visibleIdx >= p.Schema().Len() || visibleIdx >= len(p.OutputNames()) {
+		return nil, nil
+	}
+	visibleCol := p.Schema().Columns[visibleIdx]
+	if !redundantColumnRemapTypesMatch(col, visibleCol) {
+		return nil, nil
+	}
+	return visibleCol, p.OutputNames()[visibleIdx]
 }
 
 // ExtractFDForSemiJoin extracts FD for semi join.
@@ -1806,10 +1857,39 @@ func (p *LogicalJoin) updateEQCond() {
 					rKey = rProj.AppendExpr(rKey)
 				}
 				eqCond := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+				eqSf := eqCond.(*expression.ScalarFunction)
+				if _, _, isColOpCol := expression.IsColOpCol(eqSf); !isColOpCol {
+					// Join reorder and several join implementations assume each EqualCondition
+					// is strictly `col = col`. However, NewFunctionInternal may inject implicit
+					// casts (for example tinyint = bit/bool from a view), turning one side into
+					// a scalar expression (e.g. cast(col)) instead of a plain column.
+					//
+					// To preserve optimizer behavior while keeping that invariant true, we
+					// materialize non-column sides via child projections and then rebuild
+					// the equality with the projection output columns.
+					if _, isCol := eqSf.GetArgs()[0].(*expression.Column); !isCol {
+						if lProj == nil {
+							lProj = p.getProj(0)
+						}
+						lKey = lProj.AppendExpr(eqSf.GetArgs()[0])
+					} else {
+						lKey = eqSf.GetArgs()[0]
+					}
+					if _, isCol := eqSf.GetArgs()[1].(*expression.Column); !isCol {
+						if rProj == nil {
+							rProj = p.getProj(1)
+						}
+						rKey = rProj.AppendExpr(eqSf.GetArgs()[1])
+					} else {
+						rKey = eqSf.GetArgs()[1]
+					}
+					eqCond = expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), lKey, rKey)
+					eqSf = eqCond.(*expression.ScalarFunction)
+				}
 				if isNA {
-					p.NAEQConditions = append(p.NAEQConditions, eqCond.(*expression.ScalarFunction))
+					p.NAEQConditions = append(p.NAEQConditions, eqSf)
 				} else {
-					p.EqualConditions = append(p.EqualConditions, eqCond.(*expression.ScalarFunction))
+					p.EqualConditions = append(p.EqualConditions, eqSf)
 				}
 			}
 		}

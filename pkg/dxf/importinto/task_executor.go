@@ -209,6 +209,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 
 	var dataEngine, indexEngine *backend.OpenedEngine
+	defer func() {
+		if err == nil || !s.tableImporter.IsLocalSort() {
+			return
+		}
+		s.tableImporter.Backend().CleanupAllLocalEngines(context.Background())
+	}()
 	if s.tableImporter.IsLocalSort() {
 		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
 		if err != nil {
@@ -240,12 +246,6 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 	defer func() {
 		s.sharedVars.Delete(subtaskMeta.ID)
-		if err == nil || !s.tableImporter.IsLocalSort() {
-			return
-		}
-		if cleanupErr := s.tableImporter.Backend().CleanupAllLocalEngines(context.Background()); cleanupErr != nil {
-			logger.Warn("cleanup engines failed", zap.Error(cleanupErr))
-		}
 	}()
 
 	wctx := workerpool.NewContext(ctx)

@@ -268,3 +268,46 @@ func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
 		t.Fatal("analyze hangs after kill during save")
 	}
 }
+
+func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {
+	const valueLen = 8 * 1024
+	// Ensure sample values are small enough to be retained in the collector;
+	// values exceeding MaxSampleValueLength are truncated, which would make
+	// the memory-release assertions unreliable.
+	require.Greater(t, statistics.MaxSampleValueLength, valueLen)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_build_sampling_stats_concurrency=1")
+	tk.MustExec("set @@tidb_analyze_skip_column_types = ''")
+	tk.MustExec("drop table if exists t_mem_release")
+	tk.MustExec("create table t_mem_release(a text collate utf8mb4_general_ci)")
+	tk.MustExec(fmt.Sprintf("insert into t_mem_release values (repeat('a', %d))", valueLen))
+	for range 6 {
+		tk.MustExec("insert into t_mem_release select a from t_mem_release")
+	}
+
+	var beforeBytes atomic.Int64
+	var afterBytes atomic.Int64
+	var beforeCollectorMem atomic.Int64
+	var afterCollectorMem atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildBeforeReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
+		if beforeBytes.CompareAndSwap(0, bytesConsumed) {
+			beforeCollectorMem.Store(collectorMemSize)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildAfterReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
+		if afterBytes.CompareAndSwap(0, bytesConsumed) {
+			afterCollectorMem.Store(collectorMemSize)
+		}
+	})
+
+	tk.MustExec("analyze table t_mem_release with 1.0 samplerate")
+
+	require.NotZero(t, beforeBytes.Load())
+	require.NotZero(t, afterBytes.Load())
+	require.Equal(t, beforeCollectorMem.Load(), afterCollectorMem.Load())
+	require.Equal(t, beforeCollectorMem.Load(), beforeBytes.Load()-afterBytes.Load())
+}

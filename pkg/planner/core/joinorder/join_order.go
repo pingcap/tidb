@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -124,6 +125,10 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 
 	// For now, we only handle inner join and left/right outer join.
 	if join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin {
+		return makeSingleGroup(p)
+	}
+
+	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) {
 		return makeSingleGroup(p)
 	}
 
@@ -400,23 +405,8 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 	return nodeWithHint, nodesAfterHint, nil
 }
 
-func checkConnection(detector *ConflictDetector, leftPlan, rightPlan *Node) (*CheckConnectionResult, error) {
-	checkResult, err := detector.CheckConnection(leftPlan, rightPlan)
-	if err != nil {
-		return nil, err
-	}
-	if checkResult.Connected() {
-		return checkResult, nil
-	}
-	checkResult, err = detector.CheckConnection(rightPlan, leftPlan)
-	if err != nil {
-		return nil, err
-	}
-	return checkResult, nil
-}
-
 func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan *Node, vertexHints map[int]*JoinMethodHint, allowNoEQ bool) (*CheckConnectionResult, *Node, error) {
-	checkResult, err := checkConnection(detector, leftPlan, rightPlan)
+	checkResult, err := detector.CheckConnection(leftPlan, rightPlan)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -476,6 +466,10 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		// and the first round of greedy enumeration is not allowed to use non-eq edges.
 		// So we got here and we need to the second round of enumeration with `allowNoEQ` as true.
 		befLen := len(nodes)
+		// Clamp to 1 to avoid cumCost*0=0 making non-EQ joins appear free.
+		if cartesianFactor <= 0 {
+			cartesianFactor = 1
+		}
 		if nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, true); err != nil {
 			return nil, err
 		}
@@ -495,6 +489,9 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 			zap.String("missingDetail", missingDetail),
 			zap.String("nodeSets", nodeSets),
 			zap.Bool("allInnerJoin", group.allInnerJoin))
+		if intest.InTest {
+			return nil, errors.New("got remaining edges during join reorder")
+		}
 		return group.root, nil
 	}
 	if len(nodes) <= 0 {

@@ -308,6 +308,8 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		collectors[i].CMSketch.CalcDefaultValForAnalyze(uint64(hg.NDV))
 		cms = append(cms, collectors[i].CMSketch)
 		fms = append(fms, collectors[i].FMSketch)
+		collectors[i].Destroy()
+		collectors[i] = nil
 	}
 	if handleHist != nil {
 		handleHist.ID = e.commonHandle.ID

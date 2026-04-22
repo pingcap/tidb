@@ -7,22 +7,20 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 
 ## Quick workflow
 
-1) Identify the target package and existing coverage using `rg --files -g '*_test.go'` and `rg --files -g '*.json'`.
-2) Check `BUILD.bazel` for `shard_count` in the target directory; keep test count <= 50 per directory.
-3) For optimizer cases, place new tests under `pkg/planner/core/casetest/<type>` (see `references/planner-guide.md`).
-4) Reuse existing fixtures and testdata; add new files only when necessary.
-5) Name tests descriptively; avoid issue-id-only names (e.g., `TestIssue123456`).
-6) Merge same-functionality cases into a single test only if runtime remains reasonable.
-7) When moving tests/benchmarks, update `BUILD.bazel` and `Makefile` (bench-daily) if needed.
+1) Identify the target package and nearest existing coverage using `rg --files -g '*_test.go'` and `rg --files -g '*.json'`.
+2) Reuse the nearest existing suite, fixtures, and testdata before creating new files.
+3) Check package-specific references when available; for planner/core optimizer cases, use `references/planner-guide.md`.
+4) Keep directory test count aligned with `BUILD.bazel` `shard_count` (practical target: <= 50 tests per directory; benchmarks excluded).
+5) When moving tests or benchmarks, update `BUILD.bazel` and related wrappers such as `Makefile` `bench-daily`.
 
 ## Basic writing rules
 
-- Benchmarks (`func BenchmarkXxx`) are tests too; apply the same placement and naming rules (benchmarks do not count toward shard_count test limits).
+- Benchmarks (`func BenchmarkXxx`) follow the same placement and naming rules, but do not count toward the directory test-count target.
 - Prefer table-driven tests for related scenarios in the same behavior area.
 - Reuse existing helper setups and test fixtures; avoid re-creating schemas unless required.
-- Prefer one `store` + one `testkit` per test; when a single test covers multiple scenarios, use distinct table names and restore any session/system variables to their original values.
+- Prefer one `store` + one `tk` per test; when a single test covers multiple scenarios, use distinct table names and restore any session/system variables to their original values.
 - If a test must use multiple sessions or domains (for example, cross-session cache behavior), keep the extra stores/testkits but document why in the test.
-- For follow-up bug fixes, prefer appending cases to existing tests/suites instead of creating new test files or new top-level tests, unless no semantically close suite exists.
+- For follow-up bug fixes, prefer appending cases to an existing semantically close suite before creating a new file or top-level test.
 - In existing regression suites that are already sequential, keep sequential scenario blocks; do not introduce `t.Run` unless subtest isolation/parallel behavior is required by semantics.
 - Prefer exact assertions with `.Check(testkit.Rows(...))`; use `MultiCheckContain` only when output is inherently unstable, and add a short comment for why exact match is not practical.
 - Reuse table definitions only across semantically similar scenarios; if partition/index/DDL shape is the behavior under test, keep separate table schemas to avoid false positives.
@@ -31,19 +29,14 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 - In test code, use the variable name `tk` for `*testkit.TestKit` (avoid `testKit`).
 - When merging multiple tests into one, keep a single `store` and a single `tk` unless multi-session behavior is required; do not create a new store/tk inside the same test body without a documented reason.
 
-## Placement rules
-
-- **Test count limit**: Keep <= 50 tests per directory; align with `shard_count` in the directory `BUILD.bazel` (benchmarks are excluded).
-
 ## Reference files
 
 - **Package case maps** (when available): `references/<pkg>-case-map.md`
 - **Planner core placement guide**: `references/planner-guide.md`
 
-## Notes
+## Package-specific notes
 
-- Apply the same rules (placement, shard_count, naming) to other packages beyond `pkg/planner`.
-- Use existing testdata patterns (`*_in.json`, `*_out.json`, `*_xut.json`) in the same directory when extending suites. Use `-record -tags=intest,deadlock` only when the Go test suite explicitly supports `-record` and you need to regenerate outputs. For `tests/integrationtest`, use `pushd tests/integrationtest && ./run-tests.sh -r <TestName> && popd` (not `-record`).
+- Use existing testdata patterns (`*_in.json`, `*_out.json`, `*_xut.json`) in the same directory when extending suites. Use `-record -tags=intest,deadlock` only when the Go test suite explicitly supports `-record` and you need to regenerate outputs. For `tests/integrationtest`, use the recording command in `docs/agents/testing-flow.md` -> `Integration tests` (not `-record`).
 - For `pkg/planner/core/casetest/rule` predicate pushdown cases, keep SQL in `predicate_pushdown_suite_in.json` and record both `EXPLAIN format='brief'` and query results via the test runner (see `rule_predicate_pushdown_test.go`).
 - When moving benchmarks between packages, update any `TestBenchDaily` wrappers that list them and keep `Makefile` `bench-daily` entries aligned with the new package location.
 - When updating tests in any `pkg/*` package, update the corresponding case map under `references/` if it exists; do not block on missing case maps.
@@ -52,9 +45,4 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 - Prefer unit tests over `tests/integrationtest` for end-to-end coverage unless you need to avoid union-storage executor differences or require full workflow validation.
 - When tests read source files under Bazel, use `go/runfiles` and ensure the target file is exported via `exports_files()` in its owning `BUILD.bazel`.
 - For Bazel runfiles, be ready to include the workspace prefix (from `TEST_WORKSPACE`) in the runfile path if needed.
-- Validation (Bazel): run `make bazel_prepare` first; then check the package `BUILD.bazel` for `@com_github_pingcap_failpoint//:failpoint` dependency.
-  - If present, run:
-    - `make bazel-failpoint-enable`
-    - `bazel test --norun_validations --define gotags=deadlock,intest --remote_cache=https://cache.hawkingrei.com/bazelcache --noremote_upload_local_results //path/to/package/...`
-    - `make bazel-failpoint-disable`
-  - If absent, run `bazel test` directly against the package path.
+- For Bazel validation prerequisites and failpoint-aware execution, use `.agents/skills/tidb-bazel-prepare-gate` and `docs/agents/testing-flow.md`.

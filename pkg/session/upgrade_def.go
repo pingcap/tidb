@@ -478,9 +478,11 @@ const (
 	// Add index on start_time for mysql.tidb_runaway_watch and done_time for mysql.tidb_runaway_watch_done
 	// to improve the performance of runaway watch sync loop.
 	version254 = 254
+	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
 
-	// version255
+	// version256
 	// Add mysql.tidb_masking_policy.
+	version256 = 256
 	version255 = 255
 )
 
@@ -495,7 +497,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version255
+var currentBootstrapVersion int64 = version256
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -673,8 +675,9 @@ var (
 		{version: version251, fn: upgradeToVer251},
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
-		{version: version254, fn: upgradeToVer254},
+				{version: version254, fn: upgradeToVer254},
 		{version: version255, fn: upgradeToVer255},
+		{version: version256, fn: upgradeToVer256},
 	}
 )
 
@@ -2056,5 +2059,26 @@ func upgradeToVer254(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer255(s sessionapi.Session, _ int64) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rows, err := sqlexec.ExecSQL(ctx, s, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;", mysql.SystemDB, mysql.GlobalVariablesTable, vardef.TiDBAnalyzeVersion)
+	terror.MustNil(err)
+	// The value should normally never be null, but check defensively to avoid a potential panic.
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return
+	}
+
+	oldValue := rows[0].GetString(0)
+	if oldValue != "1" {
+		return
+	}
+
+	// The current default value of tidb_analyze_version is 2.
+	newValue := strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
+	logutil.BgLogger().Warn(fmt.Sprintf("Rewriting persisted tidb_analyze_version from %s to %s during upgrade", oldValue, newValue))
+	mustExecute(s, "UPDATE HIGH_PRIORITY %n.%n SET VARIABLE_VALUE=%? WHERE VARIABLE_NAME=%? AND VARIABLE_VALUE=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, newValue, vardef.TiDBAnalyzeVersion, oldValue)
+}
+
+func upgradeToVer256(s sessionapi.Session, _ int64) {
 	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
 }

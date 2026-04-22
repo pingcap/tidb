@@ -400,5 +400,221 @@
         "Warn": null
       }
     ]
+  },
+  {
+    "Name": "TestWindowSubqueryOuterRef",
+    "Cases": [
+      {
+        "SQL": "select count((select /* issue:56532 */ ref_1.c2 from t1 limit 1)) over (partition by ref_1.c1) from t2 as ref_1 order by ref_1.c1, ref_1.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Shuffle root  execution info: concurrency:5, data sources:[Apply]",
+          "    └─Window root  count(Column)->Column#17 over(partition by test.t2.c1)",
+          "      └─Sort root  test.t2.c1",
+          "        └─ShuffleReceiver root  ",
+          "          └─Apply root  CARTESIAN left outer join, left side:TableReader",
+          "            ├─TableReader(Build) root  data:TableFullScan",
+          "            │ └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo",
+          "            └─Projection(Probe) root  test.t2.c2->Column",
+          "              └─Limit root  offset:0, count:1",
+          "                └─TableReader root  data:Limit",
+          "                  └─Limit cop[tikv]  offset:0, count:1",
+          "                    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "2",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select coalesce(count(*) over (partition by ref_1.c1), (select /* issue:56532 */ ref_1.c2 from t1)) from t2 as ref_1 order by ref_1.c1, ref_1.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Projection root  coalesce(cast(Column, var_string(20)), Column)->Column, test.t2.c1, test.t2.c2",
+          "    └─Apply root  CARTESIAN left outer join, left side:Shuffle",
+          "      ├─Shuffle(Build) root  execution info: concurrency:5, data sources:[TableReader]",
+          "      │ └─Window root  count(1)->Column#11 over(partition by test.t2.c1)",
+          "      │   └─Sort root  test.t2.c1",
+          "      │     └─ShuffleReceiver root  ",
+          "      │       └─TableReader root  data:TableFullScan",
+          "      │         └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo",
+          "      └─MaxOneRow(Probe) root  ",
+          "        └─Projection root  test.t2.c2->Column",
+          "          └─TableReader root  data:TableFullScan",
+          "            └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "2",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select count(exists(select /* issue:56532 */ 1 from t1 where ref_1.c1 is not null)) over (partition by ref_1.c1) from t2 as ref_1 order by ref_1.c1, ref_1.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Shuffle root  execution info: concurrency:5, data sources:[HashJoin]",
+          "    └─Window root  count(Column)->Column#20 over(partition by test.t2.c1)",
+          "      └─Sort root  test.t2.c1",
+          "        └─ShuffleReceiver root  ",
+          "          └─HashJoin root  CARTESIAN left outer semi join, left side:TableReader, left cond:[not(isnull(test.t2.c1))]",
+          "            ├─TableReader(Build) root  data:TableFullScan",
+          "            │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "            └─TableReader(Probe) root  data:TableFullScan",
+          "              └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "2",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select count((select /* issue:56532 */ 1 from t1 where ref_1.c1 is not null limit 1)) over (partition by ref_1.c1) from t2 as ref_1 join t3 using (c1) order by ref_1.c1, ref_1.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Shuffle root  execution info: concurrency:5, data sources:[Apply]",
+          "    └─Window root  count(Column)->Column#21 over(partition by test.t2.c1)",
+          "      └─Sort root  test.t2.c1",
+          "        └─ShuffleReceiver root  ",
+          "          └─Apply root  CARTESIAN left outer join, left side:HashJoin",
+          "            ├─HashJoin(Build) root  inner join, equal:[eq(test.t2.c1, test.t3.c1)]",
+          "            │ ├─TableReader(Build) root  data:Selection",
+          "            │ │ └─Selection cop[tikv]  not(isnull(test.t3.c1))",
+          "            │ │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "            │ └─TableReader(Probe) root  data:Selection",
+          "            │   └─Selection cop[tikv]  not(isnull(test.t2.c1))",
+          "            │     └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo",
+          "            └─Projection(Probe) root  1->Column",
+          "              └─Limit root  offset:0, count:1",
+          "                └─TableReader root  data:Limit",
+          "                  └─Limit cop[tikv]  offset:0, count:1",
+          "                    └─Selection cop[tikv]  not(isnull(test.t2.c1))",
+          "                      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "2",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select count(*) over w from t2 as ref_1 join t3 using (c1) window w as (partition by exists(select /* issue:56532 */ 1 from t1 where ref_1.c1 is not null)) order by ref_1.c1, ref_1.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Shuffle root  execution info: concurrency:2, data sources:[HashJoin]",
+          "    └─Window root  count(1)->Column#18 over(partition by Column)",
+          "      └─Sort root  Column",
+          "        └─ShuffleReceiver root  ",
+          "          └─HashJoin root  CARTESIAN left outer semi join, left side:HashJoin, left cond:[not(isnull(test.t2.c1))]",
+          "            ├─TableReader(Build) root  data:TableFullScan",
+          "            │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "            └─HashJoin(Probe) root  inner join, equal:[eq(test.t2.c1, test.t3.c1)]",
+          "              ├─TableReader(Build) root  data:Selection",
+          "              │ └─Selection cop[tikv]  not(isnull(test.t3.c1))",
+          "              │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "              └─TableReader(Probe) root  data:Selection",
+          "                └─Selection cop[tikv]  not(isnull(test.t2.c1))",
+          "                  └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3",
+          "3",
+          "3"
+        ]
+      },
+      {
+        "SQL": "select count((select /* issue:56532 */ 1 from t1 where t3.c1 is not null limit 1)) over (partition by ref_1.c1) from t2 as ref_1 join t3 using (c1) where ref_1.c2 is not null order by ref_1.c1, ref_1.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Shuffle root  execution info: concurrency:5, data sources:[Apply]",
+          "    └─Window root  count(Column)->Column#21 over(partition by test.t2.c1)",
+          "      └─Sort root  test.t2.c1",
+          "        └─ShuffleReceiver root  ",
+          "          └─Apply root  CARTESIAN left outer join, left side:HashJoin",
+          "            ├─HashJoin(Build) root  inner join, equal:[eq(test.t2.c1, test.t3.c1)]",
+          "            │ ├─TableReader(Build) root  data:Selection",
+          "            │ │ └─Selection cop[tikv]  not(isnull(test.t3.c1))",
+          "            │ │   └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "            │ └─TableReader(Probe) root  data:Selection",
+          "            │   └─Selection cop[tikv]  not(isnull(test.t2.c1)), not(isnull(test.t2.c2))",
+          "            │     └─TableFullScan cop[tikv] table:ref_1 keep order:false, stats:pseudo",
+          "            └─Projection(Probe) root  1->Column",
+          "              └─Limit root  offset:0, count:1",
+          "                └─TableReader root  data:Limit",
+          "                  └─Limit cop[tikv]  offset:0, count:1",
+          "                    └─Selection cop[tikv]  not(isnull(test.t3.c1))",
+          "                      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "2",
+          "2",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select case when (exists(select /* issue:57594 */ 1)) then count(*) over (partition by 1) else 1 end from t2 as ref_0 order by ref_0.c1, ref_0.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Window root  count(1)->Column#7 over(partition by Column)",
+          "    └─Projection root  0->Column, test.t2.c1, test.t2.c2",
+          "      └─TableReader root  data:TableFullScan",
+          "        └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo",
+          "ScalarSubQuery root  Output: ",
+          "└─TableDual root  rows:1",
+          "ScalarSubQuery root  Output: ",
+          "└─TableDual root  rows:1"
+        ],
+        "Result": [
+          "3",
+          "3",
+          "3"
+        ]
+      },
+      {
+        "SQL": "select case when (exists(select /* issue:57594 */ 1 where ref_0.c2)) then 1 else 1 end from t2 as ref_0 order by ref_0.c1, ref_0.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Projection root  case(Column, 1, 1)->Column, test.t2.c1, test.t2.c2",
+          "    └─HashJoin root  CARTESIAN left outer semi join, left side:TableReader, left cond:[test.t2.c2]",
+          "      ├─TableDual(Build) root  rows:1",
+          "      └─TableReader(Probe) root  data:TableFullScan",
+          "        └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "1"
+        ]
+      },
+      {
+        "SQL": "select case when (exists(select /* issue:57594 */ 1 where ref_0.c2)) then count(*) over (partition by 1) else 1 end from t2 as ref_0 order by ref_0.c1, ref_0.c2",
+        "Plan": [
+          "Projection root  Column",
+          "└─Sort root  test.t2.c1, test.t2.c2",
+          "  └─Projection root  case(Column, Column, 1)->Column, test.t2.c2, test.t2.c1",
+          "    └─HashJoin root  CARTESIAN left outer semi join, left side:Window, left cond:[test.t2.c2]",
+          "      ├─TableDual(Build) root  rows:1",
+          "      └─Window(Probe) root  count(1)->Column#8 over(partition by Column)",
+          "        └─Projection root  0->Column, test.t2.c2, test.t2.c1",
+          "          └─TableReader root  data:TableFullScan",
+          "            └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1",
+          "1",
+          "1"
+        ]
+      }
+    ]
   }
 ]

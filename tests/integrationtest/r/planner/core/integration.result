@@ -1,4 +1,3 @@
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a varchar(10), b int, c int);
 show columns from t where true;
@@ -48,7 +47,6 @@ create table bit_col_t (a bit(0));
 Error 3013 (HY000): Invalid size for column 'a'.
 create table bit_col_t (a bit(65));
 Error 1439 (42000): Display width out of range for column 'a' (max = 64)
-set tidb_cost_model_version=2;
 drop table if exists customer;
 create table customer (C_CUSTKEY bigint(20) NOT NULL, C_NAME varchar(25) NOT NULL, C_ADDRESS varchar(25) NOT NULL, PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */);
 drop table if exists orders;
@@ -1935,7 +1933,6 @@ IndexMerge	root		type: union
 insert into t values (1, 'xx');
 select /*+ use_index_merge(t) */ * from t where a=10 or b='x';
 a	b
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int);
 insert into t values(1),(1),(2);
@@ -3153,7 +3150,6 @@ greatest(a, b)
 NULL
 2020-07-29 09:07:01
 drop table if exists t1;
-set tidb_cost_model_version=2;
 create table t1( a enum('y','b','Abc','null'),b enum('y','b','Abc','null'),key(a));
 explain format='plan_tree' select * from t1 where a like "A%";
 id	task	access object	operator info
@@ -4125,7 +4121,6 @@ create table t1(c1 int);
 select * from t1 group by t1.c1 having count(1) > 1 order by count(1) limit 10;
 c1
 set tidb_enable_ordered_result_mode = DEFAULT;
-set tidb_cost_model_version=2;
 drop view if exists v, v1, v2;
 drop table if exists t, t1, t2, t3;
 create table t(a int, b int);
@@ -4157,8 +4152,6 @@ select @@last_plan_from_binding;
 0
 show global bindings where original_sql like '%planner__core__integration%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-set tidb_cost_model_version=default;
-set tidb_cost_model_version=2;
 drop table if exists t1;
 create table t1(a int, b int, index idx_a(a));
 
@@ -4206,7 +4199,6 @@ select @@last_plan_from_binding;
 0
 show global bindings where original_sql like '%planner__core__integration%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-set tidb_cost_model_version=default;
 drop table if exists t;
 set tidb_opt_fix_control='44262:ON';
 create table t (id int, c int) partition by range (id) (partition p0 values less than (4), partition p1 values less than (7));

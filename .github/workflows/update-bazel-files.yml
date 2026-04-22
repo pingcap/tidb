@@ -1,0 +1,55 @@
+name: Update Bazel Files
+on:
+  pull_request_target:
+    branches:
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: update-bazel-files-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  update:
+    name: Update Bazel Files
+    if: >
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      github.event.pull_request.maintainer_can_modify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.BAZEL_PREPARE_PUSH_TOKEN || github.token }}
+      - name: Build Prepare
+        uses: ./.github/actions/tidb_build
+        with:
+          bazelrc: ${{ secrets.BAZELRC }}
+          gcp_sa_key: ${{ secrets.GCP_SA_KEY }}
+          go-version: 1.25
+      - name: Run Bazel Prepare
+        shell: bash
+        run: |
+          #!/bin/bash
+          unset CI
+          sed -i '/bazel-cache/d' DEPS.bzl
+          sed -i '/ats.apps.svc/d' DEPS.bzl
+          sed -i '/bazel-cache/d' WORKSPACE
+          sed -i '/ats.apps.svc/d' WORKSPACE
+          make bazel_prepare
+      - name: Commit Bazel Files
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          branch: ${{ github.event.pull_request.head.ref }}
+          commit_message: "chore: update bazel file"
+          file_pattern: "DEPS.bzl **/*.bazel **/*.bzl"

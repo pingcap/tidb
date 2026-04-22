@@ -24,8 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const seed = 4992862800126241206 // set the fixed seed for test
-
 func TestSwissTable(t *testing.T) {
 	require.True(t, maxTableCapacity == 1024)
 	{
@@ -67,7 +65,7 @@ func TestSwissTable(t *testing.T) {
 		const N = 1024
 		mp := make(map[uint64]uint64)
 		sm := ToSwissMap(mp)
-		sm.Data.MockSeedForTest(seed)
+		sm.Data.MockSeedForTest(mockSeedForTest)
 		mp[1234] = 5678
 		for i := range N {
 			mp[uint64(i)] = uint64(i * 2)
@@ -109,7 +107,7 @@ func TestSwissTable(t *testing.T) {
 		const N = 2000
 		mp := make(map[string]int)
 		sm := ToSwissMap(mp)
-		sm.Data.MockSeedForTest(seed)
+		sm.Data.MockSeedForTest(mockSeedForTest)
 		for i := range N {
 			mp[fmt.Sprintf("key-%d", i)] = i
 		}
@@ -123,7 +121,7 @@ func TestSwissTable(t *testing.T) {
 		mp := make(map[int]int)
 		require.Equal(t, 0, len(mp))
 		sm := ToSwissMap(mp)
-		sm.Data.MockSeedForTest(seed)
+		sm.Data.MockSeedForTest(mockSeedForTest)
 		require.Equal(t, 0, int(sm.Data.Used))
 		require.True(t, sm.Type.GroupSize == 136)
 		require.Equal(t, 184, int(sm.Size()))
@@ -142,7 +140,7 @@ func TestSwissTable(t *testing.T) {
 		m := MemAwareMap[complex128, complex128]{}
 		const N = 1024*50 - 1
 		delta := m.Init(mp)
-		m.MockSeedForTest(seed)
+		m.MockSeedForTest()
 		for i := range N {
 			k := complex(float64(i), float64(i))
 			d := m.Set(k, k)
@@ -158,16 +156,16 @@ func TestSwissTable(t *testing.T) {
 		require.True(t, sz == 2165296, sz)
 		require.True(t, delta == 2702278, delta)
 		require.True(t, delta == int64(m.Bytes))
-		require.True(t, seed == m.unwrap().seed)
+		require.True(t, mockSeedForTest == m.unwrap().seed)
 		clearSeq := m.unwrap().clearSeq
 		clear(m.M)
 		require.True(t, m.Len() == 0)
 		require.True(t, clearSeq+1 == m.unwrap().clearSeq)
-		require.True(t, m.unwrap().seed != seed)
+		require.True(t, m.unwrap().seed != mockSeedForTest)
 		require.True(t, sz == m.RealBytes())
 		require.True(t, delta == int64(m.Bytes))
 
-		m.MockSeedForTest(seed)
+		m.MockSeedForTest()
 		for i := range 1024 {
 			k := complex(float64(i), float64(i))
 			d, insert := m.SetExt(k, k)

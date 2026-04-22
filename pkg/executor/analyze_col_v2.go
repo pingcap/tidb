@@ -345,14 +345,13 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		samplingStatsConcurrency = totalLen
 	}
 	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(gp, buildResultChan)
-	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
 	e.samplingBuilderWg.Add(samplingStatsConcurrency)
 
 	// Start workers to build stats.
 	for range samplingStatsConcurrency {
 		e.samplingBuilderWg.Run(func() {
-			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
+			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, exitCh)
 		})
 	}
 	// Generate tasks for building stats.
@@ -406,15 +405,6 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			continue
 		}
 	}
-	defer func() {
-		totalSampleCollectorSize := int64(0)
-		for _, sampleCollector := range sampleCollectors {
-			if sampleCollector != nil {
-				totalSampleCollectorSize += sampleCollector.MemSize
-			}
-		}
-		e.memTracker.Release(totalSampleCollectorSize)
-	}()
 	if err != nil {
 		return 0, nil, nil, nil, err
 	}
@@ -658,7 +648,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
-func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -808,13 +798,13 @@ workLoop:
 					MemSize:   collectorMemSize,
 				}
 			}
-			if task.isColumn {
-				collectors[task.slicePos] = collector
-			}
 			releaseCollectorMemory := func() {
-				if !task.isColumn {
-					e.memTracker.Release(collector.MemSize)
-				}
+				collectorMemSize := collector.MemSize
+				failpoint.InjectCall("analyzeSamplingBuildBeforeReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
+				intest.Assert(collectorMemSize >= 0, "collector memory size should be non-negative")
+				e.memTracker.Release(collectorMemSize)
+				collector.Destroy()
+				failpoint.InjectCall("analyzeSamplingBuildAfterReleaseCollectorMemory", collectorMemSize, e.memTracker.BytesConsumed())
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
 			if task.isColumn {

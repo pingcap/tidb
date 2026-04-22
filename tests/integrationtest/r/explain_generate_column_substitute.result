@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 set names utf8mb4;
 drop table if exists t;
 create table t(a int, b real, c bigint as ((a+1)) virtual, e real as ((b+a)));
@@ -95,10 +94,9 @@ a	b	c	e
 0	0	1	0
 desc select * from t order by a+1;
 id	estRows	task	access object	operator info
-Projection_15	10000.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b, explain_generate_column_substitute.t.c, explain_generate_column_substitute.t.e
-└─IndexLookUp_14	10000.00	root		
-  ├─IndexFullScan_12(Build)	10000.00	cop[tikv]	table:t, index:idx_c(c)	keep order:true, stats:pseudo
-  └─TableRowIDScan_13(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Sort_4	10000.00	root		explain_generate_column_substitute.t.c
+└─TableReader_9	10000.00	root		data:TableFullScan_8
+  └─TableFullScan_8	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t order by a+1;
 a	b	c	e
 -1	-2	0	-3
@@ -266,10 +264,9 @@ a	b	c	e
 desc select * from t order by a+1;
 id	estRows	task	access object	operator info
 Projection_5	10000.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b, explain_generate_column_substitute.t.c, explain_generate_column_substitute.t.e
-└─Projection_14	10000.00	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b, explain_generate_column_substitute.t.c, explain_generate_column_substitute.t.e, plus(explain_generate_column_substitute.t.a, 1), plus(explain_generate_column_substitute.t.b, cast(explain_generate_column_substitute.t.a, double BINARY))
-  └─IndexLookUp_13	10000.00	root		
-    ├─IndexFullScan_11(Build)	10000.00	cop[tikv]	table:t, index:expr_idx_c(`a` + 1)	keep order:true, stats:pseudo
-    └─TableRowIDScan_12(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─Sort_7	10000.00	root		plus(explain_generate_column_substitute.t.a, 1)
+  └─TableReader_10	10000.00	root		data:TableFullScan_9
+    └─TableFullScan_9	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t order by a+1;
 a	b	c	e
 -1	-2	0	-3
@@ -414,15 +411,15 @@ analyze table t;
 explain format = 'plan_tree' select * from t where (lower(b) = "a" and a+1 = 2) or (lower(b) = "b" and a+1 = 5);
 id	task	access object	operator info
 Projection	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b
-└─IndexLookUp	root		
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:["a" 2,"a" 2], ["b" 5,"b" 5], keep order:false
-  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false
+└─Selection	root		or(and(eq(lower(explain_generate_column_substitute.t.b), "a"), eq(plus(explain_generate_column_substitute.t.a, 1), 2)), and(eq(lower(explain_generate_column_substitute.t.b), "b"), eq(plus(explain_generate_column_substitute.t.a, 1), 5)))
+  └─TableReader	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t	keep order:false
 explain format = 'plan_tree' select * from t where not (lower(b) >= "a");
 id	task	access object	operator info
 Projection	root		explain_generate_column_substitute.t.a, explain_generate_column_substitute.t.b
-└─IndexLookUp	root		
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:expression_index(lower(`b`), `a` + 1)	range:[-inf,"a"), keep order:false
-  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false
+└─Selection	root		lt(lower(explain_generate_column_substitute.t.b), "a")
+  └─TableReader	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t	keep order:false
 explain format = 'plan_tree' select count(upper(b)) from t group by upper(b);
 id	task	access object	operator info
 StreamAgg	root		group by:upper(explain_generate_column_substitute.t.b), funcs:count(upper(explain_generate_column_substitute.t.b))->Column
@@ -581,13 +578,13 @@ explain format='plan_tree' select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c
 id	task	access object	operator info
 Sort	root		explain_generate_column_substitute.t2.c_enum
 └─HashJoin	root		inner join, equal:[eq(minus(explain_generate_column_substitute.t1.c_int, 1), minus(explain_generate_column_substitute.t2.c_int, 1))]
-  ├─Selection(Build)	root		not(isnull(minus(explain_generate_column_substitute.t2.c_int, 1)))
-  │ └─Projection	root		explain_generate_column_substitute.t2.c_enum, minus(explain_generate_column_substitute.t2.c_int, 1), explain_generate_column_substitute.t2._tidb_rowid
-  │   └─UnionScan	root		
-  │     └─TableReader	root		data:TableFullScan
-  │       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─IndexReader(Probe)	root		index:IndexFullScan
-    └─IndexFullScan	cop[tikv]	table:t1, index:expression_index_2(`c_int` - 1)	keep order:false, stats:pseudo
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t1, index:expression_index_2(`c_int` - 1)	keep order:false, stats:pseudo
+  └─Selection(Probe)	root		not(isnull(minus(explain_generate_column_substitute.t2.c_int, 1)))
+    └─Projection	root		explain_generate_column_substitute.t2.c_enum, minus(explain_generate_column_substitute.t2.c_int, 1), explain_generate_column_substitute.t2._tidb_rowid
+      └─UnionScan	root		
+        └─TableReader	root		data:TableFullScan
+          └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
 c_enum
 orange
