@@ -726,7 +726,7 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 		--bes_backend=grpcs://beplessproxy.channel9.ai  --bes_results_url=https://bepless.hawkingrei.com/ --experimental_remote_build_event_upload=all \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS) \
-		-- $(BAZEL_COVERAGE_DDL_TARGETS)
+		-- $(BAZEL_COVERAGE_TARGETS)
 
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
