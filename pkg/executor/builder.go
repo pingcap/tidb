@@ -6152,13 +6152,21 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 
 	origCtx := b.ctx
 	buildSubPlan := b.build
-	// MySQL evaluates a recursive CTE by writing rows into an internal worktable, so truncation is handled like INSERT.
-	// In strict SQL mode, build the seed/recursive sub-plans with a strict ExprCtx only.
-	if v.RecurPlan != nil && origCtx.GetSessionVars().SQLMode.HasStrictMode() {
-		buildCtx := sessionctx.WithTruncateErrLevel(origCtx, errctx.LevelError)
+	if v.RecurPlan != nil && b.ctx.GetSessionVars().SQLMode.HasStrictMode() {
+		// Match MySQL's recursive-materialization path: once a recursive CTE is
+		// producing rows for its worktable, MySQL enables SELECT strict-error
+		// handling for that whole seed/recursive producer, not only for the final
+		// table write. So nested predicates/subqueries under the recursive member
+		// also see strict truncate semantics while this producer is built. Scope
+		// the override to seed/recur subplan construction only: the built child
+		// executors already capture the scoped ExprCtx / DistSQL / pushdown state.
+		// producer.ctx intentionally stays on the original session for runtime
+		// bookkeeping such as trackers, recursion limits, and DISTINCT row
+		// deduplication, which continue to read the statement-owned StmtCtx.
+		strictCtx := sessionctx.WithTruncateErrLevel(b.ctx, errctx.LevelError)
 		buildSubPlan = func(plan base.Plan) exec.Executor {
 			prevCtx := b.ctx
-			b.ctx = buildCtx
+			b.ctx = strictCtx
 			defer func() { b.ctx = prevCtx }()
 			return b.build(plan)
 		}

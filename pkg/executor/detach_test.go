@@ -17,8 +17,10 @@ package executor
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -70,4 +72,38 @@ func TestDetachExecutor(t *testing.T) {
 	require.True(t, ok)
 	require.NotSame(t, parent, newExec)
 	require.NotSame(t, child, newExec.AllChildren()[0])
+
+	// Force WithTruncateErrLevel to actually build a wrapper before switching
+	// back to LevelError, so the detach path exercises wrapped ExprCtx/EvalCtx.
+	scopedSess := sessionctx.WithTruncateErrLevel(
+		sessionctx.WithTruncateErrLevel(sess, errctx.LevelWarn),
+		errctx.LevelError,
+	)
+	treCtx := newTableReaderExecutorContext(scopedSess)
+	detachedTRECtx := treCtx.Detach()
+	require.IsType(t, &exprstatic.ExprContext{}, detachedTRECtx.ectx)
+	detachedTRErrCtx := detachedTRECtx.ectx.GetEvalCtx().ErrCtx()
+	require.Equal(t, errctx.LevelError,
+		detachedTRErrCtx.LevelForGroup(errctx.ErrGroupTruncate))
+
+	iluCtx := newIndexLookUpExecutorContext(scopedSess)
+	detachedILUCtx := iluCtx.Detach()
+	require.IsType(t, &exprstatic.ExprContext{}, detachedILUCtx.ectx)
+	detachedILUErrCtx := detachedILUCtx.ectx.GetEvalCtx().ErrCtx()
+	require.Equal(t, errctx.LevelError,
+		detachedILUErrCtx.LevelForGroup(errctx.ErrGroupTruncate))
+
+	projCtx := newProjectionExecutorContext(scopedSess)
+	detachedProjCtx := projCtx.Detach()
+	require.IsType(t, &exprstatic.EvalContext{}, detachedProjCtx.evalCtx)
+	detachedProjErrCtx := detachedProjCtx.evalCtx.ErrCtx()
+	require.Equal(t, errctx.LevelError,
+		detachedProjErrCtx.LevelForGroup(errctx.ErrGroupTruncate))
+
+	selCtx := selectionExecutorContext{evalCtx: scopedSess.GetExprCtx().GetEvalCtx()}
+	detachedSelCtx := selCtx.Detach()
+	require.IsType(t, &exprstatic.EvalContext{}, detachedSelCtx.evalCtx)
+	detachedSelErrCtx := detachedSelCtx.evalCtx.ErrCtx()
+	require.Equal(t, errctx.LevelError,
+		detachedSelErrCtx.LevelForGroup(errctx.ErrGroupTruncate))
 }

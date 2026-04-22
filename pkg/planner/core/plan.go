@@ -26,27 +26,28 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-// AsSctx gets sessionctx.Context from PlanContext.
-//
-// Use this helper when the caller requires a session-backed PlanContext.
-// If conversion fails, it returns an error (and triggers intest.Assert in test builds).
+type internalSctxUnwrapper interface {
+	UnwrapAsInternalSctx() any
+}
+
+// AsSctx converts PlanContext to sessionctx.Context.
 func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 	if sctx, ok := pctx.(sessionctx.Context); ok {
 		return sctx, nil
 	}
-
-	// Some PlanContext implementations are wrappers (e.g. planctx.WithExprCtx). Unwrap them to recover
-	// the underlying session-backed context when needed.
-	unwrapped := pctx.UnwrapAsInternalSctx()
-	if sctx, ok := unwrapped.(sessionctx.Context); ok {
-		return sctx, nil
+	if unwrapper, ok := pctx.(internalSctxUnwrapper); ok {
+		// Keep unwrap as a local escape hatch instead of turning it into a
+		// global PlanContext contract. Most plan contexts never need to expose
+		// a session; only a small number of planner/executor paths do.
+		unwrapped := unwrapper.UnwrapAsInternalSctx()
+		if sctx, ok := unwrapped.(sessionctx.Context); ok {
+			return sctx, nil
+		}
+		return nil, errors.Errorf("the current PlanContext (%T) unwrapped to %T, not sessionctx.Context", pctx, unwrapped)
 	}
-
-	intest.Assert(false, "PlanContext %T unwrapped to non-session value %T", pctx, unwrapped)
-	return nil, errors.Errorf("the current PlanContext (%T) cannot be converted to sessionctx.Context: unwrapped value type is %T", pctx, unwrapped)
+	return nil, errors.Errorf("the current PlanContext (%T) cannot be converted to sessionctx.Context", pctx)
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.

@@ -17,7 +17,8 @@ package executor
 import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 )
 
 // Detach detaches the current executor from the session context. After detaching, the session context
@@ -48,15 +49,41 @@ func Detach(originalExecutor exec.Executor) (exec.Executor, bool) {
 	return newExecutor, true
 }
 
+func detachStaticExprContext(ctx exprctx.BuildContext) (*exprstatic.ExprContext, bool) {
+	// Use the static-convertible capability instead of matching concrete
+	// sessionexpr types. Scoped truncate wrappers preserve this contract while
+	// changing the outer ExprContext implementation type.
+	staticConvertibleCtx, ok := ctx.(exprctx.StaticConvertibleExprContext)
+	if !ok {
+		return nil, false
+	}
+	return exprstatic.MakeExprContextStatic(staticConvertibleCtx), true
+}
+
+func detachStaticEvalContext(ctx expression.EvalContext) (*exprstatic.EvalContext, bool) {
+	// Projection/Selection keep EvalContext directly, so their detach path must
+	// also work with wrapped EvalContexts that remain static-convertible after
+	// scoped truncate overrides.
+	staticConvertibleCtx, ok := ctx.(exprctx.StaticConvertibleEvalContext)
+	if !ok {
+		return nil, false
+	}
+	return exprstatic.MakeEvalContextStatic(staticConvertibleCtx), true
+}
+
 func (treCtx tableReaderExecutorContext) Detach() tableReaderExecutorContext {
 	newCtx := treCtx
 
-	if ctx, ok := treCtx.ectx.(*sessionexpr.ExprContext); ok {
-		staticExprCtx := ctx.IntoStatic()
-
-		newCtx.dctx = newCtx.dctx.Detach()
-		newCtx.rctx = newCtx.rctx.Detach(staticExprCtx)
-		newCtx.buildPBCtx = newCtx.buildPBCtx.Detach(staticExprCtx)
+	if staticExprCtx, ok := detachStaticExprContext(treCtx.ectx); ok {
+		if newCtx.dctx != nil {
+			newCtx.dctx = newCtx.dctx.Detach()
+		}
+		if newCtx.rctx != nil {
+			newCtx.rctx = newCtx.rctx.Detach(staticExprCtx)
+		}
+		if newCtx.buildPBCtx != nil {
+			newCtx.buildPBCtx = newCtx.buildPBCtx.Detach(staticExprCtx)
+		}
 		newCtx.ectx = staticExprCtx
 		return newCtx
 	}
@@ -67,12 +94,16 @@ func (treCtx tableReaderExecutorContext) Detach() tableReaderExecutorContext {
 func (ireCtx indexReaderExecutorContext) Detach() indexReaderExecutorContext {
 	newCtx := ireCtx
 
-	if ctx, ok := ireCtx.ectx.(*sessionexpr.ExprContext); ok {
-		staticExprCtx := ctx.IntoStatic()
-
-		newCtx.dctx = newCtx.dctx.Detach()
-		newCtx.rctx = newCtx.rctx.Detach(staticExprCtx)
-		newCtx.buildPBCtx = newCtx.buildPBCtx.Detach(staticExprCtx)
+	if staticExprCtx, ok := detachStaticExprContext(ireCtx.ectx); ok {
+		if newCtx.dctx != nil {
+			newCtx.dctx = newCtx.dctx.Detach()
+		}
+		if newCtx.rctx != nil {
+			newCtx.rctx = newCtx.rctx.Detach(staticExprCtx)
+		}
+		if newCtx.buildPBCtx != nil {
+			newCtx.buildPBCtx = newCtx.buildPBCtx.Detach(staticExprCtx)
+		}
 		newCtx.ectx = staticExprCtx
 		return newCtx
 	}
@@ -82,15 +113,18 @@ func (ireCtx indexReaderExecutorContext) Detach() indexReaderExecutorContext {
 
 func (iluCtx indexLookUpExecutorContext) Detach() indexLookUpExecutorContext {
 	newCtx := iluCtx
+	// IndexLookUpExecutor owns a nested table-reader context. Preserve the
+	// detached copy here so wrapped/static ExprCtx changes are not dropped when
+	// the outer executor reports Detach() success.
 	newCtx.tableReaderExecutorContext = newCtx.tableReaderExecutorContext.Detach()
 
-	return iluCtx
+	return newCtx
 }
 
 func (pCtx projectionExecutorContext) Detach() projectionExecutorContext {
 	newCtx := pCtx
-	if ctx, ok := pCtx.evalCtx.(*sessionexpr.EvalContext); ok {
-		newCtx.evalCtx = ctx.IntoStatic()
+	if staticEvalCtx, ok := detachStaticEvalContext(pCtx.evalCtx); ok {
+		newCtx.evalCtx = staticEvalCtx
 	}
 
 	return newCtx
@@ -98,8 +132,8 @@ func (pCtx projectionExecutorContext) Detach() projectionExecutorContext {
 
 func (sCtx selectionExecutorContext) Detach() selectionExecutorContext {
 	newCtx := sCtx
-	if ctx, ok := sCtx.evalCtx.(*sessionexpr.EvalContext); ok {
-		newCtx.evalCtx = ctx.IntoStatic()
+	if staticEvalCtx, ok := detachStaticEvalContext(sCtx.evalCtx); ok {
+		newCtx.evalCtx = staticEvalCtx
 	}
 
 	return newCtx

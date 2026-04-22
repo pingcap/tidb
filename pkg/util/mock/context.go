@@ -226,7 +226,7 @@ func (c *Context) GetPlanCtx() planctx.PlanContext {
 	return c
 }
 
-// UnwrapAsInternalSctx returns the underlying internal session context as `any`.
+// UnwrapAsInternalSctx returns the underlying mocked session context.
 func (c *Context) UnwrapAsInternalSctx() any {
 	return c
 }

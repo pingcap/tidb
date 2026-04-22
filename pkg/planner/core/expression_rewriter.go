@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -220,6 +221,18 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	asScalar bool,
 	preprocess func(ast.Node) ast.Node,
 ) (expression.Expression, base.LogicalPlan, error) {
+	return b.rewriteWithPreprocessAndTruncateErrLevel(ctx, exprNode, p, aggMapper, windowMapper, asScalar, preprocess, nil)
+}
+
+func (b *PlanBuilder) rewriteWithPreprocessAndTruncateErrLevel(
+	ctx context.Context,
+	exprNode ast.ExprNode,
+	p base.LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int,
+	windowMapper map[*ast.WindowFuncExpr]int,
+	asScalar bool,
+	preprocess func(ast.Node) ast.Node,
+	truncateErrLevel *errctx.Level,
+) (expression.Expression, base.LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -237,6 +250,17 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.asScalar = asScalar
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
 	rewriter.preprocess = preprocess
+	if truncateErrLevel != nil {
+		// This only affects expression rewriting for the current build step.
+		// The session-level truncate policy remains unchanged outside this scope.
+		// TODO: recursive CTE output currently does not propagate this scoped
+		// truncate policy into nested subquery planning/evaluation. Those paths
+		// still run through builder.ctx (DoOptimize / EvalSubqueryFirstRow /
+		// ScalarSubqueryEvalCtx.Init), so truncation inside a nested subquery is
+		// left on ordinary SELECT semantics for now. Support this later if we
+		// decide the extra planning/context plumbing is worth the complexity.
+		rewriter.sctx = exprctx.CtxWithHandleTruncateErrLevel(b.ctx.GetExprCtx(), *truncateErrLevel)
+	}
 
 	expr, resultPlan, err := rewriteExprNode(rewriter, exprNode, asScalar)
 	return expr, resultPlan, err
@@ -271,6 +295,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.tryFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
+	rewriter.sctx = b.ctx.GetExprCtx()
 	rewriter.ctx = ctx
 	rewriter.err = nil
 	rewriter.planCtx.plan = p

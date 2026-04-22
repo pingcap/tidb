@@ -413,9 +413,32 @@ with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 l
 c1
 100
 set tidb_max_chunk_size=default;
+with recursive cte1(c1) as (
+(select 1 union select 2 order by 1 desc limit 1)
+union all
+select c1 + 1 from cte1 where c1 < 3
+) select * from cte1 order by c1;
+c1
+2
+3
+with recursive cte1(c1) as (
+select 1
+union all
+(select c1 + 1 from cte1 union select 10 order by 1 desc limit 1)
+) select * from cte1;
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'
 set @@sql_mode = 'STRICT_TRANS_TABLES';
 with recursive cte as (
 select cast('abcdefgh' as char(3)) as s, 1 as n
+union all
+select s, n + 1
+from cte
+where n < 2
+)
+select * from cte;
+Error 1406 (22001): Data Too Long, field len 3, data len 8
+with recursive cte as (
+(select cast('abcdefgh' as char(3)) as s, 1 as n limit 1)
 union all
 select s, n + 1
 from cte
@@ -436,6 +459,15 @@ with recursive cte as (
 select cast('abc' as char(3)) as s, 1 as n
 union all
 select 'abcdefgh', n + 1
+from cte
+where n < 2
+)
+select * from cte;
+Error 1406 (22001): Data Too Long, field len 3, data len 8
+with recursive cte as (
+select cast('abc' as char(3)) as s, 1 as n
+union all
+select (select 'abcdefgh'), n + 1
 from cte
 where n < 2
 )
@@ -469,9 +501,6 @@ CTE_0	1.80	root		Recursive CTE
 └─Projection(Recursive Part)	0.80	root		cast(abcdefgh, var_string(3))->Column#9, cast(plus(Column#6, 1), bigint BINARY)->Column#10
   └─Selection	0.80	root		lt(Column#6, 2)
     └─CTETable	1.00	root		Scan on CTE_0
-select @@warning_count;
-@@warning_count
-0
 prepare stmt_cte_trunc_prepare from '
 with recursive cte as (
 select cast(''abc'' as char(3)) as s, 1 as n
@@ -481,9 +510,6 @@ from cte
 where n < 2
 )
 select * from cte';
-select @@warning_count;
-@@warning_count
-0
 execute stmt_cte_trunc_prepare;
 Error 1406 (22001): Data Too Long, field len 3, data len 8
 deallocate prepare stmt_cte_trunc_prepare;
@@ -493,6 +519,29 @@ select cast('abcdefgh' as char(3)) as short_str, 1 as n
 select * from cte;
 short_str	n
 abc	1
+show warnings;
+Level	Code	Message
+Warning	1406	Data Too Long, field len 3, data len 8
+Warning	1406	Data Too Long, field len 3, data len 8
+with recursive cte as (
+select cast('abcdefgh' as char(3)) as short_str, 1 as n
+)
+select * from cte;
+short_str	n
+abc	1
+show warnings;
+Level	Code	Message
+Warning	1406	Data Too Long, field len 3, data len 8
+Warning	1406	Data Too Long, field len 3, data len 8
+with recursive cte as (
+select cast('abcdefgh' as char(3)) as short_str
+union all
+select cast('abc' as char(3))
+)
+select * from cte;
+short_str
+abc
+abc
 show warnings;
 Level	Code	Message
 Warning	1406	Data Too Long, field len 3, data len 8
@@ -512,7 +561,6 @@ abc	2
 show warnings;
 Level	Code	Message
 Warning	1406	Data Too Long, field len 3, data len 8
-Warning	1406	Data Too Long, field len 3, data len 8
 with recursive cte as (
 select cast('abc' as char(3)) as s, 1 as n
 union all
@@ -528,3 +576,66 @@ show warnings;
 Level	Code	Message
 Warning	1406	Data Too Long, field len 3, data len 8
 set @@sql_mode = default;
+set @@sql_mode = 'STRICT_TRANS_TABLES';
+with recursive cte as (
+select cast('x' as char(10)) as s, 1 as n
+union all
+select s, n + 1
+from cte
+where cast(concat(s, 'abcdefgh') as char(3)) = 'xab' and n < 2
+)
+select * from cte;
+Error 1406 (22001): Data Too Long, field len 3, data len 9
+with recursive cte as (
+select cast('x' as char(10)) as s, 1 as n
+union all
+select s, n + 1
+from cte
+where cast('abcdefgh' as char(3)) = 'abc' and n < 2
+)
+select * from cte;
+s	n
+x	1
+x	2
+show warnings;
+Level	Code	Message
+Warning	1406	Data Too Long, field len 3, data len 8
+set @@sql_mode = default;
+drop table if exists t_truncate_pushdown;
+create table t_truncate_pushdown(v varchar(10));
+insert into t_truncate_pushdown values ('abc'), ('abcdef');
+set @@sql_mode = 'STRICT_TRANS_TABLES';
+explain format = 'brief'
+with recursive cte as (
+select cast('seed' as char(10)) as s, 1 as n
+union all
+select cte.s, cte.n + 1
+from cte
+join t_truncate_pushdown t
+where cast(t.v as char(3)) = 'abc' and cte.n < 2
+)
+select * from cte;
+id	estRows	task	access object	operator info
+CTEFullScan	6401.00	root	CTE:cte	data:CTE_0
+CTE_0	6401.00	root		Recursive CTE
+├─Projection(Seed Part)	1.00	root		seed->Column#3, 1->Column#4
+│ └─TableDual	1.00	root		rows:1
+└─Projection(Recursive Part)	6400.00	root		Column#5->Column#11, cast(plus(Column#6, 1), bigint BINARY)->Column#12
+  └─HashJoin	6400.00	root		CARTESIAN inner join
+    ├─Selection(Build)	0.80	root		lt(Column#6, 2)
+    │ └─CTETable	1.00	root		Scan on CTE_0
+    └─TableReader(Probe)	8000.00	root		data:Selection
+      └─Selection	8000.00	cop[tikv]		eq(cast(executor__cte.t_truncate_pushdown.v, var_string(3)), "abc")
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+with recursive cte as (
+select cast('seed' as char(10)) as s, 1 as n
+union all
+select cte.s, cte.n + 1
+from cte
+join t_truncate_pushdown t
+where cast(t.v as char(3)) = 'abc' and cte.n < 2
+)
+select * from cte;
+Error 1105 (HY000): Data Too Long, field len 3, data len 6
+set @@sql_mode = default;
+drop table if exists t_truncate_pushdown;

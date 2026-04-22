@@ -22,16 +22,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-type planCtxImplForAssert struct {
+var _ planctx.PlanContext = struct {
 	sessionctx.Context
 	*PlanCtxExtended
-}
-
-func (ctx planCtxImplForAssert) UnwrapAsInternalSctx() any {
-	return ctx.Context
-}
-
-var _ planctx.PlanContext = planCtxImplForAssert{}
+}{}
 
 // PlanCtxExtended provides extended method for session context to implement `PlanContext`
 type PlanCtxExtended struct {

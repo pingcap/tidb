@@ -35,6 +35,7 @@ go_test(
         "//pkg/errctx",
         "//pkg/expression/exprstatic",
         "//pkg/types",
+        "//pkg/util/context",
         "@com_github_stretchr_testify//require",
     ],
 )
