@@ -561,6 +561,10 @@ func (fpdc *FakePDClient) SetRegions(regions []*router.Region) {
 	fpdc.regions = regions
 }
 
+func (fpdc *FakePDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return fpdc
+}
+
 func (fpdc *FakePDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return slices.Clone(fpdc.stores), nil
 }
