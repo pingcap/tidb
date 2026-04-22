@@ -1698,12 +1698,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
-	if predicted := worker.ema.Predict(); predicted > 0 {
-		req.PredictedReadBytes = predicted
-		copr_metrics.PredictHintAttached.Inc()
-	} else {
-		copr_metrics.PredictHintAbsent.Inc()
-	}
+	req.PredictedReadBytes = worker.ema.Predict()
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true

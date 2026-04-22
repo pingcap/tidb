@@ -24,10 +24,6 @@ var (
 	CoprCacheCounterEvict prometheus.Counter
 	CoprCacheCounterHit   prometheus.Counter
 	CoprCacheCounterMiss  prometheus.Counter
-
-	// Per-RPC PredictedReadBytes hint attached / absent.
-	PredictHintAbsent   prometheus.Counter
-	PredictHintAttached prometheus.Counter
 )
 
 func init() {
@@ -39,7 +35,4 @@ func InitMetricsVars() {
 	CoprCacheCounterEvict = metrics.DistSQLCoprCacheCounter.WithLabelValues("evict")
 	CoprCacheCounterHit = metrics.DistSQLCoprCacheCounter.WithLabelValues("hit")
 	CoprCacheCounterMiss = metrics.DistSQLCoprCacheCounter.WithLabelValues("miss")
-
-	PredictHintAbsent = metrics.DistSQLCoprPredictHintSend.WithLabelValues("absent")
-	PredictHintAttached = metrics.DistSQLCoprPredictHintSend.WithLabelValues("attached")
 }

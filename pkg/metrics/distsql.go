@@ -28,7 +28,6 @@ var (
 	DistSQLCoprCacheCounter         *prometheus.CounterVec
 	DistSQLCoprClosestReadCounter   *prometheus.CounterVec
 	DistSQLCoprRespBodySize         *prometheus.HistogramVec
-	DistSQLCoprPredictHintSend      *prometheus.CounterVec
 )
 
 // InitDistSQLMetrics initializes distsql metrics.
@@ -93,12 +92,4 @@ func InitDistSQLMetrics() {
 			Help:      "copr task response data size in bytes.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 10),
 		}, []string{LblStore})
-
-	DistSQLCoprPredictHintSend = metricscommon.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "distsql",
-			Name:      "copr_predict_hint_send_total",
-			Help:      "Counter of cop RPC sends labelled by whether a PredictedReadBytes hint was attached to the RPC.",
-		}, []string{LblType})
 }
