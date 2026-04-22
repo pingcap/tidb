@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-		"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/verification"

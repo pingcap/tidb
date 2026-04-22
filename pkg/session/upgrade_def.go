@@ -480,7 +480,7 @@ const (
 	// to improve the performance of runaway watch sync loop.
 	version254 = 254
 
-		// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
+	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
 	version255 = 255
 	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
 	version256 = 256
@@ -492,7 +492,7 @@ const (
 	// version258
 	// Add the default value management for `tidb_analyze_distsql_scan_concurrency`.
 	// If the cluster is upgraded from a version that has no such variable, we set it to the global.tidb_distsql_scan_concurrency value.
-			version258 = 258
+	version258 = 258
 
 	// version259
 	// Add mysql.tidb_masking_policy.
@@ -688,9 +688,9 @@ var (
 		{version: version251, fn: upgradeToVer251},
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
-				{version: version254, fn: upgradeToVer254},
+		{version: version254, fn: upgradeToVer254},
 		{version: version255, fn: upgradeToVer255},
-				{version: version256, fn: upgradeToVer256},
+		{version: version256, fn: upgradeToVer256},
 		{version: version257, fn: upgradeToVer257},
 		{version: version258, fn: upgradeToVer258},
 		{version: version259, fn: upgradeToVer259},
