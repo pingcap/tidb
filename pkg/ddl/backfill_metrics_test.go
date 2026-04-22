@@ -234,11 +234,23 @@ func TestBackfillMetricsCleanupPartitionedTable(t *testing.T) {
 				label:       metrics.LblMergeTmpIdxRate,
 				expectTable: testPhysicalTableID,
 			},
-			{
-				name:        "cleanup-index-rate-keeps-physical-id",
+					{
+				name:        "cleanup-index-rate-keeps-physical-id-for-non-partition-ddl",
 				actionType:  model.ActionAddIndex,
 				label:       metrics.LblCleanupIdxRate,
 				expectTable: testPhysicalTableID,
+			},
+			{
+				name:        "cleanup-index-rate-uses-logical-id-for-drop-partition",
+				actionType:  model.ActionDropTablePartition,
+				label:       metrics.LblCleanupIdxRate,
+				expectTable: testLogicalTableID,
+			},
+			{
+				name:        "cleanup-index-rate-uses-logical-id-for-truncate-partition",
+				actionType:  model.ActionTruncateTablePartition,
+				label:       metrics.LblCleanupIdxRate,
+				expectTable: testLogicalTableID,
 			},
 			{
 				name:        "modify-column-rate-keeps-physical-id",

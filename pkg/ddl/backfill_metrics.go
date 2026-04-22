@@ -55,6 +55,13 @@ func backfillMetricsTableID(rInfo *reorgInfo, label string) int64 {
 		return 0
 	}
 	if !isPartitionReorgDDL(rInfo.Type) {
+		// Cleanup index rate metrics for partition DDLs (DROP/TRUNCATE PARTITION) must
+		// use the logical table ID, because the old partition physical IDs are removed
+		// from Partition.Definitions after the DDL completes, so metrics keyed by them
+		// can never be cleaned up by DDLClearBackfillMetrics.
+		if label == metrics.LblCleanupIdxRate && rInfo.Job != nil && isPartitionDropOrTruncateDDL(rInfo.Type) {
+			return rInfo.Job.TableID
+		}
 		return rInfo.PhysicalTableID
 	}
 	if rInfo.Job == nil {
@@ -68,6 +75,10 @@ func backfillMetricsTableID(rInfo *reorgInfo, label string) int64 {
 
 func isPartitionReorgDDL(tp model.ActionType) bool {
 	return tp == model.ActionReorganizePartition || tp == model.ActionAlterTablePartitioning || tp == model.ActionRemovePartitioning
+}
+
+func isPartitionDropOrTruncateDDL(tp model.ActionType) bool {
+	return tp == model.ActionDropTablePartition || tp == model.ActionTruncateTablePartition
 }
 
 func isPartitionReorgBackfillMetricLabel(label string) bool {
