@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -43,6 +44,14 @@ var (
 	// exported for test.
 	BufferedHandleLimit = 256
 )
+
+// TrafficRecorder records the best-effort traffic between TiDB and TiKV.
+// It's used to report metering data for conflict handling without introducing
+// a dependency on the metering package.
+type TrafficRecorder interface {
+	IncClusterReadBytes(uint64)
+	IncClusterWriteBytes(uint64)
+}
 
 // Handler is the conflict KV Handler, either collecting info about those KVs or
 // delete those KVs from the cluster.
@@ -76,6 +85,7 @@ type BaseHandler struct {
 	targetTable table.Table
 	kvGroup     string
 	encoder     *importer.TableKVEncoder
+	collector   execute.Collector
 	logger      *zap.Logger
 	EncodedRowHandler
 
@@ -88,12 +98,17 @@ func NewBaseHandler(
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
 	encodedRowHdl EncodedRowHandler,
+	collector execute.Collector,
 	logger *zap.Logger,
 ) *BaseHandler {
+	if collector == nil {
+		collector = &execute.NoopCollector{}
+	}
 	return &BaseHandler{
 		targetTable:       targetTable,
 		kvGroup:           kvGroup,
 		encoder:           encoder,
+		collector:         collector,
 		logger:            logger,
 		EncodedRowHandler: encodedRowHdl,
 	}
@@ -110,6 +125,8 @@ func (h *BaseHandler) Run(ctx context.Context, pairCh chan *external.KVPair) err
 		if err := h.Handle(ctx, kvPair); err != nil {
 			return errors.Trace(err)
 		}
+		// Each item in pairCh is one conflict KV pair.
+		h.collector.Processed(1, 0)
 	}
 	return nil
 }
@@ -274,9 +291,6 @@ func (h *IndexKVHandler) handleBufferedHandles(ctx context.Context) error {
 		rowKeys2Handle[string(rowKey)] = hdl.handle
 	}
 
-	if err := h.snapshot.refreshAsNeeded(); err != nil {
-		return errors.Trace(err)
-	}
 	res, err := h.snapshot.BatchGet(ctx, rowKeys)
 	if err != nil {
 		return errors.Trace(err)
@@ -305,13 +319,15 @@ type LazyRefreshedSnapshot struct {
 	tidbkv.Snapshot
 	store           tidbkv.Storage
 	lastRefreshTime time.Time
+	trafficRec      TrafficRecorder
 }
 
 // NewLazyRefreshedSnapshot creates a new LazyRefreshedSnapshot.
 // exported for test.
-func NewLazyRefreshedSnapshot(store tidbkv.Storage) *LazyRefreshedSnapshot {
+func NewLazyRefreshedSnapshot(store tidbkv.Storage, rec TrafficRecorder) *LazyRefreshedSnapshot {
 	return &LazyRefreshedSnapshot{
-		store: store,
+		store:      store,
+		trafficRec: rec,
 	}
 }
 
@@ -334,6 +350,29 @@ func (s *LazyRefreshedSnapshot) refreshAsNeeded() error {
 	s.Snapshot = s.store.GetSnapshot(ver)
 	s.lastRefreshTime = time.Now()
 	return nil
+}
+
+// BatchGet implements Snapshot interface.
+func (s *LazyRefreshedSnapshot) BatchGet(
+	ctx context.Context,
+	keys []tidbkv.Key,
+	options ...tidbkv.BatchGetOption,
+) (map[string]tidbkv.ValueEntry, error) {
+	if err := s.refreshAsNeeded(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	res, err := s.Snapshot.BatchGet(ctx, keys, options...)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if s.trafficRec != nil {
+		var readBytes uint64
+		for k, v := range res {
+			readBytes += uint64(len(k) + len(v.Value))
+		}
+		s.trafficRec.IncClusterReadBytes(readBytes)
+	}
+	return res, nil
 }
 
 // the encoded key is prepended with keyspace prefix before store to object

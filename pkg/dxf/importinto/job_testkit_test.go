@@ -204,12 +204,12 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	importStepSummaries := []*execute.SubtaskSummary{
 		{
-			RowCnt: *atomic.NewInt64(300),
-			Bytes:  *atomic.NewInt64(4000),
+			RowCnt:    *atomic.NewInt64(300),
+			Processed: *atomic.NewInt64(4000),
 		},
 		{
-			RowCnt: *atomic.NewInt64(400),
-			Bytes:  *atomic.NewInt64(4000),
+			RowCnt:    *atomic.NewInt64(400),
+			Processed: *atomic.NewInt64(4000),
 		},
 	}
 	for _, m := range importStepSummaries {
@@ -245,12 +245,12 @@ func TestGetTaskImportedRows(t *testing.T) {
 	require.NoError(t, err)
 	ingestStepSummaries := []*execute.SubtaskSummary{
 		{
-			RowCnt: *atomic.NewInt64(100),
-			Bytes:  *atomic.NewInt64(1000),
+			RowCnt:    *atomic.NewInt64(100),
+			Processed: *atomic.NewInt64(1000),
 		},
 		{
-			RowCnt: *atomic.NewInt64(200),
-			Bytes:  *atomic.NewInt64(2000),
+			RowCnt:    *atomic.NewInt64(200),
+			Processed: *atomic.NewInt64(2000),
 		},
 	}
 	for _, m := range ingestStepSummaries {
@@ -288,10 +288,12 @@ func TestShowImportProgress(t *testing.T) {
 			CloudStorageURI: "s3://test-bucket/test-path",
 		},
 		Summary: importer.Summary{
-			EncodeSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-			MergeSummary:  importer.StepSummary{Bytes: 0, RowCnt: 0},
-			IngestSummary: importer.StepSummary{Bytes: 1000, RowCnt: 100},
-			ImportedRows:  100,
+			EncodeSummary:           importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			MergeSummary:            importer.StepSummary{Bytes: 0, RowCnt: 0},
+			IngestSummary:           importer.StepSummary{Bytes: 1000, RowCnt: 100},
+			CollectConflictsSummary: importer.StepSummary{RowCnt: 1000},
+			ResolveConflictsSummary: importer.StepSummary{RowCnt: 500},
+			ImportedRows:            100,
 		},
 	}
 
@@ -312,31 +314,31 @@ func TestShowImportProgress(t *testing.T) {
 	}{
 		{
 			execute.SubtaskSummary{
-				RowCnt: *atomic.NewInt64(20),
-				Bytes:  *atomic.NewInt64(200),
+				RowCnt:    *atomic.NewInt64(20),
+				Processed: *atomic.NewInt64(200),
 				Progresses: []execute.Progress{
-					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1001, 0)},
-					{RowCnt: 20, Bytes: 200, UpdateTime: time.Unix(1002, 0)},
+					{RowCnt: 0, Processed: 0, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 20, Processed: 200, UpdateTime: time.Unix(1002, 0)},
 				},
 			},
 			proto.SubtaskStateRunning,
 		},
 		{
 			execute.SubtaskSummary{
-				RowCnt: *atomic.NewInt64(30),
-				Bytes:  *atomic.NewInt64(300),
+				RowCnt:    *atomic.NewInt64(30),
+				Processed: *atomic.NewInt64(300),
 				Progresses: []execute.Progress{
-					{RowCnt: 0, Bytes: 0, UpdateTime: time.Unix(1000, 0)},
-					{RowCnt: 15, Bytes: 150, UpdateTime: time.Unix(1001, 0)},
-					{RowCnt: 30, Bytes: 300, UpdateTime: time.Unix(1002, 0)},
+					{RowCnt: 0, Processed: 0, UpdateTime: time.Unix(1000, 0)},
+					{RowCnt: 15, Processed: 150, UpdateTime: time.Unix(1001, 0)},
+					{RowCnt: 30, Processed: 300, UpdateTime: time.Unix(1002, 0)},
 				},
 			},
 			proto.SubtaskStateSucceed,
 		},
 		{
 			execute.SubtaskSummary{
-				RowCnt: *atomic.NewInt64(0),
-				Bytes:  *atomic.NewInt64(0),
+				RowCnt:    *atomic.NewInt64(0),
+				Processed: *atomic.NewInt64(0),
 			},
 			proto.SubtaskStateSucceed,
 		},
@@ -395,6 +397,22 @@ func TestShowImportProgress(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/mockSpeedDuration", "return(10000)")
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepWriteAndIngest)
 	checkShowInfo("ingest", "500B", "1000B", "50", "50B/s", "00:00:10", 50)
+
+	// collect-conflicts step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepCollectConflicts)
+	for _, s := range subtasks {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepCollectConflicts,
+			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
+	}
+	checkShowInfo("collect-conflicts", "500 conflicts", "1000 conflicts", "50", "50 conflicts/s", "00:00:10", 0)
+
+	// conflict-resolution step
+	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepConflictResolution)
+	for _, s := range subtasks {
+		testutil.CreateSubTaskWithSummary(t, manager, taskID, proto.ImportStepConflictResolution,
+			"", bytes, &s.summary, s.state, proto.ImportInto, 11)
+	}
+	checkShowInfo("conflict-resolution", "500 conflicts", "500 conflicts", "100", "50 conflicts/s", "00:00:00", 0)
 
 	// Post-process step
 	switchTaskStep(ctx, t, manager, taskID, proto.ImportStepPostProcess)

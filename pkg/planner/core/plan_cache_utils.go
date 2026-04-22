@@ -138,6 +138,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtType: stmtctx.GetStmtLabel(ctx, paramStmt),
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
+	hasUsePlanCacheHint := hint.ContainTableHintInStmtNode(paramStmt, hint.HintUsePlanCache)
 
 	var (
 		cacheable bool
@@ -222,6 +223,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
+		HasUsePlanCacheHint: hasUsePlanCacheHint,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
@@ -310,7 +312,19 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // differentiate the cache key. In other cases, it will be 0.
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
-	if matchedBinding, matched, _ := bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo); matched {
+	return newPlanCacheKeyWithMatchedBinding(sctx, stmt, nil, false)
+}
+
+func newPlanCacheKeyWithMatchedBinding(
+	sctx sessionctx.Context,
+	stmt *PlanCacheStmt,
+	matchedBinding *bindinfo.Binding,
+	bindingMatched bool,
+) (key, binding string, cacheable bool, reason string, err error) {
+	if !bindingMatched && stmt.PreparedAst != nil {
+		matchedBinding, bindingMatched, _ = bindinfo.MatchSQLBindingWithCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
+	}
+	if bindingMatched && matchedBinding != nil {
 		// Record the matched binding SQL so the plan cache key reflects the effective hints.
 		binding = matchedBinding.BindSQL
 	}
@@ -373,16 +387,17 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
 	// schemaVersion + relateVersion + pruneMode
 	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
-	// latestSchemaVersion + sqlMode + timeZoneOffset + isolationReadEngines + selectLimit
-	hashLen += 8 + 8 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
+	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
+	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
 	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 + 8 + 2
 	if len(stmt.limits) > 0 {
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
 	}
-	if vars.GetSessionVars().PlanCacheInvalidationOnFreshStats {
-		// statsVerHash
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
+		// statsVerHash: skipped when a binding is matched and PlanCacheSkipStatsOnBinding is on,
+		// because a binding pins the plan via hints so stats changes cannot alter the chosen plan.
 		hashLen += 8
 	}
 	// dirty tables
@@ -406,6 +421,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
+	hash = append(hash, bool2Byte(vars.EnableNoBackslashEscapesInLike))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
 		hash = append(hash, kv.TiDB.Name()...)
@@ -455,8 +471,9 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		hash = append(hash, '|')
 	}
 
-	// stats ver can affect cached plan
-	if sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats {
+	// stats ver can affect cached plan, unless a binding is active and PlanCacheSkipStatsOnBinding
+	// is enabled — a binding pins the plan via hints, so stats changes cannot alter the chosen plan.
+	if vars.PlanCacheInvalidationOnFreshStats && (binding == "" || !vars.PlanCacheSkipStatsOnBinding) {
 		var statsVerHash uint64
 		for _, t := range stmt.tables {
 			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
@@ -734,6 +751,8 @@ type PlanCacheStmt struct {
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
+	// HasUsePlanCacheHint indicates whether this stmt contains the use_plan_cache() hint.
+	HasUsePlanCacheHint bool
 
 	limits      []*ast.Limit
 	hasSubquery bool
@@ -821,7 +840,9 @@ func isSafePointGetPath4PlanCache(sctx base.PlanContext, path *util.AccessPath) 
 	// TODO: enable this fix control switch by default after more test cases are added.
 	if sctx != nil && sctx.GetSessionVars() != nil && sctx.GetSessionVars().OptimizerFixControl != nil {
 		fixControlOK := fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44830, false)
-		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) || isSafePointGetPath4PlanCacheScenario3(path)) {
+		if fixControlOK && (isSafePointGetPath4PlanCacheScenario2(path) ||
+			isSafePointGetPath4PlanCacheScenario3(path) ||
+			isSafePointGetPath4PlanCacheScenario4(path)) {
 			return true
 		}
 	}
@@ -895,6 +916,40 @@ func isSafePointGetPath4PlanCacheScenario3(path *util.AccessPath) bool {
 		}
 	}
 	return true
+}
+
+func isSafePointGetPath4PlanCacheScenario4(path *util.AccessPath) bool {
+	// safe scenario 4: each key column corresponds to a single EQ, except one column that corresponds
+	// to a single IN. The IN can appear at the beginning, in the middle, or at the end of the key,
+	// like `a in (1, 2) and b=3 and c=4`, `a=1 and b in (2, 3) and c=4`, or
+	// `a=1 and b=2 and c in (3, 4)`.
+	// This currently supports exactly one IN predicate only.
+	// TODO: support multiple IN predicates, like `a in (1, 2) and b in (3, 4)`, after the plan-cache
+	// safety check and rebuild path can verify the cartesian-product case safely.
+	if len(path.Ranges) <= 0 || len(path.AccessConds) < 2 || path.Ranges[0].Width() != len(path.AccessConds) {
+		return false
+	}
+	var inExpr *expression.ScalarFunction
+	for _, accessCond := range path.AccessConds {
+		f, ok := accessCond.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.EQ:
+		case ast.In:
+			// Only one IN predicate is supported in this scenario for now.
+			if inExpr != nil {
+				return false
+			}
+			inExpr = f
+		default:
+			return false
+		}
+	}
+	// The range builder deduplicates IN values, so len(path.Ranges) < len(args)-1 when duplicates exist.
+	// The equality check below relies on that invariant to reject duplicate IN values from plan cache.
+	return inExpr != nil && len(path.Ranges) == len(inExpr.GetArgs())-1
 }
 
 // parseParamTypes get parameters' types in PREPARE statement

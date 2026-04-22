@@ -16,9 +16,12 @@ package joinorder
 
 import (
 	"maps"
+	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -116,13 +119,15 @@ type edge struct {
 	idx      uint64
 	joinType base.JoinType
 	eqConds  []*expression.ScalarFunction
-	// nonEQConds holds otherCond, leftCond, or rightCond — anything that is not
-	// an equi-join predicate.
+	// nonEQConds are used in two situations:
+	// 1. store all non-eq conds for LogicalJoin, like otherCond, leftCond, or rightCond.
+	// 2. store selection conditions for LogicalSelection-derived edge, which are looked through during buildRecursive.
 	nonEQConds expression.CNFExprs
 
 	// TES is the Total Eligibility Set: the set of base relations that must be
 	// present in the candidate subgraph for this edge to be applicable.
 	// For now, TES is totally same with SES, check the TODO in makeEdge().
+	// Note: didn't use pointer for TES because FastIntSet is relatively small and copying it is cheap.
 	tes intset.FastIntSet
 	// rules are conflict rules {from → to} derived during Build. They encode
 	// reordering constraints imposed by non-assoc/l-asscom/r-asscom join-type combinations.
@@ -208,10 +213,34 @@ type Node struct {
 	usedEdges map[uint64]struct{}
 }
 
-func calcCumCost(p base.LogicalPlan) float64 {
+func validateCumCost(cost float64) error {
+	switch {
+	case math.IsNaN(cost):
+		return errors.New("invalid cumulative cost: NaN")
+	case math.IsInf(cost, -1):
+		return errors.New("invalid cumulative cost: -Inf")
+	case cost < 0:
+		return errors.Errorf("invalid cumulative cost: negative value %v", cost)
+	default:
+		return nil
+	}
+}
+
+func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
+	var cost1, cost2 float64
+	if node1 != nil {
+		cost1 = node1.cumCost
+	}
+	if node2 != nil {
+		cost2 = node2.cumCost
+	}
+	return p.StatsInfo().RowCount + cost1 + cost2
+}
+
+func calcCumCostByChildren(p base.LogicalPlan) float64 {
 	cost := p.StatsInfo().RowCount
 	for _, child := range p.Children() {
-		cost += calcCumCost(child)
+		cost += calcCumCostByChildren(child)
 	}
 	return cost
 }
@@ -241,11 +270,14 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		vertexMap[v.ID()] = &Node{
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
-			cumCost: calcCumCost(v),
+			cumCost: calcCumCostByChildren(v),
+		}
+		if err := validateCumCost(vertexMap[v.ID()].cumCost); err != nil {
+			return nil, err
 		}
 	}
 
-	if _, _, err := d.buildRecursive(group.root, vertexMap); err != nil {
+	if _, _, err := d.buildRecursive(group, group.root, vertexMap); err != nil {
 		return nil, err
 	}
 	return d.groupVertexes, nil
@@ -257,10 +289,32 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 //  3. Returns the accumulated edges and the union of all vertex sets seen so far.
 //
 // The returned edges list is used by parent calls to generate conflict rules.
-func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
+func (d *ConflictDetector) buildRecursive(group *joinGroup, p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
 	if vertexNode, ok := vertexMap[p.ID()]; ok {
 		d.groupVertexes = append(d.groupVertexes, vertexNode)
 		return nil, vertexNode.bitSet, nil
+	}
+
+	// Look through Selection nodes that were kept in the original tree
+	// (e.g., Selection between two joins in a nested case).
+	if sel, ok := p.(*logicalop.LogicalSelection); ok {
+		childEdges, childVertexes, err := d.buildRecursive(group, sel.Children()[0], vertexMap)
+		if err != nil {
+			return nil, intset.FastIntSet{}, err
+		}
+		selID := sel.ID()
+		conds, ok := group.selConds[selID]
+		if !ok {
+			return nil, intset.FastIntSet{}, errors.Errorf("unexpected Selection node (ID: %d) found in buildRecursive", selID)
+		}
+		// Create a Selection edge for filter conditions collected from Selection
+		// operators that were looked through during extractJoinGroup.
+		// Selection-derived edge doesn't have child-edges and child-vertexes,
+		// because no need to generate ConflictRule for this edge.
+		// But its TES is its all children vertexes for correctness.
+		selEdge := d.makeEdgeInternal(base.InnerJoin, intset.FastIntSet{}, intset.FastIntSet{}, nil, nil, childVertexes)
+		selEdge.nonEQConds = conds
+		return append(childEdges, selEdge), childVertexes, nil
 	}
 
 	var curVertexes intset.FastIntSet
@@ -270,11 +324,11 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]
 		return nil, intset.FastIntSet{}, errors.New("unexpected plan type in conflict detector")
 	}
 
-	leftEdges, leftVertexes, err := d.buildRecursive(joinop.Children()[0], vertexMap)
+	leftEdges, leftVertexes, err := d.buildRecursive(group, joinop.Children()[0], vertexMap)
 	if err != nil {
 		return nil, curVertexes, err
 	}
-	rightEdges, rightVertexes, err := d.buildRecursive(joinop.Children()[1], vertexMap)
+	rightEdges, rightVertexes, err := d.buildRecursive(group, joinop.Children()[1], vertexMap)
 	if err != nil {
 		return nil, curVertexes, err
 	}
@@ -367,6 +421,13 @@ func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftV
 
 // makeEdge basically implements the pseudocode for CD-C in paper(Figure-11).
 func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.Expression, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) *edge {
+	// The following implements the first part of the pseudocode for CD-C in the paper(Figure-11):
+	// calc the SES(Syntactic Eligibility Set) and init TES(Total Eligibility Set) as SES.
+	tes := d.calcSES(conds)
+	return d.makeEdgeInternal(joinType, leftVertexes, rightVertexes, leftEdges, rightEdges, tes)
+}
+
+func (d *ConflictDetector) makeEdgeInternal(joinType base.JoinType, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge, tes intset.FastIntSet) *edge {
 	e := &edge{
 		// Each new edge is appended to either d.innerEdges or d.nonInnerEdges
 		// (see below), so their combined length before the append is the next
@@ -378,11 +439,8 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 		leftEdges:     leftEdges,
 		rightEdges:    rightEdges,
 		skipRules:     d.allInnerJoin,
+		tes:           tes.Copy(),
 	}
-
-	// The following implements the first part of the pseudocode for CD-C in the paper(Figure-11):
-	// calc the SES(Syntactic Eligibility Set) and init TES(Total Eligibility Set) as SES.
-	e.tes = d.calcSES(conds)
 
 	// The following corresponds to the secion 6.2 in the paper(Cross Products and Degenerate Predicates).
 	// For degenerate predicates (only one side referenced), force TES to include
@@ -529,10 +587,7 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 		return nil, errors.Errorf("nil node found in CheckConnection, node1: %v, node2: %v", node1, node2)
 	}
 
-	result := &CheckConnectionResult{
-		node1: node1,
-		node2: node2,
-	}
+	result := &CheckConnectionResult{}
 	for _, e := range d.innerEdges {
 		if node1.checkUsedEdges(e.idx) || node2.checkUsedEdges(e.idx) {
 			continue
@@ -542,17 +597,33 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 			result.hasEQCond = result.hasEQCond || len(e.eqConds) > 0
 		}
 	}
+	var swapNode bool
 	for _, e := range d.nonInnerEdges {
 		if node1.checkUsedEdges(e.idx) || node2.checkUsedEdges(e.idx) {
 			continue
 		}
-		if e.checkNonInnerEdgeApplicable(node1, node2) {
+		ok1 := e.checkNonInnerEdgeApplicable(node1, node2)
+		ok2 := e.checkNonInnerEdgeApplicable(node2, node1)
+		if ok1 && ok2 {
+			return nil, errors.New("node1 and node2 cannot be connected by non-inner edges of different direction")
+		}
+		if ok1 || ok2 {
 			if result.appliedNonInnerEdge != nil {
 				return nil, errors.New("multiple non-inner edges applied between two nodes")
 			}
 			result.appliedNonInnerEdge = e
 			result.hasEQCond = result.hasEQCond || len(e.eqConds) > 0
+			// No need to worry about `swapNode` changing from true to false in the next loop,
+			// because an error will be returned if there are multiple different non-inner edges.
+			swapNode = ok2
 		}
+	}
+	if swapNode {
+		result.node1 = node2
+		result.node2 = node1
+	} else {
+		result.node1 = node1
+		result.node2 = node2
 	}
 	return result, nil
 }
@@ -641,10 +712,14 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	}
 	maps.Copy(usedEdges, node1.usedEdges)
 	maps.Copy(usedEdges, node2.usedEdges)
+	cumCost := calcCumCost(p, node1, node2)
+	if err := validateCumCost(cumCost); err != nil {
+		return nil, err
+	}
 	return &Node{
 		bitSet:    node1.bitSet.Union(node2.bitSet),
 		p:         p,
-		cumCost:   calcCumCost(p),
+		cumCost:   cumCost,
 		usedEdges: usedEdges,
 	}, nil
 }
@@ -707,8 +782,23 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	if err != nil {
 		return nil, err
 	}
+	// After join reorder, the NOT_NULL flag of the null-producing side should be removed.
+	// We've done this for new join's output schema in LogicalJoin.MergeSchema().
+	// Here we do the same thing for expressions in join conditions.
+	// For example:
+	//   Before reorder: t1 left (t2 left t3 on t2.c2 = t3.c2) on t1.c1 = t2.c1
+	//   After reorder, (t1 left t2 on t1.c1 = t2.c1) left t3 on t2.c2 = t3.c2;
+	//   We should make sure there is no NOT_NULL flag in `t2.c1`.
+	for i, cond := range alignedEQConds {
+		newCond, _ := alignNotNullWithSchema(cond, join.Schema())
+		alignedEQConds[i] = newCond.(*expression.ScalarFunction)
+	}
+	alignedNonEQConds := make([]expression.Expression, len(e.nonEQConds))
+	for i, cond := range e.nonEQConds {
+		alignedNonEQConds[i], _ = alignNotNullWithSchema(cond, join.Schema())
+	}
 	join.EqualConditions = alignedEQConds
-	for _, cond := range e.nonEQConds {
+	for _, cond := range alignedNonEQConds {
 		fromLeft := expression.ExprFromSchema(cond, left.Schema())
 		fromRight := expression.ExprFromSchema(cond, right.Schema())
 		if fromLeft && !fromRight {
@@ -720,6 +810,66 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 		}
 	}
 	return join, nil
+}
+
+// alignNotNullWithSchema update the columns in expression with the one from schema,
+// whose NOT_NULL flag has already been updated by LogicalJoin.MergeSchema().
+func alignNotNullWithSchema(expr expression.Expression, schema *expression.Schema) (expression.Expression, bool) {
+	if schema == nil || expr == nil {
+		return expr, false
+	}
+	tryUpdateNotNullFlag := func(dstCol, srcCol *expression.Column) (*expression.Column, bool) {
+		srcNotNullFlag := mysql.HasNotNullFlag(srcCol.RetType.GetFlag())
+		dstNotNullFlag := mysql.HasNotNullFlag(dstCol.RetType.GetFlag())
+		if srcNotNullFlag != dstNotNullFlag {
+			newTp := dstCol.RetType.DeepCopy()
+			// Make sure NOT_NULL flag of dstCol be same with srcCol.
+			if srcNotNullFlag {
+				newTp.AddFlag(mysql.NotNullFlag)
+			} else {
+				newTp.DelFlag(mysql.NotNullFlag)
+			}
+			newCol := dstCol.Clone().(*expression.Column)
+			newCol.RetType = newTp
+			return newCol, true
+		}
+		return dstCol, false
+	}
+	switch e := expr.(type) {
+	case *expression.Column:
+		if schemaCol := schema.RetrieveColumn(e); schemaCol != nil {
+			return tryUpdateNotNullFlag(e, schemaCol)
+		}
+		return e, false
+	case *expression.CorrelatedColumn:
+		if schemaCol := schema.RetrieveColumn(&e.Column); schemaCol != nil {
+			if newCol, updated := tryUpdateNotNullFlag(&e.Column, schemaCol); updated {
+				clone := e.Clone().(*expression.CorrelatedColumn)
+				clone.Column = *newCol
+				return clone, true
+			}
+		}
+		return e, false
+	case *expression.ScalarFunction:
+		var needClone bool
+		newArgs := slices.Clone(e.GetArgs())
+		for i, arg := range newArgs {
+			if newArg, updated := alignNotNullWithSchema(arg, schema); updated {
+				newArgs[i] = newArg
+				needClone = true
+			}
+		}
+		if needClone {
+			clone := e.Clone().(*expression.ScalarFunction)
+			for i, arg := range newArgs {
+				clone.GetArgs()[i] = arg
+			}
+			return clone, true
+		}
+		return e, false
+	default:
+		return expr, false
+	}
 }
 
 func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) (base.LogicalPlan, error) {
@@ -779,6 +929,7 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	}.Init(ctx, offset)
 	join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
 	join.SetChildren(left, right)
+	join.MergeSchema()
 	SetNewJoinWithHint(join, vertexHints)
 	return join, nil
 }
@@ -793,6 +944,28 @@ func (d *ConflictDetector) HasRemainingEdges(usedEdges map[uint64]struct{}) (rem
 			}
 		}
 		return true
+	})
+	return
+}
+
+// HasRemainingEdgesInSubset checks whether a subset still misses any real edge
+// whose referenced relations are fully contained in the subset.
+func (d *ConflictDetector) HasRemainingEdgesInSubset(subset intset.FastIntSet, usedEdges map[uint64]struct{}) (remaining bool) {
+	d.iterateEdges(func(e *edge) bool {
+		if len(e.eqConds) == 0 && len(e.nonEQConds) == 0 {
+			return true
+		}
+		if _, ok := usedEdges[e.idx]; ok {
+			return true
+		}
+		if !e.tes.SubsetOf(subset) {
+			return true
+		}
+		if !e.leftVertexes.Union(e.rightVertexes).SubsetOf(subset) {
+			return true
+		}
+		remaining = true
+		return false
 	})
 	return
 }
@@ -823,47 +996,12 @@ type ruleTableEntry int
 // is valid for the given pair of join types.
 // Rows = join type of e1 (left/child edge), Columns = join type of e2 (right/parent edge).
 var assocRuleTable = [][]ruleTableEntry{
-	// INNER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		0, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT OUTER
-	{
-		0, // INNER
-		1, // LEFT OUTER, check NOTE above.
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// RIGHT OUTER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		1, // RIGHT OUTER, check NOTE above.
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT SEMI and LEFT OUTER SEMI
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-
-	// LEFT ANTI and ANTI LEFT OUTER SEMI
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
+	//           INNER  LEFT   RIGHT  SEMI   ANTI
+	/* INNER  */ {1, 1, 0, 1, 1},
+	/* LEFT   */ {0, 1, 0, 0, 0}, // assoc(LEFT,LEFT)=1: see NOTE above.
+	/* RIGHT  */ {1, 1, 1, 1, 1}, // assoc(RIGHT,RIGHT)=1: see NOTE above.
+	/* SEMI   */ {0, 0, 0, 0, 0},
+	/* ANTI   */ {0, 0, 0, 0, 0},
 }
 
 // leftAsscomRuleTable[e1][e2] indicates whether the left-asscom transformation
@@ -872,46 +1010,12 @@ var assocRuleTable = [][]ruleTableEntry{
 //
 // is valid. Here e1 is the child edge (in leftEdges) and e2 is the parent edge.
 var leftAsscomRuleTable = [][]ruleTableEntry{
-	// INNER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		0, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT OUTER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		0, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// RIGHT OUTER
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT SEMI and LEFT OUTER SEMI
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		1, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT ANTI and ANTI LEFT OUTER SEMI
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		1, // RIGHT OUTER
-		1, // LEFT SEMI and LEFT OUTER SEMI
-		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
+	//           INNER  LEFT   RIGHT  SEMI   ANTI
+	/* INNER  */ {1, 1, 0, 1, 1},
+	/* LEFT   */ {1, 1, 1, 1, 1}, // l-asscom(LEFT, RIGHT)=1; see NOTE above.
+	/* RIGHT  */ {0, 1, 0, 0, 0}, // l-asscom(RIGHT, LEFT)=1; see NOTE above.
+	/* SEMI   */ {1, 1, 0, 1, 1},
+	/* ANTI   */ {1, 1, 0, 1, 1},
 }
 
 // rightAsscomRuleTable[e1][e2] indicates whether the right-asscom transformation
@@ -920,44 +1024,10 @@ var leftAsscomRuleTable = [][]ruleTableEntry{
 //
 // is valid. Here e1 is the parent edge and e2 is the child edge (in rightEdges).
 var rightAsscomRuleTable = [][]ruleTableEntry{
-	// INNER
-	{
-		1, // INNER
-		1, // LEFT OUTER
-		1, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT OUTER
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// RIGHT OUTER
-	{
-		0, // INNER
-		1, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT SEMI and LEFT OUTER SEMI
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
-	// LEFT ANTI and ANTI LEFT OUTER SEMI
-	{
-		0, // INNER
-		0, // LEFT OUTER
-		0, // RIGHT OUTER
-		0, // LEFT SEMI and LEFT OUTER SEMI
-		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
-	},
+	//           INNER  LEFT   RIGHT  SEMI   ANTI
+	/* INNER  */ {1, 0, 1, 0, 0},
+	/* LEFT   */ {0, 0, 1, 0, 0}, // r-asscom(LEFT, RIGHT)=1; see NOTE above.
+	/* RIGHT  */ {1, 1, 1, 0, 0}, // r-asscom(RIGHT, LEFT)=1; see NOTE above.
+	/* SEMI   */ {0, 0, 0, 0, 0},
+	/* ANTI   */ {0, 0, 0, 0, 0},
 }

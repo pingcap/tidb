@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -160,6 +161,9 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *storeapi.WalkOption, fn f
 				log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
 					zap.String("path", path), zap.String("base", l.base), logutil.ShortError(err))
 			}
+			if opt.StartAfter != "" && filepath.ToSlash(path) <= filepath.ToSlash(opt.StartAfter) {
+				return nil
+			}
 			// NOTE: This may cause a tombstone of the dir emit to the caller when
 			// call `Walk` in a non-exist dir.
 			return fn(path, TombstoneSize)
@@ -176,6 +180,16 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *storeapi.WalkOption, fn f
 			if path != base && opt.SkipSubDir {
 				return filepath.SkipDir
 			}
+			if path != base {
+				relativeDir, relErr := filepath.Rel(l.base, path)
+				if relErr != nil {
+					log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
+						zap.String("path", path), zap.String("base", l.base), logutil.ShortError(relErr))
+				}
+				if shouldSkipLocalSubtree(relativeDir, opt.StartAfter) {
+					return filepath.SkipDir
+				}
+			}
 			return nil
 		}
 		// in mac osx, the path parameter is absolute path; in linux, the path is relative path to execution base dir,
@@ -187,6 +201,9 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *storeapi.WalkOption, fn f
 
 		// Convert to relative path from l.base for consistency with cloud storage
 		path, _ = filepath.Rel(l.base, path)
+		if opt.StartAfter != "" && filepath.ToSlash(path) <= filepath.ToSlash(opt.StartAfter) {
+			return nil
+		}
 
 		size := f.Size()
 		// if not a regular file, we need to use os.stat to get the real file size
@@ -203,6 +220,19 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *storeapi.WalkOption, fn f
 		}
 		return fn(path, size)
 	})
+}
+
+func shouldSkipLocalSubtree(dir, startAfter string) bool {
+	if startAfter == "" {
+		return false
+	}
+	dir = filepath.ToSlash(dir)
+	startAfter = filepath.ToSlash(startAfter)
+	prefix := dir + "/"
+	if strings.HasPrefix(startAfter, prefix) {
+		return false
+	}
+	return prefix <= startAfter
 }
 
 // URI returns the base path as an URI with a file:/// prefix.
@@ -293,6 +323,13 @@ func (l *LocalStorage) Create(_ context.Context, name string, _ *storeapi.Writer
 // Rename implements Storage interface.
 func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string) error {
 	return errors.Trace(os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName)))
+}
+
+// PresignFile implements storeapi.Storage interface.
+// For local storage, returns the file name only (basename) since presigned URL is not applicable.
+func (l *LocalStorage) PresignFile(_ context.Context, fileName string, _ time.Duration) (string, error) {
+	_, fileNameOnly := filepath.Split(fileName)
+	return fileNameOnly, nil
 }
 
 // Close implements Storage interface.

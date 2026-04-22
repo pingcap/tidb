@@ -37,6 +37,25 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 )
+
+type likeEscapeSpec struct {
+	escape   string
+	explicit bool
+}
+
+func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool) {
+	switch strings.ToUpper(name) {
+	case ast.MaskingPolicyRestrictNameInsertIntoSelect:
+		return ast.MaskingPolicyRestrictOpInsertIntoSelect, true
+	case ast.MaskingPolicyRestrictNameUpdateSelect:
+		return ast.MaskingPolicyRestrictOpUpdateSelect, true
+	case ast.MaskingPolicyRestrictNameDeleteSelect:
+		return ast.MaskingPolicyRestrictOpDeleteSelect, true
+	case ast.MaskingPolicyRestrictNameCTAS:
+		return ast.MaskingPolicyRestrictOpCTAS, true
+	}
+	return ast.MaskingPolicyRestrictOpNone, false
+}
 %}
 
 %union {
@@ -184,6 +203,7 @@ import (
 	kill              "KILL"
 	lag               "LAG"
 	lastValue         "LAST_VALUE"
+	lateral           "LATERAL"
 	lead              "LEAD"
 	leading           "LEADING"
 	leave             "LEAVE"
@@ -488,6 +508,7 @@ import (
 	location                   "LOCATION"
 	locked                     "LOCKED"
 	logs                       "LOGS"
+	masking                    "MASKING"
 	master                     "MASTER"
 	maxConnectionsPerHour      "MAX_CONNECTIONS_PER_HOUR"
 	max_idxnum                 "MAX_IDXNUM"
@@ -506,6 +527,7 @@ import (
 	minRows                    "MIN_ROWS"
 	mode                       "MODE"
 	modify                     "MODIFY"
+	monitor                    "MONITOR"
 	month                      "MONTH"
 	names                      "NAMES"
 	national                   "NATIONAL"
@@ -887,10 +909,13 @@ import (
 	job                        "JOB"
 	jobs                       "JOBS"
 	lite                       "LITE"
+	ndvRate                    "NDVRATE"
 	nodeID                     "NODE_ID"
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
+	policies                   "POLICIES"
+	raw                        "RAW"
 	region                     "REGION"
 	regions                    "REGIONS"
 	reset                      "RESET"
@@ -1005,6 +1030,7 @@ import (
 	CreateIndexStmt            "CREATE INDEX statement"
 	CreateBindingStmt          "CREATE BINDING statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
+	CreateMaskingPolicyStmt    "CREATE MASKING POLICY statement"
 	CreateProcedureStmt        "CREATE PROCEDURE statement"
 	AddQueryWatchStmt          "ADD QUERY WATCH statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
@@ -1121,6 +1147,7 @@ import (
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
+	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
 	AlterJobOptionList                     "Alter job option list"
@@ -1129,6 +1156,10 @@ import (
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
 	AlterTableSpecListOpt                  "Alter table specification list optional"
+	MaskingPolicyStateOpt                  "Optional masking policy state"
+	MaskingPolicyRestrictOnOpt             "Optional masking policy restriction"
+	MaskingPolicyRestrictOperationList     "Masking policy restrict operation list"
+	MaskingPolicyRestrictOperation         "Masking policy restrict operation"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
 	ArrayKwdOpt                            "Array options"
@@ -1204,6 +1235,8 @@ import (
 	InstanceOption                         "Instance option"
 	FulltextSearchModifierOpt              "Fulltext modifier"
 	PluginNameList                         "Plugin Name List"
+	ShowImportJobTarget                    "IMPORT JOB target with optional RAW keyword"
+	ShowImportJobsTarget                   "IMPORT JOBS target with optional RAW keyword"
 	TableRefsClause                        "Table references clause"
 	FieldItem                              "Field item for load data clause"
 	FieldItemList                          "Field items for load data clause"
@@ -1308,8 +1341,8 @@ import (
 	Priority                               "Statement priority"
 	PriorityOpt                            "Statement priority option"
 	PrivElem                               "Privilege element"
-	RefreshObject                          "Refresh object"
-	RefreshObjectList                      "Refresh object list"
+	StatsObject                            "Stats object"
+	StatsObjectList                        "Stats object list"
 	RefreshStatsModeOpt                    "Refresh stats mode optional"
 	RefreshStatsMode                       "Refresh stats mode"
 	RefreshStatsClusterOpt                 "Refresh stats cluster option"
@@ -1641,7 +1674,6 @@ import (
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	LikeOrIlikeEscapeOpt            "like or ilike escape option"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
@@ -1653,6 +1685,7 @@ import (
 	ProcedurceLabelOpt              "Optional Procedure label name"
 
 %precedence empty
+%precedence masking
 %precedence statsExtended
 %precedence as
 %precedence placement
@@ -2230,7 +2263,7 @@ AlterTableSpecSingleOpt:
 		partitionMethod := ast.PartitionMethod{Expr: $7}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeLastPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2241,7 +2274,7 @@ AlterTableSpecSingleOpt:
 		partitionMethod := ast.PartitionMethod{Expr: $7}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeFirstPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2413,7 +2446,7 @@ AlterTableSpec:
 		partitionMethod := ast.PartitionMethod{Expr: $6}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 		$$ = &ast.AlterTableSpec{
 			NoWriteToBinlog: noWriteToBinlog,
 			Tp:              ast.AlterTableAddLastPartition,
@@ -2431,6 +2464,157 @@ AlterTableSpec:
 			Tp:          ast.AlterTableAddStatistics,
 			IfNotExists: $3.(bool),
 			Statistics:  statsSpec,
+		}
+	}
+|	"ADD" "MASKING" Type ColumnOptionListOpt ColumnPosition
+	{
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: ast.NewCIStr("masking")},
+			Tp:      $3.(*types.FieldType),
+			Options: $4.(ast.ColumnOptionList).Options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfNotExists: false,
+			Tp:          ast.AlterTableAddColumns,
+			NewColumns:  []*ast.ColumnDef{colDef},
+			Position:    $5.(*ast.ColumnPosition),
+		}
+	}
+|	"ADD" "MASKING" "SERIAL" ColumnOptionListOpt ColumnPosition
+	{
+		// Keep behavior consistent with `ColumnDef: ColumnName "SERIAL" ...`.
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
+		options = append(options, $4.(ast.ColumnOptionList).Options...)
+		tp.AddFlag(mysql.UnsignedFlag)
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: ast.NewCIStr("masking")},
+			Tp:      tp,
+			Options: options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfNotExists: false,
+			Tp:          ast.AlterTableAddColumns,
+			NewColumns:  []*ast.ColumnDef{colDef},
+			Position:    $5.(*ast.ColumnPosition),
+		}
+	}
+|	"ADD" "MASKING" "POLICY" PolicyName "ON" '(' Identifier ')' "AS" Expression MaskingPolicyRestrictOnOpt MaskingPolicyStateOpt
+	{
+		state := $12.(*ast.MaskingPolicyState)
+		$$ = &ast.AlterTableSpec{
+			Tp:                       ast.AlterTableAddMaskingPolicy,
+			MaskingPolicyName:        ast.NewCIStr($4),
+			MaskingPolicyColumn:      &ast.ColumnName{Name: ast.NewCIStr($7)},
+			MaskingPolicyExpr:        $10,
+			MaskingPolicyRestrictOps: $11.(ast.MaskingPolicyRestrictOps),
+			MaskingPolicyState:       *state,
+		}
+	}
+|	"ENABLE" "MASKING" "POLICY" PolicyName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableEnableMaskingPolicy,
+			MaskingPolicyName: ast.NewCIStr($4),
+		}
+	}
+|	"DISABLE" "MASKING" "POLICY" PolicyName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableDisableMaskingPolicy,
+			MaskingPolicyName: ast.NewCIStr($4),
+		}
+	}
+|	"DROP" "MASKING" "POLICY" PolicyName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableDropMaskingPolicy,
+			MaskingPolicyName: ast.NewCIStr($4),
+		}
+	}
+|	"DROP" "MASKING" RestrictOrCascadeOpt
+	{
+		$$ = &ast.AlterTableSpec{
+			IfExists:      false,
+			Tp:            ast.AlterTableDropColumn,
+			OldColumnName: &ast.ColumnName{Name: ast.NewCIStr("masking")},
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" Identifier "=" Expression
+	{
+		if !strings.EqualFold($6, "expression") {
+			yylex.AppendError(yylex.Errorf("unsupported masking policy modify option: %s", $6))
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableModifyMaskingPolicyExpression,
+			MaskingPolicyName: ast.NewCIStr($4),
+			MaskingPolicyExpr: $8,
+		}
+	}
+|	"MODIFY" "MASKING" Type ColumnOptionListOpt ColumnPosition
+	{
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: ast.NewCIStr("masking")},
+			Tp:      $3.(*types.FieldType),
+			Options: $4.(ast.ColumnOptionList).Options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfExists:   false,
+			Tp:         ast.AlterTableModifyColumn,
+			NewColumns: []*ast.ColumnDef{colDef},
+			Position:   $5.(*ast.ColumnPosition),
+		}
+	}
+|	"MODIFY" "MASKING" "SERIAL" ColumnOptionListOpt ColumnPosition
+	{
+		// Keep behavior consistent with `ColumnDef: ColumnName "SERIAL" ...`.
+		tp := types.NewFieldType(mysql.TypeLonglong)
+		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
+		options = append(options, $4.(ast.ColumnOptionList).Options...)
+		tp.AddFlag(mysql.UnsignedFlag)
+		colDef := &ast.ColumnDef{
+			Name:    &ast.ColumnName{Name: ast.NewCIStr("masking")},
+			Tp:      tp,
+			Options: options,
+		}
+		if err := colDef.Validate(); err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
+		$$ = &ast.AlterTableSpec{
+			IfExists:   false,
+			Tp:         ast.AlterTableModifyColumn,
+			NewColumns: []*ast.ColumnDef{colDef},
+			Position:   $5.(*ast.ColumnPosition),
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" "RESTRICT" "ON" '(' MaskingPolicyRestrictOperationList ')'
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                       ast.AlterTableModifyMaskingPolicyRestrictOn,
+			MaskingPolicyName:        ast.NewCIStr($4),
+			MaskingPolicyRestrictOps: $9.(ast.MaskingPolicyRestrictOps),
+		}
+	}
+|	"MODIFY" "MASKING" "POLICY" PolicyName "SET" "RESTRICT" "ON" "NONE"
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                       ast.AlterTableModifyMaskingPolicyRestrictOn,
+			MaskingPolicyName:        ast.NewCIStr($4),
+			MaskingPolicyRestrictOps: ast.MaskingPolicyRestrictOpNone,
 		}
 	}
 |	AttributesOpt
@@ -2499,7 +2683,7 @@ AlterTableSpec:
 		partitionMethod := ast.PartitionMethod{Expr: $6}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(&partitionMethod, parser.src[startOffset:endOffset])
 		$$ = &ast.AlterTableSpec{
 			IfExists:  $8.(bool),
 			Tp:        ast.AlterTableDropFirstPartition,
@@ -3479,6 +3663,10 @@ AnalyzeOptionList:
 	{
 		$$ = append($1.([]ast.AnalyzeOpt), $3.(ast.AnalyzeOpt))
 	}
+|	AnalyzeOptionList AnalyzeOption
+	{
+		$$ = append($1.([]ast.AnalyzeOpt), $2.(ast.AnalyzeOpt))
+	}
 
 AnalyzeOption:
 	NUM "BUCKETS"
@@ -3504,6 +3692,10 @@ AnalyzeOption:
 |	NumLiteral "SAMPLERATE"
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr($1, "", "")}
+	}
+|	NumLiteral "NDVRATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate, Value: ast.NewValueExpr($1, "", "")}
 	}
 
 /*******************************************************************************************/
@@ -3841,7 +4033,7 @@ ColumnOption:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.endOffset(&yyS[yypt-1])
 		expr := $4
-		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(expr, parser.src[startOffset:endOffset])
 
 		$$ = &ast.ColumnOption{
 			Tp:     ast.ColumnOptionGenerated,
@@ -4874,7 +5066,7 @@ PartitionIntervalOpt:
 		}
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
-		partitionInterval.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(partitionInterval, parser.src[startOffset:endOffset])
 		$$ = partitionInterval
 	}
 
@@ -5252,7 +5444,7 @@ CreateViewStmt:
 		} else {
 			x.CheckOption = ast.CheckOptionCascaded
 		}
-		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		parser.setNodeText(selStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 		$$ = x
 	}
 
@@ -5600,7 +5792,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$2.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+		parser.setNodeText($2, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "FORMAT" "=" stringLit TraceableStmt
 	{
@@ -5610,7 +5802,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$5.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+		parser.setNodeText($5, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" TraceableStmt
 	{
@@ -5619,7 +5811,7 @@ TraceStmt:
 			TracePlan: true,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$3.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+		parser.setNodeText($3, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
 	{
@@ -5629,7 +5821,7 @@ TraceStmt:
 			TracePlanTarget: $5,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$6.SetText(parser.lexer.client, string(parser.src[startOffset:]))
+		parser.setNodeText($6, string(parser.src[startOffset:]))
 	}
 
 ExplainSym:
@@ -5642,7 +5834,7 @@ ExplainStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		stmt := $3
-		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(stmt, strings.TrimSpace(parser.src[startOffset:]))
 		$$ = &ast.ExplainStmt{
 			Stmt:    stmt,
 			Explore: true,
@@ -5659,7 +5851,7 @@ ExplainStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		stmt := $4
-		stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(stmt, strings.TrimSpace(parser.src[startOffset:]))
 		$$ = &ast.ExplainStmt{
 			Stmt:    stmt,
 			Explore: true,
@@ -6619,36 +6811,50 @@ PredicateExpr:
 	}
 |	BitExpr LikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		escape := $4
+		escapeSpec := $4.(*likeEscapeSpec)
+		escape := escapeSpec.escape
+		explicit := escapeSpec.explicit
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
-		} else if len(escape) == 0 {
-			escape = "\\"
+		}
+		// When ESCAPE empty string is specified, escape is empty and explicit is true.
+		// This means no escape character should be used (Escape = 0).
+		var escapeChar byte
+		if len(escape) > 0 {
+			escapeChar = escape[0]
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Expr:    $1,
-			Pattern: $3,
-			Not:     !$2.(bool),
-			Escape:  escape[0],
-			IsLike:  true,
+			Expr:           $1,
+			Pattern:        $3,
+			Not:            !$2.(bool),
+			Escape:         escapeChar,
+			EscapeExplicit: explicit,
+			IsLike:         true,
 		}
 	}
 |	BitExpr IlikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		escape := $4
+		escapeSpec := $4.(*likeEscapeSpec)
+		escape := escapeSpec.escape
+		explicit := escapeSpec.explicit
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
-		} else if len(escape) == 0 {
-			escape = "\\"
+		}
+		// When ESCAPE empty string is specified, escape is empty and explicit is true.
+		// This means no escape character should be used (Escape = 0).
+		var escapeChar byte
+		if len(escape) > 0 {
+			escapeChar = escape[0]
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Expr:    $1,
-			Pattern: $3,
-			Not:     !$2.(bool),
-			Escape:  escape[0],
-			IsLike:  false,
+			Expr:           $1,
+			Pattern:        $3,
+			Not:            !$2.(bool),
+			Escape:         escapeChar,
+			EscapeExplicit: explicit,
+			IsLike:         false,
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -6668,11 +6874,11 @@ RegexpSym:
 LikeOrIlikeEscapeOpt:
 	%prec empty
 	{
-		$$ = "\\"
+		$$ = &likeEscapeSpec{escape: "\\", explicit: false}
 	}
 |	"ESCAPE" stringLit
 	{
-		$$ = $2
+		$$ = &likeEscapeSpec{escape: $2, explicit: true}
 	}
 
 Field:
@@ -6723,7 +6929,7 @@ FieldList:
 		field.Offset = parser.startOffset(&yyS[yypt])
 		if field.Expr != nil {
 			endOffset := parser.yylval.offset
-			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+			parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
 		$$ = []*ast.SelectField{field}
 	}
@@ -6734,7 +6940,7 @@ FieldList:
 		field.Offset = parser.startOffset(&yyS[yypt])
 		if field.Expr != nil {
 			endOffset := parser.yylval.offset
-			field.SetText(parser.lexer.client, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+			parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
 		$$ = append(fl, field)
 	}
@@ -7244,6 +7450,7 @@ UnReservedKeyword:
 |	"MAX_QUERIES_PER_HOUR"
 |	"MAX_UPDATES_PER_HOUR"
 |	"MAX_USER_CONNECTIONS"
+|	"MASKING"
 |	"REPLICATION"
 |	"CLIENT"
 |	"SLAVE"
@@ -7423,6 +7630,7 @@ UnReservedKeyword:
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEYFILE"
+|	"MONITOR"
 |	"AUTOEXTEND_SIZE"
 |	"PAGE_CHECKSUM"
 |	"PAGE_COMPRESSED"
@@ -7448,6 +7656,7 @@ TiDBKeyword:
 |	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
+|	"NDVRATE"
 |	"NODE_ID"
 |	"NODE_STATE"
 |	"SAMPLES"
@@ -7471,10 +7680,12 @@ TiDBKeyword:
 |	"SPLIT"
 |	"OPTIMISTIC"
 |	"PESSIMISTIC"
+|	"POLICIES"
 |	"WIDTH"
 |	"REGIONS"
 |	"REGION"
 |	"RESET"
+|	"RAW"
 |	"DRY"
 |	"RUN"
 
@@ -8196,7 +8407,7 @@ SimpleExpr:
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		endOffset := parser.endOffset(&yyS[yypt])
 		expr := $2
-		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
+		parser.setNodeText(expr, parser.src[startOffset:endOffset])
 		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 |	'(' ExpressionList ',' Expression ')'
@@ -9602,7 +9813,7 @@ SelectStmtFromDualTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-1].offset - 1
-			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+			parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
@@ -9617,7 +9828,7 @@ SelectStmtFromTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-5])
-			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+			parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Where = $4.(ast.ExprNode)
@@ -10229,6 +10440,14 @@ TableFactor:
 		resultNode := $1.(*ast.SubqueryExpr).Query
 		$$ = &ast.TableSource{Source: resultNode, AsName: $2.(ast.CIStr)}
 	}
+|	"LATERAL" SubSelect TableAsName IdentListWithParenOpt
+	{
+		resultNode := $2.(*ast.SubqueryExpr).Query
+		ts := &ast.TableSource{Source: resultNode, AsName: $3.(ast.CIStr)}
+		ts.Lateral = true
+		ts.ColumnNames = $4.([]ast.CIStr)
+		$$ = ts
+	}
 |	'(' TableRefs ')'
 	{
 		j := $2.(*ast.Join)
@@ -10660,14 +10879,14 @@ SubSelect:
 		parser.setLastSelectFieldText(rs, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SetOprStmt ')'
 	{
 		rs := $2.(*ast.SetOprStmt)
 		src := parser.src
-		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SelectStmtWithClause ')'
@@ -10678,11 +10897,11 @@ SubSelect:
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
 			// See the implementation of yyParse function
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -10701,11 +10920,11 @@ SubSelect:
 			endOffset := parser.endOffset(&yyS[yypt])
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
+			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -11903,6 +12122,17 @@ ShowStmt:
 			User: $4.(*auth.UserIdentity),
 		}
 	}
+|	"SHOW" "MASKING" "POLICIES" "FOR" TableName WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowMaskingPolicies,
+			Table: $5.(*ast.TableName),
+		}
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
+	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
@@ -12024,12 +12254,13 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
-|	"SHOW" "IMPORT" "JOB" Int64Num
+|	"SHOW" ShowImportJobTarget Int64Num
 	{
-		v := $4.(int64)
+		v := $3.(int64)
 		$$ = &ast.ShowStmt{
-			Tp:          ast.ShowImportJobs,
-			ImportJobID: &v,
+			Tp:           ast.ShowImportJobs,
+			ImportJobID:  &v,
+			ImportJobRaw: $2.(bool),
 		}
 	}
 |	"SHOW" "DISTRIBUTION" "JOB" Int64Num
@@ -12395,9 +12626,9 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
 	}
-|	"IMPORT" "JOBS"
+|	ShowImportJobsTarget
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: $1.(bool)}
 	}
 |	"DISTRIBUTION" "JOBS"
 	{
@@ -12411,14 +12642,35 @@ ShowLikeOrWhereOpt:
 |	"LIKE" SimpleExpr
 	{
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Pattern: $2,
-			Escape:  '\\',
-			IsLike:  true,
+			Pattern:        $2,
+			Escape:         '\\',
+			EscapeExplicit: false,
+			IsLike:         true,
 		}
 	}
 |	"WHERE" Expression
 	{
 		$$ = $2
+	}
+
+ShowImportJobTarget:
+	"IMPORT" "JOB"
+	{
+		$$ = false
+	}
+|	"RAW" "IMPORT" "JOB"
+	{
+		$$ = true
+	}
+
+ShowImportJobsTarget:
+	"IMPORT" "JOBS"
+	{
+		$$ = false
+	}
+|	"RAW" "IMPORT" "JOBS"
+	{
+		$$ = true
 	}
 
 GlobalScope:
@@ -12544,11 +12796,12 @@ FlushOption:
 			Tp: ast.FlushClientErrorsSummary,
 		}
 	}
-|	"STATS_DELTA" ClusterOpt
+|	"STATS_DELTA" StatsObjectList ClusterOpt
 	{
 		$$ = &ast.FlushStmt{
-			Tp:        ast.FlushStatsDelta,
-			IsCluster: $2.(bool),
+			Tp:           ast.FlushStatsDelta,
+			FlushObjects: $2.([]*ast.StatsObject),
+			IsCluster:    $3.(bool),
 		}
 	}
 
@@ -12648,6 +12901,7 @@ Statement:
 |	CreateRoleStmt
 |	CreateBindingStmt
 |	CreatePolicyStmt
+|	CreateMaskingPolicyStmt
 |	CreateProcedureStmt
 |	CreateResourceGroupStmt
 |	AddQueryWatchStmt
@@ -12793,7 +13047,7 @@ StatementList:
 		if $1 != nil {
 			s := $1
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(parser.lexer.client, lexer.stmtText())
+				parser.setNodeText(s, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -12803,7 +13057,7 @@ StatementList:
 		if $3 != nil {
 			s := $3
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(parser.lexer.client, lexer.stmtText())
+				parser.setNodeText(s, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -14610,11 +14864,11 @@ CreateBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
@@ -14628,7 +14882,7 @@ CreateBindingStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		hintedStmt := $5
-		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  hintedStmt,
@@ -14680,7 +14934,7 @@ DropBindingStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
@@ -14694,11 +14948,11 @@ DropBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
@@ -14723,7 +14977,7 @@ SetBindingStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.SetBindingStmt{
 			BindingStatusType: $3.(ast.BindingStatusType),
@@ -14737,11 +14991,11 @@ SetBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(hintedStmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.SetBindingStmt{
 			BindingStatusType: $3.(ast.BindingStatusType),
@@ -15067,6 +15321,15 @@ PrivType:
 |	"REPLICATION" "CLIENT"
 	{
 		$$ = mysql.ReplicationClientPriv
+	}
+|	"BINLOG" "MONITOR"
+	{
+		if parser.enableMariaDB {
+			$$ = mysql.ReplicationClientPriv
+		} else {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
 	}
 |	"USAGE"
 	{
@@ -15805,10 +16068,10 @@ UnlockStatsStmt:
 	}
 
 RefreshStatsStmt:
-	"REFRESH" "STATS" RefreshObjectList RefreshStatsModeOpt RefreshStatsClusterOpt
+	"REFRESH" "STATS" StatsObjectList RefreshStatsModeOpt RefreshStatsClusterOpt
 	{
 		stmt := &ast.RefreshStatsStmt{
-			RefreshObjects: $3.([]*ast.RefreshObject),
+			RefreshObjects: $3.([]*ast.StatsObject),
 		}
 		if mode, ok := $4.(*ast.RefreshStatsMode); ok {
 			stmt.RefreshMode = mode
@@ -15817,14 +16080,14 @@ RefreshStatsStmt:
 		$$ = stmt
 	}
 
-RefreshObjectList:
-	RefreshObject
+StatsObjectList:
+	StatsObject
 	{
-		$$ = []*ast.RefreshObject{$1.(*ast.RefreshObject)}
+		$$ = []*ast.StatsObject{$1.(*ast.StatsObject)}
 	}
-|	RefreshObjectList ',' RefreshObject
+|	StatsObjectList ',' StatsObject
 	{
-		$$ = append($1.([]*ast.RefreshObject), $3.(*ast.RefreshObject))
+		$$ = append($1.([]*ast.StatsObject), $3.(*ast.StatsObject))
 	}
 
 RefreshStatsModeOpt:
@@ -15858,32 +16121,32 @@ RefreshStatsClusterOpt:
 		$$ = true
 	}
 
-RefreshObject:
+StatsObject:
 	'*' '.' '*'
 	{
-		$$ = &ast.RefreshObject{
-			RefreshObjectScope: ast.RefreshObjectScopeGlobal,
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeGlobal,
 		}
 	}
 |	Identifier '.' '*'
 	{
-		$$ = &ast.RefreshObject{
-			RefreshObjectScope: ast.RefreshObjectScopeDatabase,
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeDatabase,
 			DBName:             ast.NewCIStr($1),
 		}
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.RefreshObject{
-			RefreshObjectScope: ast.RefreshObjectScopeTable,
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
 			DBName:             ast.NewCIStr($1),
 			TableName:          ast.NewCIStr($3),
 		}
 	}
 |	Identifier
 	{
-		$$ = &ast.RefreshObject{
-			RefreshObjectScope: ast.RefreshObjectScopeTable,
+		$$ = &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
 			TableName:          ast.NewCIStr($1),
 		}
 	}
@@ -15934,6 +16197,82 @@ CreatePolicyStmt:
 			IfNotExists:      $5.(bool),
 			PolicyName:       ast.NewCIStr($6),
 			PlacementOptions: $7.([]*ast.PlacementOption),
+		}
+	}
+
+MaskingPolicyStateOpt:
+	{
+		$$ = &ast.MaskingPolicyState{
+			Enabled:  true,
+			Explicit: false,
+		}
+	}
+|	"ENABLE"
+	{
+		$$ = &ast.MaskingPolicyState{
+			Enabled:  true,
+			Explicit: true,
+		}
+	}
+|	"DISABLE"
+	{
+		$$ = &ast.MaskingPolicyState{
+			Enabled:  false,
+			Explicit: true,
+		}
+	}
+
+MaskingPolicyRestrictOnOpt:
+	{
+		$$ = ast.MaskingPolicyRestrictOpNone
+	}
+|	"RESTRICT" "ON" '(' MaskingPolicyRestrictOperationList ')'
+	{
+		$$ = $4.(ast.MaskingPolicyRestrictOps)
+	}
+|	"RESTRICT" "ON" "NONE"
+	{
+		$$ = ast.MaskingPolicyRestrictOpNone
+	}
+
+MaskingPolicyRestrictOperationList:
+	MaskingPolicyRestrictOperation
+	{
+		$$ = $1.(ast.MaskingPolicyRestrictOps)
+	}
+|	MaskingPolicyRestrictOperationList ',' MaskingPolicyRestrictOperation
+	{
+		$$ = $1.(ast.MaskingPolicyRestrictOps) | $3.(ast.MaskingPolicyRestrictOps)
+	}
+
+MaskingPolicyRestrictOperation:
+	Identifier
+	{
+		op, ok := getMaskingPolicyRestrictOp($1)
+		if !ok {
+			yylex.AppendError(yylex.Errorf("unsupported masking policy restrict operation: %s", $1))
+			return 1
+		}
+		$$ = op
+	}
+
+CreateMaskingPolicyStmt:
+	"CREATE" OrReplace "MASKING" "POLICY" IfNotExists PolicyName "ON" TableName '(' Identifier ')' "AS" Expression MaskingPolicyRestrictOnOpt MaskingPolicyStateOpt
+	{
+		if $2.(bool) && $5.(bool) {
+			yylex.AppendError(yylex.Errorf("'OR REPLACE' and 'IF NOT EXISTS' are mutually exclusive"))
+			return 1
+		}
+		state := $15.(*ast.MaskingPolicyState)
+		$$ = &ast.CreateMaskingPolicyStmt{
+			OrReplace:          $2.(bool),
+			IfNotExists:        $5.(bool),
+			PolicyName:         ast.NewCIStr($6),
+			Table:              $8.(*ast.TableName),
+			Column:             &ast.ColumnName{Name: ast.NewCIStr($10)},
+			Expr:               $13,
+			RestrictOps:        $14.(ast.MaskingPolicyRestrictOps),
+			MaskingPolicyState: *state,
 		}
 	}
 
@@ -16197,7 +16536,7 @@ PlanReplayerStmt:
 			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(x.Stmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}
@@ -16216,7 +16555,7 @@ PlanReplayerStmt:
 			x.HistoricalStatsInfo = $4.(*ast.AsOfClause)
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+		parser.setNodeText(x.Stmt, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}
@@ -17047,7 +17386,7 @@ CreateProcedureStmt:
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $8
-		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
+		parser.setNodeText(originStmt, strings.TrimSpace(parser.src[startOffset:parser.yylval.offset]))
 		startOffset = parser.startOffset(&yyS[yypt-3])
 		if parser.src[startOffset] == '(' {
 			startOffset++

@@ -88,7 +88,8 @@ errdoc:tools/bin/errdoc-gen
 .PHONY: lint
 lint:tools/bin/revive
 	@echo "linting"
-	@tools/bin/revive -formatter friendly -config tools/check/revive.toml $(FILES_TIDB_TESTS)
+	@tools/bin/revive -formatter friendly -config tools/check/revive.toml \
+	-exclude pkg/util/hack/... -exclude ./pkg/util/hack/...  $(FILES_TIDB_TESTS)
 	@tools/bin/revive -formatter friendly -config tools/check/revive.toml ./lightning/...
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/overview.json
 	go run tools/dashboard-linter/main.go pkg/metrics/grafana/performance_overview.json
@@ -466,11 +467,21 @@ build_lightning_for_web:
 
 .PHONY: build_lightning
 build_lightning: ## Build TiDB Lightning data import tool
+ifeq ("$(GOOS)", "freebsd")
+	@echo "Building lightning for FreeBSD, assuming crossbuild, disabling CGO"
+	CGO_ENABLED=0 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+else
 	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+endif
 
 .PHONY: build_lightning-ctl
 build_lightning-ctl: ## Build TiDB Lightning control tool
+	@echo "Building lightning-ctl for FreeBSD, assuming crossbuild, disabling CGO"
+ifeq ("$(GOOS)", "freebsd")
+	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
+else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_CTL_BIN) ./lightning/cmd/tidb-lightning-ctl
+endif
 
 .PHONY: build_for_lightning_integration_test
 build_for_lightning_integration_test:
@@ -704,7 +715,7 @@ bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 
 .PHONY: bazel_coverage_test
 bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
@@ -712,7 +723,7 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
@@ -721,8 +732,8 @@ bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
 .PHONY: bazel_bin
 bazel_bin: ## Build importer/tidb binary files with Bazel build system
 	mkdir -p bin; \
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-workspace-status.sh --define gotags=$(BUILD_TAGS) --norun_validations ;\
+	NEXT_GEN=$(NEXT_GEN) bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-workspace-status.sh --action_env=NEXT_GEN --define gotags=$(BUILD_TAGS) --norun_validations ;\
  	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
  	cp -f ${IMPORTER_PATH} ./bin/ ;
 
@@ -731,13 +742,13 @@ bazel_build: ## Build TiDB using Bazel build system
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --stamp --workspace_status_command=./build/print-workspace-status.sh --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
+	NEXT_GEN=$(NEXT_GEN) bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --stamp --workspace_status_command=./build/print-workspace-status.sh --action_env=NEXT_GEN --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
 	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
 	cp -f ${IMPORTER_PATH} ./bin/ ; \
 	cp -f ${TIDB_SERVER_CHECK_PATH} ./bin/ ; \
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=$(BUILD_TAGS),enterprise; \
+	NEXT_GEN=$(NEXT_GEN) bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --action_env=NEXT_GEN --define gotags=$(BUILD_TAGS),enterprise; \
 	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
 	./bin/tidb-server -V
 

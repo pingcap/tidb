@@ -17,6 +17,7 @@ package exec
 import (
 	"context"
 	"reflect"
+	stdatomic "sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -37,6 +38,100 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/atomic"
 )
+
+// nextIOAcc accumulates input volume for a single Executor.Next() invocation.
+type nextIOAcc struct {
+	inRows  int64
+	inCells int64
+}
+
+func (a *nextIOAcc) reset() {
+	if a == nil {
+		return
+	}
+	stdatomic.StoreInt64(&a.inRows, 0)
+	stdatomic.StoreInt64(&a.inCells, 0)
+}
+
+func calcCellCount(rows, cols int) int64 {
+	if rows <= 0 || cols <= 0 {
+		return 0
+	}
+	return int64(rows) * int64(cols)
+}
+
+// addInput adds rows and cells (rows*cols) into the accumulator.
+func (a *nextIOAcc) addInput(rows, cols int) {
+	if a == nil || rows <= 0 {
+		return
+	}
+	stdatomic.AddInt64(&a.inRows, int64(rows))
+	stdatomic.AddInt64(&a.inCells, calcCellCount(rows, cols))
+}
+
+type nextIOAccKeyType struct{}
+
+var nextIOAccKey nextIOAccKeyType
+
+type nextIOAccProvider interface {
+	reusableNextIOAcc() *nextIOAcc
+}
+
+func getReusableNextIOAcc(e Executor) *nextIOAcc {
+	if provider, ok := e.(nextIOAccProvider); ok {
+		return provider.reusableNextIOAcc()
+	}
+	return &nextIOAcc{}
+}
+
+func needNextIOAcc(trackRUV2 bool, parentAcc *nextIOAcc, childCount int) bool {
+	return childCount > 0 && (trackRUV2 || parentAcc != nil)
+}
+
+type ruv2ExecutorMetric struct {
+	label string
+	level int
+	// useCells selects the counting unit: true means cells (rows*cols), false means rows.
+	useCells bool
+}
+
+// ruv2ExecutorMetricByType documents the current executor-to-level mapping used
+// by both RU v2 statement metrics and the configurable RU v2 weights.
+//
+// L1: BatchPointGet, PointGet, Limit.
+// L2: HashAgg, HashJoin, IndexLookUpJoin, IndexLookUpExecutor,
+// IndexReaderExecutor, MemTableReaderExec, SelectionExec, TableDualExec,
+// TableReaderExecutor, UnionScanExec, SelectLockExec.
+// L3: Sort, StreamAgg.
+// L4: intentionally unused today.
+// L5: reserved for insert-row accounting outside this executor map.
+var ruv2ExecutorMetricByType = map[string]ruv2ExecutorMetric{
+	"*executor.BatchPointGetExec":   {level: 1, label: "BatchPointGetExec", useCells: true},
+	"*executor.PointGetExecutor":    {level: 1, label: "PointGetExecutor", useCells: true},
+	"*executor.LimitExec":           {level: 1, label: "LimitExec", useCells: true},
+	"*aggregate.HashAggExec":        {level: 2, label: "HashAggExec", useCells: false},
+	"*executor.HashJoinExec":        {level: 2, label: "HashJoinExec", useCells: false},
+	"*executor.IndexLookUpJoin":     {level: 2, label: "IndexLookUpJoin", useCells: true},
+	"*executor.IndexLookUpExecutor": {level: 2, label: "IndexLookUpExecutor", useCells: false},
+	"*executor.IndexReaderExecutor": {level: 2, label: "IndexReaderExecutor", useCells: false},
+	"*executor.MemTableReaderExec":  {level: 2, label: "MemTableReaderExec", useCells: false},
+	"*executor.SelectionExec":       {level: 2, label: "SelectionExec", useCells: false},
+	"*executor.TableDualExec":       {level: 2, label: "TableDualExec", useCells: false},
+	"*executor.TableReaderExecutor": {level: 2, label: "TableReaderExecutor", useCells: false},
+	"*executor.UnionScanExec":       {level: 2, label: "UnionScanExec", useCells: false},
+	"*executor.SelectLockExec":      {level: 2, label: "SelectLockExec", useCells: true},
+	"*executor.SortExec":            {level: 3, label: "SortExec", useCells: true},
+	"*aggregate.StreamAggExec":      {level: 3, label: "StreamAggExec", useCells: false},
+}
+
+func addRUV2ExecutorMetricWithInfo(ctx context.Context, info ruv2ExecutorMetric, useCells bool, delta int64) {
+	if delta == 0 || info.useCells != useCells {
+		return
+	}
+	if ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx); ruv2Metrics != nil {
+		ruv2Metrics.AddExecutorMetric(info.level, info.label, delta)
+	}
+}
 
 // Executor is the physical implementation of an algebra operator.
 //
@@ -279,10 +374,11 @@ func newExecutorKillerHandler(handler signalHandler) executorKillerHandler {
 type BaseExecutorV2 struct {
 	_ constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
 
-	executorMeta
 	executorKillerHandler
 	executorStats
+	executorMeta
 	executorChunkAllocator
+	nextIOAccState nextIOAcc // reusable accumulator context for RUv2 tracking
 }
 
 // NewBaseExecutorV2 creates a new BaseExecutorV2 instance.
@@ -327,6 +423,11 @@ func (*BaseExecutorV2) Next(_ context.Context, _ *chunk.Chunk) error {
 // Detach detaches the current executor from the session context.
 func (*BaseExecutorV2) Detach() (Executor, bool) {
 	return nil, false
+}
+
+func (e *BaseExecutorV2) reusableNextIOAcc() *nextIOAcc {
+	e.nextIOAccState.reset()
+	return &e.nextIOAccState
 }
 
 // BuildNewBaseExecutorV2 builds a new `BaseExecutorV2` based on the configuration of the current base executor.
@@ -453,14 +554,60 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	r, ctx := tracing.StartRegionEx(ctx, reflect.TypeOf(e).String()+".Next")
+	execType := reflect.TypeOf(e).String()
+	r, ctx := tracing.StartRegionEx(ctx, execType+".Next")
 	defer r.End()
+
+	parentAcc, _ := ctx.Value(nextIOAccKey).(*nextIOAcc)
+	info, trackRUV2 := ruv2ExecutorMetricByType[execType]
+	childCount := len(e.AllChildren())
+	needLocalAcc := needNextIOAcc(trackRUV2, parentAcc, childCount)
+	var myAcc *nextIOAcc
+	if needLocalAcc {
+		// Keep descendant IO local to this executor before optionally bubbling the
+		// executor output up to its parent. Only executors with children need a
+		// local accumulator, and BaseExecutorV2-backed executors can reuse one
+		// across Next() calls.
+		myAcc = getReusableNextIOAcc(e)
+		ctx = context.WithValue(ctx, nextIOAccKey, myAcc)
+	}
 
 	e.RegisterSQLAndPlanInExecForTopProfiling()
 	err = e.Next(ctx, req)
 
 	if err != nil {
 		return err
+	}
+
+	outRows := req.NumRows()
+	outCols := req.NumCols()
+	if parentAcc != nil {
+		parentAcc.addInput(outRows, outCols)
+	}
+
+	if !trackRUV2 {
+		// recheck whether the session/query is killed during the Next()
+		return e.HandleSQLKillerSignal()
+	}
+
+	var inRows, inCells int64
+	if myAcc != nil {
+		inRows = stdatomic.LoadInt64(&myAcc.inRows)
+		inCells = stdatomic.LoadInt64(&myAcc.inCells)
+	}
+	outCells := calcCellCount(outRows, outCols)
+	// Dispatch both row-based and cell-based deltas; info.useCells filters each executor to its configured unit.
+	if inRows != 0 {
+		addRUV2ExecutorMetricWithInfo(ctx, info, false, inRows)
+	}
+	if outRows != 0 {
+		addRUV2ExecutorMetricWithInfo(ctx, info, false, int64(outRows))
+	}
+	if inCells != 0 {
+		addRUV2ExecutorMetricWithInfo(ctx, info, true, inCells)
+	}
+	if outCells != 0 {
+		addRUV2ExecutorMetricWithInfo(ctx, info, true, outCells)
 	}
 	// recheck whether the session/query is killed during the Next()
 	return e.HandleSQLKillerSignal()

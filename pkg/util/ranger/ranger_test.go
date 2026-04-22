@@ -1417,6 +1417,22 @@ create table t(
 			filterConds: "[like(test.t.h, ÿÿ%, 92)]",
 			resultStr:   "[[\"ÿÿ\",\"ÿ\\xc3\\xc0\")]", // The decoding error is ignored.
 		},
+		// CAST AS BINARY on CI column: EQ should use range scan with filter.
+		{
+			indexPos:    4,
+			exprStr:     "f = cast('a' as binary)",
+			accessConds: "[eq(test.t.f, a)]",
+			filterConds: "[eq(test.t.f, a)]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"]]",
+		},
+		// CAST AS BINARY on CI column: IN should use range scan with filter.
+		{
+			indexPos:    4,
+			exprStr:     "f in (cast('a' as binary), cast('B' as binary))",
+			accessConds: "[in(test.t.f, a, B)]",
+			filterConds: "[in(test.t.f, a, B)]",
+			resultStr:   "[[\"\\x00A\",\"\\x00A\"] [\"\\x00B\",\"\\x00B\"]]",
+		},
 	}
 
 	ctx := context.Background()
@@ -2390,11 +2406,11 @@ func TestIssue40997(t *testing.T) {
             AND db_id < '62813'
         )
     )
-	`).Check(testkit.Rows(
-		"IndexLookUp_8 1.25 root  ",
-		"├─IndexRangeScan_6(Build) 1.25 cop[tikv] table:t71706696, index:dt_2(dt, db_id, tbl_id) range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo",
-		"└─TableRowIDScan_7(Probe) 1.25 cop[tikv] table:t71706696 keep order:false, stats:pseudo",
-	))
+	`).CheckAt([]int{1, 2, 3, 4}, [][]any{
+		{"1.25", "root", "", ""},
+		{"1.25", "cop[tikv]", "table:t71706696, index:dt_2(dt, db_id, tbl_id)", "range:(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf], [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696], keep order:false, stats:pseudo"},
+		{"1.25", "cop[tikv]", "table:t71706696", "keep order:false, stats:pseudo"},
+	})
 }
 
 func TestIssue50051(t *testing.T) {
@@ -2518,4 +2534,33 @@ func TestMinAccessCondsForDNFCond(t *testing.T) {
 			require.Equal(t, tt.minAccessCondsForDNFCond, res.MinAccessCondsForDNFCond)
 		})
 	}
+}
+
+func TestBinCollationRangeForIndex(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (f varchar(10) collate utf8mb4_general_ci, index idx_f(f))")
+
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	sctx := tk.Session()
+	rctx := sctx.GetRangerCtx()
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+
+	// Test DetachSimpleCondAndBuildRangeForIndex with binary collation EQ.
+	// This exercises the shouldReserve path in the !considerDNF branch of detachCNFCondAndBuildRangeForIndex.
+	sql := "select * from t where f = cast('abc' as binary)"
+	selection := getSelectionFromQuery(t, sctx, sql)
+	conds := selection.Conditions
+	cols, lengths := plannerutil.IndexInfo2PrefixCols(tblInfo.Columns, selection.Schema().Columns, tblInfo.Indices[0])
+	require.NotNil(t, cols)
+
+	ranges, accessConds, remainedConds, err := ranger.DetachSimpleCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
+	require.NoError(t, err)
+	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, accessConds))
+	require.Equal(t, "[eq(test.t.f, abc)]", expression.StringifyExpressionsWithCtx(ectx, remainedConds))
+	require.Equal(t, "[[\"\\x00A\\x00B\\x00C\",\"\\x00A\\x00B\\x00C\"]]", fmt.Sprintf("%v", ranges))
 }
