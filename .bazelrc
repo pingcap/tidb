@@ -30,5 +30,5 @@ build:ci --bes_keywords=source:ci
 build:ci --build_event_publish_all_actions
 test:ci --bes_keywords=source:ci
 test:ci --build_event_publish_all_actions
-\
+
 try-import /data/bazel
