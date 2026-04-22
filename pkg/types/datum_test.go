@@ -591,9 +591,13 @@ func TestMarshalDatum(t *testing.T) {
 			require.Nil(t, datum.x, msg)
 		}
 		require.Equal(t, reflect.TypeOf(tt.x), reflect.TypeOf(datum.x), msg)
+		// Time is packed into d.i, not stored via d.x, so verify its
+		// round-trip through the getter rather than via d.x.
+		if tt.k == KindMysqlTime {
+			require.Equal(t, 0, tt.GetMysqlTime().Compare(datum.GetMysqlTime()), msg)
+			continue
+		}
 		switch tt.x.(type) {
-		case Time:
-			require.Equal(t, 0, tt.x.(Time).Compare(datum.x.(Time)))
 		case *MyDecimal:
 			require.Equal(t, 0, tt.x.(*MyDecimal).Compare(datum.x.(*MyDecimal)))
 		default:
@@ -642,9 +646,12 @@ func BenchmarkCompareDatumByReflect(b *testing.B) {
 	}
 }
 
-// BenchmarkDatumCopy exercises Datum.Copy on a heterogeneous slice. This
-// is the most direct measurement of Datum struct size: every byte saved
-// from the struct shows up in B/op here.
+// BenchmarkDatumCopy exercises Datum.Copy on a heterogeneous slice that
+// contains a Time datum. This is the most direct measurement of Datum
+// struct size: every byte saved from the struct shows up in B/op here.
+// With Time packed into d.i, the KindMysqlTime branch of Copy is gone
+// and the per-copy allocation count drops by one vs. the old
+// interface-boxed representation.
 func BenchmarkDatumCopy(b *testing.B) {
 	src, _ := prepareCompareDatums()
 	dst := make([]Datum, len(src))
@@ -657,9 +664,9 @@ func BenchmarkDatumCopy(b *testing.B) {
 	}
 }
 
-// BenchmarkDatumSetMysqlTime locks in the allocation cost of SetMysqlTime.
-// Today Time is boxed via d.x (any), which heap-allocates the uint64-sized
-// value. After packing Time into d.i this should drop to 0 allocs/op.
+// BenchmarkDatumSetMysqlTime asserts that SetMysqlTime is alloc-free.
+// With Time packed into d.i (rather than boxed through d.x any), every
+// call should be 0 B/op / 0 allocs/op.
 func BenchmarkDatumSetMysqlTime(b *testing.B) {
 	t := NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)
 	var d Datum
