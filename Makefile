@@ -719,9 +719,16 @@ bazel_ci_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
+BAZEL_BEP_BACKEND ?= grpcs://beplessproxy.channel9.ai
+BAZEL_BEP_RESULTS_URL ?= https://bepless.hawkingrei.com/
+BAZEL_BEP_BASE_FLAGS = \
+	--bes_backend=$(BAZEL_BEP_BACKEND) \
+	--bes_results_url=$(BAZEL_BEP_RESULTS_URL) \
+	--experimental_remote_build_event_upload=all
+
 .PHONY: bazel_coverage_test
 bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) $(BAZEL_BEP_BASE_FLAGS) $$(./build/print-bazel-bep-flags.sh) --build_tests_only --test_keep_going=false \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
@@ -729,7 +736,7 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) $(BAZEL_BEP_BASE_FLAGS) $$(./build/print-bazel-bep-flags.sh) --build_tests_only --test_keep_going=false \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
