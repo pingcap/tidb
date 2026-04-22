@@ -48,6 +48,10 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 			BaseExecutor:        exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			NewPrimaryClusterID: v.NewPrimaryClusterID,
 		}
+	case *plannercore.SwitchOverAsPrimary:
+		return &SwitchOverAsPrimaryExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		}
 	case *plannercore.ActivateStandby:
 		return &ActivateStandbyExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),

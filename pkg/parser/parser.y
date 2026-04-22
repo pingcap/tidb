@@ -1691,6 +1691,7 @@ type createFunctionPrefix struct {
 	AdminResumeLogReplication              "Admin resume log replication statement"
 	AdminDropLogReplication                "Admin drop log replication statement"
 	AdminSwitchOverPrimary                 "Admin switchover primary statement"
+	AdminSwitchOverAsPrimary               "Admin switchover as primary statement"
 	AdminActivateStandby                   "Admin activate standby statement"
 	ActivateStandbyMode                    "Activate standby mode"
 	LogReplicationOptList                  "Log replication option list"
@@ -11887,6 +11888,13 @@ AdminStmt:
 			SwitchOverPrimary: $2.(*ast.SwitchOverPrimary),
 		}
 	}
+|	"ADMIN" AdminSwitchOverAsPrimary
+	{
+		$$ = &ast.AdminStmt{
+			Tp:                  ast.AdminSwitchOverAsPrimary,
+			SwitchOverAsPrimary: $2.(*ast.SwitchOverAsPrimary),
+		}
+	}
 |	"ADMIN" AdminActivateStandby
 	{
 		$$ = &ast.AdminStmt{
@@ -18222,6 +18230,12 @@ AdminSwitchOverPrimary:
 		$$ = &ast.SwitchOverPrimary{
 			NewPrimaryClusterID: $4.(uint64),
 		}
+	}
+
+AdminSwitchOverAsPrimary:
+	"SWITCHOVER" "AS" "PRIMARY"
+	{
+		$$ = &ast.SwitchOverAsPrimary{}
 	}
 
 AdminActivateStandby:

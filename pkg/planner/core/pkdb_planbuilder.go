@@ -63,6 +63,11 @@ type SwitchOverPrimary struct {
 	NewPrimaryClusterID uint64
 }
 
+// SwitchOverAsPrimary represents an ADMIN SWITCHOVER AS PRIMARY plan.
+type SwitchOverAsPrimary struct {
+	baseSchemaProducer
+}
+
 // ActivateStandby represents an ADMIN ACTIVATE STANDBY plan.
 type ActivateStandby struct {
 	baseSchemaProducer
@@ -84,6 +89,8 @@ func (b *PlanBuilder) pkdbBuildAdmin(ctx context.Context, as *ast.AdminStmt) (ba
 		return b.buildAdminDropLogReplication(ctx, as.DropLogReplication)
 	case ast.AdminSwitchOverPrimary:
 		return b.buildAdminSwitchOverPrimary(ctx, as.SwitchOverPrimary)
+	case ast.AdminSwitchOverAsPrimary:
+		return b.buildAdminSwitchOverAsPrimary(ctx, as.SwitchOverAsPrimary)
 	case ast.AdminActivateStandby:
 		return b.buildAdminActivateStandby(ctx, as.ActivateStandby)
 	default:
@@ -189,6 +196,11 @@ func (*PlanBuilder) buildAdminSwitchOverPrimary(_ context.Context, as *ast.Switc
 	p := &SwitchOverPrimary{
 		NewPrimaryClusterID: as.NewPrimaryClusterID,
 	}
+	return p, nil
+}
+
+func (*PlanBuilder) buildAdminSwitchOverAsPrimary(_ context.Context, _ *ast.SwitchOverAsPrimary) (base.Plan, error) {
+	p := &SwitchOverAsPrimary{}
 	return p, nil
 }
 

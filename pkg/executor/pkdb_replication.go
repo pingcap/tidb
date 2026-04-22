@@ -403,6 +403,31 @@ func (e *SwitchOverPrimaryExec) Open(ctx context.Context) error {
 	return pdCli.SwitchOverPrimary(ctx, e.NewPrimaryClusterID)
 }
 
+// SwitchOverAsPrimaryExec executes ADMIN SWITCHOVER AS PRIMARY statement.
+// This statement can only be executed on a standby cluster.
+type SwitchOverAsPrimaryExec struct {
+	exec.BaseExecutor
+}
+
+// Open implements the Executor Open interface.
+func (e *SwitchOverAsPrimaryExec) Open(ctx context.Context) error {
+	do := domain.GetDomain(e.Ctx())
+	pdCli := do.GetPDClient()
+
+	// Check if the current cluster is a standby.
+	localStatus, err := pdCli.GetLogReplLocalStatus(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to get log replication local status")
+	}
+	if localStatus.GetStatus().GetSourceClusterId() == 0 {
+		return errors.New("ADMIN SWITCHOVER AS PRIMARY can only be executed on a standby cluster")
+	}
+
+	// Get current cluster ID and trigger switchover.
+	clusterID := pdCli.GetClusterID(ctx)
+	return pdCli.SwitchOverPrimary(ctx, clusterID)
+}
+
 // ActivateStandbyExec executes ADMIN ACTIVATE STANDBY statement.
 type ActivateStandbyExec struct {
 	exec.BaseExecutor

@@ -12,9 +12,6 @@ type CreateLogReplication struct {
 }
 
 func (c *CreateLogReplication) Restore(ctx *format.RestoreCtx) error {
-	if c == nil {
-		return errors.New("CreateLogReplication is nil")
-	}
 	ctx.WriteKeyWord("CREATE LOG REPLICATION ")
 	ctx.WriteName(c.Name.String())
 	if len(c.Opts) == 0 {
@@ -39,9 +36,6 @@ type AlterLogReplication struct {
 }
 
 func (a *AlterLogReplication) Restore(ctx *format.RestoreCtx) error {
-	if a == nil {
-		return errors.New("AlterLogReplication is nil")
-	}
 	ctx.WriteKeyWord("ALTER LOG REPLICATION ")
 	ctx.WriteName(a.Name.String())
 	if a.NewSourceClusterID != nil {
@@ -69,9 +63,6 @@ type PauseLogReplication struct {
 }
 
 func (p *PauseLogReplication) Restore(ctx *format.RestoreCtx) error {
-	if p == nil {
-		return errors.New("PauseLogReplication is nil")
-	}
 	ctx.WriteKeyWord("PAUSE LOG REPLICATION ")
 	ctx.WriteName(p.Name.String())
 	return nil
@@ -82,9 +73,6 @@ type ResumeLogReplication struct {
 }
 
 func (r *ResumeLogReplication) Restore(ctx *format.RestoreCtx) error {
-	if r == nil {
-		return errors.New("ResumeLogReplication is nil")
-	}
 	ctx.WriteKeyWord("RESUME LOG REPLICATION ")
 	ctx.WriteName(r.Name.String())
 	return nil
@@ -95,9 +83,6 @@ type DropLogReplication struct {
 }
 
 func (d *DropLogReplication) Restore(ctx *format.RestoreCtx) error {
-	if d == nil {
-		return errors.New("DropLogReplication is nil")
-	}
 	ctx.WriteKeyWord("DROP LOG REPLICATION ")
 	ctx.WriteName(d.Name.String())
 	return nil
@@ -108,11 +93,17 @@ type SwitchOverPrimary struct {
 }
 
 func (s *SwitchOverPrimary) Restore(ctx *format.RestoreCtx) error {
-	if s == nil {
-		return errors.New("SwitchOverPrimary is nil")
-	}
 	ctx.WriteKeyWord("SWITCHOVER PRIMARY TO ")
 	ctx.WritePlainf("%d", s.NewPrimaryClusterID)
+	return nil
+}
+
+// SwitchOverAsPrimary represents the AST node for ADMIN SWITCHOVER AS PRIMARY statement.
+type SwitchOverAsPrimary struct{}
+
+// Restore implements the Node interface for SwitchOverAsPrimary.
+func (s *SwitchOverAsPrimary) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SWITCHOVER AS PRIMARY")
 	return nil
 }
 
@@ -140,9 +131,6 @@ type ActivateStandby struct {
 }
 
 func (a *ActivateStandby) Restore(ctx *format.RestoreCtx) error {
-	if a == nil {
-		return errors.New("ActivateStandby is nil")
-	}
 	ctx.WriteKeyWord("ACTIVATE STANDBY")
 	switch a.Mode {
 	case ActivateStandbyModeUnknown:
@@ -193,9 +181,6 @@ type LogReplicationOpt struct {
 }
 
 func (o *LogReplicationOpt) Restore(ctx *format.RestoreCtx) error {
-	if o == nil {
-		return errors.New("LogReplicationOpt is nil")
-	}
 	switch o.Tp {
 	case LogReplicationOptSourceHost, LogReplicationOptSourcePort, LogReplicationOptSourceUser,
 		LogReplicationOptSourcePassword, LogReplicationOptProtectionMode, LogReplicationOptDegradeTimeout:
