@@ -307,8 +307,9 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 }
 
 func mustExecWithInfoSchemaRetry(t *testing.T, se sessiontypes.Session, sql string) {
+	ctx := context.Background()
 	var err error
-	for range 10 {
+	for range 120 {
 		rs, execErr := exec(se, sql)
 		if execErr == nil && rs != nil {
 			execErr = rs.Close()
@@ -316,14 +317,24 @@ func mustExecWithInfoSchemaRetry(t *testing.T, se sessiontypes.Session, sql stri
 		if execErr == nil {
 			return
 		}
-		if !domain.ErrInfoSchemaExpired.Equal(execErr) && !domain.ErrInfoSchemaChanged.Equal(execErr) {
+		if !isInfoSchemaRetryableErr(execErr) {
 			err = execErr
 			break
 		}
 		err = execErr
-		time.Sleep(20 * time.Millisecond)
+		se.RollbackTxn(ctx)
+		time.Sleep(100 * time.Millisecond)
 	}
 	require.NoError(t, err, "sql: %s", sql)
+}
+
+func isInfoSchemaRetryableErr(err error) bool {
+	if domain.ErrInfoSchemaExpired.Equal(err) || domain.ErrInfoSchemaChanged.Equal(err) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Information schema is out of date") ||
+		strings.Contains(msg, "Information schema is changed")
 }
 
 // TestUpgrade tests upgrading
