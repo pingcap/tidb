@@ -789,3 +789,48 @@ func TestTTLDeleteError(t *testing.T) {
 		return ttlError != nil && strings.Contains(ttlError.Error(), "Schema 'test' is in read only mode")
 	}, 10*time.Second, 100*time.Millisecond)
 }
+
+func TestSchemaReadOnlyBlockFKCascadeOnDuplicateKeyUpdateAndReplace(t *testing.T) {
+	enableReadOnlyDDLFp(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+
+	tk.MustExec("create database ro_fk_parent")
+	tk.MustExec("create database ro_fk_child")
+	tk.MustExec("create table ro_fk_parent.parent(id int primary key, val int)")
+	tk.MustExec("create table ro_fk_child.child(id int primary key, parent_id int, index idx_parent_id(parent_id), foreign key fk_p(parent_id) references ro_fk_parent.parent(id) on update cascade)")
+
+	// Prepare a real cascade scenario: existing parent/child rows + the duplicate update actually changes the
+	// referenced key value, so the cascade would update the read-only child schema without this fix.
+	tk.MustExec("insert into ro_fk_parent.parent values (2, 200)")
+	tk.MustExec("insert into ro_fk_child.child values (1, 2)")
+	tk.MustExec("alter schema ro_fk_child read only = 1")
+
+	tk.MustExec("use ro_fk_parent")
+	tk.MustGetErrMsg("insert into parent values (2, 999) on duplicate key update id = 3, val = 999",
+		"[schema:3989]Schema 'ro_fk_child' is in read only mode.")
+
+	tk.MustQuery("select * from ro_fk_parent.parent").Check(testkit.Rows("2 200"))
+	tk.MustQuery("select * from ro_fk_child.child").Check(testkit.Rows("1 2"))
+
+	// Cover the REPLACE code path as well (p.IsReplace branch in foreign_key.go).
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("create database ro_fk_parent_replace")
+	tk.MustExec("create database ro_fk_child_replace")
+	tk.MustExec("create table ro_fk_parent_replace.parent(id int primary key, val int)")
+	tk.MustExec("create table ro_fk_child_replace.child(id int primary key, parent_id int, index idx_parent_id(parent_id), foreign key fk_p(parent_id) references ro_fk_parent_replace.parent(id) on delete set null)")
+
+	// REPLACE on parent will delete the duplicated row first, which triggers the ON DELETE SET NULL cascade.
+	tk.MustExec("insert into ro_fk_parent_replace.parent values (1, 100)")
+	tk.MustExec("insert into ro_fk_child_replace.child values (1, 1)")
+	tk.MustExec("alter schema ro_fk_child_replace read only = 1")
+
+	tk.MustExec("use ro_fk_parent_replace")
+	tk.MustGetErrMsg("replace into parent values (1, 111)",
+		"[schema:3989]Schema 'ro_fk_child_replace' is in read only mode.")
+
+	tk.MustQuery("select * from ro_fk_parent_replace.parent").Check(testkit.Rows("1 100"))
+	tk.MustQuery("select * from ro_fk_child_replace.child").Check(testkit.Rows("1 1"))
+}
