@@ -67,18 +67,24 @@ const (
 
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
+//
+// Field layout is chosen to minimize padding and the per-Datum footprint.
+// The first 8-byte word packs: kind (1B), frac (1B), collationID (2B),
+// flen (4B). The collation is stored as a MySQL collation ID (0 = unset);
+// the string-valued Collation() accessor is kept as a facade that resolves
+// the ID via the charset package.
 type Datum struct {
-	k         byte   // datum kind.
-	decimal   uint16 // decimal can hold uint16 values.
-	length    uint32 // length can hold uint32 values.
-	i         int64  // i can hold int64 uint64 float64 values.
-	collation string // collation hold the collation information for string value.
-	b         []byte // b can hold string or []byte values.
-	x         any    // x hold all other types.
+	k           byte   // datum kind.
+	decimal     uint8  // holds the frac (fractional digits). MySQL fsp <= 6 and DECIMAL frac <= 30.
+	collationID uint16 // MySQL collation id; 0 means unset. Replaces a 16-byte string.
+	length      uint32 // length can hold uint32 values.
+	i           int64  // i can hold int64 uint64 float64 values.
+	b           []byte // b can hold string or []byte values.
+	x           any    // x hold all other types.
 }
 
 // EmptyDatumSize is the size of empty datum.
-// 72 = 1 + 1 (byte) + 2 (uint16) + 4 (uint32) + 8 (int64) + 16 (string) + 24 ([]byte) + 16 (interface{})
+// 56 = 1 (byte) + 1 (uint8) + 2 (uint16) + 4 (uint32) + 8 (int64) + 24 ([]byte) + 16 (interface{})
 const EmptyDatumSize = int64(unsafe.Sizeof(Datum{}))
 
 // Clone create a deep copy of the Datum.
@@ -109,14 +115,48 @@ func (d *Datum) Kind() byte {
 	return d.k
 }
 
-// Collation gets the collation of the datum.
+// Collation gets the collation name of the datum. It is kept as a string
+// facade for API compatibility; the underlying storage is a uint16 MySQL
+// collation id. Hot-path callers should prefer CollationID().
 func (d *Datum) Collation() string {
-	return d.collation
+	if d.collationID == 0 {
+		return ""
+	}
+	if c, err := charset.GetCollationByID(int(d.collationID)); err == nil {
+		return c.Name
+	}
+	return ""
 }
 
-// SetCollation sets the collation of the datum.
+// CollationID returns the MySQL collation id; 0 means the datum has no
+// collation set (previously represented by an empty string).
+func (d *Datum) CollationID() uint16 {
+	return d.collationID
+}
+
+// SetCollation sets the collation of the datum by name. Unknown or empty
+// names are stored as id 0 to preserve prior "use default" behavior.
 func (d *Datum) SetCollation(collation string) {
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
+}
+
+// SetCollationID sets the collation of the datum by MySQL collation id.
+func (d *Datum) SetCollationID(id uint16) {
+	d.collationID = id
+}
+
+// collationNameToID translates a collation name to a MySQL collation id.
+// Returns 0 for the empty string or an unknown name, matching the legacy
+// behavior of storing the raw string and letting the collator lookup fall
+// back to the default.
+func collationNameToID(name string) uint16 {
+	if name == "" {
+		return 0
+	}
+	if c, err := charset.GetCollationByName(name); err == nil {
+		return uint16(c.ID)
+	}
+	return 0
 }
 
 // Frac gets the frac of the datum.
@@ -126,7 +166,7 @@ func (d *Datum) Frac() int {
 
 // SetFrac sets the frac of the datum.
 func (d *Datum) SetFrac(frac int) {
-	d.decimal = uint16(frac)
+	d.decimal = uint8(frac)
 }
 
 // Length gets the length of the datum.
@@ -201,7 +241,7 @@ func (d *Datum) GetString() string {
 
 // GetBinaryStringEncoded gets the string value encoded with given charset.
 func (d *Datum) GetBinaryStringEncoded() string {
-	coll, err := charset.GetCollationByName(d.Collation())
+	coll, err := charset.GetCollationByID(int(d.collationID))
 	if err != nil {
 		logutil.BgLogger().Warn("unknown collation", zap.Error(err))
 		return d.GetString()
@@ -252,7 +292,7 @@ func (d *Datum) SetString(s string, collation string) {
 	d.k = KindString
 	sink(s)
 	d.b = hack.Slice(s)
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
 }
 
 // sink prevents s from being allocated on the stack.
@@ -271,7 +311,7 @@ func (d *Datum) GetBytes() []byte {
 func (d *Datum) SetBytes(b []byte) {
 	d.k = KindBytes
 	d.b = b
-	d.collation = charset.CollationBin
+	d.collationID = mysql.BinaryDefaultCollationID
 }
 
 // SetBytesAsString sets bytes value to datum as string type.
@@ -279,7 +319,7 @@ func (d *Datum) SetBytesAsString(b []byte, collation string, length uint32) {
 	d.k = KindString
 	d.b = b
 	d.length = length
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
 }
 
 // GetInterface gets interface value.
@@ -335,7 +375,7 @@ func (d *Datum) GetMysqlBit() BinaryLiteral {
 func (d *Datum) SetBinaryLiteral(b BinaryLiteral) {
 	d.k = KindBinaryLiteral
 	d.b = b
-	d.collation = charset.CollationBin
+	d.collationID = mysql.BinaryDefaultCollationID
 }
 
 // SetMysqlBit sets MysqlBit value
@@ -357,14 +397,14 @@ func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 
 // GetMysqlDuration gets Duration value
 func (d *Datum) GetMysqlDuration() Duration {
-	return Duration{Duration: time.Duration(d.i), Fsp: int(int8(d.decimal))}
+	return Duration{Duration: time.Duration(d.i), Fsp: int(d.decimal)}
 }
 
 // SetMysqlDuration sets Duration value
 func (d *Datum) SetMysqlDuration(b Duration) {
 	d.k = KindMysqlDuration
 	d.i = int64(b.Duration)
-	d.decimal = uint16(b.Fsp)
+	d.decimal = uint8(b.Fsp)
 }
 
 // GetMysqlEnum gets Enum value
@@ -378,7 +418,7 @@ func (d *Datum) SetMysqlEnum(b Enum, collation string) {
 	d.k = KindMysqlEnum
 	d.i = int64(b.Value)
 	sink(b.Name)
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
 	d.b = hack.Slice(b.Name)
 }
 
@@ -393,7 +433,7 @@ func (d *Datum) SetMysqlSet(b Set, collation string) {
 	d.k = KindMysqlSet
 	d.i = int64(b.Value)
 	sink(b.Name)
-	d.collation = collation
+	d.collationID = collationNameToID(collation)
 	d.b = hack.Slice(b.Name)
 }
 
@@ -717,7 +757,7 @@ func (d *Datum) Equals(other any) bool {
 		d.decimal == d2.decimal &&
 		d.length == d2.length &&
 		d.i == d2.i &&
-		d.collation == d2.collation &&
+		d.collationID == d2.collationID &&
 		string(d.b) == string(d2.b)
 	if !ok {
 		return false
@@ -1163,7 +1203,7 @@ func (d *Datum) convertToString(ctx Context, target *FieldType) (Datum, error) {
 	case KindFloat64:
 		s = strconv.FormatFloat(d.GetFloat64(), 'f', -1, 64)
 	case KindString, KindBytes:
-		fromBinary := d.Collation() == charset.CollationBin
+		fromBinary := d.collationID == mysql.BinaryDefaultCollationID
 		toBinary := target.GetCharset() == charset.CharsetBin
 		if fromBinary && toBinary {
 			s = d.GetString()
@@ -2159,13 +2199,13 @@ func (d *Datum) ToBytes() ([]byte, error) {
 func (d *Datum) ToHashKey() ([]byte, error) {
 	switch d.k {
 	case KindString, KindBytes:
-		return collate.GetCollator(d.Collation()).Key(d.GetString()), nil
+		return collate.GetCollatorByID(int(d.collationID)).Key(d.GetString()), nil
 	default:
 		str, err := d.ToString()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return collate.GetCollator(d.Collation()).Key(str), nil
+		return collate.GetCollatorByID(int(d.collationID)).Key(str), nil
 	}
 }
 
@@ -2208,10 +2248,15 @@ func (d *Datum) ToMysqlJSON() (j BinaryJSON, err error) {
 
 // MemUsage gets the memory usage of datum.
 func (d *Datum) MemUsage() (sum int64) {
-	// d.x is not considered now since MemUsage is now only used by analyze samples which is bytesDatum
-	return EmptyDatumSize + int64(cap(d.b)) + int64(len(d.collation))
+	// d.x is not considered now since MemUsage is now only used by analyze samples which is bytesDatum.
+	// The collation is stored inline as a uint16 id, so it no longer
+	// contributes a variable-size term here.
+	return EmptyDatumSize + int64(cap(d.b))
 }
 
+// jsonDatum keeps the on-wire JSON format stable: the Collation field
+// carries the collation name, not the internal uint16 id, so blobs
+// encoded by older versions still round-trip.
 type jsonDatum struct {
 	K         byte       `json:"k"`
 	Decimal   uint16     `json:"decimal,omitempty"`
@@ -2227,10 +2272,10 @@ type jsonDatum struct {
 func (d *Datum) MarshalJSON() ([]byte, error) {
 	jd := &jsonDatum{
 		K:         d.k,
-		Decimal:   d.decimal,
+		Decimal:   uint16(d.decimal),
 		Length:    d.length,
 		I:         d.i,
-		Collation: d.collation,
+		Collation: d.Collation(),
 		B:         d.b,
 	}
 	switch d.k {
@@ -2253,10 +2298,10 @@ func (d *Datum) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	d.k = jd.K
-	d.decimal = jd.Decimal
+	d.decimal = uint8(jd.Decimal)
 	d.length = jd.Length
 	d.i = jd.I
-	d.collation = jd.Collation
+	d.collationID = collationNameToID(jd.Collation)
 	d.b = jd.B
 
 	switch jd.K {
@@ -2409,7 +2454,7 @@ func SortDatums(ctx Context, datums []Datum) error {
 	var err error
 	slices.SortFunc(datums, func(a, b Datum) int {
 		var cmp int
-		cmp, err = a.Compare(ctx, &b, collate.GetCollator(b.Collation()))
+		cmp, err = a.Compare(ctx, &b, collate.GetCollatorByID(int(b.collationID)))
 		if err != nil {
 			return 0
 		}

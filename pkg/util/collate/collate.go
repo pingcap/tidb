@@ -172,14 +172,19 @@ func GetBinaryCollatorSlice(n int) []Collator {
 }
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
+// id == 0 means "no collation set" (the numeric counterpart of passing the
+// empty string to GetCollator) and silently falls through to the default,
+// matching GetCollator's behavior for "".
 func GetCollatorByID(id int) Collator {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		ctor, ok := newCollatorIDMap[id]
 		if !ok {
-			logutil.BgLogger().Warn(
-				"Unable to get collator by ID, use binCollator instead.",
-				zap.Int("ID", id),
-				zap.Stack("stack"))
+			if id != 0 {
+				logutil.BgLogger().Warn(
+					"Unable to get collator by ID, use binCollator instead.",
+					zap.Int("ID", id),
+					zap.Stack("stack"))
+			}
 			return newCollatorMap["utf8mb4_bin"]
 		}
 		return ctor

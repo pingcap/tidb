@@ -248,7 +248,9 @@ func TestRangeMemUsage(t *testing.T) {
 		HighVal:   []types.Datum{types.NewStringDatum("fghij")},
 		Collators: collate.GetBinaryCollatorSlice(1),
 	}
-	mem2 := mem1 + int64(cap(r2.LowVal[0].GetBytes())) + int64(len(r2.LowVal[0].Collation())) + int64(cap(r2.HighVal[0].GetBytes())) + int64(len(r2.HighVal[0].Collation()))
+	// The collation is stored inline as a uint16 id (already counted by
+	// EmptyDatumSize), so only the byte payload contributes a variable term.
+	mem2 := mem1 + int64(cap(r2.LowVal[0].GetBytes())) + int64(cap(r2.HighVal[0].GetBytes()))
 	require.Equal(t, mem2, r2.MemUsage())
 	ranges := ranger.Ranges{&r1, &r2}
 	require.Equal(t, mem1+mem2, ranges.MemUsage())

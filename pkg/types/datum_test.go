@@ -585,7 +585,7 @@ func TestMarshalDatum(t *testing.T) {
 		require.Equal(t, tt.decimal, datum.decimal, msg)
 		require.Equal(t, tt.length, datum.length, msg)
 		require.Equal(t, tt.i, datum.i, msg)
-		require.Equal(t, tt.collation, datum.collation, msg)
+		require.Equal(t, tt.collationID, datum.collationID, msg)
 		require.Equal(t, tt.b, datum.b, msg)
 		if tt.x == nil {
 			require.Nil(t, datum.x, msg)

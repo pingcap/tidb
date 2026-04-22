@@ -217,7 +217,7 @@ func EncodeMySQLTime(loc *time.Location, t types.Time, tp byte, b []byte) (_ []b
 
 func encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
 	if collate.NewCollationEnabled() && comparable1 {
-		return encodeBytes(b, collate.GetCollator(val.Collation()).ImmutableKey(val.GetString()), true)
+		return encodeBytes(b, collate.GetCollatorByID(int(val.CollationID())).ImmutableKey(val.GetString()), true)
 	}
 	return encodeBytes(b, val.GetBytes(), comparable1)
 }
