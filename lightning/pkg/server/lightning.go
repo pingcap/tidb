@@ -218,7 +218,6 @@ func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
 
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
-	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
 
 	registry := l.promRegistry
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))

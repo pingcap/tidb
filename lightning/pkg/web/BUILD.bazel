@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "web",
-    srcs = [
-        "progress.go",
-        "res.go",  #keep
-    ],
+    srcs = ["progress.go"],
     importpath = "github.com/pingcap/tidb/lightning/pkg/web",
     visibility = ["//visibility:public"],
     deps = [
