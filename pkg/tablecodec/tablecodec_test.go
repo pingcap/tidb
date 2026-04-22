@@ -565,6 +565,7 @@ func BenchmarkEncodeValue(b *testing.B) {
 	row[4] = types.NewDatum(types.Set{Name: "a", Value: 0})
 	row[5] = types.NewDatum(types.BinaryLiteral{100})
 	row[6] = types.NewFloat32Datum(1.5)
+	b.ReportAllocs()
 	b.ResetTimer()
 	encodedCol := make([]byte, 0, 16)
 	for i := 0; i < b.N; i++ {
