@@ -36,7 +36,11 @@ func init() {
 	register.Register("planner/core/casetest/rule", "PushDerivedTopnFlash", RunPushDerivedTopnFlash)
 	register.Register("planner/core/casetest/rule", "TopNPushdown", RunTopNPushdown)
 	register.Register("planner/core/casetest/rule", "EmptySelectionEliminator", RunEmptySelectionEliminator)
-	register.Register("planner/core/casetest/rule", "WrapCastForAggFuncs", RunWrapCastForAggFuncs)
+		register.Register("planner/core/casetest/rule", "WrapCastForAggFuncs", RunWrapCastForAggFuncs)
+	register.Register("planner/core/casetest/rule", "CorrelateNullSemantics", RunCorrelateNullSemantics)
+	register.Register("planner/core/casetest/rule", "CorrelateAlternativeChoosesApply", RunCorrelateAlternativeChoosesApply)
+	register.Register("planner/core/casetest/rule", "CorrelateParallelApply", RunCorrelateParallelApply)
+	register.Register("planner/core/casetest/rule", "CorrelateWithCostFactors", RunCorrelateWithCostFactors)
 	register.RegisterOnBeforeRun(func(pkg string) {
 		if pkg == "planner/core/casetest/rule" {
 			InitForMega()

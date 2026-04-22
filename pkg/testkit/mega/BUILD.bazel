@@ -10,6 +10,7 @@ go_test(
     ],
     flaky = True,
     deps = [
+        "//pkg/autoid_service/test",
         "//pkg/bindinfo/test",
         "//pkg/bindinfo/tests/test",
         "//pkg/config/kerneltype/test",
@@ -122,6 +123,7 @@ go_test(
         "//pkg/parser/test",
         "//pkg/parser/test_driver",
         "//pkg/parser/types/test",
+        "//pkg/planner/cardinality/test",
         "//pkg/planner/cascades/base/test",
         "//pkg/planner/cascades/memo/test",
         "//pkg/planner/cascades/old/test",
@@ -179,6 +181,7 @@ go_test(
         "//pkg/statistics/handle/storage/test",
         "//pkg/statistics/handle/syncload/test",
         "//pkg/statistics/handle/updatetest/test",
+        "//pkg/statistics/handle/util/test",
         "//pkg/store/copr/copr_test/test",
         "//pkg/store/driver/test",
         "//pkg/store/helper/test",
