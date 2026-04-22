@@ -338,11 +338,9 @@ func blockingMergePartitionStats2GlobalStats(
 			return
 		}
 
-		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+		// MergePartTopNAndHistToGlobal already leaves bucket NDV = 0; here
+		// we just set the table-level NDV.
 		if globalStats.Hg[i] != nil {
-			for j := range globalStats.Hg[i].Buckets {
-				globalStats.Hg[i].Buckets[j].NDV = 0
-			}
 			globalStats.Hg[i].NDV = globalStatsNDV
 		}
 	}

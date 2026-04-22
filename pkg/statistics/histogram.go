@@ -1655,21 +1655,12 @@ func MergePartTopNAndHistToGlobal(
 		}
 	}
 
-	// Build globalTopN lookup map (encoded key → decoded Datum) for Pass 2.
-	type topNInfo struct {
-		datum types.Datum
-	}
-	globalTopNMap := make(map[hack.MutableString]*topNInfo)
+	// Build globalTopN membership set for Pass 2. Only presence is needed;
+	// the decoded Datum is never consulted through this map.
+	globalTopNMap := make(map[hack.MutableString]struct{})
 	if globalTopN != nil {
 		for i := range globalTopN.TopN {
-			d, err := topNMetaToDatum(TopNMeta{
-				Encoded: globalTopN.TopN[i].Encoded,
-				Count:   globalTopN.TopN[i].Count,
-			}, tp, isIndex, tz)
-			if err != nil {
-				return nil, nil, err
-			}
-			globalTopNMap[hack.String(globalTopN.TopN[i].Encoded)] = &topNInfo{datum: d}
+			globalTopNMap[hack.String(globalTopN.TopN[i].Encoded)] = struct{}{}
 		}
 	}
 
@@ -1919,12 +1910,8 @@ func MergePartTopNAndHistToGlobal(
 	if bucketLower != nil && lastUpper != nil {
 		globalHist.AppendBucketWithNDV(bucketLower, lastUpper, cumCount, lastRepeat, 0)
 	}
-
-	if !isIndex {
-		for i := range globalHist.Buckets {
-			globalHist.Buckets[i].NDV = 0
-		}
-	}
+	// All AppendBucketWithNDV calls above pass 0, so bucket NDV is already 0
+	// for both index and column histograms.
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 2: built global histogram",
 		zap.Int("buckets", len(globalHist.Buckets)))
 
