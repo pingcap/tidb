@@ -1334,9 +1334,9 @@ type bucketMergeEntry struct {
 // compare error observed during sift) lives on the heap rather than
 // being duplicated onto every entry.
 type bucketMergeHeap struct {
-	entries []bucketMergeEntry
-	sc      *stmtctx.StatementContext
 	cmpErr  error
+	sc      *stmtctx.StatementContext
+	entries []bucketMergeEntry
 }
 
 func (h *bucketMergeHeap) Len() int { return len(h.entries) }
