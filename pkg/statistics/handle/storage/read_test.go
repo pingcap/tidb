@@ -137,20 +137,22 @@ func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
 	tableInfo := table.Meta()
 	h := dom.StatsHandle()
 	// Make sure this table exists in stats cache so the old path would touch session context.
-	h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.NotNil(t, statsTbl)
+	require.Equal(t, tableInfo.ID, statsTbl.PhysicalID)
 
-	rowIDItem := model.TableItemID{
+	internalColumnItem := model.TableItemID{
 		TableID: tableInfo.ID,
 		ID:      -1,
 	}
-	asyncload.AsyncLoadHistogramNeededItems.Insert(rowIDItem, true)
+	asyncload.AsyncLoadHistogramNeededItems.Insert(internalColumnItem, true)
 
 	require.NotPanics(t, func() {
 		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h)
 		require.NoError(t, err)
 	})
 	require.NotContains(t, asyncload.AsyncLoadHistogramNeededItems.AllItems(), model.StatsLoadItem{
-		TableItemID: rowIDItem,
+		TableItemID: internalColumnItem,
 		FullLoad:    true,
 	})
 }
