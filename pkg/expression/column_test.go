@@ -105,6 +105,10 @@ func TestColumn(t *testing.T) {
 		resolvedExpr, ok := targetCol.ResolveIndicesByVirtualExpr(ctx.GetEvalCtx(), NewSchema(exprOnlyMatchedCol, exactMatchedCol))
 		require.True(t, ok)
 		require.Equal(t, 1, resolvedExpr.(*Column).Index)
+
+		ambiguousTargetCol := &Column{UniqueID: 13, RetType: strTp, VirtualExpr: virtualExpr.Clone()}
+		_, ok = ambiguousTargetCol.ResolveIndicesByVirtualExpr(ctx.GetEvalCtx(), NewSchema(exprOnlyMatchedCol, exactMatchedCol))
+		require.False(t, ok)
 	})
 }
 
