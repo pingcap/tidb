@@ -990,9 +990,28 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 	tk.MustExec(`insert into t (a) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)`)
 	// increase by 10 ^ 5 rows
 	tk.MustExec(`insert into t (a) select null from t, t t2, t t3, t t4, t t5`)
+
+	// Diagnostics: CI failure reported global TopN count=10 instead of
+	// 100010, suggesting analyze saw only the first INSERT. These checks
+	// will show exactly what TiDB sees before analyze runs and what
+	// state stats_meta is in afterwards. If a subsequent CI run still
+	// fails, the t.Log output will disambiguate storage/commit races
+	// from merge-logic bugs.
+	t.Logf("diag: row count before analyze = %s",
+		tk.MustQuery(`SELECT COUNT(*) FROM t`).Rows()[0][0])
+	for i := 0; i < 7; i++ {
+		t.Logf("diag: partition p%d row count = %s", i,
+			tk.MustQuery(fmt.Sprintf(`SELECT COUNT(*) FROM t PARTITION (p%d)`, i)).Rows()[0][0])
+	}
+	t.Logf("diag: stats_meta before analyze = %v",
+		tk.MustQuery(`SELECT table_id, count, modify_count FROM mysql.stats_meta WHERE table_id IN (SELECT tidb_table_id FROM information_schema.tables WHERE table_name='t' AND table_schema='test')`).Rows())
+
 	tk.MustExec(`analyze table t with 1 topn, 3 buckets`)
 	// Force a full stats cache refresh from storage so all columns/indexes are loaded.
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	t.Logf("diag: stats_meta after analyze = %v",
+		tk.MustQuery(`SELECT table_id, count, modify_count FROM mysql.stats_meta WHERE table_id IN (SELECT tidb_table_id FROM information_schema.tables WHERE table_name='t' AND table_schema='test')`).Rows())
 	tk.MustQuery(`show stats_topn where table_name = 't' and partition_name = 'global'`).Sort().Check(testkit.Rows(""+
 		"test t global a 0 1 1", // TODO: Remove, since useless! extension of #66236
 		"test t global b 0 1 100010",
