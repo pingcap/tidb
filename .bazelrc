@@ -28,9 +28,7 @@ test:race --test_timeout=1200,6000,18000,72000
 
 build:ci --bes_keywords=source:ci
 build:ci --build_event_publish_all_actions
-build:ci --experimental_build_event_upload_strategy=fully_async
 test:ci --bes_keywords=source:ci
 test:ci --build_event_publish_all_actions
-test:ci --experimental_build_event_upload_strategy=fully_async
-
+\
 try-import /data/bazel
