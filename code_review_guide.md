@@ -2,7 +2,7 @@
 
 ## Principles of code review
 
-The goal of code review is for the author and reviewer(s) to collaboratively produce the best, highest quality PR they can.
+The goal of code review is for the author and reviewer(s) to collaboratively produce the best, highest-quality PR they can.
 
 * Review the code based on its own merits, not based on how you would have personally written it.
 
@@ -89,7 +89,7 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 
 * Do unit tests cover all the important code blocks and specially handled errors?
 
-* Could procedural tests be rewritten to table driven tests?
+* Could procedural tests be rewritten to table-driven tests?
 
 
 ## Guidance for reviewers
