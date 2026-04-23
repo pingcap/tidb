@@ -668,6 +668,11 @@ const (
 	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
 	TiDBOptEnableAdvancedJoinReorder = "tidb_opt_enable_advanced_join_reorder"
 
+	// TiDBOptJoinReorderThroughProj enables join reorder to look through projection operators
+	// when extracting join groups. This allows join reorder to work with derived columns from CTEs,
+	// views, or subqueries that have expression computations in their SELECT list.
+	TiDBOptJoinReorderThroughProj = "tidb_opt_join_reorder_through_proj"
+
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
 	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
@@ -1548,6 +1553,7 @@ const (
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true
+	DefTiDBOptJoinReorderThroughProj        = false
 	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
