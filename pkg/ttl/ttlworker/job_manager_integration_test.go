@@ -1762,6 +1762,20 @@ func TestIterationOfRunningJob(t *testing.T) {
 	require.Len(t, m.RunningJobs(), 0)
 }
 
+<<<<<<< HEAD
+=======
+func TestIterationOfRunningJob(t *testing.T) {
+	t.Run("normal", func(t *testing.T) {
+		testIterationOfRunningJobWithTimeout(t, time.Minute, 100, 0)
+	})
+	t.Run("session-timeout", func(t *testing.T) {
+		// Keep the timeout short enough to catch accidental long-lived session reuse,
+		// but leave headroom for slower CI hosts.
+		testIterationOfRunningJobWithTimeout(t, 3*time.Second, 100, 40*time.Millisecond)
+	})
+}
+
+>>>>>>> a57595c27b3 (pkg/ttl/ttlworker: stabilize flaky TestIterationOfRunningJob (#67884))
 func TestTTLSummaryForTimeoutJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
