@@ -51,17 +51,6 @@ type SampleItem struct {
 // EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
 const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
-// CopySampleItems returns a copy of SampleItem slice. Each SampleItem struct is copied,
-// but Datum internals (e.g. byte slices) are shared with the original.
-func CopySampleItems(items []*SampleItem) []*SampleItem {
-	n := make([]*SampleItem, len(items))
-	for i, item := range items {
-		ni := *item
-		n[i] = &ni
-	}
-	return n
-}
-
 func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	var err error
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
