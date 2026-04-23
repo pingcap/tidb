@@ -4,6 +4,7 @@ go_library(
     name = "autoid_service",
     srcs = [
         "autoid.go",
+        "export_helper.go",
     ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/autoid_service",
     visibility = ["//visibility:public"],

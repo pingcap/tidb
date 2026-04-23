@@ -1,18 +1,16 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_test(
     name = "mega_test",
     timeout = "short",
-        srcs = [
-        "coverage.go",
-        "junit.go",
+    srcs = [
         "main_test.go",
         "mega_imports_test.go",
         "mega_main_test.go",
     ],
+    embed = [":mega"],
     flaky = True,
-        deps = [
-        "@org_golang_x_tools//cover",
+    deps = [
         "//pkg/autoid_service/test",
         "//pkg/bindinfo/test",
         "//pkg/bindinfo/tests/test",
@@ -272,4 +270,15 @@ go_test(
         "//pkg/util/zeropool/test",
         "//pkg/workloadlearning/test",
     ],
+)
+
+go_library(
+    name = "mega",
+    srcs = [
+        "coverage.go",
+        "junit.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/testkit/mega",
+    visibility = ["//visibility:public"],
+    deps = ["@org_golang_x_tools//cover"],
 )

@@ -43,7 +43,7 @@ go_library(
         "//pkg/util/hint",
         "//pkg/util/mock",
         "//pkg/util/ranger",
-        "@com_github_pingcap_failpoint",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )

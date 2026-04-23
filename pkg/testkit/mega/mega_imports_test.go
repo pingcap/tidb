@@ -16,7 +16,7 @@ package mega
 
 import (
 	// Import test packages to trigger their init() functions
-		_ "github.com/pingcap/tidb/pkg/autoid_service/test"
+	_ "github.com/pingcap/tidb/pkg/autoid_service/test"
 	_ "github.com/pingcap/tidb/pkg/bindinfo/test"
 	_ "github.com/pingcap/tidb/pkg/bindinfo/tests/test"
 	_ "github.com/pingcap/tidb/pkg/config/kerneltype/test"
@@ -129,7 +129,7 @@ import (
 	_ "github.com/pingcap/tidb/pkg/parser/test"
 	"github.com/pingcap/tidb/pkg/parser/test_driver"
 	_ "github.com/pingcap/tidb/pkg/parser/types/test"
-			_ "github.com/pingcap/tidb/pkg/planner/cardinality/test"
+	_ "github.com/pingcap/tidb/pkg/planner/cardinality/test"
 	_ "github.com/pingcap/tidb/pkg/planner/cascades/base/test"
 	_ "github.com/pingcap/tidb/pkg/planner/cascades/memo/test"
 	_ "github.com/pingcap/tidb/pkg/planner/cascades/old/test"
@@ -181,13 +181,13 @@ import (
 	_ "github.com/pingcap/tidb/pkg/sessiontxn/test"
 	_ "github.com/pingcap/tidb/pkg/statistics/asyncload/test"
 	_ "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/test"
-		_ "github.com/pingcap/tidb/pkg/statistics/handle/ddl/test"
-	_ "github.com/pingcap/tidb/pkg/statistics/handle/util/test"
+	_ "github.com/pingcap/tidb/pkg/statistics/handle/ddl/test"
 	_ "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/test"
 	_ "github.com/pingcap/tidb/pkg/statistics/handle/handletest/test"
 	_ "github.com/pingcap/tidb/pkg/statistics/handle/storage/test"
 	_ "github.com/pingcap/tidb/pkg/statistics/handle/syncload/test"
 	_ "github.com/pingcap/tidb/pkg/statistics/handle/updatetest/test"
+	_ "github.com/pingcap/tidb/pkg/statistics/handle/util/test"
 	_ "github.com/pingcap/tidb/pkg/store/copr/copr_test/test"
 	_ "github.com/pingcap/tidb/pkg/store/driver/test"
 	_ "github.com/pingcap/tidb/pkg/store/helper/test"

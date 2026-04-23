@@ -15,12 +15,11 @@
 package autoid
 
 import (
-	clientv3 "go.etcd.io/etcd/client/v3"
-	"google.golang.org/grpc"
-
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/grpc"
 )
 
 // ExportNewWithCli exports newWithCli for mega test framework.

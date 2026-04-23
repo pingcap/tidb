@@ -22,7 +22,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
-        "@go_etcd_io_etcd//tests/v3/integration",
+        "@io_etcd_go_etcd_tests_v3//integration",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
     ],

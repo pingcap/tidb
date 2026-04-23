@@ -36,7 +36,7 @@ var (
 	// Legacy -ut flag removed, use "mega.test run" instead
 	flagMegaP        = flag.Int("mega.p", 8, "Number of parallel workers in orchestrator mode")
 	flagMegaTimeout  = flag.Duration("mega.timeout", 3*time.Minute, "Per-test timeout in orchestrator mode")
-				flagJUnitFile    = flag.String("junitfile", "", "Write JUnit XML results to this file (orchestrator mode)")
+	flagJUnitFile    = flag.String("junitfile", "", "Write JUnit XML results to this file (orchestrator mode)")
 	flagCoverProfile = flag.String("coverprofile", "", "Write merged coverage profile to this file (orchestrator mode)")
 )
 
@@ -350,7 +350,7 @@ func runTests(binary string, tasks []task) bool {
 	fmt.Printf("\n=== Done: %d tests in %v ===\n", len(tasks), time.Since(start).Round(time.Second))
 
 	// Collect results from all workers
-	var allResults []orchResult
+	allResults := make([]orchResult, 0, len(workers))
 	for _, w := range workers {
 		allResults = append(allResults, w.results...)
 	}
@@ -716,7 +716,7 @@ func HandleCLI() (shouldRunTests bool, exitCode int) {
 	// Parse flags first to access -mega.list and -mega.run (used internally by subprocess)
 	flag.Parse()
 
-		// Extract --junitfile and --coverprofile from positional args after the subcommand.
+	// Extract --junitfile and --coverprofile from positional args after the subcommand.
 	// flag.Parse() stops at the first non-flag argument (the subcommand), so these
 	// flags end up in flag.Args(). We need to handle them manually.
 	args := flag.Args()
