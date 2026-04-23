@@ -14,6 +14,8 @@ go_library(
         "region.go",
         "router.go",
         "schema_import.go",
+        "spark_rebase.go",
+        "spark_rebase_micros_generated.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/mydump",
     visibility = ["//visibility:public"],
@@ -40,6 +42,17 @@ go_library(
         "//pkg/util/sqlescape",
         "//pkg/util/table-filter",
         "//pkg/util/zeropool",
+<<<<<<< HEAD
+=======
+        "@com_github_apache_arrow_go_v18//arrow",
+        "@com_github_apache_arrow_go_v18//arrow/memory",
+        "@com_github_apache_arrow_go_v18//parquet",
+        "@com_github_apache_arrow_go_v18//parquet/compress",
+        "@com_github_apache_arrow_go_v18//parquet/file",
+        "@com_github_apache_arrow_go_v18//parquet/metadata",
+        "@com_github_apache_arrow_go_v18//parquet/schema",
+        "@com_github_docker_go_units//:go-units",
+>>>>>>> 73b01d05c64 (import: honor Spark legacy Parquet datetime metadata (#67908))
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -95,6 +108,14 @@ go_test(
         "//pkg/util/logutil",
         "//pkg/util/table-filter",
         "//pkg/util/table-router",
+<<<<<<< HEAD
+=======
+        "@com_github_apache_arrow_go_v18//parquet",
+        "@com_github_apache_arrow_go_v18//parquet/compress",
+        "@com_github_apache_arrow_go_v18//parquet/file",
+        "@com_github_apache_arrow_go_v18//parquet/metadata",
+        "@com_github_apache_arrow_go_v18//parquet/schema",
+>>>>>>> 73b01d05c64 (import: honor Spark legacy Parquet datetime metadata (#67908))
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
