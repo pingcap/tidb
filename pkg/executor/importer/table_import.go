@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -832,11 +833,83 @@ func PostProcess(
 		return err
 	}
 
-	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), logger,
+	mainChecksum := MainChecksumForValidation(plan, localChecksum)
+	return VerifyChecksum(ctx, plan, mainChecksum, logger,
 		func() (*local.RemoteChecksum, error) {
 			return RemoteChecksumTableBySQL(ctx, se, plan, logger)
 		},
 	)
+}
+
+// MainChecksumForValidation returns the checksum that should participate in the
+// main Import Into validation against TiKV / ADMIN CHECKSUM TABLE.
+// TiCI indexes are written outside TiKV, so their KV groups must be excluded.
+func MainChecksumForValidation(plan *Plan, localChecksum *verify.KVGroupChecksum) verify.KVChecksum {
+	if localChecksum == nil {
+		return verify.KVChecksum{}
+	}
+
+	tblInfo := getTableInfoForValidation(plan)
+	if tblInfo == nil {
+		return localChecksum.MergedChecksum()
+	}
+
+	ticiIndexIDs := make(map[int64]struct{}, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		if idx != nil && idx.IsTiCIIndex() {
+			ticiIndexIDs[idx.ID] = struct{}{}
+		}
+	}
+	if len(ticiIndexIDs) == 0 {
+		return localChecksum.MergedChecksum()
+	}
+
+	merged := verify.NewKVChecksum()
+	for id, cksum := range localChecksum.GetInnerChecksums() {
+		if _, skip := ticiIndexIDs[id]; skip {
+			continue
+		}
+		merged.Add(cksum)
+	}
+	return *merged
+}
+
+// TableInfoForRemoteChecksumValidation returns the table info that should be
+// used for remote checksum validation against TiKV-backed data.
+// TiCI indexes are not stored in TiKV, so they must be excluded from metadata
+// used to build TiKV checksum requests.
+func TableInfoForRemoteChecksumValidation(plan *Plan) *model.TableInfo {
+	tblInfo := getTableInfoForValidation(plan)
+	if tblInfo == nil {
+		return nil
+	}
+
+	filteredIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	hasTiCIIndex := false
+	for _, idx := range tblInfo.Indices {
+		if idx != nil && idx.IsTiCIIndex() {
+			hasTiCIIndex = true
+			continue
+		}
+		filteredIndices = append(filteredIndices, idx)
+	}
+	if !hasTiCIIndex {
+		return tblInfo
+	}
+
+	cloned := tblInfo.Clone()
+	cloned.Indices = filteredIndices
+	return cloned
+}
+
+func getTableInfoForValidation(plan *Plan) *model.TableInfo {
+	if plan == nil {
+		return nil
+	}
+	if plan.TableInfo != nil {
+		return plan.TableInfo
+	}
+	return plan.DesiredTableInfo
 }
 
 type autoIDRequirement struct {
