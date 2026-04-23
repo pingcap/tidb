@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -124,10 +126,12 @@ type mergeIndexWorker struct {
 
 	index table.Index
 
-	tmpIdxRecords []*temporaryIndexRecord
-	originIdxKeys []kv.Key
-	tmpIdxKeys    []kv.Key
-	jobContext    *JobContext
+	tmpIdxRecords   []*temporaryIndexRecord
+	originIdxKeys   []kv.Key
+	tmpIdxKeys      []kv.Key
+	jobContext      *JobContext
+	metricCounter   prometheus.Counter
+	conflictCounter prometheus.Counter
 }
 
 func newMergeTempIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, reorgInfo *reorgInfo, jc *JobContext) *mergeIndexWorker {
@@ -136,9 +140,11 @@ func newMergeTempIndexWorker(sessCtx sessionctx.Context, id int, t table.Physica
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 
 	return &mergeIndexWorker{
-		backfillWorker: newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeAddIndexMergeTmpWorker),
-		index:          index,
-		jobContext:     jc,
+		backfillWorker:  newBackfillWorker(jc.ddlJobCtx, sessCtx, id, t, reorgInfo, typeAddIndexMergeTmpWorker),
+		index:           index,
+		jobContext:      jc,
+		metricCounter:   getBackfillTotalByTableID(backfillMetricsTableID(reorgInfo, metrics.LblMergeTmpIdxRate), metrics.LblMergeTmpIdxRate, reorgInfo.SchemaName, t.Meta().Name.String(), indexInfo.Name.O),
+		conflictCounter: getBackfillTotalByTableID(backfillMetricsTableID(reorgInfo, metrics.LblMergeTmpIdxRate), metrics.LblMergeTmpIdxRate+"-conflict", reorgInfo.SchemaName, t.Meta().Name.String(), indexInfo.Name.O),
 	}
 }
 
@@ -163,6 +169,9 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 
 		err = w.batchCheckTemporaryUniqueKey(txn, tmpIdxRecords)
 		if err != nil {
+			if kv.ErrKeyExists.Equal(err) {
+				w.conflictCounter.Add(1)
+			}
 			return errors.Trace(err)
 		}
 
@@ -211,6 +220,7 @@ func (w *mergeIndexWorker) BackfillDataInTxn(taskRange reorgBackfillTask) (taskC
 }
 
 func (w *mergeIndexWorker) AddMetricInfo(cnt float64) {
+	w.metricCounter.Add(cnt)
 }
 
 func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {

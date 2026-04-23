@@ -11,6 +11,7 @@ package_group(
 go_library(
     name = "ddl",
     srcs = [
+        "backfill_metrics.go",
         "backfilling.go",
         "callback.go",
         "cluster.go",
@@ -148,6 +149,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "attributes_sql_test.go",
+        "backfill_metrics_test.go",
         "backfilling_test.go",
         "callback_test.go",
         "cancel_test.go",
@@ -224,6 +226,7 @@ go_test(
         "//kv",
         "//meta",
         "//meta/autoid",
+        "//metrics",
         "//parser",
         "//parser/ast",
         "//parser/auth",
@@ -267,6 +270,8 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",

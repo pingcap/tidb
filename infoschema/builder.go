@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
@@ -803,6 +804,23 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	}
 
 	b.is.addReferredForeignKeys(dbInfo.Name, tblInfo)
+
+	allColumnPublic := !slices.ContainsFunc(tblInfo.Columns,
+		func(col *model.ColumnInfo) bool {
+			return col.State != model.StatePublic
+		})
+	allIndexPublic := !slices.ContainsFunc(tblInfo.Indices,
+		func(idx *model.IndexInfo) bool {
+			return idx.State != model.StatePublic
+		})
+	if allColumnPublic && allIndexPublic && metrics.DDLHasBackfillMetrics() {
+		metrics.DDLClearBackfillMetrics(tblInfo.ID)
+		if tblInfo.Partition != nil {
+			for _, def := range tblInfo.Partition.Definitions {
+				metrics.DDLClearBackfillMetrics(def.ID)
+			}
+		}
+	}
 
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
