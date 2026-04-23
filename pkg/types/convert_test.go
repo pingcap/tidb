@@ -104,10 +104,9 @@ func TestConvertType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, float32(999.92), v)
 
-	// For TypeBlob
+	// For TypeBlob: Convert -> NewDatum now panics on unsupported Go types.
 	ft = NewFieldType(mysql.TypeBlob)
-	_, err = Convert(&invalidMockType{}, ft)
-	require.Error(t, err)
+	require.Panics(t, func() { _, _ = Convert(&invalidMockType{}, ft) })
 
 	// Nil
 	ft = NewFieldType(mysql.TypeBlob)

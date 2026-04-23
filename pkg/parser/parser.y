@@ -9852,26 +9852,23 @@ TableSampleOpt:
 	}
 |	"TABLESAMPLE" TableSampleMethodOpt '(' Expression TableSampleUnitOpt ')' RepeatableOpt
 	{
-		var repSeed ast.ExprNode
-		if $7 != nil {
-			repSeed = ast.NewValueExpr($7, parser.charset, parser.collation)
-		}
+		// Expression ($4) and RepeatableOpt ($7) are both declared as
+		// %type <expr> and already produce ast.ExprNode values. Wrapping
+		// them via ast.NewValueExpr would store the whole subtree inside a
+		// Datum's escape-hatch "x any" slot (the only production path that
+		// does so); use them directly instead.
 		$$ = &ast.TableSample{
 			SampleMethod:     $2.(ast.SampleMethodType),
-			Expr:             ast.NewValueExpr($4, parser.charset, parser.collation),
+			Expr:             $4,
 			SampleClauseUnit: $5.(ast.SampleClauseUnitType),
-			RepeatableSeed:   repSeed,
+			RepeatableSeed:   $7,
 		}
 	}
 |	"TABLESAMPLE" TableSampleMethodOpt '(' ')' RepeatableOpt
 	{
-		var repSeed ast.ExprNode
-		if $5 != nil {
-			repSeed = ast.NewValueExpr($5, parser.charset, parser.collation)
-		}
 		$$ = &ast.TableSample{
 			SampleMethod:   $2.(ast.SampleMethodType),
-			RepeatableSeed: repSeed,
+			RepeatableSeed: $5,
 		}
 	}
 

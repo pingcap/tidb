@@ -18,7 +18,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -103,7 +102,6 @@ func TestLogicAnd(t *testing.T) {
 		{[]any{types.NewDecFromStringForTest("0.000000"), nil}, 0, false, false},
 		{[]any{types.NewDecFromStringForTest("0.000001"), nil}, 0, true, false},
 
-		{[]any{errors.New("must error"), 1}, 0, false, true},
 	}
 
 	for _, c := range cases {
@@ -142,7 +140,6 @@ func TestLeftShift(t *testing.T) {
 		{[]any{-123, 2}, uint64(18446744073709551124), false, false},
 		{[]any{nil, 1}, 0, true, false},
 
-		{[]any{errors.New("must error"), 1}, 0, false, true},
 	}
 
 	for _, c := range cases {
@@ -174,7 +171,6 @@ func TestRightShift(t *testing.T) {
 		{[]any{-123, 2}, uint64(4611686018427387873), false, false},
 		{[]any{nil, 1}, 0, true, false},
 
-		{[]any{errors.New("must error"), 1}, 0, false, true},
 	}
 
 	for _, c := range cases {
@@ -213,7 +209,6 @@ func TestBitXor(t *testing.T) {
 		{[]any{-123, 321}, uint64(18446744073709551300), false, false},
 		{[]any{nil, 1}, 0, true, false},
 
-		{[]any{errors.New("must error"), 1}, 0, false, true},
 	}
 
 	for _, c := range cases {
@@ -259,7 +254,6 @@ func TestBitOr(t *testing.T) {
 		{[]any{-123, 321}, uint64(18446744073709551557), false, false},
 		{[]any{nil, 1}, 0, true, false},
 
-		{[]any{errors.New("must error"), 1}, 0, false, true},
 	}
 
 	for _, c := range cases {
@@ -326,7 +320,6 @@ func TestLogicOr(t *testing.T) {
 		{[]any{types.NewDecFromStringForTest("0.000001"), 1}, 1, false, false},
 		{[]any{types.NewDecFromStringForTest("0.000001"), nil}, 1, false, false},
 
-		{[]any{errors.New("must error"), 1}, 0, false, true},
 	}
 
 	for _, c := range cases {
@@ -365,7 +358,6 @@ func TestBitAnd(t *testing.T) {
 		{[]any{-123, 321}, 257, false, false},
 		{[]any{nil, 1}, 0, true, false},
 
-		{[]any{errors.New("must error"), 1}, 0, false, true},
 	}
 
 	for _, c := range cases {
@@ -411,7 +403,6 @@ func TestBitNeg(t *testing.T) {
 		{[]any{-123}, uint64(122), false, false},
 		{[]any{nil}, 0, true, false},
 
-		{[]any{errors.New("must error")}, 0, false, true},
 	}
 
 	for _, c := range cases {
@@ -465,7 +456,6 @@ func TestUnaryNot(t *testing.T) {
 		{[]any{types.CreateBinaryJSON(int64(0))}, 1, false, false},
 		{[]any{types.CreateBinaryJSON(map[string]any{"test": "test"})}, 0, false, false},
 
-		{[]any{errors.New("must error")}, 0, false, true},
 	}
 
 	for _, c := range cases {
@@ -636,7 +626,6 @@ func TestLogicXor(t *testing.T) {
 		{[]any{types.NewDecFromStringForTest("0.000000"), nil}, 0, true, false},
 		{[]any{types.NewDecFromStringForTest("0.000001"), nil}, 0, true, false},
 
-		{[]any{errors.New("must error"), 1}, 0, false, true},
 	}
 
 	for _, c := range cases {

@@ -637,11 +637,12 @@ func (*groupConcatDistinctOrder) MergePartialResult(AggFuncUpdateContext, Partia
 
 // GetDatumMemSize calculates the memory size of each types.Datum in sortRow.byItems.
 // types.Datum memory size = variable type's memory size + variable value's memory size.
+// Datum.GetInterface / KindInterfaceDeprecated were removed, so the
+// interface payload no longer contributes a variable-length term.
 func GetDatumMemSize(d *types.Datum) int64 {
 	var datumMemSize int64
 	datumMemSize += int64(unsafe.Sizeof(*d))
 	datumMemSize += int64(len(d.Collation()))
 	datumMemSize += int64(len(d.GetBytes()))
-	datumMemSize += getValMemDelta(d.GetInterface()) - DefInterfaceSize
 	return datumMemSize
 }

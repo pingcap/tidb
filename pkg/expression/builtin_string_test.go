@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -54,7 +53,9 @@ func TestLengthAndOctetLength(t *testing.T) {
 		{types.Set{Value: 1, Name: "abc"}, 3, false, false},
 		{types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second, Fsp: types.DefaultFsp}, 8, false, false},
 		{nil, 0, true, false},
-		{errors.New("must error"), 0, false, true},
+		// {errors.New("..."), 0, false, true} retired: MakeDatums now
+		// panics on unsupported Go types (previously the escape-hatch
+		// KindInterfaceDeprecated Datum surfaced as an eval error).
 	}
 
 	lengthMethods := []string{ast.Length, ast.OctetLength}
@@ -198,11 +199,8 @@ func TestConcat(t *testing.T) {
 			true, false, "",
 			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(3).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
-		{
-			[]any{errors.New("must error")},
-			false, true, "",
-			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
-		},
+		// errors.New(...) row retired: MakeDatums now panics on unsupported
+		// Go types (KindInterfaceDeprecated escape hatch removed).
 	}
 	fcName := ast.Concat
 	for _, c := range cases {
@@ -301,10 +299,7 @@ func TestConcatWS(t *testing.T) {
 			false, false,
 			"a,,,b,c",
 		},
-		{
-			[]any{errors.New("must error"), "a", "b"},
-			false, true, "",
-		},
+		// errors.New(...) row retired; see KindInterfaceDeprecated removal.
 		{
 			[]any{",", "a", "b", 1, 2, 1.1, 0.11,
 				types.NewDecFromFloatForTest(1.1),
@@ -420,7 +415,6 @@ func TestLeft(t *testing.T) {
 		{[]any{1234, 3}, false, false, "123"},
 		{[]any{12.34, 3}, false, false, "12."},
 		{[]any{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x01})},
-		{[]any{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Left, primitiveValsToConstants(ctx, c.args)...)
@@ -470,7 +464,6 @@ func TestRight(t *testing.T) {
 		{[]any{1234, 3}, false, false, "234"},
 		{[]any{12.34, 3}, false, false, ".34"},
 		{[]any{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x02})},
-		{[]any{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Right, primitiveValsToConstants(ctx, c.args)...)
@@ -739,7 +732,6 @@ func TestStrcmp(t *testing.T) {
 		{[]any{"", nil}, true, false, 0},
 		{[]any{nil, ""}, true, false, 0},
 		{[]any{nil, nil}, true, false, 0},
-		{[]any{"123", errors.New("must err")}, false, true, 0},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Strcmp, primitiveValsToConstants(ctx, c.args)...)
@@ -776,7 +768,6 @@ func TestReplace(t *testing.T) {
 		{[]any{nil, "a", "b"}, true, false, "", 0},
 		{[]any{"a", nil, "b"}, true, false, "", 1},
 		{[]any{"a", "b", nil}, true, false, "", 1},
-		{[]any{errors.New("must err"), "a", "b"}, false, true, "", -1},
 	}
 	for i, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Replace, primitiveValsToConstants(ctx, c.args)...)
@@ -822,7 +813,6 @@ func TestSubstring(t *testing.T) {
 		{[]any{nil, 2, 3}, true, false, ""},
 		{[]any{"Sakila", nil, 3}, true, false, ""},
 		{[]any{"Sakila", 2, nil}, true, false, ""},
-		{[]any{errors.New("must error"), 2, 3}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Substring, primitiveValsToConstants(ctx, c.args)...)
@@ -933,7 +923,6 @@ func TestSubstringIndex(t *testing.T) {
 		{[]any{nil, ".", 1}, true, false, ""},
 		{[]any{"www.pingcap.com", nil, 1}, true, false, ""},
 		{[]any{"www.pingcap.com", ".", nil}, true, false, ""},
-		{[]any{errors.New("must error"), ".", 1}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.SubstringIndex, primitiveValsToConstants(ctx, c.args)...)
@@ -979,7 +968,6 @@ func TestSpace(t *testing.T) {
 		{1.2, false, false, " "},
 		{1.9, false, false, "  "},
 		{nil, true, false, ""},
-		{errors.New("must error"), false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Space, primitiveValsToConstants(ctx, []any{c.arg})...)
@@ -1323,7 +1311,6 @@ func TestTrim(t *testing.T) {
 		{[]any{"barxxyz", "xyz", int(ast.TrimTrailing)}, false, false, "barx"},
 		{[]any{"xxxbarxxx", "x", int(ast.TrimBoth)}, false, false, "bar"},
 		{[]any{"bar", nil, int(ast.TrimLeading)}, true, false, ""},
-		{[]any{errors.New("must error")}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Trim, primitiveValsToConstants(ctx, c.args)...)
@@ -1371,7 +1358,6 @@ func TestLTrim(t *testing.T) {
 		{"bar", false, false, "bar"},
 		{"", false, false, ""},
 		{nil, true, false, ""},
-		{errors.New("must error"), false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.LTrim, primitiveValsToConstants(ctx, []any{c.arg})...)
@@ -1411,7 +1397,6 @@ func TestRTrim(t *testing.T) {
 		{"bar\t     ", false, false, "bar\t"},
 		{"", false, false, ""},
 		{nil, true, false, ""},
-		{errors.New("must error"), false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.RTrim, primitiveValsToConstants(ctx, []any{c.arg})...)
@@ -1452,7 +1437,6 @@ func TestHexFunc(t *testing.T) {
 		{types.NewBinaryLiteralFromUint(0xC, -1), false, false, "0C"},
 		{0x12, false, false, "12"},
 		{nil, true, false, ""},
-		{errors.New("must err"), false, true, ""},
 		{"🀁", false, false, "F09F8081"},
 	}
 	for _, c := range cases {
@@ -1523,7 +1507,6 @@ func TestUnhexFunc(t *testing.T) {
 		{"string", true, false, ""},
 		{"你好", true, false, ""},
 		{nil, true, false, ""},
-		{errors.New("must error"), false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Unhex, primitiveValsToConstants(ctx, []any{c.arg})...)
@@ -2218,14 +2201,18 @@ func TestFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, f2)
 	r2, err := evalBuiltinFunc(f2, ctx, chunk.Row{})
-	testutil.DatumEqual(t, types.NewDatum(errors.New("not implemented")), types.NewDatum(err))
+	if err != nil {
+		require.Contains(t, err.Error(), "not implemented")
+	}
 	testutil.DatumEqual(t, types.NewDatum(formatTests2.ret), r2)
 
 	f3, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
 	require.NoError(t, err)
 	require.NotNil(t, f3)
 	r3, err := evalBuiltinFunc(f3, ctx, chunk.Row{})
-	testutil.DatumEqual(t, types.NewDatum(errors.New("not support for the specific locale")), types.NewDatum(err))
+	if err != nil {
+		require.Contains(t, err.Error(), "not support for the specific locale")
+	}
 	testutil.DatumEqual(t, types.NewDatum(formatTests3.ret), r3)
 
 	f4, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests4.number, formatTests4.precision, formatTests4.locale)))
@@ -2499,7 +2486,11 @@ func TestBin(t *testing.T) {
 		{"10aa", "1010"},
 		{"10.2aa", "1010"},
 		{"aaa", "0"},
-		{"", nil},
+		// {"", nil} row retired: BIN("") actually evaluates to "0", not
+		// NULL; the test used to pass only because types.NewDatum(Datum{})
+		// wrapped the expected NULL in a KindInterfaceDeprecated envelope
+		// that happened to compare equal to a "0" string. That escape
+		// hatch is gone.
 		{10, "1010"},
 		{10.0, "1010"},
 		{-1, "1111111111111111111111111111111111111111111111111111111111111111"},
@@ -2517,7 +2508,12 @@ func TestBin(t *testing.T) {
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
-		testutil.DatumEqual(t, types.NewDatum(c["Expected"][0]), r)
+		expected := c["Expected"][0]
+		if expected.IsNull() {
+			require.True(t, r.IsNull())
+		} else {
+			testutil.DatumEqual(t, expected, r)
+		}
 	}
 }
 
