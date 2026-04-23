@@ -36,7 +36,7 @@ func (e *stddevSamp4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr 
 }
 
 type stddevSampOriginal4DistinctFloat64 struct {
-	varPopOriginal4DistinctFloat64
+	varPop4DistinctFloat64
 }
 
 type stddevSampPartial4DistinctFloat64 struct {

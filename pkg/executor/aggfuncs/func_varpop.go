@@ -118,12 +118,12 @@ func (*varPop4Float64) MergePartialResult(_ AggFuncUpdateContext, src, dst Parti
 	return 0, nil
 }
 
-type varPopOriginal4DistinctFloat64 struct {
+type varPop4DistinctFloat64 struct {
 	baseVarPopAggFunc
 }
 
 type varPopPartial4DistinctFloat64 struct {
-	varPopOriginal4DistinctFloat64
+	varPop4DistinctFloat64
 }
 
 type partialResult4VarPopDistinctFloat64 struct {
@@ -133,7 +133,7 @@ type partialResult4VarPopDistinctFloat64 struct {
 	valSet   set.Float64SetWithMemoryUsage
 }
 
-func (*varPopOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4VarPopDistinctFloat64)
 	p.count = 0
 	p.sum = 0
@@ -143,7 +143,7 @@ func (*varPopOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, m
 	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size + setSize
 }
 
-func (*varPopOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
+func (*varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	p.count = 0
 	p.sum = 0
@@ -151,7 +151,7 @@ func (*varPopOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
-func (e *varPopOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
@@ -162,7 +162,7 @@ func (e *varPopOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdate
 	return nil
 }
 
-func (e *varPopOriginal4DistinctFloat64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)

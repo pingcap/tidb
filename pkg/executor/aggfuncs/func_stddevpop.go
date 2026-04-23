@@ -36,7 +36,7 @@ func (e *stdDevPop4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr P
 }
 
 type stdDevPopOriginal4DistinctFloat64 struct {
-	varPopOriginal4DistinctFloat64
+	varPop4DistinctFloat64
 }
 
 type stdDevPopPartial4DistinctFloat64 struct {

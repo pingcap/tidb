@@ -604,9 +604,9 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	if aggFuncDesc.HasDistinct {
 		switch aggFuncDesc.Mode {
 		case aggregation.CompleteMode, aggregation.Partial1Mode:
-			return &varPopOriginal4DistinctFloat64{base}
+			return &varPop4DistinctFloat64{base}
 		case aggregation.FinalMode, aggregation.Partial2Mode:
-			return &varPopPartial4DistinctFloat64{varPopOriginal4DistinctFloat64{base}}
+			return &varPopPartial4DistinctFloat64{varPop4DistinctFloat64{base}}
 		default:
 			return nil
 		}
@@ -630,9 +630,9 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	if aggFuncDesc.HasDistinct {
 		switch aggFuncDesc.Mode {
 		case aggregation.CompleteMode, aggregation.Partial1Mode:
-			return &stdDevPopOriginal4DistinctFloat64{varPopOriginal4DistinctFloat64{base}}
+			return &stdDevPopOriginal4DistinctFloat64{varPop4DistinctFloat64{base}}
 		case aggregation.FinalMode, aggregation.Partial2Mode:
-			return &stdDevPopPartial4DistinctFloat64{varPopPartial4DistinctFloat64{varPopOriginal4DistinctFloat64{base}}}
+			return &stdDevPopPartial4DistinctFloat64{varPopPartial4DistinctFloat64{varPop4DistinctFloat64{base}}}
 		default:
 			return nil
 		}
@@ -656,9 +656,9 @@ func buildVarSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	if aggFuncDesc.HasDistinct {
 		switch aggFuncDesc.Mode {
 		case aggregation.CompleteMode, aggregation.Partial1Mode:
-			return &varSampOriginal4DistinctFloat64{varPopOriginal4DistinctFloat64{base}}
+			return &varSampOriginal4DistinctFloat64{varPop4DistinctFloat64{base}}
 		case aggregation.FinalMode, aggregation.Partial2Mode:
-			return &varSampPartial4DistinctFloat64{varPopPartial4DistinctFloat64{varPopOriginal4DistinctFloat64{base}}}
+			return &varSampPartial4DistinctFloat64{varPopPartial4DistinctFloat64{varPop4DistinctFloat64{base}}}
 		default:
 			return nil
 		}
@@ -682,9 +682,9 @@ func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc 
 	if aggFuncDesc.HasDistinct {
 		switch aggFuncDesc.Mode {
 		case aggregation.CompleteMode, aggregation.Partial1Mode:
-			return &stddevSampOriginal4DistinctFloat64{varPopOriginal4DistinctFloat64{base}}
+			return &stddevSampOriginal4DistinctFloat64{varPop4DistinctFloat64{base}}
 		case aggregation.FinalMode, aggregation.Partial2Mode:
-			return &stddevSampPartial4DistinctFloat64{varPopPartial4DistinctFloat64{varPopOriginal4DistinctFloat64{base}}}
+			return &stddevSampPartial4DistinctFloat64{varPopPartial4DistinctFloat64{varPop4DistinctFloat64{base}}}
 		default:
 			return nil
 		}
