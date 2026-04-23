@@ -844,10 +844,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		tps = e.getRetTpsForIndexReader()
 	}
 	idxID := e.getIndexPlanRootID()
-	needMerge := needMergeSort(e.byItems, len(kvRanges))
-	activeWindowSize := getIndexScanActiveWindow(len(kvRanges), needMerge)
-	sharedCoprRequestRateLimit := getMergeSortSharedCoprRequestRateLimit(needMerge, e.dctx.DistSQLConcurrency)
-	mergeSortIndexScanConcurrency := e.getMergeSortIndexScanConcurrency(needMerge, len(kvRanges))
+	needMerge := e.keepOrder && needMergeSort(e.byItems, len(kvRanges))
 	e.idxWorkerWg.Add(1)
 	e.pool.submit(func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexTask").End()
@@ -870,102 +867,146 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 		indexTypes := e.getRetTpsForIndexReader()
 
-		buildResults := func(start, end int) ([]distsql.SelectResult, bool, error) {
-			results := make([]distsql.SelectResult, 0, end-start)
-			for idx := start; idx < end; idx++ {
+		if !needMerge {
+			maxInFlight := getIndexScanMaxInFlight(e.dctx.DistSQLConcurrency)
+			nextRange := 0
+			pushDownIntermediateTypes := [][]*types.FieldType{indexTypes}
+			buildNext := func(ctx context.Context) (selectResultWithMeta, bool, error) {
+				if nextRange >= len(kvRanges) {
+					return selectResultWithMeta{}, false, nil
+				}
 				select {
 				case <-e.finished:
-					return results, true, nil
+					return selectResultWithMeta{}, false, nil
 				default:
 				}
 				result, err := e.buildIndexSelectResultForRange(
 					ctx,
-					idx,
-					kvRanges[idx],
+					nextRange,
+					kvRanges[nextRange],
 					tblScanIdxForRewritePartitionID,
 					tps,
 					idxID,
 					tracker,
 					len(kvRanges),
 					worker.batchSize,
-					mergeSortIndexScanConcurrency,
-					sharedCoprRequestRateLimit,
+					0,
+					nil,
 				)
 				if err != nil {
-					for _, r := range results {
-						_ = r.Close()
+					return selectResultWithMeta{}, false, err
+				}
+				entry := selectResultWithMeta{
+					InFlightCost: getSelectResultInFlightCost(result),
+				}
+				if e.indexLookUpPushDown {
+					rowIter, err := result.IntoIter(pushDownIntermediateTypes)
+					if err != nil {
+						_ = result.Close()
+						return selectResultWithMeta{}, false, err
 					}
-					return nil, false, err
+					entry.RowIter = rowIter
+				} else {
+					entry.Result = result
 				}
-				results = append(results, result)
+				nextRange++
+				return entry, true, nil
 			}
-			return results, false, nil
-		}
-
-		runFetchRound := func(baseRangeIdx int, results []distsql.SelectResult) bool {
-			if len(results) == 0 {
-				return true
-			}
-			if needMerge {
-				// e.Schema() is not the output schema for indexReader, and by-items related columns
-				// are put at first in `buildIndexReq`, so use nil schema here.
-				ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
-				results = []distsql.SelectResult{ssr}
-			}
-
 			ctx1, cancel := context.WithCancel(ctx)
-			var selResultList selectResultList
-			if e.indexLookUpPushDown {
-				var err error
-				selResultList, err = newSelectResultRowIterList(results, [][]*types.FieldType{indexTypes})
-				if err != nil {
-					cancel()
-					worker.syncErr(err)
-					return false
-				}
-			} else {
-				selResultList = newSelectResultList(results)
-			}
-			err := worker.fetchHandles(ctx1, selResultList, baseRangeIdx, indexTypes)
+			err := worker.fetchHandlesRolling(ctx1, maxInFlight, len(kvRanges), indexTypes, buildNext)
 			cancel()
-			selResultList.Close()
-			return err == nil
-		}
-
-		for start := 0; start < len(kvRanges); start += activeWindowSize {
-			end := min(start+activeWindowSize, len(kvRanges))
-			results, finished, err := buildResults(start, end)
 			if err != nil {
 				worker.syncErr(err)
 				return
 			}
-			if !runFetchRound(start, results) {
-				return
+			return
+		}
+
+		sharedCoprRequestRateLimit := getMergeSortSharedCoprRequestRateLimit(needMerge, e.dctx.DistSQLConcurrency)
+		mergeSortIndexScanConcurrency := getMergeSortIndexScanConcurrency(needMerge, len(kvRanges), e.dctx.DistSQLConcurrency)
+		results := make([]distsql.SelectResult, 0, len(kvRanges))
+		for idx := range kvRanges {
+			// check if executor is closed
+			finished := false
+			select {
+			case <-e.finished:
+				finished = true
+			default:
 			}
 			if finished {
+				break
+			}
+			result, err := e.buildIndexSelectResultForRange(
+				ctx,
+				idx,
+				kvRanges[idx],
+				tblScanIdxForRewritePartitionID,
+				tps,
+				idxID,
+				tracker,
+				len(kvRanges),
+				worker.batchSize,
+				mergeSortIndexScanConcurrency,
+				sharedCoprRequestRateLimit,
+			)
+			if err != nil {
+				for _, r := range results {
+					_ = r.Close()
+				}
+				worker.syncErr(err)
 				return
 			}
+			results = append(results, result)
+		}
+		if len(results) == 0 {
+			return
+		}
+
+		// e.Schema() is not the output schema for indexReader, and by-items related columns
+		// are put at first in `buildIndexReq`, so use nil schema here.
+		ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
+		results = []distsql.SelectResult{ssr}
+
+		ctx1, cancel := context.WithCancel(ctx)
+		var selResultList selectResultList
+		if e.indexLookUpPushDown {
+			var err error
+			selResultList, err = newSelectResultRowIterList(results, [][]*types.FieldType{indexTypes})
+			if err != nil {
+				cancel()
+				worker.syncErr(err)
+				return
+			}
+		} else {
+			selResultList = newSelectResultList(results)
+		}
+		err := worker.fetchHandles(ctx1, selResultList, indexTypes)
+		cancel()
+		selResultList.Close()
+		if err != nil {
+			worker.syncErr(err)
+			return
 		}
 	})
 	return nil
 }
 
-func getIndexScanActiveWindow(totalRanges int, needMerge bool) int {
-	const indexScanPrefetchDepth = 1
-	if totalRanges <= 1 {
-		return totalRanges
+func getIndexScanMaxInFlight(distSQLConcurrency int) int {
+	if distSQLConcurrency < 1 {
+		return 1
 	}
-	if needMerge {
-		// Merge-sort requires all participating SelectResults to be visible at once.
-		return totalRanges
+	return 2 * distSQLConcurrency
+}
+
+func getSelectResultInFlightCost(result distsql.SelectResult) int {
+	inFlightCost := 1
+	if conc, extraConc, ok := distsql.GetSelectResultConcurrency(result); ok {
+		inFlightCost = conc + extraConc
 	}
-	// For non-merge queries, keep a small prefetch window so only one additional
-	// partition can be in-flight while fetching current partition handles.
-	windowSize := 1 + indexScanPrefetchDepth
-	if windowSize > totalRanges {
-		windowSize = totalRanges
+	if inFlightCost < 1 {
+		inFlightCost = 1
 	}
-	return windowSize
+	return inFlightCost
 }
 
 func getMergeSortSharedCoprRequestRateLimit(needMerge bool, distSQLConcurrency int) *tikvutil.RateLimit {
@@ -981,18 +1022,18 @@ func getMergeSortSharedCoprRequestRateLimit(needMerge bool, distSQLConcurrency i
 	return tikvutil.NewRateLimit(2 * capacity)
 }
 
-func (e *IndexLookUpExecutor) getMergeSortIndexScanConcurrency(needMerge bool, totalRanges int) int {
-	if !needMerge || totalRanges <= 0 {
+func getMergeSortIndexScanConcurrency(needMerge bool, kvRangesSize int, distSQLConcurrency int) int {
+	if !needMerge || kvRangesSize <= 0 {
 		return 0
 	}
 	// Keep merge-sort per-range concurrency proportional to the shared cop send-rate
-	// budget so we cap goroutine fan-out while still leaving room for skewed ranges.
-	base := e.dctx.DistSQLConcurrency
+	// limit so we cap goroutine fan-out while still leaving room for skewed ranges.
+	base := distSQLConcurrency
 	if base < 1 {
 		base = 1
 	}
 	sharedBudget := 4 * base
-	perRangeConcurrency := sharedBudget / totalRanges
+	perRangeConcurrency := sharedBudget / kvRangesSize
 	if perRangeConcurrency < 2 {
 		perRangeConcurrency = 2
 	}
@@ -1340,18 +1381,34 @@ func (l selectResultList) Close() {
 	}
 }
 
+type selectResultWithMeta struct {
+	Result       distsql.SelectResult
+	RowIter      distsql.SelectResultIter
+	InFlightCost int
+}
+
+func (r *selectResultWithMeta) Close() {
+	var err error
+	if r.RowIter != nil {
+		err = r.RowIter.Close()
+	} else if r.Result != nil {
+		err = r.Result.Close()
+	}
+	if err != nil {
+		logutil.BgLogger().Error("close Select result failed", zap.Error(err))
+	}
+}
+
+type nextSelectResultBuilder func(context.Context) (selectResultWithMeta, bool, error)
+
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
 // The tasks are submitted to the pool and processed by tableWorker, and sent to e.resultCh
 // at the same time to keep data ordered.
-func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList, baseRangeIdx int, indexTypes []*types.FieldType) (err error) {
+func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList, indexTypes []*types.FieldType) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
-			err4Panic := util.GetRecoverError(r)
-			w.syncErr(err4Panic)
-			if err != nil {
-				err = errors.Trace(err4Panic)
-			}
+			err = util.GetRecoverError(r)
 		}
 	}()
 	var chk *chunk.Chunk
@@ -1361,7 +1418,6 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 	}
 	handleOffsets, err := w.getHandleOffsets(len(indexTypes))
 	if err != nil {
-		w.syncErr(err)
 		return err
 	}
 	idxID := w.idxLookup.getIndexPlanRootID()
@@ -1390,7 +1446,6 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		}
 		finishFetch := time.Now()
 		if err != nil {
-			w.syncErr(err)
 			return err
 		}
 
@@ -1420,7 +1475,155 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 			}
 			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
 			if w.idxLookup.partitionTableMode {
-				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[baseRangeIdx+curResultIdx]
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
+			}
+			taskID++
+		}
+
+		finishBuild := time.Now()
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-w.finished:
+			return nil
+		default:
+			if completedTask != nil {
+				w.resultCh <- completedTask
+			}
+
+			if tableLookUpTask != nil {
+				e := w.idxLookup
+				e.tblWorkerWg.Add(1)
+				e.pool.submit(func() {
+					defer e.tblWorkerWg.Done()
+					select {
+					case <-e.finished:
+						return
+					default:
+						growWorkerStack16K()
+						execTableTask(e, tableLookUpTask)
+					}
+				})
+				w.resultCh <- tableLookUpTask
+			}
+		}
+		if w.idxLookup.stats != nil {
+			atomic.AddInt64(&w.idxLookup.stats.FetchHandle, int64(finishFetch.Sub(startTime)))
+			atomic.AddInt64(&w.idxLookup.stats.TaskWait, int64(time.Since(finishBuild)))
+			atomic.AddInt64(&w.idxLookup.stats.FetchHandleTotal, int64(time.Since(startTime)))
+		}
+	}
+	return nil
+}
+
+func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, kvRangesSize int, indexTypes []*types.FieldType, buildNext nextSelectResultBuilder) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err = util.GetRecoverError(r)
+		}
+	}()
+	var chk *chunk.Chunk
+	if !w.idxLookup.indexLookUpPushDown {
+		// chk is only used by non-indexLookUpPushDown mode for mem-reuse
+		chk = w.idxLookup.AllocPool.Alloc(indexTypes, w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
+	}
+	handleOffsets, err := w.getHandleOffsets(len(indexTypes))
+	if err != nil {
+		return err
+	}
+	idxID := w.idxLookup.getIndexPlanRootID()
+	if w.idxLookup.stmtRuntimeStatsColl != nil {
+		if idxID != w.idxLookup.ID() && w.idxLookup.stats != nil {
+			w.idxLookup.stats.indexScanBasicStats = w.idxLookup.stmtRuntimeStatsColl.GetBasicRuntimeStats(idxID, true)
+		}
+	}
+
+	if maxInFlight < 1 {
+		maxInFlight = 1
+	}
+	results := make([]selectResultWithMeta, 0, kvRangesSize)
+	inFlight := 0
+	defer func() {
+		for _, entry := range results {
+			entry.Close()
+		}
+		results = results[:0]
+		inFlight = 0
+	}()
+
+	fillNewResults := func() error {
+		for inFlight < maxInFlight {
+			entry, ok, err := buildNext(ctx)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return nil
+			}
+			results = append(results, entry)
+			inFlight += entry.InFlightCost
+		}
+		return nil
+	}
+	if err := fillNewResults(); err != nil {
+		return err
+	}
+
+	taskID := 0
+	for i := 0; i < len(results); {
+		curResultIdx := i
+		cur := &results[curResultIdx]
+		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
+			break
+		}
+		startTime := time.Now()
+		var completedRows []chunk.Row
+		var handles []kv.Handle
+		var retChunk *chunk.Chunk
+		var curResultExhausted bool
+		if w.idxLookup.indexLookUpPushDown {
+			completedRows, handles, curResultExhausted, err = w.extractLookUpPushDownRowsOrHandles(ctx, cur.RowIter, handleOffsets)
+		} else {
+			handles, retChunk, err = w.extractTaskHandles(ctx, chk, cur.Result, handleOffsets)
+			curResultExhausted = len(handles) == 0
+		}
+		finishFetch := time.Now()
+		if err != nil {
+			return err
+		}
+
+		if curResultExhausted {
+			inFlight -= cur.InFlightCost
+			if err := fillNewResults(); err != nil {
+				return err
+			}
+			i++
+		}
+
+		if len(handles) == 0 && len(completedRows) == 0 {
+			continue
+		}
+
+		var completedTask *lookupTableTask
+		if rowCnt := len(completedRows); rowCnt > 0 {
+			metrics.IndexLookUpPushDownRowsCounterHit.Add(float64(rowCnt))
+			// Currently, completedRows is only produced by index lookup push down which does not support keep order.
+			// for non-keep-order request, the completed rows can be sent to resultCh directly.
+			completedTask = w.buildCompletedTask(taskID, completedRows)
+			taskID++
+		}
+
+		var tableLookUpTask *lookupTableTask
+		if rowCnt := len(handles); rowCnt > 0 {
+			if w.idxLookup.indexLookUpPushDown {
+				metrics.IndexLookUpPushDownRowsCounterMiss.Add(float64(rowCnt))
+			} else {
+				metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
+			}
+			tableLookUpTask = w.buildTableTask(taskID, handles, retChunk)
+			if w.idxLookup.partitionTableMode {
+				tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 			}
 			taskID++
 		}
