@@ -61,10 +61,15 @@ const (
 	// values whose type was not recognized by SetValue / NewDatum. It is
 	// no longer produced or consumed by any code path; the constant and
 	// its value are retained so the kind-space is stable and the value 14
-	// is not accidentally reused by a future kind.
+	// is not accidentally reused by a future kind. This kind must never
+	// be written by new code; any Datum observed with it is a bug.
 	//
-	// Deprecated: this kind is never set and should not be referenced by
-	// new code. Any Datum observed with this kind indicates a bug.
+	// The name is kept exported (vs. removed) so external consumers that
+	// enumerate kinds get a compile-time nudge toward the rename. The
+	// plain "Do not use" wording (rather than a `Deprecated:` marker)
+	// avoids triggering `staticcheck/SA1019` at the small number of
+	// legitimate sites that still need to refer to the constant (name
+	// tables, exhaustive "not implemented" restore groups).
 	KindInterfaceDeprecated byte = 14
 	KindMinNotNull          byte = 15
 	KindMaxValue            byte = 16
