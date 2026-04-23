@@ -2146,6 +2146,45 @@ func TestSkipStatsForGeneratedColumnsOnSkippedColumns(t *testing.T) {
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[3].ID).IsAnalyzed())
 }
 
+// TestAnalyzeIndexedGeneratedColumnOnSkippedColumn verifies that when we skip JSON columns,
+// a STORED generated column that depends on the skipped JSON column but has an index on it
+// can still be analyzed without panic. See https://github.com/pingcap/tidb/issues/67114.
+func TestAnalyzeIndexedGeneratedColumnOnSkippedColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Create table matching the issue: JSON column + STORED generated column with index
+	tk.MustExec(`CREATE TABLE t (
+		j JSON NOT NULL,
+		email VARCHAR(255) GENERATED ALWAYS AS (JSON_EXTRACT(j, '$.email')) STORED,
+		INDEX idx_email (email)
+	)`)
+
+	// Explicitly skip JSON columns
+	tk.MustExec("set @@tidb_analyze_skip_column_types = 'json'")
+
+	// This should not panic with "index out of range [-1]"
+	tk.MustExec("ANALYZE TABLE t ALL COLUMNS")
+
+	// Also test ANALYZE TABLE ... INDEX
+	tk.MustExec("ANALYZE TABLE t INDEX idx_email")
+
+	h := dom.StatsHandle()
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.NotNil(t, tblStats)
+	require.True(t, tblStats.IsAnalyzed())
+
+	// JSON base column should be skipped
+	require.False(t, tblStats.GetCol(tbl.Meta().Columns[0].ID).IsAnalyzed())
+	// STORED generated column with index should be analyzed
+	require.True(t, tblStats.GetCol(tbl.Meta().Columns[1].ID).IsAnalyzed())
+	// Index on generated column should be analyzed
+	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed())
+}
+
 func TestDynamicExpandMustForceAllColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

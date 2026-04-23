@@ -2572,8 +2572,12 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 			// Check if any dependency is in the skip list
 			for depName := range colInfo.Dependences {
 				if _, exists := skipColNameMap[depName]; exists {
-					skipCol = append(skipCol, colInfo)
-					shouldSkip = true
+					// If the generated column is required (e.g., part of an index),
+					// we must keep it to avoid index offset remapping failures.
+					if _, need := mustAnalyze[colInfo.ID]; !need {
+						skipCol = append(skipCol, colInfo)
+						shouldSkip = true
+					}
 					break
 				}
 			}
