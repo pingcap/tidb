@@ -509,6 +509,22 @@ HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<ni
 		tk.MustQuery("select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").Check(testkit.Rows("100 2"))
 	}
 
+	// merge-join-order-with-constant-leading-key
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t1(a int not null, b int not null, c int, primary key(a, b));")
+		tk.MustExec("create table t2(a int not null, b int not null, c int, primary key(a, b));")
+
+		tk.MustQuery("explain format='plan_tree' select /*+ merge_join(t1, t2) */ t1.a, t1.b from t1 join t2 on t1.a = t2.a and t1.b = t2.b where t1.a = 1 and t2.c > 10 group by t1.a, t1.b order by t1.b limit 2").Check(
+			testkit.Rows("Limit root  offset:0, count:2",
+				"└─MergeJoin root  inner join, left key:test.t2.a, test.t2.b, right key:test.t1.a, test.t1.b",
+				"  ├─TableReader(Build) root  data:TableRangeScan",
+				"  │ └─TableRangeScan cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo",
+				"  └─TableReader(Probe) root  data:Selection",
+				"    └─Selection cop[tikv]  gt(test.t2.c, 10)",
+				"      └─TableRangeScan cop[tikv] table:t2 range:[1,1], keep order:true, stats:pseudo"))
+	}
+
 	// instance-plan-cache-with-prepare
 	{
 		tk1 := prepareSharedTestKit(t)
