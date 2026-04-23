@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -228,6 +227,7 @@ func TestTwoStates(t *testing.T) {
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
+	probeTableSQL := "create table t_states_failpoint_probe (a int)"
 	mustExec(`create table t (
 		c1 int,
 		c2 varchar(64),
@@ -241,6 +241,13 @@ func TestTwoStates(t *testing.T) {
 
 	times := 0
 	var checkErr error
+	failpointHookAvailable := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(*model.Job) {
+		failpointHookAvailable = true
+	})
+	mustExec(probeTableSQL)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	mustExec("drop table t_states_failpoint_probe")
 	runStateChecks := func(state model.SchemaState) {
 		if state == prevState || checkErr != nil || times >= 3 {
 			return
@@ -297,10 +304,12 @@ func TestTwoStates(t *testing.T) {
 			runStateChecks(job.SchemaState)
 		})
 		mustExec(alterTableSQL)
+		require.Equal(t, 3, times, "TestTwoStates requires a failpoint-enabled run to observe the three intermediate add-column states; use tools/check/failpoint-go-test.sh for pkg/ddl")
 	}
 	runWithoutFailpointHook := func() {
-		// Plain `go test` does not rewrite failpoint markers, so it cannot observe
-		// the internal delete-only/write-only/write-reorg transitions directly.
+		// Plain `go test` without failpoint source rewriting leaves InjectCall as
+		// a marker stub, so it cannot observe the internal
+		// delete-only/write-only/write-reorg transitions directly.
 		// For add-column SQL semantics, those intermediate states all share the
 		// same old-schema contract until the column becomes public, so we verify
 		// that contract once before the DDL completes and keep the final public
@@ -314,7 +323,7 @@ func TestTwoStates(t *testing.T) {
 		require.NoError(t, testInfo.compileSQL(3))
 		mustExec(alterTableSQL)
 	}
-	if intest.InTest {
+	if failpointHookAvailable {
 		runWithFailpointHook()
 	} else {
 		runWithoutFailpointHook()
