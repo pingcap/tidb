@@ -426,7 +426,11 @@ func (d *Datum) GetVectorFloat32() VectorFloat32 {
 // GetMysqlTime gets types.Time value. Time is a bit-packed CoreTime
 // (uint64) so it lives directly in d.i, avoiding the per-set heap
 // allocation that storing it via d.x (interface{}) would otherwise pay.
+// The intest assertion catches kind mismatches that the previous
+// `d.x.(Time)` implementation surfaced via panic but which this unchecked
+// reinterpret would otherwise silently return as bogus CoreTime bits.
 func (d *Datum) GetMysqlTime() Time {
+	intest.Assert(d.k == KindMysqlTime, "GetMysqlTime called on Datum of kind ", d.k)
 	return Time{coreTime: CoreTime(uint64(d.i))}
 }
 
