@@ -48,7 +48,7 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 
     * If existing code is being modified or removed, ensure you understand what it did and why it is being removed. If that is not clear, raise an issue.
 
-    * For new code, can you follow each line is doing? Does it follow from what the PR described? If not, this is an issue that needs to be addressed.
+    * For new code, can you follow what each line is doing? Does it follow from what the PR described? If not, this is an issue that needs to be addressed.
 
 3. **Critical thinking and suggestions.** Are there specific, tangible ways to improve the code being changed?
 
@@ -127,7 +127,7 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 
 * Respond to all feedback raised by the reviewer, and address all blocking issues.
 
-* Suggestions should generally be incoporated unless you can clearly articulate a good reason not to, and the reviewer agrees.
+* Suggestions should generally be incorporated unless you can clearly articulate a good reason not to, and the reviewer agrees.
 
 * If the reviewer points out an issue in one part of the PR, proactively look for and address similar issues in the rest of the PR before re-requesting a review. The reviewer should not have to raise the same kind of issue repeatedly.
 
