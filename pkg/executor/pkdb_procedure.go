@@ -653,6 +653,12 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) (fun
 	}
 	e.Ctx().GetSessionVars().SetInCallProcedure()
 	defer func() {
+		if e.isFunction && e.parentContext != nil {
+			restoreErr := e.Ctx().GetSessionVars().SetProcedureContext(e.parentContext)
+			if err == nil && restoreErr != nil {
+				err = restoreErr
+			}
+		}
 		e.Ctx().GetSessionVars().OutCallProcedure(err != nil)
 	}()
 	//The last FinishExecuteStmt is expected to be a call statement.

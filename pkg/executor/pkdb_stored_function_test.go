@@ -226,6 +226,37 @@ end`)
 	))
 }
 
+func TestStoredFunctionSubqueryAssignmentKeepsParentContext(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	tk.MustExec("drop function if exists sf_ctx_inner")
+	tk.MustExec("drop function if exists sf_ctx_outer_direct")
+	tk.MustExec("drop function if exists sf_ctx_outer_subquery")
+
+	tk.MustExec(`create function sf_ctx_inner(p int) returns int
+begin
+	return p + 1;
+end`)
+	tk.MustExec(`create function sf_ctx_outer_direct(p int) returns int
+begin
+	declare v int default 0;
+	set v = sf_ctx_inner(p);
+	return v;
+end`)
+	tk.MustExec(`create function sf_ctx_outer_subquery(p int) returns int
+begin
+	declare v int default 0;
+	set v = (select sf_ctx_inner(p));
+	return v;
+end`)
+
+	tk.MustQuery("select sf_ctx_outer_direct(1)").Check(testkit.Rows("2"))
+	tk.MustQuery("select sf_ctx_outer_subquery(1)").Check(testkit.Rows("2"))
+}
+
 func TestViewQueryWithStoredFunction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
