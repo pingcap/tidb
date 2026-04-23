@@ -335,8 +335,7 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 }
 
 func TestResourceGroupRunaway(t *testing.T) {
-	// Keep GC fast enough for this test, but not so aggressive that records disappear
-	// before assertions can observe them on loaded CI.
+	// Use a longer expired duration to avoid the record being deleted too fast, 2500 means 2.5 seconds.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(2500)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
