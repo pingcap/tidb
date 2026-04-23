@@ -1,0 +1,50 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "inspector_lib",
+    srcs = [
+        "backupmeta.go",
+        "format.go",
+        "main.go",
+        "metakv.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/cmd/inspector",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//br/pkg/stream",
+        "//br/pkg/task",
+        "//br/pkg/utils",
+        "//br/pkg/version/build",
+        "//pkg/meta",
+        "@com_github_pingcap_log//:log",
+        "@com_github_spf13_cobra//:cobra",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "inspector",
+    embed = [":inspector_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "inspector_test",
+    timeout = "short",
+    srcs = [
+        "backupmeta_test.go",
+        "metakv_test.go",
+    ],
+    embed = [":inspector_lib"],
+    flaky = True,
+    shard_count = 19,
+    deps = [
+        "//br/pkg/stream",
+        "//pkg/meta",
+        "//pkg/objstore",
+        "//pkg/tablecodec",
+        "//pkg/util/codec",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_stretchr_testify//require",
+    ],
+)

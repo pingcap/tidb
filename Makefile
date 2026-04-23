@@ -445,7 +445,7 @@ bench-daily:
 		-outfile $(TO)
 
 .PHONY: build_tools
-build_tools: build_br build_lightning build_lightning-ctl ## Build all BR and Lightning tools
+build_tools: build_br build_inspector build_lightning build_lightning-ctl ## Build all BR and Lightning tools
 
 .PHONY: lightning_web
 lightning_web: ## Build Lightning web UI
@@ -459,6 +459,16 @@ ifeq ($(shell echo $(GOOS) | tr A-Z a-z),darwin)
 else
 	@echo "Detected non-macOS ($(ARCH)), disabling CGO"
 	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
+endif
+
+.PHONY: build_inspector
+build_inspector: ## Build BR log backup inspector tool
+ifeq ($(shell echo $(GOOS) | tr A-Z a-z),darwin)
+	@echo "Detected macOS ($(ARCH)), enabling CGO"
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/inspector ./br/cmd/inspector
+else
+	@echo "Detected non-macOS ($(ARCH)), disabling CGO"
+	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/inspector ./br/cmd/inspector
 endif
 
 .PHONY: build_lightning_for_web
