@@ -180,7 +180,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(sb.String())
 
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID = job.ID
 	})
 
@@ -392,7 +392,10 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 
 	checkRedactMsgAndReset := func(addUniqueKeySQL string) {
 		tk.MustExec("set session tidb_redact_log = on;")
+		// tidb_redact_log is actually a instance variable. We should avoid other sessions overwriting it.
+		tk.MustExec("set global tidb_redact_log = on;")
 		tk.MustContainErrMsg(addUniqueKeySQL, "[kv:1062]Duplicate entry '?' for key 't.idx'")
+		tk.MustExec("set global tidb_redact_log = off;")
 		tk.MustExec("set session tidb_redact_log = off;")
 		testErrStep = proto.StepInit
 	}
@@ -446,7 +449,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	var tblInfo *model.TableInfo
 	var idxInfo *model.IndexInfo
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if idxInfo == nil {
 			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 			tblInfo = tbl.Meta()
