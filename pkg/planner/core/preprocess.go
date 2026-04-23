@@ -243,7 +243,7 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 		internalExecCtx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 		rs, err := sysSession.GetSQLExecutor().ExecuteInternal(
 			internalExecCtx,
-			"SELECT definition_utf8, sql_mode FROM %n.%n WHERE lower(route_schema) = %? AND name = %? AND type = 'FUNCTION'",
+			"SELECT definition_utf8, sql_mode, character_set_client, connection_collation FROM %n.%n WHERE lower(route_schema) = %? AND name = %? AND type = 'FUNCTION'",
 			mysql.SystemDB,
 			mysql.Routines,
 			schemaLookup,
@@ -267,27 +267,38 @@ func preloadUserStoredFunction(ctx context.Context, sctx sessionctx.Context, fun
 			return nil // Don't return error here, the function not exist error will be reported during plan building.
 		}
 		definition := rows[0].GetString(0)
-		createFnSQL := "create function p() " + definition
 		sqlModeStr := rows[0].GetSet(1).String()
-		sqlExec := sctx.GetRestrictedSQLExecutor()
-		_, _, err = sqlExec.ExecRestrictedSQL(internalExecCtx, nil, "SET SQL_MODE = '"+sqlModeStr+"'")
+		charset := rows[0].GetString(2)
+		collation := rows[0].GetString(3)
+		retType, err := parseStoredFunctionReturnType(definition, sqlModeStr, charset, collation)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		stmt, err := sqlExec.ParseWithParams(internalExecCtx, createFnSQL)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		createFn, ok := stmt.(*ast.CreateProcedureInfo)
-		if !ok || createFn.FunctionInfo.RetType == nil {
-			return errors.Errorf("invalid create function statement")
-		}
-		retType := createFn.FunctionInfo.RetType
 		sc.UserFuncCtx.Lock()
 		sc.UserFuncCtx.StoredFuncName[key] = retType
 		sc.UserFuncCtx.Unlock()
 	}
 	return nil
+}
+
+func parseStoredFunctionReturnType(definition, sqlModeStr, charset, collation string) (*types.FieldType, error) {
+	sqlMode, err := mysql.GetSQLMode(sqlModeStr)
+	if err != nil {
+		return nil, err
+	}
+
+	p := parser.New()
+	p.SetSQLMode(sqlMode)
+
+	stmt, err := p.ParseOneStmt("create function p() "+definition, charset, collation)
+	if err != nil {
+		return nil, err
+	}
+	createFn, ok := stmt.(*ast.CreateProcedureInfo)
+	if !ok || createFn.FunctionInfo.RetType == nil {
+		return nil, errors.Errorf("invalid create function statement")
+	}
+	return createFn.FunctionInfo.RetType, nil
 }
 
 type preprocessorFlag uint64

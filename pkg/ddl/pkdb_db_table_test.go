@@ -259,6 +259,7 @@ func TestCreateTableAsSelectWithStoredFunction(t *testing.T) {
 	tk.MustExec("use BG00DSCB00")
 	tk.MustExec("create table src(id2 varchar(36), extend_1 varchar(400))")
 	tk.MustExec("insert into src values ('row1', 'ABCDEFGFXZZ')")
+	tk.MustExec("set @@session.sql_mode = 'ANSI_QUOTES'")
 	tk.MustExec(`create function instr_n(str varchar(1000), sub varchar(255), start_pos int, occurrence int)
 returns int
 deterministic
@@ -279,18 +280,50 @@ begin
 	end while;
 	return pos;
 end`)
+	tk.MustExec("set @@session.sql_mode = 'NO_ENGINE_SUBSTITUTION'")
+	tk.MustQuery("select @@session.sql_mode").Check(testkit.Rows("NO_ENGINE_SUBSTITUTION"))
 
 	tk.MustExec("create table t_sf_u as " +
 		"select id2, substring(extend_1, 1, 7) as extend_fx " +
 		"from BG00DSCB00.src " +
 		"where length(extend_1) > 8 and instr_n(extend_1, 'FX', 1, 1) > 0")
 	tk.MustQuery("select * from t_sf_u").Check(testkit.Rows("row1 ABCDEFG"))
+	tk.MustQuery("select @@session.sql_mode").Check(testkit.Rows("NO_ENGINE_SUBSTITUTION"))
 
 	tk.MustExec("create table t_sf_q as " +
 		"select id2, substring(extend_1, 1, 7) as extend_fx " +
 		"from BG00DSCB00.src " +
 		"where length(extend_1) > 8 and BG00DSCB00.instr_n(extend_1, 'FX', 1, 1) > 0")
 	tk.MustQuery("select * from t_sf_q").Check(testkit.Rows("row1 ABCDEFG"))
+	tk.MustQuery("select @@session.sql_mode").Check(testkit.Rows("NO_ENGINE_SUBSTITUTION"))
+}
+
+func TestCreateTableAsSelectDoesNotCorruptInfoSchemaColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	defer config.RestoreFunc()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.EnableCreateTableAsSelect = true
+	})
+
+	tk.MustExec("create database crash_test")
+	tk.MustExec("use crash_test")
+	tk.MustExec("create table t1 (id int, val decimal(10,2))")
+	tk.MustExec("create table t2 (id int, val decimal(10,2))")
+	tk.MustExec(`create view v_crash as
+		select a.id, a.val, count(*) as cnt
+		from t1 a join t2 b on a.id = b.id
+		group by a.id`)
+
+	tk.MustExec("create table t_ctas as select 1 as x")
+	tk.MustQuery(`select table_name, column_name from information_schema.columns
+		where table_schema = 'crash_test' and data_type = 'decimal'
+		order by table_name, ordinal_position`).Check(testkit.Rows(
+		"t1 val",
+		"t2 val",
+		"v_crash val",
+	))
 }
 
 func TestCreateTableAsSelectPrivilege(t *testing.T) {

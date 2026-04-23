@@ -101,6 +101,63 @@ var (
 	errEALIsOff             = errors.NewNoStackError(variable.PKDBEnableEAL + " is off")
 )
 
+var ctasParserStateVarNames = []string{
+	variable.CharacterSetClient,
+	variable.CharacterSetConnection,
+	variable.CollationConnection,
+}
+
+type ctasSessionVarValue struct {
+	name  string
+	value string
+}
+
+func captureCTASRestoreSessionVars(sessionVars *variable.SessionVars) ([]ctasSessionVarValue, error) {
+	sqlMode, ok := sessionVars.GetSystemVar(variable.SQLModeVar)
+	if !ok {
+		sqlMode = mysql.DefaultSQLMode
+	}
+	values := []ctasSessionVarValue{{name: variable.SQLModeVar, value: sqlMode}}
+	return appendCTASSessionVarValues(values, sessionVars, ctasParserStateVarNames)
+}
+
+func captureCTASCallerSessionVars(sessionVars *variable.SessionVars) ([]ctasSessionVarValue, error) {
+	sqlMode, ok := sessionVars.GetSystemVar(variable.SQLModeVar)
+	if !ok {
+		return nil, errors.New("unknown system var " + variable.SQLModeVar)
+	}
+	values := []ctasSessionVarValue{{name: variable.SQLModeVar, value: sqlMode}}
+	return appendCTASSessionVarValues(values, sessionVars, ctasParserStateVarNames)
+}
+
+func appendCTASSessionVarValues(values []ctasSessionVarValue, sessionVars *variable.SessionVars, varNames []string) ([]ctasSessionVarValue, error) {
+	for _, varName := range varNames {
+		value, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), varName)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		values = append(values, ctasSessionVarValue{name: varName, value: value})
+	}
+	return values, nil
+}
+
+func applyCTASSessionVars(sessionVars *variable.SessionVars, values []ctasSessionVarValue) error {
+	for _, value := range values {
+		if err := sessionVars.SetSystemVar(value.name, value.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreCTASSessionVars(sessionVars *variable.SessionVars, values []ctasSessionVarValue) {
+	for _, value := range values {
+		if err := sessionVars.SetSystemVar(value.name, value.value); err != nil {
+			logutil.DDLLogger().Warn("restore "+value.name+" for CTAS internal session failed", zap.Error(err))
+		}
+	}
+}
+
 // Executor is the interface for executing DDL statements.
 // it's mostly called by SQL executor.
 // DDL statements are converted into DDL jobs, JobSubmitter will submit the jobs
@@ -1026,10 +1083,9 @@ func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model
 		oldUser := internalVars.User
 		oldActiveRoles := internalVars.ActiveRoles
 		oldPrivilegeManager := privilege.GetPrivilegeManager(sctx)
-		oldSQLMode, hadOldSQLMode := internalVars.GetSystemVar(variable.SQLModeVar)
-		restoreSQLMode := oldSQLMode
-		if !hadOldSQLMode {
-			restoreSQLMode = mysql.DefaultSQLMode
+		restoreSessionVars, err := captureCTASRestoreSessionVars(internalVars)
+		if err != nil {
+			return err
 		}
 		defer func() {
 			internalVars.CurrentDB = oldDB
@@ -1037,9 +1093,7 @@ func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model
 			internalVars.User = oldUser
 			internalVars.ActiveRoles = oldActiveRoles
 			privilege.BindPrivilegeManager(sctx, oldPrivilegeManager)
-			if restoreErr := internalVars.SetSystemVar(variable.SQLModeVar, restoreSQLMode); restoreErr != nil {
-				logutil.DDLLogger().Warn("restore sql_mode for CTAS internal session failed", zap.Error(restoreErr))
-			}
+			restoreCTASSessionVars(internalVars, restoreSessionVars)
 		}()
 
 		internalVars.CurrentDB = callerVars.CurrentDB
@@ -1048,18 +1102,18 @@ func (e *executor) handleCreateTableSelect(ctx sessionctx.Context, schema *model
 		} else {
 			internalVars.CurrentDBCI = pmodel.NewCIStr(callerVars.CurrentDB)
 		}
-		sqlMode, ok := callerVars.GetSystemVar(variable.SQLModeVar)
-		if !ok {
-			return errors.New("unknown system var " + variable.SQLModeVar)
+		callerSessionVars, err := captureCTASCallerSessionVars(callerVars)
+		if err != nil {
+			return err
 		}
-		if err := internalVars.SetSystemVar(variable.SQLModeVar, sqlMode); err != nil {
+		if err := applyCTASSessionVars(internalVars, callerSessionVars); err != nil {
 			return err
 		}
 		internalVars.User = callerVars.User
 		internalVars.ActiveRoles = callerVars.ActiveRoles
 		privilege.BindPrivilegeManager(sctx, callerPrivilegeManager)
 
-		_, err := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSQL)
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSQL)
 		return err
 	}(); err != nil {
 		// if insert data into temporary table failed, drop the temporary table (like rollback)

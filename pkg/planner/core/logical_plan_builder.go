@@ -5172,7 +5172,12 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 		b.hintProcessor = originHintProcessor
 		b.ctx.GetSessionVars().PlannerSelectBlockAsName.Store(originPlannerSelectBlockAsName)
 	}()
-	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
+	var nodeW *resolve.NodeW
+	if b.resolveCtx == nil {
+		nodeW = resolve.NewNodeW(selectNode)
+	} else {
+		nodeW = resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
+	}
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
 	errViewInvalid := plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 	if err != nil {
