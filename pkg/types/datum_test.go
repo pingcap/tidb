@@ -395,7 +395,9 @@ func TestEstimatedMemUsage(t *testing.T) {
 		NewBytesDatum(b),
 		NewDecimalDatum(newMyDecimal("1234.1234", t)),
 		NewMysqlEnumDatum(enum),
+		NewTimeDatum(NewTime(FromDate(2025, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, DefaultFsp)),
 	}
+	// Time packs into Datum.i, so KindMysqlTime adds no bytes beyond sizeOfEmptyDatum.
 	bytesConsumed := 10 * (len(datumArray)*sizeOfEmptyDatum +
 		sizeOfMyDecimal +
 		len(b)*2 +
