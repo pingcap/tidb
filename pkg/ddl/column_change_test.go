@@ -432,7 +432,11 @@ func TestIssue40135(t *testing.T) {
 			_, checkErr = tk1.Exec("alter table t40135 change column a aNew SMALLINT NULL DEFAULT '-14996'")
 		}
 	})
-	tk.MustExec("alter table t40135 modify column a MEDIUMINT NULL DEFAULT '6243108' FIRST")
+	tk.MustContainErrMsg("alter table t40135 modify column a MEDIUMINT NULL DEFAULT '6243108' FIRST",
+		"[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions")
+	if checkErr == nil {
+		_, checkErr = tk1.Exec("alter table t40135 change column a aNew SMALLINT NULL DEFAULT '-14996'")
+	}
 
 	require.ErrorContains(t, checkErr, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }

@@ -22,7 +22,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2890,40 +2889,64 @@ func TestIssue40135Ver2(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec("use test")
-
 	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', c varchar(255), index(a)) PARTITION BY HASH (a) PARTITIONS 6")
 	tk.MustExec("insert into t40135 values (1, 'md', '1-md'), (2, 'ma','2-ma'), (3, 'md','3-md'), (4, 'ma','4-ma'), (5, 'md','5-md'), (6, 'ma','6-ma')")
-	one := true
-	var checkErr error
-	var wg sync.WaitGroup
-	wg.Add(1)
+
+	// Trigger a concurrent rename attempt while another DDL is running.
+	var fired atomic.Bool
+	renameErrCh := make(chan error, 1)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if job.SchemaState == model.StateDeleteOnly {
-			tk3.MustExec("delete from t40135 where a = 1")
+		if !fired.CompareAndSwap(false, true) {
+			return
 		}
-		if one {
-			one = false
-			go func() {
-				_, checkErr = tk1.Exec("alter table t40135 modify column a int NULL")
-				wg.Done()
-			}()
-		}
+		go func() {
+			_, err := tk1.Exec("alter table t40135 change column a a_new int")
+			renameErrCh <- err
+		}()
 	})
-	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
-	wg.Wait()
-	require.ErrorContains(t, checkErr, "Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+
+	errMsg := "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions"
+	tk.MustContainErrMsg("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST", errMsg)
+
+	// If the hook was not triggered, still execute the rename once as fallback.
+	var renameErr error
+	if fired.Load() {
+		select {
+		case renameErr = <-renameErrCh:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout waiting for concurrent rename result")
+		}
+	} else {
+		_, renameErr = tk1.Exec("alter table t40135 change column a a_new int")
+	}
+	require.ErrorContains(t, renameErr, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
+	require.NotContains(t, renameErr.Error(), "Unknown column")
+
 	tk.MustQuery("show create table t40135").Check(testkit.Rows("" +
 		"t40135 CREATE TABLE `t40135` (\n" +
-		"  `a` bigint(20) DEFAULT '6243108',\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` varchar(32) DEFAULT 'md',\n" +
 		"  `c` varchar(255) DEFAULT NULL,\n" +
 		"  KEY `a` (`a`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
 		"PARTITION BY HASH (`a`) PARTITIONS 6"))
+
+	// Ensure subsequent DDL can still proceed after both rejected operations.
+	tk.MustExec("alter table t40135 add column d int default 0")
+	tk.MustExec("alter table t40135 drop column d")
 	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 	tk.MustExec("admin check table t40135")
+}
+
+func TestModifyPartitionColumnRenameOnly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_part_mod_rename (a int, b int) partition by hash(a) partitions 2")
+	// Renaming partition column should be rejected by conservative partition-column check.
+	tk.MustContainErrMsg("alter table t_part_mod_rename change column a a_new int",
+		"[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
 }
 
 func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
@@ -2935,11 +2958,56 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 	tk.MustExec(`set sql_mode = default`)
 	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
 	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
-	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
+	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions")
 	tk.MustExec(`set sql_mode = ''`)
-	tk.MustExec(`alter table t modify a varchar(5)`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1265 2 warnings with this error code, first warning: Data truncated for column 'a', value is ' 654321'"))
+	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions")
 	tk.MustExec(`admin check table t`)
+}
+
+func TestAlterModifyPartitionColSignedUnsignedAndNotNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_part_col_attr")
+	tk.MustExec(`create table t_part_col_attr (
+		a int default null,
+		b int
+	) partition by hash(a) partitions 4`)
+	tk.MustExec(`insert into t_part_col_attr values (1, 10), (2, 20)`)
+
+	errMsg := "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions"
+	tk.MustContainErrMsg(`alter table t_part_col_attr modify column a int unsigned`, errMsg)
+	tk.MustContainErrMsg(`alter table t_part_col_attr modify column a int not null`, errMsg)
+	tk.MustExec(`alter table t_part_col_attr modify column a int default 42 comment 'safe attr update'`)
+	tk.MustQuery(`select column_name, column_type, is_nullable from information_schema.columns where table_schema = 'test' and table_name = 't_part_col_attr' and column_name = 'a'`).
+		Check(testkit.Rows("a int(11) YES"))
+	tk.MustQuery(`select column_default, column_comment from information_schema.columns where table_schema = 'test' and table_name = 't_part_col_attr' and column_name = 'a'`).
+		Check(testkit.Rows("42 safe attr update"))
+	tk.MustExec(`insert into t_part_col_attr (b) values (99)`)
+	tk.MustQuery(`select a, b from t_part_col_attr where b = 99`).Check(testkit.Rows("42 99"))
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t_part_col_attr`)
+}
+
+func TestAlterModifyPartitionColCharsetCollate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_part_col_charset")
+	tk.MustExec(`create table t_part_col_charset (
+		a varchar(16) character set utf8 collate utf8_bin,
+		b int
+	) partition by range columns (a) (
+		partition p0 values less than ('m'),
+		partition p1 values less than (maxvalue)
+	)`)
+	tk.MustExec(`insert into t_part_col_charset values ('a', 1), ('z', 2)`)
+
+	errMsg := "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions"
+	tk.MustContainErrMsg(`alter table t_part_col_charset modify column a varchar(16) character set utf8mb4 collate utf8mb4_bin`, errMsg)
+	tk.MustContainErrMsg(`alter table t_part_col_charset modify column a varchar(16) character set utf8 collate utf8_general_ci`, errMsg)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t_part_col_charset`)
 }
 
 func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
@@ -3255,6 +3323,214 @@ func TestModifyColumnPartitionedTableListAndKeyPartition(t *testing.T) {
 		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 		tk.MustExec(`admin check table t_key_mod`)
 		tk.MustQuery(`select a, b, c from t_key_mod use index(idx_c) where c = 60`).Check(testkit.Rows("6 6 60"))
+	})
+}
+
+// Covers modify-column on non-index non-partition columns in partitioned tables with multi-column change.
+func TestModifyColumnPartitionedTableNonPartitionColumnTypeMultiColumnNonIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_multi_non_idx")
+	tk.MustExec(`create table t_multi_non_idx (
+		a int,
+		b int,
+		c int,
+		d int,
+		primary key (a),
+		key idx_d(d)
+	) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition pMax values less than (MAXVALUE)
+	)`)
+	tk.MustExec(`insert into t_multi_non_idx values (1,10,100,1),(11,20,200,2)`)
+	tk.MustExec(`alter table t_multi_non_idx modify column b bigint, modify column c bigint`)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t_multi_non_idx`)
+	tk.MustQuery(`select a, b, c, d from t_multi_non_idx order by a`).Check(testkit.Rows(
+		"1 10 100 1",
+		"11 20 200 2",
+	))
+}
+
+// Covers modify-column on composite-index non-partition columns in partitioned tables with multi-column change.
+func TestModifyColumnPartitionedTableNonPartitionColumnTypeMultiColumnCompositeIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_multi_comp_idx")
+	tk.MustExec(`create table t_multi_comp_idx (
+		a int,
+		b int,
+		c int,
+		d varchar(20),
+		primary key (a),
+		key idx_bc(b, c)
+	) partition by hash (a) partitions 4`)
+	tk.MustExec(`insert into t_multi_comp_idx values (1,10,100,'x'),(2,20,200,'y'),(11,30,300,'z')`)
+	tk.MustExec(`alter table t_multi_comp_idx modify column b bigint unsigned, modify column c bigint unsigned`)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t_multi_comp_idx`)
+	tk.MustQuery(`select a, b, c, d from t_multi_comp_idx use index(idx_bc) where b = 20 and c = 200`).Check(testkit.Rows("2 20 200 y"))
+}
+
+// Covers signed/unsigned, nullability and default changes for non-partition columns in partitioned tables.
+func TestModifyColumnPartitionedTableNonPartitionColumnTypeAttrChanges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_attr_mod")
+	tk.MustExec(`create table t_attr_mod (
+		a int,
+		b int,
+		c int null default null,
+		d int not null default 1,
+		primary key (a)
+	) partition by hash (a) partitions 4`)
+	tk.MustExec(`insert into t_attr_mod values (1,10,20,30),(2,11,21,31)`)
+	tk.MustExec(`alter table t_attr_mod
+		modify column b int unsigned,
+		modify column c int not null default 7,
+		modify column d int null default 9`)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t_attr_mod`)
+	tk.MustQuery(`select column_name, locate('unsigned', column_type) > 0, is_nullable, coalesce(column_default, 'NULL')
+		from information_schema.columns
+		where table_schema = 'test' and table_name = 't_attr_mod' and column_name in ('b', 'c', 'd')
+		order by column_name`).Check(testkit.Rows(
+		"b 1 YES NULL",
+		"c 0 NO 7",
+		"d 0 YES 9",
+	))
+	tk.MustExec(`insert into t_attr_mod(a, b) values (10, 100)`)
+	tk.MustQuery(`select a, b, c, d from t_attr_mod where a = 10`).Check(testkit.Rows("10 100 7 9"))
+}
+
+// Covers conversions where source type is date/text/blob/json/enum/set and target type has different EvalType.
+// For json/enum/set in this scenario, target type is text.
+func TestModifyColumnPartitionedTableNonPartitionColumnTypeSourceToDifferentEvalType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_src_eval")
+	tk.MustExec(`create table t_src_eval (
+		a int,
+		d_col date,
+		txt_col text,
+		blob_col blob,
+		j_col json,
+		e_col enum('10', '20'),
+		s_col set('1', '2', '4'),
+		primary key (a)
+	) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition pMax values less than (MAXVALUE)
+	)`)
+	tk.MustExec(`insert into t_src_eval values
+		(1, '2020-01-01', '123', '456', '10', '10', '1,2'),
+		(11, '2020-01-02', '124', '457', '20', '20', '2,4')`)
+	tk.MustExec(`alter table t_src_eval
+		modify column d_col varchar(20),
+		modify column txt_col bigint,
+		modify column blob_col bigint,
+		modify column j_col text,
+		modify column e_col text,
+		modify column s_col text`)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t_src_eval`)
+	tk.MustQuery(`select a, d_col, txt_col, blob_col, j_col, e_col, s_col from t_src_eval order by a`).Check(testkit.Rows(
+		"1 2020-01-01 123 456 10 10 1,2",
+		"11 2020-01-02 124 457 20 20 2,4",
+	))
+}
+
+// Covers conversions where target type is date/text/blob/json/enum/set and source type has different EvalType.
+// For json/enum/set in this scenario, source type is text.
+func TestModifyColumnPartitionedTableNonPartitionColumnTypeTargetFromDifferentEvalType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_dst_eval")
+	tk.MustExec(`create table t_dst_eval (
+		a int,
+		i_date int,
+		i_text int,
+		i_blob int,
+		t_json text,
+		t_enum text,
+		t_set text,
+		primary key (a)
+	) partition by key (a) partitions 3`)
+	tk.MustExec(`insert into t_dst_eval values
+		(1, 20200102, 123, 456, '1', '2', '1,2'),
+		(2, 20200103, 124, 457, '2', '3', '1,4')`)
+	tk.MustExec(`alter table t_dst_eval
+		modify column i_date date,
+		modify column i_text text,
+		modify column i_blob blob,
+		modify column t_json json,
+		modify column t_enum enum('1', '2', '3'),
+		modify column t_set set('1', '2', '4')`)
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t_dst_eval`)
+	tk.MustQuery(`select a, cast(i_date as char), i_text, cast(i_blob as char), cast(t_json as char), t_enum, t_set from t_dst_eval order by a`).Check(testkit.Rows(
+		"1 2020-01-02 123 456 1 2 1,2",
+		"2 2020-01-03 124 457 2 3 1,4",
+	))
+}
+
+// Covers truncation checks on non-partition columns in partitioned tables under strict and non-strict SQL modes.
+func TestModifyColumnPartitionedTableNonPartitionColumnTruncationSQLMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	t.Run("strict mode", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_non_part_trunc_strict")
+		tk.MustExec(`create table t_non_part_trunc_strict (
+			a int,
+			b int,
+			primary key (a)
+		) partition by hash (a) partitions 4`)
+		tk.MustExec(`insert into t_non_part_trunc_strict values (1, 127), (2, 222)`)
+		tk.MustExec(`set sql_mode = default`)
+		tk.MustContainErrMsg(`alter table t_non_part_trunc_strict modify column b tinyint`, "overflows tinyint")
+		tk.MustQuery(`select data_type from information_schema.columns where table_schema = 'test' and table_name = 't_non_part_trunc_strict' and column_name = 'b'`).Check(testkit.Rows("int"))
+		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+		tk.MustExec(`admin check table t_non_part_trunc_strict`)
+	})
+
+	t.Run("non-strict mode", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_non_part_trunc_nonstrict")
+		tk.MustExec(`create table t_non_part_trunc_nonstrict (
+			a int,
+			b int,
+			primary key (a)
+		) partition by hash (a) partitions 4`)
+		tk.MustExec(`insert into t_non_part_trunc_nonstrict values (1, 127), (2, 222)`)
+		tk.MustExec(`set sql_mode = ''`)
+		tk.MustExec(`alter table t_non_part_trunc_nonstrict modify column b tinyint`)
+		warnings := tk.MustQuery(`show warnings`).Rows()
+		require.NotEmpty(t, warnings)
+		foundOverflowWarning := false
+		for _, row := range warnings {
+			if strings.Contains(fmt.Sprint(row[2]), "overflows tinyint") {
+				foundOverflowWarning = true
+				break
+			}
+		}
+		require.True(t, foundOverflowWarning, "warnings: %v", warnings)
+		tk.MustQuery(`select data_type from information_schema.columns where table_schema = 'test' and table_name = 't_non_part_trunc_nonstrict' and column_name = 'b'`).Check(testkit.Rows("tinyint"))
+		tk.MustQuery(`select a, b from t_non_part_trunc_nonstrict order by a`).Check(testkit.Rows(
+			"1 127",
+			"2 127",
+		))
+		tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+		tk.MustExec(`admin check table t_non_part_trunc_nonstrict`)
 	})
 }
 

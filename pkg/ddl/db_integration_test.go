@@ -1371,9 +1371,10 @@ func TestAlterAlgorithm(t *testing.T) {
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 	)`)
-	assertAlterWarnExec(tk, t, "alter table t modify column a bigint, ALGORITHM=INPLACE;")
-	tk.MustExec("alter table t modify column a bigint, ALGORITHM=INPLACE, ALGORITHM=INSTANT;")
-	tk.MustExec("alter table t modify column a bigint, ALGORITHM=DEFAULT;")
+	partitionColErrMsg := "[ddl:8200]Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions"
+	tk.MustGetErrMsg("alter table t modify column a bigint, ALGORITHM=INPLACE;", partitionColErrMsg)
+	tk.MustGetErrMsg("alter table t modify column a bigint, ALGORITHM=INPLACE, ALGORITHM=INSTANT;", partitionColErrMsg)
+	tk.MustGetErrMsg("alter table t modify column a bigint, ALGORITHM=DEFAULT;", partitionColErrMsg)
 
 	// Test add/drop index
 	tk.MustGetErrCode("alter table t add index idx_b(b), ALGORITHM=INSTANT", errno.ErrAlterOperationNotSupportedReason)

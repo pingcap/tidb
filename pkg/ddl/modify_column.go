@@ -1478,6 +1478,17 @@ func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col
 }
 
 func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	useGracefulCheck := false
+	failpoint.Inject("useGracefulPartitionColumnModifiableCheck", func() {
+		useGracefulCheck = true
+	})
+	if useGracefulCheck {
+		return gracefulCheckPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+	}
+	return conservativeCheckPartitionColumnModifiable(sctx, tblInfo, col, newCol)
+}
+
+func gracefulCheckPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
 	if col.Name.L != newCol.Name.L {
 		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(col.Name.L)
 	}
@@ -1541,6 +1552,54 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 	)
 	if err != nil {
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
+	}
+	return nil
+}
+
+// conservativeCheckPartitionColumnModifiable is the strict fallback check for
+// partitioning columns when graceful validation is disabled.
+//
+// Allowed:
+//   - metadata-only changes that do not affect partitioning value evaluation,
+//     such as updating default value/comment.
+//
+// Rejected:
+//   - any type-related change that may alter partitioning behavior and would
+//     require full partition reorganization, including:
+//   - column type, flen, decimal,
+//   - signed/unsigned flag,
+//   - nullability (NOT NULL flag),
+//   - charset/collation changes,
+//   - enum element definition changes.
+func conservativeCheckPartitionColumnModifiable(_ sessionctx.Context, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	oldCol := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
+	if oldCol == nil {
+		oldCol = col
+	}
+	if oldCol.Name.L != newCol.Name.L {
+		return dbterror.ErrDependentByPartitionFunctional.GenWithStackByArgs(oldCol.Name.L)
+	}
+
+	oldElems := oldCol.GetElems()
+	newElems := newCol.GetElems()
+	typeChanged := oldCol.GetType() != newCol.GetType() ||
+		oldCol.GetFlen() != newCol.GetFlen() ||
+		oldCol.GetDecimal() != newCol.GetDecimal() ||
+		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(newCol.GetFlag()) ||
+		mysql.HasNotNullFlag(oldCol.GetFlag()) != mysql.HasNotNullFlag(newCol.GetFlag()) ||
+		!strings.EqualFold(oldCol.GetCharset(), newCol.GetCharset()) ||
+		!strings.EqualFold(oldCol.GetCollate(), newCol.GetCollate()) ||
+		len(oldElems) != len(newElems)
+	if !typeChanged {
+		for i := range oldElems {
+			if oldElems[i] != newElems[i] {
+				typeChanged = true
+				break
+			}
+		}
+	}
+	if typeChanged {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
 	}
 	return nil
 }
