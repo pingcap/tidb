@@ -83,21 +83,25 @@ const (
 //
 // Field layout is chosen to minimize padding and the per-Datum footprint.
 // The first 8-byte word packs: kind (1B), frac (1B), collationID (2B),
-// flen (4B). The collation is stored as a MySQL collation ID (0 = unset);
+// flen (4B). The collation is stored as a MySQL collation id (0 = unset);
 // the string-valued Collation() accessor is kept as a facade that resolves
-// the ID via the charset package.
+// the id via the charset package. After removing KindInterfaceDeprecated
+// and packing Time into d.i, the heterogeneous `x any` slot now only
+// needs to hold a *MyDecimal pointer, so it is typed directly — saving
+// the interface header (16 B) and an allocation for the Time boxing that
+// the old `x any` required.
 type Datum struct {
-	k           byte   // datum kind.
-	decimal     uint8  // holds the frac (fractional digits). MySQL fsp <= 6 and DECIMAL frac <= 30.
-	collationID uint16 // MySQL collation id; 0 means unset. Replaces a 16-byte string.
-	length      uint32 // length can hold uint32 values.
-	i           int64  // i can hold int64 uint64 float64 values.
-	b           []byte // b can hold string or []byte values.
-	x           any    // x hold all other types.
+	k           byte       // datum kind.
+	decimal     uint8      // holds the frac (fractional digits). MySQL fsp <= 6 and DECIMAL frac <= 30.
+	collationID uint16     // MySQL collation id; 0 means unset. Replaces a 16-byte string.
+	length      uint32     // length can hold uint32 values.
+	i           int64      // i can hold int64, uint64, float bits, Duration ticks, Enum/Set Value, JSON TypeCode, and packed Time.
+	b           []byte     // b can hold string or []byte values.
+	decPtr      *MyDecimal // pointer to decimal value; non-nil only when k == KindMysqlDecimal.
 }
 
 // EmptyDatumSize is the size of empty datum.
-// 56 = 1 (byte) + 1 (uint8) + 2 (uint16) + 4 (uint32) + 8 (int64) + 24 ([]byte) + 16 (interface{})
+// 48 = 1 (byte) + 1 (uint8) + 2 (uint16) + 4 (uint32) + 8 (int64) + 24 ([]byte) + 8 (*MyDecimal)
 const EmptyDatumSize = int64(unsafe.Sizeof(Datum{}))
 
 // Clone create a deep copy of the Datum.
@@ -343,13 +347,13 @@ func (d *Datum) SetBytesAsString(b []byte, collation string, length uint32) {
 // SetNull sets datum to nil.
 func (d *Datum) SetNull() {
 	d.k = KindNull
-	d.x = nil
+	d.decPtr = nil
 }
 
 // SetMinNotNull sets datum to minNotNull value.
 func (d *Datum) SetMinNotNull() {
 	d.k = KindMinNotNull
-	d.x = nil
+	d.decPtr = nil
 }
 
 // GetBinaryLiteral4Cmp gets Bit value, and remove it's prefix 0 for comparison.
@@ -391,20 +395,23 @@ func (d *Datum) SetMysqlBit(b BinaryLiteral) {
 	d.b = b
 }
 
-// GetMysqlDecimal gets decimal value
+// GetMysqlDecimal gets decimal value.
 func (d *Datum) GetMysqlDecimal() *MyDecimal {
-	return d.x.(*MyDecimal)
+	return d.decPtr
 }
 
-// SetMysqlDecimal sets decimal value
+// SetMysqlDecimal sets decimal value.
 func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 	d.k = KindMysqlDecimal
-	d.x = b
+	d.decPtr = b
 }
 
-// GetMysqlDuration gets Duration value
+// GetMysqlDuration gets Duration value. d.decimal is stored as uint8, but
+// callers encode Fsp = -1 as the "unspecified" sentinel (see
+// types.UnspecifiedFsp), which round-trips as 255 in the narrow field.
+// Sign-extend via int8 to recover the original Fsp.
 func (d *Datum) GetMysqlDuration() Duration {
-	return Duration{Duration: time.Duration(d.i), Fsp: int(d.decimal)}
+	return Duration{Duration: time.Duration(d.i), Fsp: int(int8(d.decimal))}
 }
 
 // SetMysqlDuration sets Duration value
@@ -2300,7 +2307,10 @@ func (d *Datum) MarshalJSON() ([]byte, error) {
 	case KindMysqlDecimal:
 		jd.MyDecimal = d.GetMysqlDecimal()
 	default:
-		if d.x != nil {
+		// d.decPtr is only set by SetMysqlDecimal; any other kind that
+		// still has it populated is a bug (stale field from a reused
+		// Datum, perhaps).
+		if d.decPtr != nil {
 			return nil, fmt.Errorf("unsupported type: %d", d.k)
 		}
 	}

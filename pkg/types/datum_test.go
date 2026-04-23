@@ -337,7 +337,7 @@ func TestComputePlusAndMinus(t *testing.T) {
 		require.Equal(t, tt.hasErr, err != nil)
 		v, err := got.Compare(DefaultStmtNoWarningContext, &tt.plus, collate.GetBinaryCollator())
 		require.NoError(t, err)
-		require.Equalf(t, 0, v, "%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.x, tt.plus, tt.plus.x)
+		require.Equalf(t, 0, v, "%dth got:%#v, %#v, expect:%#v, %#v", ith, got, got.decPtr, tt.plus, tt.plus.decPtr)
 	}
 }
 
@@ -590,21 +590,15 @@ func TestMarshalDatum(t *testing.T) {
 		require.Equal(t, tt.i, datum.i, msg)
 		require.Equal(t, tt.collationID, datum.collationID, msg)
 		require.Equal(t, tt.b, datum.b, msg)
-		if tt.x == nil {
-			require.Nil(t, datum.x, msg)
-		}
-		require.Equal(t, reflect.TypeOf(tt.x), reflect.TypeOf(datum.x), msg)
-		// Time is packed into d.i, not stored via d.x, so verify its
-		// round-trip through the getter rather than via d.x.
+		require.Equal(t, tt.decPtr != nil, datum.decPtr != nil, msg)
+		// Time is packed into d.i; verify its round-trip through the
+		// getter rather than via a now-nonexistent d.x field.
 		if tt.k == KindMysqlTime {
 			require.Equal(t, 0, tt.GetMysqlTime().Compare(datum.GetMysqlTime()), msg)
 			continue
 		}
-		switch tt.x.(type) {
-		case *MyDecimal:
-			require.Equal(t, 0, tt.x.(*MyDecimal).Compare(datum.x.(*MyDecimal)))
-		default:
-			require.EqualValues(t, tt.x, datum.x, msg)
+		if tt.decPtr != nil {
+			require.Equal(t, 0, tt.decPtr.Compare(datum.decPtr), msg)
 		}
 	}
 }
