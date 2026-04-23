@@ -531,18 +531,6 @@ func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLook
 	}
 }
 
-func indexContainsVirtualGeneratedTemporalWithDateColumn(tblInfo *model.TableInfo, index *model.IndexInfo) bool {
-	for _, idxCol := range index.Columns {
-		if idxCol.Offset < 0 || idxCol.Offset >= len(tblInfo.Columns) {
-			continue
-		}
-		if tblInfo.Columns[idxCol.Offset].IsVirtualGeneratedTemporalWithDateColumn() {
-			return true
-		}
-	}
-	return false
-}
-
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	canUseFastCheck := true
 	tblInfo := v.Table.Meta()
@@ -551,7 +539,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 			canUseFastCheck = false
 			break
 		}
-		if indexContainsVirtualGeneratedTemporalWithDateColumn(tblInfo, idx) {
+		if idx.ContainsVirtualGeneratedTemporalWithDateColumn(tblInfo) {
 			canUseFastCheck = false
 			break
 		}

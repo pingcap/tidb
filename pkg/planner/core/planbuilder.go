@@ -1205,18 +1205,6 @@ func resolveIndexHintByName(publicPaths []*util.AccessPath, filteredUnsafeIndexe
 	return foundPath, nil, indexHintResolvePublicPath
 }
 
-func indexContainsVirtualGeneratedTemporalWithDateColumn(tblInfo *model.TableInfo, index *model.IndexInfo) bool {
-	for _, idxCol := range index.Columns {
-		if idxCol.Offset < 0 || idxCol.Offset >= len(tblInfo.Columns) {
-			continue
-		}
-		if tblInfo.Columns[idxCol.Offset].IsVirtualGeneratedTemporalWithDateColumn() {
-			return true
-		}
-	}
-	return false
-}
-
 func genVirtualGeneratedTemporalWithDateIndexHintWarning(index *model.IndexInfo) string {
 	return fmt.Sprintf("hint is inapplicable, index %s contains a virtual generated temporal column whose values depend on sql_mode", index.Name.O)
 }
@@ -1386,7 +1374,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			if indexContainsVirtualGeneratedTemporalWithDateColumn(tblInfo, index) {
+			if index.ContainsVirtualGeneratedTemporalWithDateColumn(tblInfo) {
 				virtualGeneratedTemporalWithDateIndexes = append(virtualGeneratedTemporalWithDateIndexes, index)
 				continue
 			}

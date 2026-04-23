@@ -365,6 +365,20 @@ func (index *IndexInfo) HasPrefixIndex() bool {
 	return false
 }
 
+// ContainsVirtualGeneratedTemporalWithDateColumn checks whether the index contains
+// a virtual generated temporal column with a date part, such as DATE, DATETIME, or TIMESTAMP.
+func (index *IndexInfo) ContainsVirtualGeneratedTemporalWithDateColumn(tblInfo *TableInfo) bool {
+	for _, idxCol := range index.Columns {
+		if idxCol.Offset < 0 || idxCol.Offset >= len(tblInfo.Columns) {
+			continue
+		}
+		if tblInfo.Columns[idxCol.Offset].IsVirtualGeneratedTemporalWithDateColumn() {
+			return true
+		}
+	}
+	return false
+}
+
 // HasColumnInIndexColumns checks whether the index contains the column with the specified ID.
 func (index *IndexInfo) HasColumnInIndexColumns(tblInfo *TableInfo, colID int64) bool {
 	for _, ic := range index.Columns {

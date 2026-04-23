@@ -2311,6 +2311,8 @@ func TestFastAdminCheckWithError(t *testing.T) {
 		)
 	`)
 	tk.MustExec(`insert into admin_test_generated set payload='{"f":"2018-09-28"}'`)
+	// mockFastCheckTableError is still active here. This only succeeds because
+	// buildCheckTable falls back to CheckTableExec for idx_f instead of using FastCheckTableExec.
 	tk.MustExec("admin check table admin_test_generated")
 }
 
