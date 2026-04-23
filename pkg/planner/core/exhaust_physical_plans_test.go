@@ -32,9 +32,32 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSortPropCompatibleWithJoinKeys(t *testing.T) {
+	colA := &expression.Column{UniqueID: 1}
+	colB := &expression.Column{UniqueID: 2}
+	colC := &expression.Column{UniqueID: 3}
+
+	require.True(t, isSortPropCompatibleWithJoinKeys(
+		[]property.SortItem{{Col: colB}},
+		[]*expression.Column{colA, colB},
+		intset.NewFastIntSet(1),
+	))
+	require.False(t, isSortPropCompatibleWithJoinKeys(
+		[]property.SortItem{{Col: colC}},
+		[]*expression.Column{colA, colB, colC},
+		intset.NewFastIntSet(1),
+	))
+	require.True(t, isSortPropCompatibleWithJoinKeys(
+		[]property.SortItem{{Col: colA}, {Col: colB}},
+		[]*expression.Column{colA, colB},
+		intset.NewFastIntSet(),
+	))
+}
 
 func rewriteSimpleExpr(ctx expression.BuildContext, str string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
 	if str == "" {
