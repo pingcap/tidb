@@ -1800,6 +1800,9 @@ func TestTiDBHashJoinVersion(t *testing.T) {
 
 func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	vars := NewSessionVars(nil)
+	sysVar := GetSysVar(vardef.TiDBAutoAnalyzeConcurrency)
+	require.NotNil(t, sysVar)
+	require.Equal(t, "3", sysVar.Value)
 
 	tests := []struct {
 		name                string
@@ -1843,9 +1846,6 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			vardef.RunAutoAnalyze.Store(tt.autoAnalyze)
 			vardef.EnableAutoAnalyzePriorityQueue.Store(tt.autoAnalyzePriority)
-
-			sysVar := GetSysVar(vardef.TiDBAutoAnalyzeConcurrency)
-			require.NotNil(t, sysVar)
 
 			_, err := sysVar.Validate(vars, tt.input, vardef.ScopeGlobal)
 			if tt.expectError {

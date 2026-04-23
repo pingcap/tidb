@@ -55,12 +55,22 @@ aliases:
     - gmhdbjd
     - wjhuang2016
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-ddl:
     - Benjamin2037
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-disttask:
     - Benjamin2037
     - D3Hunter
@@ -76,17 +86,32 @@ aliases:
     - Benjamin2037
     - gmhdbjd
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-meta:
     - Benjamin2037
     - gmhdbjd
     - wjhuang2016
     - D3Hunter
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-owner:
     - Benjamin2037
     - wjhuang2016
     - D3Hunter
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-parser:
     - bb7133
     - Benjamin2037
@@ -103,6 +128,11 @@ aliases:
     - gmhdbjd
     - wjhuang2016
     - fzzf678
+    - bb7133
+    - djshow832
+    - xhebox
+    - tiancaiamao
+    - YangKeao
   sig-approvers-lock:
     - Benjamin2037
     - wjhuang2016
@@ -278,7 +308,7 @@ aliases:
     - xhebox
     - xiongjiwei
     - xuyifangreeneyes
-    - yangkeao
+    - YangKeao
     - you06
     - youjiali1995
     - ywqzzy

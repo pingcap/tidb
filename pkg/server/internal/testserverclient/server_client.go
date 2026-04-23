@@ -2416,6 +2416,8 @@ func (cli *TestServerClient) RunReloadTLS(t *testing.T, overrider configOverride
 
 func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
 	cli.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.GetDB().SetMaxOpenConns(1)
+		dbt.GetDB().SetMaxIdleConns(1)
 		dbt.MustExec("create table sumavg (a int, b decimal, c double)")
 		dbt.MustExec("insert sumavg values (1, 1, 1)")
 		rows := dbt.MustQuery("select sum(a), sum(b), sum(c) from sumavg")
@@ -2426,6 +2428,7 @@ func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
 		require.Equal(t, 1.0, outA)
 		require.Equal(t, 1.0, outB)
 		require.Equal(t, 1.0, outC)
+		require.NoError(t, rows.Close())
 		rows = dbt.MustQuery("select avg(a), avg(b), avg(c) from sumavg")
 		require.True(t, rows.Next())
 		err = rows.Scan(&outA, &outB, &outC)
@@ -2433,6 +2436,7 @@ func (cli *TestServerClient) RunTestSumAvg(t *testing.T) {
 		require.Equal(t, 1.0, outA)
 		require.Equal(t, 1.0, outB)
 		require.Equal(t, 1.0, outC)
+		require.NoError(t, rows.Close())
 	})
 }
 

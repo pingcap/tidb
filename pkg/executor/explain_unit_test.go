@@ -19,7 +19,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	clientutil "github.com/tikv/client-go/v2/util"
 )
 
 var (
@@ -45,6 +48,12 @@ type mockErrorOperator struct {
 
 type mockEmptyOperator struct {
 	exec.BaseExecutor
+}
+
+type mockExecDetailsObserver struct {
+	exec.BaseExecutor
+	seenMetrics   *execdetails.RUV2Metrics
+	seenRUDetails *clientutil.RUDetails
 }
 
 func (e *mockErrorOperator) Open(_ context.Context) error {
@@ -73,6 +82,21 @@ func (e *mockEmptyOperator) Next(_ context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *mockEmptyOperator) Close() error {
+	return nil
+}
+
+func (e *mockExecDetailsObserver) Open(_ context.Context) error {
+	return nil
+}
+
+func (e *mockExecDetailsObserver) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	e.seenMetrics = execdetails.RUV2MetricsFromContext(ctx)
+	e.seenRUDetails, _ = ctx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+	return nil
+}
+
+func (e *mockExecDetailsObserver) Close() error {
 	return nil
 }
 
@@ -148,5 +172,68 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 
 		recordInsertRows2Metrics(ctx.GetSessionVars())
 		require.Equal(t, int64(5), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
+	})
+
+	t.Run("explain analyze drains pending raw ruv2 before snapshot", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
+
+		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		ruDetails.AddRUV2(&kvrpcpb.RUV2{
+			ReadRpcCount:  2,
+			WriteRpcCount: 3,
+		})
+
+		analyzeExec := &mockEmptyOperator{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 1),
+		}
+		targetPlan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
+		explainExec := &ExplainExec{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(getColumns()...), 0),
+			explain: &core.Explain{
+				Analyze:    true,
+				TargetPlan: targetPlan,
+			},
+			analyzeExec: analyzeExec,
+		}
+
+		require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
+
+		rootStats := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID())
+		_, groups := rootStats.MergeStats()
+		var ruStats *execdetails.RURuntimeStats
+		for _, group := range groups {
+			if stats, ok := group.(*execdetails.RURuntimeStats); ok {
+				ruStats = stats
+				break
+			}
+		}
+		require.NotNil(t, ruStats)
+		require.Equal(t, int64(2), ruStats.Metrics.ResourceManagerReadCnt())
+		require.Equal(t, int64(3), ruStats.Metrics.ResourceManagerWriteCnt())
+	})
+
+	t.Run("detached static recordset inherits statement ru context", func(t *testing.T) {
+		ctx := mock.NewContext()
+		observer := &mockExecDetailsObserver{
+			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 0),
+		}
+
+		sourceCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		sourceMetrics := execdetails.RUV2MetricsFromContext(sourceCtx)
+		sourceRUDetails := sourceCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
+		rs := staticrecordset.New(nil, observer, "select 1", sourceCtx)
+
+		fetchCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		require.NotSame(t, sourceMetrics, execdetails.RUV2MetricsFromContext(fetchCtx))
+		require.NotSame(t, sourceRUDetails, fetchCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails))
+
+		require.NoError(t, rs.Next(fetchCtx, rs.NewChunk(nil)))
+		require.Same(t, sourceMetrics, observer.seenMetrics)
+		require.Same(t, sourceRUDetails, observer.seenRUDetails)
 	})
 }

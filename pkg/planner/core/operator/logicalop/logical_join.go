@@ -98,6 +98,11 @@ type LogicalJoin struct {
 	// It is built once during join construction and then treated as immutable.
 	RedundantColsToOutputIdx map[int64]int
 
+	// PreferCorrelate is set to true when this SemiJoin originated from a non-correlated
+	// IN subquery during the correlate alternative round, indicating that the CorrelateSolver
+	// should convert it back to a correlated Apply with index lookups.
+	PreferCorrelate bool
+
 	// EqualCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	EqualCondOutCnt float64
 
