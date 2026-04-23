@@ -33,6 +33,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -277,7 +278,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Warn("cpuWorker panic", zap.Stack("stack"), zap.Any("error", r))
@@ -308,7 +309,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 			panic("test for PanicSameTime")
 		}
 	})
-	err = a.dealHistogramAndTopN(stmtCtx, sctx, opts, isIndex)
+	err = a.dealHistogramAndTopN(stmtCtx, killer, sctx, opts, isIndex)
 	if err != nil {
 		statslogutil.StatsLogger().Warn("dealHistogramAndTopN failed", zap.Error(err))
 		return err
@@ -329,6 +330,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 ) error {
 	a.skipMissingPartitionStats = sctx.GetSessionVars().SkipMissingPartitionStats
 	stmtCtx := sctx.GetSessionVars().StmtCtx
+	// Capture the caller's SQLKiller here. Inside CallWithSCtx the
+	// passed-in sctx is a pooled stats session whose lifecycle is
+	// independent of the user's query, so its killer wouldn't reflect
+	// user-initiated KILL / connection close.
+	killer := &sctx.GetSessionVars().SQLKiller
 	return util.CallWithSCtx(a.statsHandle.SPool(),
 		func(sctx sessionctx.Context) error {
 			err := a.prepare(sctx, isIndex)
@@ -342,7 +348,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 				return a.ioWorker(sctx, isIndex)
 			})
 			mergeWg.Go(func() error {
-				return a.cpuWorker(stmtCtx, sctx, opts, isIndex)
+				return a.cpuWorker(stmtCtx, killer, sctx, opts, isIndex)
 			})
 			err = metawg.Wait()
 			if err != nil {
@@ -525,7 +531,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
 	}
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, killer *sqlkiller.SQLKiller, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) (err error) {
 	failpoint.Inject("dealHistogramAndTopNErr", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("dealHistogramAndTopNErr returned error"))
@@ -545,7 +551,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			}
 			var err error
 			// Combined TopN + histogram merge.
-			killer := &sctx.GetSessionVars().SQLKiller
 			wrapper := item.item
 			globalHg := &(a.globalStats.Hg[item.idx])
 			a.globalStats.TopN[item.idx], *globalHg, err = statistics.MergePartTopNAndHistToGlobal(
