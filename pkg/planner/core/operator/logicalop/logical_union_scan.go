@@ -70,10 +70,14 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 		}
 	}
 	predicates = predicatesWithoutVCol
-	retainedPredicates, _, err := p.Children()[0].PredicatePushDown(predicates)
+	retainedPredicates, child, err := p.Children()[0].PredicatePushDown(predicates)
 	if err != nil {
 		return nil, nil, err
 	}
+	if _, ok := child.(*LogicalTableDual); ok {
+		return nil, child, nil
+	}
+	p.SetChild(0, child)
 	p.Conditions = make([]expression.Expression, 0, len(predicates))
 	p.Conditions = append(p.Conditions, predicates...)
 	// The conditions in UnionScan is only used for added rows, so parent Selection should not be removed.

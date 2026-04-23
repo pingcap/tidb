@@ -752,8 +752,10 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("drop table if exists t2")
+	tk.MustExec("drop table if exists t3")
 	tk.MustExec("create table t1(a int not null)")
 	tk.MustExec("create table t2(a int not null)")
+	tk.MustExec("create table t3(a int)")
 	tk.MustExec("prepare stmt1 from 'select * from t1 where a > ?'")
 	tk.MustExec("set @p0 = 0")
 	tk.MustQuery("execute stmt1 using @p0").Check(testkit.Rows())
@@ -834,6 +836,37 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	require.NoError(t, err)
 	cnt = pb.GetCounter().GetValue()
 	require.Equal(t, float64(6), cnt)
+
+	tk.MustExec("prepare stmt3 from 'select 1 from t3 where a = null'")
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	tk.MustExec("begin")
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	require.Equal(t, float64(6), cnt) // can't reuse the plan created outside the txn
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	cnt = pb.GetCounter().GetValue()
+	require.Equal(t, float64(7), cnt)
+	tk.MustExec("insert into t3 values(null)")
+	// Cached plan is invalid now, it is not chosen and removed. The result must still be empty.
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	cnt = pb.GetCounter().GetValue()
+	require.Equal(t, float64(7), cnt)
+	// Cached plan is reused and must still keep the result empty.
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	cnt = pb.GetCounter().GetValue()
+	require.Equal(t, float64(8), cnt)
+	tk.MustExec("rollback")
+	// Though the cached plan was built in a transaction, it does not impact correctness, so it is reused.
+	tk.MustQuery("execute stmt3").Check(testkit.Rows())
+	err = counter.Write(pb)
+	require.NoError(t, err)
+	cnt = pb.GetCounter().GetValue()
+	require.Equal(t, float64(9), cnt)
 }
 
 func TestPlanCacheSwitchDB(t *testing.T) {
