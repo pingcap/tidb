@@ -1154,32 +1154,71 @@ func (*PlanBuilder) detectSelectWindow(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func getPathByIndexName(paths []*util.AccessPath, idxName ast.CIStr, tblInfo *model.TableInfo) *util.AccessPath {
-	var indexPrefixPath *util.AccessPath
-	prefixMatches := 0
-	for _, path := range paths {
-		// Only accept tikv's primary key table path.
+type indexHintResolveStatus int
+
+const (
+	indexHintResolveNotFound indexHintResolveStatus = iota
+	indexHintResolvePublicPath
+	indexHintResolveFilteredUnsafe
+)
+
+func resolveIndexHintByName(publicPaths []*util.AccessPath, filteredUnsafeIndexes []*model.IndexInfo, idxName ast.CIStr, tblInfo *model.TableInfo) (*util.AccessPath, *model.IndexInfo, indexHintResolveStatus) {
+	// Exact names win over prefixes. Check public paths first so a valid index is
+	// never shadowed by a filtered index that happens to share the exact name.
+	for _, path := range publicPaths {
 		if path.IsTiKVTablePath() && isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
-			return path
+			return path, nil, indexHintResolvePublicPath
 		}
-		// If it's not a tikv table path and the index is nil, it could not be any index path.
-		if path.Index == nil {
-			continue
+		if path.Index != nil && path.Index.Name.L == idxName.L {
+			return path, nil, indexHintResolvePublicPath
 		}
-		if path.Index.Name.L == idxName.L {
-			return path
-		}
-		if strings.HasPrefix(path.Index.Name.L, idxName.L) {
-			indexPrefixPath = path
-			prefixMatches++
+	}
+	for _, index := range filteredUnsafeIndexes {
+		if index.Name.L == idxName.L {
+			return nil, index, indexHintResolveFilteredUnsafe
 		}
 	}
 
-	// Return only unique prefix matches
-	if prefixMatches == 1 {
-		return indexPrefixPath
+	var foundPath *util.AccessPath
+	var foundFilteredIndex *model.IndexInfo
+	prefixMatches := 0
+	for _, path := range publicPaths {
+		if path.Index != nil && strings.HasPrefix(path.Index.Name.L, idxName.L) {
+			foundPath = path
+			foundFilteredIndex = nil
+			prefixMatches++
+		}
 	}
-	return nil
+	for _, index := range filteredUnsafeIndexes {
+		if strings.HasPrefix(index.Name.L, idxName.L) {
+			foundPath = nil
+			foundFilteredIndex = index
+			prefixMatches++
+		}
+	}
+	if prefixMatches != 1 {
+		return nil, nil, indexHintResolveNotFound
+	}
+	if foundFilteredIndex != nil {
+		return nil, foundFilteredIndex, indexHintResolveFilteredUnsafe
+	}
+	return foundPath, nil, indexHintResolvePublicPath
+}
+
+func indexContainsVirtualGeneratedTemporalWithDateColumn(tblInfo *model.TableInfo, index *model.IndexInfo) bool {
+	for _, idxCol := range index.Columns {
+		if idxCol.Offset < 0 || idxCol.Offset >= len(tblInfo.Columns) {
+			continue
+		}
+		if tblInfo.Columns[idxCol.Offset].IsVirtualGeneratedTemporalWithDateColumn() {
+			return true
+		}
+	}
+	return false
+}
+
+func genVirtualGeneratedTemporalWithDateIndexHintWarning(index *model.IndexInfo) string {
+	return fmt.Sprintf("hint is inapplicable, index %s contains a virtual generated temporal column whose values depend on sql_mode", index.Name.O)
 }
 
 func isPrimaryIndex(indexName ast.CIStr) bool {
@@ -1308,6 +1347,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	var err error
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
+	var virtualGeneratedTemporalWithDateIndexes []*model.IndexInfo
 
 	// When NO_INDEX_LOOKUP_PUSHDOWN hint is specified, we should set `forceNoIndexLookUpPushDown = true` to avoid
 	// using index look up push down even if other hint or system variable `tidb_index_lookup_pushdown_policy`
@@ -1345,6 +1385,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
 					continue
 				}
+			}
+			if indexContainsVirtualGeneratedTemporalWithDateColumn(tblInfo, index) {
+				virtualGeneratedTemporalWithDateIndexes = append(virtualGeneratedTemporalWithDateIndexes, index)
+				continue
 			}
 			if index.InvertedInfo != nil {
 				invertedIndexes[index.Name.L] = struct{}{}
@@ -1441,8 +1485,15 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if _, ok := invertedIndexes[idxName.L]; ok {
 				continue
 			}
-			path := getPathByIndexName(publicPaths, idxName, tblInfo)
-			if path == nil {
+			path, filteredIndex, resolveStatus := resolveIndexHintByName(publicPaths, virtualGeneratedTemporalWithDateIndexes, idxName, tblInfo)
+			if resolveStatus == indexHintResolveFilteredUnsafe {
+				if hint.HintType != ast.HintIgnore {
+					hasUseOrForce = true
+					ctx.GetSessionVars().StmtCtx.SetHintWarning(genVirtualGeneratedTemporalWithDateIndexHintWarning(filteredIndex))
+				}
+				continue
+			}
+			if resolveStatus == indexHintResolveNotFound {
 				err := plannererrors.ErrKeyDoesNotExist.FastGenByArgs(idxName, tblInfo.Name)
 				// if hint is from comment-style sql hints, we should throw a warning instead of error.
 				if i < indexHintsLen {

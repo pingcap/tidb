@@ -107,6 +107,44 @@ func TestInvisibleIndex(t *testing.T) {
 	})
 }
 
+func TestVirtualGeneratedTemporalWithDateIndex(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_issue_52520")
+		tk.MustExec("create table t_issue_52520 (a varchar(32), b date as (a), key idx_b(b))")
+		tk.MustExec("set @@sql_mode = ''")
+		tk.MustExec("insert into t_issue_52520(a) values ('2020-02-31')")
+		tk.MustExec("set @@sql_mode = 'ALLOW_INVALID_DATES'")
+
+		tk.MustNoIndexUsed("select /* issue:52520 */ b from t_issue_52520 use index(idx_b)")
+		tk.MustQuery("show warnings").CheckContain("virtual generated temporal column")
+		tk.MustQuery("select /* issue:52520 */ b from t_issue_52520 use index(idx_b)").Check(testkit.Rows("2020-02-31"))
+		tk.MustQuery("show warnings").CheckContain("virtual generated temporal column")
+
+		tk.MustNoIndexUsed("select /*+ USE_INDEX(t_issue_52520, idx_b) */ /* issue:52520 */ b from t_issue_52520")
+		tk.MustQuery("show warnings").CheckContain("virtual generated temporal column")
+		tk.MustQuery("select /*+ USE_INDEX(t_issue_52520, idx_b) */ /* issue:52520 */ b from t_issue_52520").Check(testkit.Rows("2020-02-31"))
+		tk.MustQuery("show warnings").CheckContain("virtual generated temporal column")
+
+		tk.MustNoIndexUsed("select /* issue:52520 */ b from t_issue_52520 use index(idx_b) where b = '2020-02-31'")
+		tk.MustQuery("show warnings").CheckContain("virtual generated temporal column")
+		tk.MustQuery("select /* issue:52520 */ b from t_issue_52520 use index(idx_b) where b = '2020-02-31'").Check(testkit.Rows("2020-02-31"))
+		tk.MustQuery("show warnings").CheckContain("virtual generated temporal column")
+
+		tk.MustNoIndexUsed("select /*+ USE_INDEX(t_issue_52520, idx_b) */ /* issue:52520 */ b from t_issue_52520 where b = '2020-02-31'")
+		tk.MustQuery("show warnings").CheckContain("virtual generated temporal column")
+		tk.MustQuery("select /*+ USE_INDEX(t_issue_52520, idx_b) */ /* issue:52520 */ b from t_issue_52520 where b = '2020-02-31'").Check(testkit.Rows("2020-02-31"))
+		tk.MustQuery("show warnings").CheckContain("virtual generated temporal column")
+
+		tk.MustNoIndexUsed("select /* issue:52520 */ b from t_issue_52520 ignore index(idx_b) where b = '2020-02-31'")
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tk.MustExec("drop table if exists t_issue_52520_prefix")
+		tk.MustExec("create table t_issue_52520_prefix (a varchar(32), c int, b date as (a), key idx_safe(c), key idx_unsafe(b))")
+		tk.MustContainErrMsg("select /* issue:52520 */ c from t_issue_52520_prefix use index(idx) where c = 1", "Key 'idx' doesn't exist")
+	})
+}
+
 func TestRangeDerivation(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
@@ -297,6 +335,14 @@ func TestInvertedIndex(t *testing.T) {
 		testKit.MustNoIndexUsed("select * from t ignore index(idx_b) where b = 2")
 		testKit.MustNoIndexUsed("select * from t ignore index(idx_c) where c = 3")
 		testKit.MustNoIndexUsed("select * from t ignore index(idx_d) where d < 1")
+
+		testKit.MustExec("drop table if exists t_issue_52520_columnar")
+		testKit.MustExec("create table t_issue_52520_columnar (a varchar(32), b date as (a))")
+		testKit.MustExec("alter table t_issue_52520_columnar set tiflash replica 1")
+		testKit.MustExec("alter table t_issue_52520_columnar add columnar index idx_b (b) using inverted")
+		testkit.SetTiFlashReplica(t, dom, "test", "t_issue_52520_columnar")
+		testKit.MustNoIndexUsed("select /* issue:52520 */ b from t_issue_52520_columnar use index(idx_b)")
+		testKit.MustQuery("show warnings").CheckContain("virtual generated temporal column")
 	})
 }
 
