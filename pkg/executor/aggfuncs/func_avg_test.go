@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
@@ -49,11 +50,15 @@ func TestMemAvg(t *testing.T) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4AvgDecimalSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
+			aggfuncs.DefPartialResult4AvgDistinctDecimalSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4AvgFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4AvgDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
 	}
+
+	tests[1].aggTest.valType = types.NewFieldType(mysql.TypeNewDecimal)
 
 	for _, test := range tests {
 		testAggMemFunc(t, test)

@@ -487,7 +487,7 @@ func distinctUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int
 		if param.valType != nil {
 			switch param.valType.GetType() {
 			case mysql.TypeNewDecimal:
-				memDelta += int64(unsafe.Sizeof(&types.MyDecimal{}))
+				memDelta += types.MyDecimalStructSize
 			default:
 				panic("Not supported")
 			}
