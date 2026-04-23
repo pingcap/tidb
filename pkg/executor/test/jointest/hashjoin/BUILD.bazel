@@ -1,4 +1,31 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "hashjoin",
+    srcs = [
+        "hash_join_intest.go",
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/jointest/hashjoin",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/executor/join",
+        "//pkg/meta/autoid",
+        "//pkg/session",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/dbterror/exeerrors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "hashjoin_test",
@@ -9,7 +36,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 21,
+    shard_count = 42,
     deps = [
         "//pkg/config",
         "//pkg/executor/join",

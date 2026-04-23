@@ -69,6 +69,11 @@ func withSession(pool syssession.Pool, fn func(session.Session) error) error {
 	})
 }
 
+// WithSessionForTest exposes withSession to external tests.
+func WithSessionForTest(pool syssession.Pool, fn func(session.Session) error) error {
+	return withSession(pool, fn)
+}
+
 func prepareSession(se session.Session) (func(), error) {
 	originalRetryLimit := se.GetSessionVars().RetryLimit
 	originalEnable1PC := se.GetSessionVars().Enable1PC

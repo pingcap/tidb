@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "tikv",
@@ -13,7 +13,7 @@ go_library(
         "server_batch.go",
         "util.go",
         "write.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv",
     visibility = ["//visibility:public"],
     deps = [
@@ -59,39 +59,5 @@ go_library(
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "tikv_test",
-    timeout = "short",
-    srcs = [
-        "detector_test.go",
-        "main_test.go",
-        "mock_pd_test.go",
-        "mvcc_test.go",
-        "util_test.go",
-    ],
-    embed = [":tikv"],
-    flaky = True,
-    shard_count = 32,
-    deps = [
-        "//pkg/store/mockstore/unistore/config",
-        "//pkg/store/mockstore/unistore/lockstore",
-        "//pkg/store/mockstore/unistore/tikv/kverrors",
-        "//pkg/store/mockstore/unistore/tikv/mvcc",
-        "//pkg/store/mockstore/unistore/util/lockwaiter",
-        "//pkg/testkit/testsetup",
-        "@com_github_pingcap_badger//:badger",
-        "@com_github_pingcap_badger//y",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/deadlock",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//clients/gc",
-        "@com_github_tikv_pd_client//constants",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

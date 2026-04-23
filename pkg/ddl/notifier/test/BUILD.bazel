@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "testkit.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/notifier/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/ddl/notifier",
+        "//pkg/ddl/session",
+        "//pkg/meta/metadef",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["testkit_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 9,
+)

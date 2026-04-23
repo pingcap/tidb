@@ -1,16 +1,17 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "workloadrepo",
     srcs = [
         "const.go",
+        "export_helper.go",
         "housekeeper.go",
         "sampling.go",
         "snapshot.go",
         "table.go",
         "utils.go",
         "worker.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/workloadrepo",
     visibility = ["//visibility:public"],
     deps = [
@@ -42,31 +43,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "workloadrepo_test",
-    timeout = "short",
-    srcs = ["worker_test.go"],
-    embed = [":workloadrepo"],
-    flaky = True,
-    shard_count = 15,
-    deps = [
-        "//pkg/domain",
-        "//pkg/infoschema",
-        "//pkg/kv",
-        "//pkg/owner",
-        "//pkg/parser/ast",
-        "//pkg/parser/auth",
-        "//pkg/parser/mysql",
-        "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
-        "//pkg/testkit",
-        "//pkg/util/slice",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-        "@io_etcd_go_etcd_client_v3//:client",
-        "@io_etcd_go_etcd_server_v3//embed",
     ],
 )

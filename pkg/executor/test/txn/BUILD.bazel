@@ -1,4 +1,32 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "txn",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+        "txn_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/txn",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/errno",
+        "//pkg/meta/autoid",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "txn_test",
@@ -8,7 +36,7 @@ go_test(
         "txn_test.go",
     ],
     flaky = True,
-    shard_count = 11,
+    shard_count = 22,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

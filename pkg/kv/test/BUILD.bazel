@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/kv/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/parser",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testutil",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/codec",
+        "//pkg/util/size",
+        "@com_github_pingcap_kvproto//pkg/coprocessor",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

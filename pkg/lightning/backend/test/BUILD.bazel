@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "backend.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/backend/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//br/pkg/mock",
+        "//pkg/lightning/backend",
+        "//pkg/lightning/backend/encode",
+        "//pkg/parser/mysql",
+        "//pkg/testkit/mega/register",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_mock//gomock",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["backend_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 14,
+)

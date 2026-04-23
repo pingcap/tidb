@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "session",
@@ -20,27 +20,5 @@ go_library(
         "//pkg/util/sqlkiller",
         "//pkg/util/timeutil",
         "@com_github_pingcap_errors//:errors",
-    ],
-)
-
-go_test(
-    name = "session_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "session_test.go",
-        "sysvar_test.go",
-    ],
-    flaky = True,
-    shard_count = 7,
-    deps = [
-        ":session",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit",
-        "//pkg/testkit/testsetup",
-        "//pkg/util",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

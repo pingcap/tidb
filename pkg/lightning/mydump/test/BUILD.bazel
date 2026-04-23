@@ -1,0 +1,58 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "csv_parser.go",
+        "loader.go",
+        "parser.go",
+        "reader.go",
+        "region.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/mydump/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/lightning/common",
+        "//pkg/lightning/config",
+        "//pkg/lightning/log",
+        "//pkg/lightning/mydump",
+        "//pkg/lightning/worker",
+        "//pkg/objstore",
+        "//pkg/objstore/mockobjstore",
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/storeapi",
+        "//pkg/parser/mysql",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util/logutil",
+        "//pkg/util/table-filter",
+        "//pkg/util/table-router",
+        "@com_github_apache_arrow_go_v18//parquet",
+        "@com_github_apache_arrow_go_v18//parquet/schema",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "csv_parser_test.go",
+        "loader_test.go",
+        "parser_test.go",
+        "reader_test.go",
+        "region_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 50,
+)

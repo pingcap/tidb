@@ -7,7 +7,7 @@ go_library(
         "doc.go",
         "progress.go",
         "storage.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/stream/crr/internal/checkpoint",
     visibility = ["//br/pkg/stream/crr:__subpackages__"],
     deps = [

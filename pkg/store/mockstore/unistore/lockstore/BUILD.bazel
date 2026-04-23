@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "lockstore",
@@ -14,22 +14,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "lockstore_test",
-    timeout = "short",
-    srcs = [
-        "lockstore_test.go",
-        "main_test.go",
-    ],
-    embed = [":lockstore"],
-    flaky = True,
-    shard_count = 4,
-    deps = [
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

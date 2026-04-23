@@ -6477,9 +6477,6 @@ func (b *builtinTimeFormatSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	if err != nil || isNull {
 		return "", isNull, err
 	}
-	if len(formatMask) == 0 {
-		return "", true, nil
-	}
 	res, err := b.formatTime(dur, formatMask)
 	return res, isNull, err
 }

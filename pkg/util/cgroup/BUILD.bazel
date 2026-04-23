@@ -9,7 +9,7 @@ go_library(
         "cgroup_cpu_unsupport.go",
         "cgroup_memory.go",
         "cgroup_memory_unsupport.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/cgroup",
     visibility = ["//visibility:public"],
     deps = [
@@ -72,11 +72,16 @@ go_library(
 go_test(
     name = "cgroup_test",
     timeout = "short",
-    srcs = [
-        "cgroup_cpu_test.go",
-        "cgroup_mock_test.go",
-    ],
+    srcs = ["cgroup_cpu_internal_test.go"],
     embed = [":cgroup"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    deps = select({
+        "@io_bazel_rules_go//go/platform:android": [
+            "@com_github_stretchr_testify//require",
+        ],
+        "@io_bazel_rules_go//go/platform:linux": [
+            "@com_github_stretchr_testify//require",
+        ],
+        "//conditions:default": [],
+    }),
 )

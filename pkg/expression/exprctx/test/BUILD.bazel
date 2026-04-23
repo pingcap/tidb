@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "context_override.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/expression/exprctx/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/errctx",
+        "//pkg/expression/exprctx",
+        "//pkg/expression/exprstatic",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["context_override_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

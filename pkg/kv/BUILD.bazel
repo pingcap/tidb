@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "kv",
@@ -20,7 +20,7 @@ go_library(
         "utils.go",
         "variables.go",
         "version.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/kv",
     visibility = ["//visibility:public"],
     deps = [
@@ -63,54 +63,5 @@ go_library(
         "@com_github_tikv_pd_client//http",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "kv_test",
-    timeout = "short",
-    srcs = [
-        "checker_test.go",
-        "error_test.go",
-        "fault_injection_test.go",
-        "interface_mock_test.go",
-        "key_test.go",
-        "kv_test.go",
-        "main_test.go",
-        "mock_test.go",
-        "option_test.go",
-        "txn_test.go",
-        "utils_test.go",
-        "version_test.go",
-    ],
-    embed = [":kv"],
-    flaky = True,
-    shard_count = 27,
-    deps = [
-        "//pkg/config/kerneltype",
-        "//pkg/keyspace",
-        "//pkg/meta/model",
-        "//pkg/parser",
-        "//pkg/parser/mysql",
-        "//pkg/parser/terror",
-        "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit/testsetup",
-        "//pkg/testkit/testutil",
-        "//pkg/types",
-        "//pkg/util/codec",
-        "//pkg/util/resourcegrouptag",
-        "//pkg/util/size",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/coprocessor",
-        "@com_github_pingcap_kvproto//pkg/deadlock",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//kv",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

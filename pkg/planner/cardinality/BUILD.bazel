@@ -1,10 +1,14 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
+# gazelle:build_tags intest
+
 go_library(
     name = "cardinality",
     srcs = [
         "cross_estimation.go",
         "exponential.go",
+        "export_helper.go",
+        "export_intest.go",
         "join.go",
         "ndv.go",
         "pseudo.go",
@@ -13,7 +17,7 @@ go_library(
         "row_size.go",
         "selectivity.go",
         "trace.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/planner/cardinality",
     visibility = ["//visibility:public"],
     deps = [
@@ -32,6 +36,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/tablecodec",
+        "//pkg/testkit/testdata",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",
@@ -48,21 +53,13 @@ go_library(
 go_test(
     name = "cardinality_test",
     timeout = "short",
-    srcs = [
-        "exponential_test.go",
-        "main_test.go",
-        "ndv_test.go",
-        "row_size_test.go",
-        "selectivity_test.go",
-    ],
+    srcs = ["selectivity_test.go"],
     data = glob(["testdata/**"]),
-    embed = [":cardinality"],
     flaky = True,
-    shard_count = 48,
+    shard_count = 42,
     deps = [
-        "//pkg/config",
+        ":cardinality",
         "//pkg/domain",
-        "//pkg/expression",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser",
@@ -74,7 +71,6 @@ go_test(
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
         "//pkg/planner/planctx",
-        "//pkg/planner/property",
         "//pkg/planner/util",
         "//pkg/session",
         "//pkg/sessionctx",
@@ -86,8 +82,6 @@ go_test(
         "//pkg/statistics/handle/types",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
-        "//pkg/testkit/testmain",
-        "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/codec",
         "//pkg/util/collate",
@@ -96,6 +90,5 @@ go_test(
         "//pkg/util/ranger",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

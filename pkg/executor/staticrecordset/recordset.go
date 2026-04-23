@@ -21,10 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -34,21 +32,15 @@ type staticRecordSet struct {
 	fields   []*resolve.ResultField
 	executor exec.Executor
 
-	sqlText   string
-	sourceCtx context.Context
+	sqlText string
 }
 
 // New creates a new staticRecordSet
-func New(fields []*resolve.ResultField, executor exec.Executor, sqlText string, sourceCtx ...context.Context) sqlexec.RecordSet {
-	var inherited context.Context
-	if len(sourceCtx) > 0 {
-		inherited = sourceCtx[0]
-	}
+func New(fields []*resolve.ResultField, executor exec.Executor, sqlText string) sqlexec.RecordSet {
 	return &staticRecordSet{
-		fields:    fields,
-		executor:  executor,
-		sqlText:   sqlText,
-		sourceCtx: inherited,
+		fields:   fields,
+		executor: executor,
+		sqlText:  sqlText,
 	}
 }
 
@@ -57,14 +49,6 @@ func (s *staticRecordSet) Fields() []*resolve.ResultField {
 }
 
 func (s *staticRecordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
-	if s.sourceCtx != nil {
-		if ruDetails, _ := s.sourceCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails); ruDetails != nil {
-			ctx = context.WithValue(ctx, clientutil.RUDetailsCtxKey, ruDetails)
-		}
-		if metrics := execdetails.RUV2MetricsFromContext(s.sourceCtx); metrics != nil {
-			ctx = context.WithValue(ctx, execdetails.RUV2MetricsCtxKey, metrics)
-		}
-	}
 	defer func() {
 		r := recover()
 		if r == nil {

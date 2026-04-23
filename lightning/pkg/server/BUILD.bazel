@@ -8,7 +8,7 @@ go_library(
         "run_options.go",
         "sigusr1_other.go",
         "sigusr1_unix.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/lightning/pkg/server",
     visibility = ["//visibility:public"],
     deps = [

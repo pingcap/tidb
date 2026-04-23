@@ -22,7 +22,7 @@ go_library(
         "util.go",
         "writer.go",
         "writer_util.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/dumpling/export",
     visibility = ["//visibility:public"],
     deps = [

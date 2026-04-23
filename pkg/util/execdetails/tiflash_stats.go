@@ -21,7 +21,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/resource_manager"
@@ -632,13 +631,13 @@ func (networkTraffic *TiFlashNetworkTrafficSummary) UpdateTiKVExecDetails(tikvDe
 	if tikvDetails == nil {
 		return
 	}
-	atomic.AddInt64(&tikvDetails.UnpackedBytesSentMPPCrossZone, int64(networkTraffic.interZoneSendBytes))
-	atomic.AddInt64(&tikvDetails.UnpackedBytesSentMPPTotal, int64(networkTraffic.interZoneSendBytes))
-	atomic.AddInt64(&tikvDetails.UnpackedBytesSentMPPTotal, int64(networkTraffic.innerZoneSendBytes))
+	tikvDetails.UnpackedBytesSentMPPCrossZone += int64(networkTraffic.interZoneSendBytes)
+	tikvDetails.UnpackedBytesSentMPPTotal += int64(networkTraffic.interZoneSendBytes)
+	tikvDetails.UnpackedBytesSentMPPTotal += int64(networkTraffic.innerZoneSendBytes)
 
-	atomic.AddInt64(&tikvDetails.UnpackedBytesReceivedMPPCrossZone, int64(networkTraffic.interZoneReceiveBytes))
-	atomic.AddInt64(&tikvDetails.UnpackedBytesReceivedMPPTotal, int64(networkTraffic.interZoneReceiveBytes))
-	atomic.AddInt64(&tikvDetails.UnpackedBytesReceivedMPPTotal, int64(networkTraffic.innerZoneReceiveBytes))
+	tikvDetails.UnpackedBytesReceivedMPPCrossZone += int64(networkTraffic.interZoneReceiveBytes)
+	tikvDetails.UnpackedBytesReceivedMPPTotal += int64(networkTraffic.interZoneReceiveBytes)
+	tikvDetails.UnpackedBytesReceivedMPPTotal += int64(networkTraffic.innerZoneReceiveBytes)
 }
 
 // Clone implements the deep copy of * TiFlashNetworkTrafficSummary

@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/util/deadlockhistory/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/deadlockhistory",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_tikv_client_go_v2//error",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

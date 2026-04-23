@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "interval_timezone.go",
+        "main.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue/intervaltimezone/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sessionctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/autoanalyze/priorityqueue",
+        "//pkg/statistics/handle/util",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/timeutil",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["interval_timezone_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

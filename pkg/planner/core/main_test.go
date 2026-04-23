@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,9 +32,8 @@ func TestMain(m *testing.M) {
 
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
-	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
-
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/statistics/handle/usage/collector.(*globalCollector[...]).StartWorker.func1"),
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
@@ -55,8 +54,4 @@ func TestMain(m *testing.M) {
 	}
 
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func GetRuntimeFilterGeneratorData() testdata.TestData {
-	return testDataMap["runtime_filter_generator_suite"]
 }

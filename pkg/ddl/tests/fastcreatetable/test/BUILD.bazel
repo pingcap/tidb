@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/ddl/tests/fastcreatetable/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/meta/model",
+        "//pkg/server",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testsetup",
+        "//pkg/util",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

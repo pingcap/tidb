@@ -1,9 +1,10 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "execdetails",
     srcs = [
         "execdetails.go",
+        "export_helper.go",
         "runtime_stats.go",
         "ruv2_metrics.go",
         "tiflash_stats.go",
@@ -15,35 +16,10 @@ go_library(
         "//pkg/kv",
         "//pkg/metrics",
         "@com_github_influxdata_tdigest//:tdigest",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//resource_group/controller",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "execdetails_test",
-    timeout = "short",
-    srcs = [
-        "execdetails_test.go",
-        "main_test.go",
-    ],
-    embed = [":execdetails"],
-    flaky = True,
-    race = "on",
-    deps = [
-        "//pkg/config",
-        "//pkg/kv",
-        "//pkg/testkit/testsetup",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_kvproto//pkg/resource_manager",
-        "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//util",
-        "@com_github_tikv_pd_client//resource_group/controller",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

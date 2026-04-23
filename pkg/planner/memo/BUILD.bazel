@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "memo",
     srcs = [
+        "export_helper.go",
         "expr_iterator.go",
         "group.go",
         "group_expr.go",
@@ -17,39 +18,5 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/property",
-    ],
-)
-
-go_test(
-    name = "memo_test",
-    timeout = "short",
-    srcs = [
-        "expr_iterator_test.go",
-        "group_expr_test.go",
-        "group_test.go",
-        "main_test.go",
-    ],
-    embed = [":memo"],
-    flaky = True,
-    shard_count = 17,
-    deps = [
-        "//pkg/domain",
-        "//pkg/expression",
-        "//pkg/infoschema",
-        "//pkg/meta/model",
-        "//pkg/parser",
-        "//pkg/planner/cascades/pattern",
-        "//pkg/planner/core",
-        "//pkg/planner/core/base",
-        "//pkg/planner/core/operator/logicalop",
-        "//pkg/planner/core/operator/physicalop",
-        "//pkg/planner/core/resolve",
-        "//pkg/planner/property",
-        "//pkg/planner/util/coretestsdk",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@io_opencensus_go//stats/view",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

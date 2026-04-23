@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "collate",
@@ -6,6 +6,7 @@ go_library(
         "bin.go",
         "charset.go",
         "collate.go",
+        "export_helper.go",
         "gb18030_bin.go",
         "gb18030_chinese_ci.go",
         "gbk_bin.go",
@@ -33,23 +34,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_text//encoding",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "collate_test",
-    timeout = "short",
-    srcs = [
-        "collate_bench_test.go",
-        "collate_test.go",
-        "main_test.go",
-    ],
-    embed = [":collate"],
-    flaky = True,
-    deps = [
-        "//pkg/parser/charset",
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

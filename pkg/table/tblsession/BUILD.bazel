@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "tblsession",
@@ -15,22 +15,5 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/table/tblctx",
         "//pkg/util/intest",
-    ],
-)
-
-go_test(
-    name = "tblsession_test",
-    timeout = "short",
-    srcs = ["table_test.go"],
-    flaky = True,
-    deps = [
-        ":tblsession",
-        "//pkg/infoschema",
-        "//pkg/meta/model",
-        "//pkg/sessionctx/variable",
-        "//pkg/table",
-        "//pkg/table/tables",
-        "//pkg/util/mock",
-        "@com_github_stretchr_testify//require",
     ],
 )

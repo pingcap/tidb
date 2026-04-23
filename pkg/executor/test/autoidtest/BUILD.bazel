@@ -1,4 +1,33 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "autoidtest",
+    srcs = [
+        "autoid_intest.go",
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/autoidtest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/autoid_service",
+        "//pkg/config",
+        "//pkg/ddl/testutil",
+        "//pkg/meta/autoid",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "autoidtest_test",
@@ -9,7 +38,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 10,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",

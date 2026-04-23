@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "agg_spill.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/aggregate/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/executor/aggfuncs",
+        "//pkg/executor/aggregate",
+        "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/testutil",
+        "//pkg/executor/internal/util",
+        "//pkg/expression",
+        "//pkg/expression/aggregation",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/memory",
+        "//pkg/util/mock",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["agg_spill_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 3,
+)

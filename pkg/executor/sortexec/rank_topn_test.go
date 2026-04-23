@@ -15,10 +15,12 @@
 package sortexec_test
 
 import (
+	"context"
 	crand "crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"math/rand"
+	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -44,6 +46,136 @@ type rankTopNCase struct {
 	orderByIdx                  []int
 	truncateKeyExprs            []expression.Expression
 	truncateKeyPrefixCharCounts []int
+}
+
+// resultChecker validates TopN output rows against the sorted source rows.
+type resultChecker struct {
+	schema      *expression.Schema
+	keyColumns  []int
+	keyCmpFuncs []chunk.CompareFunc
+	byItemsDesc []bool
+	savedChunks []*chunk.Chunk
+	rowPtrs     []chunk.RowPtr
+}
+
+func newResultChecker(schema *expression.Schema, keyColumns []int, keyCmpFuncs []chunk.CompareFunc, byItemsDesc []bool, savedChunks []*chunk.Chunk) *resultChecker {
+	checker := resultChecker{}
+	checker.schema = schema
+	checker.keyColumns = keyColumns
+	checker.keyCmpFuncs = keyCmpFuncs
+	checker.byItemsDesc = byItemsDesc
+	checker.savedChunks = savedChunks
+	return &checker
+}
+
+func (r *resultChecker) lessRow(rowI, rowJ chunk.Row) bool {
+	for i, colIdx := range r.keyColumns {
+		cmpFunc := r.keyCmpFuncs[i]
+		if cmpFunc != nil {
+			cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
+			if r.byItemsDesc[i] {
+				cmp = -cmp
+			}
+			if cmp < 0 {
+				return true
+			} else if cmp > 0 {
+				return false
+			}
+		}
+	}
+	return false
+}
+
+func (r *resultChecker) keyColumnsLess(i, j int) bool {
+	rowI := r.savedChunks[r.rowPtrs[i].ChkIdx].GetRow(int(r.rowPtrs[i].RowIdx))
+	rowJ := r.savedChunks[r.rowPtrs[j].ChkIdx].GetRow(int(r.rowPtrs[j].RowIdx))
+	return r.lessRow(rowI, rowJ)
+}
+
+func (r *resultChecker) getSavedChunksRowNumber() int {
+	rowNum := 0
+	for _, chk := range r.savedChunks {
+		rowNum += chk.NumRows()
+	}
+	return rowNum
+}
+
+func (r *resultChecker) initRowPtrs() {
+	r.rowPtrs = make([]chunk.RowPtr, 0, r.getSavedChunksRowNumber())
+	chunkNum := len(r.savedChunks)
+	for chkIdx := range chunkNum {
+		chk := r.savedChunks[chkIdx]
+		for rowIdx := range chk.NumRows() {
+			r.rowPtrs = append(r.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		}
+	}
+}
+
+func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count int64) bool {
+	if r.rowPtrs == nil {
+		r.initRowPtrs()
+
+		sort.Slice(r.rowPtrs, r.keyColumnsLess)
+		if offset < 0 {
+			offset = 0
+		}
+		if count < 0 {
+			count = int64(len(r.rowPtrs)) - offset
+		}
+
+		start := min(int64(len(r.rowPtrs)), offset)
+		end := min(int64(len(r.rowPtrs)), offset+count)
+		r.rowPtrs = r.rowPtrs[start:end]
+	}
+
+	cursor := 0
+	fieldTypes := make([]*types.FieldType, 0, len(r.schema.Columns))
+	for _, col := range r.schema.Columns {
+		fieldTypes = append(fieldTypes, col.GetType(nil))
+	}
+
+	totalResRowNum := 0
+	for _, chk := range resultChunks {
+		totalResRowNum += chk.NumRows()
+	}
+	if totalResRowNum != len(r.rowPtrs) {
+		return false
+	}
+
+	for _, chk := range resultChunks {
+		rowNum := chk.NumRows()
+		for i := range rowNum {
+			resRow := chk.GetRow(i)
+			res := resRow.ToString(fieldTypes)
+
+			expectRow := r.savedChunks[r.rowPtrs[cursor].ChkIdx].GetRow(int(r.rowPtrs[cursor].RowIdx))
+			expect := expectRow.ToString(fieldTypes)
+			if res != expect {
+				return false
+			}
+			cursor++
+		}
+	}
+
+	return true
+}
+
+func executeTopNExecutor(t *testing.T, exe *sortexec.TopNExec) []*chunk.Chunk {
+	tmpCtx := context.Background()
+	err := exe.Open(tmpCtx)
+	require.NoError(t, err)
+
+	resultChunks := make([]*chunk.Chunk, 0)
+	chk := exec.NewFirstChunk(exe)
+	for {
+		err = exe.Next(tmpCtx, chk)
+		require.NoError(t, err)
+		if chk.NumRows() == 0 {
+			break
+		}
+		resultChunks = append(resultChunks, chk.CopyConstruct())
+	}
+	return resultChunks
 }
 
 func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Schema) *testutil.MockDataSource {

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "sessionexpr",
@@ -26,30 +26,5 @@ go_library(
         "//pkg/util/mathutil",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "sessionexpr_test",
-    timeout = "short",
-    srcs = ["sessionctx_test.go"],
-    flaky = True,
-    shard_count = 5,
-    deps = [
-        ":sessionexpr",
-        "//pkg/errctx",
-        "//pkg/expression/exprctx",
-        "//pkg/expression/expropt",
-        "//pkg/parser/auth",
-        "//pkg/parser/mysql",
-        "//pkg/privilege",
-        "//pkg/types",
-        "//pkg/util/context",
-        "//pkg/util/mathutil",
-        "//pkg/util/mock",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//mock",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//oracle",
     ],
 )

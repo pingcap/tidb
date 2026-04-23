@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "tikv",
@@ -37,35 +37,5 @@ go_library(
         "@org_golang_google_grpc//status",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "tikv_test",
-    timeout = "short",
-    srcs = [
-        "local_sst_writer_test.go",
-        "tikv_test.go",
-    ],
-    data = glob(["sst-examples/**"]),
-    embed = [":tikv"],
-    flaky = True,
-    shard_count = 7,
-    deps = [
-        "@com_github_cockroachdb_pebble//:pebble",
-        "@com_github_cockroachdb_pebble//sstable",
-        "@com_github_cockroachdb_pebble//vfs",
-        "@com_github_coreos_go_semver//semver",
-        "@com_github_google_uuid//:uuid",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/import_sstpb",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//:client",
-        "@com_github_tikv_pd_client//http",
-        "@com_github_tikv_pd_client//pkg/caller",
-        "@org_golang_google_grpc//:grpc",
-        "@org_golang_google_grpc//credentials/insecure",
     ],
 )

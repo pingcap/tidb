@@ -9,7 +9,7 @@ go_library(
         "split.go",
         "splitter.go",
         "sum_sorted.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/restore/split",
     visibility = ["//visibility:public"],
     deps = [

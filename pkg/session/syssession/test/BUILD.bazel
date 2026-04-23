@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "session_integration.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/session/syssession/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/session/syssession",
+        "//pkg/sessionctx",
+        "//pkg/sessiontxn",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["session_integration_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 2,
+)

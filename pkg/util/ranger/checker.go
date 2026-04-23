@@ -67,12 +67,6 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			if c.matchColumn(scalar.GetArgs()[1]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[1].GetType(c.ctx).EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[1].GetType(c.ctx).GetCollate(), collation) {
-					// When comparing a column with a binary-collation constant (e.g. col = CAST(x AS BINARY)),
-					// allow building an approximate index range for EQ/NullEQ. The condition is kept as a
-					// filter (shouldReserve=true) to ensure the binary comparison semantics are enforced.
-					if collate.IsBinCollation(collation) && (scalar.FuncName.L == ast.EQ || scalar.FuncName.L == ast.NullEQ) {
-						return true, true
-					}
 					return false, true
 				}
 				isFullLength := c.isFullLengthColumn()
@@ -86,9 +80,6 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			if c.matchColumn(scalar.GetArgs()[0]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
 				if scalar.GetArgs()[0].GetType(c.ctx).EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType(c.ctx).GetCollate(), collation) {
-					if collate.IsBinCollation(collation) && (scalar.FuncName.L == ast.EQ || scalar.FuncName.L == ast.NullEQ) {
-						return true, true
-					}
 					return false, true
 				}
 				isFullLength := c.isFullLengthColumn()
@@ -130,17 +121,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 			return false, true
 		}
 		if scalar.GetArgs()[0].GetType(c.ctx).EvalType() == types.ETString && !collate.CompatibleCollate(scalar.GetArgs()[0].GetType(c.ctx).GetCollate(), collation) {
-			if !collate.IsBinCollation(collation) {
-				return false, true
-			}
-			// Binary collation mismatch: verify all IN-list values are constants before
-			// allowing approximate range building with a filter for correctness.
-			for _, v := range scalar.GetArgs()[1:] {
-				if _, ok := v.(*expression.Constant); !ok {
-					return false, true
-				}
-			}
-			return true, true
+			return false, true
 		}
 		for _, v := range scalar.GetArgs()[1:] {
 			if _, ok := v.(*expression.Constant); !ok {

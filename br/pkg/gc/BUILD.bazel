@@ -7,7 +7,7 @@ go_library(
         "manager_global.go",
         "manager_keyspace.go",
         "safepoint.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/gc",
     visibility = ["//visibility:public"],
     deps = [

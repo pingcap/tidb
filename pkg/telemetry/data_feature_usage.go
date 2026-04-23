@@ -122,6 +122,11 @@ func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsag
 	return &usage, nil
 }
 
+// GetFeatureUsage exposes feature-usage collection to external tests.
+func GetFeatureUsage(sctx sessionctx.Context) (*featureUsage, error) {
+	return getFeatureUsage(context.Background(), sctx)
+}
+
 // collectFeatureUsageFromInfoschema updates the usage for temporary table, cached table, placement policies and resource groups.
 func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsage) {
 	if usage.PlacementPolicyUsage == nil {
@@ -268,7 +273,11 @@ var initialIndexMergeCounter m.IndexMergeUsageCounter
 var initialStoreBatchCoprCounter m.StoreBatchCoprCounter
 var initialFairLockingUsageCounter m.FairLockingUsageCounter
 
-// getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
+// GetTxnUsageInfo gets the usage info of transaction related features for tests.
+func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
+	return getTxnUsageInfo(ctx)
+}
+
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
 	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncCommit); err == nil {

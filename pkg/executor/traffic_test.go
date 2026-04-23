@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build ignore_internal_tests
+// +build ignore_internal_tests
+
 package executor
 
 import (
@@ -479,7 +482,7 @@ type trafficTestSuite struct {
 	t           *testing.T
 	parser      *parser.Parser
 	planBuilder *plannercore.PlanBuilder
-	execBuilder *MockExecutorBuilder
+	execBuilder *executor.ExportMockExecutorBuilder
 }
 
 func newTrafficTestSuite(t *testing.T, chunkSize int) *trafficTestSuite {
@@ -488,7 +491,7 @@ func newTrafficTestSuite(t *testing.T, chunkSize int) *trafficTestSuite {
 	sctx.GetSessionVars().MaxChunkSize = chunkSize
 	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 	planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
-	execBuilder := NewMockExecutorBuilderForTest(sctx, is, nil)
+	execBuilder := executor.NewMockExecutorBuilderForTest(sctx, is, nil)
 	return &trafficTestSuite{
 		t:           t,
 		parser:      parser,

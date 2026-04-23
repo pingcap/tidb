@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "staticrecordset",
@@ -14,28 +14,8 @@ go_library(
         "//pkg/session/cursor",
         "//pkg/util",
         "//pkg/util/chunk",
-        "//pkg/util/execdetails",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
-        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "staticrecordset_test",
-    timeout = "short",
-    srcs = ["integration_test.go"],
-    flaky = True,
-    shard_count = 8,
-    deps = [
-        "//pkg/ddl",
-        "//pkg/parser/mysql",
-        "//pkg/session/cursor",
-        "//pkg/testkit",
-        "//pkg/util/sqlexec",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
     ],
 )

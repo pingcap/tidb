@@ -1,8 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "utilfuncp",
-    srcs = ["func_pointer_misc.go"],
+    srcs = [
+        "export_helper.go",
+        "func_pointer_misc.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner/util/utilfuncp",
     visibility = ["//visibility:public"],
     deps = [
@@ -15,19 +18,5 @@ go_library(
         "//pkg/table",
         "//pkg/util/execdetails",
         "//pkg/util/hint",
-    ],
-)
-
-go_test(
-    name = "utilfuncp_test",
-    timeout = "short",
-    srcs = ["func_pointer_misc_test.go"],
-    embed = [":utilfuncp"],
-    flaky = True,
-    deps = [
-        "//pkg/expression",
-        "//pkg/parser/mysql",
-        "//pkg/types",
-        "@com_github_stretchr_testify//require",
     ],
 )

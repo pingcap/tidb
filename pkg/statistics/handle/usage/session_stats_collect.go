@@ -55,6 +55,16 @@ var (
 	batchInsertSize = 2048
 )
 
+// GetDumpStatsMaxDurationForTest exposes dumpStatsMaxDuration to external tests.
+func GetDumpStatsMaxDurationForTest() time.Duration {
+	return dumpStatsMaxDuration
+}
+
+// SetDumpStatsMaxDurationForTest overrides dumpStatsMaxDuration in external tests.
+func SetDumpStatsMaxDurationForTest(d time.Duration) {
+	dumpStatsMaxDuration = d
+}
+
 // TimeCostRecorderForTest can collect per-batch timings when provided in tests.
 type TimeCostRecorderForTest interface {
 	Record(duration time.Duration)

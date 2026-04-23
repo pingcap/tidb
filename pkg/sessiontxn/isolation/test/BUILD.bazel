@@ -1,0 +1,59 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "main.go",
+        "optimistic.go",
+        "readcommitted.go",
+        "register_gen.go",
+        "repeatable_read.go",
+        "serializable.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/sessiontxn/isolation/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/executor",
+        "//pkg/expression",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/planner",
+        "//pkg/planner/core/resolve",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/sessiontxn",
+        "//pkg/sessiontxn/isolation",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfork",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//error",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "optimistic_test.go",
+        "readcommitted_test.go",
+        "repeatable_read_test.go",
+        "serializable_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 28,
+)

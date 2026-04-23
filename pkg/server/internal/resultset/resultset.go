@@ -100,7 +100,6 @@ func NewCursorRUV2Tracker(
 		ruDetails:         ruDetails,
 		weights:           weights,
 	}
-	execdetails.SyncRUV2MetricsFromRUDetails(tracker.metrics, tracker.ruDetails)
 	if metrics != nil {
 		tracker.reportedTiDBRU = metrics.CalculateRUValues(weights)
 	}
@@ -127,7 +126,6 @@ func (t *CursorRUV2Tracker) reportDelta() {
 
 	var currentTiDBRU float64
 	if t.metrics != nil {
-		execdetails.SyncRUV2MetricsFromRUDetails(t.metrics, t.ruDetails)
 		currentTiDBRU = t.metrics.CalculateRUValues(t.weights)
 	}
 	currentTiKVRUV2 := t.reportedTiKVRUV2

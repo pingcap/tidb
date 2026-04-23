@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "state",
@@ -11,14 +11,4 @@ go_library(
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
-)
-
-go_test(
-    name = "state_test",
-    timeout = "short",
-    srcs = ["state_test.go"],
-    embed = [":state"],
-    flaky = True,
-    shard_count = 3,
-    deps = ["@com_github_stretchr_testify//require"],
 )

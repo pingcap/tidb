@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "plugin",
@@ -24,33 +24,5 @@ go_library(
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "plugin_test",
-    timeout = "short",
-    srcs = [
-        "const_test.go",
-        "helper_test.go",
-        "integration_test.go",
-        "main_test.go",
-        "plugin_test.go",
-        "spi_test.go",
-    ],
-    embed = [":plugin"],
-    flaky = True,
-    shard_count = 12,
-    deps = [
-        "//pkg/kv",
-        "//pkg/parser/mysql",
-        "//pkg/server",
-        "//pkg/session",
-        "//pkg/sessionctx/variable",
-        "//pkg/testkit",
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@io_etcd_go_etcd_client_v3//:client",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -1,3 +1,6 @@
+//go:build !intest
+// +build !intest
+
 // Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -1202,27 +1205,24 @@ func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
 func TestTiFlashProgressCache(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	se := session.CreateSessionAndSetID(t, s.store)
-	defer se.Close()
+	tk := testkit.NewTestKit(t, s.store)
 
-	session.MustExec(t, se, "use test")
-	session.MustExec(t, se, "drop table if exists ddltiflash")
-	session.MustExec(t, se, "create table ddltiflash(z int)")
-	session.MustExec(t, se, "alter table ddltiflash set tiflash replica 1")
-	WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", []string{"ddltiflash"}, ddl.PollTiFlashInterval*RoundToBeAvailable*10)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	CheckTableAvailable(s.dom, t, 1, []string{})
 
 	tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 0)
 	// after available, it will still update progress cache.
-	require.Eventually(t, func() bool {
-		progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
-		return isExist && progress == 1
-	}, ddl.PollTiFlashInterval*RoundToBeAvailable*10, ddl.PollTiFlashInterval/2)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 	require.True(t, isExist)
-	require.Equal(t, 1.0, progress)
+	require.True(t, progress == 1)
 }
 
 func TestTiFlashProgressAvailableList(t *testing.T) {

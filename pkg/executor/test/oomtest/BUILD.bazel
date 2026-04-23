@@ -1,4 +1,30 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "oomtest",
+    srcs = [
+        "oom_intest.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/oomtest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/memory",
+        "//pkg/util/set",
+        "//pkg/util/syncutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
 
 go_test(
     name = "oomtest_test",
@@ -6,7 +32,7 @@ go_test(
     srcs = ["oom_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 4,
+    shard_count = 8,
     deps = [
         "//pkg/testkit",
         "//pkg/testkit/testsetup",

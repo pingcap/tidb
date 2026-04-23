@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = glob(
+        ["*.go"],
+        exclude = ["*_test.go"],
+    ),
+    importpath = "github.com/pingcap/tidb/pkg/sessionctx/variable/tests/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/executor",
+        "//pkg/kv",
+        "//pkg/parser",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/planner/core",
+        "//pkg/sessionctx/sessionstates",
+        "//pkg/sessionctx/slowlogrule",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/execdetails",
+        "//pkg/util/memory",
+        "//pkg/util/mock",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

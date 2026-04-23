@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "mathutil",
@@ -12,23 +12,5 @@ go_library(
     deps = [
         "//pkg/util/intest",
         "@org_golang_x_exp//constraints",
-    ],
-)
-
-go_test(
-    name = "mathutil_test",
-    timeout = "short",
-    srcs = [
-        "exponential_average_test.go",
-        "main_test.go",
-        "math_test.go",
-        "rand_test.go",
-    ],
-    embed = [":mathutil"],
-    flaky = True,
-    deps = [
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

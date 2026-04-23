@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "querywatch",
@@ -19,32 +19,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_tikv_pd_client//resource_group/controller",
-    ],
-)
-
-go_test(
-    name = "querywatch_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "query_watch_test.go",
-    ],
-    embed = [":querywatch"],
-    flaky = True,
-    shard_count = 2,
-    deps = [
-        "//pkg/config",
-        "//pkg/errno",
-        "//pkg/kv",
-        "//pkg/meta/autoid",
-        "//pkg/parser/terror",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit",
-        "//pkg/testkit/testsetup",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

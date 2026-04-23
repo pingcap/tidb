@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "collect_column_stats_usage.go",
+        "register_gen.go",
+        "rule_partition_pruning.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/rule/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/expression",
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/resolve",
+        "//pkg/planner/core/rule",
+        "//pkg/planner/util/coretestsdk",
+        "//pkg/session",
+        "//pkg/testkit/ddlhelper",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/types",
+        "//pkg/util/hint",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "collect_column_stats_usage_test.go",
+        "rule_partition_pruning_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 13,
+)

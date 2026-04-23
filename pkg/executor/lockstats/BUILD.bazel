@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "lockstats",
     srcs = [
+        "export_helper.go",
         "lock_stats_executor.go",
         "unlock_stats_executor.go",
     ],
@@ -17,20 +18,5 @@ go_library(
         "//pkg/table/tables",
         "//pkg/util/chunk",
         "@com_github_pingcap_errors//:errors",
-    ],
-)
-
-go_test(
-    name = "lockstats_test",
-    timeout = "short",
-    srcs = ["lock_stats_executor_test.go"],
-    embed = [":lockstats"],
-    flaky = True,
-    shard_count = 2,
-    deps = [
-        "//pkg/infoschema",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "@com_github_stretchr_testify//require",
     ],
 )

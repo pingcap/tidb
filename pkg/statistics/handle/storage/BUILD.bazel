@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "storage",
@@ -9,7 +9,7 @@ go_library(
         "save.go",
         "stats_read_writer.go",
         "update.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/storage",
     visibility = ["//visibility:public"],
     deps = [
@@ -47,37 +47,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "storage_test",
-    timeout = "short",
-    srcs = [
-        "dump_test.go",
-        "gc_test.go",
-        "read_test.go",
-        "stats_read_writer_test.go",
-    ],
-    flaky = True,
-    shard_count = 26,
-    deps = [
-        ":storage",
-        "//pkg/domain",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
-        "//pkg/statistics",
-        "//pkg/statistics/asyncload",
-        "//pkg/statistics/handle/ddl/testutil",
-        "//pkg/statistics/handle/types",
-        "//pkg/statistics/handle/util",
-        "//pkg/statistics/util",
-        "//pkg/testkit",
-        "//pkg/testkit/analyzehelper",
-        "//pkg/util",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
     ],
 )

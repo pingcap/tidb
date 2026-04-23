@@ -48,32 +48,23 @@ type FileScanner interface {
 }
 
 type fileScanner struct {
-	redactedSourcePath string
-	db                 *sql.DB
-	store              storeapi.Storage
-	loader             *mydump.MDLoader
-	logger             log.Logger
-	config             *SDKConfig
+	sourcePath string
+	db         *sql.DB
+	store      storeapi.Storage
+	loader     *mydump.MDLoader
+	logger     log.Logger
+	config     *SDKConfig
 }
-
-const redactedInvalidSourcePath = "<redacted-invalid-source>"
 
 // NewFileScanner creates a new FileScanner
 func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDKConfig) (FileScanner, error) {
-	redactedSourcePath := ast.RedactURL(sourcePath)
-	parseErrorSourcePath := redactedSourcePath
-	if parseErrorSourcePath == sourcePath {
-		// ast.RedactURL leaves malformed or unsupported URLs unchanged.
-		// Avoid exposing the original source in outward-facing parse errors.
-		parseErrorSourcePath = redactedInvalidSourcePath
-	}
 	u, err := objstore.ParseBackend(sourcePath, nil)
 	if err != nil {
-		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s", parseErrorSourcePath)
+		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s, err=%v", sourcePath, err)
 	}
 	store, err := objstore.New(ctx, u, &storeapi.Options{})
 	if err != nil {
-		return nil, errors.Annotatef(ErrCreateExternalStorage, "source=%s, err=%v", redactedSourcePath, err)
+		return nil, errors.Annotatef(ErrCreateExternalStorage, "source=%s, err=%v", sourcePath, err)
 	}
 
 	ldrCfg := mydump.LoaderConfig{
@@ -99,24 +90,24 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	loader, err := mydump.NewLoaderWithStore(ctx, ldrCfg, store, loaderOptions...)
 	if err != nil {
 		if loader == nil || !errors.ErrorEqual(err, common.ErrTooManySourceFiles) {
-			return nil, errors.Annotatef(ErrCreateLoader, "source=%s, charset=%s, err=%v", redactedSourcePath, cfg.charset, err)
+			return nil, errors.Annotatef(ErrCreateLoader, "source=%s, charset=%s, err=%v", sourcePath, cfg.charset, err)
 		}
 	}
 
 	return &fileScanner{
-		redactedSourcePath: redactedSourcePath,
-		db:                 db,
-		store:              store,
-		loader:             loader,
-		logger:             cfg.logger,
-		config:             cfg,
+		sourcePath: sourcePath,
+		db:         db,
+		store:      store,
+		loader:     loader,
+		logger:     cfg.logger,
+		config:     cfg,
 	}, nil
 }
 
 func (s *fileScanner) CreateSchemasAndTables(ctx context.Context) error {
 	dbMetas := s.loader.GetDatabases()
 	if len(dbMetas) == 0 {
-		return errors.Annotatef(ErrNoDatabasesFound, "source=%s", s.redactedSourcePath)
+		return errors.Annotatef(ErrNoDatabasesFound, "source=%s", s.sourcePath)
 	}
 
 	// Create all schemas and tables
@@ -130,7 +121,7 @@ func (s *fileScanner) CreateSchemasAndTables(ctx context.Context) error {
 
 	err := importer.Run(ctx, dbMetas)
 	if err != nil {
-		return errors.Annotatef(ErrCreateSchema, "source=%s, db_count=%d, err=%v", s.redactedSourcePath, len(dbMetas), err)
+		return errors.Annotatef(ErrCreateSchema, "source=%s, db_count=%d, err=%v", s.sourcePath, len(dbMetas), err)
 	}
 
 	return nil
@@ -164,7 +155,7 @@ func (s *fileScanner) CreateSchemaAndTableByName(ctx context.Context, schema, ta
 				Tables:     []*mydump.MDTableMeta{tblMeta},
 			}})
 			if err != nil {
-				return errors.Annotatef(ErrCreateSchema, "source=%s, schema=%s, table=%s, err=%v", s.redactedSourcePath, schema, table, err)
+				return errors.Annotatef(ErrCreateSchema, "source=%s, schema=%s, table=%s, err=%v", s.sourcePath, schema, table, err)
 			}
 
 			return nil
@@ -211,7 +202,7 @@ func (s *fileScanner) GetTotalSize(ctx context.Context) int64 {
 func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSizeEstimate, error) {
 	dbMetas := s.loader.GetDatabases()
 	if len(dbMetas) == 0 {
-		return nil, errors.Annotatef(ErrNoDatabasesFound, "source=%s", s.redactedSourcePath)
+		return nil, errors.Annotatef(ErrNoDatabasesFound, "source=%s", s.sourcePath)
 	}
 
 	result := &ImportDataSizeEstimate{

@@ -1,4 +1,32 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "passwordtest",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "password_management_intest.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/passwordtest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/domain",
+        "//pkg/errno",
+        "//pkg/kv",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/privilege/privileges",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/sqlescape",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "passwordtest_test",
@@ -8,7 +36,7 @@ go_test(
         "password_management_test.go",
     ],
     flaky = True,
-    shard_count = 9,
+    shard_count = 18,
     deps = [
         "//pkg/domain",
         "//pkg/errno",

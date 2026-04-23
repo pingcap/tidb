@@ -1,4 +1,55 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "admintest",
+    srcs = [
+        "admin_intest.go",
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/admintest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/ddl",
+        "//pkg/domain",
+        "//pkg/errno",
+        "//pkg/executor",
+        "//pkg/kv",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/server",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testsetup",
+        "//pkg/testkit/testutil",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/logutil",
+        "//pkg/util/logutil/consistency",
+        "//pkg/util/mock",
+        "//pkg/util/redact",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+    ],
+)
 
 go_test(
     name = "admintest_test",
@@ -8,7 +59,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 30,
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/ddl",

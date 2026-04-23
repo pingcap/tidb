@@ -1,11 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "serverstate",
     srcs = [
         "mem_syncer.go",
         "syncer.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/ddl/serverstate",
     visibility = ["//visibility:public"],
     deps = [
@@ -20,22 +20,5 @@ go_library(
         "@io_etcd_go_etcd_client_v3//concurrency",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "serverstate_test",
-    timeout = "short",
-    srcs = ["syncer_test.go"],
-    flaky = True,
-    deps = [
-        ":serverstate",
-        "//pkg/ddl/schemaver",
-        "//pkg/ddl/util",
-        "//pkg/sessionctx/vardef",
-        "//pkg/util",
-        "@com_github_stretchr_testify//require",
-        "@io_etcd_go_etcd_api_v3//mvccpb",
-        "@io_etcd_go_etcd_tests_v3//integration",
     ],
 )

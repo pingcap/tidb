@@ -1,4 +1,43 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "showtest",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+        "show_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/showtest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/autoid_service",
+        "//pkg/config",
+        "//pkg/executor",
+        "//pkg/infoschema",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/parser/types",
+        "//pkg/privilege/privileges",
+        "//pkg/session",
+        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/dbterror/plannererrors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "showtest_test",
@@ -8,7 +47,7 @@ go_test(
         "show_test.go",
     ],
     flaky = True,
-    shard_count = 25,
+    shard_count = 50,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",

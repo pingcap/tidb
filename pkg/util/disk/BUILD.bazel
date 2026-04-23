@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "disk",
     srcs = [
+        "export_helper.go",
         "tempDir.go",
         "tracker.go",
     ],
@@ -17,22 +18,5 @@ go_library(
         "@com_github_pingcap_log//:log",
         "@org_golang_x_sync//singleflight",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "disk_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "tempDir_test.go",
-    ],
-    embed = [":disk"],
-    flaky = True,
-    deps = [
-        "//pkg/config",
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -1,3 +1,6 @@
+//go:build !intest
+// +build !intest
+
 // Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -1258,7 +1261,6 @@ func TestAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t *testing.T) {
 
 	testkit.NewTestKit(t, store).MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_auto_analyze_concurrency'").Check(testkit.Rows("8"))
 }
-
 func TestBootstrapInNextGenInvalidSystemTable(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("this is only checked in next-gen kernel")

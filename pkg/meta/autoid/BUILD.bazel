@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "autoid",
@@ -7,7 +7,7 @@ go_library(
         "autoid_service.go",
         "errors.go",
         "memid.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/meta/autoid",
     visibility = ["//visibility:public"],
     deps = [
@@ -34,37 +34,5 @@ go_library(
         "@org_golang_google_grpc//credentials",
         "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "autoid_test",
-    timeout = "short",
-    srcs = [
-        "autoid_test.go",
-        "bench_test.go",
-        "main_test.go",
-        "memid_test.go",
-        "seq_autoid_test.go",
-    ],
-    flaky = True,
-    shard_count = 11,
-    deps = [
-        ":autoid",
-        "//pkg/kv",
-        "//pkg/meta",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "//pkg/parser/mysql",
-        "//pkg/parser/terror",
-        "//pkg/store/mockstore",
-        "//pkg/testkit/testsetup",
-        "//pkg/types",
-        "//pkg/util",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

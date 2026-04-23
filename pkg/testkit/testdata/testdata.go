@@ -56,9 +56,102 @@ type TestData struct {
 	funcMap        map[string]int
 }
 
+func resolveRepoRoot(start string) string {
+	dir := start
+	for {
+		for _, marker := range []string{"MODULE.bazel", "WORKSPACE", "go.mod"} {
+			if _, err := os.Stat(filepath.Join(dir, marker)); err == nil {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+func absolutizeCallerFile(callerFile string) string {
+	if callerFile == "" || filepath.IsAbs(callerFile) {
+		return callerFile
+	}
+
+	var roots []string
+	if cwd, err := os.Getwd(); err == nil {
+		roots = append(roots, cwd)
+		if root := resolveRepoRoot(cwd); root != "" {
+			roots = append(roots, root)
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		if root := resolveRepoRoot(filepath.Dir(exe)); root != "" {
+			roots = append(roots, root)
+		}
+	}
+
+	for _, root := range roots {
+		abs := filepath.Join(root, callerFile)
+		if _, err := os.Stat(abs); err == nil {
+			return abs
+		}
+		if info, err := os.Stat(filepath.Dir(abs)); err == nil && info.IsDir() {
+			return abs
+		}
+	}
+	return callerFile
+}
+
+func resolveTestSuitePrefix(dir, suiteName, callerFile string) string {
+	defaultPrefix := filepath.Join(dir, suiteName)
+	candidates := []string{defaultPrefix}
+
+	if callerFile != "" {
+		callerFile = absolutizeCallerFile(callerFile)
+		callerDir := filepath.Dir(callerFile)
+		candidates = append(candidates, filepath.Join(callerDir, dir, suiteName))
+		// Mega tests often move sources into a sibling "test" package while
+		// keeping testdata in the parent package directory.
+		if filepath.Base(callerDir) == "test" {
+			candidates = append(candidates, filepath.Join(callerDir, "..", dir, suiteName))
+		}
+	}
+
+	for _, prefix := range candidates {
+		if _, err := os.Stat(fmt.Sprintf("%s_in.json", prefix)); err == nil {
+			return prefix
+		}
+	}
+	return defaultPrefix
+}
+
+func resolveTestDataCallerFile() string {
+	pcs := make([]uintptr, 16)
+	n := runtime.Callers(2, pcs)
+	frames := runtime.CallersFrames(pcs[:n])
+
+	for {
+		frame, more := frames.Next()
+		if frame.File != "" {
+			file := filepath.ToSlash(frame.File)
+			if !strings.Contains(file, "/pkg/testkit/testdata/") && !strings.HasPrefix(file, "pkg/testkit/testdata/") {
+				return frame.File
+			}
+		}
+		if !more {
+			break
+		}
+	}
+	return ""
+}
+
 func loadTestSuiteData(dir, suiteName string, cascades ...bool) (res TestData, err error) {
 	inCascades := len(cascades) > 0 && cascades[0]
 	res.filePathPrefix = filepath.Join(dir, suiteName)
+	if callerFile := resolveTestDataCallerFile(); callerFile != "" {
+		res.filePathPrefix = resolveTestSuitePrefix(dir, suiteName, callerFile)
+	}
+
 	res.input, err = loadTestSuiteCases(fmt.Sprintf("%s_in.json", res.filePathPrefix))
 	if err != nil {
 		return res, err
@@ -175,6 +268,16 @@ func (td *TestData) LoadTestCases(t *testing.T, in any, out any, opts ...string)
 	}
 
 	casesIdx, ok := td.funcMap[funcName]
+	if !ok {
+		// Fallback: mega framework renames Test* to Run*, try the original Test prefix
+		if strings.HasPrefix(funcName, "Run") {
+			casesIdx, ok = td.funcMap["Test"+funcName[3:]]
+		}
+		if !ok {
+			// Also try without any prefix change
+			casesIdx, ok = td.funcMap[funcName]
+		}
+	}
 	require.Truef(t, ok, "Must get test %s", funcName)
 	err := json.Unmarshal(*td.input[casesIdx].Cases, in)
 	require.NoError(t, err)

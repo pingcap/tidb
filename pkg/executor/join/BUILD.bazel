@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "join",
@@ -29,7 +29,7 @@ go_library(
         "row_table_builder.go",
         "semi_join_probe.go",
         "tagged_ptr.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/executor/join",
     visibility = ["//visibility:public"],
     deps = [
@@ -72,58 +72,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "join_test",
-    timeout = "short",
-    srcs = [
-        "anti_semi_join_probe_test.go",
-        "bench_test.go",
-        "concurrent_map_test.go",
-        "hash_table_v1_test.go",
-        "hash_table_v2_test.go",
-        "inner_join_probe_test.go",
-        "inner_join_spill_test.go",
-        "join_row_table_test.go",
-        "join_stats_test.go",
-        "join_table_meta_test.go",
-        "joiner_test.go",
-        "left_outer_anti_semi_join_probe_test.go",
-        "left_outer_join_probe_test.go",
-        "left_outer_semi_join_probe_test.go",
-        "outer_join_spill_test.go",
-        "right_outer_join_probe_test.go",
-        "row_table_builder_test.go",
-        "semi_join_probe_test.go",
-        "tagged_ptr_test.go",
-    ],
-    embed = [":join"],
-    flaky = True,
-    shard_count = 50,
-    deps = [
-        "//pkg/config",
-        "//pkg/domain",
-        "//pkg/executor/internal/exec",
-        "//pkg/executor/internal/testutil",
-        "//pkg/executor/internal/util",
-        "//pkg/expression",
-        "//pkg/parser/ast",
-        "//pkg/parser/mysql",
-        "//pkg/planner/core/base",
-        "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit/testfailpoint",
-        "//pkg/types",
-        "//pkg/util",
-        "//pkg/util/chunk",
-        "//pkg/util/codec",
-        "//pkg/util/disk",
-        "//pkg/util/memory",
-        "//pkg/util/mock",
-        "//pkg/util/sqlkiller",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
     ],
 )

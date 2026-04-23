@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "sql_fail.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/store/driver/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/session",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/util",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["sql_fail_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

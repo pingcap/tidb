@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "isolation",
@@ -8,7 +8,7 @@ go_library(
         "readcommitted.go",
         "repeatable_read.go",
         "serializable.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/sessiontxn/isolation",
     visibility = ["//visibility:public"],
     deps = [
@@ -42,48 +42,8 @@ go_library(
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
         "@com_github_tikv_client_go_v2//txnkv/transaction",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "isolation_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "optimistic_test.go",
-        "readcommitted_test.go",
-        "repeatable_read_test.go",
-        "serializable_test.go",
-    ],
-    flaky = True,
-    shard_count = 28,
-    deps = [
-        ":isolation",
-        "//pkg/config",
-        "//pkg/config/kerneltype",
-        "//pkg/executor",
-        "//pkg/expression",
-        "//pkg/infoschema",
-        "//pkg/kv",
-        "//pkg/parser",
-        "//pkg/parser/ast",
-        "//pkg/planner",
-        "//pkg/planner/core/resolve",
-        "//pkg/session",
-        "//pkg/sessionctx",
-        "//pkg/sessiontxn",
-        "//pkg/testkit",
-        "//pkg/testkit/testfork",
-        "//pkg/testkit/testsetup",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//error",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

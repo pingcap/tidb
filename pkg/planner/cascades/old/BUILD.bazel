@@ -1,9 +1,10 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "old",
     srcs = [
         "enforcer_rules.go",
+        "export_helper.go",
         "implementation_rules.go",
         "optimize.go",
         "stringer.go",
@@ -34,40 +35,5 @@ go_library(
         "//pkg/util/intset",
         "//pkg/util/ranger",
         "@com_github_pingcap_errors//:errors",
-    ],
-)
-
-go_test(
-    name = "old_test",
-    timeout = "short",
-    srcs = [
-        "enforcer_rules_test.go",
-        "main_test.go",
-        "optimize_test.go",
-        "stringer_test.go",
-        "transformation_rules_test.go",
-    ],
-    data = glob(["testdata/**"]),
-    embed = [":old"],
-    flaky = True,
-    shard_count = 25,
-    deps = [
-        "//pkg/domain",
-        "//pkg/expression",
-        "//pkg/infoschema",
-        "//pkg/meta/model",
-        "//pkg/parser",
-        "//pkg/planner/cascades/pattern",
-        "//pkg/planner/core",
-        "//pkg/planner/core/base",
-        "//pkg/planner/core/operator/logicalop",
-        "//pkg/planner/core/resolve",
-        "//pkg/planner/memo",
-        "//pkg/planner/property",
-        "//pkg/planner/util/coretestsdk",
-        "//pkg/testkit/testdata",
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

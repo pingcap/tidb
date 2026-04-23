@@ -1,27 +1,15 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "intest",
     srcs = [
-        "assert.go",  #keep
+        "assert.go",
         "assert_common.go",
-        "in_unittest.go",  #keep
+        "in_unittest.go",
         "no_assert.go",
         "not_in_unittest.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/intest",
     visibility = ["//visibility:public"],
     deps = ["@com_github_pingcap_failpoint//:failpoint"],
-)
-
-go_test(
-    name = "intest_test",
-    timeout = "short",
-    srcs = ["assert_test.go"],
-    flaky = True,
-    deps = [
-        ":intest",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
-    ],
 )

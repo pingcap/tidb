@@ -7,7 +7,7 @@ go_library(
         "limit.go",
         "schema.go",
         "store.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/backup",
     visibility = ["//visibility:public"],
     deps = [

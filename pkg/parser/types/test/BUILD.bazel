@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "field_type.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/types/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/parser/test_driver",
+        "//pkg/parser/types",
+        "//pkg/testkit/mega/register",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["field_type_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 5,
+)

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "schematracker",
@@ -38,31 +38,5 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "schematracker_test",
-    timeout = "short",
-    srcs = [
-        "dm_tracker_test.go",
-        "info_store_test.go",
-    ],
-    embed = [":schematracker"],
-    flaky = True,
-    shard_count = 15,
-    deps = [
-        "//pkg/executor",
-        "//pkg/infoschema",
-        "//pkg/meta/autoid",
-        "//pkg/meta/model",
-        "//pkg/parser",
-        "//pkg/parser/ast",
-        "//pkg/planner/core/resolve",
-        "//pkg/sessionctx",
-        "//pkg/util/chunk",
-        "//pkg/util/mock",
-        "//pkg/util/sqlexec",
-        "@com_github_stretchr_testify//require",
     ],
 )

@@ -10,7 +10,7 @@ go_library(
         "job_progress.go",
         "job_submitter.go",
         "precheck.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/lightning/pkg/importinto",
     visibility = ["//visibility:public"],
     deps = [

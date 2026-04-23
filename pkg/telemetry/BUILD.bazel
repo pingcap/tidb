@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "telemetry",
@@ -29,38 +29,5 @@ go_library(
         "@com_github_tikv_client_go_v2//metrics",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "telemetry_test",
-    timeout = "short",
-    srcs = [
-        "data_feature_usage_test.go",
-        "data_window_test.go",
-        "main_test.go",
-    ],
-    embed = [":telemetry"],
-    flaky = True,
-    shard_count = 25,
-    deps = [
-        "//pkg/autoid_service",
-        "//pkg/config",
-        "//pkg/config/kerneltype",
-        "//pkg/domain",
-        "//pkg/kv",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
-        "//pkg/store/mockstore",
-        "//pkg/store/mockstore/unistore",
-        "//pkg/testkit",
-        "//pkg/testkit/testsetup",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//testutils",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

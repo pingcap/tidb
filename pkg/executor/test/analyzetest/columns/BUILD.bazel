@@ -1,4 +1,27 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "columns",
+    srcs = [
+        "analyze_columns_with_intest.go",
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/analyzetest/columns",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/ast",
+        "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "columns_test",
@@ -8,7 +31,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 6,
+    shard_count = 12,
     deps = [
         "//pkg/config",
         "//pkg/parser/ast",

@@ -1,4 +1,28 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "memtest",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "mem_intest.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/memtest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/meta/autoid",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/memory",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "memtest_test",
@@ -9,7 +33,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 2,
+    shard_count = 4,
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",

@@ -1,0 +1,44 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "deleter.go",
+        "handler.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/dxf/importinto/conflictedkv",
+        "//pkg/executor/importer",
+        "//pkg/kv",
+        "//pkg/lightning/backend/encode",
+        "//pkg/lightning/backend/external",
+        "//pkg/lightning/backend/kv",
+        "//pkg/parser/ast",
+        "//pkg/session",
+        "//pkg/table",
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "deleter_test.go",
+        "handler_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 2,
+)

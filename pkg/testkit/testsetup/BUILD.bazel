@@ -2,11 +2,15 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "testsetup",
-    srcs = ["bridge.go"],
+    srcs = [
+        "bridge.go",
+        "etcd.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/testkit/testsetup",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_pingcap_log//:log",
+        "@io_etcd_go_etcd_tests_v3//integration",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],

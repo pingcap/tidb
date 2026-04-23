@@ -24,7 +24,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
@@ -128,15 +127,16 @@ func (e *inspectionResultRetriever) retrieve(ctx context.Context, sctx sessionct
 	sctx.GetSessionVars().InspectionTableCache = map[string]variable.TableSnapshot{}
 	defer func() { sctx.GetSessionVars().InspectionTableCache = nil }()
 
-	failpoint.InjectContext(ctx, "mockMergeMockInspectionTables", func() {
-		// Merge mock snapshots injected from failpoint for test purpose
-		mockTables, ok := ctx.Value("__mockInspectionTables").(map[string]variable.TableSnapshot)
-		if ok {
-			for name, snap := range mockTables {
-				sctx.GetSessionVars().InspectionTableCache[strings.ToLower(name)] = snap
-			}
+	// Merge mock snapshots injected from test context for mega binary compatibility.
+	// In original go test, this was guarded by failpoint.InjectContext with a WithHook ctx.
+	// In mega binary, the ctx hook may be lost during execution chain, so we check ctx value directly.
+	mockTables, ok := ctx.Value(ContextKeyType("__mockInspectionTables")).(map[string]variable.TableSnapshot)
+	if ok {
+		for name, snap := range mockTables {
+			sctx.GetSessionVars().InspectionTableCache[strings.ToLower(name)] = snap
 		}
-	})
+	}
+	_ = mockTables // avoid unused var if no tables
 
 	if e.instanceToStatusAddress == nil {
 		// Get cluster info.

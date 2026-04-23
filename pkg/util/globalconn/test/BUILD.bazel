@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "globalconn.go",
+        "pool.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/globalconn/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/testkit/mega/register",
+        "//pkg/util/globalconn",
+        "@com_github_stretchr_testify//assert",
+        "@org_modernc_mathutil//:mathutil",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "globalconn_test.go",
+        "pool_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+)

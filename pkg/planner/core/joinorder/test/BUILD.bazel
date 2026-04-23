@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "test",
+    srcs = ["bitset_bench.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/joinorder/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/intset",
+        "@com_github_bits_and_blooms_bitset//:bitset",
+    ],
+)

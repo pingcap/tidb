@@ -15,7 +15,7 @@ go_library(
         "precheck_impl.go",
         "table_import.go",
         "tidb.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/lightning/pkg/importer",
     visibility = ["//visibility:public"],
     deps = [

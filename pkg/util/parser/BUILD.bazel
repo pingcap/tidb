@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "parser",
@@ -15,24 +15,5 @@ go_library(
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "parser_test",
-    timeout = "short",
-    srcs = [
-        "ast_test.go",
-        "main_test.go",
-        "parser_test.go",
-    ],
-    flaky = True,
-    deps = [
-        ":parser",
-        "//pkg/parser",
-        "//pkg/testkit/testsetup",
-        "//pkg/types/parser_driver",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "calibrate_resource.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/internal/calibrateresource/test",
+    visibility = ["//pkg/executor:__subpackages__"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/executor",
+        "//pkg/parser/mysql",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/meta_storagepb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//constants",
+        "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//resource_group/controller",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["calibrate_resource_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

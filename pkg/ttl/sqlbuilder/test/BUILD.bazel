@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "main.go",
+        "register_gen.go",
+        "sql.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ttl/sqlbuilder/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/ttl/cache",
+        "//pkg/ttl/sqlbuilder",
+        "//pkg/types",
+        "//pkg/util/dbterror",
+        "//pkg/util/sqlexec",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["sql_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 5,
+)

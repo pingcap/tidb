@@ -1,0 +1,42 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "data_feature_usage.go",
+        "data_window.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/telemetry/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/autoid_service",
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/domain",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx/vardef",
+        "//pkg/store/mockstore",
+        "//pkg/store/mockstore/unistore",
+        "//pkg/telemetry",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "data_feature_usage_test.go",
+        "data_window_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 25,
+)

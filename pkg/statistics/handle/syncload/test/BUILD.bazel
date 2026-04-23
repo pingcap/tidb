@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "stats_syncload.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/syncload/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/statistics/handle/syncload",
+        "//pkg/statistics/handle/types",
+        "//pkg/testkit",
+        "//pkg/testkit/analyzehelper",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/mathutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["stats_syncload_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 6,
+)

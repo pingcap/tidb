@@ -915,7 +915,6 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
 	policies                   "POLICIES"
-	raw                        "RAW"
 	region                     "REGION"
 	regions                    "REGIONS"
 	reset                      "RESET"
@@ -1235,8 +1234,6 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	InstanceOption                         "Instance option"
 	FulltextSearchModifierOpt              "Fulltext modifier"
 	PluginNameList                         "Plugin Name List"
-	ShowImportJobTarget                    "IMPORT JOB target with optional RAW keyword"
-	ShowImportJobsTarget                   "IMPORT JOBS target with optional RAW keyword"
 	TableRefsClause                        "Table references clause"
 	FieldItem                              "Field item for load data clause"
 	FieldItemList                          "Field items for load data clause"
@@ -6818,7 +6815,7 @@ PredicateExpr:
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		}
-		// When ESCAPE empty string is specified, escape is empty and explicit is true.
+		// When ESCAPE '' is specified, escape is empty and explicit is true.
 		// This means no escape character should be used (Escape = 0).
 		var escapeChar byte
 		if len(escape) > 0 {
@@ -6842,7 +6839,7 @@ PredicateExpr:
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		}
-		// When ESCAPE empty string is specified, escape is empty and explicit is true.
+		// When ESCAPE '' is specified, escape is empty and explicit is true.
 		// This means no escape character should be used (Escape = 0).
 		var escapeChar byte
 		if len(escape) > 0 {
@@ -6929,7 +6926,7 @@ FieldList:
 		field.Offset = parser.startOffset(&yyS[yypt])
 		if field.Expr != nil {
 			endOffset := parser.yylval.offset
-			parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+		parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
 		$$ = []*ast.SelectField{field}
 	}
@@ -6940,7 +6937,7 @@ FieldList:
 		field.Offset = parser.startOffset(&yyS[yypt])
 		if field.Expr != nil {
 			endOffset := parser.yylval.offset
-			parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
+		parser.setNodeText(field, strings.TrimSpace(parser.src[field.Offset:endOffset]))
 		}
 		$$ = append(fl, field)
 	}
@@ -7685,7 +7682,6 @@ TiDBKeyword:
 |	"REGIONS"
 |	"REGION"
 |	"RESET"
-|	"RAW"
 |	"DRY"
 |	"RUN"
 
@@ -9813,7 +9809,7 @@ SelectStmtFromDualTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-1].offset - 1
-			parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
+		parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
@@ -9828,7 +9824,7 @@ SelectStmtFromTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-5])
-			parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
+		parser.setNodeText(lastField, parser.src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Where = $4.(ast.ExprNode)
@@ -10897,11 +10893,11 @@ SubSelect:
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
 			// See the implementation of yyParse function
-			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
+		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
+		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -10920,11 +10916,11 @@ SubSelect:
 			endOffset := parser.endOffset(&yyS[yypt])
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
-			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
+		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-			parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
+		parser.setNodeText(rs, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -12254,13 +12250,12 @@ ShowStmt:
 	{
 		$$ = $4.(*ast.ShowStmt)
 	}
-|	"SHOW" ShowImportJobTarget Int64Num
+|	"SHOW" "IMPORT" "JOB" Int64Num
 	{
-		v := $3.(int64)
+		v := $4.(int64)
 		$$ = &ast.ShowStmt{
-			Tp:           ast.ShowImportJobs,
-			ImportJobID:  &v,
-			ImportJobRaw: $2.(bool),
+			Tp:          ast.ShowImportJobs,
+			ImportJobID: &v,
 		}
 	}
 |	"SHOW" "DISTRIBUTION" "JOB" Int64Num
@@ -12626,9 +12621,9 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportGroups, ShowGroupKey: $3}
 	}
-|	ShowImportJobsTarget
+|	"IMPORT" "JOBS"
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: $1.(bool)}
+		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
 |	"DISTRIBUTION" "JOBS"
 	{
@@ -12651,26 +12646,6 @@ ShowLikeOrWhereOpt:
 |	"WHERE" Expression
 	{
 		$$ = $2
-	}
-
-ShowImportJobTarget:
-	"IMPORT" "JOB"
-	{
-		$$ = false
-	}
-|	"RAW" "IMPORT" "JOB"
-	{
-		$$ = true
-	}
-
-ShowImportJobsTarget:
-	"IMPORT" "JOBS"
-	{
-		$$ = false
-	}
-|	"RAW" "IMPORT" "JOBS"
-	{
-		$$ = true
 	}
 
 GlobalScope:
@@ -16265,14 +16240,14 @@ CreateMaskingPolicyStmt:
 		}
 		state := $15.(*ast.MaskingPolicyState)
 		$$ = &ast.CreateMaskingPolicyStmt{
-			OrReplace:          $2.(bool),
-			IfNotExists:        $5.(bool),
-			PolicyName:         ast.NewCIStr($6),
-			Table:              $8.(*ast.TableName),
-			Column:             &ast.ColumnName{Name: ast.NewCIStr($10)},
-			Expr:               $13,
-			RestrictOps:        $14.(ast.MaskingPolicyRestrictOps),
-			MaskingPolicyState: *state,
+			OrReplace:           $2.(bool),
+			IfNotExists:         $5.(bool),
+			PolicyName:          ast.NewCIStr($6),
+			Table:               $8.(*ast.TableName),
+			Column:              &ast.ColumnName{Name: ast.NewCIStr($10)},
+			Expr:                $13,
+			RestrictOps:         $14.(ast.MaskingPolicyRestrictOps),
+			MaskingPolicyState:  *state,
 		}
 	}
 

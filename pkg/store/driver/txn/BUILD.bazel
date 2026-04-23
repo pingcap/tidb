@@ -1,16 +1,18 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "txn",
     srcs = [
         "batch_getter.go",
         "error.go",
+        "export_helper.go",
+        "ruv2_metrics.go",
         "scanner.go",
         "snapshot.go",
         "txn_driver.go",
         "union_iter.go",
         "unionstore_driver.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/store/driver/txn",
     visibility = ["//visibility:public"],
     deps = [
@@ -24,6 +26,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/execdetails",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/tracing",
@@ -41,29 +44,5 @@ go_library(
         "@com_github_tikv_client_go_v2//txnkv/txnsnapshot",
         "@com_github_tikv_client_go_v2//txnkv/txnutil",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "txn_test",
-    timeout = "short",
-    srcs = [
-        "batch_getter_test.go",
-        "driver_test.go",
-        "main_test.go",
-        "union_iter_test.go",
-    ],
-    embed = [":txn"],
-    flaky = True,
-    shard_count = 5,
-    deps = [
-        "//pkg/kv",
-        "//pkg/testkit/testsetup",
-        "//pkg/util/mock",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

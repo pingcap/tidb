@@ -1,4 +1,37 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "splittest",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "register_gen.go",
+        "split_table_intest.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/splittest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/ddl",
+        "//pkg/domain/infosync",
+        "//pkg/kv",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx/vardef",
+        "//pkg/store/copr",
+        "//pkg/store/driver/backoff",
+        "//pkg/store/helper",
+        "//pkg/table",
+        "//pkg/testkit",
+        "//pkg/testkit/external",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/benchdaily",
+        "//pkg/util/dbterror",
+        "//pkg/util/dbterror/plannererrors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "splittest_test",
@@ -9,7 +42,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 3,
+    shard_count = 6,
     deps = [
         "//pkg/ddl",
         "//pkg/domain/infosync",

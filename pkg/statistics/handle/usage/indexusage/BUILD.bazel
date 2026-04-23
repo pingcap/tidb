@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "indexusage",
@@ -9,14 +9,4 @@ go_library(
         "//pkg/meta/model",
         "//pkg/statistics/handle/usage/collector",
     ],
-)
-
-go_test(
-    name = "indexusage_test",
-    timeout = "short",
-    srcs = ["collector_test.go"],
-    embed = [":indexusage"],
-    flaky = True,
-    shard_count = 4,
-    deps = ["@com_github_stretchr_testify//require"],
 )

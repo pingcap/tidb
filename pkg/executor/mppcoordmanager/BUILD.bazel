@@ -1,8 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "mppcoordmanager",
-    srcs = ["mpp_coordinator_manager.go"],
+    srcs = [
+        "export_helper.go",
+        "mpp_coordinator_manager.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/executor/mppcoordmanager",
     visibility = ["//visibility:public"],
     deps = [
@@ -13,19 +16,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "mppcoordmanager_test",
-    timeout = "short",
-    srcs = ["mpp_coordinator_manager_test.go"],
-    embed = [":mppcoordmanager"],
-    flaky = True,
-    race = "on",
-    deps = [
-        "//pkg/kv",
-        "//pkg/store/copr",
-        "@com_github_stretchr_testify//require",
     ],
 )

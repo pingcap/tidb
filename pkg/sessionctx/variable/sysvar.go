@@ -2612,10 +2612,6 @@ var defaultSysVars = []*SysVar{
 		s.TiDBOptEnableAdvancedJoinReorder = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughProj, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughProj), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.TiDBOptJoinReorderThroughProj = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughSel), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.TiDBOptJoinReorderThroughSel = TiDBOptOn(val)
 		return nil
@@ -3920,7 +3916,11 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
-			return strconv.Itoa(int(vardef.GlobalSlowLogRateLimiter.Limit())), nil
+			lim := vardef.GlobalSlowLogRateLimiter.Limit()
+			if lim == rate.Inf {
+				return "0", nil
+			}
+			return strconv.Itoa(int(lim)), nil
 		},
 	},
 	{
@@ -3939,10 +3939,6 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableCachePrepareStmt, Value: BoolToOnOff(vardef.DefEnableCachePrepareStmt), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableCachePrepareStmt = TiDBOptOn(val)
-		return nil
-	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

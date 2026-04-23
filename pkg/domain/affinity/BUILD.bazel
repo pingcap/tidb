@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "affinity",
     srcs = [
+        "export_helper.go",
         "interface.go",
         "manager.go",
     ],
@@ -14,21 +15,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_pd_client//http",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "affinity_test",
-    timeout = "short",
-    srcs = ["manager_test.go"],
-    embed = [":affinity"],
-    flaky = True,
-    shard_count = 11,
-    deps = [
-        "//pkg/errno",
-        "//pkg/parser/terror",
-        "@com_github_stretchr_testify//mock",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_pd_client//http",
     ],
 )

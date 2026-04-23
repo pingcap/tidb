@@ -18,8 +18,6 @@ go_test(
         "test.parquet",
         "part0.parquet",
         "part1.parquet",
-        "spark-legacy-date.gz.parquet",
-        "spark-legacy-datetime.gz.parquet",
     ],
     flaky = True,
     race = "on",

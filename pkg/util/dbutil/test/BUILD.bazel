@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "index.go",
+        "register_gen.go",
+        "table.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/dbutil/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/mysql",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util/dbutil",
+        "//pkg/util/dbutil/dbutiltest",
+        "//pkg/util/schemacmp",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "index_test.go",
+        "table_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+)

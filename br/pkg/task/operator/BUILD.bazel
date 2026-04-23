@@ -12,7 +12,7 @@ go_library(
         "migrate_to.go",
         "prepare_snap.go",
         "test_storage.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/task/operator",
     visibility = ["//visibility:public"],
     deps = [

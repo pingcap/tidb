@@ -1,9 +1,10 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "example",
     srcs = [
         "doc.go",
+        "export_helper.go",
         "proto.go",
         "scheduler.go",
         "task_executor.go",
@@ -19,22 +20,5 @@ go_library(
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "example_test",
-    timeout = "short",
-    srcs = ["app_test.go"],
-    embed = [":example"],
-    flaky = True,
-    deps = [
-        "//pkg/dxf/framework/handle",
-        "//pkg/dxf/framework/proto",
-        "//pkg/dxf/framework/scheduler",
-        "//pkg/dxf/framework/taskexecutor",
-        "//pkg/testkit",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//util",
     ],
 )

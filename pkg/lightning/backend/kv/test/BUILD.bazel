@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "kv2sql.go",
+        "register_gen.go",
+        "sql2kv.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/backend/kv/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/ddl",
+        "//pkg/kv",
+        "//pkg/lightning/backend/encode",
+        "//pkg/lightning/backend/kv",
+        "//pkg/lightning/common",
+        "//pkg/lightning/log",
+        "//pkg/lightning/verification",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core",
+        "//pkg/sessionctx/vardef",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/tablecodec",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "kv2sql_test.go",
+        "sql2kv_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 14,
+)

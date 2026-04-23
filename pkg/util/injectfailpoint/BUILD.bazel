@@ -2,7 +2,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "injectfailpoint",
-    srcs = ["random_retry.go"],
+    srcs = [
+        "random_retry.go",
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/util/injectfailpoint",
     visibility = ["//visibility:public"],
     deps = [

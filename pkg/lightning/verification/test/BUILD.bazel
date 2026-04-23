@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "checksum.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/verification/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/lightning/common",
+        "//pkg/lightning/verification",
+        "//pkg/testkit/mega/register",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["checksum_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 4,
+)

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "extstore",
@@ -18,23 +18,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_spf13_afero//:afero",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "extstore_test",
-    timeout = "short",
-    srcs = ["extstore_test.go"],
-    embed = [":extstore"],
-    flaky = True,
-    shard_count = 5,
-    deps = [
-        "//pkg/config",
-        "//pkg/objstore/storeapi",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit/testsetup",
-        "@com_github_spf13_afero//:afero",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "path.go",
+        "register_gen.go",
+        "slice_recursive_flatten_iter.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/util/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/domain",
+        "//pkg/meta/model",
+        "//pkg/planner/util",
+        "//pkg/planner/util/coretestsdk",
+        "//pkg/testkit/mega/register",
+        "//pkg/types",
+        "//pkg/util/collate",
+        "//pkg/util/ranger",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "path_test.go",
+        "slice_recursive_flatten_iter_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 3,
+)

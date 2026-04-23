@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+//go:build ignore_internal_tests
+// +build ignore_internal_tests
+
+package executor_test
 
 import (
 	"fmt"
@@ -46,7 +49,7 @@ var (
 	InspectionRules        = inspectionRules
 )
 
-func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
+func RunBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	indexRanges := make([]*ranger.Range, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
@@ -75,7 +78,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwc(t *testing.T) {
 	}
 }
 
-func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
+func RunBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 	indexRanges := make([]*ranger.Range, 0, 6)
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 1, 1, 1))
 	indexRanges = append(indexRanges, generateIndexRange(1, 1, 2, 1, 1))
@@ -146,7 +149,7 @@ func generateDatumSlice(vals ...int64) []types.Datum {
 	return datums
 }
 
-func TestSlowQueryRuntimeStats(t *testing.T) {
+func RunSlowQueryRuntimeStats(t *testing.T) {
 	stats := &slowQueryRuntimeStats{
 		totalFileNum: 2,
 		readFileNum:  2,
@@ -162,7 +165,7 @@ func TestSlowQueryRuntimeStats(t *testing.T) {
 	require.Equal(t, "initialize: 2ms, read_file: 2s, parse_log: {time:200ms, concurrency:15}, total_file: 4, read_file: 4, read_size: 2 GB", stats.String())
 }
 
-func TestFilterTemporaryTableKeys(t *testing.T) {
+func RunFilterTemporaryTableKeys(t *testing.T) {
 	vars := variable.NewSessionVars(nil)
 	const tableID int64 = 3
 	vars.TxnCtx = &variable.TransactionContext{
@@ -175,7 +178,7 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 	require.Len(t, res, 1)
 }
 
-func TestErrLevelsForResetStmtContext(t *testing.T) {
+func RunErrLevelsForResetStmtContext(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
 
@@ -349,7 +352,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 	}
 }
 
-func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
+func RunAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().TxnCtx.IsPessimistic = true
 	sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()

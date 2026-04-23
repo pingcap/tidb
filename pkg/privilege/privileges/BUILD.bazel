@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "privileges",
@@ -46,53 +46,5 @@ go_library(
         "@com_github_lestrrat_go_jwx_v2//jwt/openid",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "privileges_test",
-    timeout = "short",
-    srcs = [
-        "cache_test.go",
-        "main_test.go",
-        "privileges_test.go",
-        "tidb_auth_token_test.go",
-    ],
-    embed = [":privileges"],
-    flaky = True,
-    shard_count = 50,
-    deps = [
-        "//pkg/config",
-        "//pkg/domain",
-        "//pkg/errno",
-        "//pkg/kv",
-        "//pkg/meta/metadef",
-        "//pkg/parser/auth",
-        "//pkg/parser/mysql",
-        "//pkg/parser/terror",
-        "//pkg/privilege",
-        "//pkg/session",
-        "//pkg/sessionctx",
-        "//pkg/sessionctx/sessionstates",
-        "//pkg/sessionctx/vardef",
-        "//pkg/sessionctx/variable",
-        "//pkg/testkit",
-        "//pkg/testkit/testsetup",
-        "//pkg/testkit/testutil",
-        "//pkg/util",
-        "//pkg/util/dbterror/exeerrors",
-        "//pkg/util/dbterror/plannererrors",
-        "//pkg/util/hack",
-        "//pkg/util/sem",
-        "//pkg/util/sem/compat",
-        "//pkg/util/sem/v2:sem",
-        "//pkg/util/sqlescape",
-        "@com_github_lestrrat_go_jwx_v2//jwa",
-        "@com_github_lestrrat_go_jwx_v2//jwk",
-        "@com_github_lestrrat_go_jwx_v2//jws",
-        "@com_github_lestrrat_go_jwx_v2//jwt",
-        "@com_github_lestrrat_go_jwx_v2//jwt/openid",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

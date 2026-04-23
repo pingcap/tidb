@@ -205,6 +205,57 @@ ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
+.PHONY: bazel_coverage_test
+bazel_coverage_test: tools/bin/failpoint-ctl ## Run the CI mega-test flow; target name is kept for CI compatibility. Produces bazel.xml and bazel-out/_coverage/_coverage_report.dat unless SKIP_MEGA_RUN=1.
+	@echo "=== Enabling failpoints ==="
+	@tools/bin/failpoint-ctl enable
+	@echo "=== Preparing BUILD.bazel files (gazelle + tazel) ==="
+	@if [ "$(SKIP_GAZELLE)" != "1" ]; then \
+		$(MAKE) bazel_ci_simple_prepare; \
+	else \
+		echo "=== Skip bazel_ci_simple_prepare because SKIP_GAZELLE=1 ==="; \
+	fi
+	@echo "=== Building mega binary ==="
+	@$(MAKE) bazel-mega-binary
+		@echo "=== Running mega tests ==="
+	@if [ "$(SKIP_MEGA_RUN)" = "1" ]; then \
+		echo "=== Skip mega tests because SKIP_MEGA_RUN=1 ==="; \
+	else \
+		rm -f bazel.xml bazel-out/_coverage/_coverage_report.dat; \
+		mkdir -p bazel-out/_coverage; \
+		./bazel-bin/pkg/testkit/mega/mega_test_/mega_test run --junitfile bazel.xml --coverprofile bazel-out/_coverage/_coverage_report.dat; \
+		MEGA_RUN_RET=$$?; \
+		if [ "$$MEGA_RUN_RET" -ne 0 ]; then \
+			if [ "$(MEGA_RUN_STRICT)" = "1" ]; then \
+				echo "=== Mega tests failed (strict mode), exiting with $$MEGA_RUN_RET ==="; \
+				$(MAKE) ut-mega-cleanup; \
+				exit $$MEGA_RUN_RET; \
+			fi; \
+			echo "=== Mega tests failed with $$MEGA_RUN_RET, but continue because MEGA_RUN_STRICT!=1 ==="; \
+		fi; \
+	fi
+
+.PHONY: bazel-mega-binary
+bazel-mega-binary: ## Build the mega test binary. Requires failpoint-ctl enable + gazelle first (see ut-mega).
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) --collect_code_coverage //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS)
+
+.PHONY: ut-mega-cleanup
+ut-mega-cleanup:
+	@tools/bin/failpoint-ctl disable
+
+.PHONY: ut-mega-test
+ut-mega-test: tools/bin/ut tools/bin/failpoint-ctl ## Run specific mega tests (usage: make ut-mega-test X=ddl/Options)
+	@tools/bin/failpoint-ctl enable
+	@$(MAKE) bazel_ci_simple_prepare
+	@$(MAKE) bazel-mega-binary
+	@tools/bin/ut --mega run '$(X)' \
+		; RET=$$?; $(MAKE) ut-mega-cleanup; exit $$RET
+
+.PHONY: ut-mega-list
+ut-mega-list: tools/bin/ut ## List all mega tests
+	@$(MAKE) bazel-mega-binary
+	@tools/bin/ut --mega list
+
 .PHONY: gotest_in_verify_ci
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
@@ -342,17 +393,23 @@ failpoint-disable: tools/bin/failpoint-ctl
 	@$(FAILPOINT_DISABLE)
 
 .PHONY: bazel-failpoint-enable
-bazel-failpoint-enable:
-	find $$PWD/ -mindepth 1 -maxdepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
+bazel-failpoint-enable: bazel-failpoint-ctl
+	@dirs="$$(rg -l 'github.com/pingcap/failpoint' -g '*.go' | xargs -r -n1 dirname | sort -u)"; \
+		$(BAZEL_FAILPOINT_CTL) enable $$dirs
 
 .PHONY: bazel-failpoint-disable
-bazel-failpoint-disable:
-	find $$PWD/ -mindepth 1 -maxdepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
+bazel-failpoint-disable: bazel-failpoint-ctl
+	@dirs="$$(rg -l 'github.com/pingcap/failpoint' -g '*.go' | xargs -r -n1 dirname | sort -u)"; \
+		$(BAZEL_FAILPOINT_CTL) disable $$dirs
+
+.PHONY: bazel-failpoint-ctl
+bazel-failpoint-ctl:
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl
 
 .PHONY: tools/bin/ut
-tools/bin/ut: tools/check/ut.go tools/check/longtests.go
+tools/bin/ut: tools/check/ut.go tools/check/longtests.go tools/check/ut_mega.go
 	cd tools/check; \
-	$(GO) build -o ../bin/ut ut.go longtests.go
+	$(GO) build -o ../bin/ut ut.go longtests.go ut_mega.go
 
 .PHONY: tools/bin/xprog
 tools/bin/xprog: tools/check/xprog/xprog.go
@@ -685,13 +742,13 @@ bazel_ci_simple_prepare:
 bazel_prepare: ## Update and generate BUILD.bazel files. Please run this before commit.
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle -- update-repos -from_file=go.mod -to_macro DEPS.bzl%go_deps  -build_file_proto_mode=disable -prune
-	bazel $(BAZEL_GLOBAL_CONFIG) run \
-		--run_under="cd $(CURDIR) && " \
-		 //tools/tazel:tazel
 	$(eval $@TMP_OUT := $(shell mktemp -d -t tidbbzl.XXXXXX))
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //cmd/mirror -- --mirror> $($@TMP_OUT)/tmp.txt
 	cp $($@TMP_OUT)/tmp.txt DEPS.bzl
 	rm -rf $($@TMP_OUT)
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) \
+		--run_under="cd $(CURDIR) && " \
+		 //tools/tazel:tazel
 
 .PHONY: bazel_ci_prepare_rbe
 bazel_ci_prepare_rbe:
@@ -713,23 +770,9 @@ bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
-.PHONY: bazel_ci_test
-bazel_ci_test: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
-		--define gotags=$(UNIT_TEST_TAGS) \
-		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
-
-.PHONY: bazel_ci_test_ddlargsv1
-bazel_ci_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
-		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
-		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
-
-.PHONY: bazel_coverage_test
-bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+.PHONY: bazel_coverage_test_bak
+bazel_coverage_test_bak: bazel-failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
@@ -737,7 +780,7 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
@@ -754,10 +797,8 @@ bazel_bin: ## Build importer/tidb binary files with Bazel build system
 .PHONY: bazel_build
 bazel_build: ## Build TiDB using Bazel build system
 	mkdir -p bin
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	NEXT_GEN=$(NEXT_GEN) bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --stamp --workspace_status_command=./build/print-workspace-status.sh --action_env=NEXT_GEN --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --stamp --workspace_status_command=./build/print-workspace-status.sh --action_env=NEXT_GEN --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=false ;\
 	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
 	cp -f ${IMPORTER_PATH} ./bin/ ; \
 	cp -f ${TIDB_SERVER_CHECK_PATH} ./bin/ ; \

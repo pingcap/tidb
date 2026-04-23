@@ -6,7 +6,7 @@ go_library(
         "tikv_handler.go",
         "upgrade_handler.go",
         "util.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/server/handler",
     visibility = ["//visibility:public"],
     deps = [

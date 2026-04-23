@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "testdata",
@@ -9,4 +9,13 @@ go_library(
         "//pkg/util/context",
         "@com_github_stretchr_testify//require",
     ],
+)
+
+go_test(
+    name = "testdata_test",
+    timeout = "short",
+    srcs = ["testdata_test.go"],
+    embed = [":testdata"],
+    flaky = True,
+    shard_count = 3,
 )

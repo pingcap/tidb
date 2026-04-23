@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "autoid.go",
+        "bench.go",
+        "main.go",
+        "memid.go",
+        "register_gen.go",
+        "seq_autoid.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/meta/autoid/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/store/mockstore",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "autoid_test.go",
+        "memid_test.go",
+        "seq_autoid_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 11,
+)

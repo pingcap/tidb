@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "task_executor_testkit.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor",
+        "//pkg/dxf/framework/testutil",
+        "//pkg/kv",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util/logutil",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_mock//gomock",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["task_executor_testkit_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

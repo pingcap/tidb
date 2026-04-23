@@ -1,0 +1,32 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "table.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/table/tblsession/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/meta/model",
+        "//pkg/sessionctx/variable",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/table/tblsession",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["table_test.go"],
+    embed = [":test"],
+    flaky = True,
+)

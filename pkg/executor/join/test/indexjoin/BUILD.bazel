@@ -1,4 +1,24 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "indexjoin",
+    srcs = [
+        "index_lookup_join_intest.go",
+        "index_lookup_merge_join_intest.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/join/test/indexjoin",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/session",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
 
 go_test(
     name = "indexjoin_test",
@@ -8,7 +28,7 @@ go_test(
         "index_lookup_merge_join_test.go",
     ],
     flaky = True,
-    shard_count = 13,
+    shard_count = 26,
     deps = [
         "//pkg/session",
         "//pkg/testkit",

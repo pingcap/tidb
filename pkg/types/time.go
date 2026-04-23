@@ -2225,6 +2225,11 @@ func checkTimestampType(t CoreTime, tz *gotime.Location) error {
 	return nil
 }
 
+// CheckTimestampTypeForTest validates timestamp ranges in tests.
+func CheckTimestampTypeForTest(t CoreTime, tz *gotime.Location) error {
+	return checkTimestampType(t, tz)
+}
+
 func checkDatetimeType(t CoreTime, allowZeroInDate, allowInvalidDate bool) error {
 	if err := checkDateType(t, allowZeroInDate, allowInvalidDate); err != nil {
 		return errors.Trace(err)

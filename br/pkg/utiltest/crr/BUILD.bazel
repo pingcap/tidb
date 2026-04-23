@@ -10,7 +10,7 @@ go_library(
         "pd_sim.go",
         "pd_sim_service.go",
         "types.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/br/pkg/utiltest/crr",
     visibility = ["//visibility:public"],
     deps = [

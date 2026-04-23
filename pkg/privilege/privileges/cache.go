@@ -55,6 +55,8 @@ var (
 	userTablePrivilegeMask = computePrivMask(mysql.AllGlobalPrivs)
 	dbTablePrivilegeMask   = computePrivMask(mysql.AllDBPrivs)
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
+	// EnsureActiveUserVisitKey is used by tests to observe ensureActiveUser calls.
+	EnsureActiveUserVisitKey = &struct{}{}
 )
 
 const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv | mysql.CreateTMPTablePriv
@@ -383,6 +385,93 @@ func newMySQLPrivilege() *MySQLPrivilege {
 	p.globalPriv = bTree[itemGlobalPriv]{BTreeG: btree.NewG(8, compareItemGlobalPriv)}
 	p.dynamicPriv = bTree[itemDynamicPriv]{BTreeG: btree.NewG(8, compareItemDynamicPriv)}
 	return &p
+}
+
+// NewMySQLPrivilege creates a privilege cache for tests and callers that need
+// an empty privilege holder before loading system tables.
+func NewMySQLPrivilege() *MySQLPrivilege {
+	return newMySQLPrivilege()
+}
+
+// User returns cached user privilege records for tests.
+func (p *MySQLPrivilege) User() []UserRecord {
+	var users []UserRecord
+	p.user.Ascend(func(it itemUser) bool {
+		users = append(users, it.data...)
+		return true
+	})
+	return users
+}
+
+// SetUser replaces cached user privilege records for tests.
+func (p *MySQLPrivilege) SetUser(users []UserRecord) {
+	p.user = bTree[itemUser]{BTreeG: btree.NewG(8, compareItemUser)}
+	for _, user := range users {
+		it, ok := p.user.Get(itemUser{username: user.User})
+		if !ok {
+			p.user.ReplaceOrInsert(itemUser{
+				username: user.User,
+				data:     []UserRecord{user},
+			})
+			continue
+		}
+		it.data = append(it.data, user)
+		p.user.ReplaceOrInsert(it)
+	}
+}
+
+// DB returns cached DB privilege records for tests.
+func (p *MySQLPrivilege) DB() []dbRecord {
+	var dbs []dbRecord
+	p.db.Ascend(func(it itemDB) bool {
+		dbs = append(dbs, it.data...)
+		return true
+	})
+	return dbs
+}
+
+// TablesPriv returns cached table privilege records for tests.
+func (p *MySQLPrivilege) TablesPriv() []tablesPrivRecord {
+	var tablesPriv []tablesPrivRecord
+	p.tablesPriv.Ascend(func(it itemTablesPriv) bool {
+		tablesPriv = append(tablesPriv, it.data...)
+		return true
+	})
+	return tablesPriv
+}
+
+// ColumnsPriv returns cached column privilege records for tests.
+func (p *MySQLPrivilege) ColumnsPriv() []columnsPrivRecord {
+	var columnsPriv []columnsPrivRecord
+	p.columnsPriv.Ascend(func(it itemColumnsPriv) bool {
+		columnsPriv = append(columnsPriv, it.data...)
+		return true
+	})
+	return columnsPriv
+}
+
+// DefaultRoles returns cached default role records for tests.
+func (p *MySQLPrivilege) DefaultRoles() []defaultRoleRecord {
+	var defaultRoles []defaultRoleRecord
+	p.defaultRoles.Ascend(func(it itemDefaultRole) bool {
+		defaultRoles = append(defaultRoles, it.data...)
+		return true
+	})
+	return defaultRoles
+}
+
+// GlobalPriv returns cached global privilege records for the given user in tests.
+func (p *MySQLPrivilege) GlobalPriv(user string) []globalPrivRecord {
+	it, ok := p.globalPriv.Get(itemGlobalPriv{username: user})
+	if !ok {
+		return nil
+	}
+	return slices.Clone(it.data)
+}
+
+// RoleGraph returns the cached role graph for tests.
+func (p *MySQLPrivilege) RoleGraph() map[auth.RoleIdentity]roleGraphEdgesTable {
+	return p.roleGraph
 }
 
 // FindAllUserEffectiveRoles is used to find all effective roles grant to this user.
@@ -2155,7 +2244,7 @@ func NewHandle(sctx util.SessionPool, globalVars variable.GlobalVarAccessor) *Ha
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
 func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
-	if p := ctx.Value("mock"); p != nil {
+	if p := ctx.Value(EnsureActiveUserVisitKey); p != nil {
 		visited := p.(*bool)
 		*visited = true
 	}
@@ -2187,6 +2276,11 @@ func (h *Handle) merge(data *MySQLPrivilege, userList map[string]struct{}) {
 // Get the MySQLPrivilege for read.
 func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
+}
+
+// FullData reports whether all privilege rows are loaded in memory.
+func (h *Handle) FullData() bool {
+	return h.fullData.Load()
 }
 
 // UpdateAll loads all the users' privilege info from kv storage.

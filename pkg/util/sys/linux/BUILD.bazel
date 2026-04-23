@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "linux",
@@ -59,20 +59,4 @@ go_library(
         ],
         "//conditions:default": [],
     }),
-)
-
-go_test(
-    name = "linux_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "sys_test.go",
-    ],
-    flaky = True,
-    deps = [
-        ":linux",
-        "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
-    ],
 )

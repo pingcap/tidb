@@ -1,0 +1,35 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "ast.go",
+        "main.go",
+        "parser.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/parser/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/parser",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testsetup",
+        "//pkg/types/parser_driver",
+        "//pkg/util/parser",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "ast_test.go",
+        "parser_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+)

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -85,7 +84,6 @@ type BaseHandler struct {
 	targetTable table.Table
 	kvGroup     string
 	encoder     *importer.TableKVEncoder
-	collector   execute.Collector
 	logger      *zap.Logger
 	EncodedRowHandler
 
@@ -98,17 +96,12 @@ func NewBaseHandler(
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
 	encodedRowHdl EncodedRowHandler,
-	collector execute.Collector,
 	logger *zap.Logger,
 ) *BaseHandler {
-	if collector == nil {
-		collector = &execute.NoopCollector{}
-	}
 	return &BaseHandler{
 		targetTable:       targetTable,
 		kvGroup:           kvGroup,
 		encoder:           encoder,
-		collector:         collector,
 		logger:            logger,
 		EncodedRowHandler: encodedRowHdl,
 	}
@@ -125,8 +118,6 @@ func (h *BaseHandler) Run(ctx context.Context, pairCh chan *external.KVPair) err
 		if err := h.Handle(ctx, kvPair); err != nil {
 			return errors.Trace(err)
 		}
-		// Each item in pairCh is one conflict KV pair.
-		h.collector.Processed(1, 0)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "charset",
@@ -31,21 +31,5 @@ go_library(
         "@org_golang_x_text//encoding/unicode",
         "@org_golang_x_text//transform",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "charset_test",
-    timeout = "short",
-    srcs = [
-        "charset_test.go",
-        "encoding_test.go",
-    ],
-    embed = [":charset"],
-    flaky = True,
-    shard_count = 9,
-    deps = [
-        "@com_github_stretchr_testify//require",
-        "@org_golang_x_text//transform",
     ],
 )

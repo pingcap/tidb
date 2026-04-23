@@ -57,12 +57,13 @@ func (e *MetricRetriever) retrieve(ctx context.Context, sctx sessionctx.Context)
 	}
 	e.retrieved = true
 
-	failpoint.InjectContext(ctx, "mockMetricsTableData", func() {
-		m, ok := ctx.Value("__mockMetricsTableData").(map[string][][]types.Datum)
-		if ok && m[e.table.Name.L] != nil {
-			failpoint.Return(m[e.table.Name.L], nil)
-		}
-	})
+	// Check for mock metrics data injected from test context.
+	// In original go test, this was guarded by failpoint.InjectContext with a WithHook ctx.
+	// In mega binary, the ctx hook may be lost during execution chain, so we check ctx value directly.
+	m, ok := ctx.Value(ContextKeyType("__mockMetricsTableData")).(map[string][][]types.Datum)
+	if ok && m[e.table.Name.L] != nil {
+		return m[e.table.Name.L], nil
+	}
 
 	tblDef, err := infoschema.GetMetricTableDef(e.table.Name.L)
 	if err != nil {

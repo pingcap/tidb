@@ -1,4 +1,33 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "unstabletest",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "memory_intest.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/test/unstabletest",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/meta/autoid",
+        "//pkg/session/sessmgr",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/util",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/memory",
+        "//pkg/util/skip",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "unstabletest_test",
@@ -8,7 +37,7 @@ go_test(
         "memory_test.go",
     ],
     flaky = True,
-    shard_count = 2,
+    shard_count = 4,
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",

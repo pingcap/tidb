@@ -216,7 +216,7 @@ func (s *importStepExecutor) estimateAndSetConcurrency(ctx context.Context, chun
 
 // Accepted implements Collector.Accepted interface.
 func (s *importStepExecutor) Accepted(bytes int64) {
-	s.summary.Processed.Add(bytes)
+	s.summary.Bytes.Add(bytes)
 }
 
 // Processed implements Collector.Processed interface.
@@ -645,7 +645,7 @@ type ingestCollector struct {
 }
 
 func (c *ingestCollector) Processed(bytes, rowCnt int64) {
-	c.summary.Processed.Add(bytes)
+	c.summary.Bytes.Add(bytes)
 	if c.kvGroup == external.DataKVGroup {
 		c.summary.RowCnt.Add(rowCnt)
 	}

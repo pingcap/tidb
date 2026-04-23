@@ -1,0 +1,49 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "main.go",
+        "plan_stats.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/casetest/planstats/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/domain",
+        "//pkg/executor",
+        "//pkg/meta/model",
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/planner",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/planner/core/resolve",
+        "//pkg/planner/core/rule",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics",
+        "//pkg/statistics/asyncload",
+        "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/statistics/handle/types",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/dbutil",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["plan_stats_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 8,
+)

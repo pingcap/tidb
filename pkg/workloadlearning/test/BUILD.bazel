@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "cache.go",
+        "handle.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/workloadlearning/test",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/parser/ast",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/workloadlearning",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = [
+        "cache_test.go",
+        "handle_test.go",
+    ],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 4,
+)

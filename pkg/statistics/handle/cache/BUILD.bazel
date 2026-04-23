@@ -1,12 +1,13 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "cache",
     srcs = [
+        "export_helper.go",
         "stats_table_row_cache.go",
         "statscache.go",
         "statscacheinner.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/cache",
     visibility = ["//visibility:public"],
     deps = [
@@ -33,28 +34,5 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "cache_test",
-    timeout = "short",
-    srcs = [
-        "bench_test.go",
-        "statscache_test.go",
-    ],
-    embed = [":cache"],
-    flaky = True,
-    shard_count = 3,
-    deps = [
-        "//pkg/config",
-        "//pkg/statistics",
-        "//pkg/statistics/handle/cache/internal",
-        "//pkg/statistics/handle/cache/internal/testutil",
-        "//pkg/statistics/handle/metrics",
-        "//pkg/statistics/handle/types",
-        "//pkg/util/benchdaily",
-        "@com_github_prometheus_client_golang//prometheus/testutil",
-        "@com_github_stretchr_testify//require",
     ],
 )

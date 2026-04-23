@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "extsort",
@@ -17,26 +17,6 @@ go_library(
         "@com_github_cockroachdb_pebble//vfs",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
-        "@org_golang_x_sync//errgroup",
-        "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "extsort_test",
-    timeout = "short",
-    srcs = [
-        "disk_sorter_test.go",
-        "external_sorter_test.go",
-    ],
-    embed = [":extsort"],
-    flaky = True,
-    deps = [
-        "@com_github_cockroachdb_pebble//:pebble",
-        "@com_github_cockroachdb_pebble//sstable",
-        "@com_github_cockroachdb_pebble//vfs",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
     ],

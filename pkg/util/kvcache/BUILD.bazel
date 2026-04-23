@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "kvcache",
@@ -8,22 +8,5 @@ go_library(
     deps = [
         "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
-    ],
-)
-
-go_test(
-    name = "kvcache_test",
-    timeout = "short",
-    srcs = [
-        "main_test.go",
-        "simple_lru_test.go",
-    ],
-    embed = [":kvcache"],
-    flaky = True,
-    deps = [
-        "//pkg/testkit/testsetup",
-        "//pkg/util/memory",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

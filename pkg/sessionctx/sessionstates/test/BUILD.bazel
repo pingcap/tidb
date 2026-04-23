@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "test",
+    srcs = [
+        "register_gen.go",
+        "session_states.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/sessionctx/sessionstates/test",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/errno",
+        "//pkg/expression",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/server",
+        "//pkg/sessionctx/sessionstates",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/util/sem/compat",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "test_test",
+    timeout = "short",
+    srcs = ["session_states_test.go"],
+    embed = [":test"],
+    flaky = True,
+    shard_count = 12,
+)

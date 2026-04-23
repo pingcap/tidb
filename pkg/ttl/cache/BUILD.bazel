@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "cache",
@@ -33,51 +33,6 @@ go_library(
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//tikv",
-        "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "cache_test",
-    timeout = "short",
-    srcs = [
-        "base_test.go",
-        "infoschema_test.go",
-        "main_test.go",
-        "split_test.go",
-        "table_test.go",
-        "task_test.go",
-        "ttlstatus_test.go",
-    ],
-    embed = [":cache"],
-    flaky = True,
-    shard_count = 20,
-    deps = [
-        "//pkg/infoschema",
-        "//pkg/kv",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
-        "//pkg/parser/mysql",
-        "//pkg/server",
-        "//pkg/session",
-        "//pkg/store/helper",
-        "//pkg/tablecodec",
-        "//pkg/testkit",
-        "//pkg/testkit/testflag",
-        "//pkg/testkit/testsetup",
-        "//pkg/ttl/session",
-        "//pkg/types",
-        "//pkg/util/codec",
-        "//pkg/util/logutil",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-        "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_pd_client//:client",
-        "@com_github_tikv_pd_client//clients/router",
-        "@com_github_tikv_pd_client//opt",
-        "@com_github_tikv_pd_client//pkg/caller",
-        "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
     ],
 )

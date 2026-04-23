@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "storage",
@@ -9,7 +9,7 @@ go_library(
         "subtask_state.go",
         "task_state.go",
         "task_table.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/storage",
     visibility = ["//visibility:public"],
     deps = [
@@ -36,38 +36,5 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
-    ],
-)
-
-go_test(
-    name = "storage_test",
-    timeout = "moderate",
-    srcs = [
-        "table_test.go",
-        "task_state_test.go",
-        "task_table_test.go",
-    ],
-    embed = [":storage"],
-    flaky = True,
-    shard_count = 29,
-    deps = [
-        "//pkg/config",
-        "//pkg/dxf/framework/proto",
-        "//pkg/dxf/framework/schstatus",
-        "//pkg/dxf/framework/taskexecutor/execute",
-        "//pkg/dxf/framework/testutil",
-        "//pkg/kv",
-        "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
-        "//pkg/testkit",
-        "//pkg/testkit/testfailpoint",
-        "//pkg/testkit/testsetup",
-        "//pkg/util",
-        "//pkg/util/sqlexec",
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//util",
-        "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_goleak//:goleak",
     ],
 )

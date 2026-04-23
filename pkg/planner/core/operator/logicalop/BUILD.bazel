@@ -36,7 +36,7 @@ go_library(
         "logical_union_scan.go",
         "logical_window.go",
         "shallow_ref_generated.go",
-    ],
+    ] + glob(["binding__failpoint_binding__.go"]),
     importpath = "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop",
     visibility = ["//visibility:public"],
     deps = [

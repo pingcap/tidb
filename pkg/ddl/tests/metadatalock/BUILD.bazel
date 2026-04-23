@@ -1,4 +1,34 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "metadatalock",
+    srcs = [
+        "main_intest.go",
+        "main_mega_init.go",
+        "mdl_intest.go",
+        "register_gen.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/tests/metadatalock",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/ddl",
+        "//pkg/ddl/ingest/testutil",
+        "//pkg/errno",
+        "//pkg/meta/model",
+        "//pkg/server",
+        "//pkg/testkit",
+        "//pkg/testkit/mega/register",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
 
 go_test(
     name = "metadatalock_test",
@@ -8,7 +38,7 @@ go_test(
         "mdl_test.go",
     ],
     flaky = True,
-    shard_count = 38,
+    shard_count = 50,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
