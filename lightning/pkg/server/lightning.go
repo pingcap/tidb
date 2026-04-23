@@ -48,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/importer"
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	_ "github.com/pingcap/tidb/pkg/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
@@ -445,7 +445,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	l.cancel = cancel
 	l.curTask = taskCfg
 	l.cancelLock.Unlock()
-	web.BroadcastStartTask()
+	progress.BroadcastStartTask()
 
 	defer func() {
 		cancel()
@@ -453,7 +453,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		l.cancel = nil
 		l.importer = nil
 		l.cancelLock.Unlock()
-		web.BroadcastEndTask(err)
+		progress.BroadcastEndTask(err)
 	}()
 
 	failpoint.Inject("SkipRunTask", func() {
@@ -507,7 +507,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		}
 
 		dbMetas = mdl.GetDatabases()
-		web.BroadcastInitProgress(dbMetas)
+		progress.BroadcastInitProgress(dbMetas)
 	}
 
 	db, keyspaceName, err := initDBAndKeyspace(ctx, taskCfg, o)
@@ -901,7 +901,7 @@ func writeBytesCompressed(w http.ResponseWriter, req *http.Request, b []byte) {
 
 func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	res, err := web.MarshalTaskProgress()
+	res, err := progress.MarshalTaskProgress()
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {
@@ -913,7 +913,7 @@ func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 func handleProgressTable(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	tableName := req.URL.Query().Get("t")
-	res, err := web.MarshalTableCheckpoints(tableName)
+	res, err := progress.MarshalTableCheckpoints(tableName)
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {
