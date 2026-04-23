@@ -116,7 +116,7 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 
   * Suggestions and nit picks can be non-blocking, less important forms of feedback. It's up to the author to incorporate these forms of feedback, and it should not matter to the reviewer if they are addressed or not.
 
-    * A suggestion might be, for example, a different name for a variable or field that the reviewer thinks is clearer or more idiomatic. These can be blocking (for example, if the name is confusing or doesn't make sense), or non-blocking (if the existing name is fine, but could be improved). The reviewer should make their expectations clear.
+    * A suggestion might be, for example, a name for a variable or field that is acceptable, but could be clearer or more idiomatic.
   
     * A nit pick might be, for example, fixing a typo or awkwardly-phrased comment, removing extraneous parentheses around a Boolean condition, or simplifying nested if conditionals with a Boolean `&&` operator.
 
