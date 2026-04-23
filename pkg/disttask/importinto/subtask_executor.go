@@ -153,7 +153,7 @@ func postProcess(ctx context.Context, taskID int64, store kv.Storage, taskMeta *
 		)
 		localChecksum.AddRawGroup(id, cksum.Size, cksum.KVs, cksum.Sum)
 	}
-	encodeStepChecksum := localChecksum.MergedChecksum()
+	encodeStepChecksum := importer.MainChecksumForValidation(&taskMeta.Plan, localChecksum)
 	deletedRowsChecksum := subtaskMeta.DeletedRowsChecksum.ToKVChecksum()
 	finalChecksum := encodeStepChecksum
 	finalChecksum.Sub(deletedRowsChecksum)

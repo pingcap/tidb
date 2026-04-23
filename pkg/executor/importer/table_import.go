@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -807,7 +808,51 @@ func PostProcess(
 		return err
 	}
 
-	return VerifyChecksum(ctx, plan, localChecksum.MergedChecksum(), se, logger)
+	mainChecksum := MainChecksumForValidation(plan, localChecksum)
+	return VerifyChecksum(ctx, plan, mainChecksum, se, logger)
+}
+
+// MainChecksumForValidation returns the checksum that should participate in the
+// main Import Into validation against TiKV / ADMIN CHECKSUM TABLE.
+// TiCI indexes are written outside TiKV, so their KV groups must be excluded.
+func MainChecksumForValidation(plan *Plan, localChecksum *verify.KVGroupChecksum) verify.KVChecksum {
+	if localChecksum == nil {
+		return verify.KVChecksum{}
+	}
+
+	tblInfo := getTableInfoForValidation(plan)
+	if tblInfo == nil {
+		return localChecksum.MergedChecksum()
+	}
+
+	ticiIndexIDs := make(map[int64]struct{}, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		if idx != nil && idx.IsTiCIIndex() {
+			ticiIndexIDs[idx.ID] = struct{}{}
+		}
+	}
+	if len(ticiIndexIDs) == 0 {
+		return localChecksum.MergedChecksum()
+	}
+
+	merged := verify.NewKVChecksum()
+	for id, cksum := range localChecksum.GetInnerChecksums() {
+		if _, skip := ticiIndexIDs[id]; skip {
+			continue
+		}
+		merged.Add(cksum)
+	}
+	return *merged
+}
+
+func getTableInfoForValidation(plan *Plan) *model.TableInfo {
+	if plan == nil {
+		return nil
+	}
+	if plan.TableInfo != nil {
+		return plan.TableInfo
+	}
+	return plan.DesiredTableInfo
 }
 
 type autoIDRequirement struct {
