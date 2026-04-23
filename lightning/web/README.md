@@ -1,6 +1,15 @@
 TiDB Lightning Web Interface
 ============================
 
+> **Warning:**
+>
+> The TiDB Lightning Web Interface is deprecated as of v8.5.6 and will be
+> removed in v8.5.7. The web UI build has been broken since v8.4.0. Use the
+> [`tidb-lightning` CLI](https://docs.pingcap.com/tidb/stable/tidb-lightning-overview/)
+> or the [`IMPORT INTO`](https://docs.pingcap.com/tidb/stable/sql-statement-import-into/)
+> statement instead. If this affects your workflow, please comment on
+> [#67697](https://github.com/pingcap/tidb/issues/67697).
+
 TiDB Lightning provides a web interface for local monitoring task control. The
 app is written using [Material-UI] based on [React].
 

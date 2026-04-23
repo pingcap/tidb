@@ -1443,6 +1443,11 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) exec.Executor {
 			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		}
 	}
+	// EXPLAIN FOR CONNECTION can render directly from the stored brief binary plan without
+	// rebuilding the target executor, which may no longer have live parameter values.
+	if !v.Analyze && v.BriefBinaryPlan != "" {
+		return explainExec
+	}
 	// Needs to build the target plan, even if not executing it
 	// to get partition pruning.
 	explainExec.analyzeExec = b.build(v.TargetPlan)

@@ -1088,7 +1088,7 @@ func (local *Backend) prepareAndSendJob(
 	// the table when table is created.
 	needSplit := len(regionSplitKeys) > 2 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeyCnt
 	// split region by given ranges
-	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
+	failpoint.Inject("forceSplitRegion", func(_ failpoint.Value) {
 		needSplit = true
 	})
 	if needSplit {

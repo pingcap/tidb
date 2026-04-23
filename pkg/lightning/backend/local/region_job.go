@@ -1036,7 +1036,9 @@ func (d *dispatcher) run() error {
 			}
 			// max retry backoff time: 2+4+8+16+30*26=810s
 			sleepSecond := min(math.Pow(2, float64(job.retryCount)), float64(maxRetryBackoffSecond))
-			job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
+			backoff := time.Second * time.Duration(sleepSecond)
+			failpoint.InjectCall("adjustRegionJobRetryBackoff", &backoff)
+			job.waitUntil = time.Now().Add(backoff)
 			tidblogutil.Logger(d.workerCtx).Info("put job back to jobCh to retry later",
 				logutil.Key("startKey", job.keyRange.Start),
 				logutil.Key("endKey", job.keyRange.End),

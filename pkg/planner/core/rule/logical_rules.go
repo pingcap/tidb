@@ -42,6 +42,7 @@ const (
 	FlagSyncWaitStatsLoadPoint
 	FlagJoinReOrder
 	FlagOuterJoinToSemiJoin
+	FlagCorrelate
 	FlagPruneColumnsAgain
 	FlagPushDownSequence
 	FlagEliminateUnionAllDualItem
