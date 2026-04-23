@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "windows",
+    srcs = [
+        "builder.go",
+        "pipelined_window.go",
+        "window.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/windows",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/executor/aggfuncs",
+        "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/vecgroupchecker",
+        "//pkg/expression",
+        "//pkg/expression/aggregation",
+        "//pkg/parser/ast",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/sessionctx",
+        "//pkg/util/chunk",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "windows_test",
+    timeout = "short",
+    srcs = [
+        "window_executor_test.go",
+        "window_sql_test.go",
+    ],
+    flaky = True,
+    shard_count = 7,
+    deps = [
+        ":windows",
+        "//pkg/parser/mysql",
+        "//pkg/testkit",
+    ],
+)

@@ -53,6 +53,7 @@ import (
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
+	windowexec "github.com/pingcap/tidb/pkg/executor/windows"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -64,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -5553,123 +5553,12 @@ func (b *executorBuilder) buildWindow(v *physicalop.PhysicalWindow) exec.Executo
 	if b.err != nil {
 		return nil
 	}
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
-	groupByItems := make([]expression.Expression, 0, len(v.PartitionBy))
-	for _, item := range v.PartitionBy {
-		groupByItems = append(groupByItems, item.Col)
+	exec, err := windowexec.Build(b.ctx, v, childExec, false)
+	if err != nil {
+		b.err = err
+		return nil
 	}
-	orderByCols := make([]*expression.Column, 0, len(v.OrderBy))
-	for _, item := range v.OrderBy {
-		orderByCols = append(orderByCols, item.Col)
-	}
-	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
-	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
-	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
-	exprCtx := b.ctx.GetExprCtx()
-	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(exprCtx, desc, false)
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		agg := aggfuncs.BuildWindowFunctions(exprCtx, aggDesc, resultColIdx, orderByCols)
-		windowFuncs = append(windowFuncs, agg)
-		partialResult, _ := agg.AllocPartialResult()
-		partialResults = append(partialResults, partialResult)
-		resultColIdx++
-	}
-
-	var err error
-	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
-		exec := &PipelinedWindowExec{
-			BaseExecutor:   base,
-			groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx().GetEvalCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
-			numWindowFuncs: len(v.WindowFuncDescs),
-			windowFuncs:    windowFuncs,
-			partialResults: partialResults,
-		}
-		exec.slidingWindowFuncs = make([]aggfuncs.SlidingWindowAggFunc, len(exec.windowFuncs))
-		for i, windowFunc := range exec.windowFuncs {
-			if slidingWindowAggFunc, ok := windowFunc.(aggfuncs.SlidingWindowAggFunc); ok {
-				exec.slidingWindowFuncs[i] = slidingWindowAggFunc
-			}
-		}
-		if v.Frame == nil {
-			exec.start = &logicalop.FrameBound{
-				Type:      ast.Preceding,
-				UnBounded: true,
-			}
-			exec.end = &logicalop.FrameBound{
-				Type:      ast.Following,
-				UnBounded: true,
-			}
-		} else {
-			exec.start = v.Frame.Start
-			exec.end = v.Frame.End
-			if v.Frame.Type == ast.Ranges {
-				cmpResult := int64(-1)
-				if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
-					cmpResult = 1
-				}
-				exec.orderByCols = orderByCols
-				exec.expectedCmpResult = cmpResult
-				exec.isRangeFrame = true
-				err = exec.start.UpdateCompareCols(b.ctx, exec.orderByCols)
-				if err != nil {
-					return nil
-				}
-				err = exec.end.UpdateCompareCols(b.ctx, exec.orderByCols)
-				if err != nil {
-					return nil
-				}
-			}
-		}
-		return exec
-	}
-	var processor windowProcessor
-	if v.Frame == nil {
-		processor = &aggWindowProcessor{
-			windowFuncs:    windowFuncs,
-			partialResults: partialResults,
-		}
-	} else if v.Frame.Type == ast.Rows {
-		processor = &rowFrameWindowProcessor{
-			windowFuncs:    windowFuncs,
-			partialResults: partialResults,
-			start:          v.Frame.Start,
-			end:            v.Frame.End,
-		}
-	} else {
-		cmpResult := int64(-1)
-		if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
-			cmpResult = 1
-		}
-		tmpProcessor := &rangeFrameWindowProcessor{
-			windowFuncs:       windowFuncs,
-			partialResults:    partialResults,
-			start:             v.Frame.Start,
-			end:               v.Frame.End,
-			orderByCols:       orderByCols,
-			expectedCmpResult: cmpResult,
-		}
-
-		err = tmpProcessor.start.UpdateCompareCols(b.ctx, orderByCols)
-		if err != nil {
-			return nil
-		}
-		err = tmpProcessor.end.UpdateCompareCols(b.ctx, orderByCols)
-		if err != nil {
-			return nil
-		}
-
-		processor = tmpProcessor
-	}
-	return &WindowExec{
-		BaseExecutor:   base,
-		processor:      processor,
-		groupChecker:   vecgroupchecker.NewVecGroupChecker(b.ctx.GetExprCtx().GetEvalCtx(), b.ctx.GetSessionVars().EnableVectorizedExpression, groupByItems),
-		numWindowFuncs: len(v.WindowFuncDescs),
-	}
+	return exec
 }
 
 func (b *executorBuilder) buildShuffle(v *physicalop.PhysicalShuffle) *ShuffleExec {
