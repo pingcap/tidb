@@ -1899,7 +1899,18 @@ func MergePartTopNAndHistToGlobal(
 	// hist upper (topN-only group), >0 means hist-only, ==0 means both
 	// at the same key (merged into one group).
 	ri, ti2 := 0, 0
+	// HandleSignal does atomic loads and a time.Now() on every call; at
+	// 4 M iterations for 8k-partition tables the overhead adds up.
+	// Check once per 1024 iterations — worst-case cancellation latency
+	// on the order of a millisecond.
+	var p2Iter uint32
 	for ri < len(sortedRefs) || ti2 < len(allTopN) {
+		if p2Iter&1023 == 0 {
+			if err := killer.HandleSignal(); err != nil {
+				return nil, nil, err
+			}
+		}
+		p2Iter++
 		var mergeOrd int
 		var topNDatum types.Datum
 		if ri >= len(sortedRefs) {
