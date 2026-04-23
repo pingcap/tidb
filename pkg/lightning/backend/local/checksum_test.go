@@ -196,9 +196,7 @@ func TestDoChecksumWithTikv(t *testing.T) {
 			checksumTS = req.StartTs
 		}
 		checksumExec := &TiKVChecksumManager{manager: newGCTTLManager(pdClient, lightningServicePrefix), client: kvClient}
-		physicalTS, logicalTS, err := pdClient.GetTS(ctx)
-		require.NoError(t, err)
-		_, err = checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
+		_, err := checksumExec.Checksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
 			checksumExec.Close()
@@ -206,12 +204,10 @@ func TestDoChecksumWithTikv(t *testing.T) {
 		}
 		require.NoError(t, err)
 
-		// after checksum, safepint should be small than start ts
+		// After checksum, the service safe point should match the checksum request TS.
 		ts := pdClient.currentSafePoint()
-		// 1ms for the schedule deviation
-		startTS := oracle.ComposeTS(physicalTS+1, logicalTS)
-		require.True(t, ts <= startTS+1)
-		require.GreaterOrEqual(t, checksumTS, ts)
+		require.NotZero(t, checksumTS)
+		require.Equal(t, checksumTS, ts)
 		require.True(t, checksumExec.manager.started.Load())
 		require.Zero(t, checksumExec.manager.currentTS)
 		require.Equal(t, 0, len(checksumExec.manager.tableGCSafeTS))
