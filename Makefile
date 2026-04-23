@@ -237,7 +237,7 @@ bazel_coverage_test: tools/bin/failpoint-ctl ## Run the CI mega-test flow; targe
 
 .PHONY: bazel-mega-binary
 bazel-mega-binary: ## Build the mega test binary. Requires failpoint-ctl enable + gazelle first (see ut-mega).
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) --collect_code_coverage $(BAZEL_INSTRUMENTATION_FILTER) //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS)
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) --collect_code_coverage //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS)
 
 .PHONY: ut-mega-cleanup
 ut-mega-cleanup:
