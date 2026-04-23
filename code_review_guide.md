@@ -127,7 +127,7 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 
 * Respond to all feedback raised by the reviewer, and address all blocking issues.
 
-* Suggestions should generally be incorporated unless you can clearly articulate a good reason not to, and the reviewer agrees.
+  * In general, prefer to incorporate non-blocking suggestions from the reviewer. If you disagree and choose not to, clearly articulate your reasoning for why.
 
 * If the reviewer points out an issue in one part of the PR, proactively look for and address similar issues in the rest of the PR before re-requesting a review. The reviewer should not have to raise the same kind of issue repeatedly.
 
