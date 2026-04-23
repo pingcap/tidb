@@ -352,63 +352,6 @@ func SubTestMergeSampleCollector(s *testSampleSuite) func(*testing.T) {
 	}
 }
 
-// BenchmarkCopySampleItems benchmarks the performance of CopySampleItems.
-// The value-type SampleItem.Value avoids per-element heap allocation and nil checks.
-// go test -benchmem -run=^$ -bench ^BenchmarkCopySampleItems$ github.com/pingcap/tidb/pkg/statistics
-func BenchmarkCopySampleItems(b *testing.B) {
-	const n = 10000
-	items := make([]*SampleItem, n)
-	for i := range items {
-		items[i] = &SampleItem{
-			Value:   types.NewIntDatum(int64(i)),
-			Ordinal: i,
-		}
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = CopySampleItems(items)
-	}
-}
-
-// BenchmarkSortSampleItems benchmarks the performance of sorting SampleItems.
-// go test -benchmem -run=^$ -bench ^BenchmarkSortSampleItems$ github.com/pingcap/tidb/pkg/statistics
-func BenchmarkSortSampleItems(b *testing.B) {
-	const n = 10000
-	sc := stmtctx.NewStmtCtx()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		items := make([]*SampleItem, n)
-		for j := range items {
-			items[j] = &SampleItem{
-				Value:   types.NewIntDatum(int64(n - j)),
-				Ordinal: j,
-			}
-		}
-		b.StartTimer()
-		_ = sortSampleItems(sc, items)
-	}
-}
-
-// BenchmarkSampleCollect benchmarks the reservoir sampling collect path.
-// The value-type SampleItem.Value eliminates separate Datum heap allocations per sample.
-// go test -benchmem -run=^$ -bench ^BenchmarkSampleCollect$ github.com/pingcap/tidb/pkg/statistics
-func BenchmarkSampleCollect(b *testing.B) {
-	sc := stmtctx.NewStmtCtx()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		c := &SampleCollector{
-			MaxSampleSize: 10000,
-			Samples:       make([]*SampleItem, 0, 10000),
-			FMSketch:      NewFMSketch(1000),
-		}
-		for j := 0; j < 20000; j++ {
-			d := types.NewIntDatum(int64(j))
-			_ = c.collect(sc, d)
-		}
-	}
-}
-
 func SubTestCollectorProtoConversion(s *testSampleSuite) func(*testing.T) {
 	return func(t *testing.T) {
 		builder := SampleBuilder{
