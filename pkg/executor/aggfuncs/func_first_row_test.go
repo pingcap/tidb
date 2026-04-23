@@ -33,16 +33,16 @@ func TestMergePartialResult4FirstRow(t *testing.T) {
 	setE, _ := types.ParseSetName(elems, "e", mysql.DefaultCollationName)
 
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 5, 0, 2, 0),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeFloat, 5, 0.0, 2.0, 0.0),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDouble, 5, 0.0, 2.0, 0.0),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeNewDecimal, 5, types.NewDecFromInt(0), types.NewDecFromInt(2), types.NewDecFromInt(0)),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeString, 5, "0", "2", "0"),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDate, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeJSON, 5, types.CreateBinaryJSON(int64(0)), types.CreateBinaryJSON(int64(2)), types.CreateBinaryJSON(int64(0))),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeEnum, 5, enumE, enumC, enumE),
-		buildAggTester(ast.AggFuncFirstRow, mysql.TypeSet, 5, setE, setED, setE),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 0, 5, 0, 2, 0),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeFloat, 0, 5, 0.0, 2.0, 0.0),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDouble, 0, 5, 0.0, 2.0, 0.0),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeNewDecimal, 0, 5, types.NewDecFromInt(0), types.NewDecFromInt(2), types.NewDecFromInt(0)),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeString, 0, 5, "0", "2", "0"),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDate, 0, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeDuration, 0, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeJSON, 0, 5, types.CreateBinaryJSON(int64(0)), types.CreateBinaryJSON(int64(2)), types.CreateBinaryJSON(int64(0))),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeEnum, 0, 5, enumE, enumC, enumE),
+		buildAggTester(ast.AggFuncFirstRow, mysql.TypeSet, 0, 5, setE, setED, setE),
 	}
 	for _, test := range tests {
 		testMergePartialResult(t, test)
@@ -51,25 +51,25 @@ func TestMergePartialResult4FirstRow(t *testing.T) {
 
 func TestMemFirstRow(t *testing.T) {
 	tests := []aggMemTest{
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowIntSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeFloat, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeFloat, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowFloat32Size, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDouble, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDouble, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowFloat64Size, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeNewDecimal, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeNewDecimal, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowDecimalSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeString, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeString, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowStringSize, firstRowUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDate, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDate, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowTimeSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDuration, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDuration, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowDurationSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeJSON, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeJSON, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowJSONSize, firstRowUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeEnum, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeEnum, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowEnumSize, firstRowUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeSet, 5,
+		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeSet, 0, 5,
 			aggfuncs.DefPartialResult4FirstRowSetSize, firstRowUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {

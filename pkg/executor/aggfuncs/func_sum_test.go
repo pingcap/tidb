@@ -27,8 +27,8 @@ import (
 
 func TestMergePartialResult4Sum(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, types.NewDecFromInt(10), types.NewDecFromInt(9), types.NewDecFromInt(19)),
-		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, 10.0, 9.0, 19.0),
+		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 0, 5, types.NewDecFromInt(10), types.NewDecFromInt(9), types.NewDecFromInt(19)),
+		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 0, 5, 10.0, 9.0, 19.0),
 	}
 
 	for i, test := range tests {
@@ -40,8 +40,8 @@ func TestMergePartialResult4Sum(t *testing.T) {
 
 func TestSum(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(10)),
-		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, nil, 10.0),
+		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 0, 5, nil, types.NewDecFromInt(10)),
+		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 0, 5, nil, 10.0),
 	}
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
@@ -52,17 +52,15 @@ func TestSum(t *testing.T) {
 
 func TestMemSum(t *testing.T) {
 	tests := []aggMemTest{
-		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 5,
+		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 0, 5,
 			aggfuncs.DefPartialResult4SumFloat64Size, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
+		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 0, 5,
 			aggfuncs.DefPartialResult4SumDecimalSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 5,
+		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 0, 5,
 			aggfuncs.DefPartialResult4SumDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
+		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4SumDistinctDecimalSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
 	}
-
-	tests[3].aggTest.valType = types.NewFieldType(mysql.TypeNewDecimal)
 
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("%s_%d", test.aggTest.funcName, i), func(t *testing.T) {

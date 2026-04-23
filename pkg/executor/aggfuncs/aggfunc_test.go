@@ -516,8 +516,8 @@ type aggMemTest struct {
 	isDistinct         bool
 }
 
-func buildAggMemTester(funcName string, tp byte, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool) aggMemTest {
-	aggTest := buildAggTester(funcName, tp, numRows)
+func buildAggMemTester(funcName string, keyTp byte, valTp byte, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool) aggMemTest {
+	aggTest := buildAggTester(funcName, keyTp, valTp, numRows)
 	pt := aggMemTest{
 		aggTest:            aggTest,
 		allocMemDelta:      allocMemDelta,
@@ -649,16 +649,21 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[2])
 }
 
-func buildAggTester(funcName string, tp byte, numRows int, results ...any) aggTest {
-	return buildAggTesterWithFieldType(funcName, types.NewFieldType(tp), numRows, results...)
+func buildAggTester(funcName string, keyTp byte, valTp byte, numRows int, results ...any) aggTest {
+	var valFt *types.FieldType
+	if valTp != 0 {
+		valFt = types.NewFieldType(valTp)
+	}
+	return buildAggTesterWithFieldType(funcName, types.NewFieldType(keyTp), valFt, numRows, results...)
 }
 
-func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows int, results ...any) aggTest {
+func buildAggTesterWithFieldType(funcName string, keyTt *types.FieldType, valFt *types.FieldType, numRows int, results ...any) aggTest {
 	pt := aggTest{
-		keyType:  ft,
+		keyType:  keyTt,
+		valType:  valFt,
 		numRows:  numRows,
 		funcName: funcName,
-		dataGen:  getDataGenFunc(ft),
+		dataGen:  getDataGenFunc(keyTt),
 	}
 	for _, result := range results {
 		pt.results = append(pt.results, types.NewDatum(result))

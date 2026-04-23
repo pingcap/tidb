@@ -54,7 +54,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 		entries3 = append(entries3, entries1...)
 		entries3 = append(entries3, entries2...)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries3)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, 0, numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries3)))
 	}
 
 	for _, test := range tests {
@@ -81,7 +81,7 @@ func TestJsonArrayagg(t *testing.T) {
 		// to adapt the `genSrcChk` Chunk format
 		entries = append(entries, nil)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, nil, types.CreateBinaryJSON(entries)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, 0, numRows, nil, types.CreateBinaryJSON(entries)))
 	}
 
 	for _, test := range tests {
@@ -134,7 +134,7 @@ func TestMemJsonArrayagg(t *testing.T) {
 	tests := make([]aggMemTest, 0, len(typeList))
 	numRows := 5
 	for _, argType := range typeList {
-		tests = append(tests, buildAggMemTester(ast.AggFuncJsonArrayagg, argType, numRows, aggfuncs.DefPartialResult4JsonArrayagg+aggfuncs.DefSliceSize, jsonArrayaggMemDeltaGens, false))
+		tests = append(tests, buildAggMemTester(ast.AggFuncJsonArrayagg, argType, 0, numRows, aggfuncs.DefPartialResult4JsonArrayagg+aggfuncs.DefSliceSize, jsonArrayaggMemDeltaGens, false))
 	}
 
 	for _, test := range tests {
