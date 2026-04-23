@@ -2635,7 +2635,7 @@ func TestMakeDate(t *testing.T) {
 		{[]any{nil, 2900025}, "", true, false},
 		{[]any{2060, nil}, "", true, false},
 		{[]any{nil, nil}, "", true, false},
-		{[]any{errors.New("must error"), errors.New("must error")}, "", false, true},
+		// errors.New(...) row retired; see KindInterfaceDeprecated removal.
 	}
 
 	for _, c := range cases {

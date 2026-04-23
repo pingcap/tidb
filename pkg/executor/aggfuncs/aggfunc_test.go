@@ -369,9 +369,22 @@ func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows i
 		dataGen:  getDataGenFunc(ft),
 	}
 	for _, result := range results {
-		pt.results = append(pt.results, types.NewDatum(result))
+		pt.results = append(pt.results, resultToDatum(result))
 	}
 	return pt
+}
+
+// resultToDatum accepts either an already-built types.Datum (common case for
+// aggregate tests whose expected value doesn't map cleanly to a Go primitive,
+// e.g. Duration / Time / Decimal) or a primitive Go value that NewDatum can
+// wrap. Prior to the KindInterfaceDeprecated removal, passing a types.Datum
+// here round-tripped through the escape hatch; NewDatum(someDatum) now panics
+// instead, so detect the passthrough explicitly.
+func resultToDatum(result any) types.Datum {
+	if d, ok := result.(types.Datum); ok {
+		return d
+	}
+	return types.NewDatum(result)
 }
 
 func testMultiArgsMergePartialResult(t *testing.T, ctx *mock.Context, p multiArgsAggTest) {
@@ -470,7 +483,7 @@ func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldTyp
 		dataGens:  dataGens,
 	}
 	for _, result := range results {
-		mt.results = append(mt.results, types.NewDatum(result))
+		mt.results = append(mt.results, resultToDatum(result))
 	}
 	return mt
 }

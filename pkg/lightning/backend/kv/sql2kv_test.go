@@ -58,13 +58,11 @@ func TestMarshal(t *testing.T) {
 		map[string]any{"kind": "max", "val": "+inf"},
 	})
 
-	invalid := types.Datum{}
-	invalid.SetInterface(1)
-	err = encoder.AddArray("bad-test", lkv.RowArrayMarshaller{minNotNull, invalid})
-	require.Regexp(t, "cannot convert.*", err)
-	require.Equal(t, encoder.Fields["bad-test"], []any{
-		map[string]any{"kind": "min", "val": "-inf"},
-	})
+	// The previous sub-test used types.Datum.SetInterface(1) to construct
+	// a KindInterfaceDeprecated Datum and verify the marshaller surfaces
+	// a ToString failure. With SetInterface removed there is no public
+	// API path that produces such a Datum, so the scenario is unreachable.
+	_ = minNotNull
 }
 
 type mockTable struct {

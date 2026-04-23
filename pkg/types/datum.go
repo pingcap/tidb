@@ -57,12 +57,20 @@ const (
 	KindMysqlBit      byte = 11 // Used for BIT table column values.
 	KindMysqlSet      byte = 12
 	KindMysqlTime     byte = 13
-	KindInterface     byte = 14
-	KindMinNotNull    byte = 15
-	KindMaxValue      byte = 16
-	KindRaw           byte = 17
-	KindMysqlJSON     byte = 18
-	KindVectorFloat32 byte = 19
+	// KindInterfaceDeprecated was once a catch-all kind (value 14) for Go
+	// values whose type was not recognized by SetValue / NewDatum. It is
+	// no longer produced or consumed by any code path; the constant and
+	// its value are retained so the kind-space is stable and the value 14
+	// is not accidentally reused by a future kind.
+	//
+	// Deprecated: this kind is never set and should not be referenced by
+	// new code. Any Datum observed with this kind indicates a bug.
+	KindInterfaceDeprecated byte = 14
+	KindMinNotNull          byte = 15
+	KindMaxValue            byte = 16
+	KindRaw                 byte = 17
+	KindMysqlJSON           byte = 18
+	KindVectorFloat32       byte = 19
 )
 
 // Datum is a data box holds different kind of data.
@@ -321,16 +329,11 @@ func (d *Datum) SetBytesAsString(b []byte, collation string, length uint32) {
 	d.collationID = collationNameToID(collation)
 }
 
-// GetInterface gets interface value.
-func (d *Datum) GetInterface() any {
-	return d.x
-}
-
-// SetInterface sets interface to datum.
-func (d *Datum) SetInterface(x any) {
-	d.k = KindInterface
-	d.x = x
-}
+// GetInterface and SetInterface were removed along with the
+// KindInterfaceDeprecated (14) kind. The x field is now only used
+// internally to carry *MyDecimal and the boxed Time value; callers that
+// previously relied on the escape hatch should use the typed Set/Get
+// methods for the value they actually hold.
 
 // SetNull sets datum to nil.
 func (d *Datum) SetNull() {
@@ -530,8 +533,6 @@ func (d Datum) String() string {
 		t = "KindMysqlSet"
 	case KindMysqlTime:
 		t = "KindMysqlTime"
-	case KindInterface:
-		t = "KindInterface"
 	case KindMinNotNull:
 		t = "KindMinNotNull"
 	case KindMaxValue:
@@ -542,8 +543,10 @@ func (d Datum) String() string {
 		t = "KindMysqlJSON"
 	case KindVectorFloat32:
 		t = "KindVectorFloat32"
+	// No case for KindInterfaceDeprecated (14): unreachable at runtime;
+	// falls through to the default which prints the raw kind value.
 	default:
-		t = "Unknown"
+		t = fmt.Sprintf("Unknown type: %d", int(d.k))
 	}
 	v := d.GetValue()
 	switch v.(type) {
@@ -591,8 +594,14 @@ func (d *Datum) GetValue() any {
 		return d.GetMysqlTime()
 	case KindVectorFloat32:
 		return d.GetVectorFloat32()
+	case KindNull, KindMinNotNull, KindMaxValue, KindRaw:
+		// These kinds carry no inline value; nil matches the prior
+		// behavior where d.x was unset and GetInterface returned nil.
+		return nil
 	default:
-		return d.GetInterface()
+		// Any remaining kind (e.g. KindInterfaceDeprecated, or a stale
+		// byte written to d.k) is a programmer bug.
+		panic(fmt.Sprintf("types.Datum.GetValue: invalid kind %d", d.k))
 	}
 }
 
@@ -679,7 +688,7 @@ func (d *Datum) SetValueWithDefaultCollation(val any) {
 	case VectorFloat32:
 		d.SetVectorFloat32(x)
 	default:
-		d.SetInterface(x)
+		panic(fmt.Sprintf("types.Datum.SetValue: unsupported Go type %T", x))
 	}
 }
 
@@ -729,7 +738,7 @@ func (d *Datum) SetValue(val any, tp *types.FieldType) {
 	case VectorFloat32:
 		d.SetVectorFloat32(x)
 	default:
-		d.SetInterface(x)
+		panic(fmt.Sprintf("types.Datum.SetValue: unsupported Go type %T", x))
 	}
 }
 

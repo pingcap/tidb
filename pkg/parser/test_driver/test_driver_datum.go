@@ -45,11 +45,13 @@ const (
 	KindMysqlBit      byte = 11 // Used for BIT table column values.
 	KindMysqlSet      byte = 12
 	KindMysqlTime     byte = 13
-	KindInterface     byte = 14
-	KindMinNotNull    byte = 15
-	KindMaxValue      byte = 16
-	KindRaw           byte = 17
-	KindMysqlJSON     byte = 18
+	// Deprecated: KindInterfaceDeprecated (14) is retained only to keep
+	// the kind-space stable; it is no longer produced or consumed.
+	KindInterfaceDeprecated byte = 14
+	KindMinNotNull          byte = 15
+	KindMaxValue            byte = 16
+	KindRaw                 byte = 17
+	KindMysqlJSON           byte = 18
 )
 
 // Datum is a data box holds different kind of data.
@@ -138,16 +140,9 @@ func (d *Datum) SetBytesAsString(b []byte) {
 	d.b = b
 }
 
-// GetInterface gets interface value.
-func (d *Datum) GetInterface() any {
-	return d.x
-}
-
-// SetInterface sets interface to datum.
-func (d *Datum) SetInterface(x any) {
-	d.k = KindInterface
-	d.x = x
-}
+// GetInterface and SetInterface were removed along with the
+// KindInterfaceDeprecated (14) kind. See pkg/types/datum.go for the
+// rationale; callers should use the typed Set/Get methods.
 
 // SetNull sets datum to nil.
 func (d *Datum) SetNull() {
@@ -196,8 +191,10 @@ func (d *Datum) GetValue() any {
 		return d.GetMysqlDecimal()
 	case KindBinaryLiteral, KindMysqlBit:
 		return d.GetBinaryLiteral()
+	case KindNull, KindMinNotNull, KindMaxValue, KindRaw:
+		return nil
 	default:
-		return d.GetInterface()
+		panic(fmt.Sprintf("test_driver.Datum.GetValue: invalid kind %d", d.k))
 	}
 }
 
@@ -235,7 +232,7 @@ func (d *Datum) SetValue(val any) {
 	case HexLiteral:
 		d.SetBinaryLiteral(BinaryLiteral(x))
 	default:
-		d.SetInterface(x)
+		panic(fmt.Sprintf("test_driver.Datum.SetValue: unsupported Go type %T", x))
 	}
 }
 
