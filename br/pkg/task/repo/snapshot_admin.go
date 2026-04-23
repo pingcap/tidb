@@ -368,7 +368,10 @@ func confirmRepoSnapshotDelete(
 	if !shouldConfirmRepoSnapshotMutation(console, cfg.SkipPrompt) {
 		return nil
 	}
-	preview := collectRepoSnapshotDeletePreview(ctx, storage, &cfg.Config, cfg.BackupID)
+	preview, err := collectRepoSnapshotDeletePreview(ctx, storage, &cfg.Config, cfg.BackupID)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	console.Printf("About to delete snapshot backup %s (%s).\n", cfg.BackupID, formatRepoSnapshotBackupTime(cfg.BackupID))
 	console.Println("This permanently removes snapshot metadata, data files, and pending markers for this backup.")
 	if preview.HasBasic {
@@ -398,23 +401,27 @@ func collectRepoSnapshotDeletePreview(
 	storage storeapi.Storage,
 	cfg *Config,
 	backupID repo.BackupID,
-) repoSnapshotDeletePreview {
+) (repoSnapshotDeletePreview, error) {
 	preview := repoSnapshotDeletePreview{}
 	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
-	if backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo); err == nil {
-		preview.HasBasic = true
-		preview.Basic = convertRepoSnapshotBasicView(*backupMeta)
+	backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo)
+	if err != nil {
+		return preview, errors.Annotatef(err, "collect delete preview for snapshot %s: read metadata", backupID)
 	}
-	if pendingBackups, err := repo.SnapshotOpsExtension(storage).ListPendingBackups(ctx); err == nil {
-		for _, pending := range pendingBackups {
-			if pending.BackupID == backupID {
-				preview.HasPending = true
-				preview.Pending = pending
-				break
-			}
+	preview.HasBasic = true
+	preview.Basic = convertRepoSnapshotBasicView(*backupMeta)
+	pendingBackups, err := repo.SnapshotOpsExtension(storage).ListPendingBackups(ctx)
+	if err != nil {
+		return preview, errors.Annotatef(err, "collect delete preview for snapshot %s: list pending backups", backupID)
+	}
+	for _, pending := range pendingBackups {
+		if pending.BackupID == backupID {
+			preview.HasPending = true
+			preview.Pending = pending
+			break
 		}
 	}
-	return preview
+	return preview, nil
 }
 
 func confirmRepoSnapshotPendingDiscard(

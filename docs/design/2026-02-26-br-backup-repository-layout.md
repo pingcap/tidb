@@ -1,8 +1,8 @@
 # BR Backup Repository Layout
 
-- Author(s): ChatGPT, [@YuJuncen](https://github.com/YuJuncen)
+- Author(s): GPT-5.{2,3,4}, [@YuJuncen](https://github.com/YuJuncen)
 - Discussion PR: #66576
-- Tracking Issue: TBD
+- Tracking Issue: #67964
 
 ## Table of Contents
 
@@ -62,7 +62,7 @@ Non-goals (initially):
 
 Treat `--storage` as a repository root. Reserve `_meta/` for metadata and `_data/` for large data. This avoids touching user data and legacy single-backup roots.
 
-```
+```text
 s3://bucket/prefix/
   backup.lock
   _meta/repo.json

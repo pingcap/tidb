@@ -23,10 +23,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 const RepoVersion = 1
+
+const repoInitLockPath = RootLockPath + ".init"
 
 var errRepoRootContainsArtifacts = errors.New("repo root contains snapshot artifacts")
 
@@ -57,6 +60,18 @@ func EnsureRepo(
 	storage storeapi.Storage,
 	createdBy string,
 ) (*RepoMeta, error) {
+	lock, err := objstore.LockWithRetry(
+		ctx,
+		objstore.TryLockRemote,
+		storage,
+		repoInitLockPath,
+		"initialize BR snapshot repository metadata",
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer lock.UnlockOnCleanUp(ctx)
+
 	exists, err := storage.FileExists(ctx, RepoMetaPath)
 	if err != nil {
 		return nil, errors.Trace(err)

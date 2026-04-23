@@ -410,10 +410,12 @@ func ApplyTiDBRuntimeConfig(cfg *Config) {
 			cfg.PD = pds
 		}
 	}
-	cfg.TLS = TLSConfig{
-		CA:   tidbCfg.Security.ClusterSSLCA,
-		Cert: tidbCfg.Security.ClusterSSLCert,
-		Key:  tidbCfg.Security.ClusterSSLKey,
+	if tidbCfg.Security.ClusterSSLCA != "" || tidbCfg.Security.ClusterSSLCert != "" || tidbCfg.Security.ClusterSSLKey != "" {
+		cfg.TLS = TLSConfig{
+			CA:   tidbCfg.Security.ClusterSSLCA,
+			Cert: tidbCfg.Security.ClusterSSLCert,
+			Key:  tidbCfg.Security.ClusterSSLKey,
+		}
 	}
 }
 

@@ -99,7 +99,7 @@ func newRepoSnapshotGetCommand() *cobra.Command {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
 			}
-			backupID, err := parseRepoSnapshotBackupID(cmd, true)
+			backupID, err := parseRequiredRepoSnapshotBackupID(cmd)
 			if err != nil {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
@@ -135,7 +135,7 @@ func newRepoSnapshotDeleteCommand() *cobra.Command {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
 			}
-			backupID, err := parseRepoSnapshotBackupID(cmd, true)
+			backupID, err := parseRequiredRepoSnapshotBackupID(cmd)
 			if err != nil {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
@@ -188,7 +188,7 @@ func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
 			}
-			backupID, err := parseRepoSnapshotBackupID(cmd, false)
+			backupID, err := taskrepo.ParseSnapshotBackupIDFlag(cmd.Flags())
 			if err != nil {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
@@ -308,12 +308,12 @@ func parseRepoSnapshotConfig(cmd *cobra.Command) (taskrepo.Config, error) {
 	}, nil
 }
 
-func parseRepoSnapshotBackupID(cmd *cobra.Command, required bool) (repo.BackupID, error) {
+func parseRequiredRepoSnapshotBackupID(cmd *cobra.Command) (repo.BackupID, error) {
 	backupID, err := taskrepo.ParseSnapshotBackupIDFlag(cmd.Flags())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if required && backupID.IsZero() {
+	if backupID.IsZero() {
 		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "--backup-id is required")
 	}
 	return backupID, nil

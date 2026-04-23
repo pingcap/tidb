@@ -29,22 +29,67 @@ import (
 	"go.uber.org/zap"
 )
 
+// PendingMarker describes one repo-v1 marker object under `_meta/pending/`.
+// A pending marker means BR recorded a snapshot backup attempt in the repository
+// and has not yet discarded that attempt. Its presence alone does not prove the
+// backup is resumable or completed; callers must still inspect the snapshot
+// metadata and checkpoint state for that BackupID.
 type PendingMarker struct {
-	BackupID   BackupID
-	ConfigHash string
-	Path       string
-}
-
-type SnapshotDataFile struct {
-	StoreID  uint64
+	// BackupID identifies the snapshot backup attempt encoded in the marker file
+	// name `<backup-id>.json`.
 	BackupID BackupID
-	Path     string
+	// ConfigHash is the config-hash namespace segment between
+	// `_meta/pending/` and the marker filename. BR-generated paths use
+	// PendingConfigHashStorageName, so the stored value is typically upper-case
+	// hex, but parsers only require it to occupy exactly one path segment.
+	ConfigHash string
+	// Path is the storage-relative object key returned by the backing storage,
+	// typically `_meta/pending/<config-hash>/<backup-id>.json`. Callers should
+	// treat it as an opaque repo path, not a local filesystem path.
+	Path string
 }
 
+// SnapshotDataFile describes one repo-v1 snapshot data object under
+// `_data/snapshot/`.
+// The stable directory layout is `_data/snapshot/<store-id>/<backup-id>/<...>`.
+// All files with the same StoreID and BackupID belong to the same per-store
+// subtree for one snapshot attempt; the remaining suffix is repo-managed data
+// path and may contain additional directories.
+type SnapshotDataFile struct {
+	// StoreID is the decimal TiKV store ID taken from the path segment
+	// `_data/snapshot/<store-id>/...`.
+	StoreID uint64
+	// BackupID is the snapshot backup attempt ID taken from the path segment
+	// `_data/snapshot/<store-id>/<backup-id>/...`.
+	BackupID BackupID
+	// Path is the storage-relative object key returned by the backing storage.
+	// Consumers may rely on it residing under the StoreID/BackupID subtree, but
+	// should not assume a particular filename or suffix format beyond at least
+	// one additional path component after `<backup-id>/`.
+	Path string
+}
+
+// TrySeq is an error-first iterator of `(error, T)` pairs built on
+// `iter.Seq2`. Producers yield `(nil, item)` for normal values and may yield a
+// terminal `(err, zero)` pair when scanning fails. Consumers typically range as
+// `for err, item := range seq`, check `err` first, and stop once it becomes
+// non-nil.
 type TrySeq[T any] = iter.Seq2[error, T]
 
 var errStopWalkSeq = errors.New("stop walk seq")
 
+// ListCompletedSnapshotIDs scans repo-v1 snapshot metadata under
+// `_meta/snapshot/` and returns the unique backup IDs that have at least one
+// completed metadata object.
+// A snapshot counts as completed when the repository contains `backupmeta` or
+// `backupmeta.*` under `_meta/snapshot/<backup-id>/`. This only reflects the
+// metadata layout; it does not verify pending markers or data files.
+// The storage must expose repository-root-relative object keys through
+// `WalkDir` and support walking the `_meta/snapshot` subtree, so callers should
+// pass the repository root storage view rather than a prefixed per-backup view.
+// It returns an error if storage walking fails or if a candidate metadata path
+// under that subtree has an invalid backup-id segment. The returned slice is
+// deduplicated and sorted in ascending BackupID order.
 func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]BackupID, error) {
 	ids := make(map[BackupID]struct{})
 	err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: snapshotMetadataRootDir}, func(filePath string, _ int64) error {
