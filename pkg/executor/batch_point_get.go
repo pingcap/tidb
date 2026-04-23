@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -73,6 +74,9 @@ type BatchPointGetExec struct {
 	batchGetter    kv.BatchGetter
 
 	columns []*model.ColumnInfo
+	// MaskingExprs stores the masking expressions for columns that have masking policies.
+	// If not nil, each element corresponds to a column in the schema.
+	MaskingExprs []expression.Expression
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
@@ -246,6 +250,40 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+
+	// Apply masking expressions if any
+	if e.MaskingExprs != nil && req.NumRows() > 0 {
+		// Create a new chunk to hold masked values
+		fieldTypes := make([]*types.FieldType, len(e.MaskingExprs))
+		for i, col := range schema.Columns {
+			fieldTypes[i] = col.RetType
+		}
+		maskedChunk := chunk.NewChunkWithCapacity(fieldTypes, req.NumRows())
+
+		// Process each row and apply masking
+		for rowIdx := range req.NumRows() {
+			row := req.GetRow(rowIdx)
+			for colIdx, expr := range e.MaskingExprs {
+				if expr != nil {
+					// Evaluate the masking expression
+					result, err := expr.Eval(sctx.GetExprCtx().GetEvalCtx(), row)
+					if err != nil {
+						return err
+					}
+					// Append masked value to new chunk
+					maskedChunk.AppendDatum(colIdx, &result)
+				} else {
+					// No masking for this column, copy original value
+					datum := row.GetDatum(colIdx, schema.Columns[colIdx].RetType)
+					maskedChunk.AppendDatum(colIdx, &datum)
+				}
+			}
+		}
+
+		// Replace the original chunk with the masked chunk
+		req.SwapColumns(maskedChunk)
+	}
+
 	return nil
 }
 

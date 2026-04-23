@@ -84,6 +84,10 @@ type PointGetPlan struct {
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
 
+	// MaskingExprs stores masking expressions for columns that have masking policies.
+	// If non-nil, each element corresponds to one output column in schema order.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
+
 	// required by cost model
 	cost         float64
 	PlanCostInit bool
@@ -521,6 +525,10 @@ type BatchPointGetPlan struct {
 	LockWaitTime  int64
 	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost          float64
+
+	// MaskingExprs stores masking expressions for columns that have masking policies.
+	// If non-nil, each element corresponds to one output column in schema order.
+	MaskingExprs []expression.Expression `plan-cache-clone:"shallow"`
 
 	// required by cost model
 	PlanCostInit bool

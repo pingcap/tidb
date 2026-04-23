@@ -16,6 +16,7 @@ package issyncer
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -253,6 +254,12 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+
+	maskingPolicyTable := findSystemTableInfoByName(schemas, "mysql", "tidb_masking_policy")
+	maskingPolicies, err := l.fetchMaskingPolicies(m, maskingPolicyTable)
+	if err != nil {
+		return nil, false, currentSchemaVersion, nil, err
+	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 
 	data := l.infoCache.Data
@@ -267,7 +274,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	}
 	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2).
 		WithCrossKS(l.crossKS)
-	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, maskingPolicies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -476,6 +483,33 @@ func (*Loader) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 		return nil, err
 	}
 	return allResourceGroups, nil
+}
+
+func (l *Loader) fetchMaskingPolicies(m meta.Reader, policyTblInfo *model.TableInfo) ([]*model.MaskingPolicyInfo, error) {
+	bootstrapVersion, err := m.GetBootstrapVersion()
+	if err != nil {
+		return nil, err
+	}
+	// mysql.tidb_masking_policy is introduced in bootstrap version 224.
+	if bootstrapVersion < 224 {
+		return nil, nil
+	}
+	return infoschema.LoadMaskingPolicies(l.sysExecutorFactory, policyTblInfo)
+}
+
+func findSystemTableInfoByName(schemas []*model.DBInfo, dbName, tableName string) *model.TableInfo {
+	for _, dbInfo := range schemas {
+		if !strings.EqualFold(dbInfo.Name.L, dbName) {
+			continue
+		}
+		for _, tblInfo := range dbInfo.Deprecated.Tables {
+			if strings.EqualFold(tblInfo.Name.L, tableName) {
+				return tblInfo
+			}
+		}
+		break
+	}
+	return nil
 }
 
 func (*Loader) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, schemaCacheSize uint64) error {

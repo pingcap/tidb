@@ -137,7 +137,7 @@ func checkDropColumnForStatePublic(colInfo *model.ColumnInfo) (err error) {
 	return nil
 }
 
-func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	tblInfo, colInfo, idxInfos, ifExists, err := checkDropColumn(jobCtx, job)
 	if err != nil {
 		if ifExists && dbterror.ErrCantDropFieldOrKey.Equal(err) {
@@ -205,6 +205,10 @@ func onDropColumn(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
+		if err = w.dropMaskingPoliciesOnColumn(jobCtx, tblInfo.ID, colInfo.ID); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone

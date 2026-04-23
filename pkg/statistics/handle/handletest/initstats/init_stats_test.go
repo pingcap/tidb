@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -265,13 +264,9 @@ func testConcurrentlyInitStats(t *testing.T) {
 		}
 	}
 	maxID := maxPhysicalTableID(h, is)
-	if kerneltype.IsClassic() {
-		require.Equal(t, int64(130), maxID)
-	} else {
-		// In next-gen, the table ID is different from classic because the system table IDs and the regular table IDs are different,
-		// so the next-gen table ID will be ahead of the classic table ID.
-		require.Equal(t, int64(23), maxID)
-	}
+	tbl9, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t9"))
+	require.NoError(t, err)
+	require.Equal(t, tbl9.Meta().ID, maxID)
 }
 
 func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {

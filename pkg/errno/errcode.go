@@ -1135,6 +1135,8 @@ const (
 	ErrPlacementPolicyNotExists           = 8239
 	ErrPlacementPolicyWithDirectOption    = 8240
 	ErrPlacementPolicyInUse               = 8241
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
 	ErrOptOnCacheTable                    = 8242
 	ErrHTTPServiceError                   = 8243
 	ErrPartitionColumnStatsMissing        = 8244
@@ -1152,8 +1154,6 @@ const (
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
 	ErrInvalidAffinityOption              = 8266
 	ErrForbiddenDDL                       = 8267
-	ErrMaskingPolicyExists                = 8268
-	ErrMaskingPolicyNotExists             = 8269
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1171,6 +1171,7 @@ const (
 	ErrStorageClassInvalidSpec                  = 8271
 	ErrModifyColumnReferencedByPartialCondition = 8272
 	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrAccessDeniedToMaskedColumn               = 8274
 
 	// [8800, 8900) are reserved for a downstream fork
 

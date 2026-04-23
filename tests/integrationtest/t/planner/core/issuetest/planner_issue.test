@@ -706,6 +706,9 @@ insert into long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill valu
 # Enable statement summary
 set global tidb_enable_stmt_summary = 1;
 set global tidb_stmt_summary_refresh_interval = 1;
+set global tidb_stmt_summary_max_sql_length = 32768;
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
 
 # Execute a very long query that would previously exceed the 4k limit
 select pk,

@@ -91,6 +91,16 @@ type infoSchemaMisc struct {
 	resourceGroupMutex sync.RWMutex
 	resourceGroupMap   map[string]*model.ResourceGroupInfo
 
+	// maskingPolicyMap stores masking policies by policy name.
+	// It is kept for backward compatibility for lookups that only provide policy name.
+	// When multiple policies share the same name, one representative is retained.
+	maskingPolicyMutex sync.RWMutex
+	maskingPolicyMap   map[string]*model.MaskingPolicyInfo
+	// maskingPolicyDBAndNameMap stores masking policies by db_name.policy_name.
+	// When multiple policies share the same key, one representative is retained.
+	maskingPolicyDBAndNameMap   map[string]*model.MaskingPolicyInfo
+	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
+
 	// temporaryTables stores the temporary table ids
 	temporaryTableIDs map[int64]struct{}
 }
@@ -202,9 +212,12 @@ func (is *infoSchema) base() *infoSchema {
 func newInfoSchema(r autoid.Requirement) *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
-			policyMap:        map[string]*model.PolicyInfo{},
-			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
-			ruleBundleMap:    map[int64]*placement.Bundle{},
+			policyMap:                   map[string]*model.PolicyInfo{},
+			resourceGroupMap:            map[string]*model.ResourceGroupInfo{},
+			maskingPolicyMap:            map[string]*model.MaskingPolicyInfo{},
+			maskingPolicyDBAndNameMap:   map[string]*model.MaskingPolicyInfo{},
+			maskingPolicyTableColumnMap: map[int64]map[int64]*model.MaskingPolicyInfo{},
+			ruleBundleMap:               map[int64]*placement.Bundle{},
 		},
 		schemaMap:             map[string]*schemaTables{},
 		schemaID2Name:         map[int64]string{},
@@ -278,6 +291,17 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 	for _, v := range is.policyMap {
 		if v.ID == id {
 			return v, true
+		}
+	}
+	return nil, false
+}
+
+func (is *infoSchema) MaskingPolicyByID(id int64) (val *model.MaskingPolicyInfo, ok bool) {
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			if policy.ID == id {
+				return policy, true
+			}
 		}
 	}
 	return nil, false
@@ -546,6 +570,36 @@ func (is *infoSchemaMisc) ResourceGroupByName(name ast.CIStr) (*model.ResourceGr
 	return t, r
 }
 
+// MaskingPolicyByName is used to find the masking policy.
+func (is *infoSchemaMisc) MaskingPolicyByName(name ast.CIStr) (*model.MaskingPolicyInfo, bool) {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	t, r := is.maskingPolicyMap[name.L]
+	return t, r
+}
+
+// MaskingPolicyByDBAndName is used to find the masking policy by database name and policy name.
+// It returns one representative policy when multiple policies share the same db/name.
+func (is *infoSchemaMisc) MaskingPolicyByDBAndName(dbName, policyName string) (*model.MaskingPolicyInfo, bool) {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	key := dbName + "." + policyName
+	t, r := is.maskingPolicyDBAndNameMap[key]
+	return t, r
+}
+
+// MaskingPolicyByTableColumn is used to find the masking policy by table/column id.
+func (is *infoSchemaMisc) MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool) {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	colMap, ok := is.maskingPolicyTableColumnMap[tableID]
+	if !ok {
+		return nil, false
+	}
+	t, r := colMap[columnID]
+	return t, r
+}
+
 // ResourceGroupByID is used to find the resource group.
 func (is *infoSchemaMisc) ResourceGroupByID(id int64) (*model.ResourceGroupInfo, bool) {
 	is.resourceGroupMutex.RLock()
@@ -573,6 +627,41 @@ func (is *infoSchemaMisc) CloneResourceGroups() map[string]*model.ResourceGroupI
 	is.resourceGroupMutex.RLock()
 	defer is.resourceGroupMutex.RUnlock()
 	return maps.Clone(is.resourceGroupMap)
+}
+
+// AllMaskingPolicies returns all masking policies.
+func (is *infoSchemaMisc) AllMaskingPolicies() []*model.MaskingPolicyInfo {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	policies := make([]*model.MaskingPolicyInfo, 0, len(is.maskingPolicyTableColumnMap))
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			policies = append(policies, policy)
+		}
+	}
+	return policies
+}
+
+func (is *infoSchemaMisc) CloneMaskingPoliciesByName() map[string]*model.MaskingPolicyInfo {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	return maps.Clone(is.maskingPolicyMap)
+}
+
+func (is *infoSchemaMisc) CloneMaskingPoliciesByDBAndName() map[string]*model.MaskingPolicyInfo {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	return maps.Clone(is.maskingPolicyDBAndNameMap)
+}
+
+func (is *infoSchemaMisc) CloneMaskingPoliciesByTableColumn() map[int64]map[int64]*model.MaskingPolicyInfo {
+	is.maskingPolicyMutex.RLock()
+	defer is.maskingPolicyMutex.RUnlock()
+	cloned := make(map[int64]map[int64]*model.MaskingPolicyInfo, len(is.maskingPolicyTableColumnMap))
+	for tableID, colMap := range is.maskingPolicyTableColumnMap {
+		cloned[tableID] = maps.Clone(colMap)
+	}
+	return cloned
 }
 
 // AllPlacementPolicies returns all placement policies
@@ -611,6 +700,23 @@ func (is *infoSchemaMisc) setResourceGroup(resourceGroup *model.ResourceGroupInf
 	is.resourceGroupMap[resourceGroup.Name.L] = resourceGroup
 }
 
+func (is *infoSchemaMisc) setMaskingPolicy(policy *model.MaskingPolicyInfo) {
+	is.maskingPolicyMutex.Lock()
+	defer is.maskingPolicyMutex.Unlock()
+
+	// Keep one representative entry for compatibility lookups.
+	dbNameKey := policy.DBName.L + "." + policy.Name.L
+	is.maskingPolicyMap[policy.Name.L] = policy
+	is.maskingPolicyDBAndNameMap[dbNameKey] = policy
+
+	colMap, ok := is.maskingPolicyTableColumnMap[policy.TableID]
+	if !ok {
+		colMap = make(map[int64]*model.MaskingPolicyInfo)
+		is.maskingPolicyTableColumnMap[policy.TableID] = colMap
+	}
+	colMap[policy.ColumnID] = policy
+}
+
 func (is *infoSchemaMisc) deleteResourceGroup(name string) {
 	is.resourceGroupMutex.Lock()
 	defer is.resourceGroupMutex.Unlock()
@@ -621,6 +727,81 @@ func (is *infoSchemaMisc) setPolicy(policy *model.PolicyInfo) {
 	is.policyMutex.Lock()
 	defer is.policyMutex.Unlock()
 	is.policyMap[policy.Name.L] = policy
+}
+
+func (is *infoSchemaMisc) deleteMaskingPolicy(name string) {
+	is.maskingPolicyMutex.Lock()
+	defer is.maskingPolicyMutex.Unlock()
+	policy, ok := is.maskingPolicyMap[name]
+	if !ok {
+		return
+	}
+	is.deleteMaskingPolicyLocked(policy)
+}
+
+func (is *infoSchemaMisc) deleteMaskingPolicyByID(policyID int64) {
+	is.maskingPolicyMutex.Lock()
+	defer is.maskingPolicyMutex.Unlock()
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			if policy.ID == policyID {
+				is.deleteMaskingPolicyLocked(policy)
+				return
+			}
+		}
+	}
+}
+
+func (is *infoSchemaMisc) deleteMaskingPolicyLocked(policy *model.MaskingPolicyInfo) {
+	if colMap, ok := is.maskingPolicyTableColumnMap[policy.TableID]; ok {
+		delete(colMap, policy.ColumnID)
+		if len(colMap) == 0 {
+			delete(is.maskingPolicyTableColumnMap, policy.TableID)
+		}
+	}
+
+	dbNameKey := policy.DBName.L + "." + policy.Name.L
+	if byDBAndName, ok := is.maskingPolicyDBAndNameMap[dbNameKey]; ok && byDBAndName.ID == policy.ID {
+		delete(is.maskingPolicyDBAndNameMap, dbNameKey)
+		if candidate := is.findMaskingPolicyByDBAndNameLocked(policy.DBName.L, policy.Name.L); candidate != nil {
+			is.maskingPolicyDBAndNameMap[dbNameKey] = candidate
+		}
+	}
+
+	if byName, ok := is.maskingPolicyMap[policy.Name.L]; ok && byName.ID == policy.ID {
+		delete(is.maskingPolicyMap, policy.Name.L)
+		if candidate := is.findMaskingPolicyByNameLocked(policy.Name.L); candidate != nil {
+			is.maskingPolicyMap[policy.Name.L] = candidate
+		}
+	}
+}
+
+func (is *infoSchemaMisc) findMaskingPolicyByDBAndNameLocked(dbName, policyName string) *model.MaskingPolicyInfo {
+	var candidate *model.MaskingPolicyInfo
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			if policy.DBName.L == dbName && policy.Name.L == policyName {
+				if candidate == nil || policy.ID < candidate.ID {
+					candidate = policy
+				}
+			}
+		}
+	}
+	return candidate
+}
+
+func (is *infoSchemaMisc) findMaskingPolicyByNameLocked(policyName string) *model.MaskingPolicyInfo {
+	var candidate *model.MaskingPolicyInfo
+	for _, colMap := range is.maskingPolicyTableColumnMap {
+		for _, policy := range colMap {
+			if policy.Name.L == policyName {
+				if candidate == nil || policy.ID < candidate.ID {
+					candidate = policy
+				}
+			}
+		}
+	}
+	return candidate
 }
 
 func (is *infoSchemaMisc) deletePolicy(name string) {
@@ -840,6 +1021,9 @@ func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, tab
 		}
 	}
 
+	if ts.InfoSchema == nil {
+		return nil, ErrTableNotExists.FastGenByArgs(schema, table)
+	}
 	return ts.InfoSchema.TableByName(ctx, schema, table)
 }
 
@@ -881,6 +1065,9 @@ func (ts *SessionExtendedInfoSchema) TableByID(ctx stdctx.Context, id int64) (ta
 		}
 	}
 
+	if ts.InfoSchema == nil {
+		return nil, false
+	}
 	return ts.InfoSchema.TableByID(ctx, id)
 }
 

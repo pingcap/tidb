@@ -27,6 +27,9 @@ type MaskingPolicyStatus string
 const (
 	MaskingPolicyStatusEnabled  MaskingPolicyStatus = "ENABLED"
 	MaskingPolicyStatusDisabled MaskingPolicyStatus = "DISABLED"
+	// Keep aliases for callsites migrated from earlier naming.
+	MaskingPolicyStatusEnable  = MaskingPolicyStatusEnabled
+	MaskingPolicyStatusDisable = MaskingPolicyStatusDisabled
 )
 
 // String implements fmt.Stringer interface.
@@ -44,12 +47,21 @@ const (
 	MaskingPolicyTypeMaskNull    MaskingPolicyType = "MASK_NULL"
 	MaskingPolicyTypeMaskDate    MaskingPolicyType = "MASK_DATE"
 	MaskingPolicyTypeCustom      MaskingPolicyType = "CUSTOM"
+	// Keep aliases for callsites migrated from earlier naming.
+	MaskingPolicyTypeFull    = MaskingPolicyTypeMaskFull
+	MaskingPolicyTypePartial = MaskingPolicyTypeMaskPartial
+	MaskingPolicyTypeNull    = MaskingPolicyTypeMaskNull
+	MaskingPolicyTypeDate    = MaskingPolicyTypeMaskDate
 )
 
 // MaskingPolicyInfo is the struct to store the masking policy.
 type MaskingPolicyInfo struct {
 	ID   int64     `json:"id"`
 	Name ast.CIStr `json:"name"`
+	// Keep logical names for observability and job metadata.
+	DBName     ast.CIStr `json:"db_name,omitempty"`
+	TableName  ast.CIStr `json:"table_name,omitempty"`
+	ColumnName ast.CIStr `json:"column_name,omitempty"`
 	// TableID/ColumnID are stable bindings and are the source of truth.
 	TableID     int64                        `json:"table_id"`
 	ColumnID    int64                        `json:"column_id"`

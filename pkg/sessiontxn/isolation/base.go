@@ -154,6 +154,12 @@ func (p *baseTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	if is := p.sctx.GetSessionVars().SnapshotInfoschema; is != nil {
 		return is.(infoschema.InfoSchema)
 	}
+
+	// Ensure p.infoSchema is not nil before wrapping it
+	if p.infoSchema == nil {
+		p.infoSchema = p.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+	}
+
 	if _, ok := p.infoSchema.(*infoschema.SessionExtendedInfoSchema); !ok {
 		p.infoSchema = &infoschema.SessionExtendedInfoSchema{
 			InfoSchema: p.infoSchema,

@@ -482,7 +482,9 @@ const (
 
 	// version255 rewrites persisted tidb_analyze_version=1 to 2 during upgrade.
 	version255 = 255
-	// version256 introduces tidb_plan_cache_skip_stats_on_binding.
+	// version256:
+	// 1. Add mysql.tidb_masking_policy.
+	// 2. Initialize tidb_plan_cache_skip_stats_on_binding.
 	version256 = 256
 
 	// version257
@@ -2092,6 +2094,7 @@ func upgradeToVer255(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer256(s sessionapi.Session, _ int64) {
+	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
 	initGlobalVariableIfNotExists(s, vardef.TiDBPlanCacheSkipStatsOnBinding, vardef.On)
 }
 

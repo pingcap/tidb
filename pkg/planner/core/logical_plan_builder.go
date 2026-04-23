@@ -269,7 +269,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		b.optFlag |= rule.FlagSkewDistinctAgg
 	}
 	// flag it if cte contain aggregation
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	var rollupExpand *logicalop.LogicalExpand
@@ -1764,11 +1764,31 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
+// applyMasking controls whether masking policies are applied to the projected columns.
+// When false, columns use original values (for HAVING, ORDER BY, set operators).
+// When true, masking is applied (for final result output).
 func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
-	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (base.LogicalPlan, []expression.Expression, int, error) {
+	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool, applyMasking bool) (base.LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
 		return nil, nil, 0, err
+	}
+	var cachedMaskPlan base.LogicalPlan
+	var cachedMaskExprs []expression.Expression
+	getMaskExprs := func(cur base.LogicalPlan) ([]expression.Expression, error) {
+		if cur == nil {
+			return nil, nil
+		}
+		if cur == cachedMaskPlan {
+			return cachedMaskExprs, nil
+		}
+		exprs, err := b.buildMaskingReplaceExprs(ctx, cur)
+		if err != nil {
+			return nil, err
+		}
+		cachedMaskPlan = cur
+		cachedMaskExprs = exprs
+		return exprs, nil
 	}
 	b.optFlag |= rule.FlagEliminateProjection
 	b.curClause = fieldList
@@ -1789,7 +1809,17 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		// When `considerWindow` is true, all the non-window fields have been built, so we just use the schema columns.
 		if considerWindow && !isWindowFuncField {
 			col := p.Schema().Columns[i]
-			proj.Exprs = append(proj.Exprs, col)
+			expr := expression.Expression(col)
+			if applyMasking && !field.Auxiliary {
+				maskExprs, err := getMaskExprs(p)
+				if err != nil {
+					return nil, nil, 0, err
+				}
+				if maskExprs != nil {
+					expr = expression.ColumnSubstitute(b.ctx.GetExprCtx(), expr, p.Schema(), maskExprs)
+				}
+			}
+			proj.Exprs = append(proj.Exprs, expr)
 			schema.Append(col)
 			newNames = append(newNames, p.OutputNames()[i])
 			continue
@@ -1823,6 +1853,15 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		}
 
 		p = np
+		if applyMasking && !field.Auxiliary {
+			maskExprs, err := getMaskExprs(p)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			if maskExprs != nil {
+				newExpr = expression.ColumnSubstitute(b.ctx.GetExprCtx(), newExpr, p.Schema(), maskExprs)
+			}
+		}
 		proj.Exprs = append(proj.Exprs, newExpr)
 
 		col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
@@ -1963,11 +2002,204 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 	return proj, proj.Exprs, oldLen, nil
 }
 
+func (b *PlanBuilder) buildMaskingReplaceExprs(ctx context.Context, p base.LogicalPlan) ([]expression.Expression, error) {
+	if b.is == nil || p == nil {
+		return nil, nil
+	}
+	if len(b.is.AllMaskingPolicies()) == 0 {
+		return nil, nil
+	}
+	cols := p.Schema().Columns
+	names := p.OutputNames()
+	if len(cols) == 0 || len(cols) != len(names) {
+		return nil, nil
+	}
+	replaceExprs := make([]expression.Expression, len(cols))
+	for i, col := range cols {
+		replaceExprs[i] = col
+	}
+	schemaVersion := b.is.SchemaMetaVersion()
+	sv := b.ctx.GetSessionVars()
+	hasMask := false
+	for i, col := range cols {
+		policy, tblInfo, colInfo := b.findMaskingPolicy(ctx, names[i], col)
+		if policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+		expr, placeholder, err := getMaskingPolicyExpr(b.ctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
+		if err != nil {
+			return nil, err
+		}
+		if placeholder == nil {
+			continue
+		}
+		masked := expression.ColumnSubstitute(
+			b.ctx.GetExprCtx(),
+			expr,
+			expression.NewSchema(placeholder),
+			[]expression.Expression{col},
+		)
+		replaceExprs[i] = masked
+		hasMask = true
+	}
+	if !hasMask {
+		return nil, nil
+	}
+	return replaceExprs, nil
+}
+
+func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, name *types.FieldName, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo) {
+	if name == nil || name.Hidden {
+		return nil, nil, nil
+	}
+	tblName := name.OrigTblName
+	if tblName.L == "" {
+		tblName = name.TblName
+	}
+	if tblName.L == "" {
+		return nil, nil, nil
+	}
+	colName := name.OrigColName
+	if colName.L == "" {
+		colName = name.ColName
+	}
+	if colName.L == "" {
+		return nil, nil, nil
+	}
+	dbName := name.DBName
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if dbName.L == "" {
+		return nil, nil, nil
+	}
+	tbl, err := b.is.TableByName(ctx, dbName, tblName)
+	if err != nil {
+		return nil, nil, nil
+	}
+	tblInfo := tbl.Meta()
+	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+	if colInfo == nil {
+		return nil, nil, nil
+	}
+	// For CTE-derived columns (where OrigTblName differs from TblName),
+	// the column ID was reallocated by getResultCTESchema and won't match
+	// the source table's column ID. Skip the ID check in this case.
+	if name.TblName.L == name.OrigTblName.L && colInfo.ID != col.ID {
+		return nil, nil, nil
+	}
+	policy, ok := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	if !ok {
+		return nil, nil, nil
+	}
+	return policy, tblInfo, colInfo
+}
+
+// buildFinalProjectionWithMasking builds a final projection that applies masking policies
+// to the result. This implements the "AT RESULT" semantics where masking is applied
+// only after all relational operations (HAVING, ORDER BY, set operators) have been
+// computed using original values.
+func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int) (base.LogicalPlan, error) {
+	if b.is == nil || p == nil {
+		return p, nil
+	}
+	sv := b.ctx.GetSessionVars()
+	if sv != nil && sv.InRestrictedSQL {
+		// Internal SQL should not be rewritten by masking policies.
+		return p, nil
+	}
+	if len(b.is.AllMaskingPolicies()) == 0 {
+		return p, nil
+	}
+
+	maskedFinalExprs := make([]expression.Expression, 0, oldLen)
+	finalChild := p
+	if proj, ok := p.(*logicalop.LogicalProjection); ok && len(proj.Children()) == 1 && len(proj.Exprs) >= oldLen {
+		hasComputedExpr := false
+		for i := range oldLen {
+			if _, ok := proj.Exprs[i].(*expression.Column); !ok {
+				hasComputedExpr = true
+				break
+			}
+		}
+		if !hasComputedExpr {
+			goto fallbackMasking
+		}
+		child := proj.Children()[0]
+		maskSourcePlan := child
+		for maskSourcePlan != nil {
+			names := maskSourcePlan.OutputNames()
+			if len(names) > 0 && len(names) == len(maskSourcePlan.Schema().Columns) {
+				break
+			}
+			if len(maskSourcePlan.Children()) != 1 {
+				break
+			}
+			maskSourcePlan = maskSourcePlan.Children()[0]
+		}
+		childMaskExprs, err := b.buildMaskingReplaceExprs(ctx, maskSourcePlan)
+		if err != nil {
+			return nil, err
+		}
+		if childMaskExprs != nil {
+			for i := range oldLen {
+				expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), proj.Exprs[i], maskSourcePlan.Schema(), childMaskExprs)
+				maskedFinalExprs = append(maskedFinalExprs, expr)
+			}
+			finalChild = child
+		}
+	}
+
+fallbackMasking:
+	if len(maskedFinalExprs) == 0 {
+		maskExprs, err := b.buildMaskingReplaceExprs(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		if maskExprs == nil {
+			// No masking needed, return original plan
+			return p, nil
+		}
+		for i := range oldLen {
+			col := p.Schema().Columns[i]
+			expr := expression.ColumnSubstitute(b.ctx.GetExprCtx(), col, p.Schema(), maskExprs)
+			maskedFinalExprs = append(maskedFinalExprs, expr)
+		}
+	}
+
+	// Build a projection that applies masking to the first oldLen columns (non-auxiliary)
+	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
+	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
+	newNames := make([]*types.FieldName, 0, oldLen)
+
+	for i := range oldLen {
+		expr := maskedFinalExprs[i]
+		proj.Exprs = append(proj.Exprs, expr)
+
+		// Create a new column for the masked result
+		newCol := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+		// Preserve the original column ID for masking policy lookup
+		newCol.ID = p.Schema().Columns[i].ID
+		newCol.SetCoercibility(p.Schema().Columns[i].Coercibility())
+		newCol.SetRepertoire(p.Schema().Columns[i].Repertoire())
+		schema.Append(newCol)
+		newNames = append(newNames, p.OutputNames()[i])
+	}
+
+	proj.SetSchema(schema)
+	proj.SetOutputNames(newNames)
+	proj.SetChildren(finalChild)
+	return proj, nil
+}
+
 func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logicalop.LogicalAggregation, error) {
 	b.optFlag = b.optFlag | rule.FlagBuildKeyInfo
 	b.optFlag = b.optFlag | rule.FlagPushDownAgg
 	// flag it if cte contain distinct
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	plan4Agg := logicalop.LogicalAggregation{
@@ -2180,6 +2412,17 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 	}
 
+	// Apply masking at the final result stage (AT RESULT semantics).
+	// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
+	// For CTEs, we skip masking here because CTE definitions should preserve original values.
+	// For nested set-op operands, masking is deferred to the outermost set-op result.
+	if b.buildingSetOprOperand == 0 && !b.isCTE && !b.buildingCTE {
+		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
 	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
 	if oldLen != setOprPlan.Schema().Len() {
@@ -2236,10 +2479,14 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (b
 	switch x := selects[0].(type) {
 	case *ast.SelectStmt:
 		afterSetOperator = x.AfterSetOperator
+		b.buildingSetOprOperand++
 		leftPlan, err = b.buildSelect(ctx, x)
+		b.buildingSetOprOperand--
 	case *ast.SetOprSelectList:
 		afterSetOperator = x.AfterSetOperator
+		b.buildingSetOprOperand++
 		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy})
+		b.buildingSetOprOperand--
 	}
 	if err != nil {
 		return nil, nil, err
@@ -2257,13 +2504,17 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (b
 				// TODO: support intersect all
 				return nil, nil, errors.Errorf("TiDB do not support intersect all")
 			}
+			b.buildingSetOprOperand++
 			rightPlan, err = b.buildSelect(ctx, x)
+			b.buildingSetOprOperand--
 		case *ast.SetOprSelectList:
 			if *x.AfterSetOperator == ast.IntersectAll {
 				// TODO: support intersect all
 				return nil, nil, errors.Errorf("TiDB do not support intersect all")
 			}
+			b.buildingSetOprOperand++
 			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy})
+			b.buildingSetOprOperand--
 		}
 		if err != nil {
 			return nil, nil, err
@@ -2567,7 +2818,7 @@ func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit) (cou
 func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit, targetQB ...int) (base.LogicalPlan, error) {
 	b.optFlag = b.optFlag | rule.FlagPushDownTopN
 	// flag it if cte contain limit
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	var (
@@ -4307,7 +4558,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// If the current query is not a CTE query (it may be a subquery within a CTE query
 		// or an external non-CTE query), we will give a warning.
 		// In particular, recursive CTE have separate warnings, so they are no longer called.
-		if b.buildingCTE {
+		if b.buildingCTE && len(b.outerCTEs) > 0 {
 			if b.isCTE {
 				b.outerCTEs[len(b.outerCTEs)-1].forceInlineByHintOrVar = true
 			} else if !b.buildingRecursivePartForCTE {
@@ -4520,7 +4771,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	var oldLen int
 	// According to https://dev.mysql.com/doc/refman/8.0/en/window-functions-usage.html,
 	// we can only process window functions after having clause, so `considerWindow` is false now.
-	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil)
+	// applyMasking=false: Use original values for HAVING, ORDER BY, etc. Masking will be applied later.
+	p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, totalMap, nil, false, sel.OrderBy != nil, false)
 	if err != nil {
 		return nil, err
 	}
@@ -4558,7 +4810,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// In such case plan `p` is not changed, so we don't have to build another projection.
 		if hasWindowFuncField {
 			// Now we build the window function fields.
-			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false)
+			// applyMasking=false: Use original values. Masking will be applied later.
+			p, projExprs, oldLen, err = b.buildProjection(ctx, p, sel.Fields.Fields, windowAggMap, windowMapper, true, false, false)
 			if err != nil {
 				return nil, err
 			}
@@ -4574,7 +4827,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	if sel.OrderBy != nil {
 		// flag it if cte contain order by
-		if b.buildingCTE {
+		if b.buildingCTE && len(b.outerCTEs) > 0 {
 			b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 		}
 		// We need to keep the ORDER BY clause for the following cases:
@@ -4595,6 +4848,19 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	if sel.Limit != nil {
 		p, err = b.buildLimit(p, sel.Limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Apply masking at the final result stage (AT RESULT semantics).
+	// This ensures HAVING, ORDER BY, set operators, etc. all use original values.
+	// For CTEs, we skip masking here because:
+	// 1. CTE definitions should preserve original values for correct filtering/joining
+	// 2. Masking is applied when CTE results are materialized to the final output
+	// For set-operator operands, masking is deferred to the outer set-op final stage.
+	if b.buildingSetOprOperand == 0 && !b.isCTE && !b.buildingCTE {
+		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen)
 		if err != nil {
 			return nil, err
 		}
@@ -4814,13 +5080,16 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			lp.SetSchema(getResultCTESchema(cte.cteClass.SeedPartLogicalPlan.Schema(), b.ctx.GetSessionVars()))
 
 			// If current CTE query contain another CTE which 'containRecursiveForbiddenOperator' is true, current CTE 'containRecursiveForbiddenOperator' will be true
-			if b.buildingCTE {
+			if b.buildingCTE && len(b.outerCTEs) > 0 {
 				b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = cte.containRecursiveForbiddenOperator || b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator
 			}
 			// Compute cte inline
 			b.computeCTEInlineFlag(cte)
 
 			if cte.recurLP == nil && cte.isInline {
+				// Save and truncate outerCTEs to prevent infinite recursion during inline merge.
+				// Also set b.buildingCTE to false - b.isCTE is set to true inside
+				// buildDataSourceFromCTEMerge so masking is properly skipped.
 				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
 				copy(saveCte, b.outerCTEs[i:])
 				b.outerCTEs = b.outerCTEs[:i]
@@ -4896,6 +5165,19 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
+	// Set b.isCTE to true to ensure masking is skipped during CTE definition building
+	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior
+	// We also set b.buildingCTE because buildTableRefs -> buildResultSetNode(false)
+	// will overwrite b.isCTE, so we need b.buildingCTE as a backup flag.
+	oldIsCTE := b.isCTE
+	oldBuildingCTE := b.buildingCTE
+	b.isCTE = true
+	b.buildingCTE = true
+	defer func() {
+		b.isCTE = oldIsCTE
+		b.buildingCTE = oldBuildingCTE
+	}()
+
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
 	if err != nil {
 		return nil, err
@@ -4903,6 +5185,14 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
+		// Preserve OrigTblName and OrigColName for masking policy lookup
+		// If they are not set, copy from TblName and ColName before overwriting
+		if name.OrigTblName.L == "" {
+			name.OrigTblName = name.TblName
+		}
+		if name.OrigColName.L == "" {
+			name.OrigColName = name.ColName
+		}
 		name.TblName = cte.Name
 		name.DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
@@ -4912,6 +5202,10 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
+			// Preserve original column name before overwriting
+			if outPutNames[i].OrigColName.L == "" {
+				outPutNames[i].OrigColName = outPutNames[i].ColName
+			}
 			outPutNames[i].ColName = n
 		}
 	}
@@ -7051,7 +7345,7 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, ord
 }
 
 func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, orderedSpec []*ast.WindowSpec, aggMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	args := make([]ast.ExprNode, 0, 4)
@@ -7921,9 +8215,13 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 	// Clone output names to avoid mutating shared structs (important for LATERAL subqueries)
 	clonedNames := make([]*types.FieldName, len(outPutNames))
 	for i, name := range outPutNames {
+		origTblName := name.OrigTblName
+		if origTblName.L == "" {
+			origTblName = name.TblName
+		}
 		clonedNames[i] = &types.FieldName{
 			DBName:            name.DBName,
-			OrigTblName:       name.OrigTblName,
+			OrigTblName:       origTblName,
 			OrigColName:       name.OrigColName,
 			TblName:           def.Name, // Set to CTE name
 			ColName:           name.ColName,

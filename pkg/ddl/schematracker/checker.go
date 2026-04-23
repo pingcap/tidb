@@ -446,6 +446,12 @@ func (*Checker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceStmt) er
 	panic("implement me")
 }
 
+// CreateMaskingPolicy implements the DDL interface.
+func (*Checker) CreateMaskingPolicy(_ sessionctx.Context, _ *ast.CreateMaskingPolicyStmt) error {
+	//TODO implement me
+	panic("implement me")
+}
+
 // CreatePlacementPolicy implements the DDL interface.
 func (*Checker) CreatePlacementPolicy(_ sessionctx.Context, _ *ast.CreatePlacementPolicyStmt) error {
 	//TODO implement me

@@ -1885,24 +1885,33 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
 
 	versions := make([]int, 0, len(versionedBootstrapSchemas))
-	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	allTableIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	allDBIDs := make([]int64, 0, len(systemDatabases))
+	dbNameToID := make(map[string]int64, len(systemDatabases))
 	for _, vbs := range versionedBootstrapSchemas {
 		versions = append(versions, int(vbs.ver))
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
-			allIDs = append(allIDs, db.ID)
+			if oldID, ok := dbNameToID[db.Name]; ok {
+				require.Equal(t, oldID, db.ID, "same database name should always use the same ID")
+			} else {
+				dbNameToID[db.Name] = db.ID
+				allDBIDs = append(allDBIDs, db.ID)
+			}
 
 			testTableBasicInfoSlice(t, db.Tables, "IF NOT EXISTS mysql.%s (")
 			for _, tbl := range db.Tables {
-				allIDs = append(allIDs, tbl.ID)
+				allTableIDs = append(allTableIDs, tbl.ID)
 			}
 		}
 	}
 	require.IsIncreasing(t, versions,
 		"versions in versionedBootstrapSchemas should be monotonically increasing, and cannot have duplicate versions")
-	slices.Sort(allIDs)
-	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
+	slices.Sort(allDBIDs)
+	require.IsIncreasing(t, allDBIDs, "versionedBootstrapSchemas should not have duplicate database IDs")
+	slices.Sort(allTableIDs)
+	require.IsIncreasing(t, allTableIDs, "versionedBootstrapSchemas should not have duplicate table IDs")
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {

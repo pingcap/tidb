@@ -145,6 +145,11 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
+	// maskingExprs stores masking expressions for columns that have masking policies.
+	// If not nil, each element corresponds to a column in the schema.
+	// The executor should evaluate these expressions instead of returning raw column values.
+	MaskingExprs []expression.Expression
+
 	stats *runtimeStatsWithSnapshot
 }
 
@@ -214,6 +219,7 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	e.rowDecoder = decoder
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
+	e.MaskingExprs = p.MaskingExprs
 	e.buildVirtualColumnInfo()
 
 	sessVars := e.Ctx().GetSessionVars()
@@ -448,6 +454,38 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+
+	// Apply masking expressions if any
+	if e.MaskingExprs != nil && req.NumRows() > 0 {
+		// Evaluate masking expressions and replace column values
+		row := req.GetRow(0)
+		// Create a new chunk to hold masked values
+		fieldTypes := make([]*types.FieldType, len(e.MaskingExprs))
+		for i, col := range schema.Columns {
+			fieldTypes[i] = col.RetType
+		}
+		maskedChunk := chunk.NewChunkWithCapacity(fieldTypes, 1)
+
+		for i, expr := range e.MaskingExprs {
+			if expr != nil {
+				// Evaluate the masking expression
+				result, err := expr.Eval(sctx.GetExprCtx().GetEvalCtx(), row)
+				if err != nil {
+					return err
+				}
+				// Append masked value to new chunk
+				maskedChunk.AppendDatum(i, &result)
+			} else {
+				// No masking for this column, copy original value
+				datum := row.GetDatum(i, schema.Columns[i].RetType)
+				maskedChunk.AppendDatum(i, &datum)
+			}
+		}
+
+		// Replace the original chunk with the masked chunk
+		req.SwapColumns(maskedChunk)
+	}
+
 	return nil
 }
 

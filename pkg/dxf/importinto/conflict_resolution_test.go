@@ -115,6 +115,7 @@ type conflictedKVHandleContext struct {
 	tempDir          string
 	store            tidbkv.Storage
 	logger           *zap.Logger
+	tbl              table.Table
 	taskMeta         *importinto.TaskMeta
 	tk               *testkit.TestKit
 	conflictedKVInfo importinto.KVGroupConflictInfos
@@ -154,6 +155,7 @@ func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 	return &conflictedKVHandleContext{
 		store:            store,
 		logger:           logger,
+		tbl:              tbl,
 		taskMeta:         taskMeta,
 		tk:               tk,
 		conflictedKVInfo: conflictedKVInfo,

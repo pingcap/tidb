@@ -1636,6 +1636,16 @@ error = '''
 %s is forbidden
 '''
 
+["ddl:8268"]
+error = '''
+Masking policy '%-.192s' already exists
+'''
+
+["ddl:8269"]
+error = '''
+Unknown masking policy '%-.192s'
+'''
+
 ["ddl:8270"]
 error = '''
 Invalid engine attribute format: %s
@@ -2328,12 +2338,12 @@ Unknown resource group '%-.192s'
 
 ["meta:8268"]
 error = '''
-masking policy already exists
+Masking policy '%-.192s' already exists
 '''
 
 ["meta:8269"]
 error = '''
-masking policy doesn't exist
+Unknown masking policy '%-.192s'
 '''
 
 ["planner:1044"]
@@ -2799,6 +2809,11 @@ Delete can not find column %s for table %s
 ["planner:8242"]
 error = '''
 '%s' is unsupported on cache tables.
+'''
+
+["planner:8274"]
+error = '''
+Access denied to masked column '%-.192s'. Obtain the required privileges and retry.
 '''
 
 ["privilege:1045"]

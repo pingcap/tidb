@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -385,6 +386,10 @@ func (f *fakeSessionContext) SetValue(key fmt.Stringer, value any) {
 
 func (f *fakeSessionContext) GetSessionVars() *variable.SessionVars {
 	return f.vars
+}
+
+func (*fakeSessionContext) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
+	return nil
 }
 
 func TestSplitTablesQueryMatch(t *testing.T) {
