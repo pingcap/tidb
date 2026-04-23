@@ -27,146 +27,138 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-func TestSetVarTimestampHintsWorks(t *testing.T) {
+func TestHintSuite(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec(`use test`)
+		t.Run("TestSetVarTimestampHintsWorks", func(t *testing.T) {
+			testKit.MustExec(`set timestamp=default;`)
+			require.Equal(t, "42", testKit.MustQuery(`select /*+ set_var(timestamp=1) */ @@timestamp + 41;`).Rows()[0][0].(string))
+			firstts := testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
+			require.Eventually(t, func() bool {
+				return firstts < testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
+			}, time.Second, time.Microsecond*10)
 
-		// test that the timestamp continues to update (default behavior)
-		testKit.MustExec(`set timestamp=default;`)
-		require.Equal(t, "42", testKit.MustQuery(`select /*+ set_var(timestamp=1) */ @@timestamp + 41;`).Rows()[0][0].(string))
-		firstts := testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
-		require.Eventually(t, func() bool {
-			return firstts < testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
-		}, time.Second, time.Microsecond*10)
+			testKit.MustExec(`set timestamp=1745862208.446495;`)
+			require.Equal(t, "1745862208.446495", testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string))
+			require.Equal(t, "1", testKit.MustQuery(`select /*+ set_var(timestamp=1) */ @@timestamp;`).Rows()[0][0].(string))
+			require.Equal(t, "1745862208.446495", testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string))
+		})
 
-		// test that the set value is preserved
-		testKit.MustExec(`set timestamp=1745862208.446495;`)
-		require.Equal(t, "1745862208.446495", testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string))
-		require.Equal(t, "1", testKit.MustQuery(`select /*+ set_var(timestamp=1) */ @@timestamp;`).Rows()[0][0].(string))
-		require.Equal(t, "1745862208.446495", testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string))
-	})
-}
+		t.Run("TestSetVarTimestampHintsWorksWithBindings", func(t *testing.T) {
+			testKit.MustExec(`create session binding for select @@timestamp + 41 using select /*+ set_var(timestamp=1) */ @@timestamp + 41;`)
+			testKit.MustExec(`set timestamp=default;`)
+			require.Equal(t, "42", testKit.MustQuery(`select @@timestamp + 41;`).Rows()[0][0].(string))
+			testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			firstts := testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
+			require.Eventually(t, func() bool {
+				return firstts < testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
+			}, time.Second, time.Microsecond*10)
 
-func TestSetVarTimestampHintsWorksWithBindings(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec(`use test`)
-		testKit.MustExec(`create session binding for select @@timestamp + 41 using select /*+ set_var(timestamp=1) */ @@timestamp + 41;`)
+			testKit.MustExec(`set timestamp=1745862208.446495;`)
+			require.Equal(t, "1745862208.446495", testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string))
+			require.Equal(t, "42", testKit.MustQuery(`select @@timestamp + 41;`).Rows()[0][0].(string))
+			testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			require.Equal(t, "1745862208.446495", testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string))
+		})
 
-		// test that bindings with hints correctly restore the default timestamp
-		testKit.MustExec(`set timestamp=default;`)
-		require.Equal(t, "42", testKit.MustQuery(`select @@timestamp + 41;`).Rows()[0][0].(string))
-		testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-		firstts := testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
-		require.Eventually(t, func() bool {
-			return firstts < testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string)
-		}, time.Second, time.Microsecond*10)
+		t.Run("TestSetVarInQueriesAndBindingsWorkTogether", func(t *testing.T) {
+			testKit.MustExec(`set @@max_execution_time=2000;`)
+			testKit.MustExec(`drop table if exists foo`)
+			testKit.MustExec(`create table foo (a int);`)
+			testKit.MustExec(`create session binding for select * from foo where a = 1 using select /*+ set_var(max_execution_time=1234) */ * from foo where a = 1;`)
+			testKit.MustExec(`select /*+ set_var(max_execution_time=2222) */ * from foo where a = 1;`)
+			testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
+		})
 
-		// test that bindings with hints correctly restore the previous non-default timestamp value
-		testKit.MustExec(`set timestamp=1745862208.446495;`)
-		require.Equal(t, "1745862208.446495", testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string))
-		require.Equal(t, "42", testKit.MustQuery(`select @@timestamp + 41;`).Rows()[0][0].(string))
-		testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-		require.Equal(t, "1745862208.446495", testKit.MustQuery(`select @@timestamp;`).Rows()[0][0].(string))
-	})
-}
+		t.Run("TestSetVarHintsWithExplain", func(t *testing.T) {
+			testKit.MustExec(`set @@max_execution_time=2000;`)
+			testKit.MustExec(`explain select /*+ set_var(max_execution_time=100) */ @@max_execution_time;`)
+			testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
 
-func TestSetVarInQueriesAndBindingsWorkTogether(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec(`use test`)
-		testKit.MustExec(`set @@max_execution_time=2000;`)
-		testKit.MustExec(`create table foo (a int);`)
-		testKit.MustExec(`create session binding for select * from foo where a = 1 using select /*+ set_var(max_execution_time=1234) */ * from foo where a = 1;`)
-		testKit.MustExec(`select /*+ set_var(max_execution_time=2222) */ * from foo where a = 1;`)
-		testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-		testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
-	})
-}
+			testKit.MustExec(`drop table if exists t`)
+			testKit.MustExec(`create table t(a int);`)
+			testKit.MustExec(`create global binding for select * from t where a = 1 and sleep(0.1) using select /*+ SET_VAR(max_execution_time=500) */ * from t where a = 1 and sleep(0.1);`)
+			testKit.MustExec(`select * from t where a = 1 and sleep(0.1);`)
+			testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
 
-func TestSetVarHintsWithExplain(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec(`use test`)
+			testKit.MustExec(`explain select * from t where a = 1 and sleep(0.1);`)
+			testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+			testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
+		})
 
-		testKit.MustExec(`set @@max_execution_time=2000;`)
-		testKit.MustExec(`explain select /*+ set_var(max_execution_time=100) */ @@max_execution_time;`)
-		testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
+		t.Run("TestWriteSlowLogHint", func(t *testing.T) {
+			testKit.MustExec(`drop table if exists t`)
+			testKit.MustExec(`create table t(a int);`)
+			testKit.MustExec(`select * from t where a = 1;`)
 
-		testKit.MustExec(`create table t(a int);`)
-		testKit.MustExec(`create global binding for select * from t where a = 1 and sleep(0.1) using select /*+ SET_VAR(max_execution_time=500) */ * from t where a = 1 and sleep(0.1);`)
-		testKit.MustExec(`select * from t where a = 1 and sleep(0.1);`)
-		testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-		testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
+			core, recorded := observer.New(zap.WarnLevel)
+			logger := zap.New(core)
+			prev := logutil.SlowQueryLogger
+			logutil.SlowQueryLogger = logger
+			defer func() { logutil.SlowQueryLogger = prev }()
 
-		testKit.MustExec(`explain select * from t where a = 1 and sleep(0.1);`)
-		testKit.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-		testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
-	})
-}
+			sql := "select /*+ write_slow_log */ * from t where a = 1;"
+			checkWriteSlowLog := func(expectWrite bool) {
+				if !expectWrite {
+					require.Equal(t, 0, recorded.Len())
+				} else {
+					require.NotEqual(t, 0, recorded.Len())
+				}
 
-func TestWriteSlowLogHint(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec(`use test`)
-		testKit.MustExec(`create table t(a int);`)
-		testKit.MustExec(`select * from t where a = 1;`)
-
-		core, recorded := observer.New(zap.WarnLevel)
-		logger := zap.New(core)
-		prev := logutil.SlowQueryLogger
-		logutil.SlowQueryLogger = logger
-		defer func() { logutil.SlowQueryLogger = prev }()
-
-		sql := "select /*+ write_slow_log */ * from t where a = 1;"
-		checkWriteSlowLog := func(expectWrite bool) {
-			if !expectWrite {
-				require.Equal(t, 0, recorded.Len())
-			} else {
-				require.NotEqual(t, 0, recorded.Len())
+				writeMsg := slices.ContainsFunc(recorded.All(), func(entry observer.LoggedEntry) bool {
+					if entry.Level == zap.WarnLevel && strings.Contains(entry.Message, sql) {
+						return true
+					}
+					return false
+				})
+				require.Equal(t, expectWrite, writeMsg)
 			}
 
-			writeMsg := slices.ContainsFunc(recorded.All(), func(entry observer.LoggedEntry) bool {
-				if entry.Level == zap.WarnLevel && strings.Contains(entry.Message, sql) {
-					return true
-				}
-				return false
-			})
-			require.Equal(t, expectWrite, writeMsg)
-		}
+			testKit.MustExec(`select * from t where a = 1;`)
+			checkWriteSlowLog(false)
 
-		testKit.MustExec(`select * from t where a = 1;`)
-		checkWriteSlowLog(false)
+			testKit.MustExec(sql)
+			checkWriteSlowLog(true)
+		})
 
-		testKit.MustExec(sql)
-		checkWriteSlowLog(true)
-	})
-}
+		t.Run("TestSetVarPartialOrderedIndexForTopN", func(t *testing.T) {
+			testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 
-func TestSetVarPartialOrderedIndexForTopN(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
-		testKit.MustExec(`use test`)
+			testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
+			testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("COST"))
+			testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 
-		// Test default value
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+			testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = COST`)
+			testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=DISABLE) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+			testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("COST"))
 
-		// Test set_var hint changes the value during query execution
-		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
-		testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("COST"))
-		// Value should be restored after query
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+			testKit.MustExec(`drop table if exists t, t_multi`)
+			testKit.MustExec(`create table t(a int, b varchar(10), index idx_b(b(5)));`)
+			testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
+			testKit.MustExec(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ * from t order by b limit 10;`)
+			testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 
-		// Test set_var hint with OFF
-		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = COST`)
-		testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=DISABLE) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
-		// Value should be restored after query
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("COST"))
+			testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
+			testKit.MustExec(`explain select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ * from t order by b limit 10;`)
+			testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 
-		// Test set_var hint with multiple queries
-		testKit.MustExec(`create table t(a int, b varchar(10), index idx_b(b(5)));`)
-		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
-		testKit.MustExec(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ * from t order by b limit 10;`)
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
-
-		// Test with EXPLAIN (should not change the value)
-		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
-		testKit.MustExec(`explain select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ * from t order by b limit 10;`)
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
+			testKit.MustExec(`create table t_multi(a int, b varchar(30), c varchar(30), key idx_ab_prefix(a, b(15)))`)
+			testKit.MustExec(`insert into t_multi values
+			(1, 'alpha', 'first'),
+			(1, 'beta', 'second'),
+			(1, 'gamma', 'third'),
+			(2, 'alpha', 'fourth'),
+			(2, 'beta', 'fifth'),
+			(2, 'gamma', 'sixth')`)
+			testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = COST`)
+			testKit.MustQuery(`select /*+ use_index(t_multi, idx_ab_prefix) */ * from t_multi order by a, b limit 3 offset 2`).
+				Check(testkit.Rows(
+					"1 gamma third",
+					"2 alpha fourth",
+					"2 beta fifth",
+				))
+		})
 	})
 }
