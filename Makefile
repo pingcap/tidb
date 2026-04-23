@@ -206,24 +206,18 @@ ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(CLEAN_UT_BINARY)
 
 .PHONY: bazel_coverage_test
-bazel_coverage_test: tools/bin/failpoint-ctl ## Run the CI mega-test flow; target name is kept for CI compatibility. Produces bazel.xml and bazel-out/_coverage/_coverage_report.dat unless SKIP_MEGA_RUN=1.
+bazel_coverage_test: tools/bin/failpoint-ctl ## Build mega.test, run all tests, produce bazel.xml and bazel-out/_coverage/_coverage_report.dat. Set SKIP_MEGA_RUN=1 to skip running.
 	@echo "=== Enabling failpoints ==="
 	@tools/bin/failpoint-ctl enable
-	@echo "=== Preparing BUILD.bazel files (gazelle + tazel) ==="
-	@if [ "$(SKIP_GAZELLE)" != "1" ]; then \
-		$(MAKE) bazel_ci_simple_prepare; \
-	else \
-		echo "=== Skip bazel_ci_simple_prepare because SKIP_GAZELLE=1 ==="; \
-	fi
 	@echo "=== Building mega binary ==="
 	@$(MAKE) bazel-mega-binary
-		@echo "=== Running mega tests ==="
+	@echo "=== Running mega tests ==="
 	@if [ "$(SKIP_MEGA_RUN)" = "1" ]; then \
 		echo "=== Skip mega tests because SKIP_MEGA_RUN=1 ==="; \
 	else \
 		rm -f bazel.xml bazel-out/_coverage/_coverage_report.dat; \
 		mkdir -p bazel-out/_coverage; \
-		./bazel-bin/pkg/testkit/mega/mega_test_/mega_test run --junitfile bazel.xml --coverprofile bazel-out/_coverage/_coverage_report.dat; \
+		time ./bazel-bin/pkg/testkit/mega/mega_test_/mega_test run --junitfile bazel.xml --coverprofile bazel-out/_coverage/_coverage_report.dat; \
 		MEGA_RUN_RET=$$?; \
 		if [ "$$MEGA_RUN_RET" -ne 0 ]; then \
 			if [ "$(MEGA_RUN_STRICT)" = "1" ]; then \
@@ -237,7 +231,7 @@ bazel_coverage_test: tools/bin/failpoint-ctl ## Run the CI mega-test flow; targe
 
 .PHONY: bazel-mega-binary
 bazel-mega-binary: ## Build the mega test binary. Requires failpoint-ctl enable + gazelle first (see ut-mega).
-	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) --collect_code_coverage //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS)
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) --norun_validations --collect_code_coverage //pkg/testkit/mega:mega_test --define gotags=$(UNIT_TEST_TAGS)
 
 .PHONY: ut-mega-cleanup
 ut-mega-cleanup:

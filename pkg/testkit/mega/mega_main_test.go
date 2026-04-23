@@ -200,6 +200,15 @@ func workDir() string {
 // These are positional args after the flags, or explicitly passed args.
 func parseFilterArgs() []string {
 	args := make([]string, 0, len(os.Args))
+	// Flags that take a value — we need to skip the next arg after them.
+	flagWithValue := map[string]bool{
+		"--junitfile":    true,
+		"--coverprofile": true,
+		"-mega.p":        true,
+		"-mega.timeout":  true,
+		"-test.v":        true,
+		"-test.run":      true,
+	}
 	// Collect non-flag arguments from os.Args
 	// Skip known subcommands (run, test, list, help)
 	skipNext := false
@@ -216,6 +225,9 @@ func parseFilterArgs() []string {
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
+			if flagWithValue[arg] {
+				skipNext = true // skip the value that follows this flag
+			}
 			continue // skip flags
 		}
 		args = append(args, arg)
