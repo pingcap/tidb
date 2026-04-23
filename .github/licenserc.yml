@@ -61,7 +61,7 @@ header:
     - "lightning/web/docs/api.yaml"
     - "lightning/web/public/index.html"
     - "lightning/web/webpack.config.js"
-    - "pkg/lightning/checkpoints/checkpointspb/file_checkpoints.pb.go"
+    - "lightning/pkg/checkpoints/checkpointspb/file_checkpoints.pb.go"
     - "pkg/lightning/manual/manual.go"
     - "pkg/lightning/manual/manual_nocgo.go"
     - "pkg/lightning/mydump/bytes.go"
