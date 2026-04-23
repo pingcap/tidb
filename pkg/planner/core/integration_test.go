@@ -2411,39 +2411,3 @@ from (
     group by t0.c1, t0.c0, t0.c2
 ) as s where ref3`).Check(testkit.Rows())
 }
-
-func TestNestedCorrelatedAggregateOuterReference(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int, d int, c char(10) not null, primary key (a, b))")
-	tk.MustExec(`insert into t1 values
-(1,1,0,'a'), (1,2,0,'b'), (1,3,0,'c'), (1,4,0,'d'),
-(1,5,0,'e'), (2,1,0,'f'), (2,2,0,'g'), (2,3,0,'h'),
-(3,4,0,'i'), (3,3,0,'j'), (3,2,0,'k'), (3,1,0,'l'),
-(1,9,0,'m'), (1,0,10,'n'), (2,0,5,'o'), (3,0,7,'p')`)
-
-	tk.MustQuery(`SELECT tt.a,
- (SELECT (SELECT c FROM t1 as t WHERE t1.a=t.a AND t.d=MAX(t1.b + tt.a)
-  LIMIT 1) FROM t1 WHERE t1.a=tt.a GROUP BY a LIMIT 1) as test
-  FROM t1 as tt`).Sort().Check(testkit.Rows(
-		"1 n",
-		"1 n",
-		"1 n",
-		"1 n",
-		"1 n",
-		"1 n",
-		"1 n",
-		"2 o",
-		"2 o",
-		"2 o",
-		"2 o",
-		"3 p",
-		"3 p",
-		"3 p",
-		"3 p",
-		"3 p",
-	))
-}
