@@ -45,8 +45,11 @@ const (
 	KindMysqlBit      byte = 11 // Used for BIT table column values.
 	KindMysqlSet      byte = 12
 	KindMysqlTime     byte = 13
-	// Deprecated: KindInterfaceDeprecated (14) is retained only to keep
-	// the kind-space stable; it is no longer produced or consumed.
+	// KindInterfaceDeprecated (14) is retained only to keep the
+	// kind-space stable; it is no longer produced or consumed. Do not
+	// write this kind from new code. The plain wording (rather than a
+	// `Deprecated:` marker) avoids triggering `staticcheck/SA1019` at
+	// the handful of legitimate sites that still enumerate it.
 	KindInterfaceDeprecated byte = 14
 	KindMinNotNull          byte = 15
 	KindMaxValue            byte = 16
