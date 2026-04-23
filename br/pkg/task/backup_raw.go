@@ -49,6 +49,7 @@ func DefineRawBackupFlags(command *cobra.Command) {
 	command.Flags().StringP(flagTiKVColumnFamily, "", "default", "backup specify cf, correspond to tikv cf")
 	command.Flags().StringP(flagStartKey, "", "", "backup raw kv start key, key is inclusive")
 	command.Flags().StringP(flagEndKey, "", "", "backup raw kv end key, key is exclusive")
+	command.Flags().String(flagKeyspaceName, "", "keyspace name for backup")
 	command.Flags().String(flagCompressionType, "zstd",
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	command.Flags().Bool(flagRemoveSchedulers, false,
@@ -96,6 +97,10 @@ func (cfg *RawKvConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 // ParseBackupConfigFromFlags parses the backup-related flags from the flag set.
 func (cfg *RawKvConfig) ParseBackupConfigFromFlags(flags *pflag.FlagSet) error {
 	err := cfg.ParseFromFlags(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.KeyspaceName, err = flags.GetString(flagKeyspaceName)
 	if err != nil {
 		return errors.Trace(err)
 	}

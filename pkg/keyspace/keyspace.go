@@ -92,12 +92,11 @@ func WrapZapcoreWithKeyspace() zap.Option {
 	})
 }
 
-// BuildAPIContext is used to build APIContext.
-func BuildAPIContext(keyspaceName string) (apiContext pd.APIContext) {
+// BuildAPIContext returns a V1 API context for the default keyspace and a
+// V2 API context scoped to keyspaceName otherwise.
+func BuildAPIContext(keyspaceName string) pd.APIContext {
 	if len(keyspaceName) == 0 {
-		apiContext = pd.NewAPIContextV1()
-	} else {
-		apiContext = pd.NewAPIContextV2(keyspaceName)
+		return pd.NewAPIContextV1()
 	}
-	return
+	return pd.NewAPIContextV2(keyspaceName)
 }
