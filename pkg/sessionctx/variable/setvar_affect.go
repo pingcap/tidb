@@ -127,6 +127,11 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tiflash_fine_grained_shuffle_batch_size":         {},
 	"tiflash_fine_grained_shuffle_stream_count":       {},
 	"tidb_hash_join_version":                          {},
+<<<<<<< HEAD
+=======
+	"tidb_allow_tiflash_cop":                          {},
+	"tidb_enable_cache_prepare_stmt":                  {},
+>>>>>>> 4fe287f387a (*: support cache prepared statement in plan cache (#67820))
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},

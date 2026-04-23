@@ -790,6 +790,10 @@ type SessionVars struct {
 	SysErrorCount uint16
 	// nonPreparedPlanCacheStmts stores PlanCacheStmts for non-prepared plan cache.
 	nonPreparedPlanCacheStmts *kvcache.SimpleLRUCache
+	// prepareStmtDedupCache caches PlanCacheStmt templates keyed by SQL text +
+	// charset + collation + currentDB to skip redundant Parse+Preprocess+Build
+	// on repeated COM_STMT_PREPARE for the same SQL within a session.
+	prepareStmtDedupCache *kvcache.SimpleLRUCache
 	// PreparedStmts stores prepared statement.
 	PreparedStmts        map[uint32]any
 	PreparedStmtNameToID map[string]uint32
@@ -1753,6 +1757,44 @@ type SessionVars struct {
 
 	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
 	OutPacketBytes atomic.Uint64
+<<<<<<< HEAD
+=======
+
+	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
+	IndexLookUpPushDownPolicy string
+
+	// EnableCachePrepareStmt indicates whether to cache prepare stmt in plan cache.
+	EnableCachePrepareStmt bool
+}
+
+// ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
+func (s *SessionVars) ResetRelevantOptVarsAndFixes(record bool) {
+	s.RecordRelevantOptVarsAndFixes = record
+	s.RelevantOptVars = nil
+	s.RelevantOptFixes = nil
+}
+
+// RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptVar(varName string) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptVars == nil {
+		s.RelevantOptVars = make(map[string]struct{})
+	}
+	s.RelevantOptVars[varName] = struct{}{}
+}
+
+// RecordRelevantOptFix records the optimizer fix that is relevant to the current query.
+func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
+	if !s.RecordRelevantOptVarsAndFixes {
+		return
+	}
+	if s.RelevantOptFixes == nil {
+		s.RelevantOptFixes = make(map[uint64]struct{})
+	}
+	s.RelevantOptFixes[fixID] = struct{}{}
+>>>>>>> 4fe287f387a (*: support cache prepared statement in plan cache (#67820))
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2165,6 +2207,7 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 // NewSessionVars creates a session vars object.
 func NewSessionVars(hctx HookContext) *SessionVars {
 	vars := &SessionVars{
+<<<<<<< HEAD
 		UserVars:                      NewUserVars(),
 		systems:                       make(map[string]string),
 		PreparedStmts:                 make(map[uint32]any),
@@ -2290,6 +2333,150 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
 		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
+=======
+		UserVars:                         NewUserVars(),
+		systems:                          make(map[string]string),
+		PreparedStmts:                    make(map[uint32]any),
+		PreparedStmtNameToID:             make(map[string]uint32),
+		PlanCacheParams:                  NewPlanCacheParamList(),
+		TxnCtx:                           &TransactionContext{},
+		RetryInfo:                        &RetryInfo{},
+		ActiveRoles:                      make([]*auth.RoleIdentity, 0, 10),
+		AutoIncrementIncrement:           vardef.DefAutoIncrementIncrement,
+		AutoIncrementOffset:              vardef.DefAutoIncrementOffset,
+		StmtCtx:                          stmtctx.NewStmtCtx(),
+		AllowAggPushDown:                 false,
+		AllowCartesianBCJ:                vardef.DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:       vardef.DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:       vardef.DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:      vardef.DefBroadcastJoinThresholdCount,
+		OptimizerSelectivityLevel:        vardef.DefTiDBOptimizerSelectivityLevel,
+		OptIndexPruneThreshold:           vardef.DefTiDBOptIndexPruneThreshold,
+		RiskScaleNDVSkewRatio:            vardef.DefOptRiskScaleNDVSkewRatio,
+		RiskGroupNDVSkewRatio:            vardef.DefOptRiskGroupNDVSkewRatio,
+		AlwaysKeepJoinKey:                vardef.DefOptAlwaysKeepJoinKey,
+		CartesianJoinOrderThreshold:      vardef.DefOptCartesianJoinOrderThreshold,
+		EnableOuterJoinReorder:           vardef.DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:      vardef.DefOptEnableNoDecorrelateInSelect,
+		EnableAlternativeLogicalPlans:    vardef.DefOptEnableAlternativeLogicalPlans,
+		EnableSemiJoinRewrite:            vardef.DefOptEnableSemiJoinRewrite,
+		RetryLimit:                       vardef.DefTiDBRetryLimit,
+		DisableTxnAutoRetry:              vardef.DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:                 kv.PriorityLow,
+		allowInSubqToJoinAndAgg:          vardef.DefOptInSubqToJoinAndAgg,
+		preferRangeScan:                  vardef.DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:      vardef.DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:           vardef.DefOptLimitPushDownThreshold,
+		CorrelationThreshold:             vardef.DefOptCorrelationThreshold,
+		CorrelationExpFactor:             vardef.DefOptCorrelationExpFactor,
+		RiskEqSkewRatio:                  vardef.DefOptRiskEqSkewRatio,
+		RiskRangeSkewRatio:               vardef.DefOptRiskRangeSkewRatio,
+		cpuFactor:                        vardef.DefOptCPUFactor,
+		copCPUFactor:                     vardef.DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:      vardef.DefOptTiFlashConcurrencyFactor,
+		networkFactor:                    vardef.DefOptNetworkFactor,
+		scanFactor:                       vardef.DefOptScanFactor,
+		descScanFactor:                   vardef.DefOptDescScanFactor,
+		seekFactor:                       vardef.DefOptSeekFactor,
+		memoryFactor:                     vardef.DefOptMemoryFactor,
+		diskFactor:                       vardef.DefOptDiskFactor,
+		concurrencyFactor:                vardef.DefOptConcurrencyFactor,
+		IndexScanCostFactor:              vardef.DefOptIndexScanCostFactor,
+		IndexReaderCostFactor:            vardef.DefOptIndexReaderCostFactor,
+		TableReaderCostFactor:            vardef.DefOptTableReaderCostFactor,
+		TableFullScanCostFactor:          vardef.DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:         vardef.DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:         vardef.DefOptTableRowIDScanCostFactor,
+		TableTiFlashScanCostFactor:       vardef.DefOptTableTiFlashScanCostFactor,
+		IndexLookupCostFactor:            vardef.DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:             vardef.DefOptIndexMergeCostFactor,
+		SortCostFactor:                   vardef.DefOptSortCostFactor,
+		TopNCostFactor:                   vardef.DefOptTopNCostFactor,
+		LimitCostFactor:                  vardef.DefOptLimitCostFactor,
+		StreamAggCostFactor:              vardef.DefOptStreamAggCostFactor,
+		HashAggCostFactor:                vardef.DefOptHashAggCostFactor,
+		MergeJoinCostFactor:              vardef.DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:               vardef.DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:              vardef.DefOptIndexJoinCostFactor,
+		SelectivityFactor:                vardef.DefOptSelectivityFactor,
+		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
+		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		CommandValue:                     uint32(mysql.ComSleep),
+		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
+		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
+		TiDBOptJoinReorderThroughSel:     vardef.DefTiDBOptJoinReorderThroughSel,
+		SlowQueryFile:                    config.GetGlobalConfig().Log.SlowQueryFile,
+		WaitSplitRegionFinish:            vardef.DefTiDBWaitSplitRegionFinish,
+		WaitSplitRegionTimeout:           vardef.DefWaitSplitRegionTimeout,
+		enableIndexMerge:                 vardef.DefTiDBEnableIndexMerge,
+		EnableNoBackslashEscapesInLike:   vardef.DefTiDBEnableNoBackslashEscapesInLike,
+		NoopFuncsMode:                    TiDBOptOnOffWarn(vardef.DefTiDBEnableNoopFuncs),
+		replicaRead:                      kv.ReplicaReadLeader,
+		AllowRemoveAutoInc:               vardef.DefTiDBAllowRemoveAutoInc,
+		UsePlanBaselines:                 vardef.DefTiDBUsePlanBaselines,
+		EvolvePlanBaselines:              vardef.DefTiDBEvolvePlanBaselines,
+		EnableExtendedStats:              false,
+		IsolationReadEngines:             make(map[kv.StoreType]struct{}),
+		LockWaitTimeout:                  vardef.DefInnodbLockWaitTimeout * 1000,
+		MetricSchemaStep:                 vardef.DefTiDBMetricSchemaStep,
+		MetricSchemaRangeDuration:        vardef.DefTiDBMetricSchemaRangeDuration,
+		SequenceState:                    NewSequenceState(),
+		WindowingUseHighPrecision:        true,
+		PrevFoundInPlanCache:             vardef.DefTiDBFoundInPlanCache,
+		FoundInPlanCache:                 vardef.DefTiDBFoundInPlanCache,
+		PlanCacheStrategy:                vardef.DefTiDBPlanCacheStrategy,
+		PrevFoundInBinding:               vardef.DefTiDBFoundInBinding,
+		FoundInBinding:                   vardef.DefTiDBFoundInBinding,
+		SelectLimit:                      math.MaxUint64,
+		AllowAutoRandExplicitInsert:      vardef.DefTiDBAllowAutoRandExplicitInsert,
+		EnableClusteredIndex:             vardef.DefTiDBEnableClusteredIndex,
+		EnableParallelApply:              vardef.DefTiDBEnableParallelApply,
+		ShardAllocateStep:                vardef.DefTiDBShardAllocateStep,
+		EnablePointGetCache:              vardef.DefTiDBPointGetCache,
+		PartitionPruneMode:               *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
+		TxnScope:                         kv.NewDefaultTxnScopeVar(),
+		EnabledRateLimitAction:           vardef.DefTiDBEnableRateLimitAction,
+		EnableAsyncCommit:                vardef.DefTiDBEnableAsyncCommit,
+		Enable1PC:                        vardef.DefTiDBEnable1PC,
+		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
+		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
+		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
+		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
+		TMPTableSize:                     vardef.DefTiDBTmpTableMaxSize,
+		MPPStoreFailTTL:                  vardef.DefTiDBMPPStoreFailTTL,
+		Rng:                              mathutil.NewWithTime(),
+		EnableLegacyInstanceScope:        vardef.DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:          vardef.DefTiDBRemoveOrderbyInSubquery,
+		EnableSkewDistinctAgg:            vardef.DefTiDBSkewDistinctAgg,
+		Enable3StageDistinctAgg:          vardef.DefTiDB3StageDistinctAgg,
+		MaxAllowedPacket:                 vardef.DefMaxAllowedPacket,
+		TiFlashFastScan:                  vardef.DefTiFlashFastScan,
+		EnableTiFlashReadForWriteStmt:    true,
+		ForeignKeyChecks:                 vardef.DefTiDBForeignKeyChecks,
+		HookContext:                      hctx,
+		EnableReuseChunk:                 vardef.DefTiDBEnableReusechunk,
+		preUseChunkAlloc:                 vardef.DefTiDBUseAlloc,
+		chunkPool:                        nil,
+		mppExchangeCompressionMode:       vardef.DefaultExchangeCompressionMode,
+		mppVersion:                       kv.MppVersionUnspecified,
+		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
+		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
+		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
+		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
+		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
+		EnableRedactLog:                  vardef.DefTiDBRedactLog,
+		EnableWindowFunction:             vardef.DefEnableWindowFunction,
+		CostModelVersion:                 vardef.DefTiDBCostModelVer,
+		OptimizerEnableNAAJ:              vardef.DefTiDBEnableNAAJ,
+		OptOrderingIdxSelRatio:           vardef.DefTiDBOptOrderingIdxSelRatio,
+		RegardNULLAsPoint:                vardef.DefTiDBRegardNULLAsPoint,
+		AllowProjectionPushDown:          vardef.DefOptEnableProjectionPushDown,
+		SkipMissingPartitionStats:        vardef.DefTiDBSkipMissingPartitionStats,
+		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
+		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
+		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
+>>>>>>> 4fe287f387a (*: support cache prepared statement in plan cache (#67820))
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
@@ -2715,6 +2902,37 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 	}
 	stmt, _ := s.nonPreparedPlanCacheStmts.Get(planCacheStmtKey(sql))
 	return stmt
+}
+
+// PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
+// Including charset, collation, currentDB and sqlMode ensures that the cached
+// PlanCacheStmt is only reused when the session context that affects parsing,
+// name-resolution and cacheability decisions is identical. sqlMode is included
+// because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
+// IsASTCacheable (which computes StmtCacheable) runs on that AST.
+func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+	var modeBuf [8]byte
+	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+}
+
+// GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
+// or nil when the cache is empty or the key is not found.
+func (s *SessionVars) GetPrepareStmtDedupCache(key string) any {
+	if s.prepareStmtDedupCache == nil {
+		return nil
+	}
+	v, _ := s.prepareStmtDedupCache.Get(planCacheStmtKey(key))
+	return v
+}
+
+// SetPrepareStmtDedupCache stores a PrepareStmtCacheEntry under the given key.
+// The cache is lazily initialized and bounded by SessionPlanCacheSize (LRU eviction).
+func (s *SessionVars) SetPrepareStmtDedupCache(key string, val any) {
+	if s.prepareStmtDedupCache == nil {
+		s.prepareStmtDedupCache = kvcache.NewSimpleLRUCache(uint(s.SessionPlanCacheSize), 0, 0)
+	}
+	s.prepareStmtDedupCache.Put(planCacheStmtKey(key), val)
 }
 
 // AddPreparedStmt adds prepareStmt to current session and count in global.
