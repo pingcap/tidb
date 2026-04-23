@@ -15,10 +15,12 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -34,12 +36,15 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -237,7 +242,71 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 
 func deriveSearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) {
 	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
+	if count, ok := deriveTiCISearchPathStats(ds, path); ok {
+		path.CountAfterAccess = count
+		return
+	}
 	path.CountAfterAccess = min(float64(ds.StatisticTable.RealtimeCount)/10, 1000)
+}
+
+func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) (float64, bool) {
+	sctx, ok := ds.SCtx().(sessionctx.Context)
+	if !ok || path == nil || path.Index == nil || path.FtsQueryInfo == nil || len(path.Ranges) == 0 {
+		return 0, false
+	}
+	provider, ok := sctx.GetStore().(kv.TiCIEstimateCountProvider)
+	if !ok {
+		return 0, false
+	}
+	readTS, err := sessiontxn.GetTxnManager(sctx).GetStmtReadTS()
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get TiCI estimate count read ts", zap.Error(err), zap.Int64("tableID", ds.PhysicalTableID), zap.Int64("indexID", path.Index.ID))
+		return 0, false
+	}
+	tableID := ds.PhysicalTableID
+	if tableID == 0 {
+		tableID = ds.TableInfo.ID
+	}
+	keyRanges, err := distsql.TiCIIndexRangesToKVRanges(sctx.GetDistSQLCtx(), []int64{tableID}, path.Index.ID, path.Ranges, getTiCIShardType(ds, path))
+	if err != nil {
+		logutil.BgLogger().Warn("failed to build TiCI estimate count key ranges", zap.Error(err), zap.Int64("tableID", tableID), zap.Int64("indexID", path.Index.ID))
+		return 0, false
+	}
+	tzName, tzOffset := timeutil.Zone(sctx.GetSessionVars().Location())
+	count, err := provider.EstimateTiCICount(context.Background(), &kv.TiCIEstimateCountRequest{
+		TableID:        tableID,
+		IndexID:        path.Index.ID,
+		StartTS:        readTS,
+		FTSQueryInfo:   path.FtsQueryInfo,
+		KeyRanges:      keyRanges,
+		TimeZoneName:   tzName,
+		TimeZoneOffset: tzOffset,
+	}, 50*time.Millisecond)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to estimate TiCI search path row count", zap.Error(err), zap.Int64("tableID", tableID), zap.Int64("indexID", path.Index.ID))
+		return 0, false
+	}
+	plannerCount := min(float64(count), float64(ds.StatisticTable.RealtimeCount))
+	logutil.BgLogger().Info("TiCI estimate count succeeded",
+		zap.Int64("tableID", tableID),
+		zap.String("indexName", path.Index.Name.O),
+		zap.Int64("indexID", path.Index.ID),
+		zap.Uint64("readTS", readTS),
+		zap.Uint64("estimatedCount", count),
+		zap.Float64("plannerCountAfterAccess", plannerCount),
+		zap.Int64("realtimeCount", ds.StatisticTable.RealtimeCount),
+		zap.Int("rangeCount", len(path.Ranges)))
+	return plannerCount, true
+}
+
+func getTiCIShardType(ds *logicalop.DataSource, path *util.AccessPath) distsql.TiCIShardType {
+	if path.Index.HybridInfo != nil && path.Index.HybridInfo.Sharding != nil {
+		return distsql.TiCIShardExtraShardingKey
+	}
+	if ds.TableInfo.IsCommonHandle {
+		return distsql.TiCIShardCommonHandle
+	}
+	return distsql.TiCIShardIntHandle
 }
 
 // adjustCountAfterAccess adjusts the CountAfterAccess when it's less than the estimated table row count.
