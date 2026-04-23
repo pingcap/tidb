@@ -3094,6 +3094,14 @@ var defaultSysVars = []*SysVar{
 			// Deprecated: do nothing.
 			return nil
 		},
+		// Both read paths return "1" unconditionally. Validation alone is
+		// not enough: session.GetGlobalSysVar() applies only
+		// ValidateFromType on the persisted value (skipping the
+		// Validation callback), so a cluster upgraded from an older
+		// TiDB with a non-1 value persisted in mysql.global_variables
+		// would otherwise read that stale value.
+		GetSession: func(_ *SessionVars) (string, error) { return "1", nil },
+		GetGlobal:  func(_ context.Context, _ *SessionVars) (string, error) { return "1", nil },
 		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
 			if normalizedValue != "1" {
 				// Use errWarnDeprecatedSyntax (MySQL code 1287) for
