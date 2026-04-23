@@ -11,6 +11,7 @@ package_group(
 go_library(
     name = "ddl",
     srcs = [
+        "backfill_metrics.go",
         "backfilling.go",
         "callback.go",
         "cluster.go",
@@ -147,6 +148,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "attributes_sql_test.go",
+        "backfill_metrics_test.go",
         "backfilling_test.go",
         "callback_test.go",
         "cancel_test.go",
