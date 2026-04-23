@@ -2293,6 +2293,7 @@ func TestFastAdminCheckWithError(t *testing.T) {
 	// And the admin check shouldn't be blocked when meeting error.
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec(`
 		create table admin_test (c1 int, c2 int,
@@ -2300,6 +2301,17 @@ func TestFastAdminCheckWithError(t *testing.T) {
 		key idx6(c1), key idx7(c1), key idx8(c1), key idx9(c1), key idx10(c1))
 	`)
 	tk.MustExecToErr("admin check table admin_test")
+
+	tk.MustExec("drop table if exists admin_test_generated")
+	tk.MustExec(`
+		create table admin_test_generated (
+			payload json,
+			f date as (JSON_EXTRACT(payload, '$.f')),
+			key idx_f(f)
+		)
+	`)
+	tk.MustExec(`insert into admin_test_generated set payload='{"f":"2018-09-28"}'`)
+	tk.MustExec("admin check table admin_test_generated")
 }
 
 func TestFastAdminCheckQuickPassSkipBucketed(t *testing.T) {
@@ -2488,7 +2500,7 @@ func TestAdminCheckTableWithEnumAndPointGet(t *testing.T) {
 func TestFastCheckTableConcurrent(t *testing.T) {
 	// This test verifies that concurrent execution of admin check table works correctly.
 	// Note: The data race in ExecDetails (fixed by using ContextWithInitializedExecDetails
-	// in getCheckSum) cannot be detected in unit tests because mocktikv doesn't trigger
+	// in getCheckSum/getGlobalCheckSum) cannot be detected in unit tests because mocktikv doesn't trigger
 	// the network traffic writes to ExecDetails that happen in real TiKV environments.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

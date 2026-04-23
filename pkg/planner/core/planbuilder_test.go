@@ -106,29 +106,65 @@ func TestGetPathByIndexName(t *testing.T) {
 		genTiFlashPath(tblInfo),
 	}
 
-	path := getPathByIndexName(accessPath, ast.NewCIStr("idx"), tblInfo)
+	resolve := func(paths []*util.AccessPath, filteredUnsafeIndexes []*model.IndexInfo, idxName string, tblInfo *model.TableInfo) (*util.AccessPath, *model.IndexInfo, indexHintResolveStatus) {
+		return resolveIndexHintByName(paths, filteredUnsafeIndexes, ast.NewCIStr(idxName), tblInfo)
+	}
+
+	path, filteredIndex, status := resolve(accessPath, nil, "idx", tblInfo)
 	require.NotNil(t, path)
+	require.Nil(t, filteredIndex)
+	require.Equal(t, indexHintResolvePublicPath, status)
 	require.Equal(t, accessPath[1], path)
 
 	// "id" is a prefix of "idx"
-	path = getPathByIndexName(accessPath, ast.NewCIStr("id"), tblInfo)
+	path, filteredIndex, status = resolve(accessPath, nil, "id", tblInfo)
 	require.NotNil(t, path)
+	require.Nil(t, filteredIndex)
+	require.Equal(t, indexHintResolvePublicPath, status)
 	require.Equal(t, accessPath[1], path)
 
-	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
+	path, filteredIndex, status = resolve(accessPath, nil, "primary", tblInfo)
 	require.NotNil(t, path)
+	require.Nil(t, filteredIndex)
+	require.Equal(t, indexHintResolvePublicPath, status)
 	require.Equal(t, accessPath[0], path)
 
-	path = getPathByIndexName(accessPath, ast.NewCIStr("not exists"), tblInfo)
+	path, filteredIndex, status = resolve(accessPath, nil, "not exists", tblInfo)
 	require.Nil(t, path)
+	require.Nil(t, filteredIndex)
+	require.Equal(t, indexHintResolveNotFound, status)
 
 	tblInfo = &model.TableInfo{
 		Indices:    make([]*model.IndexInfo, 0),
 		PKIsHandle: false,
 	}
 
-	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
+	path, filteredIndex, status = resolve(accessPath, nil, "primary", tblInfo)
 	require.Nil(t, path)
+	require.Nil(t, filteredIndex)
+	require.Equal(t, indexHintResolveNotFound, status)
+
+	t.Run("resolve filtered unsafe indexes", func(t *testing.T) {
+		unsafeExact := &model.IndexInfo{Name: ast.NewCIStr("idx_unsafe")}
+		unsafeLong := &model.IndexInfo{Name: ast.NewCIStr("idx_unsafe_long")}
+
+		path, filteredIndex, status = resolve(accessPath, []*model.IndexInfo{unsafeExact, unsafeLong}, "idx_unsafe", tblInfo)
+		require.Nil(t, path)
+		require.Same(t, unsafeExact, filteredIndex)
+		require.Equal(t, indexHintResolveFilteredUnsafe, status)
+
+		path, filteredIndex, status = resolve(accessPath, []*model.IndexInfo{unsafeLong}, "idx_unsafe_l", tblInfo)
+		require.Nil(t, path)
+		require.Same(t, unsafeLong, filteredIndex)
+		require.Equal(t, indexHintResolveFilteredUnsafe, status)
+
+		publicPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_shared")}}
+		filteredUnsafe := &model.IndexInfo{Name: ast.NewCIStr("idx_shared")}
+		path, filteredIndex, status = resolve([]*util.AccessPath{publicPath}, []*model.IndexInfo{filteredUnsafe}, "idx_shared", tblInfo)
+		require.Same(t, publicPath, path)
+		require.Nil(t, filteredIndex)
+		require.Equal(t, indexHintResolvePublicPath, status)
+	})
 
 	t.Run("ignore exact and prefix-resolved long index without removing shorter sibling", func(t *testing.T) {
 		shortPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no")}}
@@ -139,19 +175,28 @@ func TestGetPathByIndexName(t *testing.T) {
 			Indices: []*model.IndexInfo{shortPath.Index, longPath.Index},
 		}
 
-		ignored := []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete_flag"), tblInfo)}
+		ignoredPath, ignoredIndex, resolveStatus := resolve(paths, nil, "idx_contract_sys_no_delete_flag", tblInfo)
+		require.Nil(t, ignoredIndex)
+		require.Equal(t, indexHintResolvePublicPath, resolveStatus)
+		ignored := []*util.AccessPath{ignoredPath}
 		require.Same(t, longPath, ignored[0])
 		remained := removeIgnoredPaths(paths, ignored)
 		require.Len(t, remained, 1)
 		require.Same(t, shortPath, remained[0])
 
-		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete"), tblInfo)}
+		ignoredPath, ignoredIndex, resolveStatus = resolve(paths, nil, "idx_contract_sys_no_delete", tblInfo)
+		require.Nil(t, ignoredIndex)
+		require.Equal(t, indexHintResolvePublicPath, resolveStatus)
+		ignored = []*util.AccessPath{ignoredPath}
 		require.Same(t, longPath, ignored[0])
 		remained = removeIgnoredPaths(paths, ignored)
 		require.Len(t, remained, 1)
 		require.Same(t, shortPath, remained[0])
 
-		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("Idx_Contract_Sys_No_Delete_Flag"), tblInfo)}
+		ignoredPath, ignoredIndex, resolveStatus = resolve(paths, nil, "Idx_Contract_Sys_No_Delete_Flag", tblInfo)
+		require.Nil(t, ignoredIndex)
+		require.Equal(t, indexHintResolvePublicPath, resolveStatus)
+		ignored = []*util.AccessPath{ignoredPath}
 		require.Same(t, longPath, ignored[0])
 		remained = removeIgnoredPaths(paths, ignored)
 		require.Len(t, remained, 1)
