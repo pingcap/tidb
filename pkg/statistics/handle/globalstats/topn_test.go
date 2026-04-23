@@ -275,7 +275,9 @@ func TestMergePartTopNAndHistToGlobalCountPreservation(t *testing.T) {
 		outputTotal += float64(hybridTopN.TotalCount())
 	}
 	inputTotal := float64(inputTopNTotal) + float64(inputHistTotal)
-	require.InDelta(t, inputTotal, outputTotal, inputTotal*0.01,
+	// Fixture uses exact integer counts and no sampling; total rows
+	// must be preserved exactly by the merge.
+	require.Equal(t, inputTotal, outputTotal,
 		"total count should be preserved: input=%.0f, output=%.0f", inputTotal, outputTotal)
 }
 

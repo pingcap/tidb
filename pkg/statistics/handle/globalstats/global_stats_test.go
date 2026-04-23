@@ -973,6 +973,11 @@ func TestGlobalStatsMergeCombined(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	// Pin the session settings this test depends on: global stats /
+	// partition_name='global' and the bucket layout below assume V2
+	// analyze under dynamic prune mode. Defaults shift over time.
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (
 	a int primary key auto_increment,

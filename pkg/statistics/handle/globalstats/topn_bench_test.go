@@ -113,9 +113,11 @@ func benchmarkGlobalStatsMergeWith(b *testing.B, partitions int, prepare func(*t
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = statistics.MergePartTopNAndHistToGlobal(
+		if _, _, err := statistics.MergePartTopNAndHistToGlobal(
 			topNs, hists, 100, 256, false, &killer, sc,
-		)
+		); err != nil {
+			b.Fatalf("MergePartTopNAndHistToGlobal: %v", err)
+		}
 	}
 }
 
