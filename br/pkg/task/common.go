@@ -748,6 +748,12 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.MetadataDownloadBatchSize, err = flags.GetUint(flagMetadataDownloadBatchSize); err != nil {
 		return errors.Trace(err)
 	}
+	if flags.Lookup(FlagKeyspaceName) != nil {
+		cfg.KeyspaceName, err = flags.GetString(FlagKeyspaceName)
+		if err != nil {
+			return errors.Annotatef(err, "failed to get flag %s", FlagKeyspaceName)
+		}
+	}
 
 	return cfg.normalizePDURLs()
 }

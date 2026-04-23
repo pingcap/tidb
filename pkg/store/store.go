@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	pderr "github.com/tikv/pd/client/errs"
 	"go.uber.org/zap"
 )
 
@@ -149,7 +150,17 @@ func IsNotTSOLeaderError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "not leader")
+	if !strings.Contains(err.Error(), pderr.NotLeaderErr) {
+		return false
+	}
+	return errors.Find(err, func(inner error) bool {
+		pdErr, ok := inner.(*errors.Error)
+		if !ok {
+			return false
+		}
+		return pdErr.RFCCode() == pderr.ErrClientGetTSO.RFCCode() ||
+			pdErr.RFCCode() == pderr.ErrClientGetLeader.RFCCode()
+	}) != nil
 }
 
 // MustInitStorage initializes the kv.Storage for this instance.
