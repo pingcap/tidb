@@ -3096,7 +3096,10 @@ var defaultSysVars = []*SysVar{
 		},
 		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
 			if normalizedValue != "1" {
-				vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("tidb_merge_partition_stats_concurrency is deprecated and will be removed in a future release. It no longer affects behavior."))
+				// Use errWarnDeprecatedSyntax (MySQL code 1287) for
+				// consistency with other deprecated sysvar warnings
+				// such as tidb_index_serial_scan_concurrency.
+				vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGen("tidb_merge_partition_stats_concurrency is deprecated and will be removed in a future release. It no longer affects behavior."))
 			}
 			return "1", nil
 		},
