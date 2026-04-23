@@ -2401,7 +2401,19 @@ var defaultSysVars = []*SysVar{
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 		return nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(DefTiDBOptJoinReorderThroughSel), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+=======
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableAdvancedJoinReorder, Value: BoolToOnOff(vardef.DefTiDBOptEnableAdvancedJoinReorder), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiDBOptEnableAdvancedJoinReorder = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughProj, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughProj), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiDBOptJoinReorderThroughProj = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughSel), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+>>>>>>> a64f198a6ee (planner: handle the projection between the join group (#65367))
 		s.TiDBOptJoinReorderThroughSel = TiDBOptOn(val)
 		return nil
 	}},

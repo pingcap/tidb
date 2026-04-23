@@ -151,5 +151,10 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 	if len(usedEdges) == 0 {
 		return nil, nil
 	}
+<<<<<<< HEAD
 	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
+=======
+	join, remainOtherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, s.otherConds)
+	return join, remainOtherConds, isCartesian
+>>>>>>> a64f198a6ee (planner: handle the projection between the join group (#65367))
 }

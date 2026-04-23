@@ -64,7 +64,11 @@ go_library(
         "rule_join_reorder.go",
         "rule_join_reorder_dp.go",
         "rule_join_reorder_greedy.go",
+<<<<<<< HEAD
         "rule_max_min_eliminate.go",
+=======
+        "rule_join_reorder_projection_inline.go",
+>>>>>>> a64f198a6ee (planner: handle the projection between the join group (#65367))
         "rule_outer_to_inner_join.go",
         "rule_partition_processor.go",
         "rule_predicate_push_down.go",
@@ -290,6 +294,7 @@ go_test(
         "//pkg/parser/terror",
         "//pkg/planner",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/joinorder",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
