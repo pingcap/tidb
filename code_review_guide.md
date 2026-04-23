@@ -96,7 +96,7 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 
 * Take care to ensure that your feedback is about the *code*, not the *author*: feedback should never be personal. Be kind to the coder, not to the code.
 
-  * A good rule of thumb is use "we" rather than "you": for example, "We shouldn't be calling this repeatedly" is better than "You shouldn't be calling this repeatedly". This both avoids the risk of interpreting feedback as personal attacks, frames code review as a collaborative effort between the author and the reviewer, and emphasizes the shared ownership of the codebase.
+  * A good rule of thumb is to use "we" rather than "you": for example, "We shouldn't be calling this repeatedly" is better than "You shouldn't be calling this repeatedly". This both avoids the risk of interpreting feedback as personal attacks, frames code review as a collaborative effort between the author and the reviewer, and emphasizes the shared ownership of the codebase.
 
 * Ask questions rather than make statements.
 
