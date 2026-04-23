@@ -9,4 +9,10 @@ Error 3108 (HY000): Column 'a' has a generated column dependency.
 drop table if exists t2;
 create table t2(id int, a int, b int generated always as (abs(a)) virtual);
 alter table t2 modify column a bigint;
-Error 3106 (HY000): '[ddl:3108]Column 'a' has a generated column dependency.' is not supported for generated columns.
+DESC t2;
+Field	Type	Null	Key	Default	Extra
+id	int	YES		NULL	
+a	bigint	YES		NULL	
+b	int	YES		NULL	VIRTUAL GENERATED
+alter table t2 modify column a varchar(20);
+Error 8200 (HY000): Unsupported modify column: oldCol is a dependent column 'a' for generated column

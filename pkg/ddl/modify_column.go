@@ -1852,8 +1852,6 @@ func GetModifiableColumnJob(
 	if newColName.L == model.ExtraHandleName.L {
 		return nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
-	errG := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)
-
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
 		c := table.FindCol(t.Cols(), newColName.L)
@@ -1863,8 +1861,8 @@ func GetModifiableColumnJob(
 
 		// And also check the generated columns dependency, if some generated columns
 		// depend on this column, we can't rename the column name.
-		if errG != nil {
-			return nil, errors.Trace(errG)
+		if err := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
@@ -1972,11 +1970,10 @@ func GetModifiableColumnJob(
 	if err = checkModifyGeneratedColumn(sctx, schema.Name, t, col, newCol, specNewColumn, spec.Position); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if errG != nil {
-		// According to issue https://github.com/pingcap/tidb/issues/24321,
-		// changing the type of a column involving generating a column is prohibited.
-		return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs(errG.Error())
-	}
+	// NOTE: We no longer unconditionally block all modifications of columns with generated
+	// column dependencies. Instead, we rely on `isGeneratedRelatedColumn` (called above
+	// when mayNeedChangeColData is true) to block only modifications that require data
+	// reorganization. See https://github.com/pingcap/tidb/issues/43455
 
 	if t.Meta().TTLInfo != nil {
 		// the column referenced by TTL should be a time type
