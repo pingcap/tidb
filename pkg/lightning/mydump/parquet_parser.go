@@ -15,43 +15,40 @@
 package mydump
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
-	"fmt"
 	"io"
-	"math/big"
-	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
+	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/file"
+	"github.com/apache/arrow-go/v18/parquet/metadata"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/xitongsys/parquet-go/parquet"
-	preader "github.com/xitongsys/parquet-go/reader"
-	"github.com/xitongsys/parquet-go/source"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
 )
 
 const (
-	batchReadRowSize = 32
-
-	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
-	// optimize the read performance
-	smallParquetFileThreshold = 256 * 1024 * 1024
-	// jan011970 is the date of unix epoch in julian day,
-	jan011970 = 2440588
-	secPerDay = 24 * 60 * 60
-
-	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
-	timeLayout    = "2006-01-02 15:04:05.999999"
+	// defaultBufSize specifies the default size of skip buffer.
+	// Skip buffer is used when reading data from the cloud. If there is a gap
+	// between the current read position and the last read position, these
+	// data is stored in this buffer to avoid potentially reopening the
+	// underlying file when the gap size is less than the buffer size.
+	defaultBufSize = 64 * 1024
 )
 
-<<<<<<< HEAD
-=======
 var (
 	unsupportedParquetTypes = map[schema.ConvertedType]struct{}{
 		// TODO(joechenrh): support read list type as vector
@@ -302,534 +299,243 @@ func (rgp *rowGroupParser) Close() error {
 	return onceErr.Get()
 }
 
->>>>>>> 73b01d05c64 (import: honor Spark legacy Parquet datetime metadata (#67908))
 // ParquetParser parses a parquet file for import
-// It implements the Parser interface.
 type ParquetParser struct {
-	Reader      *preader.ParquetReader
-	columns     []string
-	columnMetas []*parquet.SchemaElement
-	rows        []any
-	readRows    int64
-	curStart    int64
-	curIndex    int
-	lastRow     Row
-	logger      log.Logger
+	fileMeta *metadata.FileMetaData
+	colTypes []convertedType
+	colNames []string
 
-	readSeekCloser ReadSeekCloser
-}
-
-// readerWrapper is a used for implement `source.ParquetFile`
-type readerWrapper struct {
-	ReadSeekCloser
-	store storage.ExternalStorage
 	ctx   context.Context
-	// current file path
-	path string
+	store storeapi.Storage
+	path  string
+	prop  *parquet.ReaderProperties
+	loc   *time.Location
+
+	alloc memory.Allocator
+
+	rowGroup *rowGroupParser
+
+	rowPool *zeropool.Pool[[]types.Datum]
+
+	curRowGroup   int
+	totalRowGroup int
+
+	totalRows      int64 // total rows in this file
+	totalReadRows  int64 // total rows read
+	totalReadBytes int   // total bytes read, estimated by all the read datum.
+
+	lastRow Row
+	logger  log.Logger
 }
 
-func (*readerWrapper) Write(_ []byte) (n int, err error) {
-	return 0, errors.New("unsupported operation")
-}
-
-func (r *readerWrapper) Open(name string) (source.ParquetFile, error) {
-	if len(name) == 0 {
-		name = r.path
+// Init initializes the Parquet parser and allocate necessary buffers
+func (pp *ParquetParser) Init(loc *time.Location) error {
+	meta := pp.fileMeta
+	pp.totalRowGroup = meta.NumRowGroups()
+	if pp.totalRowGroup == 0 {
+		return nil
 	}
-	reader, err := r.store.Open(r.ctx, name, nil)
+
+	pp.totalRows = meta.NumRows
+
+	if loc == nil {
+		loc = timeutil.SystemLocation()
+	}
+	pp.loc = loc
+
+	return pp.buildRowGroupParser()
+}
+
+func (pp *ParquetParser) buildRowGroupParser() (err error) {
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
+	eg.SetLimit(8)
+
+	builder, err := pp.getBuilder(egCtx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return &readerWrapper{
-		ReadSeekCloser: reader,
-		store:          r.store,
-		ctx:            r.ctx,
-		path:           name,
-	}, nil
-}
 
-func (*readerWrapper) Create(_ string) (source.ParquetFile, error) {
-	return nil, errors.New("unsupported operation")
-}
+	readers := make([]*file.Reader, pp.fileMeta.NumColumns())
+	defer func() {
+		if err != nil {
+			for _, r := range readers {
+				if r != nil {
+					_ = r.Close()
+				}
+			}
+		}
+	}()
 
-// bytesReaderWrapper is a wrapper of bytes.Reader used for implement `source.ParquetFile`
-type bytesReaderWrapper struct {
-	*bytes.Reader
-	rawBytes []byte
-	// current file path
-	path string
-}
+	for i := range pp.fileMeta.NumColumns() {
+		eg.Go(func() error {
+			wrapper, err := builder(i)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-func (*bytesReaderWrapper) Close() error {
+			reader, err := file.NewParquetReader(
+				wrapper,
+				file.WithReadProps(pp.prop),
+				file.WithMetadata(pp.fileMeta),
+			)
+			if err != nil {
+				_ = wrapper.Close()
+				return errors.Trace(err)
+			}
+			readers[i] = reader
+			return nil
+		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return errors.Trace(err)
+	}
+
+	rgp := &rowGroupParser{
+		rowGroup: pp.curRowGroup,
+		readers:  readers,
+	}
+	if err := rgp.init(pp.colTypes, pp.loc); err != nil {
+		return errors.Trace(err)
+	}
+	pp.rowGroup = rgp
 	return nil
 }
 
-func (*bytesReaderWrapper) Create(_ string) (source.ParquetFile, error) {
-	return nil, errors.New("unsupported operation")
-}
-
-func (*bytesReaderWrapper) Write(_ []byte) (n int, err error) {
-	return 0, errors.New("unsupported operation")
-}
-
-func (r *bytesReaderWrapper) Open(name string) (source.ParquetFile, error) {
-	if len(name) > 0 && name != r.path {
-		panic(fmt.Sprintf("Open with a different name is not supported! current: '%s', new: '%s'", r.path, name))
-	}
-	return &bytesReaderWrapper{
-		Reader:   bytes.NewReader(r.rawBytes),
-		rawBytes: r.rawBytes,
-		path:     r.path,
-	}, nil
-}
-
-// OpenParquetReader opens a parquet file and returns a handle that can at least read the file.
-func OpenParquetReader(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	path string,
-	size int64,
-) (source.ParquetFile, error) {
-	if size <= smallParquetFileThreshold {
-		fileBytes, err := store.ReadFile(ctx, path)
-		if err != nil {
-			return nil, err
-		}
-		return &bytesReaderWrapper{
-			Reader:   bytes.NewReader(fileBytes),
-			rawBytes: fileBytes,
-			path:     path,
-		}, nil
-	}
-
-	r, err := store.Open(ctx, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	return &readerWrapper{
-		ReadSeekCloser: r,
-		store:          store,
-		ctx:            ctx,
-		path:           path,
-	}, nil
-}
-
-// ReadParquetFileRowCountByFile reads the parquet file row count.
-// It is a special func to fetch parquet file row count fast.
-func ReadParquetFileRowCountByFile(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	fileMeta SourceFileMeta,
-) (int64, error) {
-	r, err := store.Open(ctx, fileMeta.Path, nil)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	wrapper := &readerWrapper{
-		ReadSeekCloser: r,
-		store:          store,
-		ctx:            ctx,
-		path:           fileMeta.Path,
-	}
-
-	//nolint: errcheck
-	defer wrapper.Close()
-
-	res := new(preader.ParquetReader)
-	res.NP = 1
-	res.PFile = wrapper
-	if err = res.ReadFooter(); err != nil {
-		return 0, err
-	}
-
-	return res.Footer.NumRows, nil
-}
-
-// NewParquetParser generates a parquet parser.
-func NewParquetParser(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	r storage.ReadSeekCloser,
-	path string,
-) (*ParquetParser, error) {
-	// check to avoid wrapping twice
-	wrapper, ok := r.(source.ParquetFile)
-	if !ok {
-		wrapper = &readerWrapper{
-			ReadSeekCloser: r,
-			store:          store,
-			ctx:            ctx,
-			path:           path,
-		}
-	}
-
-	// FIXME: need to bench what the best value for the concurrent reader number
-	reader, err := preader.NewParquetReader(wrapper, nil, 2)
+func (pp *ParquetParser) getBuilder(ctx context.Context) (func(int) (readerAtSeekerCloser, error), error) {
+	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	columns := make([]string, 0, len(reader.Footer.Schema)-1)
-	columnMetas := make([]*parquet.SchemaElement, 0, len(reader.Footer.Schema)-1)
-	for i, c := range reader.SchemaHandler.SchemaElements {
-		if c.GetNumChildren() == 0 {
-			// we need to use the raw name, SchemaElement.Name might be prefixed with PARGO_PERFIX_
-			columns = append(columns, strings.ToLower(reader.SchemaHandler.GetExName(i)))
-			// transfer old ConvertedType to LogicalType
-			columnMeta := c
-			if c.ConvertedType != nil && c.LogicalType == nil {
-				newMeta := *c
-				columnMeta = &newMeta
-				if err := convertToLogicType(columnMeta); err != nil {
-					return nil, err
-				}
-			}
-			columnMetas = append(columnMetas, columnMeta)
+	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
+		base, err := newInMemoryReaderBase(ctx, pp.store, pp.path, ranges)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
+		pp.logger.Debug("use in memory reader for parquet file", zap.String("path", pp.path))
+		return func(c int) (readerAtSeekerCloser, error) {
+			return &inMemoryParquetWrapper{
+				base:     base,
+				pos:      ranges.columnStarts[c],
+				fileSize: pp.fileMeta.GetSourceFileSize(),
+			}, nil
+		}, nil
 	}
 
-	return &ParquetParser{
-		Reader:         reader,
-		columns:        columns,
-		columnMetas:    columnMetas,
-		logger:         log.Wrap(logutil.Logger(ctx)),
-		readSeekCloser: wrapper,
+	return func(c int) (readerAtSeekerCloser, error) {
+		return newParquetWrapper(ctx, pp.store, pp.path,
+			&storeapi.ReaderOption{
+				StartOffset: &ranges.columnStarts[c],
+				EndOffset:   &ranges.columnEnds[c],
+			})
 	}, nil
 }
 
-func convertToLogicType(se *parquet.SchemaElement) error {
-	logicalType := &parquet.LogicalType{}
-	switch *se.ConvertedType {
-	case parquet.ConvertedType_UTF8:
-		logicalType.STRING = &parquet.StringType{}
-	case parquet.ConvertedType_ENUM:
-		logicalType.ENUM = &parquet.EnumType{}
-	case parquet.ConvertedType_DECIMAL:
-		logicalType.DECIMAL = &parquet.DecimalType{
-			Scale:     *se.Scale,
-			Precision: *se.Precision,
+func (pp *ParquetParser) moveToNextRowGroup() error {
+	if pp.rowGroup != nil {
+		err := pp.rowGroup.Close()
+		pp.rowGroup = nil
+		if err != nil {
+			return err
 		}
-	case parquet.ConvertedType_DATE:
-		logicalType.DATE = &parquet.DateType{}
-	case parquet.ConvertedType_TIME_MILLIS:
-		logicalType.TIME = &parquet.TimeType{
-			IsAdjustedToUTC: true,
-			Unit: &parquet.TimeUnit{
-				MILLIS: parquet.NewMilliSeconds(),
-			},
-		}
-	case parquet.ConvertedType_TIME_MICROS:
-		logicalType.TIME = &parquet.TimeType{
-			IsAdjustedToUTC: true,
-			Unit: &parquet.TimeUnit{
-				MICROS: parquet.NewMicroSeconds(),
-			},
-		}
-	case parquet.ConvertedType_TIMESTAMP_MILLIS:
-		logicalType.TIMESTAMP = &parquet.TimestampType{
-			IsAdjustedToUTC: true,
-			Unit: &parquet.TimeUnit{
-				MILLIS: parquet.NewMilliSeconds(),
-			},
-		}
-	case parquet.ConvertedType_TIMESTAMP_MICROS:
-		logicalType.TIMESTAMP = &parquet.TimestampType{
-			IsAdjustedToUTC: true,
-			Unit: &parquet.TimeUnit{
-				MICROS: parquet.NewMicroSeconds(),
-			},
-		}
-	case parquet.ConvertedType_UINT_8:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 8,
-			IsSigned: false,
-		}
-	case parquet.ConvertedType_UINT_16:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 16,
-			IsSigned: false,
-		}
-	case parquet.ConvertedType_UINT_32:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 32,
-			IsSigned: false,
-		}
-	case parquet.ConvertedType_UINT_64:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 64,
-			IsSigned: false,
-		}
-	case parquet.ConvertedType_INT_8:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 8,
-			IsSigned: true,
-		}
-	case parquet.ConvertedType_INT_16:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 16,
-			IsSigned: true,
-		}
-	case parquet.ConvertedType_INT_32:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 32,
-			IsSigned: true,
-		}
-	case parquet.ConvertedType_INT_64:
-		logicalType.INTEGER = &parquet.IntType{
-			BitWidth: 64,
-			IsSigned: true,
-		}
-	case parquet.ConvertedType_JSON:
-		logicalType.JSON = &parquet.JsonType{}
-	case parquet.ConvertedType_BSON:
-		logicalType.BSON = &parquet.BsonType{}
-	// case parquet.ConvertedType_INTERVAL, parquet.ConvertedType_MAP, parquet.ConvertedType_MAP_KEY_VALUE, parquet.ConvertedType_LIST:
-	default:
-		return errors.Errorf("unsupported type: '%s'", *se.ConvertedType)
 	}
-	se.LogicalType = logicalType
+
+	pp.curRowGroup++
+	if pp.curRowGroup >= pp.totalRowGroup {
+		return io.EOF
+	}
+
+	return pp.buildRowGroupParser()
+}
+
+// readSingleRow read one row internally and store them in the row buffer.
+// The data read is shallow copied from the internal buffer of parquet reader,
+// so copy it if you need to keep the data before the next read.
+func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
+	// Move to next row group
+	if pp.rowGroup.isDone() {
+		if err := pp.moveToNextRowGroup(); err != nil {
+			return err
+		}
+	}
+
+	if err := pp.rowGroup.readRow(row); err != nil {
+		return err
+	}
+
+	pp.totalReadBytes += estimateRowSize(row)
+	pp.totalReadRows++
 	return nil
 }
 
 // Pos returns the currently row number of the parquet file
 func (pp *ParquetParser) Pos() (pos int64, rowID int64) {
-	return pp.curStart + int64(pp.curIndex), pp.lastRow.RowID
+	return pp.totalReadRows, pp.lastRow.RowID
 }
 
-// SetPos sets the position in a parquet file.
-// It implements the Parser interface.
+// SetPos implements the Parser interface.
+// For parquet file, this interface will read and discard the first `pos` rows,
+// and set the current row ID to `rowID`
 func (pp *ParquetParser) SetPos(pos int64, rowID int64) error {
-	if pos < pp.curStart {
-		panic("don't support seek back yet")
-	}
-	pp.lastRow.RowID = rowID
+	row := pp.rowPool.Get()
+	defer pp.rowPool.Put(row)
 
-	if pos < pp.curStart+int64(len(pp.rows)) {
-		pp.curIndex = int(pos - pp.curStart)
-		pp.readRows = pos
-		return nil
-	}
-
-	if pos > pp.curStart+int64(len(pp.rows)) {
-		if err := pp.Reader.SkipRows(pos - pp.curStart - int64(len(pp.rows))); err != nil {
-			return errors.Trace(err)
+	// TODO(joechenrh): skip rows use underlying SkipRow interface
+	// For now it's ok, since only UTs use this interface
+	toRead := pos - pp.lastRow.RowID
+	for range toRead {
+		if err := pp.readSingleRow(row); err != nil {
+			return err
 		}
 	}
-	pp.curStart = pos
-	pp.readRows = pos
-	pp.curIndex = 0
-	if len(pp.rows) > 0 {
-		pp.rows = pp.rows[:0]
-	}
 
+	pp.lastRow.RowID = rowID
 	return nil
 }
 
 // ScannedPos implements the Parser interface.
-// For parquet it's parquet file's reader current position.
+// For parquet we use the size of all read datum to estimate the scanned position.
 func (pp *ParquetParser) ScannedPos() (int64, error) {
-	return pp.readSeekCloser.Seek(0, io.SeekCurrent)
+	return int64(pp.totalReadBytes), nil
 }
 
 // Close closes the parquet file of the parser.
 // It implements the Parser interface.
 func (pp *ParquetParser) Close() error {
-	pp.Reader.ReadStop()
-	return pp.Reader.PFile.Close()
+	defer func() {
+		if a, ok := pp.alloc.(interface{ Close() }); ok {
+			a.Close()
+		}
+	}()
+
+	var onceErr common.OnceError
+	if pp.rowGroup != nil {
+		if err := pp.rowGroup.Close(); err != nil {
+			onceErr.Set(err)
+			pp.logger.Warn("Close parquet parser get error", zap.Error(err))
+		}
+		pp.rowGroup = nil
+	}
+	return onceErr.Get()
 }
 
 // ReadRow reads a row in the parquet file by the parser.
-// It implements the Parser interface.
+// The read data is shallow copied from the internal buffer of parquet reader,
+// so it's only valid before the next ReadRow call.
 func (pp *ParquetParser) ReadRow() error {
 	pp.lastRow.RowID++
 	pp.lastRow.Length = 0
-	if pp.curIndex >= len(pp.rows) {
-		if pp.readRows >= pp.Reader.GetNumRows() {
-			return io.EOF
-		}
-		count := batchReadRowSize
-		if pp.Reader.GetNumRows()-pp.readRows < int64(count) {
-			count = int(pp.Reader.GetNumRows() - pp.readRows)
-		}
 
-		var err error
-		pp.rows, err = pp.Reader.ReadByNumber(count)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		pp.curStart = pp.readRows
-		pp.readRows += int64(len(pp.rows))
-		pp.curIndex = 0
+	row := pp.rowPool.Get()
+	if err := pp.readSingleRow(row); err != nil {
+		pp.rowPool.Put(row)
+		return err
 	}
 
-	row := pp.rows[pp.curIndex]
-	pp.curIndex++
-
-	v := reflect.ValueOf(row)
-	length := v.NumField()
-	if cap(pp.lastRow.Row) < length {
-		pp.lastRow.Row = make([]types.Datum, length)
-	} else {
-		pp.lastRow.Row = pp.lastRow.Row[:length]
-	}
-	for i := range length {
-		pp.lastRow.Length += getDatumLen(v.Field(i))
-		if err := setDatumValue(&pp.lastRow.Row[i], v.Field(i), pp.columnMetas[i], pp.logger); err != nil {
-			return err
-		}
-	}
+	pp.lastRow.Row = row
+	pp.lastRow.Length = estimateRowSize(row)
 	return nil
-}
-
-func getDatumLen(v reflect.Value) int {
-	if v.Kind() == reflect.Ptr {
-		if v.IsNil() {
-			return 0
-		}
-		return getDatumLen(v.Elem())
-	}
-	if v.Kind() == reflect.String {
-		return len(v.String())
-	}
-	return 8
-}
-
-// convert a parquet value to Datum
-//
-// See: https://github.com/apache/parquet-format/blob/master/LogicalTypes.md
-func setDatumValue(d *types.Datum, v reflect.Value, meta *parquet.SchemaElement, logger log.Logger) error {
-	switch v.Kind() {
-	case reflect.Bool:
-		if v.Bool() {
-			d.SetUint64(1)
-		} else {
-			d.SetUint64(0)
-		}
-	case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		d.SetUint64(v.Uint())
-	case reflect.Int8, reflect.Int16:
-		d.SetInt64(v.Int())
-	case reflect.Int32, reflect.Int64:
-		return setDatumByInt(d, v.Int(), meta)
-	case reflect.String:
-		setDatumByString(d, v.String(), meta)
-	case reflect.Float32, reflect.Float64:
-		d.SetFloat64(v.Float())
-	case reflect.Ptr:
-		if !v.IsNil() {
-			return setDatumValue(d, v.Elem(), meta, logger)
-		}
-		d.SetNull()
-	default:
-		logger.Error("unknown value", zap.Stringer("kind", v.Kind()),
-			zap.String("type", v.Type().Name()), zap.Reflect("value", v.Interface()))
-		return errors.Errorf("unknown value: %v", v)
-	}
-	return nil
-}
-
-func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
-	if meta.LogicalType != nil && meta.LogicalType.DECIMAL != nil {
-		v = binaryToDecimalStr([]byte(v), int(meta.LogicalType.DECIMAL.Scale))
-	}
-	if meta.Type != nil && *meta.Type == parquet.Type_INT96 && len(v) == 96/8 {
-		ts := int96ToTime([]byte(v))
-		ts = ts.UTC()
-		v = ts.Format(utcTimeLayout)
-	}
-	d.SetString(v, "utf8mb4_bin")
-}
-
-func binaryToDecimalStr(rawBytes []byte, scale int) string {
-	negative := rawBytes[0] > 127
-	if negative {
-		for i := range rawBytes {
-			rawBytes[i] = ^rawBytes[i]
-		}
-		for i := len(rawBytes) - 1; i >= 0; i-- {
-			rawBytes[i]++
-			if rawBytes[i] != 0 {
-				break
-			}
-		}
-	}
-
-	intValue := big.NewInt(0)
-	intValue = intValue.SetBytes(rawBytes)
-	val := fmt.Sprintf("%0*d", scale, intValue)
-	dotIndex := len(val) - scale
-	var res strings.Builder
-	if negative {
-		res.WriteByte('-')
-	}
-	if dotIndex == 0 {
-		res.WriteByte('0')
-	} else {
-		res.WriteString(val[:dotIndex])
-	}
-	if scale > 0 {
-		res.WriteByte('.')
-		res.WriteString(val[dotIndex:])
-	}
-	return res.String()
-}
-
-// when the value type is int32/int64, convert to value to target logical type in tidb
-func setDatumByInt(d *types.Datum, v int64, meta *parquet.SchemaElement) error {
-	if meta.ConvertedType == nil && meta.LogicalType == nil {
-		d.SetInt64(v)
-		return nil
-	}
-
-	logicalType := meta.LogicalType
-	switch {
-	case logicalType.DECIMAL != nil:
-		if logicalType.DECIMAL.Scale == 0 {
-			d.SetInt64(v)
-			return nil
-		}
-		minLen := logicalType.DECIMAL.Scale + 1
-		if v < 0 {
-			minLen++
-		}
-		val := fmt.Sprintf("%0*d", minLen, v)
-		dotIndex := len(val) - int(*meta.Scale)
-		d.SetString(val[:dotIndex]+"."+val[dotIndex:], "utf8mb4_bin")
-	case logicalType.DATE != nil:
-		dateStr := time.Unix(v*86400, 0).Format(time.DateOnly)
-		d.SetString(dateStr, "utf8mb4_bin")
-	case logicalType.TIMESTAMP != nil:
-		// convert all timestamp types (datetime/timestamp) to string
-		timeStr := formatTime(v, logicalType.TIMESTAMP.Unit, timeLayout,
-			utcTimeLayout, logicalType.TIMESTAMP.IsAdjustedToUTC)
-		d.SetString(timeStr, "utf8mb4_bin")
-	case logicalType.TIME != nil:
-		// convert all timestamp types (datetime/timestamp) to string
-		timeStr := formatTime(v, logicalType.TIME.Unit, "15:04:05.999999", "15:04:05.999999Z",
-			logicalType.TIME.IsAdjustedToUTC)
-		d.SetString(timeStr, "utf8mb4_bin")
-	default:
-		d.SetInt64(v)
-	}
-	return nil
-}
-
-func formatTime(v int64, units *parquet.TimeUnit, format, utcFormat string, utc bool) string {
-	var t time.Time
-	if units.MICROS != nil {
-		t = time.UnixMicro(v)
-	} else if units.MILLIS != nil {
-		t = time.UnixMilli(v)
-	} else {
-		// nano
-		t = time.Unix(0, v)
-	}
-	t = t.UTC()
-	if utc {
-		return t.Format(utcFormat)
-	}
-	return t.Format(format)
 }
 
 // LastRow gets the last row parsed by the parser.
@@ -839,13 +545,14 @@ func (pp *ParquetParser) LastRow() Row {
 }
 
 // RecycleRow implements the Parser interface.
-func (*ParquetParser) RecycleRow(_ Row) {
+func (pp *ParquetParser) RecycleRow(row Row) {
+	pp.rowPool.Put(row.Row)
 }
 
 // Columns returns the _lower-case_ column names corresponding to values in
 // the LastRow.
 func (pp *ParquetParser) Columns() []string {
-	return pp.columns
+	return pp.colNames
 }
 
 // SetColumns set restored column names to parser
@@ -865,30 +572,28 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 	pp.lastRow.RowID = rowID
 }
 
-func jdToTime(jd int32, nsec int64) time.Time {
-	sec := int64(jd-jan011970) * secPerDay
-	// it's fine not to check the value of nsec
-	// because it's legall even though it exceeds the maximum.
-	// See TestNsecOutSideRange.
-	return time.Unix(sec, nsec)
+// ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
+func ReadParquetFileRowCountByFile(
+	ctx context.Context,
+	store storeapi.Storage,
+	fileMeta SourceFileMeta,
+) (int64, error) {
+	r, err := store.Open(ctx, fileMeta.Path, nil)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer func() {
+		_ = r.Close()
+	}()
+
+	reader, err := file.NewParquetReader(&parquetWrapper{ReadSeekCloser: r})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	return reader.MetaData().NumRows, nil
 }
 
-<<<<<<< HEAD
-// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
-// INT96 timestamp layout
-// --------------------------
-// |   64 bit   |   32 bit   |
-// ---------------------------
-// |  nano sec  |  julian day  |
-// ---------------------------
-// NOTE: parquet date can be less than 1970-01-01 that is not supported by TiDB,
-// where dt is a negative number but still legal in the context of Go.
-// But it will cause errors or potential data inconsistency when importing.
-func int96ToTime(parquetDate []byte) time.Time {
-	nano := binary.LittleEndian.Uint64(parquetDate[:8])
-	dt := binary.LittleEndian.Uint32(parquetDate[8:])
-	return jdToTime(int32(dt), int64(nano))
-=======
 // NewParquetParser generates a parquet parser.
 func NewParquetParser(
 	ctx context.Context,
@@ -1200,5 +905,4 @@ func EstimateParquetReaderMemory(
 		zap.Int64("peak-memory-bytes", peak),
 	)
 	return peak, nil
->>>>>>> 73b01d05c64 (import: honor Spark legacy Parquet datetime metadata (#67908))
 }
