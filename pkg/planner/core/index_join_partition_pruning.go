@@ -34,6 +34,14 @@ type normalizedIndexJoinBound struct {
 	outerCol  *expression.Column
 }
 
+// buildIndexJoinRuntimeProp collects the runtime metadata that index-join inner scans
+// need during physical plan construction. Besides the original join-key/cost fields,
+// it also tries to derive extra probe-side partition pruning predicates by:
+// 1. finding the partition column on the inner subtree,
+// 2. collecting outer-side static filters that can bound join predicates involving that column,
+// 3. folding those bounds back into coarse predicates on the inner partition column.
+// The derived predicates are attached later when the physical inner scan builds its
+// partition pruning info.
 func buildIndexJoinRuntimeProp(
 	join *logicalop.LogicalJoin,
 	outerIdx int,
@@ -203,6 +211,10 @@ func filterIndexJoinOuterStaticFilters(candidateCols map[int64]struct{}, filters
 	return result
 }
 
+// substituteIndexJoinOuterFiltersThroughProjection handles the common outer-side shape
+// DataSource/Selection -> Projection -> IndexJoin. Static filters are collected from the
+// child side, but pruning candidates are tracked in the projection schema, so we remap
+// pass-through column references through the projection before matching them again.
 func substituteIndexJoinOuterFiltersThroughProjection(
 	proj *logicalop.LogicalProjection,
 	filters []expression.Expression,
@@ -252,7 +264,7 @@ func buildPartInfoFromIndexJoinProp(
 	if len(extraConds) == 0 {
 		return partInfo
 	}
-	partInfo.PruningConds = append(partInfo.PruningConds, extraConds...)
+	partInfo.PruningConds = append(append([]expression.Expression(nil), partInfo.PruningConds...), extraConds...)
 	return partInfo
 }
 

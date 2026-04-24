@@ -121,6 +121,35 @@ func checkPrunePartitionInfo(c *testing.T, query string, infos1 string, plan []s
 	require.Equal(c, infos1, infos2, comment)
 }
 
+func getPartitionsFromPlan(plan []string) []string {
+	partitions := make([]string, 0, 1)
+	seen := make(map[string]struct{})
+	for _, row := range plan {
+		partitionList := coretestsdk.GetFieldValue("partition:", row)
+		if partitionList == "" {
+			continue
+		}
+		for _, partition := range strings.Split(partitionList, ",") {
+			partition = strings.TrimSpace(partition)
+			if partition == "" {
+				continue
+			}
+			if _, ok := seen[partition]; ok {
+				continue
+			}
+			seen[partition] = struct{}{}
+			partitions = append(partitions, partition)
+		}
+	}
+	sort.Strings(partitions)
+	return partitions
+}
+
+func checkPlanPartitions(c *testing.T, query string, expected []string, plan []string) {
+	comment := fmt.Sprintf("the query is: %v, the plan is:\n%v", query, strings.Join(plan, "\n"))
+	require.Equal(c, expected, getPartitionsFromPlan(plan), comment)
+}
+
 func TestListColumnsPartitionPruner(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
@@ -280,16 +309,16 @@ join t_log sl use index (idx_log_core)
  and sl.transaction_type = 3
  and sl.created_time >= l.created_time - interval 10 second
  and sl.created_time <= l.created_time + interval 10 second
-where l.created_time >= '2025-09-02 00:01:00'
-  and l.created_time < '2025-09-02 23:59:00'
-  and sl.amount <> 0`
+		where l.created_time >= '2025-09-02 00:01:00'
+		  and l.created_time < '2025-09-02 23:59:00'
+		  and sl.amount <> 0`
 		tk.MustQuery(query).Check(testkit.Rows("1 11"))
-		tk.MustQuery("explain format = 'plan_tree' " + query).MultiCheckContain([]string{
+		plan := tk.MustQuery("explain format = 'plan_tree' " + query)
+		plan.MultiCheckContain([]string{
 			"IndexHashJoin",
 			"idx_log_core",
-			"partition:p1",
 		})
-		tk.MustQuery("explain format = 'plan_tree' " + query).CheckNotContain("partition:all")
+		checkPlanPartitions(t, query, []string{"p1"}, testdata.ConvertRowsToStrings(plan.Rows()))
 	})
 }
 
@@ -332,12 +361,12 @@ where l.created_time >= '2025-09-02 00:01:00'
   and l.created_time < '2025-09-02 23:59:00'
   and sl.amount <> 0`
 		tk.MustQuery(query).Check(testkit.Rows("1 11"))
-		tk.MustQuery("explain format = 'plan_tree' " + query).MultiCheckContain([]string{
+		plan := tk.MustQuery("explain format = 'plan_tree' " + query)
+		plan.MultiCheckContain([]string{
 			"IndexHashJoin",
 			"idx_log_ct",
-			"partition:p1",
 		})
-		tk.MustQuery("explain format = 'plan_tree' " + query).CheckNotContain("partition:all")
+		checkPlanPartitions(t, query, []string{"p1"}, testdata.ConvertRowsToStrings(plan.Rows()))
 	})
 }
 
