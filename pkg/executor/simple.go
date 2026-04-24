@@ -2018,29 +2018,38 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// capture the current authentication_string as the secondary password before
 		// overwriting it in this UPDATE.
 		if plOptions.retainCurrentPassword {
-			attrObj, err := buildAdditionalPasswordJSON(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+			entry, err := buildAdditionalPasswordEntry(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
 			if err != nil {
 				return err
 			}
-			// attrObj is a full JSON object; trim the surrounding braces so it can
-			// be concatenated with the other newAttributes entries.
-			newAttributes = append(newAttributes, strings.TrimSuffix(strings.TrimPrefix(attrObj, "{"), "}"))
-		}
-		if length := len(newAttributes); length > 0 {
-			if length > 1 || passwordLockingStr == "" {
-				passwordLockingInfo.containsNoOthers = false
-			}
-			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
-			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
+			newAttributes = append(newAttributes, entry)
 		}
 		// DISCARD OLD PASSWORD removes the secondary password.
-		// MySQL also silently drops the secondary when the auth plugin is changed;
-		// detect that here and do the same.
-		dropSecondary := plOptions.discardOldPassword
-		if !dropSecondary && spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" && spec.AuthOpt.AuthPlugin != currentAuthPlugin {
-			dropSecondary = true
+		// MySQL also silently drops the secondary when the auth plugin is changed.
+		dropSecondary := plOptions.discardOldPassword ||
+			(spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" && spec.AuthOpt.AuthPlugin != currentAuthPlugin)
+		// RETAIN always writes a fresh secondary, so any pending drop is moot.
+		if plOptions.retainCurrentPassword {
+			dropSecondary = false
 		}
-		if dropSecondary && !plOptions.retainCurrentPassword {
+
+		// Emit a single user_attributes assignment so the merge-then-remove
+		// pipeline is expressed in one SQL expression rather than relying on
+		// MySQL's left-to-right evaluation of same-row SET assignments.
+		hasNewAttributes := len(newAttributes) > 0
+		if hasNewAttributes {
+			if len(newAttributes) > 1 || passwordLockingStr == "" {
+				passwordLockingInfo.containsNoOthers = false
+			}
+		}
+		switch {
+		case hasNewAttributes && dropSecondary:
+			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
+			fields = append(fields, alterField{"user_attributes=json_remove(json_merge_patch(coalesce(user_attributes, '{}'), %?), '$.additional_password')", newAttributesStr})
+		case hasNewAttributes:
+			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
+			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
+		case dropSecondary:
 			fields = append(fields, alterField{"user_attributes=json_remove(coalesce(user_attributes, '{}'), '$.additional_password')", nil})
 		}
 
@@ -2533,7 +2542,10 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 // matching MySQL 8.0 behavior.
 func isDualPasswordCapablePlugin(plugin string) bool {
 	switch plugin {
-	case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+	// Empty plugin is treated as mysql_native_password elsewhere in this file
+	// (see executeAlterUser's AuthPlugin defaulting), so legacy rows with an
+	// empty `plugin` column must also be eligible for RETAIN / DISCARD.
+	case "", mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 		return true
 	}
 	return false
@@ -2563,12 +2575,13 @@ func readAuthenticationString(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 	return req.GetRow(0).GetString(0), true, nil
 }
 
-// buildAdditionalPasswordJSON reads the user's current authentication_string
-// and returns a JSON-object fragment `{"additional_password": "<hash>"}`
-// suitable for merging into user_attributes via JSON_MERGE_PATCH.
+// buildAdditionalPasswordEntry reads the user's current authentication_string
+// and returns a JSON key/value fragment `"additional_password": "<hash>"`
+// suitable for embedding inside a user_attributes JSON object (e.g. via
+// JSON_MERGE_PATCH). The caller composes the surrounding object.
 // It fails when the user doesn't exist or when the current primary password is
 // empty — MySQL rejects RETAIN CURRENT PASSWORD in both situations.
-func buildAdditionalPasswordJSON(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (string, error) {
+func buildAdditionalPasswordEntry(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name, host string) (string, error) {
 	oldPwd, found, err := readAuthenticationString(ctx, sqlExecutor, name, host)
 	if err != nil {
 		return "", err
@@ -2583,7 +2596,7 @@ func buildAdditionalPasswordJSON(ctx context.Context, sqlExecutor sqlexec.SQLExe
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf(`{"additional_password": %s}`, encoded), nil
+	return fmt.Sprintf(`"additional_password": %s`, encoded), nil
 }
 
 func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, string, error) {
@@ -2752,10 +2765,11 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if s.RetainCurrentPassword {
 		// If RETAIN CURRENT PASSWORD is specified, promote the current authentication_string
 		// to user_attributes.$.additional_password as part of this UPDATE.
-		attr, err := buildAdditionalPasswordJSON(ctx, sqlExecutor, u, h)
+		entry, err := buildAdditionalPasswordEntry(ctx, sqlExecutor, u, h)
 		if err != nil {
 			return err
 		}
+		attr := "{" + entry + "}"
 		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp(),user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?) WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, attr, u, strings.ToLower(h))
 	} else {
 		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))

@@ -288,7 +288,15 @@ func (p *UserPrivileges) authenticateWithPlugin(user *auth.UserIdentity, authent
 }
 
 func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
-	pwd := record.AuthenticationString
+	return p.isValidHashForSlot(record, "primary", record.AuthenticationString) &&
+		p.isValidHashForSlot(record, "secondary", record.AdditionalAuthenticationString)
+}
+
+// isValidHashForSlot validates a single password hash (primary or secondary)
+// stored on a UserRecord against the user's plugin. The slot label is included
+// in error logs so operators can tell which hash is corrupt when dual passwords
+// are in use.
+func (p *UserPrivileges) isValidHashForSlot(record *UserRecord, slot, pwd string) bool {
 	if pwd == "" {
 		return true
 	}
@@ -300,19 +308,19 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.PWDHashLen+1 {
 			return true
 		}
-		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.String("slot", slot), zap.Int("hash_length", len(pwd)))
 		return false
 	case mysql.AuthCachingSha2Password:
 		if len(pwd) == mysql.SHAPWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.String("slot", slot), zap.Int("hash_length", len(pwd)))
 		return false
 	case mysql.AuthTiDBSM3Password:
 		if len(pwd) == mysql.SM3PWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.String("slot", slot), zap.Int("hash_length", len(pwd)))
 		return false
 	case mysql.AuthSocket:
 		return true
@@ -676,12 +684,17 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	} else if len(pwd) > 0 && len(authentication) > 0 {
 		// checkHash returns (ok, retryable). retryable is false for unrecoverable errors
 		// (e.g. a malformed stored hash) that should short-circuit the secondary-password fallback.
-		checkHash := func(storedHash string) (bool, bool) {
+		// slot is "primary" or "secondary" and is threaded into failure logs so triage can
+		// distinguish corruption of the primary vs. the retained secondary hash.
+		checkHash := func(storedHash, slot string) (bool, bool) {
 			switch record.AuthPlugin {
 			case mysql.AuthNativePassword:
 				hpwd, err := auth.DecodePassword(storedHash)
 				if err != nil {
-					logutil.BgLogger().Warn("decode password string failed", zap.Error(err))
+					logutil.BgLogger().Warn("decode password string failed",
+						zap.String("slot", slot),
+						zap.String("auth_user", authUser),
+						zap.Error(err))
 					return false, false
 				}
 				return auth.CheckScrambledPassword(salt, hpwd, authentication), true
@@ -689,6 +702,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 				ok, err := auth.CheckHashingPassword([]byte(storedHash), string(authentication), record.AuthPlugin)
 				if err != nil {
 					logutil.BgLogger().Error("failed to check hashed password",
+						zap.String("slot", slot),
 						zap.String("auth_plugin", record.AuthPlugin),
 						zap.String("auth_user", authUser),
 						zap.Error(err))
@@ -702,11 +716,11 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		// NOTE: If the checking of the clear-text password fails, please set `info.FailedDueToWrongPassword = true`.
 		switch record.AuthPlugin {
 		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-			ok, retryable := checkHash(pwd)
+			ok, retryable := checkHash(pwd, "primary")
 			if !ok && retryable && len(record.AdditionalAuthenticationString) > 0 {
 				// MySQL-compatible dual-password fallback: try the secondary password
 				// stored in user_attributes.$.additional_password with the same plugin.
-				ok, _ = checkHash(record.AdditionalAuthenticationString)
+				ok, _ = checkHash(record.AdditionalAuthenticationString, "secondary")
 				if ok {
 					// Surface fallback logins so operators can tell which accounts
 					// have finished rotating and can safely DISCARD OLD PASSWORD.
