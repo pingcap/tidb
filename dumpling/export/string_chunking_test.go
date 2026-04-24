@@ -116,7 +116,7 @@ func TestExtractOrderByColumns(t *testing.T) {
 		{"ORDER BY `a`, `b`, `c`", []string{"`a`", "`b`", "`c`"}},
 		{"ORDER BY id", []string{"id"}},
 		{"ORDER BY user_id, created_at DESC", []string{"user_id", "created_at DESC"}},
-		{"", []string{""}},
+		{"", nil},
 		// Test columns with commas in names
 		{"ORDER BY `col,1`, `col,2`", []string{"`col,1`", "`col,2`"}},
 		{"ORDER BY `col,with,many,commas`, `normal_col`", []string{"`col,with,many,commas`", "`normal_col`"}},

@@ -2192,9 +2192,13 @@ func extractOrderByColumns(orderByClause string) []string {
 	// Remove "ORDER BY " prefix
 	columnsStr := strings.TrimPrefix(orderByClause, "ORDER BY ")
 
-	// Handle empty clause
+	// Handle empty clause: returning nil (rather than []string{""}) signals
+	// "no chunking columns" so callers can bail out instead of synthesizing
+	// SELECT lists or WHERE predicates from an empty column name. The prefix
+	// "ORDER BY " is matched case-sensitively with a single space; callers
+	// should normalize before passing in.
 	if columnsStr == "" {
-		return []string{""}
+		return nil
 	}
 
 	var columns []string

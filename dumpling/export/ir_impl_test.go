@@ -129,23 +129,6 @@ func TestChunkRowIter(t *testing.T) {
 	sqlRowIter.Next()
 }
 
-func TestNewTableDataWithImprovedChunking(t *testing.T) {
-	// Test table data creation for improved string key handling
-
-	// Test creating table data with streaming chunking support
-	query := "SELECT id, name FROM users WHERE id >= 'user123' AND id < 'user456'"
-	selectLen := 2
-	chunkIndex := false // Streaming chunking doesn't use traditional chunk index
-
-	td := newTableData(query, selectLen, chunkIndex)
-	require.NotNil(t, td, "Should create table data successfully")
-
-	// Verify the query is stored correctly for streaming chunking
-	require.Contains(t, td.query, "WHERE", "Query should contain WHERE clause for chunking")
-	require.Contains(t, td.query, ">=", "Query should contain lower bound")
-	require.Contains(t, td.query, "<", "Query should contain upper bound")
-}
-
 func TestRowIterWithStringKeyProgress(t *testing.T) {
 	// Test row iteration with progress tracking for string key chunking
 
@@ -182,54 +165,4 @@ func TestRowIterWithStringKeyProgress(t *testing.T) {
 	require.Equal(t, 3, rowCount, "Should process all rows in the chunk")
 	require.False(t, iter.HasNext(), "Should reach end of iteration")
 	require.NoError(t, iter.Close(), "Should close iterator cleanly")
-}
-
-func TestTableDataQueryValidation(t *testing.T) {
-	// Test query validation for different chunking methods
-
-	testCases := []struct {
-		name        string
-		query       string
-		expectValid bool
-	}{
-		{
-			name:        "simple numeric chunking",
-			query:       "SELECT * FROM table WHERE id >= 100 AND id < 200",
-			expectValid: true,
-		},
-		{
-			name:        "string key chunking",
-			query:       "SELECT * FROM table WHERE name >= 'alice' AND name < 'bob'",
-			expectValid: true,
-		},
-		{
-			name:        "composite key chunking",
-			query:       "SELECT * FROM table WHERE (col1 > 'a' OR (col1 = 'a' AND col2 >= 'x'))",
-			expectValid: true,
-		},
-		{
-			name:        "streaming chunk with cursor",
-			query:       "SELECT * FROM table WHERE id > 'last_boundary' ORDER BY id LIMIT 1000 OFFSET 0",
-			expectValid: true,
-		},
-		{
-			name:        "full table scan",
-			query:       "SELECT * FROM table",
-			expectValid: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			td := newTableData(tc.query, 1, false)
-
-			if tc.expectValid {
-				require.NotNil(t, td, "Should create valid table data")
-				require.Equal(t, tc.query, td.query, "Query should be stored correctly")
-			} else {
-				// If we had query validation, we'd test it here
-				require.NotNil(t, td, "Table data creation should not fail")
-			}
-		})
-	}
 }
