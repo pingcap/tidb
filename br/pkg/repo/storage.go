@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// revive:disable-next-line:file-header
 package repo
 
 import (
@@ -23,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
+
+const pathSeparator = "/"
 
 type prefixedStorage struct {
 	base   storeapi.Storage
@@ -36,15 +39,25 @@ func NewPrefixedStorage(base storeapi.Storage, prefix string) storeapi.Storage {
 	}
 }
 
-func (s *prefixedStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+func (s *prefixedStorage) WriteFile(
+	ctx context.Context,
+	name string,
+	data []byte,
+) error {
 	return s.base.WriteFile(ctx, s.fullPath(name), data)
 }
 
-func (s *prefixedStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (s *prefixedStorage) ReadFile(
+	ctx context.Context,
+	name string,
+) ([]byte, error) {
 	return s.base.ReadFile(ctx, s.fullPath(name))
 }
 
-func (s *prefixedStorage) FileExists(ctx context.Context, name string) (bool, error) {
+func (s *prefixedStorage) FileExists(
+	ctx context.Context,
+	name string,
+) (bool, error) {
 	return s.base.FileExists(ctx, s.fullPath(name))
 }
 
@@ -60,7 +73,10 @@ func (s *prefixedStorage) Open(
 	return s.base.Open(ctx, s.fullPath(name), option)
 }
 
-func (s *prefixedStorage) DeleteFiles(ctx context.Context, names []string) error {
+func (s *prefixedStorage) DeleteFiles(
+	ctx context.Context,
+	names []string,
+) error {
 	prefixed := make([]string, 0, len(names))
 	for _, name := range names {
 		prefixed = append(prefixed, s.fullPath(name))
@@ -71,24 +87,29 @@ func (s *prefixedStorage) DeleteFiles(ctx context.Context, names []string) error
 func (s *prefixedStorage) WalkDir(
 	ctx context.Context,
 	opt *storeapi.WalkOption,
-	fn func(path string, size int64) error,
+	fn func(filePath string, size int64) error,
 ) error {
 	walkOpt := &storeapi.WalkOption{}
 	if opt != nil {
 		*walkOpt = *opt
 	}
 	walkOpt.SubDir = s.fullPath(walkOpt.SubDir)
-	return s.base.WalkDir(ctx, walkOpt, func(path string, size int64) error {
-		return fn(s.trimPath(path), size)
-	})
+	return s.base.WalkDir(
+		ctx,
+		walkOpt,
+		func(filePath string, size int64) error {
+			return fn(s.trimPath(filePath), size)
+		},
+	)
 }
 
 func (s *prefixedStorage) URI() string {
-	base := strings.TrimRight(s.base.URI(), "/")
+	base := strings.TrimRight(s.base.URI(), pathSeparator)
 	if s.prefix.String() == "" {
 		return base
 	}
-	return base + "/" + strings.TrimRight(s.prefix.String(), "/")
+	return base + pathSeparator +
+		strings.TrimRight(s.prefix.String(), pathSeparator)
 }
 
 func (s *prefixedStorage) Create(
@@ -106,7 +127,11 @@ func (s *prefixedStorage) Rename(
 	return s.base.Rename(ctx, s.fullPath(oldFileName), s.fullPath(newFileName))
 }
 
-func (s *prefixedStorage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+func (s *prefixedStorage) PresignFile(
+	ctx context.Context,
+	fileName string,
+	expire time.Duration,
+) (string, error) {
 	return s.base.PresignFile(ctx, s.fullPath(fileName), expire)
 }
 
@@ -121,5 +146,5 @@ func (s *prefixedStorage) fullPath(name string) string {
 func (s *prefixedStorage) trimPath(name string) string {
 	prefix := s.prefix.String()
 	trimmed := strings.TrimPrefix(name, prefix)
-	return strings.TrimPrefix(trimmed, path.Clean("/"))
+	return strings.TrimPrefix(trimmed, path.Clean(pathSeparator))
 }

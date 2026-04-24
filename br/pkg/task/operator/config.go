@@ -306,7 +306,10 @@ func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := taskrepo.ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
+	if err := taskrepo.ValidateSnapshotRestoreStorage(
+		cfg.Layout,
+		cfg.BackupID,
+	); err != nil {
 		return errors.Trace(err)
 	}
 	return cfg.Config.ParseFromFlags(flags)

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// revive:disable-next-line:file-header
 package repo
 
 import (
@@ -29,37 +30,51 @@ import (
 
 const RepoVersion = 1
 
-const repoInitLockPath = RootLockPath + ".init"
+const (
+	repoInitLockPath = RootLockPath + ".init"
+	repoGuardFile    = "DO NOT DELETE\n" +
+		"This path is managed as a BR snapshot repository."
+)
 
-var errRepoRootContainsArtifacts = errors.New("repo root contains snapshot artifacts")
+var errRepoRootContainsArtifacts = errors.New(
+	"repo root contains snapshot artifacts",
+)
 
-type RepoMeta struct {
+type Meta struct {
 	RepoVersion int    `json:"repo_version"`
 	RepoID      string `json:"repo_id"`
 	CreatedAt   string `json:"created_at"`
 	CreatedBy   string `json:"created_by"`
 }
 
-func LoadRepoMeta(ctx context.Context, storage storeapi.Storage) (*RepoMeta, error) {
+// revive:disable-next-line:cyclomatic
+func LoadRepoMeta(
+	ctx context.Context,
+	storage storeapi.Storage,
+) (*Meta, error) {
 	data, err := storage.ReadFile(ctx, RepoMetaPath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	meta := &RepoMeta{}
+	meta := &Meta{}
 	if err := json.Unmarshal(data, meta); err != nil {
 		return nil, errors.Annotate(err, "decode repo metadata")
 	}
 	if meta.RepoVersion != RepoVersion {
-		return nil, errors.Errorf("unsupported repo version %d", meta.RepoVersion)
+		return nil, errors.Errorf(
+			"unsupported repo version %d",
+			meta.RepoVersion,
+		)
 	}
 	return meta, nil
 }
 
+// revive:disable-next-line:cognitive-complexity
 func EnsureRepo(
 	ctx context.Context,
 	storage storeapi.Storage,
 	createdBy string,
-) (*RepoMeta, error) {
+) (*Meta, error) {
 	lock, err := objstore.LockWithRetry(
 		ctx,
 		objstore.TryLockRemote,
@@ -91,7 +106,7 @@ func EnsureRepo(
 		return nil, errors.Trace(err)
 	}
 
-	meta := &RepoMeta{
+	meta := &Meta{
 		RepoVersion: RepoVersion,
 		RepoID:      uuid.NewString(),
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
@@ -110,6 +125,7 @@ func EnsureRepo(
 	return meta, nil
 }
 
+// revive:disable-next-line:cognitive-complexity
 func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage) error {
 	for _, path := range []string{
 		metautil.MetaFile,
@@ -121,7 +137,11 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 			return errors.Trace(err)
 		}
 		if exists {
-			return errors.Errorf("storage %s already contains legacy snapshot artifact %q", storage.URI(), path)
+			return errors.Errorf(
+				"storage %s already contains legacy snapshot artifact %q",
+				storage.URI(),
+				path,
+			)
 		}
 	}
 	for _, prefix := range []string{
@@ -130,15 +150,24 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 		snapshotDataRootDir,
 	} {
 		found := false
-		err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(string, int64) error {
-			found = true
-			return errRepoRootContainsArtifacts
-		})
+		err := storage.WalkDir(
+			ctx,
+			&storeapi.WalkOption{SubDir: prefix},
+			func(string, int64) error {
+				found = true
+				return errRepoRootContainsArtifacts
+			},
+		)
 		if err != nil && !errors.ErrorEqual(err, errRepoRootContainsArtifacts) {
 			return errors.Trace(err)
 		}
 		if found {
-			return errors.Errorf("storage %s already contains repo-v1 snapshot artifact under %q", storage.URI(), prefix)
+			return errors.Errorf(
+				"storage %s already contains repo-v1 snapshot artifact "+
+					"under %q",
+				storage.URI(),
+				prefix,
+			)
 		}
 	}
 	return nil
@@ -152,5 +181,5 @@ func ensureRepoGuard(ctx context.Context, storage storeapi.Storage) error {
 	if exists {
 		return nil
 	}
-	return storage.WriteFile(ctx, RootLockPath, []byte("DO NOT DELETE\nThis path is managed as a BR snapshot repository."))
+	return storage.WriteFile(ctx, RootLockPath, []byte(repoGuardFile))
 }

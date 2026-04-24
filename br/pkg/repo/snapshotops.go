@@ -34,7 +34,8 @@ import (
 type PendingBackupState string
 
 const (
-	// PendingBackupStateStale means the pending backup is not resumable. Completed snapshot metadata/data, if present, are kept.
+	// PendingBackupStateStale means the pending backup is not resumable.
+	// Completed snapshot metadata/data, if present, are kept.
 	PendingBackupStateStale PendingBackupState = "stale"
 	// PendingBackupStateUnfinished means the backup has checkpoint metadata but no completed backup metadata yet.
 	PendingBackupStateUnfinished PendingBackupState = "unfinished"
@@ -335,12 +336,21 @@ func (ops SnapshotOps) DeleteSnapshot(
 	return result, nil
 }
 
+var repoStartAfterSchemes = [...]string{
+	"s3://",
+	"ks3://",
+	"gcs://",
+	"file://",
+}
+
 func supportsRepoStartAfter(storage storeapi.Storage) bool {
 	uri := strings.ToLower(storage.URI())
-	return strings.HasPrefix(uri, "s3://") ||
-		strings.HasPrefix(uri, "ks3://") ||
-		strings.HasPrefix(uri, "gcs://") ||
-		strings.HasPrefix(uri, "file://")
+	for _, scheme := range repoStartAfterSchemes {
+		if strings.HasPrefix(uri, scheme) {
+			return true
+		}
+	}
+	return false
 }
 
 // ValidateRepoV1StartAfterSupport checks whether the resolved storage exposes
@@ -355,10 +365,6 @@ func ValidateRepoV1StartAfterSupport(storage storeapi.Storage) error {
 		"storage %s does not support WalkDir StartAfter required by repo-v1 snapshot operations",
 		storage.URI(),
 	)
-}
-
-func (ops SnapshotOps) supportsRepoStartAfter() bool {
-	return supportsRepoStartAfter(ops.Storage)
 }
 
 func (ops SnapshotOps) requireRepoStartAfter() error {
@@ -376,7 +382,8 @@ func (ops SnapshotOps) DiscardPendingSnapshot(
 	switch target.State {
 	case PendingBackupStateStale:
 		result.StalePending = true
-		if err := checkpoint.RemoveCheckpointDataForBackup(ctx, NewPrefixedStorage(ops.Storage, SnapshotMetadataDir(target.BackupID))); err != nil {
+		metadataStorage := NewPrefixedStorage(ops.Storage, SnapshotMetadataDir(target.BackupID))
+		if err := checkpoint.RemoveCheckpointDataForBackup(ctx, metadataStorage); err != nil {
 			return result, errors.Annotatef(err, "delete checkpoint files for stale backup %s", target.BackupID)
 		}
 		result.PendingDeleted, err = ops.deleteFilesFromStream(ctx, filePathStream(target.MarkerPaths), opts)
@@ -423,7 +430,11 @@ func (ops SnapshotOps) deletePendingMarkersForBackup(
 	return 0, nil
 }
 
-func (ops SnapshotOps) deletePrefixFiles(ctx context.Context, prefix string, opts snapshotMutationOptions) (int, error) {
+func (ops SnapshotOps) deletePrefixFiles(
+	ctx context.Context,
+	prefix string,
+	opts snapshotMutationOptions,
+) (int, error) {
 	return ops.deleteFilesFromStream(ctx, ops.walkFilesWithPrefix(ctx, prefix), opts)
 }
 
@@ -464,7 +475,11 @@ func (ops SnapshotOps) walkFilesWithPrefix(ctx context.Context, prefix string) T
 	}
 }
 
-func (ops SnapshotOps) walkSnapshotDataPathsForStoreBackup(ctx context.Context, storeID uint64, backupID BackupID) TrySeq[string] {
+func (ops SnapshotOps) walkSnapshotDataPathsForStoreBackup(
+	ctx context.Context,
+	storeID uint64,
+	backupID BackupID,
+) TrySeq[string] {
 	return func(yield func(error, string) bool) {
 		for err, dataFile := range ops.walkSnapshotDataFilesForStoreBackup(ctx, storeID, backupID) {
 			if err != nil {
@@ -526,11 +541,18 @@ func (ops SnapshotOps) walkSnapshotStoreBackupHeads(ctx context.Context) TrySeq[
 	}
 }
 
-func (ops SnapshotOps) walkSnapshotDataFilesForStoreBackup(ctx context.Context, storeID uint64, backupID BackupID) TrySeq[SnapshotDataFile] {
+func (ops SnapshotOps) walkSnapshotDataFilesForStoreBackup(
+	ctx context.Context,
+	storeID uint64,
+	backupID BackupID,
+) TrySeq[SnapshotDataFile] {
 	return func(yield func(error, SnapshotDataFile) bool) {
 		for err, dataFile := range ops.walkSnapshotDataFilesAfter(ctx, snapshotStoreBackupAnchor(storeID, backupID)) {
 			if err != nil {
-				yield(errors.Annotatef(err, "walk snapshot data files for store %d backup %s", storeID, backupID), SnapshotDataFile{})
+				yield(
+					errors.Annotatef(err, "walk snapshot data files for store %d backup %s", storeID, backupID),
+					SnapshotDataFile{},
+				)
 				return
 			}
 			if dataFile.StoreID != storeID || dataFile.BackupID != backupID {

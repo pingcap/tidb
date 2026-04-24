@@ -109,7 +109,7 @@ type repoSnapshotTableView struct {
 	TableName      string `json:"table-name"`
 	KVCount        uint64 `json:"kv-count"`
 	KVSize         uint64 `json:"kv-size"`
-	TiFlashReplica uint64 `json:"tiflash-replica"`
+	TiFlashReplica int    `json:"tiflash-replica"`
 }
 
 type repoSnapshotFileView struct {
@@ -798,7 +798,7 @@ func convertRepoSnapshotTableView(table *metautil.Table) repoSnapshotTableView {
 		TableName:      tableName,
 		KVCount:        table.TotalKvs,
 		KVSize:         table.TotalBytes,
-		TiFlashReplica: uint64(table.TiFlashReplicas),
+		TiFlashReplica: table.TiFlashReplicas,
 	}
 }
 

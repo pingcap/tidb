@@ -144,7 +144,11 @@ func (c *checksumTableCtx) getTables(ctx context.Context) (res []tableInDB, err 
 }
 
 func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil.Table, err error) {
-	rootBackend, rootStorage, err := task.GetStorage(ctx, c.cfg.Storage, &c.cfg.Config)
+	rootBackend, rootStorage, err := task.GetStorage(
+		ctx,
+		c.cfg.Storage,
+		&c.cfg.Config,
+	)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to open backup storage")
 	}
@@ -161,7 +165,11 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 		return nil, errors.Annotate(err, "failed to load backupmeta")
 	}
 
-	metaReader := metautil.NewMetaReader(backupMeta, resolved.MetadataStorage(), &c.cfg.CipherInfo)
+	metaReader := metautil.NewMetaReader(
+		backupMeta,
+		resolved.MetadataStorage(),
+		&c.cfg.CipherInfo,
+	)
 
 	tblCh := make(chan *metautil.Table, 1024)
 	errCh := make(chan error, 1)

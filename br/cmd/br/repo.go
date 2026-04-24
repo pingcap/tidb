@@ -163,11 +163,24 @@ func newRepoSnapshotDeleteCommand() *cobra.Command {
 				}
 				return errors.Trace(err)
 			}
-			return printRepoSnapshotMutationResult(cmd, "deleted", backupID, result.BackupID, result.MetadataDeleted, result.DataDeleted, result.PendingDeleted)
+			return printRepoSnapshotMutationResult(
+				cmd,
+				"deleted",
+				backupID,
+				result.BackupID,
+				result.MetadataDeleted,
+				result.DataDeleted,
+				result.PendingDeleted,
+			)
 		},
 	}
 	cmd.Flags().String(repoSnapshotFlagBackupID, "", "snapshot backup id")
-	cmd.Flags().BoolP(repoSnapshotFlagYes, repoSnapshotFlagYesShort, false, "skip the confirmation prompt and execute the command directly")
+	cmd.Flags().BoolP(
+		repoSnapshotFlagYes,
+		repoSnapshotFlagYesShort,
+		false,
+		"skip the confirmation prompt and execute the command directly",
+	)
 	_ = cmd.MarkFlagRequired(repoSnapshotFlagBackupID)
 	return cmd
 }
@@ -215,11 +228,24 @@ func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
 				}
 				return errors.Trace(err)
 			}
-			return printRepoSnapshotMutationResult(cmd, "discarded", backupID, result.BackupID, result.MetadataDeleted, result.DataDeleted, result.PendingDeleted)
+			return printRepoSnapshotMutationResult(
+				cmd,
+				"discarded",
+				backupID,
+				result.BackupID,
+				result.MetadataDeleted,
+				result.DataDeleted,
+				result.PendingDeleted,
+			)
 		},
 	}
 	cmd.Flags().String(repoSnapshotFlagBackupID, "", "snapshot backup id")
-	cmd.Flags().BoolP(repoSnapshotFlagYes, repoSnapshotFlagYesShort, false, "skip the confirmation prompt and execute the command directly")
+	cmd.Flags().BoolP(
+		repoSnapshotFlagYes,
+		repoSnapshotFlagYesShort,
+		false,
+		"skip the confirmation prompt and execute the command directly",
+	)
 	return cmd
 }
 
@@ -247,7 +273,11 @@ func newRepoSnapshotOrphansListCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			orphanPaths, err := taskrepo.RunRepoSnapshotOrphansList(ctx, tidbGlue, taskrepo.RepoSnapshotOrphansConfig{Config: cfg})
+			orphanPaths, err := taskrepo.RunRepoSnapshotOrphansList(
+				ctx,
+				tidbGlue,
+				taskrepo.RepoSnapshotOrphansConfig{Config: cfg},
+			)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -279,7 +309,11 @@ func newRepoSnapshotOrphansDeleteCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			deleted, err := taskrepo.RunRepoSnapshotOrphansDelete(ctx, tidbGlue, taskrepo.RepoSnapshotOrphansConfig{Config: cfg, SkipPrompt: skipPrompt})
+			deleted, err := taskrepo.RunRepoSnapshotOrphansDelete(
+				ctx,
+				tidbGlue,
+				taskrepo.RepoSnapshotOrphansConfig{Config: cfg, SkipPrompt: skipPrompt},
+			)
 			if err != nil {
 				if berrors.Is(err, berrors.ErrOperationAborted) {
 					_, err = fmt.Fprintln(cmd.OutOrStdout(), "operation canceled")
@@ -291,7 +325,12 @@ func newRepoSnapshotOrphansDeleteCommand() *cobra.Command {
 			return errors.Trace(err)
 		},
 	}
-	cmd.Flags().BoolP(repoSnapshotFlagYes, repoSnapshotFlagYesShort, false, "skip the confirmation prompt and execute the command directly")
+	cmd.Flags().BoolP(
+		repoSnapshotFlagYes,
+		repoSnapshotFlagYesShort,
+		false,
+		"skip the confirmation prompt and execute the command directly",
+	)
 	return cmd
 }
 

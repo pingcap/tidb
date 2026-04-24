@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// revive:disable-next-line:file-header
 package repo
 
 import (
@@ -34,14 +35,14 @@ const (
 )
 
 func ParseLayout(raw string) (Layout, error) {
-	switch Layout(strings.TrimSpace(raw)) {
-	case "", LayoutLegacy:
+	layout := Layout(strings.TrimSpace(raw))
+	if layout == "" {
 		return LayoutLegacy, nil
-	case LayoutRepoV1:
-		return LayoutRepoV1, nil
-	default:
-		return "", errors.Errorf("unknown storage layout %q", raw)
 	}
+	if layout == LayoutLegacy || layout == LayoutRepoV1 {
+		return layout, nil
+	}
+	return "", errors.Errorf("unknown storage layout %q", raw)
 }
 
 func (l Layout) String() string {
@@ -58,6 +59,13 @@ func (l Layout) IsRepoV1() bool {
 // BackupID is the stable identifier of one snapshot instance in repo-v1.
 type BackupID uint64
 
+const (
+	backupIDDecimalBase      = 10
+	backupIDHexBase          = 16
+	backupIDStorageNameWidth = 16
+	backupIDBitSize          = 64
+)
+
 func NewBackupID(ts uint64) (BackupID, error) {
 	if ts == 0 {
 		return 0, errors.New("backup id must not be zero")
@@ -66,7 +74,11 @@ func NewBackupID(ts uint64) (BackupID, error) {
 }
 
 func ParseBackupID(raw string) (BackupID, error) {
-	id, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 64)
+	id, err := strconv.ParseUint(
+		strings.TrimSpace(raw),
+		backupIDDecimalBase,
+		backupIDBitSize,
+	)
 	if err != nil {
 		return 0, errors.Annotatef(err, "invalid backup id %q", raw)
 	}
@@ -74,16 +86,24 @@ func ParseBackupID(raw string) (BackupID, error) {
 }
 
 func (id BackupID) String() string {
-	return strconv.FormatUint(uint64(id), 10)
+	return strconv.FormatUint(uint64(id), backupIDDecimalBase)
 }
 
 func ParseBackupIDStorageName(raw string) (BackupID, error) {
-	if len(raw) != 16 {
-		return 0, errors.Errorf("invalid backup id storage name %q: expect 16 hex characters", raw)
+	if len(raw) != backupIDStorageNameWidth {
+		return 0, errors.Errorf(
+			"invalid backup id storage name %q: expect %d hex characters",
+			raw,
+			backupIDStorageNameWidth,
+		)
 	}
-	id, err := strconv.ParseUint(raw, 16, 64)
+	id, err := strconv.ParseUint(raw, backupIDHexBase, backupIDBitSize)
 	if err != nil {
-		return 0, errors.Annotatef(err, "invalid backup id storage name %q", raw)
+		return 0, errors.Annotatef(
+			err,
+			"invalid backup id storage name %q",
+			raw,
+		)
 	}
 	return BackupID(id), nil
 }
@@ -126,5 +146,9 @@ func PendingFile(configHash []byte, backupID BackupID) string {
 }
 
 func SnapshotStoreDataPrefix(storeID uint64, backupID BackupID) string {
-	return path.Join(snapshotDataRootDir, strconv.FormatUint(storeID, 10), backupID.StorageName())
+	return path.Join(
+		snapshotDataRootDir,
+		strconv.FormatUint(storeID, backupIDDecimalBase),
+		backupID.StorageName(),
+	)
 }

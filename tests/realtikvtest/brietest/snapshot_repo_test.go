@@ -353,7 +353,6 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 		"github.com/pingcap/tidb/br/pkg/backup/backup-response-error-after-checkpoint",
 		"github.com/pingcap/tidb/br/pkg/restore/snap_client/corrupt-files",
 	} {
-		fp := fp
 		t.Cleanup(func() {
 			_ = failpoint.Disable(fp)
 		})

@@ -92,16 +92,20 @@ var errStopWalkSeq = errors.New("stop walk seq")
 // deduplicated and sorted in ascending BackupID order.
 func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]BackupID, error) {
 	ids := make(map[BackupID]struct{})
-	err := storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: snapshotMetadataRootDir}, func(filePath string, _ int64) error {
-		backupID, ok, err := ParseCompletedSnapshotMetaPath(filePath)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if ok {
-			ids[backupID] = struct{}{}
-		}
-		return nil
-	})
+	err := storage.WalkDir(
+		ctx,
+		&storeapi.WalkOption{SubDir: snapshotMetadataRootDir},
+		func(filePath string, _ int64) error {
+			backupID, ok, err := ParseCompletedSnapshotMetaPath(filePath)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if ok {
+				ids[backupID] = struct{}{}
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -176,7 +180,12 @@ func ParseCompletedSnapshotMetaPath(filePath string) (id BackupID, parsed bool, 
 		return 0, false, nil
 	}
 	defer func() {
-		logSkippedRepoPath(parsed, err, filePath, "skip non-completed repo-v1 snapshot metadata path while scanning completed snapshots")
+		logSkippedRepoPath(
+			parsed,
+			err,
+			filePath,
+			"skip non-completed repo-v1 snapshot metadata path while scanning completed snapshots",
+		)
 	}()
 	if len(parts) < 4 {
 		return 0, false, nil
@@ -224,7 +233,12 @@ func ParseSnapshotDataFilePath(filePath string) (dataFile SnapshotDataFile, pars
 		return SnapshotDataFile{}, false, nil
 	}
 	defer func() {
-		logSkippedRepoPath(parsed, err, filePath, "skip invalid repo-v1 snapshot data path while scanning snapshot data files")
+		logSkippedRepoPath(
+			parsed,
+			err,
+			filePath,
+			"skip invalid repo-v1 snapshot data path while scanning snapshot data files",
+		)
 	}()
 	if len(parts) < 5 {
 		return SnapshotDataFile{}, false, nil

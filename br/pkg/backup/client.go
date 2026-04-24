@@ -89,7 +89,6 @@ type PerStoreBackupAdapter interface {
 	RewriteStoreResponseFiles(storeID uint64, files []*backuppb.File) ([]*backuppb.File, error)
 }
 
-
 type MainBackupLoop struct {
 	BackupSender
 
