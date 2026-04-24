@@ -367,13 +367,6 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 	// Regression test for https://github.com/pingcap/tidb/issues/66339
 	// Read-only user variables with uppercase names should be converted to constant
 	// and use IndexRangeScan, same as lowercase names.
-<<<<<<< HEAD
-	tk.MustExec("create table t(a int, key(a))")
-	tk.MustExec("set @a=1")
-	tk.MustHavePlan("select a from t where a=@a", "IndexRangeScan")
-	tk.MustExec("set @A=1")
-	tk.MustHavePlan("select a from t where a=@A", "IndexRangeScan")
-=======
 	// issue-66339-readonly-var-uppercase-uses-index-range
 	{
 		tk := prepareSharedTestKit(t)
@@ -571,7 +564,6 @@ ORDER BY field1`).Check(testkit.Rows())
 		))
 		tk.MustExec("rollback")
 	}
->>>>>>> abd1c00ceda (planner: preserve UnionScan child rewrite for NULL predicates (#67969))
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
