@@ -1405,8 +1405,9 @@ func (n *SetCharsetStmt) Accept(v Visitor) (Node, bool) {
 type SetPwdStmt struct {
 	stmtNode
 
-	User     *auth.UserIdentity
-	Password string
+	User                  *auth.UserIdentity
+	Password              string
+	RetainCurrentPassword bool
 }
 
 // Restore implements Node interface.
@@ -1420,6 +1421,9 @@ func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain("=")
 	ctx.WriteString(n.Password)
+	if n.RetainCurrentPassword {
+		ctx.WriteKeyWord(" RETAIN CURRENT PASSWORD")
+	}
 	return nil
 }
 
@@ -1696,6 +1700,9 @@ const (
 	PasswordRequireCurrentDefault
 
 	UserResourceGroupName
+
+	RetainCurrentPassword
+	DiscardOldPassword
 )
 
 type PasswordOrLockOption struct {
@@ -1738,6 +1745,10 @@ func (p *PasswordOrLockOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" DAY")
 	case PasswordReuseDefault:
 		ctx.WriteKeyWord("PASSWORD REUSE INTERVAL DEFAULT")
+	case RetainCurrentPassword:
+		ctx.WriteKeyWord("RETAIN CURRENT PASSWORD")
+	case DiscardOldPassword:
+		ctx.WriteKeyWord("DISCARD OLD PASSWORD")
 	default:
 		return errors.Errorf("Unsupported PasswordOrLockOption.Type %d", p.Type)
 	}

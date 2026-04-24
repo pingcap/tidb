@@ -4,11 +4,12 @@ go_test(
     name = "passwordtest_test",
     timeout = "short",
     srcs = [
+        "dual_password_test.go",
         "main_test.go",
         "password_management_test.go",
     ],
     flaky = True,
-    shard_count = 9,
+    shard_count = 25,
     deps = [
         "//pkg/domain",
         "//pkg/errno",

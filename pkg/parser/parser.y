@@ -548,6 +548,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	nvarcharType               "NVARCHAR"
 	off                        "OFF"
 	offset                     "OFFSET"
+	old                        "OLD"
 	oltpReadOnly               "OLTP_READ_ONLY"
 	oltpReadWrite              "OLTP_READ_WRITE"
 	oltpWriteOnly              "OLTP_WRITE_ONLY"
@@ -611,6 +612,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	restore                    "RESTORE"
 	restores                   "RESTORES"
 	resume                     "RESUME"
+	retain                     "RETAIN"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
 	role                       "ROLE"
@@ -7516,6 +7518,8 @@ UnReservedKeyword:
 |	"IMPORT"
 |	"IMPORTS"
 |	"DISCARD"
+|	"OLD"
+|	"RETAIN"
 |	"TABLE_CHECKSUM"
 |	"UNICODE"
 |	"AUTO_RANDOM"
@@ -11275,9 +11279,17 @@ SetStmt:
 	{
 		$$ = &ast.SetPwdStmt{Password: $4}
 	}
+|	"SET" "PASSWORD" EqOrAssignmentEq PasswordOpt "RETAIN" "CURRENT" "PASSWORD"
+	{
+		$$ = &ast.SetPwdStmt{Password: $4, RetainCurrentPassword: true}
+	}
 |	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt
 	{
 		$$ = &ast.SetPwdStmt{User: $4.(*auth.UserIdentity), Password: $6}
+	}
+|	"SET" "PASSWORD" "FOR" Username EqOrAssignmentEq PasswordOpt "RETAIN" "CURRENT" "PASSWORD"
+	{
+		$$ = &ast.SetPwdStmt{User: $4.(*auth.UserIdentity), Password: $6, RetainCurrentPassword: true}
 	}
 |	"SET" "GLOBAL" "TRANSACTION" TransactionChars
 	{
@@ -14750,6 +14762,18 @@ PasswordOrLockOption:
 	{
 		$$ = &ast.PasswordOrLockOption{
 			Type: ast.PasswordRequireCurrentDefault,
+		}
+	}
+|	"RETAIN" "CURRENT" "PASSWORD"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.RetainCurrentPassword,
+		}
+	}
+|	"DISCARD" "OLD" "PASSWORD"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.DiscardOldPassword,
 		}
 	}
 
