@@ -209,7 +209,14 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 	}
 	zoneHelper := taskZoneInfoHelper{}
 	zoneHelper.init(allTiFlashZoneInfo)
-	for _, mppTask := range pf.Sink.GetSelfTasks() {
+	tasks := pf.Sink.GetSelfTasks()
+	taskIDs := make([]int64, 0, len(tasks))
+	addresses := make([]string, 0, len(tasks))
+	rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
+	if !vardef.EnableResourceControl.Load() {
+		rgName = ""
+	}
+	for _, mppTask := range tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
 		} else if !mppTask.TiFlashStaticPrune {
@@ -232,19 +239,8 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 			return errors.Trace(err)
 		}
 
-		rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
-		if !vardef.EnableResourceControl.Load() {
-			rgName = ""
-		}
-		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
-			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
-			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
-			zap.String("plan", plannercore.ToString(pf.Sink)),
-			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
-			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
-			zap.Uint64("GatherID", c.gatherID),
-			zap.String("resource_group", rgName),
-		)
+		taskIDs = append(taskIDs, mppTask.ID)
+		addresses = append(addresses, mppTask.Meta.GetAddress())
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
 			Meta:                   mppTask.Meta,
@@ -265,6 +261,19 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 		}
 		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
+	}
+	if len(tasks) > 0 {
+		firstTask := tasks[0]
+		logutil.BgLogger().Info("Dispatch mpp tasks", zap.Uint64("timestamp", firstTask.StartTs),
+			zap.Int64s("IDs", taskIDs), zap.Int("task-count", len(taskIDs)),
+			zap.Uint64("QueryTs", firstTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", firstTask.MppQueryID.LocalQueryID),
+			zap.Uint64("ServerID", firstTask.MppQueryID.ServerID), zap.Strings("addresses", addresses),
+			zap.String("plan", plannercore.ToString(pf.Sink)),
+			zap.Int64("mpp-version", firstTask.MppVersion.ToInt64()),
+			zap.String("exchange-compression-mode", pf.Sink.GetCompressionMode().Name()),
+			zap.Uint64("GatherID", c.gatherID),
+			zap.String("resource_group", rgName),
+		)
 	}
 	return nil
 }
