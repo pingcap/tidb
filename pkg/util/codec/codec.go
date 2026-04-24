@@ -307,6 +307,103 @@ func EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
 	return encode(loc, b, v, true)
 }
 
+// EncodeKeyWithDesc is like EncodeKey, but bitwise-complements the encoded
+// bytes of every datum whose corresponding entry in desc is true. Complementing
+// a memcomparable-encoded datum reverses its byte comparison order, so a
+// forward iterator over keys built this way yields descending order for those
+// columns. Columns whose desc entry is false (or whose index is past len(desc))
+// are encoded identically to EncodeKey, preserving mixed-direction composite
+// indexes like INDEX(a ASC, b DESC). See pingcap/tidb#2519.
+//
+// Returns an error if any DESC column has a Kind whose underlying encoding is
+// not memcomparable in the sense that "complement of encoded bytes" preserves
+// reverse order — currently KindMysqlJSON and KindVectorFloat32. Those types
+// aren't usable as ordinary index columns anyway (json/vector indexes go
+// through their own pipeline), but the explicit rejection prevents a
+// caller from accidentally producing keys whose comparison semantics would
+// be undefined.
+func EncodeKeyWithDesc(loc *time.Location, b []byte, desc []bool, v ...types.Datum) ([]byte, error) {
+	for i := range v {
+		isDesc := i < len(desc) && desc[i]
+		if isDesc {
+			switch v[i].Kind() {
+			case types.KindMysqlJSON, types.KindVectorFloat32:
+				return b, errors.Errorf(
+					"descending-order encoding is not supported for column kind %v; this kind has no memcomparable form whose bitwise complement preserves reverse order",
+					v[i].Kind())
+			}
+		}
+		start := len(b)
+		var err error
+		b, err = encode(loc, b, v[i:i+1], true)
+		if err != nil {
+			return b, err
+		}
+		if isDesc {
+			for j := start; j < len(b); j++ {
+				b[j] ^= 0xFF
+			}
+		}
+	}
+	return b, nil
+}
+
+// DecodeOneWithDesc decodes a single datum from a byte slice produced by
+// EncodeKeyWithDesc. When desc is false it is equivalent to DecodeOne; when
+// true it inverts the encoded bytes and dispatches through the existing
+// decoder, so all types supported by DecodeOne work unchanged.
+//
+// This allocates a scratch buffer to hold the complemented prefix. Callers on
+// hot paths that decode many consecutive descending columns should consider a
+// streaming variant; none of the current callsites are hot enough to justify
+// the added complexity.
+func DecodeOneWithDesc(b []byte, desc bool) (remain []byte, d types.Datum, err error) {
+	if !desc {
+		return DecodeOne(b)
+	}
+	if len(b) < 1 {
+		return nil, d, errors.New("invalid encoded key")
+	}
+	// peek() inspects the flag byte and computes the encoded length, so we
+	// complement b into a scratch buffer first. A full copy keeps the logic
+	// simple — DecodeOne handles every type uniformly on the scratch copy.
+	cp := make([]byte, len(b))
+	for i := range b {
+		cp[i] = b[i] ^ 0xFF
+	}
+	rem, d, err := DecodeOne(cp)
+	if err != nil {
+		return nil, d, errors.Trace(err)
+	}
+	consumed := len(b) - len(rem)
+	return b[consumed:], d, nil
+}
+
+// CutOneWithDesc cuts the first encoded datum from b, where the column may be
+// stored with descending-complemented bytes (desc=true). It is equivalent to
+// CutOne when desc is false. Used by index-key decoders that only need to
+// advance past a column without materialising its value.
+func CutOneWithDesc(b []byte, desc bool) (data []byte, remain []byte, err error) {
+	if !desc {
+		return CutOne(b)
+	}
+	if len(b) < 1 {
+		return nil, nil, errors.New("invalid encoded key")
+	}
+	// peek() in cmpl-space gives the encoded length. We only need one byte of
+	// scratch (the flag) plus up to the encoded length for variable-length
+	// types, so take the minimum slice needed.
+	cp := make([]byte, len(b))
+	for i := range b {
+		cp[i] = b[i] ^ 0xFF
+	}
+	l, err := peek(cp)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return b[:l], b[l:], nil
+}
+
 // EncodeValue appends the encoded values to byte slice b, returning the appended
 // slice. It does not guarantee the order for comparison.
 func EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
