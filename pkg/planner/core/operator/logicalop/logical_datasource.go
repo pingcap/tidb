@@ -726,7 +726,7 @@ func (ds *DataSource) indexCoveringColumn(column *expression.Column, indexColumn
 		return true
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByPlainIndex := isIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
+	coveredByPlainIndex := IsIndexColsCoveringCol(evalCtx, column, indexColumns, idxColLens, ignoreLen)
 	if !coveredByPlainIndex && handleCoveringState != stateCoveredByCommonHandle {
 		return false
 	}
@@ -748,14 +748,18 @@ func (ds *DataSource) handleCoveringColumn(column *expression.Column, ignoreLen 
 		return stateCoveredByIntHandle
 	}
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
-	coveredByClusteredIndex := isIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
+	coveredByClusteredIndex := IsIndexColsCoveringCol(evalCtx, column, ds.CommonHandleCols, ds.CommonHandleLens, ignoreLen)
 	if coveredByClusteredIndex {
 		return stateCoveredByCommonHandle
 	}
 	return stateNotCoveredByHandle
 }
 
-func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
+// IsIndexColsCoveringCol reports whether the given column is covered by the index columns,
+// with prefix-index length taken into account (pass ignoreLen=true to skip the length check).
+// A prefix index does not cover the full column value for projection, so the caller must not
+// treat it as covering unless ignoreLen is explicitly true.
+func IsIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column, indexCols []*expression.Column, idxColLens []int, ignoreLen bool) bool {
 	for i, indexCol := range indexCols {
 		if indexCol == nil || !col.EqualByExprAndID(sctx, indexCol) {
 			continue

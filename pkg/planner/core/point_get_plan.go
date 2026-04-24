@@ -664,7 +664,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		p.PartitionNames = tblName.PartitionNames
 
 		// Check if the index covers all required columns
-		p.CoveredByIndex = checkIndexCoveringColumns(p, schema.Columns, idxInfo)
+		p.CoveredByIndex = checkIndexCoveringColumns(ctx, p, schema.Columns, idxInfo)
 		return p
 	}
 	return nil
@@ -1466,15 +1466,17 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 	return &col.Name.Name
 }
 
-// checkIndexCoveringColumns checks if the index covers all required columns
-func checkIndexCoveringColumns(p *physicalop.PointGetPlan, columns []*expression.Column, idxInfo *model.IndexInfo) bool {
-	// Get index columns
+// checkIndexCoveringColumns reports whether idxInfo covers every projected column of a
+// point get. It reuses logicalop.IsIndexColsCoveringCol (the same primitive that drives
+// LogicalDataSource.indexCoveringColumn) so prefix indexes and generated-column equality
+// are handled consistently with the rest of the optimizer.
+func checkIndexCoveringColumns(ctx base.PlanContext, p *physicalop.PointGetPlan, columns []*expression.Column, idxInfo *model.IndexInfo) bool {
 	indexColumns := make([]*expression.Column, 0, len(idxInfo.Columns))
 	idxColLens := make([]int, 0, len(idxInfo.Columns))
-
 	for _, idxCol := range idxInfo.Columns {
+		colInfo := p.TblInfo.Columns[idxCol.Offset]
 		for _, col := range columns {
-			if col.ID == p.TblInfo.Columns[idxCol.Offset].ID {
+			if col.ID == colInfo.ID {
 				indexColumns = append(indexColumns, col)
 				idxColLens = append(idxColLens, idxCol.Length)
 				break
@@ -1482,39 +1484,22 @@ func checkIndexCoveringColumns(p *physicalop.PointGetPlan, columns []*expression
 		}
 	}
 
-	// Check if all required columns are covered by the index
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
 	for _, col := range columns {
-		if !isColumnCoveredByIndex(p, col, indexColumns, idxColLens) {
+		// Integer primary key: the value is already encoded in the handle, so the executor
+		// synthesizes it without reading row data.
+		if p.TblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
+			continue
+		}
+		// ExtraHandleID / ExtraPhysTblID are synthesized from the handle/partition, not read
+		// from row data. buildResultFromIndex fills the former; if the latter is requested
+		// and not otherwise reconstructable, buildResultFromIndex falls back to a row fetch.
+		if col.ID == model.ExtraHandleID || col.ID == model.ExtraPhysTblID {
+			continue
+		}
+		if !logicalop.IsIndexColsCoveringCol(evalCtx, col, indexColumns, idxColLens, false) {
 			return false
 		}
 	}
-
 	return true
-}
-
-// isColumnCoveredByIndex checks if a column is covered by the index
-func isColumnCoveredByIndex(p *physicalop.PointGetPlan, column *expression.Column, indexColumns []*expression.Column, idxColLens []int) bool {
-	// Handle primary key
-	if p.TblInfo.PKIsHandle && mysql.HasPriKeyFlag(column.RetType.GetFlag()) {
-		return true
-	}
-
-	// Handle row ID
-	if column.ID == model.ExtraHandleID || column.ID == model.ExtraPhysTblID {
-		return true
-	}
-
-	// Check if column is in the index
-	for i, idxCol := range indexColumns {
-		if idxCol.ID == column.ID {
-			// For string columns with prefix index, we need to check if length is sufficient
-			if column.RetType.EvalType() == types.ETString && idxColLens[i] != types.UnspecifiedLength {
-				// For point get, prefix index should be sufficient since we're doing equality comparison
-				return true
-			}
-			return true
-		}
-	}
-
-	return false
 }
