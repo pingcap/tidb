@@ -55,8 +55,8 @@ func TestBuildObjectSyncChecker(t *testing.T) {
 	require.True(t, synced)
 
 	checker, err = buildObjectSyncChecker(upstream, downstream, false)
-	require.ErrorContains(t, err, "downstream storage must be provided")
+	require.ErrorContains(t, err, "upstream storage cannot check object sync")
 
 	_, err = buildObjectSyncChecker(upstream, nil, false)
-	require.ErrorContains(t, err, "downstream storage must be provided")
+	require.ErrorContains(t, err, "upstream storage cannot check object sync")
 }
