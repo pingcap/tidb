@@ -24,10 +24,6 @@ Policy-level requirements remain in the repository root `AGENTS.md`.
 
 - Planner rule notes live at `docs/agents/planner/rule/rule_ai_notes.md`.
 
-## Ranger Notes
-
-- Ranger notes live at `docs/agents/ranger/README.md`.
-
 ## IMPORT INTO Notes
 
 - IMPORT INTO notes live at `docs/agents/import-into/README.md`.

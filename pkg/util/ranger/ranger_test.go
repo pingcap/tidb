@@ -1120,7 +1120,6 @@ create table t(
 	f varchar(10) collate utf8mb4_general_ci,
 	g enum('A','B','C') collate utf8mb4_general_ci,
 	h varchar(10) collate utf8_bin,
-	i enum('z','a') collate utf8mb4_general_ci,
 	index idx_ab(a(50), b),
 	index idx_cb(c, a),
 	index idx_d(d(2)),
@@ -1128,8 +1127,7 @@ create table t(
 	index idx_f(f),
 	index idx_de(d(2), e),
 	index idx_g(g),
-	index idx_h(h(3)),
-	index idx_i(i)
+	index idx_h(h(3))
 )`)
 
 	tests := []struct {
@@ -1453,34 +1451,6 @@ create table t(
 			require.Equal(t, tt.resultStr, got)
 		})
 	}
-
-	t.Run("enum in-list keeps ordinal range order", func(t *testing.T) {
-		sql := "select * from t where i in ('a', 'z', 'a')"
-		sctx := testKit.Session()
-		stmts, err := session.Parse(sctx, sql)
-		require.NoError(t, err)
-		require.Len(t, stmts, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		nodeW := resolve.NewNodeW(stmts[0])
-		err = plannercore.Preprocess(ctx, sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
-		require.NoError(t, err)
-		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
-		require.NoError(t, err)
-		selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-		tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
-		idx := tbl.FindIndexByName("idx_i")
-		require.NotNil(t, idx)
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
-		}
-		cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, idx)
-		require.NotNil(t, cols)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
-		require.NoError(t, err)
-		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(sctx.GetExprCtx().GetEvalCtx(), res.RemainedConds))
-		require.Equal(t, "[[\"z\",\"z\"] [\"a\",\"a\"]]", fmt.Sprintf("%v", res.Ranges))
-	})
 }
 
 func TestTableShardIndex(t *testing.T) {
@@ -1892,7 +1862,7 @@ func TestShardIndexFuncSuites(t *testing.T) {
 	}
 }
 
-func getSelectionFromQuery(t testing.TB, sctx sessionctx.Context, sql string) *logicalop.LogicalSelection {
+func getSelectionFromQuery(t *testing.T, sctx sessionctx.Context, sql string) *logicalop.LogicalSelection {
 	ctx := context.Background()
 	stmts, err := session.Parse(sctx, sql)
 	require.NoError(t, err)
@@ -2338,24 +2308,6 @@ func TestRangeFallbackForBuildColumnRange(t *testing.T) {
 	require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, access))
 	require.Equal(t, "[in(test.t.a, aaa, bbb, ccc, ddd, eee)]", expression.StringifyExpressionsWithCtx(ectx, remained))
 	checkRangeFallbackAndReset(t, sctx, true)
-
-	t.Run("same-type IN values keep exact point ranges", func(t *testing.T) {
-		sql = "select * from t where b in (10,20,30)"
-		selection = getSelectionFromQuery(t, sctx, sql)
-		conds = selection.Conditions
-		require.Equal(t, 1, len(conds))
-		colb := expression.ColInfo2Col(selection.Schema().Columns, tblInfo.Columns[1])
-		conds, filters = ranger.DetachCondsForColumn(rctx, conds, colb)
-		require.Equal(t, 1, len(conds))
-		require.Equal(t, 0, len(filters))
-		ranges, access, remained, err = ranger.BuildColumnRange(conds, rctx, colb.RetType, types.UnspecifiedLength, 0)
-		require.NoError(t, err)
-		require.Equal(t, "[[10,10] [20,20] [30,30]]", fmt.Sprintf("%v", ranges))
-		require.Equal(t, "[in(test.t.b, 10, 20, 30)]", expression.StringifyExpressionsWithCtx(ectx, access))
-		require.Equal(t, "[]", expression.StringifyExpressionsWithCtx(ectx, remained))
-		checkRangeFallbackAndReset(t, sctx, false)
-	})
-
 	sql = "select * from t where b in (10,20,30)"
 	selection = getSelectionFromQuery(t, sctx, sql)
 	conds = selection.Conditions

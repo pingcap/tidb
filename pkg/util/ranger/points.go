@@ -636,7 +636,9 @@ func (r *builder) buildFromIn(
 	convertToSortKey bool,
 ) ([]*point, bool) {
 	list := expr.GetArgs()[1:]
-	values := make([]types.Datum, 0, len(list))
+	rangePoints := make([]*point, 0, len(list)*2)
+	pointObjs := make([]point, len(list)*2)
+	pointCount := 0
 	hasNull := false
 	ft := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
 	colCollate := ft.GetCollate()
@@ -686,27 +688,37 @@ func (r *builder) buildFromIn(
 		if ft.EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
 			dt.SetString(dt.GetString(), ft.GetCollate()) // refine the string like what we did in builder.buildFromBinOp
 		}
-		var value types.Datum
-		dt.Copy(&value)
-		values = append(values, value)
+		dt.Copy(&pointObjs[pointCount].value)
+		pointObjs[pointCount].start = true
+		startPoint := &pointObjs[pointCount]
+		pointCount++
+		dt.Copy(&pointObjs[pointCount].value)
+		endPoint := &pointObjs[pointCount]
+		pointCount++
+		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	collator := collate.GetCollator(colCollate)
-	// Deduplicate before materializing points so the common long-IN path allocates
-	// fewer point objects. Do not deduplicate again after prefix cutting or sort-key
-	// conversion here, because those later transformations intentionally preserve the
-	// existing range-builder semantics.
-	values, err := sortAndDedupDatums(tc, values, collator)
-	if err != nil {
-		r.err = err
-		return getFullRange(), hasNull
+	slices.SortFunc(rangePoints, func(a, b *point) (cmpare int) {
+		cmpare, r.err = rangePointCmp(tc, a, b, collator)
+		return cmpare
+	})
+	// check and remove duplicates
+	curPos, frontPos := 0, 0
+	for frontPos < len(rangePoints) {
+		if rangePoints[curPos].start == rangePoints[frontPos].start {
+			frontPos++
+		} else {
+			curPos++
+			rangePoints[curPos] = rangePoints[frontPos]
+			frontPos++
+		}
 	}
-
-	rangePoints := datumsToPoints(values)
-	if prefixLen == types.UnspecifiedLength && !convertToSortKey {
-		return rangePoints, hasNull
+	if curPos > 0 {
+		curPos++
 	}
-
+	rangePoints = rangePoints[:curPos]
 	cutPrefixForPoints(rangePoints, prefixLen, ft)
+	var err error
 	if convertToSortKey {
 		rangePoints, err = pointsConvertToSortKey(r.sctx, rangePoints, newTp)
 		if err != nil {
@@ -715,63 +727,6 @@ func (r *builder) buildFromIn(
 		}
 	}
 	return rangePoints, hasNull
-}
-
-func sortAndDedupDatums(tc types.Context, values []types.Datum, collator collate.Collator) ([]types.Datum, error) {
-	if len(values) <= 1 {
-		return values, nil
-	}
-
-	var sortErr error
-	slices.SortFunc(values, func(a, b types.Datum) (cmp int) {
-		cmp, sortErr = rangeDatumCmp(tc, &a, &b, collator)
-		return cmp
-	})
-	if sortErr != nil {
-		return nil, errors.Trace(sortErr)
-	}
-
-	curPos := 0
-	for frontPos := 1; frontPos < len(values); frontPos++ {
-		cmp, err := rangeDatumCmp(tc, &values[curPos], &values[frontPos], collator)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cmp == 0 {
-			continue
-		}
-		curPos++
-		values[curPos] = values[frontPos]
-	}
-	return values[:curPos+1], nil
-}
-
-func rangeDatumCmp(tc types.Context, a, b *types.Datum, collator collate.Collator) (int, error) {
-	// Keep the datum-level fast path aligned with rangePointCmp so ENUM IN-lists
-	// still sort and deduplicate by ordinal value rather than display name.
-	if a.Kind() == types.KindMysqlEnum && b.Kind() == types.KindMysqlEnum {
-		return cmp.Compare(a.GetInt64(), b.GetInt64()), nil
-	}
-	return a.Compare(tc, b, collator)
-}
-
-func datumsToPoints(values []types.Datum) []*point {
-	pointCount := len(values) * 2
-	// Keep the pointer list and point structs in batch storage so long-IN
-	// workloads do not pay one heap object per emitted endpoint.
-	rangePoints := make([]*point, pointCount)
-	pointObjs := make([]point, pointCount)
-	for i := range values {
-		startPoint := &pointObjs[i*2]
-		startPoint.value = values[i]
-		startPoint.start = true
-		rangePoints[i*2] = startPoint
-
-		endPoint := &pointObjs[i*2+1]
-		endPoint.value = values[i]
-		rangePoints[i*2+1] = endPoint
-	}
-	return rangePoints
 }
 
 func (r *builder) newBuildFromPatternLike(
