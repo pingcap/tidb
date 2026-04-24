@@ -387,19 +387,25 @@ func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 		return pointRanges, true
 	}
 	rangeCount := len(pointRanges) * len(ranges)
-	totalLowDatumCount := 0
-	totalHighDatumCount := 0
-	totalCollatorCount := 0
+	sumPointLow := 0
+	sumPointHigh := 0
+	sumPointCollator := 0
 	for _, pointRange := range pointRanges {
-		pointLowWidth := len(pointRange.LowVal)
-		pointHighWidth := len(pointRange.HighVal)
-		pointCollatorWidth := len(pointRange.Collators)
-		for _, r := range ranges {
-			totalLowDatumCount += pointLowWidth + len(r.LowVal)
-			totalHighDatumCount += pointHighWidth + len(r.HighVal)
-			totalCollatorCount += pointCollatorWidth + len(r.Collators)
-		}
+		sumPointLow += len(pointRange.LowVal)
+		sumPointHigh += len(pointRange.HighVal)
+		sumPointCollator += len(pointRange.Collators)
 	}
+	sumRangeLow := 0
+	sumRangeHigh := 0
+	sumRangeCollator := 0
+	for _, r := range ranges {
+		sumRangeLow += len(r.LowVal)
+		sumRangeHigh += len(r.HighVal)
+		sumRangeCollator += len(r.Collators)
+	}
+	totalLowDatumCount := sumPointLow*len(ranges) + sumRangeLow*len(pointRanges)
+	totalHighDatumCount := sumPointHigh*len(ranges) + sumRangeHigh*len(pointRanges)
+	totalCollatorCount := sumPointCollator*len(ranges) + sumRangeCollator*len(pointRanges)
 
 	// Allocate storage for the full fanout once. Individual result ranges take
 	// capped subslices below, which avoids per-result slice allocation.
