@@ -187,8 +187,8 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 		}
 		return foldedExpr, isDeferredConst
 	}
-	// If case expression contains deferred expressions (un-cacheable functions like current_role()),
-	// do not fold it, because deferred expressions need to be evaluated at runtime.
+	// If case expression contains deferred constants (e.g., ParamMarkers or DeferredExpr like user variables),
+	// return the expression as-is but marked as deferred, so it will be re-evaluated at runtime.
 	if isDeferredConst {
 		return expr, true
 	}

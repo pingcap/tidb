@@ -353,13 +353,11 @@ func (b *builtinMaskNullRealSig) Clone() builtinFunc {
 }
 
 func (b *builtinMaskNullRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	_, isNull, err := b.args[0].EvalReal(ctx, row)
+	_, _, err := b.args[0].EvalReal(ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
-	if isNull {
-		return 0, true, nil
-	}
+	// mask_null(col) always return null, so it equal to just check error
 	return 0, true, nil
 }
 
