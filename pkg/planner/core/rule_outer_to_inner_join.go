@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // ConvertOuterToInnerJoin converts outer to inner joins if the unmtaching rows are filtered.
@@ -37,7 +36,7 @@ type ConvertOuterToInnerJoin struct {
 //     - For inner/semi joins, the ON clause can be applied on both children
 //     - For anti semi joins, ON clause applied only on left side
 //     - For all other cases, do not pass ON clause.
-func (*ConvertOuterToInnerJoin) Optimize(_ context.Context, p base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (*ConvertOuterToInnerJoin) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	return p.ConvertOuterToInnerJoin(nil), planChanged, nil
 }

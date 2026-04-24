@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -45,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -289,8 +287,10 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpReloadBindings is used to reload plan binding.
+	// OpReloadBindings is used to reload plan binding in this node.
 	OpReloadBindings
+	// OpReloadClusterBindings is used to reload plan binding in the entire cluster.
+	OpReloadClusterBindings
 	// OpSetBindingStatus is used to set binding status.
 	OpSetBindingStatus
 	// OpSQLBindDropByDigest is used to drop SQL binds by digest
@@ -305,9 +305,10 @@ const (
 type SQLBindPlan struct {
 	physicalop.SimpleSchemaProducer
 
-	IsGlobal  bool
-	SQLBindOp SQLBindOpType
-	Details   []*SQLBindOpDetail
+	IsGlobal     bool
+	SQLBindOp    SQLBindOpType
+	Details      []*SQLBindOpDetail
+	IsFromRemote bool
 }
 
 // SQLBindOpDetail represents the detail of an operation on a single binding.
@@ -342,223 +343,23 @@ type Simple struct {
 	ResolveCtx *resolve.Context
 }
 
-// MemoryUsage return the memory usage of Simple
-func (s *Simple) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = s.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool + size.SizeOfUint64
-	return
-}
-
-// PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
+// PhysicalPlanWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.
-type PhysicalSimpleWrapper struct {
+type PhysicalPlanWrapper struct {
 	physicalop.BasePhysicalPlan
-	Inner Simple
+	Inner base.Plan
 }
 
 // MemoryUsage return the memory usage of PhysicalSimpleWrapper
-func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
+func (p *PhysicalPlanWrapper) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
-	return
-}
-
-// InsertGeneratedColumns is for completing generated columns in Insert.
-// We resolve generation expressions in plan, and eval those in executor.
-type InsertGeneratedColumns struct {
-	Exprs        []expression.Expression
-	OnDuplicates []*expression.Assignment
-}
-
-func (i InsertGeneratedColumns) cloneForPlanCache() InsertGeneratedColumns {
-	return InsertGeneratedColumns{
-		Exprs:        cloneExpressionsForPlanCache(i.Exprs, nil),
-		OnDuplicates: util.CloneAssignments(i.OnDuplicates),
-	}
-}
-
-// MemoryUsage return the memory usage of InsertGeneratedColumns
-func (i *InsertGeneratedColumns) MemoryUsage() (sum int64) {
-	if i == nil {
-		return
-	}
-	sum = size.SizeOfSlice*3 + int64(cap(i.OnDuplicates))*size.SizeOfPointer + int64(cap(i.Exprs))*size.SizeOfInterface
-
-	for _, expr := range i.Exprs {
-		sum += expr.MemoryUsage()
-	}
-	for _, as := range i.OnDuplicates {
-		sum += as.MemoryUsage()
-	}
-	return
-}
-
-// Insert represents an insert plan.
-type Insert struct {
-	physicalop.SimpleSchemaProducer
-
-	Table         table.Table        `plan-cache-clone:"shallow"`
-	tableSchema   *expression.Schema `plan-cache-clone:"shallow"`
-	tableColNames types.NameSlice    `plan-cache-clone:"shallow"`
-	Columns       []*ast.ColumnName  `plan-cache-clone:"shallow"`
-	Lists         [][]expression.Expression
-
-	OnDuplicate        []*expression.Assignment
-	Schema4OnDuplicate *expression.Schema `plan-cache-clone:"shallow"`
-	names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
-
-	GenCols InsertGeneratedColumns
-
-	SelectPlan base.PhysicalPlan
-
-	IsReplace bool
-	IgnoreErr bool
-
-	// NeedFillDefaultValue is true when expr in value list reference other column.
-	NeedFillDefaultValue bool
-
-	AllAssignmentsAreConstant bool
-
-	RowLen int
-
-	FKChecks   []*FKCheck   `plan-cache-clone:"must-nil"`
-	FKCascades []*FKCascade `plan-cache-clone:"must-nil"`
-}
-
-// MemoryUsage return the memory usage of Insert
-func (p *Insert) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+
-		cap(p.Columns)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
-		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*4 + size.SizeOfInt
-	if p.tableSchema != nil {
-		sum += p.tableSchema.MemoryUsage()
-	}
-	if p.Schema4OnDuplicate != nil {
-		sum += p.Schema4OnDuplicate.MemoryUsage()
-	}
-	if p.SelectPlan != nil {
-		sum += p.SelectPlan.MemoryUsage()
-	}
-
-	for _, name := range p.tableColNames {
-		sum += name.MemoryUsage()
-	}
-	for _, exprs := range p.Lists {
-		sum += size.SizeOfSlice + int64(cap(exprs))*size.SizeOfInterface
-		for _, expr := range exprs {
-			sum += expr.MemoryUsage()
-		}
-	}
-	for _, as := range p.OnDuplicate {
-		sum += as.MemoryUsage()
-	}
-	for _, name := range p.names4OnDuplicate {
-		sum += name.MemoryUsage()
-	}
-	for _, fkC := range p.FKChecks {
-		sum += fkC.MemoryUsage()
-	}
-
-	return
-}
-
-// Update represents Update plan.
-type Update struct {
-	physicalop.SimpleSchemaProducer
-
-	OrderedList []*expression.Assignment
-
-	AllAssignmentsAreConstant bool
-
-	IgnoreError bool
-
-	VirtualAssignmentsOffset int
-
-	SelectPlan base.PhysicalPlan
-
-	// TblColPosInfos is for multi-table update statement.
-	// It records the column position of each related table.
-	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
-
-	// Used when partition sets are given.
-	// e.g. update t partition(p0) set a = 1;
-	PartitionedTable []table.PartitionedTable `plan-cache-clone:"shallow"`
-
-	// tblID2Table stores related tables' info of this Update statement.
-	tblID2Table map[int64]table.Table `plan-cache-clone:"shallow"`
-
-	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
-	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
-}
-
-// MemoryUsage return the memory usage of Update
-func (p *Update) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfSlice*3 + int64(cap(p.OrderedList))*size.SizeOfPointer +
-		size.SizeOfBool + size.SizeOfInt + size.SizeOfInterface + int64(cap(p.PartitionedTable))*size.SizeOfInterface +
-		int64(len(p.tblID2Table))*(size.SizeOfInt64+size.SizeOfInterface)
-	if p.SelectPlan != nil {
-		sum += p.SelectPlan.MemoryUsage()
-	}
-
-	for _, as := range p.OrderedList {
-		sum += as.MemoryUsage()
-	}
-	for _, colInfo := range p.TblColPosInfos {
-		sum += colInfo.MemoryUsage()
-	}
-	for _, v := range p.FKChecks {
-		sum += size.SizeOfInt64 + size.SizeOfSlice + int64(cap(v))*size.SizeOfPointer
-		for _, fkc := range v {
-			sum += fkc.MemoryUsage()
-		}
-	}
-	return
-}
-
-// Delete represents a delete plan.
-type Delete struct {
-	physicalop.SimpleSchemaProducer
-
-	IsMultiTable bool
-
-	SelectPlan base.PhysicalPlan
-
-	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
-
-	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
-	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
-
-	IgnoreErr bool
-}
-
-// MemoryUsage return the memory usage of Delete
-func (p *Delete) MemoryUsage() (sum int64) {
-	if p == nil {
-		return
-	}
-
-	sum = p.SimpleSchemaProducer.MemoryUsage() + size.SizeOfBool + size.SizeOfInterface + size.SizeOfSlice
-	if p.SelectPlan != nil {
-		sum += p.SelectPlan.MemoryUsage()
-	}
-	for _, colInfo := range p.TblColPosInfos {
-		sum += colInfo.MemoryUsage()
-	}
+	// base.Plan doesn't have MemoryUsage method, so we just use a fixed size.
+	planMem := int64(256)
+	sum = p.BasePhysicalPlan.MemoryUsage() + planMem
 	return
 }
 
@@ -630,7 +431,7 @@ type LoadData struct {
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Options            []*LoadDataOpt
 
-	GenCols InsertGeneratedColumns
+	GenCols physicalop.InsertGeneratedColumns
 }
 
 // LoadDataOpt represents load data option.
@@ -651,7 +452,7 @@ type ImportInto struct {
 	Format             *string
 	Options            []*LoadDataOpt
 
-	GenCols InsertGeneratedColumns
+	GenCols physicalop.InsertGeneratedColumns
 	Stmt    string
 
 	SelectPlan base.PhysicalPlan
@@ -682,6 +483,7 @@ type UnlockStats struct {
 type PlanReplayer struct {
 	physicalop.SimpleSchemaProducer
 	ExecStmt          ast.StmtNode
+	StmtList          []string // For PLAN REPLAYER DUMP EXPLAIN ( "sql1", "sql2", ... )
 	Analyze           bool
 	Load              bool
 	File              string
@@ -886,6 +688,19 @@ func (e *Explain) prepareSchema() error {
 		format = types.ExplainFormatROW
 		e.Format = types.ExplainFormatROW
 	}
+	// Ensure StmtCtx.ExplainFormat is set early so shouldRemoveColumnNumbers can access it
+	// This needs to be set before any ExplainInfo() calls are made
+	// ResetContextOfStmt already set ExplainFormat to the original format (normalized to lowercase),
+	// so we preserve that value instead of overwriting it with the converted format
+	if e.SCtx() != nil {
+		stmtCtx := e.SCtx().GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		// Only set ExplainFormat if it's not already set (it should be set in ResetContextOfStmt)
+		// This preserves the original format value for test compatibility
+		if stmtCtx.ExplainFormat == "" {
+			stmtCtx.ExplainFormat = format
+		}
+	}
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
@@ -968,8 +783,8 @@ func (e *Explain) renderResultForExplore() error {
 			strconv.FormatFloat(p.ScanRowsPerReturnRow, 'f', -1, 64),
 			p.Recommend,
 			p.Reason,
-			fmt.Sprintf("EXPLAIN ANALYZE '%v'", p.PlanDigest),
-			fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)})
+			fmt.Sprintf("EXPLAIN ANALYZE %v", p.BindSQL),
+			fmt.Sprintf("CREATE GLOBAL BINDING USING %v", p.BindSQL)})
 	}
 	return nil
 }
@@ -989,12 +804,12 @@ func (e *Explain) RenderResult() error {
 		pp, ok := e.TargetPlan.(base.PhysicalPlan)
 		if ok {
 			if _, err := getPlanCost(pp, property.RootTaskType,
-				optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate|costusage.CostFlagUseTrueCardinality|costusage.CostFlagTrace)); err != nil {
+				costusage.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate|costusage.CostFlagUseTrueCardinality|costusage.CostFlagTrace)); err != nil {
 				return err
 			}
 			if pp.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
 				// output cost formula and factor costs through warning under model ver2 and true_card_cost mode for cost calibration.
-				cost, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+				cost, _ := pp.GetPlanCostVer2(property.RootTaskType, costusage.NewDefaultPlanCostOption())
 				if cost.GetTrace() != nil {
 					trace := cost.GetTrace()
 					pp.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("cost formula: %v", trace.GetFormula()))
@@ -1034,6 +849,13 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = rows
 		return nil
+	}
+	// Ensure StmtCtx.ExplainFormat is set to match e.Format so shouldRemoveColumnNumbers can access it
+	// e.Format is already normalized to lowercase in planbuilder.go and may have been converted from Traditional to ROW in prepareSchema()
+	// prepareSchema() already set ExplainFormat (preserving the original from ResetContextOfStmt), so we just ensure InExplainStmt is set
+	if e.SCtx() != nil {
+		e.SCtx().GetSessionVars().StmtCtx.InExplainStmt = true
+		// ExplainFormat should already be set correctly in prepareSchema() or ResetContextOfStmt
 	}
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache, types.ExplainFormatPlanTree:
@@ -1279,18 +1101,25 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 	estCost = "N/A"
 	costFormula = "N/A"
 	sctx := p.SCtx()
+	// Ensure StmtCtx.ExplainFormat is set before calling ExplainInfo() so shouldRemoveColumnNumbers can access it
+	// format is already normalized to lowercase when passed from ExplainFlatPlanInRowFormat (which uses e.Format)
+	if sctx != nil {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		stmtCtx.ExplainFormat = format
+	}
 	if isPhysicalPlan {
 		if format != types.ExplainFormatPlanTree {
 			estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
 		}
 		if sctx != nil && sctx.GetSessionVars().CostModelVersion == modelVer2 {
-			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+			costVer2, _ := pp.GetPlanCostVer2(property.RootTaskType, costusage.NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(costVer2.GetCost(), 'f', 2, 64)
 			if costVer2.GetTrace() != nil {
 				costFormula = costVer2.GetTrace().GetFormula()
 			}
 		} else {
-			planCost, _ := getPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+			planCost, _ := getPlanCost(pp, property.RootTaskType, costusage.NewDefaultPlanCostOption())
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 		}
 	} else if si := p.StatsInfo(); si != nil {
@@ -1306,6 +1135,8 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 		}
 		operatorInfo = p.ExplainInfo()
 	}
+
+	// Column numbers are now removed in column.ExplainInfo() when format is plan_tree
 	return estRows, estCost, costFormula, accessObject, operatorInfo
 }
 
@@ -1344,6 +1175,9 @@ func binaryDataFromFlatPlan(explainCtx base.PlanContext, flat *FlatPhysicalPlan,
 	res.Main = binaryOpTreeFromFlatOps(explainCtx, flat.Main, briefBinaryPlan)
 	for _, explainedCTE := range flat.CTEs {
 		res.Ctes = append(res.Ctes, binaryOpTreeFromFlatOps(explainCtx, explainedCTE, briefBinaryPlan))
+	}
+	for _, subQ := range flat.ScalarSubQueries {
+		res.Subqueries = append(res.Subqueries, binaryOpTreeFromFlatOps(explainCtx, subQ, briefBinaryPlan))
 	}
 	return res
 }
@@ -1418,7 +1252,7 @@ func binaryOpFromFlatOp(explainCtx base.PlanContext, fop *FlatOperator, out *tip
 
 	if fop.IsPhysicalPlan {
 		p := fop.Origin.(base.PhysicalPlan)
-		out.Cost, _ = getPlanCost(p, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+		out.Cost, _ = getPlanCost(p, property.RootTaskType, costusage.NewDefaultPlanCostOption())
 		out.EstRows = p.GetEstRowCountForDisplay()
 	} else if statsInfo := fop.Origin.StatsInfo(); statsInfo != nil {
 		out.EstRows = statsInfo.RowCount

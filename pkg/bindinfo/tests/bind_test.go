@@ -17,9 +17,7 @@ package tests
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -44,7 +42,6 @@ func utilCleanBindingEnv(tk *testkit.TestKit) {
 func TestPrepareCacheWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
@@ -468,13 +465,13 @@ func TestBindSQLDigest(t *testing.T) {
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
 		res := tk.MustQuery(`show global bindings`).Rows()
-		require.Equal(t, len(res[0]), 11)
+		require.Equalf(t, 11, len(res[0]), "sql: %s", sql)
 
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(c.origin, "utf8mb4", "utf8mb4_general_ci")
-		require.NoError(t, err)
+		require.NoErrorf(t, err, "sql: %s", c.origin)
 		_, sqlDigestWithDB := parser.NormalizeDigestForBinding(bindinfo.RestoreDBForBinding(originNode, "test"))
-		require.Equal(t, res[0][9], sqlDigestWithDB.String())
+		require.Equalf(t, sqlDigestWithDB.String(), res[0][9], "sql: %s", c.origin)
 	}
 }
 
@@ -486,9 +483,9 @@ func TestSimplifiedCreateBinding(t *testing.T) {
 
 	check := func(scope, sql, binding string) {
 		r := tk.MustQuery(fmt.Sprintf("show %s bindings", scope)).Rows()
-		require.Equal(t, len(r), 1)
-		require.Equal(t, r[0][0].(string), sql)
-		require.Equal(t, r[0][1].(string), binding)
+		require.Equalf(t, 1, len(r), "sql: %s, binding: %s, scope: %s", sql, binding, scope)
+		require.Equalf(t, sql, r[0][0].(string), "sql: %s, binding: %s, scope: %s", sql, binding, scope)
+		require.Equalf(t, binding, r[0][1].(string), "sql: %s, binding: %s, scope: %s", sql, binding, scope)
 	}
 
 	tk.MustExec(`create binding using select /*+ use_index(t, a) */ * from t`)
@@ -558,15 +555,15 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		utilCleanBindingEnv(tk)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
-		h.LoadFromStorageToCache(true)
+		h.LoadFromStorageToCache(true, false)
 		res := tk.MustQuery(`show global bindings`).Rows()
 
-		require.Equal(t, len(res), 1)
-		require.Equal(t, len(res[0]), 11)
+		require.Equalf(t, 1, len(res), "sql: %s", sql)
+		require.Equalf(t, 11, len(res[0]), "sql: %s", sql)
 		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCBinding())
-		h.LoadFromStorageToCache(true)
+		require.NoError(t, h.GCBinding(), "sql: %s", sql)
+		h.LoadFromStorageToCache(true, false)
 		tk.MustQuery("show global bindings").Check(testkit.Rows())
 	}
 
@@ -577,11 +574,11 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		tk.MustExec(sql)
 		res := tk.MustQuery(`show bindings`).Rows()
 
-		require.Equal(t, len(res), 1)
-		require.Equal(t, len(res[0]), 11)
+		require.Equalf(t, 1, len(res), "sql: %s", sql)
+		require.Equalf(t, 11, len(res[0]), "sql: %s", sql)
 		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCBinding())
+		require.NoError(t, h.GCBinding(), "sql: %s", sql)
 		tk.MustQuery("show bindings").Check(testkit.Rows())
 	}
 
@@ -637,30 +634,13 @@ func removeAllBindings(tk *testkit.TestKit, global bool) {
 	}
 	// test DROP BINDING FOR SQL DIGEST can handle empty strings correctly
 	digests = append(digests, "", "", "")
-	// randomly split digests into 4 groups using random number
-	// shuffle the slice
-	rand.Shuffle(len(digests), func(i, j int) {
-		digests[i], digests[j] = digests[j], digests[i]
-	})
-	split := make([][]string, 4)
-	for i, d := range digests {
-		split[i%4] = append(split[i%4], d)
-	}
 	// group 0: wrap with ' then connect by ,
 	var g0 string
-	for _, d := range split[0] {
+	for _, d := range digests {
 		g0 += "'" + d + "',"
 	}
-	// group 1: connect by , and set into a user variable
-	tk.MustExec(fmt.Sprintf("set @a = '%v'", strings.Join(split[1], ",")))
-	g1 := "@a,"
-	var g2 string
-	for _, d := range split[2] {
-		g2 += "'" + d + "',"
-	}
-	// group 2: connect by , and put into a normal string
-	g3 := "'" + strings.Join(split[3], ",") + "'"
-	tk.MustExec(fmt.Sprintf("drop %v binding for sql digest %s %s %s %s", scope, g0, g1, g2, g3))
+	g0 += "'123', '456'" // invalid digests
+	tk.MustExec(fmt.Sprintf("drop %v binding for sql digest %s", scope, g0))
 	tk.MustQuery(fmt.Sprintf("show %v bindings", scope)).Check(testkit.Rows()) // empty
 }
 
@@ -823,6 +803,11 @@ func TestFuzzyBindingHints(t *testing.T) {
 }
 
 func TestBatchDropBindings(t *testing.T) {
+	originLease := bindinfo.Lease
+	bindinfo.Lease = 0
+	defer func() {
+		bindinfo.Lease = originLease
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)

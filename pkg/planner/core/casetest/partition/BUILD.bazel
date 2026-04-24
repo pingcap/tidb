@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "integration_partition_test.go",
+        "list_partition_integration_test.go",
         "main_test.go",
         "partition_pruner_test.go",
     ],
@@ -21,6 +22,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "//pkg/util/benchdaily",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

@@ -18,10 +18,49 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRetLabel(t *testing.T) {
 	require.Equal(t, opSucc, RetLabel(nil))
 	require.Equal(t, opFailed, RetLabel(errors.New("test error")))
+}
+
+func readGaugeValue(t *testing.T, gauge prometheus.Gauge) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, gauge.Write(m))
+	return m.GetGauge().GetValue()
+}
+
+func countCollectedMetrics(collector prometheus.Collector) int {
+	ch := make(chan prometheus.Metric, 16)
+	collector.Collect(ch)
+	close(ch)
+
+	count := 0
+	for range ch {
+		count++
+	}
+	return count
+}
+
+func TestStmtSummaryMetricLabels(t *testing.T) {
+	InitStmtSummaryMetrics()
+	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowRecordCount))
+	require.Equal(t, 0, countCollectedMetrics(StmtSummaryWindowEvictedCount))
+
+	SetStmtSummaryWindowMetrics(StmtSummaryTypeV1, 3, 1)
+	require.Equal(t, 1, countCollectedMetrics(StmtSummaryWindowRecordCount))
+	require.Equal(t, 1, countCollectedMetrics(StmtSummaryWindowEvictedCount))
+	require.Equal(t, 3.0, readGaugeValue(t, StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV1)))
+	require.Equal(t, 1.0, readGaugeValue(t, StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV1)))
+
+	SetStmtSummaryWindowMetrics(StmtSummaryTypeV2, 5, 2)
+	require.Equal(t, 2, countCollectedMetrics(StmtSummaryWindowRecordCount))
+	require.Equal(t, 2, countCollectedMetrics(StmtSummaryWindowEvictedCount))
+	require.Equal(t, 5.0, readGaugeValue(t, StmtSummaryWindowRecordCount.WithLabelValues(StmtSummaryTypeV2)))
+	require.Equal(t, 2.0, readGaugeValue(t, StmtSummaryWindowEvictedCount.WithLabelValues(StmtSummaryTypeV2)))
 }

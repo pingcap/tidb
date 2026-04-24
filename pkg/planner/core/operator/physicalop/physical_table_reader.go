@@ -23,15 +23,15 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // ReadReqType is the read request type of the operator. Currently, only PhysicalTableReader uses this.
@@ -90,7 +90,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 	if p.TablePlan == nil {
 		return &p
 	}
-	p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+	p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 	p.SetSchema(p.TablePlan.Schema())
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
@@ -102,7 +102,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 // LoadTableStats loads the stats of the table read by this plan.
 func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
-	utilfuncp.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
+	stats.LoadTableStats(ctx, ts.Table, ts.PhysicalTableID)
 }
 
 // SetTablePlanForTest sets TablePlan field for test usage only
@@ -235,14 +235,14 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 		return nil, err
 	}
 	// TablePlans are actually the flattened plans in TablePlan, so can't copy them, just need to extract from TablePlan
-	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
+	cloned.TablePlans = FlattenListPushDownPlan(cloned.TablePlan)
 	return cloned, nil
 }
 
 // SetChildren overrides op.PhysicalPlan SetChildren interface.
 func (p *PhysicalTableReader) SetChildren(children ...base.PhysicalPlan) {
 	p.TablePlan = children[0]
-	p.TablePlans = FlattenPushDownPlan(p.TablePlan)
+	p.TablePlans = FlattenListPushDownPlan(p.TablePlan)
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -251,21 +251,6 @@ func (p *PhysicalTableReader) ExtractCorrelatedCols() (corCols []*expression.Cor
 		corCols = append(corCols, coreusage.ExtractCorrelatedCols4PhysicalPlan(child)...)
 	}
 	return corCols
-}
-
-// BuildPlanTrace implements op.PhysicalPlan interface.
-func (p *PhysicalTableReader) BuildPlanTrace() *tracing.PlanTrace {
-	rp := p.BasePhysicalPlan.BuildPlanTrace()
-	if p.TablePlan != nil {
-		rp.Children = append(rp.Children, p.TablePlan.BuildPlanTrace())
-	}
-	return rp
-}
-
-// AppendChildCandidate implements PhysicalPlan interface.
-func (p *PhysicalTableReader) AppendChildCandidate(op *optimizetrace.PhysicalOptimizeOp) {
-	p.BasePhysicalPlan.AppendChildCandidate(op)
-	AppendChildCandidate(p, p.TablePlan, op)
 }
 
 // ExplainInfo implements Plan interface.
@@ -289,30 +274,6 @@ func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
 	return "data:" + p.TablePlan.ExplainID().String()
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalTableReader)
-	*cloned = *p
-	basePlan, baseOK := p.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.PhysicalSchemaProducer = *basePlan
-	if p.TablePlan != nil {
-		tablePlan, ok := p.TablePlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.TablePlan = tablePlan.(base.PhysicalPlan)
-	}
-	cloned.TablePlans = FlattenPushDownPlan(cloned.TablePlan)
-	cloned.PlanPartInfo = p.PlanPartInfo.CloneForPlanCache()
-	if p.TableScanAndPartitionInfos != nil {
-		return nil, false
-	}
-	return cloned, true
-}
-
 // ResolveIndices implements Plan interface.
 func (p *PhysicalTableReader) ResolveIndices() error {
 	err := ResolveIndicesForVirtualColumn(p.Schema().Columns, p.Schema())
@@ -324,13 +285,13 @@ func (p *PhysicalTableReader) ResolveIndices() error {
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalTableReader) GetPlanCostVer1(_ property.TaskType,
-	option *optimizetrace.PlanCostOption) (float64, error) {
+	option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalTableReader(p, option)
 }
 
 // GetPlanCostVer2 calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType,
-	option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+	option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetPlanCostVer24PhysicalTableReader(p, taskType, option)
 }
 
@@ -378,4 +339,19 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 	for _, child := range children {
 		setMppOrBatchCopForTableScan(child)
 	}
+}
+
+// GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
+func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
+	reader.PlanPartInfo = &PhysPlanPartInfo{
+		PruningConds:   sg.Source.AllConds,
+		PartitionNames: sg.Source.PartitionNames,
+		Columns:        sg.Source.TblCols,
+		ColumnNames:    sg.Source.OutputNames(),
+	}
+	reader.SetStats(stats)
+	reader.SetSchema(schema)
+	reader.SetChildrenReqProps(props)
+	return reader
 }

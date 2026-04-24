@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -58,7 +59,12 @@ func TestIntegrationCopCache(t *testing.T) {
 	tid := tblInfo.Meta().ID
 	tk.MustExec(`insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)`)
 	tableStart := tablecodec.GenTableRecordPrefix(tid)
-	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 6)
+	tableStartPrefixNext := tableStart.PrefixNext()
+	if kerneltype.IsNextGen() {
+		tableStart = store.GetCodec().EncodeKey(tableStart)
+		tableStartPrefixNext = store.GetCodec().EncodeKey(tableStartPrefixNext)
+	}
+	cluster.SplitKeys(tableStart, tableStartPrefixNext, 6)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`))
 	defer func() {

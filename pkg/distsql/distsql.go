@@ -177,6 +177,16 @@ func SelectWithRuntimeStats(ctx context.Context, dctx *distsqlctx.DistSQLContext
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	isRestrict bool, dctx *distsqlctx.DistSQLContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, dctx.KvExecCounter)
+	failpoint.Inject("mockAnalyzeRequestWaitForCancel", func(val failpoint.Value) {
+		if val.(bool) {
+			<-ctx.Done()
+			err := context.Cause(ctx)
+			if err == nil {
+				err = ctx.Err()
+			}
+			failpoint.Return(nil, err)
+		}
+	})
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = kv.InternalTxnStats
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})

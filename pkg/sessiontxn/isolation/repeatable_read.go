@@ -226,11 +226,11 @@ func notNeedGetLatestTSFromPD(plan base.Plan, inLockOrWriteStmt bool) bool {
 			}
 		}
 		return true
-	case *plannercore.Update:
+	case *physicalop.Update:
 		return notNeedGetLatestTSFromPD(v.SelectPlan, true)
-	case *plannercore.Delete:
+	case *physicalop.Delete:
 		return notNeedGetLatestTSFromPD(v.SelectPlan, true)
-	case *plannercore.Insert:
+	case *physicalop.Insert:
 		return v.SelectPlan == nil
 	}
 	return false

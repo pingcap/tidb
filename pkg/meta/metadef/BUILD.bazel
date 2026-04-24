@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "db.go",
         "system.go",
+        "system_tables_def.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/meta/metadef",
     visibility = ["//visibility:public"],

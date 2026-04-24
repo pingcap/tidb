@@ -137,9 +137,17 @@ kv_outage() {
         done
         # let tikv start up completely if backup is finished before tikv restarts
         ensure_tikv
+        for i in "${id[@]}"; do
+            debug_tikv "$i"
+        done
         # sometimes even though a tikv node is stopped, pd also show is_intialized in ensure_tikv
         sleep 1
     }
+}
+
+debug_tikv() {
+    echo "Debug TiKV($i)..."
+    run_curl "https://$TIKV_STATUS_ADDR$i/debug/dup-key/disable" "{}" || echo "failed to disable debug dup key"
 }
 
 start_tikv() {
@@ -234,6 +242,9 @@ start_services_impl() {
         start_tikv "$i"
     done
     ensure_tikv
+    for i in $(seq $TIKV_COUNT); do
+        debug_tikv "$i"
+    done
     if $RUN_TIDB; then
         start_tidb
     fi

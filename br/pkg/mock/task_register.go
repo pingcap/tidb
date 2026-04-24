@@ -5,6 +5,7 @@
 //
 //	mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister
 //
+
 // Package mock is a generated GoMock package.
 package mock
 
@@ -36,6 +37,11 @@ func NewMockTaskRegister(ctrl *gomock.Controller) *MockTaskRegister {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockTaskRegister) EXPECT() *MockTaskRegisterMockRecorder {
 	return m.recorder
+}
+
+// ISGOMOCK indicates that this struct is a gomock mock.
+func (m *MockTaskRegister) ISGOMOCK() struct{} {
+	return struct{}{}
 }
 
 // Close mocks base method.

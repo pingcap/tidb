@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -806,7 +806,7 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 	if err == nil && d.GetInt64() < id {
 		// Auto ID is out of range.
 		sc := ctx.GetSessionVars().StmtCtx
-		insertPlan, ok := sc.GetPlan().(*core.Insert)
+		insertPlan, ok := sc.GetPlan().(*physicalop.Insert)
 		if ok && sc.TypeFlags().TruncateAsWarning() && len(insertPlan.OnDuplicate) > 0 {
 			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
 			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.
@@ -1181,7 +1181,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 	if !replace {
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
 		if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic && e.Ctx().GetSessionVars().LockUnchangedKeys {
-			txnCtx.AddUnchangedKeyForLock(uk.newKey)
+			txnCtx.AddUnchangedKeyForLock(uk.newKey, false)
 		}
 		return true, nil
 	}
@@ -1249,7 +1249,7 @@ func (e *InsertValues) batchCheckAndInsert(
 					if txnCtx := e.Ctx().GetSessionVars().TxnCtx; txnCtx.IsPessimistic &&
 						e.Ctx().GetSessionVars().LockUnchangedKeys {
 						// lock duplicated row key on insert-ignore
-						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey)
+						txnCtx.AddUnchangedKeyForLock(r.handleKey.newKey, false)
 					}
 					continue
 				}

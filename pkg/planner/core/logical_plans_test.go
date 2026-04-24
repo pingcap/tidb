@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -1362,6 +1363,30 @@ func TestVisitInfo(t *testing.T) {
 			},
 		},
 		{
+			sql: "flush stats_delta ttt",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "ttt", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.ttt, test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta test.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "test", "", "", nil, false, nil, false},
+			},
+		},
+		{
+			sql: "flush stats_delta *.*",
+			ans: []visitInfo{
+				{mysql.SelectPriv, "", "", "", plannererrors.ErrPrivilegeCheckFail, false, nil, false},
+			},
+		},
+		{
 			sql: "SET GLOBAL wait_timeout=12345",
 			ans: []visitInfo{
 				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, []string{"SYSTEM_VARIABLES_ADMIN"}, false},
@@ -1835,7 +1860,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(base.LogicalPlan), &PlanCounterDisabled)
+	p, _, err = physicalOptimize(p.(base.LogicalPlan))
 	return p.(base.PhysicalPlan), stmt, err
 }
 
@@ -1995,7 +2020,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
-			result: "PRIMARY_KEY,c_d_e,f_g",
+			result: "PRIMARY_KEY,c_d_e,g,f_g",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
@@ -2011,7 +2036,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "PRIMARY_KEY,b_c_global",
+			result: "PRIMARY_KEY,c_d_e,b_c_global",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
@@ -2136,7 +2161,7 @@ func TestUpdateEQCond(t *testing.T) {
 	}{
 		{
 			sql:  "select t1.a from t t1, t t2 where t1.a = t2.a+1",
-			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#25)->Projection->Projection",
+			best: "Join{DataScan(t1)->DataScan(t2)->Projection}(test.t.a,Column#27)->Projection->Projection",
 		},
 	}
 	s := coretestsdk.CreatePlannerSuiteElems()
@@ -2214,7 +2239,7 @@ func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	join, ok := proj.Children()[0].(*logicalop.LogicalJoin)
 	require.True(t, ok)
 	// previous wrong JoinType is InnerJoin
-	require.Equal(t, logicalop.RightOuterJoin, join.JoinType)
+	require.Equal(t, base.RightOuterJoin, join.JoinType)
 }
 
 func TestResolvingCorrelatedAggregate(t *testing.T) {
@@ -2232,11 +2257,11 @@ func TestResolvingCorrelatedAggregate(t *testing.T) {
 		},
 		{
 			sql:  "select (select sum(count(a))) from t",
-			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Aggr(sum(Column#13))->MaxOneRow}->Projection",
+			best: "Apply{DataScan(t)->Aggr(count(test.t.a))->Dual->Aggr(sum(Column#14))->MaxOneRow}->Projection",
 		},
 		{
 			sql:  "select (select sum(count(n.a)) from t) from t n",
-			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Aggr(sum(Column#25))->MaxOneRow}->Projection",
+			best: "Apply{DataScan(n)->Aggr(count(test.t.a))->DataScan(t)->Aggr(sum(Column#27))->MaxOneRow}->Projection",
 		},
 		{
 			sql:  "select (select cnt from (select count(a) as cnt) n) from t",
@@ -2311,28 +2336,6 @@ func TestFastPathInvalidBatchPointGet(t *testing.T) {
 	}
 }
 
-func TestTraceFastPlan(t *testing.T) {
-	s := coretestsdk.CreatePlannerSuiteElems()
-	defer s.Close()
-	s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	defer func() {
-		s.GetCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace = false
-	}()
-	s.GetCtx().GetSessionVars().SnapshotInfoschema = s.GetIS()
-	sql := "select * from t where a=1"
-	comment := fmt.Sprintf("sql:%s", sql)
-	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
-	require.NoError(t, err, comment)
-	nodeW := resolve.NewNodeW(stmt)
-	err = Preprocess(context.Background(), s.GetSCtx(), nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()}))
-	require.NoError(t, err, comment)
-	plan := TryFastPlan(s.GetCtx(), nodeW)
-	require.NotNil(t, plan)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer)
-	require.NotNil(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.FinalPlan)
-	require.True(t, s.GetCtx().GetSessionVars().StmtCtx.OptimizeTracer.IsFastPlan)
-}
-
 func TestWindowLogicalPlanAmbiguous(t *testing.T) {
 	sql := "select a, max(a) over(), sum(a) over() from t"
 	var planString string
@@ -2392,6 +2395,34 @@ func TestRemoveOrderbyInSubquery(t *testing.T) {
 	}
 }
 
+func TestAddLimitForCorrelatedExistsSubquery(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{ // First query should add LIMIT because it's an EXISTS subquery with NO_DECORRELATE
+			sql:  "select * from t t1 where exists (select /*+ NO_DECORRELATE() */ 1 from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection->Limit}->Projection",
+		},
+		{ // Second query should NOT add LIMIT because it is NOT an EXISTS subquery
+			sql:  "select * from t t1 where b in (select /*+ NO_DECORRELATE() */ b from t t2 where t1.a = t2.a)",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(test.t.a, test.t.a)])->Projection}->Projection",
+		},
+	}
+
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.GetParser().ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		nodeW := resolve.NewNodeW(stmt)
+		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+		require.NoError(t, err, comment)
+		require.Equal(t, tt.best, ToString(p), comment)
+	}
+}
 func TestRollupExpand(t *testing.T) {
 	ctx := context.Background()
 	sql := "select count(a) from t group by a, b with rollup"
@@ -2431,13 +2462,13 @@ func TestRollupExpand(t *testing.T) {
 	require.Equal(t, len(builder.currentBlockExpand.LevelExprs), 3)
 	// for grouping set {}: gid = '00' = 0
 	require.Equal(t, expression.ExplainExpressionList(s.GetCtx().GetExprCtx().GetEvalCtx(), expand.LevelExprs[0], expand.Schema(), errors.RedactLogDisable),
-		"test.t.a, <nil>->Column#13, <nil>->Column#14, 0->gid")
+		"test.t.a, <nil>->Column#14, <nil>->Column#15, 0->gid")
 	// for grouping set {a}: gid = '01' = 1
 	require.Equal(t, expression.ExplainExpressionList(s.GetCtx().GetExprCtx().GetEvalCtx(), expand.LevelExprs[1], expand.Schema(), errors.RedactLogDisable),
-		"test.t.a, Column#13, <nil>->Column#14, 1->gid")
+		"test.t.a, Column#14, <nil>->Column#15, 1->gid")
 	// for grouping set {a,b}: gid = '11' = 3
 	require.Equal(t, expression.ExplainExpressionList(s.GetCtx().GetExprCtx().GetEvalCtx(), expand.LevelExprs[2], expand.Schema(), errors.RedactLogDisable),
-		"test.t.a, Column#13, Column#14, 3->gid")
+		"test.t.a, Column#14, Column#15, 3->gid")
 
 	require.Equal(t, expand.Schema().Len(), 4)
 	// source column a should be kept as real.
@@ -2503,7 +2534,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		require.NoError(t, err)
 		p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
 		require.NoError(t, err)
-		deletePlan, ok := p.(*Delete)
+		deletePlan, ok := p.(*physicalop.Delete)
 		require.True(t, ok, comment)
 		var sb strings.Builder
 

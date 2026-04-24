@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -32,9 +31,9 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 	}
 	nodeTp := h.TypeSelect
 	switch flat.Main[0].Origin.(type) {
-	case *Update:
+	case *physicalop.Update:
 		nodeTp = h.TypeUpdate
-	case *Delete:
+	case *physicalop.Delete:
 		nodeTp = h.TypeDelete
 	}
 	var hints []*ast.TableOptimizerHint
@@ -48,7 +47,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 	for _, fop := range selectPlan {
 		p := fop.Origin.(base.PhysicalPlan)
 		hints = genHintsFromSingle(p, nodeTp, fop.StoreType, hints)
-		if join, ok := p.(PhysicalJoin); ok {
+		if join, ok := p.(base.PhysicalJoin); ok {
 			joinOrderHint := genJoinOrderHintFromRootPhysicalJoin(join, visitedPhysicalJoinIDs, nodeTp)
 			if joinOrderHint != nil {
 				hints = append(hints, joinOrderHint)
@@ -62,7 +61,7 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 			}
 			p := fop.Origin.(base.PhysicalPlan)
 			hints = genHintsFromSingle(p, nodeTp, fop.StoreType, hints)
-			if join, ok := p.(PhysicalJoin); ok {
+			if join, ok := p.(base.PhysicalJoin); ok {
 				joinOrderHint := genJoinOrderHintFromRootPhysicalJoin(join, visitedPhysicalJoinIDs, nodeTp)
 				if joinOrderHint != nil {
 					hints = append(hints, joinOrderHint)
@@ -200,6 +199,22 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				QBName:   qbName,
 				HintName: ast.NewCIStr(h.HintAggToCop),
 			})
+		}
+	case *physicalop.PhysicalApply:
+		if pp.NoDecorrelate {
+			children := pp.Children()
+			if len(children) > 1 {
+				innerOffset := children[1].QueryBlockOffset()
+				if innerOffset > 0 && innerOffset != pp.QueryBlockOffset() {
+					innerQB, err := h.GenerateQBName(nodeType, innerOffset)
+					if err == nil {
+						res = append(res, &ast.TableOptimizerHint{
+							QBName:   innerQB,
+							HintName: ast.NewCIStr(h.HintNoDecorrelate),
+						})
+					}
+				}
+			}
 		}
 	case *physicalop.PhysicalMergeJoin:
 		hint := genJoinMethodHintForSinglePhysicalJoin(
@@ -527,7 +542,7 @@ func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 
 // genJoinOrderHintFromRootPhysicalJoin is the entry point of generating join order hint.
 func genJoinOrderHintFromRootPhysicalJoin(
-	p PhysicalJoin,
+	p base.PhysicalJoin,
 	visitedIDs map[int]struct{},
 	nodeType h.NodeType,
 ) *ast.TableOptimizerHint {
@@ -564,7 +579,7 @@ func genJoinOrderHintFromRootPhysicalJoin(
 	return res
 }
 
-func extractOrderedPhysicalJoinGroup(p PhysicalJoin, visitedIDs map[int]struct{}, depth uint) []base.PhysicalPlan {
+func extractOrderedPhysicalJoinGroup(p base.PhysicalJoin, visitedIDs map[int]struct{}, depth uint) []base.PhysicalPlan {
 	visitedIDs[p.ID()] = struct{}{}
 
 	// 1. sanity checks
@@ -580,7 +595,7 @@ func extractOrderedPhysicalJoinGroup(p PhysicalJoin, visitedIDs map[int]struct{}
 
 	jt := p.GetJoinType()
 	// They are the only join types supported by current join reorder.
-	if jt != logicalop.InnerJoin && jt != logicalop.LeftOuterJoin && jt != logicalop.RightOuterJoin {
+	if jt != base.InnerJoin && jt != base.LeftOuterJoin && jt != base.RightOuterJoin {
 		return nil
 	}
 
@@ -588,12 +603,12 @@ func extractOrderedPhysicalJoinGroup(p PhysicalJoin, visitedIDs map[int]struct{}
 	// join group and return.
 
 	var child0IsJoin, child1IsJoin bool
-	var childJoin PhysicalJoin
+	var childJoin base.PhysicalJoin
 	var childJoinGroup []base.PhysicalPlan
-	if childJoin, child0IsJoin = p.Children()[0].(PhysicalJoin); child0IsJoin {
+	if childJoin, child0IsJoin = p.Children()[0].(base.PhysicalJoin); child0IsJoin {
 		childJoinGroup = extractOrderedPhysicalJoinGroup(childJoin, visitedIDs, depth+1)
 	}
-	if childJoin, child1IsJoin = p.Children()[1].(PhysicalJoin); child1IsJoin {
+	if childJoin, child1IsJoin = p.Children()[1].(base.PhysicalJoin); child1IsJoin {
 		childJoinGroup = extractOrderedPhysicalJoinGroup(childJoin, visitedIDs, depth+1)
 	}
 

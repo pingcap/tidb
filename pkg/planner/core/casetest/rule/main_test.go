@@ -34,6 +34,11 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite", true)
 	testDataMap.LoadTestSuiteData("testdata", "predicate_simplification", true)
+	testDataMap.LoadTestSuiteData("testdata", "outer_to_semi_join_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "correlate_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "cdc_join_reorder_suite", true)
+	testDataMap.LoadTestSuiteData("testdata", "order_aware_join_reorder_suite", true)
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
@@ -70,4 +75,20 @@ func GetPredicatePushdownSuiteData() testdata.TestData {
 
 func GetPredicateSimplificationSuiteData() testdata.TestData {
 	return testDataMap["predicate_simplification"]
+}
+
+func GetOuterToSemiJoinSuiteData() testdata.TestData {
+	return testDataMap["outer_to_semi_join_suite"]
+}
+
+func GetCorrelateSuiteData() testdata.TestData {
+	return testDataMap["correlate_suite"]
+}
+
+func GetCDCJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["cdc_join_reorder_suite"]
+}
+
+func GetOrderAwareJoinReorderSuiteData() testdata.TestData {
+	return testDataMap["order_aware_join_reorder_suite"]
 }

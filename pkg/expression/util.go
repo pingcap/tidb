@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -188,6 +189,23 @@ func ExtractColumnsMapFromExpressions(filter func(*Column) bool, exprs ...Expres
 	return m
 }
 
+var uniqueIDToColumnMapPool = sync.Pool{
+	New: func() any {
+		return make(map[int64]*Column, 4)
+	},
+}
+
+// GetUniqueIDToColumnMap gets map[int64]*Column map from the pool.
+func GetUniqueIDToColumnMap() map[int64]*Column {
+	return uniqueIDToColumnMapPool.Get().(map[int64]*Column)
+}
+
+// PutUniqueIDToColumnMap puts map[int64]*Column map back to the pool.
+func PutUniqueIDToColumnMap(m map[int64]*Column) {
+	clear(m)
+	uniqueIDToColumnMapPool.Put(m)
+}
+
 // ExtractColumnsMapFromExpressionsWithReusedMap is the same as ExtractColumnsFromExpressions, but map can be reused.
 func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter func(*Column) bool, exprs ...Expression) {
 	if len(exprs) == 0 {
@@ -199,6 +217,23 @@ func ExtractColumnsMapFromExpressionsWithReusedMap(m map[int64]*Column, filter f
 	for _, expr := range exprs {
 		extractColumns(m, expr, filter)
 	}
+}
+
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, filter func(*Column) bool, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr, filter)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
 }
 
 // ExtractAllColumnsFromExpressions is the same as ExtractColumnsFromExpressions. But this will not remove duplicates.
@@ -500,6 +535,7 @@ func SetExprColumnInOperand(expr Expression) Expression {
 		for i, arg := range args {
 			args[i] = SetExprColumnInOperand(arg)
 		}
+		v.CleanHashCode()
 	}
 	return expr
 }
@@ -565,7 +601,11 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
-					e.(*ScalarFunction).Function.getArgs()[0] = newArg
+					sf := e.(*ScalarFunction)
+					sf.Function.getArgs()[0] = newArg
+					// Clone returns a ScalarFunction with cached hash keys. Since we mutate its args
+					// in-place here, clear them to avoid stale CanonicalHashCode/HashCode.
+					sf.CleanHashCode()
 				}
 				e.SetCoercibility(v.Coercibility())
 				e.GetType(ctx.GetEvalCtx()).SetFlag(flag)
@@ -647,7 +687,21 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
-			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			var newFunc Expression
+			var err error
+			switch v.FuncName.L {
+			case ast.EQ:
+				// keep order as col=value to avoid flaky test.
+				args := refExprArr.Result()
+				switch args[0].(type) {
+				case *Constant:
+					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, args[1], args[0])
+				default:
+					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, args[0], args[1])
+				}
+			default:
+				newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			}
 			if err != nil {
 				return true, true, v
 			}
@@ -745,7 +799,9 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 			newSf = BuildCastFunction(ctx, newArgs[0], x.RetType)
 		} else if x.FuncName.L == ast.Grouping {
 			newSf = x.Clone()
-			newSf.(*ScalarFunction).GetArgs()[0] = newArgs[0]
+			sf := newSf.(*ScalarFunction)
+			sf.GetArgs()[0] = newArgs[0]
+			sf.CleanHashCode()
 		} else {
 			newSf, err = NewFunction(ctx, x.FuncName.L, x.GetType(ctx.GetEvalCtx()), newArgs...)
 		}
@@ -841,6 +897,18 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.EQ:     opcode.EQ,
 	opcode.NE:     opcode.NE,
 	opcode.NullEQ: opcode.NullEQ,
+}
+
+// CompareOpMap records all comparison operators.
+var CompareOpMap = map[string]struct{}{
+	ast.LT:     {},
+	ast.GE:     {},
+	ast.GT:     {},
+	ast.LE:     {},
+	ast.EQ:     {},
+	ast.NE:     {},
+	ast.NullEQ: {},
+	ast.In:     {},
 }
 
 func pushNotAcrossArgs(ctx BuildContext, exprs []Expression, not bool) ([]Expression, bool) {
@@ -1001,7 +1069,9 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 }
 
 // pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
-// Input `not` indicates whether there's a `NOT` be pushed down.
+// Input `not` indicates whether there's a `NOT` to be pushed down from the parent.
+// Logical operators can cancel double NOT; non-logical expressions are wrapped
+// with is_true_with_null to preserve three-valued logic.
 // Output `changed` indicates whether the output expression differs from the
 // input `expr` because of the pushed-down-not.
 func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expression, changed bool) {
@@ -2286,4 +2356,26 @@ func IsConstNull(expr Expression) bool {
 		}
 	}
 	return false
+}
+
+// IsColOpCol is to whether ScalarFunction meets col op col condition.
+func IsColOpCol(sf *ScalarFunction) (_, _ *Column, _ bool) {
+	args := sf.GetArgs()
+	if len(args) == 2 {
+		col2, ok2 := args[1].(*Column)
+		col1, ok1 := args[0].(*Column)
+		return col1, col2, ok1 && ok2
+	}
+	return nil, nil, false
+}
+
+// ExtractColumnsFromColOpCol is to extract columns from col op col condition.
+func ExtractColumnsFromColOpCol(sf *ScalarFunction) (_, _ *Column) {
+	args := sf.GetArgs()
+	if len(args) == 2 {
+		col2 := args[1].(*Column)
+		col1 := args[0].(*Column)
+		return col1, col2
+	}
+	return nil, nil
 }

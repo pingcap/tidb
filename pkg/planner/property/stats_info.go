@@ -16,6 +16,7 @@ package property
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -119,4 +120,18 @@ func (s *StatsInfo) GetGroupNDV4Cols(cols []*expression.Column) *GroupNDV {
 		}
 	}
 	return nil
+}
+
+// DeriveLimitStats derives the stats of the top-n plan.
+func DeriveLimitStats(childProfile *StatsInfo, limitCount float64) *StatsInfo {
+	stats := &StatsInfo{
+		RowCount: math.Min(limitCount, childProfile.RowCount),
+		ColNDVs:  make(map[int64]float64, len(childProfile.ColNDVs)),
+		// limit operation does not change the histogram (kind of sample).
+		HistColl: childProfile.HistColl,
+	}
+	for id, c := range childProfile.ColNDVs {
+		stats.ColNDVs[id] = math.Min(c, stats.RowCount)
+	}
+	return stats
 }

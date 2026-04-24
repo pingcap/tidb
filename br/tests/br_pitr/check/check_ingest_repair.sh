@@ -140,6 +140,10 @@ check_contains "ON DELETE SET NULL ON UPDATE CASCADE"
 run_sql "SELECT count(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs19' AND INDEX_ID = 2 AND IS_GLOBAL = 1;"
 check_contains "RESCNT: 1"
 
+## check table test.pairs20
+run_sql "SELECT COUNT(*) AS RESCNT FROM INFORMATION_SCHEMA.TIDB_INDEXES WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 'pairs20' AND INDEX_ID > 2 AND PREDICATE = '\`id\` > 5'"
+check_contains "RESCNT: 2"
+
 # adjust some index to be visible
 run_sql "ALTER TABLE test.pairs ALTER INDEX i1 VISIBLE;"
 
@@ -197,4 +201,8 @@ check_not_contains "RESCNT: 0"
 run_sql "select count(*) AS RESCNT from test.pairs19 use index(i1) where pid = 1;"
 check_not_contains "RESCNT: 0"
 run_sql "select count(*) AS RESCNT from test.pairs19 use index(i1) where pid = 10;"
+check_not_contains "RESCNT: 0"
+run_sql "select count(*) AS RESCNT from test.pairs20 use index(i1) where pid1 = 10";
+check_not_contains "RESCNT: 0"
+run_sql "select count(*) AS RESCNT from test.pairs20 use index(i2) where pid2 = 10";
 check_not_contains "RESCNT: 0"

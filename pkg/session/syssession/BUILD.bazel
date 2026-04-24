@@ -20,6 +20,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -44,6 +45,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessiontxn",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",

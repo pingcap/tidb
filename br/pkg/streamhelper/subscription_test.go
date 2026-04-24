@@ -18,14 +18,14 @@ import (
 )
 
 func installSubscribeSupport(c *fakeCluster) {
-	for _, s := range c.stores {
+	for _, s := range c.storeList() {
 		s.SetSupportFlushSub(true)
 	}
 }
 
 func installSubscribeSupportForRandomN(c *fakeCluster, n int) {
 	i := 0
-	for _, s := range c.stores {
+	for _, s := range c.storeList() {
 		if i == n {
 			break
 		}
@@ -42,6 +42,22 @@ func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
 		last = len(sub.Events())
 		return noProg
 	}, 3*time.Second, 100*time.Millisecond)
+}
+
+func collectCheckpointSpans(t *testing.T, sub *streamhelper.FlushSubscriber, checkpoint uint64) *spans.ValueSortedFull {
+	t.Helper()
+	observed := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	require.Eventually(t, func() bool {
+		for {
+			select {
+			case event := <-sub.Events():
+				observed.Merge(event)
+			default:
+				return observed.MinValue() == checkpoint
+			}
+		}
+	}, 3*time.Second, 100*time.Millisecond)
+	return observed
 }
 
 func TestSubBasic(t *testing.T) {
@@ -83,9 +99,9 @@ func TestNormalError(t *testing.T) {
 	installSubscribeSupport(c)
 
 	sub := streamhelper.NewSubscriber(c, c)
-	c.onGetClient = oneStoreFailure()
+	c.SetOnGetClient(oneStoreFailure())
 	req.NoError(sub.UpdateStoreTopology(ctx))
-	c.onGetClient = nil
+	c.SetOnGetClient(nil)
 	req.Error(sub.PendingErrors())
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
@@ -128,14 +144,14 @@ func TestStoreOffline(t *testing.T) {
 	c.splitAndScatter("0001", "0002", "0003", "0008", "0009")
 	installSubscribeSupport(c)
 
-	c.onGetClient = func(u uint64) error {
+	c.SetOnGetClient(func(u uint64) error {
 		return status.Error(codes.DataLoss, "upon an eclipsed night, some of data (not all data) have fled from the dataset")
-	}
+	})
 	sub := streamhelper.NewSubscriber(c, c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
 	req.Error(sub.PendingErrors())
 
-	c.onGetClient = nil
+	c.SetOnGetClient(nil)
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 }
@@ -157,8 +173,8 @@ func TestStoreRemoved(t *testing.T) {
 	}
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
-	for _, s := range c.stores {
-		c.removeStore(s.id)
+	for _, s := range c.storeList() {
+		c.removeStore(s.ID)
 		break
 	}
 	req.NoError(sub.UpdateStoreTopology(ctx))
@@ -169,12 +185,8 @@ func TestStoreRemoved(t *testing.T) {
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 
-	waitPendingEvents(t, sub)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 
 	defer func() {
 		if t.Failed() {

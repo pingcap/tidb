@@ -17,6 +17,8 @@ package metrics
 import (
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestmetric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	timermetrics "github.com/pingcap/tidb/pkg/timer/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -90,15 +92,19 @@ func InitMetrics() {
 	InitResourceManagerMetrics()
 	InitServerMetrics()
 	InitSessionMetrics()
+	InitRUV2Metrics()
 	InitSliMetrics()
 	InitStatsMetrics()
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
-	InitDistTaskMetrics()
+	InitStmtSummaryMetrics()
+	dxfmetric.InitDistTaskMetrics()
+	ingestmetric.InitIngestMetrics()
 	InitResourceGroupMetrics()
 	InitGlobalSortMetrics()
 	InitInfoSchemaV2Metrics()
+	InitMemoryMetrics()
 	timermetrics.InitTimerMetrics()
 
 	InitBRMetrics()
@@ -127,6 +133,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(collectors.MetricsGC, collectors.MetricsMemory, collectors.MetricsScheduler)))
 
 	prometheus.MustRegister(AutoAnalyzeCounter)
+	prometheus.MustRegister(ManualAnalyzeCounter)
 	prometheus.MustRegister(AutoAnalyzeHistogram)
 	prometheus.MustRegister(AutoIDHistogram)
 	prometheus.MustRegister(BatchAddIdxHistogram)
@@ -203,6 +210,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatementDeadlockDetectDuration)
 	prometheus.MustRegister(StatementPessimisticRetryCount)
 	prometheus.MustRegister(StatementLockKeysCount)
+	prometheus.MustRegister(StatementSharedLockKeysCount)
 	prometheus.MustRegister(ValidateReadTSFromPDCount)
 	prometheus.MustRegister(UpdateSelfVersionHistogram)
 	prometheus.MustRegister(WatchOwnerCounter)
@@ -216,6 +224,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
 	prometheus.MustRegister(CopMVCCRatioHistogram)
+	prometheus.MustRegister(SlowQueryCounter)
 	prometheus.MustRegister(HandleSchemaValidate)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
@@ -282,8 +291,19 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
-	prometheus.MustRegister(DistTaskUsedSlotsGauge)
+	dxfmetric.Register(prometheus.DefaultRegisterer)
+	ingestmetric.Register(prometheus.DefaultRegisterer)
+
 	prometheus.MustRegister(RunawayCheckerCounter)
+	prometheus.MustRegister(RunawayFlusherCounter)
+	prometheus.MustRegister(RunawayFlusherAddCounter)
+	prometheus.MustRegister(RunawayFlusherBatchSizeHistogram)
+	prometheus.MustRegister(RunawayFlusherDurationHistogram)
+	prometheus.MustRegister(RunawayFlusherIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerDurationHistogram)
+	prometheus.MustRegister(RunawaySyncerIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerCheckpointGauge)
+	prometheus.MustRegister(RunawaySyncerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
 	prometheus.MustRegister(GlobalSortReadFromCloudStorageDuration)
@@ -308,6 +328,24 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindingCacheNumBindings)
 	prometheus.MustRegister(InternalSessions)
 	prometheus.MustRegister(ActiveUser)
+	prometheus.MustRegister(RUV2ResultChunkCells)
+	prometheus.MustRegister(RUV2ExecutorL1)
+	prometheus.MustRegister(RUV2ExecutorL2)
+	prometheus.MustRegister(RUV2ExecutorL3)
+	prometheus.MustRegister(RUV2ExecutorL5InsertRows)
+	prometheus.MustRegister(RUV2PlanCnt)
+	prometheus.MustRegister(RUV2PlanDeriveStatsPaths)
+	prometheus.MustRegister(RUV2ResourceManagerReadCnt)
+	prometheus.MustRegister(RUV2ResourceManagerWriteCnt)
+	prometheus.MustRegister(RUV2SessionParserTotal)
+	prometheus.MustRegister(RUV2TxnCnt)
+	prometheus.MustRegister(RUV2TiKVKVEngineCacheMiss)
+	prometheus.MustRegister(RUV2TiKVCoprocessorExecutorIterations)
+	prometheus.MustRegister(RUV2TiKVCoprocessorResponseBytes)
+	prometheus.MustRegister(RUV2TiKVRaftstoreStoreWriteTriggerWB)
+	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysBatchGet)
+	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysGet)
+	prometheus.MustRegister(RUV2TiKVCoprocessorWorkTotal)
 
 	prometheus.MustRegister(NetworkTransmissionStats)
 
@@ -333,6 +371,41 @@ func RegisterMetrics() {
 	tikvmetrics.InitMetricsWithConstLabels(TiDB, TiKVClient, metricscommon.GetConstLabels())
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	prometheus.MustRegister(GlobalMemArbitrationDuration)
+	prometheus.MustRegister(GlobalMemArbitratorWorkMode)
+	prometheus.MustRegister(GlobalMemArbitratorQuota)
+	prometheus.MustRegister(GlobalMemArbitratorWaitingTask)
+	prometheus.MustRegister(GlobalMemArbitratorRuntimeMemMagnifi)
+	prometheus.MustRegister(GlobalMemArbitratorRootPool)
+	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
+	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
+
+	// TLS
+	prometheus.MustRegister(TLSVersion)
+	prometheus.MustRegister(TLSCipher)
+
+	// IndexLookup
+	prometheus.MustRegister(IndexLookUpExecutorDuration)
+	prometheus.MustRegister(IndexLookRowsCounter)
+	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
+	prometheus.MustRegister(IndexLookUpCopTaskCount)
+
+	// StmtSummary
+	prometheus.MustRegister(StmtSummaryWindowRecordCount)
+	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+}
+
+// Register registers custom collectors.
+func Register(cs ...prometheus.Collector) {
+	prometheus.MustRegister(cs...)
+}
+
+// Unregister unregisters custom collectors.
+func Unregister(cs ...prometheus.Collector) {
+	for _, c := range cs {
+		prometheus.Unregister(c)
+	}
 }
 
 var mode struct {

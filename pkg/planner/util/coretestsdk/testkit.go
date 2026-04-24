@@ -116,13 +116,9 @@ func createPlannerSuite() (s *PlannerSuite) {
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{},
 	}
-	initStatsCtx := mock.NewContext()
-	initStatsCtx.Store = &mock.Store{
-		Client: &mock.Client{},
-	}
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := domain.NewMockDomain()
-	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
+	if err := do.CreateStatsHandle(context.Background()); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
 	ctx.BindDomainAndSchValidator(do, nil)

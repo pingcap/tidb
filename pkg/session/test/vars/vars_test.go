@@ -186,6 +186,25 @@ func TestUpgradeSysvars(t *testing.T) {
 	require.Equal(t, "OFF", v) // the default value is restored.
 }
 
+func TestIndexJoinBuildV2SysVarCompatibility(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("SHOW VARIABLES LIKE 'tidb_opt_index_join_build_v2'").Check(testkit.Rows("tidb_opt_index_join_build_v2 ON"))
+	tk.MustQuery("SELECT @@tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_opt_index_join_build_v2', 'OFF')`)
+	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_opt_index_join_build_v2'").Check(testkit.Rows("tidb_opt_index_join_build_v2 ON"))
+	tk2.MustQuery("SELECT @@GLOBAL.tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
+	tk2.MustQuery("SELECT @@tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
+	tk2.MustContainErrMsg("SET @@tidb_opt_index_join_build_v2 = OFF", "tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off")
+}
+
 func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	varName := "tidb_general_log"
 	defaultValue := "OFF" // This is the default value for tidb_general_log
@@ -204,12 +223,11 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, defaultValue, v)
 
-	// session.GetGlobalSysVar would not get the value which session.SetGlobalSysVar writes,
-	// because SetGlobalSysVar calls SetGlobalFromHook, which uses TiDBGeneralLog's SetGlobal,
-	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
+	// session.GetGlobalSysVar would not get the value which session.SetInstanceSysVar writes,
+	// because SetInstanceSysVar did not persist values into the mysql.global_variable table.
 
 	// set to "1"
-	err = se.SetGlobalSysVar(context.Background(), varName, "ON")
+	err = se.SetInstanceSysVar(context.Background(), varName, "ON")
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
@@ -217,7 +235,7 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 
 	// set back to "0"
-	err = se.SetGlobalSysVar(context.Background(), varName, defaultValue)
+	err = se.SetInstanceSysVar(context.Background(), varName, defaultValue)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
@@ -302,7 +320,6 @@ func TestGlobalVarAccessor(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().MaxExecutionTime)
-	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().GetMaxExecutionTime())
 	tk1.MustExec("set @@global.max_execution_time = 0")
 
 	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")

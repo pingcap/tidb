@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -444,7 +445,18 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect cte_max_recursion_depth value: '-1'"))
 	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
 
+	// test for instance
+	tk.MustExec("set @@instance.ddl_slow_threshold=1234")
+	tk.MustQuery("select @@instance.ddl_slow_threshold").Check(testkit.Rows("1234"))
+	tk.MustGetErrCode("set @@instance.tidb_redact_log=1", errno.ErrLocalVariable)
+	// set instance variable, but global variable is still the old value
+	tk.MustExec("set @@instance.tidb_stmt_summary_max_stmt_count=1234")
+	tk.MustQuery("select @@global.tidb_stmt_summary_max_stmt_count").Check(testkit.Rows("3000"))
+
 	// test for tidb_redact_log
+	tk.MustGetErrCode(`set @@session.tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
+	tk.MustGetErrCode(`set @@tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
+	tk.MustGetErrCode(`set @@tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set global tidb_redact_log = 1")
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("ON"))
@@ -542,15 +554,6 @@ func TestSetVar(t *testing.T) {
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@global.%s = 46;", v), "Unknown charset 46")
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "Unknown charset 46")
 	}
-
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("0"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
 
 	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = 'tiflash'")
 	tk.MustQuery("select @@session.tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
@@ -669,7 +672,7 @@ func TestSetVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
 
 	// test for tidb_analyze_column_options
-	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
 	tk.MustExec("set global tidb_analyze_column_options = 'ALL'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
 	tk.MustExec("set global tidb_analyze_column_options = 'predicate'")
@@ -1374,6 +1377,9 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustExec("set @@global.innodb_lock_wait_timeout = 0")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
 
+	tk.MustExec("set @@global.innodb_lock_wait_timeout = 1073741824")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
 	tk.MustExec("set @@global.innodb_lock_wait_timeout = 1073741825")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
 
@@ -1456,8 +1462,6 @@ func TestSetConcurrency(t *testing.T) {
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.ProjectionConcurrency())
 	require.Equal(t, vardef.DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())
 
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.IndexSerialScanConcurrency())
-
 	// test setting deprecated variables
 	warnTpl := "Warning 1287 '%s' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead"
 
@@ -1496,9 +1500,8 @@ func TestSetConcurrency(t *testing.T) {
 	require.Equal(t, 1, vars.DistSQLScanConcurrency())
 
 	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
-	require.Equal(t, 4, vars.IndexSerialScanConcurrency())
 
 	// test setting deprecated value unset
 	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")
@@ -1814,4 +1817,28 @@ func TestDivPrecisionIncrement(t *testing.T) {
 
 	// Test set global.
 	tk.MustExec("set global div_precision_increment = 4")
+}
+
+func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originConfig := config.GetGlobalConfig()
+	originServiceScope := vardef.ServiceScope.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+		vardef.ServiceScope.Store(originServiceScope)
+	})
+
+	tk.MustExec("set global tidb_service_scope='BaCkGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
+
+	tk.MustExec("set instance tidb_service_scope='BackGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
 }

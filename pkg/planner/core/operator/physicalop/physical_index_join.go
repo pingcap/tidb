@@ -25,11 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -68,6 +66,10 @@ type PhysicalIndexJoin struct {
 	InnerHashKeys []*expression.Column
 	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
 	EqualConditions []*expression.ScalarFunction `plan-cache-clone:"shallow"`
+
+	// FromDecorrelatedApply is true only when this IndexJoin keeps the original
+	// Apply outer/inner order after decorrelation.
+	FromDecorrelatedApply bool
 }
 
 // Init initializes PhysicalIndexJoin.
@@ -101,6 +103,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	cloned.FromDecorrelatedApply = p.FromDecorrelatedApply
 	return cloned, nil
 }
 
@@ -172,7 +175,11 @@ func (p *PhysicalIndexJoin) ExplainInfoInternal(normalized bool, isIndexMergeJoi
 	if len(p.OuterHashKeys) > 0 && !isIndexMergeJoin {
 		exprs := make([]expression.Expression, 0, len(p.OuterHashKeys))
 		for i := range p.OuterHashKeys {
-			expr, err := expression.NewFunctionBase(exprCtx, ast.EQ, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
+			op := ast.EQ
+			if i < len(p.IsNullEQ) && p.IsNullEQ[i] {
+				op = ast.NullEQ
+			}
+			expr, err := expression.NewFunctionBase(exprCtx, op, types.NewFieldType(mysql.TypeLonglong), p.OuterHashKeys[i], p.InnerHashKeys[i])
 			if err != nil {
 				logutil.BgLogger().Warn("fail to NewFunctionBase", zap.Error(err))
 			}
@@ -206,40 +213,13 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 	return p.ExplainInfoInternal(false, false)
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexJoin)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalJoin.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalJoin = *basePlan
-	if p.InnerPlan != nil {
-		innerPlan, ok := p.InnerPlan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		cloned.InnerPlan = innerPlan.(base.PhysicalPlan)
-	}
-	cloned.Ranges = p.Ranges.CloneForPlanCache()
-	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
-	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
-	cloned.IdxColLens = make([]int, len(p.IdxColLens))
-	copy(cloned.IdxColLens, p.IdxColLens)
-	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
-	cloned.OuterHashKeys = utilfuncp.CloneColumnsForPlanCache(p.OuterHashKeys, nil)
-	cloned.InnerHashKeys = utilfuncp.CloneColumnsForPlanCache(p.InnerHashKeys, nil)
-	return cloned, true
-}
-
 // GetCost computes the cost of index join operator and its children.
 func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64, costFlag uint64) float64 {
 	return utilfuncp.GetCost4PhysicalIndexJoin(p, outerCnt, innerCnt, outerCost, innerCost, costFlag)
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalIndexJoin) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer14PhysicalIndexJoin(p, taskType, option)
 }
 
@@ -381,7 +361,7 @@ func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
 // plan-cost = build-child-cost + build-filter-cost +
 // (probe-cost + probe-filter-cost) / concurrency
 // probe-cost = probe-child-cost * build-rows / batchRatio
-func (p *PhysicalIndexJoin) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
+func (p *PhysicalIndexJoin) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption, _ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin(p, taskType, option, 0)
 }
 
@@ -456,7 +436,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 
 	colsNeedResolving := p.Schema().Len()
 	// The last output column of this two join is the generated column to indicate whether the row is matched or not.
-	if p.JoinType == logicalop.LeftOuterSemiJoin || p.JoinType == logicalop.AntiLeftOuterSemiJoin {
+	if p.JoinType == base.LeftOuterSemiJoin || p.JoinType == base.AntiLeftOuterSemiJoin {
 		colsNeedResolving--
 	}
 	// To avoid that two plan shares the same column slice.
@@ -485,4 +465,21 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	}
 
 	return
+}
+
+// IndexJoinInfo is generated by index join's inner ds, which will build their own index choice based
+// the indexJoinProp pushed down by index join. While index join still need some feedback by this kind
+// choice info to make index join runtime compatible, like IdxColLens will help truncate the index key
+// to construct suitable lookup contents. KeyOff2IdxOff will help ds to quickly locate the index column
+// from lookup contents. Ranges will be used to rebuild the underlying index range if there is any parameter
+// affecting the index join's inner range. CompareFilters will be used to quickly evaluate the last-col's
+// non-eq range.
+// This kind of IndexJoinInfo will be wrapped as a part of CopTask or RootTask, which will be passed upward
+// to targeted indexJoin to complete the physicalIndexJoin's detail: ref:
+type IndexJoinInfo struct {
+	// The following fields are used to keep index join aware of inner plan's index/pk choice.
+	IdxColLens     []int
+	KeyOff2IdxOff  []int
+	Ranges         ranger.MutableRanges
+	CompareFilters *ColWithCmpFuncManager
 }

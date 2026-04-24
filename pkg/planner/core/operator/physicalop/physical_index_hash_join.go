@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -62,19 +61,6 @@ func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPla
 	return cloned, nil
 }
 
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalIndexHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalIndexHashJoin)
-	*cloned = *p
-	inlj, ok := p.PhysicalIndexJoin.CloneForPlanCache(newCtx)
-	if !ok {
-		return nil, false
-	}
-	cloned.PhysicalIndexJoin = *inlj.(*PhysicalIndexJoin)
-	cloned.Self = cloned
-	return cloned, true
-}
-
 // Attach2Task implements PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalIndexHashJoin(p, tasks...)
@@ -86,12 +72,12 @@ func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost
 }
 
 // GetPlanCostVer1 calculates the cost of the plan if it has not been calculated yet and returns the cost.
-func (p *PhysicalIndexHashJoin) GetPlanCostVer1(taskType property.TaskType, option *optimizetrace.PlanCostOption) (float64, error) {
+func (p *PhysicalIndexHashJoin) GetPlanCostVer1(taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	return utilfuncp.GetPlanCostVer1PhysicalIndexHashJoin(p, taskType, option)
 }
 
 // GetPlanCostVer2 implements PhysicalPlan interface.
-func (p *PhysicalIndexHashJoin) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption,
+func (p *PhysicalIndexHashJoin) GetPlanCostVer2(taskType property.TaskType, option *costusage.PlanCostOption,
 	_ ...bool) (costusage.CostVer2, error) {
 	return utilfuncp.GetIndexJoinCostVer24PhysicalIndexJoin(&p.PhysicalIndexJoin, taskType, option, 1)
 }

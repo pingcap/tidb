@@ -621,21 +621,18 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (1), (2)")
 	do, _ := session.GetDomain(store)
-	err := do.StatsHandle().DumpStatsDeltaToKV(true)
-	require.NoError(t, err)
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	err = do.StatsHandle().DumpStatsDeltaToKV(true)
-	require.NoError(t, err)
-	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
+	tk.MustExec("flush stats_delta *.*")
+	err := do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
-	err = do.StatsHandle().DumpStatsDeltaToKV(true)
-	require.NoError(t, err)
+	tk.MustExec("flush stats_delta *.*")
 	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
@@ -652,7 +649,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	}
 	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
 	tk.MustExec("set @@tidb_index_lookup_size = '10'")
 	tk.MustExec("use test")
 	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
@@ -670,11 +667,11 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	err = rs.Next(context.Background(), req)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	keyword := "pickAndExecTask"
+	keyword := "execTableTask"
 	require.NoError(t, rs.Close())
 	require.Eventually(t, func() bool {
 		return !checkGoroutineExists(keyword)
-	}, time.Millisecond*100, time.Millisecond*10)
+	}, time.Second, time.Millisecond*10)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
@@ -916,7 +913,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	kv.TxnTotalSizeLimit.Store(8000)
+	kv.TxnTotalSizeLimit.Store(8050)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

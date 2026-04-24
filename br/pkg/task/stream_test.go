@@ -27,8 +27,8 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -117,7 +117,7 @@ func fakeCheckpointFiles(
 	infos []fakeGlobalCheckPoint,
 ) error {
 	cpDir := filepath.Join(tmpDir, stream.GetStreamBackupGlobalCheckpointPrefix())
-	s, err := storage.NewLocalStorage(cpDir)
+	s, err := objstore.NewLocalStorage(cpDir)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -149,7 +149,7 @@ type fakeGlobalCheckPoint struct {
 func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpdir)
+	s, err := objstore.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
 
 	infos := []fakeGlobalCheckPoint{
@@ -178,7 +178,7 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	var fullBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := storage.NewLocalStorage(testDir)
+	storage, err := objstore.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -196,12 +196,46 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	_, err = getLogInfo(context.TODO(), &cfg)
 	require.ErrorIs(t, err, berrors.ErrStorageUnknown)
 	require.ErrorContains(t, err, "the storage has been used for full backup")
+
+	t.Run("full backup ts checks backupmeta compatibility", func(t *testing.T) {
+		testDir := t.TempDir()
+		storage, err := objstore.NewLocalStorage(testDir)
+		require.NoError(t, err)
+
+		const fullBackupTS uint64 = 223344
+		const fullClusterID uint64 = 556677
+		m := backuppb.BackupMeta{
+			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
+			ClusterVersion:      "8.5.6",
+			BrVersion:           "v8.5.6",
+			EndVersion:          fullBackupTS,
+			ClusterId:           fullClusterID,
+		}
+		data, err := proto.Marshal(&m)
+		require.NoError(t, err)
+		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
+
+		restoreCfg := &RestoreConfig{
+			Config: Config{
+				CheckRequirements: true,
+			},
+			FullBackupStorage: testDir,
+		}
+		_, _, err = getFullBackupTS(context.TODO(), restoreCfg)
+		require.ErrorContains(t, err, "requires schema version")
+
+		restoreCfg.CheckRequirements = false
+		startTS, clusterID, err := getFullBackupTS(context.TODO(), restoreCfg)
+		require.NoError(t, err)
+		require.Equal(t, fullBackupTS, startTS)
+		require.Equal(t, fullClusterID, clusterID)
+	})
 }
 
 func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	var startLogBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := storage.NewLocalStorage(testDir)
+	storage, err := objstore.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -219,11 +253,39 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	logInfo, err := getLogInfo(context.TODO(), &cfg)
 	require.Nil(t, err)
 	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
+
+	t.Run("log info checks backupmeta compatibility", func(t *testing.T) {
+		testDir := t.TempDir()
+		storage, err := objstore.NewLocalStorage(testDir)
+		require.NoError(t, err)
+
+		m := backuppb.BackupMeta{
+			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
+			ClusterVersion:      "8.5.6",
+			BrVersion:           "v8.5.6",
+			StartVersion:        startLogBackupTS,
+		}
+		data, err := proto.Marshal(&m)
+		require.NoError(t, err)
+		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
+
+		cfg := Config{
+			Storage:           testDir,
+			CheckRequirements: true,
+		}
+		_, err = getLogInfo(context.TODO(), &cfg)
+		require.ErrorContains(t, err, "requires schema version")
+
+		cfg.CheckRequirements = false
+		logInfo, err := getLogInfo(context.TODO(), &cfg)
+		require.NoError(t, err)
+		require.Equal(t, startLogBackupTS, logInfo.logMinTS)
+	})
 }
 
 func TestGetExternalStorageOptions(t *testing.T) {
 	cfg := Config{}
-	u, err := storage.ParseBackend("s3://bucket/path", nil)
+	u, err := objstore.ParseBackend("s3://bucket/path", nil)
 	require.NoError(t, err)
 	options := getExternalStorageOptions(&cfg, u)
 	require.NotNil(t, options.HTTPClient)

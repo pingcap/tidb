@@ -52,36 +52,5 @@ func AssertTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 		require.True(t, idx.TopN.Equal(bIdx.TopN))
 		return false
 	})
-	require.True(t, IsSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
 	require.True(t, statistics.ColAndIdxExistenceMapIsEqual(a.ColAndIdxExistenceMap, b.ColAndIdxExistenceMap))
-}
-
-// IsSameExtendedStats is to judge whether the extended states is the same.
-func IsSameExtendedStats(a, b *statistics.ExtendedStatsColl) bool {
-	aEmpty := (a == nil) || len(a.Stats) == 0
-	bEmpty := (b == nil) || len(b.Stats) == 0
-	if (aEmpty && !bEmpty) || (!aEmpty && bEmpty) {
-		return false
-	}
-	if aEmpty && bEmpty {
-		return true
-	}
-	if len(a.Stats) != len(b.Stats) {
-		return false
-	}
-	for aKey, aItem := range a.Stats {
-		bItem, ok := b.Stats[aKey]
-		if !ok {
-			return false
-		}
-		for i, id := range aItem.ColIDs {
-			if id != bItem.ColIDs[i] {
-				return false
-			}
-		}
-		if (aItem.Tp != bItem.Tp) || (aItem.ScalarVals != bItem.ScalarVals) || (aItem.StringVals != bItem.StringVals) {
-			return false
-		}
-	}
-	return true
 }

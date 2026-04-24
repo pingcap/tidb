@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -168,6 +169,21 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}
 
+	// Emit txn.enter trace event
+	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
+		sessVars := m.sctx.GetSessionVars()
+		fields := []zap.Field{
+			zap.Int("type", int(r.Type)),
+			zap.Uint64("conn_id", sessVars.ConnectionID),
+			zap.Bool("explicit", r.Type == sessiontxn.EnterNewTxnWithBeginStmt),
+		}
+		// Add startTS if transaction context is available
+		if sessVars.TxnCtx != nil && sessVars.TxnCtx.StartTS > 0 {
+			fields = append(fields, zap.Uint64("start_ts", sessVars.TxnCtx.StartTS))
+		}
+		traceevent.TraceEvent(ctx, traceevent.TxnLifecycle, "txn.enter", fields...)
+	}
+
 	m.resetEvents()
 	m.recordEvent("enter txn")
 	return nil
@@ -181,7 +197,20 @@ func (m *txnManager) OnTxnEnd() {
 
 	duration := time.Since(m.enterTxnInstant)
 	threshold := m.sctx.GetSessionVars().SlowTxnThreshold
-	if threshold > 0 && uint64(duration.Milliseconds()) >= threshold {
+	slow := threshold > 0 && uint64(duration.Milliseconds()) >= threshold
+
+	// Emit txn.end trace event
+	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
+		sessVars := m.sctx.GetSessionVars()
+		traceevent.TraceEvent(context.Background(), traceevent.TxnLifecycle, "txn.end",
+			zap.Duration("duration", duration),
+			zap.Uint64("stmt_count", uint64(sessVars.TxnCtx.StatementCount)),
+			zap.Bool("slow", slow),
+			zap.Uint64("conn_id", sessVars.ConnectionID),
+		)
+	}
+
+	if slow {
 		logutil.BgLogger().Info(
 			"slow transaction", zap.Duration("duration", duration),
 			zap.Uint64("conn", m.sctx.GetSessionVars().ConnectionID),

@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
 )
@@ -99,12 +98,6 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 			if vars.SelectLimit != math2.MaxUint64 && p != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
 				p = nil
-			}
-			if vars.StmtCtx.EnableOptimizeTrace && p != nil {
-				if vars.StmtCtx.OptimizeTracer == nil {
-					vars.StmtCtx.OptimizeTracer = &tracing.OptimizeTracer{}
-				}
-				vars.StmtCtx.OptimizeTracer.SetFastPlan(p.BuildPlanTrace())
 			}
 		}()
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
@@ -263,14 +256,14 @@ func newBatchPointGetPlan(
 	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(
-				ctx.GetSessionVars().CurrentDB,
-				dbName,
-				tblAlias,
-				idxInfo,
-				tblHints,
-				indexHints,
-			) {
+			idxInfo.HasCondition() || !indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias,
+			idxInfo,
+			tblHints,
+			indexHints,
+		) {
 			continue
 		}
 		if len(idxInfo.Columns) != len(whereColNames) || idxInfo.HasPrefixIndex() {
@@ -494,10 +487,7 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
+	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
 	p := newBatchPointGetPlan(
 		ctx,
 		in,
@@ -564,10 +554,6 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	if schema == nil {
 		return nil
 	}
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
 
 	pairs := make([]nameValuePair, 0, 4)
 	pairs, isTableDual := getNameValuePairs(ctx.GetExprCtx(), tbl, tblAlias, pairs, selStmt.Where)
@@ -576,6 +562,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	}
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
+	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
 	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 &&
 		indexIsAvailableByHints(
 			ctx.GetSessionVars().CurrentDB,
@@ -586,7 +573,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 			tblName.IndexHints,
 		) {
 		if isTableDual {
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
@@ -615,20 +602,17 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 	var err error
 
 	tbl := tblName.TableInfo
-	dbName := tblName.Schema.L
-	if dbName == "" {
-		dbName = ctx.GetSessionVars().CurrentDB
-	}
+	dbName := getLowerDB(tblName.Schema, ctx.GetSessionVars())
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
-			!indexIsAvailableByHints(
-				ctx.GetSessionVars().CurrentDB,
-				dbName,
-				tblAlias,
-				idxInfo,
-				tblHints,
-				tblName.IndexHints,
-			) {
+			idxInfo.HasCondition() || !indexIsAvailableByHints(
+			ctx.GetSessionVars().CurrentDB,
+			dbName,
+			tblAlias,
+			idxInfo,
+			tblHints,
+			tblName.IndexHints,
+		) {
 			continue
 		}
 		if idxInfo.Global {
@@ -652,7 +636,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 					continue
 				}
 			}
-			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+			p := newPointGetPlan(ctx, dbName, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
@@ -1222,11 +1206,11 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 		return nil
 	}
 	handleCols := buildHandleCols(dbName, tbl, pointPlan)
-	updatePlan := Update{
+	updatePlan := physicalop.Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
-		TblColPosInfos: TblColPosInfoSlice{
-			TblColPosInfo{
+		TblColPosInfos: physicalop.TblColPosInfoSlice{
+			physicalop.TblColPosInfo{
 				TblID:      tbl.ID,
 				Start:      0,
 				End:        pointPlan.Schema().Len(),
@@ -1240,7 +1224,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	updatePlan.SetOutputNames(pointPlan.OutputNames())
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
 	t, _ := is.TableByID(context.Background(), tbl.ID)
-	updatePlan.tblID2Table = map[int64]table.Table{
+	updatePlan.TblID2Table = map[int64]table.Table{
 		tbl.ID: t,
 	}
 	if tbl.GetPartitionInfo() != nil {
@@ -1263,7 +1247,7 @@ func buildPointUpdatePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 			updatePlan.PartitionedTable = append(updatePlan.PartitionedTable, pt)
 		}
 	}
-	err := updatePlan.buildOnUpdateFKTriggers(ctx, is, updatePlan.tblID2Table)
+	err := updatePlan.BuildOnUpdateFKTriggers(ctx, is, updatePlan.TblID2Table)
 	if err != nil {
 		return nil
 	}
@@ -1284,7 +1268,7 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 			Col:     col,
 			ColName: plan.OutputNames()[idx].ColName,
 		}
-		defaultExpr := extractDefaultExpr(assign.Expr)
+		defaultExpr := physicalop.ExtractDefaultExpr(assign.Expr)
 		if defaultExpr != nil {
 			defaultExpr.Name = assign.Column
 		}
@@ -1293,10 +1277,27 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 			return nil, true
 		}
 		castToTP := col.GetStaticType()
-		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
+		if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
+			assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		// Point-update builds assignment expressions directly in the planner.
+		// Keep the implicit CAST for most target column types so the fast path stays
+		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets:
+		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
+		// must be decided by executor-side table.CastValue under the current statement
+		// context and sql_mode.
+		//
+		// This applies to more than integer columns. Unsigned decimal/real also uses the
+		// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
+		// diverging from assignment semantics.
+		isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
+			(castToTP.EvalType() == types.ETInt ||
+				castToTP.EvalType() == types.ETDecimal ||
+				castToTP.EvalType() == types.ETReal)
+		if !isUnsignedNumericTarget {
+			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		}
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
@@ -1356,17 +1357,17 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	if err != nil {
 		return nil
 	}
-	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo)
+	err = buildSingleTableColPosInfoForDelete(t, &colPosInfo, 0)
 	if err != nil {
 		return nil
 	}
-	delPlan := Delete{
+	delPlan := physicalop.Delete{
 		SelectPlan:     pointPlan,
-		TblColPosInfos: []TblColPosInfo{colPosInfo},
+		TblColPosInfos: []physicalop.TblColPosInfo{colPosInfo},
 		IgnoreErr:      ignoreErr,
 	}.Init(ctx)
 	tblID2Table := map[int64]table.Table{tbl.ID: t}
-	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)
+	err = delPlan.BuildOnDeleteFKTriggers(ctx, is, tblID2Table)
 	if err != nil {
 		return nil
 	}

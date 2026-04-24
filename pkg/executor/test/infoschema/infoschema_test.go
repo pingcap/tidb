@@ -182,22 +182,22 @@ func TestDataForTableStatsField(t *testing.T) {
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 16 48 0"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4 16 64 0"))
 	tk.MustExec("delete from t where c >= 3")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 16 32 0"))
 	tk.MustExec("delete from t where c=3")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 16 32 0"))
@@ -211,7 +211,7 @@ func TestDataForTableStatsField(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 16 48 0"))
@@ -237,6 +237,10 @@ func TestPartitionsTable(t *testing.T) {
 
 		tk.MustQuery("select PARTITION_NAME, PARTITION_DESCRIPTION from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 			testkit.Rows("p0 6", "p1 11", "p2 16"))
+		pid := tk.MustQuery("select TIDB_PARTITION_ID from information_schema.PARTITIONS where table_name='test_partitions' and partition_name='p1';").Rows()[0][0]
+		tk.MustQuery(fmt.Sprintf("select TABLE_NAME, PARTITION_NAME, TIDB_PARTITION_ID from information_schema.PARTITIONS where TIDB_PARTITION_ID=%v;", pid)).Check(
+			testkit.Rows(fmt.Sprintf("test_partitions p1 %v", pid)),
+		)
 
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 			testkit.Rows(
@@ -245,7 +249,7 @@ func TestPartitionsTable(t *testing.T) {
 				"0 0 0 0",
 			),
 		)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("flush stats_delta *.*")
 		require.NoError(t, h.Update(context.Background(), is))
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 			testkit.Rows(
@@ -262,7 +266,7 @@ func TestPartitionsTable(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
 		testkit.Rows("<nil> 3 16 48 0"))
@@ -1029,12 +1033,38 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 	}
 }
 
+func TestInfoSchemaExcludeNonPublicColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_state_test")
+	tk.MustExec("create table t_state_test (a bigint, b bigint, c bigint);")
+
+	tk2 := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterReorgWorkForModifyColumn", func() {
+		// Query information_schema.columns
+		rows := tk2.MustQuery("select COLUMN_NAME from information_schema.columns where table_schema='test' and table_name='t_state_test'").Sort().Rows()
+		// Collect column names
+		names := make([]string, 0, len(rows))
+		for _, r := range rows {
+			names = append(names, strings.ToLower(r[0].(string)))
+		}
+		// Assert temporary changing columns are not visible
+		require.ElementsMatch(t, []string{"a", "b", "c"}, names)
+	})
+
+	// Trigger the ALTER that will reorganize the table
+	tk.MustExec("alter table t_state_test modify column a int;")
+}
+
 func TestIndexUsageWithData(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	// Some bad tests will set the global variable to 0, and they don't set it back. So even if the default value for this variable is 1,
 	// we'll need to set it to 1 here.
 	tk.MustExec("set global tidb_enable_collect_execution_info=1;")
+	// Enable sync stats loading to ensure statistics are loaded when queries execute (required for index usage reporting)
+	tk.MustExec("set session tidb_stats_load_sync_wait = 60000")
 	tk.RefreshSession()
 
 	insertDataAndScanToT := func(indexName string) {
@@ -1065,10 +1095,12 @@ func TestIndexUsageWithData(t *testing.T) {
 		logutil.BgLogger().Info("execute with plan",
 			zap.String("sql", sql),
 			zap.String("plan", tk.MustQuery("explain "+sql).String()))
+		tk.Session().ReportUsageStats()
 	}
 
 	checkIndexUsage := func(startQuery time.Time, endQuery time.Time, percentageAccess2050 bool) {
 		require.Eventually(t, func() bool {
+			tk.Session().ReportUsageStats()
 			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
 			if len(rows) != 1 {
 				return false
@@ -1202,7 +1234,7 @@ func TestKeyspaceMeta(t *testing.T) {
 		Config: cfg,
 	}
 
-	store := testkit.CreateMockStore(t, mockstore.WithKeyspaceMeta(keyspaceMeta))
+	store := testkit.CreateMockStore(t, mockstore.WithCurrentKeyspaceMeta(keyspaceMeta))
 	tk := testkit.NewTestKit(t, store)
 
 	rows := tk.MustQuery("select * from information_schema.keyspace_meta").Rows()

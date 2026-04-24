@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -76,37 +77,26 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool util.DestroyableSessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+func CallWithSCtx(pool syssession.Pool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
-	se, err := pool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err == nil { // only recycle when no error
-			pool.Put(se)
-		} else {
-			// Note: Otherwise, the session will be leaked.
-			pool.Destroy(se)
-		}
-	}()
-	sctx := se.(sessionctx.Context)
-	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
-		return errors.Trace(err)
-	}
+	return pool.WithSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
+				return errors.Trace(err)
+			}
 
-	wrapTxn := false
-	for _, flag := range flags {
-		if flag == FlagWrapTxn {
-			wrapTxn = true
-		}
-	}
-	if wrapTxn {
-		err = WrapTxn(sctx, f)
-	} else {
-		err = f(sctx)
-	}
-	return errors.Trace(err)
+			wrapTxn := false
+			for _, flag := range flags {
+				if flag == FlagWrapTxn {
+					wrapTxn = true
+				}
+			}
+			if wrapTxn {
+				return WrapTxn(sctx, f)
+			}
+			return f(sctx)
+		})
+	})
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
@@ -183,11 +173,32 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
+	// sync innodb_lock_wait_timeout
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.InnodbLockWaitTimeout)
+	if err != nil {
+		return err
+	}
+	lockWaitSec, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().LockWaitTimeout = lockWaitSec * 1000
+
+	// timezone setting
+	// timezone used to datetime/timestamp conversion when collecting stats.
+	globalTZ, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TimeZone)
+	if err != nil {
+		return err
+	}
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, globalTZ); err != nil {
+		return err
+	}
+	sctx.GetSessionVars().StmtCtx.SetTimeZone(sctx.GetSessionVars().Location())
 	return nil
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func GetCurrentPruneMode(pool util.DestroyableSessionPool) (mode string, err error) {
+func GetCurrentPruneMode(pool syssession.Pool) (mode string, err error) {
 	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil

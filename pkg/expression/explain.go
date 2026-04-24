@@ -111,7 +111,7 @@ func (col *Column) ColumnExplainInfo(ctx ParamValues, normalized bool) string {
 	if normalized {
 		return col.ColumnExplainInfoNormalized()
 	}
-	return col.StringWithCtx(ctx, errors.RedactLogDisable)
+	return col.StringWithCtxForExplain(ctx, errors.RedactLogDisable, shouldRemoveColumnNumbers(ctx))
 }
 
 // ColumnExplainInfoNormalized returns the normalized explained info for column.
@@ -141,20 +141,26 @@ func (col *Column) ExplainNormalizedInfo4InList() string {
 func (expr *Constant) ExplainInfo(ctx EvalContext) string {
 	redact := ctx.GetTiDBRedactLog()
 	if redact == errors.RedactLogEnable {
+		if expr.SubqueryRefID > 0 {
+			return fmt.Sprintf("ScalarQueryCol#%d(?)", expr.SubqueryRefID)
+		}
 		return "?"
 	}
+
 	dt, err := expr.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return "not recognized const value"
 	}
+
+	valueStr := expr.format(dt)
+
 	if redact == errors.RedactLogMarker {
-		builder := new(strings.Builder)
-		builder.WriteString("‹")
-		builder.WriteString(expr.format(dt))
-		builder.WriteString("›")
-		return builder.String()
+		valueStr = "‹" + valueStr + "›"
 	}
-	return expr.format(dt)
+	if expr.SubqueryRefID > 0 {
+		return fmt.Sprintf("ScalarQueryCol#%d(%s)", expr.SubqueryRefID, valueStr)
+	}
+	return valueStr
 }
 
 // ExplainNormalizedInfo implements the Expression interface.
@@ -181,24 +187,37 @@ func (expr *Constant) format(dt types.Datum) string {
 // ExplainExpressionList generates explain information for a list of expressions.
 func ExplainExpressionList(ctx EvalContext, exprs []Expression, schema *Schema, redactMode string) string {
 	builder := &strings.Builder{}
+	// Check explain format once at the start - it doesn't change during a single explain output
+	removeColNums := shouldRemoveColumnNumbers(ctx)
 	for i, expr := range exprs {
-		switch expr.(type) {
+		switch expr := expr.(type) {
 		case *Column, *CorrelatedColumn:
-			builder.WriteString(expr.StringWithCtx(ctx, redactMode))
-			if expr.StringWithCtx(ctx, redactMode) != schema.Columns[i].StringWithCtx(ctx, redactMode) {
+			// Both Column and CorrelatedColumn use the same StringWithCtxForExplain method
+			// (CorrelatedColumn embeds Column), so they can share the same logic
+			var col *Column
+			switch c := expr.(type) {
+			case *Column:
+				col = c
+			case *CorrelatedColumn:
+				col = &c.Column
+			}
+			exprStr := col.StringWithCtxForExplain(ctx, redactMode, removeColNums)
+			schemaColStr := schema.Columns[i].StringWithCtxForExplain(ctx, redactMode, removeColNums)
+			builder.WriteString(exprStr)
+			if exprStr != schemaColStr {
 				// simple col projected again with another uniqueID without origin name.
 				builder.WriteString("->")
-				builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
+				builder.WriteString(schemaColStr)
 			}
 		case *Constant:
 			v := expr.StringWithCtx(ctx, errors.RedactLogDisable)
 			redact.WriteRedact(builder, v, redactMode)
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
+			builder.WriteString(schema.Columns[i].StringWithCtxForExplain(ctx, redactMode, removeColNums))
 		default:
 			builder.WriteString(expr.StringWithCtx(ctx, redactMode))
 			builder.WriteString("->")
-			builder.WriteString(schema.Columns[i].StringWithCtx(ctx, redactMode))
+			builder.WriteString(schema.Columns[i].StringWithCtxForExplain(ctx, redactMode, removeColNums))
 		}
 		if i+1 < len(exprs) {
 			builder.WriteString(", ")

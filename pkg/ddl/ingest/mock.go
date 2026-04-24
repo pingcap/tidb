@@ -35,13 +35,13 @@ import (
 )
 
 // NewMockBackendCtx creates a MockBackendCtx.
-func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context, cpMgr *CheckpointManager) BackendCtx {
+func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context, cpOp CheckpointOperator) BackendCtx {
 	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", job.ID))
 	mockCtx := &MockBackendCtx{
 		mu:            sync.Mutex{},
 		sessCtx:       sessCtx,
 		jobID:         job.ID,
-		checkpointMgr: cpMgr,
+		checkpointMgr: cpOp,
 	}
 	return mockCtx
 }
@@ -51,7 +51,7 @@ type MockBackendCtx struct {
 	sessCtx       sessionctx.Context
 	mu            sync.Mutex
 	jobID         int64
-	checkpointMgr *CheckpointManager
+	checkpointMgr CheckpointOperator
 }
 
 // Register implements BackendCtx.Register interface.
@@ -86,7 +86,7 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 // IngestIfQuotaExceeded implements BackendCtx.IngestIfQuotaExceeded interface.
 func (m *MockBackendCtx) IngestIfQuotaExceeded(_ context.Context, taskID, cnt int) error {
 	if m.checkpointMgr != nil {
-		m.checkpointMgr.UpdateWrittenKeys(taskID, cnt)
+		m.checkpointMgr.FinishChunk(taskID, cnt)
 	}
 	return nil
 }
@@ -102,7 +102,7 @@ func (m *MockBackendCtx) Ingest(_ context.Context) error {
 // NextStartKey implements CheckpointOperator interface.
 func (m *MockBackendCtx) NextStartKey() kv.Key {
 	if m.checkpointMgr != nil {
-		return m.checkpointMgr.NextKeyToProcess()
+		return m.checkpointMgr.NextStartKey()
 	}
 	return nil
 }
@@ -118,28 +118,28 @@ func (m *MockBackendCtx) TotalKeyCount() int {
 // AddChunk implements CheckpointOperator interface.
 func (m *MockBackendCtx) AddChunk(id int, endKey kv.Key) {
 	if m.checkpointMgr != nil {
-		m.checkpointMgr.Register(id, endKey)
+		m.checkpointMgr.AddChunk(id, endKey)
 	}
 }
 
 // UpdateChunk implements CheckpointOperator interface.
 func (m *MockBackendCtx) UpdateChunk(id int, count int, done bool) {
 	if m.checkpointMgr != nil {
-		m.checkpointMgr.UpdateTotalKeys(id, count, done)
+		m.checkpointMgr.UpdateChunk(id, count, done)
 	}
 }
 
 // FinishChunk implements CheckpointOperator interface.
 func (m *MockBackendCtx) FinishChunk(id int, count int) {
 	if m.checkpointMgr != nil {
-		m.checkpointMgr.UpdateWrittenKeys(id, count)
+		m.checkpointMgr.FinishChunk(id, count)
 	}
 }
 
 // GetImportTS implements CheckpointOperator interface.
 func (m *MockBackendCtx) GetImportTS() uint64 {
 	if m.checkpointMgr != nil {
-		return m.checkpointMgr.GetTS()
+		return m.checkpointMgr.GetImportTS()
 	}
 	return 0
 }
@@ -247,6 +247,11 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 // LockForWrite implements Writer.LockForWrite interface.
 func (*MockWriter) LockForWrite() func() {
 	return func() {}
+}
+
+// WrittenBytes implements Writer.WrittenBytes interface.
+func (*MockWriter) WrittenBytes() int64 {
+	return 0
 }
 
 // MockExecAfterWriteRow is only used for test.

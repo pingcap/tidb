@@ -174,7 +174,7 @@ Error 1105 (HY000): invalid X509_NAME input: /CN=TiDBOU=PingCAP
 CREATE USER 'u6'@'%' require subject '/CN=TiDB\NC=PingCAP';
 Error 1105 (HY000): invalid X509_NAME input: /CN=TiDBNC=PingCAP
 CREATE USER 'u7'@'%' require cipher 'AES128-GCM-SHA1';
-Error 1105 (HY000): Unsupported cipher suit: AES128-GCM-SHA1
+Error 1105 (HY000): Unsupported cipher suite: AES128-GCM-SHA1
 CREATE USER 'u8'@'%' require subject '/CN';
 Error 1105 (HY000): invalid X509_NAME input: /CN
 CREATE USER 'u9'@'%' require cipher 'TLS_AES_256_GCM_SHA384' cipher 'RC4-SHA';

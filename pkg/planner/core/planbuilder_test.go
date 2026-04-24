@@ -28,7 +28,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -43,8 +42,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -129,6 +129,34 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
+
+	t.Run("ignore exact and prefix-resolved long index without removing shorter sibling", func(t *testing.T) {
+		shortPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no")}}
+		longPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no_delete_flag")}}
+		paths := []*util.AccessPath{shortPath, longPath}
+
+		tblInfo := &model.TableInfo{
+			Indices: []*model.IndexInfo{shortPath.Index, longPath.Index},
+		}
+
+		ignored := []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete_flag"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained := removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+
+		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained = removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+
+		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("Idx_Contract_Sys_No_Delete_Flag"), tblInfo)}
+		require.Same(t, longPath, ignored[0])
+		remained = removeIgnoredPaths(paths, ignored)
+		require.Len(t, remained, 1)
+		require.Same(t, shortPath, remained[0])
+	})
 }
 
 func TestRewriterPool(t *testing.T) {
@@ -145,7 +173,7 @@ func TestRewriterPool(t *testing.T) {
 	dirtyRewriter.asScalar = true
 	dirtyRewriter.planCtx.aggrMap = make(map[*ast.AggregateFuncExpr]int)
 	dirtyRewriter.preprocess = func(ast.Node) ast.Node { return nil }
-	dirtyRewriter.planCtx.insertPlan = &Insert{}
+	dirtyRewriter.planCtx.insertPlan = &physicalop.Insert{}
 	dirtyRewriter.disableFoldCounter = 1
 	dirtyRewriter.ctxStack = make([]expression.Expression, 2)
 	dirtyRewriter.ctxNameStk = make([]*types.FieldName, 2)
@@ -161,6 +189,39 @@ func TestRewriterPool(t *testing.T) {
 	require.Zero(t, cleanRewriter.disableFoldCounter)
 	require.Len(t, cleanRewriter.ctxStack, 0)
 	builder.rewriterCounter--
+}
+
+func TestGetInsertColExprDeepCopiesValueExprFieldType(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+
+	valueExpr, ok := ast.NewValueExpr(1, "", "").(*driver.ValueExpr)
+	require.True(t, ok)
+	valueExpr.Type.AddFlag(mysql.NotNullFlag)
+
+	col := &table.Column{
+		ColumnInfo: &model.ColumnInfo{
+			Name:      ast.NewCIStr("a"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+	}
+	expr, err := builder.getInsertColExpr(context.TODO(), &physicalop.Insert{}, nil, col, valueExpr, nil)
+	require.NoError(t, err)
+
+	constExpr, ok := expr.(*expression.Constant)
+	require.True(t, ok)
+	require.NotSame(t, valueExpr.GetType(), constExpr.RetType)
+	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
+	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
+
+	constExpr.RetType.SetType(mysql.TypeString)
+	constExpr.RetType.DelFlag(mysql.NotNullFlag)
+
+	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
+	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
 }
 
 func TestDisableFold(t *testing.T) {
@@ -334,7 +395,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 		ExtraHandleCol: col,
 		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
 	}
-	indexLookup = indexLookup.Init(ctx, 0)
+	indexLookup = indexLookup.Init(ctx, 0, util.IndexLookUpPushDownNone)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
@@ -583,13 +644,10 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 	return nil
 }
 
-func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
-	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
-
+func TestHandleAnalyzeOptions(t *testing.T) {
 	tests := []struct {
 		name        string
 		opts        []ast.AnalyzeOpt
-		statsVer    int
 		ExpectedErr string
 	}{
 		{
@@ -600,19 +658,7 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 					Value: ast.NewValueExpr(100000+1, "", ""),
 				},
 			},
-			statsVer:    statistics.Version1,
 			ExpectedErr: "Value of analyze option TOPN should not be larger than 100000",
-		},
-		{
-			name: "Use SampleRate option in stats version 1",
-			opts: []ast.AnalyzeOpt{
-				{
-					Type:  ast.AnalyzeOptSampleRate,
-					Value: ast.NewValueExpr(1, "", ""),
-				},
-			},
-			statsVer:    statistics.Version1,
-			ExpectedErr: "Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2",
 		},
 		{
 			name: "Too big SampleRate option",
@@ -622,7 +668,6 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 					Value: ast.NewValueExpr(2, "", ""),
 				},
 			},
-			statsVer:    statistics.Version2,
 			ExpectedErr: "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0",
 		},
 		{
@@ -633,7 +678,6 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 					Value: ast.NewValueExpr(100000+1, "", ""),
 				},
 			},
-			statsVer:    2,
 			ExpectedErr: "Value of analyze option BUCKETS should be positive and not larger than 100000",
 		},
 		{
@@ -648,44 +692,18 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 					Value: ast.NewValueExpr(0.1, "", ""),
 				},
 			},
-			statsVer:    statistics.Version2,
 			ExpectedErr: "ou can only either set the value of the sample num or set the value of the sample rate. Don't set both of them",
-		},
-		{
-			name: "Too big CMSketchDepth and CMSketchWidth option",
-			opts: []ast.AnalyzeOpt{
-				{
-					Type:  ast.AnalyzeOptCMSketchDepth,
-					Value: ast.NewValueExpr(1024, "", ""),
-				},
-				{
-					Type:  ast.AnalyzeOptCMSketchWidth,
-					Value: ast.NewValueExpr(2048, "", ""),
-				},
-			},
-			statsVer:    statistics.Version1,
-			ExpectedErr: "cm sketch size(depth * width) should not larger than 1258291",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := handleAnalyzeOptions(tt.opts, tt.statsVer)
+			_, err := handleAnalyzeOptions(tt.opts)
 			if tt.ExpectedErr != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.ExpectedErr)
 			} else {
 				require.NoError(t, err)
-			}
-
-			if tt.statsVer == statistics.Version2 {
-				_, err := handleAnalyzeOptionsV2(tt.opts)
-				if tt.ExpectedErr != "" {
-					require.Error(t, err)
-					require.Contains(t, err.Error(), tt.ExpectedErr)
-				} else {
-					require.NoError(t, err)
-				}
 			}
 		})
 	}
@@ -758,8 +776,8 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 			Name:   ast.NewCIStr("t1"),
 		},
 		{
-			Schema: ast.NewCIStr("test"),
-			Name:   ast.NewCIStr("t2"),
+			Schema: ast.NewCIStr("Test"),
+			Name:   ast.NewCIStr("T2"),
 		},
 	}
 
@@ -769,6 +787,64 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, "t1", pb.visitInfo[0].table)
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
+	require.Equal(t, "test", pb.visitInfo[2].db)
+	require.Equal(t, "t2", pb.visitInfo[2].table)
+}
+
+func TestBuildRefreshStatsPrivileges(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	ctx.GetSessionVars().CurrentDB = "test"
+
+	p := parser.New()
+	testCases := []struct {
+		name            string
+		sql             string
+		expectedDB      string
+		expectedTable   string
+		expectedEntries int
+	}{
+		{
+			name:            "table scope",
+			sql:             "REFRESH STATS t1",
+			expectedDB:      "test",
+			expectedTable:   "t1",
+			expectedEntries: 1,
+		},
+		{
+			name:            "database scope",
+			sql:             "REFRESH STATS test.*",
+			expectedDB:      "test",
+			expectedTable:   "",
+			expectedEntries: 1,
+		},
+		{
+			name:            "global scope",
+			sql:             "REFRESH STATS *.*",
+			expectedDB:      "",
+			expectedTable:   "",
+			expectedEntries: 1,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+			stmtNode, err := p.ParseOneStmt(tc.sql, "", "")
+			require.NoError(t, err)
+			rs := stmtNode.(*ast.RefreshStatsStmt)
+			builder.visitInfo = nil
+			_, err = builder.buildRefreshStats(rs)
+			require.NoError(t, err)
+			require.Len(t, builder.visitInfo, tc.expectedEntries)
+			vi := builder.visitInfo[0]
+			require.Equal(t, tc.expectedDB, vi.db)
+			require.Equal(t, tc.expectedTable, vi.table)
+			require.Equal(t, mysql.SelectPriv, vi.privilege)
+		})
+	}
 }
 
 func TestImportIntoCollAssignmentChecker(t *testing.T) {
@@ -1055,24 +1131,179 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestProcessNextGenS3Path(t *testing.T) {
-	u, err := url.Parse("S3://bucket?External-id=abc")
-	require.NoError(t, err)
-	_, err = processSemNextGenS3Path(u)
-	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
+	for _, str := range []string{
+		"S3://bucket?External-id=abc",
+		"oss://bucket?External-id=abc",
+		"oSS://bucket?External-id=abc",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+		require.ErrorContains(t, err, "IMPORT INTO with explicit external ID")
+	}
 
-	bak := config.GetGlobalKeyspaceName()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = "sem-next-gen"
+	for _, str := range []string{
+		"s3://bucket",
+		"oss://bucket",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.NoError(t, err)
+	}
+}
+
+func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
+	checkPushDownIndexLookUpReaderCommon := func(r *physicalop.PhysicalIndexLookUpReader) {
+		require.True(t, r.IndexLookUpPushDown)
+		tablePlans := physicalop.FlattenListPushDownPlan(r.TablePlan)
+		require.Len(t, r.TablePlans, len(tablePlans))
+		planIDMap := make(map[int]struct{})
+		for i, p := range tablePlans {
+			require.Equal(t, p, r.TablePlans[i], i)
+			// table plan should reset the stats info to zero
+			require.Zero(t, p.StatsInfo().RowCount)
+			_, ok := planIDMap[p.ID()]
+			require.False(t, ok, "duplicated plan id %d", p.ID())
+			planIDMap[p.ID()] = struct{}{}
+		}
+		indexPlans, m := physicalop.FlattenTreePushDownPlan(r.IndexPlan)
+		require.Len(t, r.IndexPlans, len(indexPlans))
+		for i, p := range indexPlans {
+			require.Equal(t, p, r.IndexPlans[i], i)
+			_, ok := planIDMap[p.ID()]
+			require.False(t, ok, "duplicated plan id %d", p.ID())
+			planIDMap[p.ID()] = struct{}{}
+		}
+		require.Equal(t, m, r.IndexPlansUnNatureOrders)
+	}
+
+	ctx := mock.NewContext()
+	tablePlan := physicalop.PhysicalTableScan{}.Init(ctx, 10)
+	tableInfo := &model.TableInfo{
+		IsCommonHandle: false,
+		Partition:      nil,
+	}
+	tablePlan.Table = tableInfo.Clone()
+	tablePlan.SetStats(&property.StatsInfo{
+		RowCount: 1000,
 	})
-	t.Cleanup(func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = bak
-		})
+	tableSchema := expression.NewSchema(
+		&expression.Column{ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		&expression.Column{ID: 2, RetType: types.NewFieldType(mysql.TypeString)},
+		&expression.Column{ID: 3, RetType: types.NewFieldType(mysql.TypeFloat)},
+	)
+	tablePlan.SetSchema(tableSchema.Clone())
+	indexPlan := physicalop.PhysicalIndexScan{}.Init(ctx, 11)
+	indexPlan.SetStats(&property.StatsInfo{
+		RowCount: 1000,
 	})
-	u, err = url.Parse("s3://bucket")
+	indexSchema := expression.NewSchema(
+		&expression.Column{ID: 2, RetType: types.NewFieldType(mysql.TypeString)},
+		&expression.Column{ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	)
+	indexPlan.SetSchema(indexSchema.Clone())
+
+	// test for simple case: tablePlan and indexPlan are single plans without parent
+	check := func(p base.Plan) {
+		r, ok := p.(*physicalop.PhysicalIndexLookUpReader)
+		require.True(t, ok)
+		checkPushDownIndexLookUpReaderCommon(r)
+		require.Equal(t, map[int]int{
+			0: 2,
+		}, r.IndexPlansUnNatureOrders)
+		require.Len(t, r.TablePlans, 1)
+		require.IsType(t, &physicalop.PhysicalTableScan{}, r.TablePlans[0])
+		require.Len(t, r.IndexPlans, 3)
+		require.IsType(t, &physicalop.PhysicalIndexScan{}, r.IndexPlans[0])
+		require.IsType(t, &physicalop.PhysicalTableScan{}, r.IndexPlans[1])
+		lookup, ok := r.IndexPlans[2].(*physicalop.PhysicalLocalIndexLookUp)
+		require.True(t, ok)
+		require.Equal(t, []uint32{1}, lookup.IndexHandleOffsets)
+		require.Equal(t, tableSchema.String(), lookup.Schema().String())
+		require.Equal(t, 10, lookup.QueryBlockOffset())
+		require.Equal(t, tableSchema.String(), r.Schema().String())
+		require.Equal(t, 10, lookup.QueryBlockOffset())
+	}
+	reader := physicalop.PhysicalIndexLookUpReader{
+		TablePlan: tablePlan,
+		IndexPlan: indexPlan,
+		KeepOrder: false,
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
+	check(reader)
+	cloned, err := reader.Clone(ctx)
 	require.NoError(t, err)
-	newPath, err := processSemNextGenS3Path(u)
+	check(cloned)
+	clonedForCache, ok := reader.CloneForPlanCache(ctx)
+	require.True(t, ok)
+	check(clonedForCache)
+
+	// test for a more complex case: tablePlan and indexPlan are trees
+	tablePlan = physicalop.PhysicalTableScan{}.Init(ctx, 10)
+	tablePlan.Table = tableInfo.Clone()
+	tablePlan.SetStats(&property.StatsInfo{
+		RowCount: 500,
+	})
+	tablePlan.SetSchema(tableSchema.Clone())
+	selectionPlan := physicalop.PhysicalSelection{}.Init(ctx, &property.StatsInfo{
+		RowCount: 200,
+	}, tablePlan.QueryBlockOffset())
+	selectionPlan.SetChildren(tablePlan)
+	projectionPlan := physicalop.PhysicalProjection{}.Init(ctx, &property.StatsInfo{
+		RowCount: 200,
+	}, tablePlan.QueryBlockOffset())
+	projectionSchema := expression.NewSchema(
+		&expression.Column{ID: 2, RetType: types.NewFieldType(mysql.TypeString)},
+	)
+	projectionPlan.SetSchema(projectionSchema)
+	projectionPlan.SetChildren(selectionPlan)
+	indexPlan = physicalop.PhysicalIndexScan{}.Init(ctx, 11)
+	indexPlan.SetStats(&property.StatsInfo{
+		RowCount: 1000,
+	})
+	indexPlan.SetSchema(indexSchema.Clone())
+	limitPlan := physicalop.PhysicalLimit{}.Init(ctx, &property.StatsInfo{
+		RowCount: 1000,
+	}, indexPlan.QueryBlockOffset())
+	limitPlan.SetChildren(indexPlan)
+
+	check = func(p base.Plan) {
+		r, ok := p.(*physicalop.PhysicalIndexLookUpReader)
+		require.True(t, ok)
+		checkPushDownIndexLookUpReaderCommon(reader)
+		require.Equal(t, map[int]int{
+			1: 3,
+		}, r.IndexPlansUnNatureOrders)
+		require.Len(t, r.TablePlans, 3)
+		require.IsType(t, &physicalop.PhysicalTableScan{}, r.TablePlans[0])
+		require.IsType(t, &physicalop.PhysicalSelection{}, r.TablePlans[1])
+		require.IsType(t, &physicalop.PhysicalProjection{}, r.TablePlans[2])
+		require.Len(t, reader.IndexPlans, 6)
+		require.IsType(t, &physicalop.PhysicalIndexScan{}, r.IndexPlans[0])
+		require.IsType(t, &physicalop.PhysicalLimit{}, r.IndexPlans[1])
+		require.IsType(t, &physicalop.PhysicalTableScan{}, r.IndexPlans[2])
+		lookup, ok := r.IndexPlans[3].(*physicalop.PhysicalLocalIndexLookUp)
+		require.True(t, ok)
+		require.IsType(t, &physicalop.PhysicalSelection{}, r.IndexPlans[4])
+		require.IsType(t, &physicalop.PhysicalProjection{}, r.IndexPlans[5])
+		require.Equal(t, []uint32{1}, lookup.IndexHandleOffsets)
+		require.Equal(t, tableSchema.String(), lookup.Schema().String())
+		require.Equal(t, 10, lookup.QueryBlockOffset())
+		require.Equal(t, projectionSchema.String(), reader.Schema().String())
+		require.Equal(t, 10, lookup.QueryBlockOffset())
+	}
+
+	reader = physicalop.PhysicalIndexLookUpReader{
+		TablePlan: projectionPlan,
+		IndexPlan: limitPlan,
+		KeepOrder: false,
+	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
+	check(reader)
+	cloned, err = reader.Clone(ctx)
 	require.NoError(t, err)
-	require.Equal(t, "s3://bucket?external-id=sem-next-gen", newPath)
+	check(cloned)
+	clonedForCache, ok = reader.CloneForPlanCache(ctx)
+	require.True(t, ok)
+	check(clonedForCache)
 }

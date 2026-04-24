@@ -17,6 +17,7 @@ package physicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
@@ -31,6 +32,28 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 
 	HandleCols util.HandleCols
+}
+
+// ExhaustPhysicalPlans4LogicalUnionScan will be called by LogicalUnionScan in logicalOp pkg.
+func ExhaustPhysicalPlans4LogicalUnionScan(p *logicalop.LogicalUnionScan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
+	if prop.IsFlashProp() {
+		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
+		return nil, true, nil
+	}
+	childProp := prop.CloneEssentialFields()
+	childProp = admitIndexJoinProp(childProp, prop)
+	if childProp == nil {
+		// even hint can not work with this. index join prop is not satisfied in mpp task type.
+		return nil, false, nil
+	}
+	// here we just pass down the keep order property to the child.
+	// cuz, in union scan exec, it will feel the underlying tableReader or indexReader to get the keepOrder.
+	us := PhysicalUnionScan{
+		Conditions: p.Conditions,
+		HandleCols: p.HandleCols,
+	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), childProp)
+	return []base.PhysicalPlan{us}, true, nil
 }
 
 // Init initializes PhysicalUnionScan.
@@ -69,22 +92,6 @@ func (p *PhysicalUnionScan) MemoryUsage() (sum int64) {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalUnionScan) ExplainInfo() string {
 	return string(expression.SortedExplainExpressionList(p.SCtx().GetExprCtx().GetEvalCtx(), p.Conditions))
-}
-
-// CloneForPlanCache implements the base.Plan interface.
-func (p *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
-	cloned := new(PhysicalUnionScan)
-	*cloned = *p
-	basePlan, baseOK := p.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
-	if !baseOK {
-		return nil, false
-	}
-	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = utilfuncp.CloneExpressionsForPlanCache(p.Conditions, nil)
-	if p.HandleCols != nil {
-		cloned.HandleCols = p.HandleCols.Clone()
-	}
-	return cloned, true
 }
 
 // Attach2Task implements PhysicalPlan interface.

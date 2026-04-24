@@ -29,8 +29,8 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	"github.com/pingcap/tidb/pkg/errno"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -38,9 +38,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -65,8 +65,8 @@ import (
 type TableImporter struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
-	dbInfo    *checkpoints.TidbDBInfo
-	tableInfo *checkpoints.TidbTableInfo
+	dbInfo    *importdef.DBInfo
+	tableInfo *importdef.TableInfo
 	tableMeta *mydump.MDTableMeta
 	encTable  table.Table
 	alloc     autoid.Allocators
@@ -85,8 +85,8 @@ type TableImporter struct {
 func NewTableImporter(
 	tableName string,
 	tableMeta *mydump.MDTableMeta,
-	dbInfo *checkpoints.TidbDBInfo,
-	tableInfo *checkpoints.TidbTableInfo,
+	dbInfo *importdef.DBInfo,
+	tableInfo *importdef.TableInfo,
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
@@ -420,6 +420,41 @@ func createColumnPermutation(
 	return colPerm, nil
 }
 
+// estimateCompactionThreshold estimates the SST file compaction threshold by total row file size.
+// With a higher compaction threshold, the compaction time increases, but the iteration time decreases.
+// Try to limit the total SST file count under 500. But compressing 32GB SST files costs about 20min,
+// so set the upper bound to 32GB to avoid too long compaction time.
+// factor is the non-clustered index count, or 1 for the data engine.
+func estimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
+	totalRawFileSize := int64(0)
+	var lastFile string
+	fileSizeMap := make(map[string]int64, len(files))
+	for _, file := range files {
+		fileSizeMap[file.FileMeta.Path] = file.FileMeta.RealSize
+	}
+
+	for _, engineCp := range cp.Engines {
+		for _, chunk := range engineCp.Chunks {
+			if chunk.FileMeta.Path == lastFile {
+				continue
+			}
+			size, ok := fileSizeMap[chunk.FileMeta.Path]
+			if !ok {
+				size = chunk.FileMeta.FileSize
+			}
+			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				// Parquet file is compressed, thus estimates with a factor of 2.
+				size *= 2
+			}
+			totalRawFileSize += size
+			lastFile = chunk.FileMeta.Path
+		}
+	}
+	totalRawFileSize *= factor
+
+	return local.EstimateCompactionThreshold2(totalRawFileSize)
+}
+
 func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	indexEngineCp := cp.Engines[common.IndexEngineID]
 	if indexEngineCp == nil {
@@ -458,7 +493,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 			if !common.TableHasAutoRowID(tr.tableInfo.Core) {
 				idxCnt--
 			}
-			threshold := local.EstimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
+			threshold := estimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
 			idxEngineCfg.Local = backend.LocalEngineConfig{
 				Compact:            threshold > 0,
 				CompactConcurrency: 4,
@@ -684,8 +719,8 @@ func (tr *TableImporter) preprocessEngine(
 	var chunkErr common.OnceError
 
 	type chunkFlushStatus struct {
-		dataStatus  backend.ChunkFlushStatus
-		indexStatus backend.ChunkFlushStatus
+		dataStatus  common.ChunkFlushStatus
+		indexStatus common.ChunkFlushStatus
 		chunkCp     *checkpoints.ChunkCheckpoint
 	}
 
@@ -788,13 +823,6 @@ ChunkLoop:
 			break
 		}
 
-		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			// TODO: use the compressed size of the chunk to conduct memory control
-			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
 		go func(w *worker.Worker, cr *chunkProcessor) {
@@ -808,7 +836,7 @@ ChunkLoop:
 				metrics.ChunkCounter.WithLabelValues(metric.ChunkStateRunning).Add(remainChunkCnt)
 			}
 			err := cr.process(ctx, tr, engineID, dataWriter, indexWriter, rc)
-			var dataFlushStatus, indexFlushStaus backend.ChunkFlushStatus
+			var dataFlushStatus, indexFlushStaus common.ChunkFlushStatus
 			if err == nil {
 				dataFlushStatus, err = dataWriter.Close(ctx)
 			}
@@ -1199,42 +1227,6 @@ func (tr *TableImporter) postProcess(
 	}
 
 	return true, nil
-}
-
-func getChunkCompressedSizeForParquet(
-	ctx context.Context,
-	chunk *checkpoints.ChunkCheckpoint,
-	store storage.ExternalStorage,
-) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
-		ZStdDecodeConcurrency: 1,
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
-	if err != nil {
-		_ = reader.Close()
-		return 0, errors.Trace(err)
-	}
-	//nolint: errcheck
-	defer parser.Close()
-	err = parser.Reader.ReadFooter()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	rowGroups := parser.Reader.Footer.GetRowGroups()
-	var maxRowGroupSize int64
-	for _, rowGroup := range rowGroups {
-		var rowGroupSize int64
-		columnChunks := rowGroup.GetColumns()
-		for _, columnChunk := range columnChunks {
-			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
-			rowGroupSize += columnChunkSize
-		}
-		maxRowGroupSize = max(maxRowGroupSize, rowGroupSize)
-	}
-	return maxRowGroupSize, nil
 }
 
 func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {

@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
@@ -31,11 +30,11 @@ import (
 func TestGCStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set @@tidb_analyze_version = 1")
+	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a, b), index idx_a(a))")
 	testKit.MustExec("insert into t values (1,1),(2,2),(3,3)")
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 0 topn")
 
 	testKit.MustExec("alter table t drop index idx")
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
@@ -64,7 +63,7 @@ func TestGCStats(t *testing.T) {
 func TestGCPartition(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set @@tidb_analyze_version = 1")
+	testKit.MustExec("set @@tidb_analyze_version = 2")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
@@ -72,7 +71,7 @@ func TestGCPartition(t *testing.T) {
 			    partition p0 values less than (3),
 			    partition p1 values less than (6))`)
 		testKit.MustExec("insert into t values (1,2),(2,3),(3,4),(4,5),(5,6)")
-		testKit.MustExec("analyze table t")
+		testKit.MustExec("analyze table t with 0 topn")
 
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
@@ -96,54 +95,6 @@ func TestGCPartition(t *testing.T) {
 		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
 	})
-}
-
-func TestGCExtendedStats(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("set session tidb_enable_extended_stats = on")
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t(a int, b int, c int)")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
-	testKit.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	testKit.MustExec("alter table t add stats_extended s2 correlation(b,c)")
-	h := dom.StatsHandle()
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	testKit.MustExec("analyze table t")
-
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s1 2 [1,2] 1.000000 1",
-		"s2 2 [2,3] 1.000000 1",
-	))
-	testKit.MustExec("alter table t drop column a")
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s1 2 [1,2] 1.000000 1",
-		"s2 2 [2,3] 1.000000 1",
-	))
-	ddlLease := time.Duration(0)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s1 2 [1,2] 1.000000 2",
-		"s2 2 [2,3] 1.000000 1",
-	))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s2 2 [2,3] 1.000000 1",
-	))
-
-	testKit.MustExec("drop table t")
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s2 2 [2,3] 1.000000 1",
-	))
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
-		"s2 2 [2,3] 1.000000 2",
-	))
-	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
-	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows())
 }
 
 func TestGCColumnStatsUsage(t *testing.T) {
@@ -196,7 +147,7 @@ func TestExtremCaseOfGC(t *testing.T) {
 	rs := testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
 	require.Len(t, rs.Rows(), 1)
 	rs = testKit.MustQuery("select * from mysql.stats_histograms where table_id = ?", tid)
-	require.Len(t, rs.Rows(), 0)
+	require.Len(t, rs.Rows(), 2)
 	h := dom.StatsHandle()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset", `return(0)`)
 	h.GCStats(dom.InfoSchema(), time.Second*3)

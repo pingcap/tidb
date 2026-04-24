@@ -14,6 +14,7 @@ go_library(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/logutil",
@@ -36,13 +37,14 @@ go_test(
     name = "usage_test",
     timeout = "short",
     srcs = [
+        "export_test.go",
         "index_usage_integration_test.go",
         "predicate_column_test.go",
         "session_stats_collect_test.go",
     ],
     embed = [":usage"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 14,
     deps = [
         "//pkg/meta/model",
         "//pkg/parser/ast",

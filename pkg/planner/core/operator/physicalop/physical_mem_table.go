@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -77,4 +78,60 @@ func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
 		return p.Extractor.ExplainInfo(p)
 	}
 	return ""
+}
+
+// findBestTask4LogicalMemTable converts the LogicalMemTable to PhysicalMemTable.
+func findBestTask4LogicalMemTable(super *logicalop.LogicalMemTable, prop *property.PhysicalProperty) (t base.Task, err error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, nil
+	}
+	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalMemTable](super)
+	if prop.MPPPartitionTp != property.AnyType {
+		return base.InvalidTask, nil
+	}
+
+	// If prop.CanAddEnforcer is true, the prop.SortItems need to be set nil for p.findBestTask.
+	// Before function return, reset it for enforcing task prop.
+	oldProp := prop.CloneEssentialFields()
+	if prop.CanAddEnforcer {
+		// First, get the bestTask without enforced prop
+		prop.CanAddEnforcer = false
+		// still use the super.
+		t, err = FindBestTask(super, prop)
+		if err != nil {
+			return nil, err
+		}
+		prop.CanAddEnforcer = true
+		if t != base.InvalidTask {
+			return
+		}
+		// Next, get the bestTask with enforced prop
+		prop.SortItems = []property.SortItem{}
+	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		if prop.CanAddEnforcer {
+			*prop = *oldProp
+			t = EnforceProperty(prop, t, p.Plan.SCtx(), nil)
+			prop.CanAddEnforcer = true
+		}
+	}()
+
+	if !prop.IsSortItemEmpty() {
+		return base.InvalidTask, nil
+	}
+	memTable := PhysicalMemTable{
+		DBName:         p.DBName,
+		Table:          p.TableInfo,
+		Columns:        p.Columns,
+		Extractor:      p.Extractor,
+		QueryTimeRange: p.QueryTimeRange,
+	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+	memTable.SetSchema(p.Schema())
+	rt := &RootTask{}
+	rt.SetPlan(memTable)
+	return rt, nil
 }

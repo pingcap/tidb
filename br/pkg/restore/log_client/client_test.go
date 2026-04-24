@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -40,17 +41,18 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -1334,9 +1336,9 @@ func (fse fakeSQLExecutor) ExecRestrictedSQL(_ context.Context, _ []sqlexec.Opti
 func TestInitSchemasReplaceForDDL(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.ToSlash(t.TempDir())
-	backend, err := storage.ParseBackend("local://"+path, nil)
+	backend, err := objstore.ParseBackend("local://"+path, nil)
 	require.NoError(t, err)
-	stg, err := storage.New(ctx, backend, nil)
+	stg, err := objstore.New(ctx, backend, nil)
 	require.NoError(t, err)
 
 	{
@@ -1368,7 +1370,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		s := utiltest.CreateRestoreSchemaSuite(t)
 		tk := testkit.NewTestKit(t, s.Mock.Storage)
-		tk.Exec(session.CreateTiDBPITRIDMapTable)
+		tk.Exec(metadef.CreateTiDBPITRIDMapTable)
 		g := gluetidb.New()
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
@@ -1434,11 +1436,27 @@ func getDBMap() map[int64]*stream.DBReplace {
 	return replaces
 }
 
+func mustMarshalPITRIDMapBackupMeta(t *testing.T, schemaVersion uint32) []byte {
+	t.Helper()
+
+	backupMeta := &backuppb.BackupMeta{
+		BackupSchemaVersion: schemaVersion,
+		ClusterVersion:      "8.5.6",
+		BrVersion:           "v8.5.6",
+		DbMaps: (&stream.TableMappingManager{
+			DBReplaceMap: getDBMap(),
+		}).ToProto(),
+	}
+	data, err := proto.Marshal(backupMeta)
+	require.NoError(t, err)
+	return data
+}
+
 func TestPITRIDMap(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.MustExec(session.CreateTiDBPITRIDMapTable)
+	tk.MustExec(metadef.CreateTiDBPITRIDMapTable)
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
@@ -1478,9 +1496,31 @@ func TestPITRIDMap(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		err = se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %?;",
+			uint64(0), uint64(2), uint64(3))
+		require.NoError(t, err)
+		for startIdx, segmentID := 0, 0; startIdx < len(data); segmentID += 1 {
+			endIdx := min(startIdx+logclient.PITRIdMapBlockSize, len(data))
+			err = se.ExecuteInternal(ctx,
+				"REPLACE INTO mysql.tidb_pitr_id_map (restore_id, restored_ts, upstream_cluster_id, segment_id, id_map) VALUES (%?, %?, %?, %?, %?);",
+				uint64(0), uint64(2), uint64(3), segmentID, data[startIdx:endIdx],
+			)
+			require.NoError(t, err)
+			startIdx = endIdx
+		}
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
 }
 
 func TestPITRIDMapOnStorage(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("in next-gen, system tables have reserved and fixed table ID, cannot be dropped")
+	}
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -1489,7 +1529,7 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
-	backend, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+	backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
 	require.NoError(t, err)
 	err = client.SetStorage(ctx, backend, nil)
 	require.NoError(t, err)
@@ -1502,7 +1542,7 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
 	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, s.Mock.Domain, se)
-	backend2, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()+"/temp_another"), nil)
+	backend2, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()+"/temp_another"), nil)
 	require.NoError(t, err)
 	err = client2.SetStorage(ctx, backend2, nil)
 	require.NoError(t, err)
@@ -1532,19 +1572,34 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("reject newer backup schema version", func(t *testing.T) {
+		client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+		backend, err := objstore.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+		require.NoError(t, err)
+		storage, err := objstore.New(ctx, backend, nil)
+		require.NoError(t, err)
+		err = client.SetStorage(ctx, backend, nil)
+		require.NoError(t, err)
+		data := mustMarshalPITRIDMapBackupMeta(t, backuppb.BackupSchemaVersion+1)
+		require.NoError(t, storage.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), data))
+
+		_, err = client.TEST_initSchemasMap(ctx, 2, nil)
+		require.ErrorContains(t, err, "requires schema version")
+	})
 }
 
 func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.MustExec(session.CreateTiDBPITRIDMapTable)
+	tk.MustExec(metadef.CreateTiDBPITRIDMapTable)
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
 	client.SetUseCheckpoint()
-	stg, err := storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()))
+	stg, err := objstore.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()))
 	require.NoError(t, err)
 	logCheckpointMetaManager := checkpoint.NewLogStorageMetaManager(
 		stg, nil, 123, "test", 1)
@@ -1558,7 +1613,7 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
 	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, s.Mock.Domain, se)
-	stg, err = storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()) + "/temp_another")
+	stg, err = objstore.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()) + "/temp_another")
 	require.NoError(t, err)
 	logCheckpointMetaManager2 := checkpoint.NewLogStorageMetaManager(
 		stg, nil, 123, "test", 1)
@@ -2165,7 +2220,7 @@ func TestRepairIngestIndex(t *testing.T) {
 			RowCount:   100,
 			RawArgs:    args,
 			ReorgMeta: &model.DDLReorgMeta{
-				ReorgTp: model.ReorgTypeLitMerge,
+				ReorgTp: model.ReorgTypeIngest,
 			},
 			BinlogInfo: &model.HistoryInfo{
 				TableInfo: &model.TableInfo{
@@ -2350,7 +2405,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			RowCount:   100,
 			RawArgs:    args,
 			ReorgMeta: &model.DDLReorgMeta{
-				ReorgTp: model.ReorgTypeLitMerge,
+				ReorgTp: model.ReorgTypeIngest,
 			},
 			BinlogInfo: &model.HistoryInfo{
 				TableInfo: &model.TableInfo{
@@ -2367,7 +2422,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			},
 		}
 	}
-	stg, err := storage.NewLocalStorage(t.TempDir())
+	stg, err := objstore.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 	logStorageMetaManager := checkpoint.NewLogStorageMetaManager(stg, nil, 123, "test", 1)
 

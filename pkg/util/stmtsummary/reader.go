@@ -328,6 +328,8 @@ const (
 	BackoffTypesStr                            = "BACKOFF_TYPES"
 	AvgMemStr                                  = "AVG_MEM"
 	MaxMemStr                                  = "MAX_MEM"
+	AvgMemArbitrationStr                       = "AVG_MEM_ARBITRATION"
+	MaxMemArbitrationStr                       = "MAX_MEM_ARBITRATION"
 	AvgDiskStr                                 = "AVG_DISK"
 	MaxDiskStr                                 = "MAX_DISK"
 	AvgKvTimeStr                               = "AVG_KV_TIME"
@@ -364,6 +366,8 @@ const (
 	MaxRequestUnitWriteStr                     = "MAX_REQUEST_UNIT_WRITE"
 	AvgQueuedRcTimeStr                         = "AVG_QUEUED_RC_TIME"
 	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
+	AvgRequestUnitV2Str                        = "AVG_REQUEST_UNIT_V2"
+	MaxRequestUnitV2Str                        = "MAX_REQUEST_UNIT_V2"
 	ResourceGroupName                          = "RESOURCE_GROUP"
 	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
 	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
@@ -383,6 +387,7 @@ const (
 	ErrorsStr                               = "ERRORS"
 	WarningsStr                             = "WARNINGS"
 	MemStr                                  = "MEM"
+	MemArbitrationStr                       = "MEM_ARBITRATION"
 	DiskStr                                 = "DISK"
 	TotalTimeStr                            = "TOTAL_TIME"
 	ParseTimeStr                            = "PARSE_TIME"
@@ -766,6 +771,15 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	MaxMemStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.maxMem
 	},
+	MemArbitrationStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.sumMemArbitration
+	},
+	AvgMemArbitrationStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgSumFloat(ssStats.sumMemArbitration, ssStats.execCount)
+	},
+	MaxMemArbitrationStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxMemArbitration
+	},
 	DiskStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.sumDisk
 	},
@@ -904,6 +918,12 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	MaxQueuedRcTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return int64(ssStats.MaxRUWaitDuration)
+	},
+	AvgRequestUnitV2Str: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgSumFloat(ssStats.SumRUV2, ssStats.execCount)
+	},
+	MaxRequestUnitV2Str: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.MaxRUV2
 	},
 	ResourceGroupName: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.resourceGroupName

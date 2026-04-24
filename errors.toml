@@ -201,14 +201,24 @@ error = '''
 pd not fully scattered
 '''
 
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
-failed to wait region splitted
+failed to wait region split
 '''
 
 ["BR:PD:ErrPDUpdateFailed"]
 error = '''
 failed to update PD
+'''
+
+["BR:PiTR:ErrCheckpointWatchRestart"]
+error = '''
+checkpoint watch needs restart
 '''
 
 ["BR:PiTR:ErrInvalidTaskInfo"]
@@ -331,6 +341,11 @@ error = '''
 stream task has no storage
 '''
 
+["Import:ErrCastValue"]
+error = '''
+Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
+'''
+
 ["Ingest:EpochNotMatch"]
 error = '''
 epoch not match
@@ -369,6 +384,11 @@ server is busy
 ["Ingest:StoreDiskFull"]
 error = '''
 store disk full
+'''
+
+["KV:ErrNoLeader"]
+error = '''
+region has no leader, region '%d'
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
@@ -484,11 +504,6 @@ check multi-ingest support error
 ["Lightning:KV:ErrCreateKVClient"]
 error = '''
 create kv client error
-'''
-
-["Lightning:KV:ErrNoLeader"]
-error = '''
-write to tikv with no leader returned, region '%d', leader: %d
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
@@ -1611,6 +1626,16 @@ error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
 '''
 
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
+["ddl:8267"]
+error = '''
+%s is forbidden
+'''
+
 ["ddl:8270"]
 error = '''
 Invalid engine attribute format: %s
@@ -1619,6 +1644,11 @@ Invalid engine attribute format: %s
 ["ddl:8271"]
 error = '''
 Invalid storage class: %s
+'''
+
+["ddl:8272"]
+error = '''
+Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
 '''
 
 ["ddl:9014"]
@@ -1966,6 +1996,11 @@ error = '''
 Unsupported option %s for %s
 '''
 
+["executor:8167"]
+error = '''
+Duplicate key conflict found. Please resolve conflicts in the input dataset, or set on_duplicate_key to a strategy that can handle conflicts, for example 'capture'
+'''
+
 ["executor:8170"]
 error = '''
 Job ID %d doesn't exist
@@ -2009,6 +2044,11 @@ Delete can not find column %s for table %s
 ["executor:8179"]
 error = '''
 Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
+'''
+
+["executor:8180"]
+error = '''
+Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
 '''
 
 ["executor:8212"]
@@ -2284,6 +2324,16 @@ Resource group '%-.192s' already exists
 ["meta:8249"]
 error = '''
 Unknown resource group '%-.192s'
+'''
+
+["meta:8268"]
+error = '''
+masking policy already exists
+'''
+
+["meta:8269"]
+error = '''
+masking policy doesn't exist
 '''
 
 ["planner:1044"]
@@ -2659,6 +2709,11 @@ Argument %s of GROUPING function is not in GROUP BY
 ["planner:3637"]
 error = '''
 Variable '%s' might not be affected by SET_VAR hint.
+'''
+
+["planner:3809"]
+error = '''
+Invalid use of LATERAL: %s
 '''
 
 ["planner:8006"]

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
@@ -150,7 +151,6 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		vardef.TiDBRowFormatVersion,
 		vardef.TiDBSlowQueryFile,
 		vardef.TiDBSlowLogThreshold,
-		vardef.TiDBSlowTxnLogThreshold,
 		vardef.TiDBEnableCollectExecutionInfo,
 		vardef.TiDBMemoryUsageAlarmRatio,
 		vardef.TiDBRedactLog,
@@ -159,6 +159,13 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		vardef.TiDBTopSQLMaxMetaCount,
 		vardef.TiDBServiceScope,
 		vardef.TiDBCloudStorageURI,
+		vardef.TiDBStmtSummaryMaxStmtCount,
+		vardef.TiDBServerMemoryLimit,
+		vardef.TiDBServerMemoryLimitGCTrigger,
+		vardef.TiDBInstancePlanCacheMaxMemSize,
+		vardef.TiDBStatsCacheMemQuota,
+		vardef.TiDBMemQuotaBindingCache,
+		vardef.TiDBSchemaCacheSize,
 		tidbAuditRetractLog:
 		return true
 	}
@@ -168,6 +175,8 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 // IsRestrictedPrivilege returns true if the privilege shuld not be satisfied by SUPER
 // As most dynamic privileges are.
 func IsRestrictedPrivilege(privNameInUpper string) bool {
+	intest.Assert(strings.ToUpper(privNameInUpper) == privNameInUpper, "privilege name must be uppercase")
+
 	if len(privNameInUpper) < 12 {
 		return false
 	}

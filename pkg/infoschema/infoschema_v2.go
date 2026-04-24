@@ -386,12 +386,15 @@ func gcCollectTableItem(bt *btree.BTreeG[*tableItem], cutVer int64, maxItems int
 	//	db2 tbl2 v0    <- delete, because v0 < v4
 	//	db1 tbl3 v4
 	//	...
-	// So the rule can be simplify to "remove all items whose (version < schemaVersion && previous item is same table)"
+	// So the rule can be simplify to "remove all items whose (version < cutVer && previous item is same table && previous
+	// item is also < cutVer)". This keeps the pivot record (latest version < cutVer) for every table name, which is still
+	// needed to serve requests whose schemaVersion is in [cutVer, next_change_of_the_table).
 	bt.Descend(func(item *tableItem) bool {
 		if item.schemaVersion < cutVer &&
 			prev != nil &&
 			prev.dbName.L == item.dbName.L &&
-			prev.tableName.L == item.tableName.L {
+			prev.tableName.L == item.tableName.L &&
+			prev.schemaVersion < cutVer {
 			dels = append(dels, item)
 			if len(dels) >= maxItems {
 				return false
@@ -411,7 +414,8 @@ func gcCollectReferredForeignKeyItem(bt *btree.BTreeG[*referredForeignKeyItem], 
 		if item.schemaVersion < cutVer &&
 			prev != nil &&
 			prev.dbName == item.dbName &&
-			prev.tableName == item.tableName {
+			prev.tableName == item.tableName &&
+			prev.schemaVersion < cutVer {
 			dels = append(dels, item)
 			if len(dels) >= maxItems {
 				return false
@@ -864,7 +868,7 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return nil, false
 	}
 
-	if isTableVirtual(id) {
+	if autoid.IsMemSchemaID(id) {
 		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
 			schTbls := raw.(*schemaTables)
 			val, ok = schTbls.tables[itm.tableName.L]
@@ -950,7 +954,7 @@ func (is *infoschemaV2) TableIsCached(id int64) (ok bool) {
 		return false
 	}
 
-	if isTableVirtual(id) {
+	if autoid.IsMemSchemaID(id) {
 		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
 			schTbls := raw.(*schemaTables)
 			_, ok = schTbls.tables[itm.tableName.L]
@@ -1342,7 +1346,7 @@ func (is *infoschemaV2) TableExists(schema, table ast.CIStr) bool {
 }
 
 func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
-	if isTableVirtual(id) {
+	if autoid.IsMemSchemaID(id) {
 		var st *schemaTables
 		is.Data.specials.Range(func(key, value any) bool {
 			tmp := value.(*schemaTables)
@@ -1446,13 +1450,6 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 }
 
 var loadTableSF = &singleflight.Group{}
-
-func isTableVirtual(id int64) bool {
-	// some kind of magic number...
-	// we use special ids for tables in INFORMATION_SCHEMA/PERFORMANCE_SCHEMA/METRICS_SCHEMA
-	// See meta/autoid/autoid.go for those definitions.
-	return (id & autoid.SystemSchemaIDFlag) > 0
-}
 
 // IsV2 tells whether an InfoSchema is v2 or not.
 func IsV2(is InfoSchema) (bool, *infoschemaV2) {

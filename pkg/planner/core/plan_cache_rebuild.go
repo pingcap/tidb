@@ -146,15 +146,15 @@ func rebuildRange(p base.Plan) error {
 				return err
 			}
 		}
-	case *Insert:
+	case *physicalop.Insert:
 		if x.SelectPlan != nil {
 			return rebuildRange(x.SelectPlan)
 		}
-	case *Update:
+	case *physicalop.Update:
 		if x.SelectPlan != nil {
 			return rebuildRange(x.SelectPlan)
 		}
-	case *Delete:
+	case *physicalop.Delete:
 		if x.SelectPlan != nil {
 			return rebuildRange(x.SelectPlan)
 		}
@@ -240,6 +240,14 @@ func buildRangeForTableScan(sctx base.PlanContext, ts *physicalop.PhysicalTableS
 				return errors.New("fail to build ranges, cannot get the primary key column")
 			}
 			ts.Ranges = ranger.FullIntRange(false)
+		}
+	}
+
+	// Rebuild GroupedRanges if GroupByColIdxs is set
+	if len(ts.GroupByColIdxs) > 0 {
+		ts.GroupedRanges, err = GroupRangesByCols(ts.Ranges, ts.GroupByColIdxs)
+		if err != nil {
+			return err
 		}
 	}
 	return
@@ -418,6 +426,14 @@ func buildRangeForIndexScan(sctx base.PlanContext, is *physicalop.PhysicalIndexS
 		return errors.New("rebuild to get an unsafe range")
 	}
 	is.Ranges = res.Ranges
+
+	// Rebuild GroupedRanges if GroupByColIdxs is set
+	if len(is.GroupByColIdxs) > 0 {
+		is.GroupedRanges, err = GroupRangesByCols(is.Ranges, is.GroupByColIdxs)
+		if err != nil {
+			return err
+		}
+	}
 	return
 }
 

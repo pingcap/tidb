@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -304,13 +305,27 @@ func showCommentsFromJob(job *model.Job) string {
 		return ""
 	}
 	var labels []string
-	if job.Type == model.ActionAddIndex ||
-		job.Type == model.ActionAddPrimaryKey {
+	switch m.AnalyzeState {
+	case model.AnalyzeStateRunning:
+		labels = append(labels, "analyzing")
+	case model.AnalyzeStateFailed:
+		labels = append(labels, "analyze_failed")
+	case model.AnalyzeStateTimeout:
+		labels = append(labels, "analyze_timeout")
+	default:
+	}
+	isAddingIndex := job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionAddPrimaryKey
+	if isAddingIndex && kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		return strings.Join(labels, ", ")
+	}
+	if isAddingIndex {
 		switch m.ReorgTp {
 		case model.ReorgTypeTxn:
 			labels = append(labels, model.ReorgTypeTxn.String())
-		case model.ReorgTypeLitMerge:
-			labels = append(labels, model.ReorgTypeLitMerge.String())
+		case model.ReorgTypeIngest:
+			labels = append(labels, model.ReorgTypeIngest.String())
 			if m.IsDistReorg {
 				labels = append(labels, "DXF")
 			}
@@ -345,6 +360,10 @@ func showCommentsFromJob(job *model.Job) string {
 }
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
+	if kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		return ""
+	}
 	var labels []string
 	if sub.ReorgTp == model.ReorgTypeNone {
 		return ""

@@ -7,14 +7,14 @@
         "test t  a 0 \u0000B\u0000B\u0000B 2"
       ],
       [
-        "TableReader_8 2.00 root  data:Selection_7",
-        "└─Selection_7 2.00 cop[tikv]  eq(test.t.a, \"aÄa\")",
-        "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        "TableReader 2.00 root  data:Selection",
+        "└─Selection 2.00 cop[tikv]  eq(test.t.a, \"aÄa\")",
+        "  └─TableFullScan 4.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_8 2.00 root  data:Selection_7",
-        "└─Selection_7 2.00 cop[tikv]  gt(test.t.a, \"aÄa\")",
-        "  └─TableFullScan_6 4.00 cop[tikv] table:t keep order:false"
+        "TableReader 2.00 root  data:Selection",
+        "└─Selection 2.00 cop[tikv]  gt(test.t.a, \"aÄa\")",
+        "  └─TableFullScan 4.00 cop[tikv] table:t keep order:false"
       ]
     ]
   },
@@ -24,107 +24,149 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 763
+        "Count": 763,
+        "MinEst": 759,
+        "MaxEst": 763
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 67
+        "Count": 67,
+        "MinEst": 13,
+        "MaxEst": 247
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 62
+        "Count": 62,
+        "MinEst": 13,
+        "MaxEst": 226
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 57
+        "Count": 57,
+        "MinEst": 13,
+        "MaxEst": 205
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 52
+        "Count": 52,
+        "MinEst": 13,
+        "MaxEst": 184
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 41
+        "Count": 41,
+        "MinEst": 13,
+        "MaxEst": 143
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 59
+        "Count": 59,
+        "MinEst": 13,
+        "MaxEst": 215
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 38
+        "Count": 38,
+        "MinEst": 13,
+        "MaxEst": 131
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 18
+        "Count": 18,
+        "MinEst": 13,
+        "MaxEst": 48
       },
       {
         "Start": 1500,
         "End": 1600,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 13,
+        "MaxEst": 1508
       },
       {
         "Start": 300,
         "End": 899,
-        "Count": 4500
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
       },
       {
         "Start": 800,
         "End": 1000,
-        "Count": 873
+        "Count": 873,
+        "MinEst": 763,
+        "MaxEst": 1221
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 381
+        "Count": 381,
+        "MinEst": 13,
+        "MaxEst": 1502
       },
       {
         "Start": 300,
         "End": 1500,
-        "Count": 4500
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
       },
       {
         "Start": 200,
         "End": 300,
-        "Count": 122
+        "Count": 122,
+        "MinEst": 13,
+        "MaxEst": 467
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 101
+        "Count": 101,
+        "MinEst": 13,
+        "MaxEst": 383
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 872
+        "Count": 872,
+        "MinEst": 763,
+        "MaxEst": 1217
       },
       {
         "Start": 200,
         "End": 1000,
-        "Count": 4500
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
       },
       {
         "Start": 0,
         "End": 100,
-        "Count": 80
+        "Count": 80,
+        "MinEst": 13,
+        "MaxEst": 299
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 132
+        "Count": 132,
+        "MinEst": 13,
+        "MaxEst": 507
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 60
+        "Count": 60,
+        "MinEst": 13,
+        "MaxEst": 216
       }
     ]
   },
@@ -232,48 +274,48 @@
     "Name": "TestColumnIndexNullEstimation",
     "Cases": [
       [
-        "IndexReader_7 4.00 root  index:IndexRangeScan_6",
-        "└─IndexRangeScan_6 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], keep order:false"
+        "IndexReader 4.00 root  index:IndexRangeScan",
+        "└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], keep order:false"
       ],
       [
-        "IndexReader_7 1.00 root  index:IndexFullScan_6",
-        "└─IndexFullScan_6 1.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
+        "IndexReader 1.00 root  index:IndexFullScan",
+        "└─IndexFullScan 1.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
       ],
       [
-        "IndexReader_7 4.00 root  index:IndexRangeScan_6",
-        "└─IndexRangeScan_6 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], (3,+inf], keep order:false"
+        "IndexReader 4.00 root  index:IndexRangeScan",
+        "└─IndexRangeScan 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], (3,+inf], keep order:false"
       ],
       [
-        "IndexReader_6 5.00 root  index:IndexFullScan_5",
-        "└─IndexFullScan_5 5.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
+        "IndexReader 5.00 root  index:IndexFullScan",
+        "└─IndexFullScan 5.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
       ],
       [
-        "IndexReader_7 1.00 root  index:IndexRangeScan_6",
-        "└─IndexRangeScan_6 1.00 cop[tikv] table:t, index:idx_b(b) range:[-inf,4), keep order:false"
+        "IndexReader 1.00 root  index:IndexRangeScan",
+        "└─IndexRangeScan 1.00 cop[tikv] table:t, index:idx_b(b) range:[-inf,4), keep order:false"
       ],
       [
-        "TableReader_8 1.00 root  data:Selection_7",
-        "└─Selection_7 1.00 cop[tikv]  isnull(test.t.a)",
-        "  └─TableFullScan_6 5.00 cop[tikv] table:t keep order:false"
+        "TableReader 1.00 root  data:Selection",
+        "└─Selection 1.00 cop[tikv]  isnull(test.t.a)",
+        "  └─TableFullScan 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_8 4.00 root  data:Selection_7",
-        "└─Selection_7 4.00 cop[tikv]  not(isnull(test.t.a))",
-        "  └─TableFullScan_6 5.00 cop[tikv] table:t keep order:false"
+        "TableReader 4.00 root  data:Selection",
+        "└─Selection 4.00 cop[tikv]  not(isnull(test.t.a))",
+        "  └─TableFullScan 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_8 2.00 root  data:Selection_7",
-        "└─Selection_7 2.00 cop[tikv]  or(isnull(test.t.a), gt(test.t.a, 3))",
-        "  └─TableFullScan_6 5.00 cop[tikv] table:t keep order:false"
+        "TableReader 2.00 root  data:Selection",
+        "└─Selection 2.00 cop[tikv]  or(isnull(test.t.a), gt(test.t.a, 3))",
+        "  └─TableFullScan 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_6 5.00 root  data:TableFullScan_5",
-        "└─TableFullScan_5 5.00 cop[tikv] table:t keep order:false"
+        "TableReader 5.00 root  data:TableFullScan",
+        "└─TableFullScan 5.00 cop[tikv] table:t keep order:false"
       ],
       [
-        "TableReader_8 3.00 root  data:Selection_7",
-        "└─Selection_7 3.00 cop[tikv]  lt(test.t.a, 4)",
-        "  └─TableFullScan_6 5.00 cop[tikv] table:t keep order:false"
+        "TableReader 3.00 root  data:Selection",
+        "└─Selection 3.00 cop[tikv]  lt(test.t.a, 4)",
+        "  └─TableFullScan 5.00 cop[tikv] table:t keep order:false"
       ]
     ]
   },
@@ -281,7 +323,7 @@
     "Name": "TestUniqCompEqualEst",
     "Cases": [
       [
-        "Point_Get_6 1.00 root table:t, clustered index:PRIMARY(a, b) "
+        "Point_Get 1.00 root table:t, clustered index:PRIMARY(a, b) "
       ]
     ]
   },
@@ -836,8 +878,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300 and a <= 900",
         "Result": [
-          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
+          "TableReader 1338.33 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 1338.33 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -860,16 +902,16 @@
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300",
         "Result": [
-          "TableReader 2000.00 root partition:all data:Selection",
-          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
+          "TableReader 1583.33 root partition:all data:Selection",
+          "└─Selection 1583.33 cop[tikv]  ge(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 900",
         "Result": [
-          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "└─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
+          "TableReader 1521.88 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 1521.88 cop[tikv]  le(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -1628,7 +1670,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -1642,7 +1688,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 50
+                    "Result": {
+                      "Est": 50,
+                      "MaxEst": 50,
+                      "MinEst": 50
+                    }
                   }
                 ]
               },
@@ -1717,7 +1767,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -1731,7 +1785,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 1
+                    "Result": {
+                      "Est": 1,
+                      "MaxEst": 1,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -1807,7 +1865,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -1877,7 +1939,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -2040,7 +2106,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -2185,7 +2255,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -2199,7 +2273,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 51.67785234899329
+                    "Result": {
+                      "Est": 51.67785234899329,
+                      "MaxEst": 51.67785234899329,
+                      "MinEst": 51.67785234899329
+                    }
                   }
                 ]
               },
@@ -2280,7 +2358,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2294,7 +2376,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 1.0335570469798658
+                    "Result": {
+                      "Est": 1.0335570469798658,
+                      "MaxEst": 1.0335570469798658,
+                      "MinEst": 1.0335570469798658
+                    }
                   }
                 ]
               },
@@ -2626,6 +2712,21 @@
                             "realtimeRowCount": 3080
                           },
                           {
+                            "commonPrefix": 0,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
+                            "unsigned": false
+                          },
+                          {
+                            "avgRowCount": 0,
+                            "boundL": -7000,
+                            "boundR": 11000,
+                            "histL": -1000,
+                            "histR": 5000,
+                            "lPercent": 0.8402777777777778,
+                            "rPercent": 0
+                          },
+                          {
                             "Result": 1.539230384807596
                           }
                         ]
@@ -2640,7 +2741,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 1.539230384807596
+                    "Result": {
+                      "Est": 1.539230384807596,
+                      "MaxEst": 30.8,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -2715,7 +2820,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2764,7 +2873,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 1
+                            "Result": {
+                              "Est": 1,
+                              "MaxEst": 1,
+                              "MinEst": 1
+                            }
                           }
                         ]
                       },
@@ -2778,7 +2891,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 2
+                    "Result": {
+                      "Est": 2,
+                      "MaxEst": 2,
+                      "MinEst": 2
+                    }
                   }
                 ]
               },
@@ -2910,6 +3027,21 @@
                                 "realtimeRowCount": 3080
                               },
                               {
+                                "commonPrefix": 0,
+                                "lScalar": 72057594037927940,
+                                "rScalar": 252201579132747780,
+                                "unsigned": false
+                              },
+                              {
+                                "avgRowCount": 0,
+                                "boundL": 252201579132747740,
+                                "boundR": 252201579132747840,
+                                "histL": 252201579132747780,
+                                "histR": 252201579132747800,
+                                "lPercent": 1,
+                                "rPercent": 0
+                              },
+                              {
                                 "Result": 1.539230384807596
                               }
                             ]
@@ -3008,7 +3140,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -3057,7 +3193,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3106,7 +3246,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3155,7 +3299,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3254,7 +3402,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 50
+                                        "Result": {
+                                          "Est": 50,
+                                          "MaxEst": 50,
+                                          "MinEst": 50
+                                        }
                                       }
                                     ]
                                   },
@@ -3303,7 +3455,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3352,7 +3508,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3401,7 +3561,11 @@
                                       },
                                       {
                                         "Error": null,
-                                        "Result": 1
+                                        "Result": {
+                                          "Est": 1,
+                                          "MaxEst": 1,
+                                          "MinEst": 1
+                                        }
                                       }
                                     ]
                                   },
@@ -3634,7 +3798,7 @@
                             "unsigned": false
                           },
                           {
-                            "avgRowCount": 154.37797031265498,
+                            "avgRowCount": 0,
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
@@ -3643,13 +3807,13 @@
                             "rPercent": 0
                           },
                           {
-                            "Result": 154.37797031265498
+                            "Result": 1
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 154.37797031265498,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -3657,7 +3821,11 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 154.37797031265498
+                    "Result": {
+                      "Est": 1,
+                      "MaxEst": 1100,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -3818,7 +3986,11 @@
                           },
                           {
                             "Error": null,
-                            "Result": 50
+                            "Result": {
+                              "Est": 50,
+                              "MaxEst": 50,
+                              "MinEst": 50
+                            }
                           }
                         ]
                       },
@@ -3832,7 +4004,11 @@
                   },
                   {
                     "Name": "b",
-                    "Result": 2.713087248322148
+                    "Result": {
+                      "Est": 2.713087248322148,
+                      "MaxEst": 2.713087248322148,
+                      "MinEst": 1
+                    }
                   }
                 ]
               },
@@ -3965,7 +4141,7 @@
                             "unsigned": false
                           },
                           {
-                            "avgRowCount": 154.37797031265498,
+                            "avgRowCount": 0,
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
@@ -3974,13 +4150,13 @@
                             "rPercent": 0
                           },
                           {
-                            "Result": 154.37797031265498
+                            "Result": 1
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 154.37797031265498,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
@@ -3988,7 +4164,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 154.37797031265498
+                    "Result": 1
                   }
                 ]
               },
@@ -4141,7 +4317,7 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0.05012271763397889,
+                "Selectivity": 0.0003246753246753247,
                 "partial cover": false
               },
               {
@@ -4233,8 +4409,8 @@
       {
         "Query": "explain format = 'brief' select a, b from t where a = 1 and b = 1",
         "Result": [
-          "IndexReader 20.32 root  index:IndexRangeScan",
-          "└─IndexRangeScan 20.32 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
+          "IndexReader 18.29 root  index:IndexRangeScan",
+          "└─IndexRangeScan 18.29 cop[tikv] table:t, index:iabc(a, b, c) range:[1 1,1 1], keep order:false"
         ]
       }
     ]

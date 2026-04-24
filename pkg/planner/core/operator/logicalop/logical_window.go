@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -160,7 +158,7 @@ func (fb *FrameBound) Equals(other any) bool {
 	if fb.Type != fb2.Type || fb.UnBounded != fb2.UnBounded || fb.Num != fb2.Num {
 		return false
 	}
-	if fb.CalcFuncs == nil && fb2.CalcFuncs != nil || fb.CalcFuncs != nil && fb2.CalcFuncs == nil || len(fb.CalcFuncs) != len(fb2.CmpFuncs) {
+	if fb.CalcFuncs == nil && fb2.CalcFuncs != nil || fb.CalcFuncs != nil && fb2.CalcFuncs == nil || len(fb.CalcFuncs) != len(fb2.CalcFuncs) {
 		return false
 	}
 	for i, one := range fb.CalcFuncs {
@@ -193,9 +191,17 @@ func (fb *FrameBound) Clone() *FrameBound {
 	cloned := new(FrameBound)
 	*cloned = *fb
 
-	cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
-	for _, it := range fb.CalcFuncs {
-		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+	if fb.CalcFuncs != nil {
+		cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
+		for _, it := range fb.CalcFuncs {
+			cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+		}
+	}
+	if fb.CompareCols != nil {
+		cloned.CompareCols = make([]expression.Expression, 0, len(fb.CompareCols))
+		for _, it := range fb.CompareCols {
+			cloned.CompareCols = append(cloned.CompareCols, it.Clone())
+		}
 	}
 	cloned.CmpFuncs = fb.CmpFuncs
 
@@ -287,15 +293,35 @@ func (p LogicalWindow) Init(ctx base.PlanContext, offset int) *LogicalWindow {
 // ReplaceExprColumns implements base.LogicalPlan interface.
 func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column) {
 	for _, desc := range p.WindowFuncDescs {
-		for _, arg := range desc.Args {
-			ruleutil.ResolveExprAndReplace(arg, replace)
+		for i, arg := range desc.Args {
+			desc.Args[i] = ruleutil.ResolveExprAndReplace(arg, replace)
 		}
 	}
-	for _, item := range p.PartitionBy {
-		ruleutil.ResolveColumnAndReplace(item.Col, replace)
+	for i, item := range p.PartitionBy {
+		p.PartitionBy[i].Col = ruleutil.ResolveColumnAndReplace(item.Col, replace)
 	}
-	for _, item := range p.OrderBy {
-		ruleutil.ResolveColumnAndReplace(item.Col, replace)
+	for i, item := range p.OrderBy {
+		p.OrderBy[i].Col = ruleutil.ResolveColumnAndReplace(item.Col, replace)
+	}
+	if p.Frame == nil {
+		return
+	}
+	// RANGE frames keep order-by dependent expressions in frame bounds as well.
+	// When projection elimination rewrites window columns, update frame expressions
+	// together with PartitionBy/OrderBy so later ResolveIndices sees the same column IDs.
+	replaceFrameBoundColumns(p.Frame.Start, replace)
+	replaceFrameBoundColumns(p.Frame.End, replace)
+}
+
+func replaceFrameBoundColumns(bound *FrameBound, replace map[string]*expression.Column) {
+	if bound == nil {
+		return
+	}
+	for i, expr := range bound.CalcFuncs {
+		bound.CalcFuncs[i] = ruleutil.ResolveExprAndReplace(expr, replace)
+	}
+	for i, expr := range bound.CompareCols {
+		bound.CompareCols[i] = ruleutil.ResolveExprAndReplace(expr, replace)
 	}
 }
 
@@ -306,7 +332,7 @@ func (p *LogicalWindow) ReplaceExprColumns(replace map[string]*expression.Column
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	partitionCols := expression.NewSchema(p.GetPartitionByCols()...)
@@ -319,12 +345,12 @@ func (p *LogicalWindow) PredicatePushDown(predicates []expression.Expression, op
 			canNotBePushed = append(canNotBePushed, cond)
 		}
 	}
-	_, _, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
+	_, _, err := p.BaseLogicalPlan.PredicatePushDown(canBePushed)
 	return canNotBePushed, p, err
 }
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
-func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	windowColumns := p.GetWindowResultColumns()
 	cnt := 0
 	for _, col := range parentUsedCols {
@@ -343,7 +369,7 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	parentUsedCols = parentUsedCols[:cnt]
 	parentUsedCols = p.extractUsedCols(parentUsedCols)
 	var err error
-	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols, opt)
+	p.Children()[0], err = p.Children()[0].PruneColumns(parentUsedCols)
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +441,8 @@ func (p *LogicalWindow) ExtractColGroups(colGroups [][]*expression.Column) [][]*
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, infos ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	p.hasTiFlash = infos[0].HasTiFlash
 	result := make([]*expression.Column, 0, len(p.PartitionBy)+len(p.OrderBy))
 	for i := range p.PartitionBy {
 		result = append(result, p.PartitionBy[i].Col)
@@ -423,12 +450,10 @@ func (p *LogicalWindow) PreparePossibleProperties(_ *expression.Schema, _ ...[][
 	for i := range p.OrderBy {
 		result = append(result, p.OrderBy[i].Col)
 	}
-	return [][]*expression.Column{result}
-}
-
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalWindow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalWindow(p, prop)
+	return &base.PossiblePropertiesInfo{
+		Orders:     [][]*expression.Column{result},
+		HasTiFlash: p.hasTiFlash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

@@ -21,11 +21,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	dxfstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -47,8 +48,6 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
-
-const unknownImportedRowCount = -1
 
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
@@ -109,6 +108,12 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
+	}
+	if kerneltype.IsNextGen() {
+		ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
+		if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+			return err2
+		}
 	}
 
 	// must use a new session to pre-check, else the stmt in show processlist will be changed.
@@ -205,7 +210,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 }
 
 func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase, error) {
-	importFromServer, err := storage.IsLocalPath(e.controller.Path)
+	importFromServer, err := objstore.IsLocalPath(e.controller.Path)
 	if err != nil {
 		// since we have checked this during creating controller, this should not happen.
 		return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())

@@ -26,14 +26,17 @@ import (
 	"github.com/pingcap/errors"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )
+
+// 64 is chosen based on nextgen import shape: subtask size is ~100 GiB and each region is ~1 GiB,
+// so split key count is often around 100. A threshold of 100 may miss coarse split/scatter on boundary
+// cases, while 64 triggers early load spreading and still avoids this stage for smaller tasks.
+const coarseGrainedSplitKeysThreshold = 64
 
 // splitAndScatterRegionInBatches splits&scatter regions in batches.
 // Too many split&scatter requests may put a lot of pressure on TiKV and PD.
@@ -50,6 +53,36 @@ func (local *Backend) splitAndScatterRegionInBatches(
 		limiter = rate.NewLimiter(rate.Limit(eventLimit), burstPerSec*ratePerSecMultiplier)
 		batchCnt = min(batchCnt, burstPerSec)
 	}
+	if len(splitKeys) > coarseGrainedSplitKeysThreshold {
+		// Split and scatter a coarse-grained set of keys first to spread regions
+		// before the fine-grained split stage.
+		coarseGrainedSplitKeys := getCoarseGrainedSplitKeys(splitKeys)
+		if err := local.splitAndScatterRegionInBatchesWithLimiter(ctx, coarseGrainedSplitKeys, batchCnt, limiter); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return local.splitAndScatterRegionInBatchesWithLimiter(ctx, splitKeys, batchCnt, limiter)
+}
+
+func getCoarseGrainedSplitKeys(splitKeys [][]byte) [][]byte {
+	sqrtCnt := int(math.Sqrt(float64(len(splitKeys))))
+	coarseGrainedSplitKeys := make([][]byte, 0, sqrtCnt+1)
+	i := 0
+	for ; i < len(splitKeys); i += sqrtCnt {
+		coarseGrainedSplitKeys = append(coarseGrainedSplitKeys, splitKeys[i])
+	}
+	if i-sqrtCnt != len(splitKeys)-1 {
+		coarseGrainedSplitKeys = append(coarseGrainedSplitKeys, splitKeys[len(splitKeys)-1])
+	}
+	return coarseGrainedSplitKeys
+}
+
+func (local *Backend) splitAndScatterRegionInBatchesWithLimiter(
+	ctx context.Context,
+	splitKeys [][]byte,
+	batchCnt int,
+	limiter *rate.Limiter,
+) error {
 	for i := 0; i < len(splitKeys); i += batchCnt {
 		batch := splitKeys[i:]
 		if len(batch) > batchCnt {
@@ -235,43 +268,10 @@ const (
 	CompactionUpperThreshold = 32 * units.GiB
 )
 
-// EstimateCompactionThreshold estimate SST files compression threshold by total row file size
-// with a higher compression threshold, the compression time increases, but the iteration time decreases.
-// Try to limit the total SST files number under 500. But size compress 32GB SST files cost about 20min,
-// we set the upper bound to 32GB to avoid too long compression time.
-// factor is the non-clustered(1 for data engine and number of non-clustered index count for index engine).
-func EstimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
-	totalRawFileSize := int64(0)
-	var lastFile string
-	fileSizeMap := make(map[string]int64, len(files))
-	for _, file := range files {
-		fileSizeMap[file.FileMeta.Path] = file.FileMeta.RealSize
-	}
-
-	for _, engineCp := range cp.Engines {
-		for _, chunk := range engineCp.Chunks {
-			if chunk.FileMeta.Path == lastFile {
-				continue
-			}
-			size, ok := fileSizeMap[chunk.FileMeta.Path]
-			if !ok {
-				size = chunk.FileMeta.FileSize
-			}
-			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-				// parquet file is compressed, thus estimates with a factor of 2
-				size *= 2
-			}
-			totalRawFileSize += size
-			lastFile = chunk.FileMeta.Path
-		}
-	}
-	totalRawFileSize *= factor
-
-	return EstimateCompactionThreshold2(totalRawFileSize)
-}
-
 // EstimateCompactionThreshold2 estimate SST files compression threshold by total row file size
-// see EstimateCompactionThreshold for more details.
+// with a higher compaction threshold, the compaction time increases, but the iteration time decreases.
+// Try to limit the total SST files number under 500. But compressing 32GB SST files costs about 20min,
+// so set the upper bound to 32GB to avoid too long compaction time.
 func EstimateCompactionThreshold2(totalRawFileSize int64) int64 {
 	// try restrict the total file number within 512
 	threshold := totalRawFileSize / 512

@@ -39,7 +39,23 @@ func TestIsTiFlashHTTPResp(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "Test with TiFlash label 2",
+			name: "Test with TiFlash write label under NextGen kernel",
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{
+					{
+						Key:   "engine",
+						Value: "tiflash",
+					},
+					{
+						Key:   "engine_role",
+						Value: "write",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Test with TiFlash compute label under NextGen kernel",
 			store: &pdhttp.MetaStore{
 				Labels: []pdhttp.StoreLabel{
 					{
@@ -74,6 +90,80 @@ func TestIsTiFlashHTTPResp(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			require.Equal(t, tt.want, IsTiFlashHTTPResp(tt.store))
+		})
+	}
+}
+
+func TestIsTiFlashWriteHTTPResp(t *testing.T) {
+	tests := []struct {
+		name  string
+		store *pdhttp.MetaStore
+		want  bool
+	}{
+		{
+			name: "Test with TiFlash label",
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{
+					{
+						Key:   "engine",
+						Value: "tiflash",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Test with TiFlash write label under NextGen kernel",
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{
+					{
+						Key:   "engine",
+						Value: "tiflash",
+					},
+					{
+						Key:   "engine_role",
+						Value: "write",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Test with TiFlash compute label under NextGen kernel",
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{
+					{
+						Key:   "engine",
+						Value: "tiflash_compute",
+					},
+				},
+			},
+			want: false, // tiflash_compute is excluded
+		},
+		{
+			name: "Test without TiFlash label",
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{
+					{
+						Key:   "engine",
+						Value: "not_tiflash",
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "Test with no labels",
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsTiFlashWriteHTTPResp(tt.store))
 		})
 	}
 }

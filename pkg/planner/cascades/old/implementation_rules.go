@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
@@ -181,7 +182,7 @@ func (*ImplTiKVSingleReadGather) OnImplement(expr *memo.GroupExpr, reqProp *prop
 		reader := physicalop.GetPhysicalIndexReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(sg.SCtx().GetSessionVars(), reqProp.ExpectedCnt), reqProp)
 		return []memo.Implementation{impl.NewIndexReaderImpl(reader, sg.Source)}, nil
 	}
-	reader := plannercore.GetPhysicalTableReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(sg.SCtx().GetSessionVars(), reqProp.ExpectedCnt), reqProp)
+	reader := physicalop.GetPhysicalTableReader(sg, logicProp.Schema, logicProp.Stats.ScaleByExpectCnt(sg.SCtx().GetSessionVars(), reqProp.ExpectedCnt), reqProp)
 	return []memo.Implementation{impl.NewTableReaderImpl(reader, sg.Source)}, nil
 }
 
@@ -291,7 +292,7 @@ type ImplSort struct {
 // Match implements ImplementationRule match interface.
 func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
-	return plannercore.MatchItems(prop, ls.ByItems)
+	return physicalop.MatchItems(prop, ls.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -299,7 +300,7 @@ func (*ImplSort) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 // generate a PhysicalSort.
 func (*ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	ls := expr.ExprNode.(*logicalop.LogicalSort)
-	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
+	if newProp, canUseNominal := physicalop.GetPropByOrderByItems(ls.ByItems); canUseNominal {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
 		ns := physicalop.NominalSort{}.Init(
 			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(ls.SCtx().GetSessionVars(), reqProp.ExpectedCnt), ls.QueryBlockOffset(), newProp)
@@ -377,7 +378,7 @@ func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (m
 	if expr.Group.EngineType != pattern.EngineTiDB {
 		return prop.IsSortItemEmpty()
 	}
-	return plannercore.MatchItems(prop, topN.ByItems)
+	return physicalop.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -407,8 +408,8 @@ type ImplTopNAsLimit struct {
 // Match implements ImplementationRule Match interface.
 func (*ImplTopNAsLimit) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*logicalop.LogicalTopN)
-	_, canUseLimit := plannercore.GetPropByOrderByItems(topN.ByItems)
-	return canUseLimit && plannercore.MatchItems(prop, topN.ByItems)
+	_, canUseLimit := physicalop.GetPropByOrderByItems(topN.ByItems)
+	return canUseLimit && physicalop.MatchItems(prop, topN.ByItems)
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -450,7 +451,7 @@ type ImplHashJoinBuildLeft struct {
 // Match implements ImplementationRule Match interface.
 func (*ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	switch expr.ExprNode.(*logicalop.LogicalJoin).JoinType {
-	case logicalop.InnerJoin, logicalop.LeftOuterJoin, logicalop.RightOuterJoin:
+	case base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin:
 		return prop.IsSortItemEmpty()
 	default:
 		return false
@@ -461,11 +462,11 @@ func (*ImplHashJoinBuildLeft) Match(expr *memo.GroupExpr, prop *property.Physica
 func (*ImplHashJoinBuildLeft) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, true)}, nil
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, false)}, nil
 	default:
 		return nil, nil
@@ -485,14 +486,14 @@ func (*ImplHashJoinBuildRight) Match(_ *memo.GroupExpr, prop *property.PhysicalP
 func (*ImplHashJoinBuildRight) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	join := expr.ExprNode.(*logicalop.LogicalJoin)
 	switch join.JoinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin,
-		logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case base.SemiJoin, base.AntiSemiJoin,
+		base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case logicalop.InnerJoin:
+	case base.InnerJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case logicalop.LeftOuterJoin:
+	case base.LeftOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 1, false)}, nil
-	case logicalop.RightOuterJoin:
+	case base.RightOuterJoin:
 		return []memo.Implementation{getImplForHashJoin(expr, reqProp, 0, true)}, nil
 	}
 	return nil, nil

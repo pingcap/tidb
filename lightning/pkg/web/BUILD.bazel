@@ -10,7 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/lightning/pkg/web",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/lightning/checkpoints",
+        "//lightning/pkg/checkpoints",
         "//pkg/lightning/common",
         "//pkg/lightning/mydump",
         "@com_github_pingcap_errors//:errors",

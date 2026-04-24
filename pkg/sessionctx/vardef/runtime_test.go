@@ -31,4 +31,6 @@ func TestIsReadOnlyVarInNextGen(t *testing.T) {
 	require.True(t, IsReadOnlyVarInNextGen(TiDBMaxDistTaskNodes))
 	require.True(t, IsReadOnlyVarInNextGen(TiDBDDLReorgMaxWriteSpeed))
 	require.True(t, IsReadOnlyVarInNextGen(TiDBDDLDiskQuota))
+	require.True(t, IsReadOnlyVarInNextGen(TiDBDDLEnableFastReorg))
+	require.True(t, IsReadOnlyVarInNextGen(TiDBEnableDistTask))
 }

@@ -20,11 +20,9 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -414,42 +412,6 @@ func SchemaExists(ctx context.Context, db dbutil.QueryExecutor, schema string) (
 	}
 }
 
-// GetJSON fetches a page and parses it as JSON. The parsed result will be
-// stored into the `v`. The variable `v` must be a pointer to a type that can be
-// unmarshalled from JSON.
-//
-// Example:
-//
-//	client := &http.Client{}
-//	var resp struct { IP string }
-//	if err := util.GetJSON(client, "http://api.ipify.org/?format=json", &resp); err != nil {
-//		return errors.Trace(err)
-//	}
-//	fmt.Println(resp.IP)
-func GetJSON(ctx context.Context, client *http.Client, url string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Errorf("get %s http status code != 200, message %s", url, string(body))
-	}
-
-	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
-}
-
 // KillMySelf sends sigint to current process, used in integration test only
 //
 // Only works on Unix. Signaling on Windows is not supported.
@@ -752,4 +714,9 @@ func SkipReadRowCount(tblInfo *model.TableInfo) bool {
 	}
 
 	return true
+}
+
+// ChunkFlushStatus is the status of a chunk flush.
+type ChunkFlushStatus interface {
+	Flushed() bool
 }

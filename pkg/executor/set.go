@@ -19,9 +19,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -152,20 +151,27 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.FastGenByArgs(sysVar.Name))
 	}
 	if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
-		// For backward compatibility we will change the v.IsGlobal to true,
+		// For backward compatibility we will change the v.IsInstance to true,
 		// and append a warning saying this will not be supported in future.
-		v.IsGlobal = true
+		v.IsInstance = true
 		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
 	}
 
-	if v.IsGlobal {
+	if v.IsGlobal || v.IsInstance {
 		valStr, err := e.getVarValue(ctx, v, sysVar)
 		if err != nil {
 			return err
 		}
-		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, name, valStr)
-		if err != nil {
-			return err
+		if v.IsGlobal {
+			err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, name, valStr)
+			if err != nil {
+				return err
+			}
+		} else if v.IsInstance {
+			err = sessionVars.GlobalVarsAccessor.SetInstanceSysVar(ctx, name, valStr)
+			if err != nil {
+				return err
+			}
 		}
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
@@ -178,22 +184,23 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		if name == vardef.TiDBCloudStorageURI {
 			showValStr = ast.RedactURL(showValStr)
 		}
-		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
+		logstr := "set global var"
+		if v.IsInstance {
+			logstr = "set instance var"
+		}
+		logutil.BgLogger().Info(logstr, zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if name == vardef.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
-			oldConfig := config.GetGlobalConfig()
-			if oldConfig.Instance.TiDBServiceScope != valStr {
-				newConfig := *oldConfig
-				newConfig.Instance.TiDBServiceScope = valStr
-				config.StoreGlobalConfig(&newConfig)
-			}
+			// SetInstanceSysVar has already updated vardef.ServiceScope in the sysvar hook.
+			// Read it here so InitMetaSession uses the latest canonical (case-insensitive) value.
+			serviceScope := vardef.ServiceScope.Load()
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
 			taskMgr, err := storage.GetTaskManager()
 			if err != nil {
 				return err
 			}
 			return taskMgr.WithNewSession(func(se sessionctx.Context) error {
-				return taskMgr.InitMetaSession(ctx, se, serverID, valStr)
+				return taskMgr.InitMetaSession(ctx, se, serverID, serviceScope)
 			})
 		}
 		return err

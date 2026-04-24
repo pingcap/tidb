@@ -83,6 +83,9 @@ func InitGCWorkerMetrics() {
 		})
 }
 
+// StageTotal is used in the "stage" label of GCHistogram to represent the total time of a turn of GC.
+const StageTotal = "total"
+
 func init() {
 	GCUnsafeDestroyRangeFailuresCounterVec = metrics.TiKVUnsafeDestroyRangeFailuresCounterVec
 }
