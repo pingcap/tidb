@@ -15,7 +15,12 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/version/build",
         "//lightning/pkg/importer",
+<<<<<<< HEAD
         "//lightning/pkg/web",
+=======
+        "//lightning/pkg/importinto",
+        "//lightning/pkg/progress",
+>>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
         "//pkg/expression",
         "//pkg/lightning/backend/local",
         "//pkg/lightning/checkpoints",
@@ -39,7 +44,6 @@ go_library(
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/collectors",
         "@com_github_prometheus_client_golang//prometheus/promhttp",
-        "@com_github_shurcool_httpgzip//:httpgzip",
         "@com_github_tikv_pd_client//http",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
@@ -59,8 +63,14 @@ go_test(
     flaky = True,
     shard_count = 7,
     deps = [
+<<<<<<< HEAD
         "//lightning/pkg/web",
         "//pkg/lightning/checkpoints",
+=======
+        "//lightning/pkg/checkpoints",
+        "//lightning/pkg/importinto/mock",
+        "//lightning/pkg/progress",
+>>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",

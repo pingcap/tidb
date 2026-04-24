@@ -48,7 +48,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/importer"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/lightning/pkg/web"
+=======
+	"github.com/pingcap/tidb/lightning/pkg/importinto"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
+>>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 	_ "github.com/pingcap/tidb/pkg/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
@@ -66,7 +71,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/shurcooL/httpgzip"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -219,7 +223,6 @@ func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
 
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
-	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
 
 	registry := l.promRegistry
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -253,17 +256,6 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/pause", httpHandleWrapper(handlePause))
 	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
 	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
-
-	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
-		IndexHTML: true,
-		ServeError: func(w http.ResponseWriter, req *http.Request, err error) {
-			if os.IsNotExist(err) && !strings.Contains(req.URL.Path, ".") {
-				http.Redirect(w, req, "/web/", http.StatusFound)
-			} else {
-				httpgzip.NonSpecific(w, req, err)
-			}
-		},
-	})))
 
 	listener, err := net.Listen("tcp", statusAddr)
 	if err != nil {
@@ -458,14 +450,14 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	l.cancel = cancel
 	l.curTask = taskCfg
 	l.cancelLock.Unlock()
-	web.BroadcastStartTask()
+	progress.BroadcastStartTask()
 
 	defer func() {
 		cancel()
 		l.cancelLock.Lock()
 		l.cancel = nil
 		l.cancelLock.Unlock()
-		web.BroadcastEndTask(err)
+		progress.BroadcastEndTask(err)
 	}()
 
 	failpoint.Inject("SkipRunTask", func() {
@@ -509,6 +501,61 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		return common.ErrInvalidTLSConfig.Wrap(err)
 	}
 
+<<<<<<< HEAD
+=======
+	var mdl *mydump.MDLoader
+	var dbMetas []*mydump.MDDatabaseMeta
+	s := o.dumpFileStorage
+	if taskCfg.TikvImporter.Backend != config.BackendImportInto {
+		mdl, s, err = l.initDataSource(ctx, taskCfg, o)
+		if err != nil {
+			return err
+		}
+
+		dbMetas = mdl.GetDatabases()
+		progress.BroadcastInitProgress(dbMetas)
+	}
+
+	db, keyspaceName, err := initDBAndKeyspace(ctx, taskCfg, o)
+	if err != nil {
+		return err
+	}
+
+	param := &importer.ControllerParam{
+		DBMetas:           dbMetas,
+		Status:            &l.status,
+		DumpFileStorage:   s,
+		OwnExtStorage:     o.dumpFileStorage == nil,
+		DB:                db,
+		CheckpointStorage: o.checkpointStorage,
+		CheckpointName:    o.checkpointName,
+		DupIndicator:      o.dupIndicator,
+		KeyspaceName:      keyspaceName,
+	}
+
+	var procedure LightningImporter
+	procedure, err = newImporter(ctx, taskCfg, param)
+	if err != nil {
+		o.logger.Error("restore failed", log.ShortError(err))
+		return errors.Trace(err)
+	}
+
+	l.cancelLock.Lock()
+	l.importer = procedure
+	l.cancelLock.Unlock()
+
+	failpoint.Inject("orphanWriterGoRoutine", func() {
+		// don't exit too quickly to expose panic
+		defer time.Sleep(time.Second * 10)
+	})
+	defer procedure.Close()
+
+	err = procedure.Run(ctx)
+	return errors.Trace(err)
+}
+
+func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, o *options) (*mydump.MDLoader, storeapi.Storage, error) {
+>>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 	s := o.dumpFileStorage
 	if s == nil {
 		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
@@ -888,7 +935,7 @@ func writeBytesCompressed(w http.ResponseWriter, req *http.Request, b []byte) {
 
 func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	res, err := web.MarshalTaskProgress()
+	res, err := progress.MarshalTaskProgress()
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {
@@ -900,7 +947,7 @@ func handleProgressTask(w http.ResponseWriter, req *http.Request) {
 func handleProgressTable(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	tableName := req.URL.Query().Get("t")
-	res, err := web.MarshalTableCheckpoints(tableName)
+	res, err := progress.MarshalTableCheckpoints(tableName)
 	if err == nil {
 		writeBytesCompressed(w, req, res)
 	} else {

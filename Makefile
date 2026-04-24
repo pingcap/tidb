@@ -323,10 +323,6 @@ tools/bin/golangci-lint:
 	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.47.2
 
-.PHONY: tools/bin/vfsgendev
-tools/bin/vfsgendev:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
-
 .PHONY: tools/bin/gotestsum
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
@@ -381,18 +377,24 @@ bench-daily:
 .PHONY: build_tools
 build_tools: build_br build_lightning build_lightning-ctl
 
+<<<<<<< HEAD
 .PHONY: lightning_web
 lightning_web:
 	@cd lightning/web && npm install && npm run build
 
+=======
+>>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 .PHONY: build_br
 build_br:
 	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 
+<<<<<<< HEAD
 .PHONY: build_lightning_for_web
 build_lightning_for_web:
 	CGO_ENABLED=1 $(GOBUILD) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
+=======
+>>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 .PHONY: build_lightning
 build_lightning:
 	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
@@ -526,9 +528,14 @@ br_bins:
 	@rm tmp_parser.go
 
 .PHONY: data_parsers
+<<<<<<< HEAD
 data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
 	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
 	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
+=======
+data_parsers: pkg/lightning/mydump/parser_generated.go
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" lightning/pkg/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
+>>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 
 .PHONY: build_dumpling
 build_dumpling:

@@ -28,7 +28,7 @@ go_library(
         "//br/pkg/version/build",
         "//lightning/pkg/importer/opts",
         "//lightning/pkg/precheck",
-        "//lightning/pkg/web",
+        "//lightning/pkg/progress",
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/errno",
@@ -128,7 +128,12 @@ go_test(
         "//lightning/pkg/importer/mock",
         "//lightning/pkg/importer/opts",
         "//lightning/pkg/precheck",
+<<<<<<< HEAD
         "//lightning/pkg/web",
+=======
+        "//lightning/pkg/progress",
+        "//pkg/config/kerneltype",
+>>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
         "//pkg/ddl",
         "//pkg/errno",
         "//pkg/kv",
