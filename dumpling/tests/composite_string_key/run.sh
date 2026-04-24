@@ -1,6 +1,8 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Copyright 2024 PingCAP, Inc. Licensed under Apache-2.0.
+# Bash is required: the chunk-iteration loop below uses `read -r -d ''`,
+# which is a bash extension that POSIX /bin/sh (e.g. dash) does not implement.
 
 set -eu
 

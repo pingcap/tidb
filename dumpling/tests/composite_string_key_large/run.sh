@@ -1,6 +1,9 @@
-#!/bin/sh
+#!/usr/bin/env bash
 #
 # Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
+#
+# Bash is required: the chunk-iteration loop below uses `read -r -d ''`,
+# which is a bash extension that POSIX /bin/sh (e.g. dash) does not implement.
 #
 # Larger-scale regression test for string-based (composite) primary-key
 # chunking. It proves end-to-end correctness by:
@@ -62,9 +65,10 @@ for t in range(10):
     for e in range(50):
         eid = f"evt-{e:04d}"
         # Exercise SQL escaping: single/double quotes and a backslash.
-        # Double single-quotes so the literal is valid MySQL.
+        # Double single-quotes and double backslashes so the literal is valid
+        # under MySQL's default sql_mode (which treats backslash as escape).
         raw = f"payload for tenant {t} event {e} with 'single' and \"double\" quotes and a backslash \\."
-        payload = raw.replace("'", "''")
+        payload = raw.replace("\\", "\\\\").replace("'", "''")
         rows.append(f"('{tenant}','{eid}','{payload}')")
 print("INSERT INTO events (tenant,event_id,payload) VALUES")
 print(",\n".join(rows) + ";")
