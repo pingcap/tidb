@@ -18,6 +18,7 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 			Password:          v.Password,
 			ProtectionMode:    v.ProtectionMode,
 			DegradeTimeoutSec: v.DegradeTimeoutSec,
+			Detached:          v.Detached,
 		}
 	case *plannercore.AlterLogReplication:
 		return &AlterLogReplicationExec{

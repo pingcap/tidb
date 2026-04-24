@@ -170,14 +170,6 @@ func (e *memtableRetriever) setDataForLogReplWorkflowHistoryGlobal(ctx context.C
 		}
 
 		state := wf.State
-		if state == "" {
-			// Currently, PD does not maintain states for completed workflows and
-			// may not set correct states for in-progress workflows.
-			state = "COMPLETED"
-			if wf.EndTime == 0 {
-				state = "CANCELLED"
-			}
-		}
 		row[8].SetString(state, mysql.DefaultCollationName) // WORKFLOW_STATE
 		if wf.StateInfo != "" {
 			row[9].SetString(wf.StateInfo, mysql.DefaultCollationName) // WORKFLOW_STATE_INFO

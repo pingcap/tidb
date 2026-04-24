@@ -125,6 +125,26 @@ func TestIllegalAlterLogRepl(t *testing.T) {
 	}
 }
 
+func TestBuildAdminCreateLogReplicationDetached(t *testing.T) {
+	b := &PlanBuilder{}
+	ctx := context.Background()
+
+	p, err := b.buildAdminCreateLogReplication(ctx, &ast.CreateLogReplication{
+		Name: model.NewCIStr("repl"),
+		Opts: []*ast.LogReplicationOpt{
+			{Tp: ast.LogReplicationOptSourceHost, Value: "127.0.0.1"},
+			{Tp: ast.LogReplicationOptDetached},
+		},
+	})
+	require.NoError(t, err)
+
+	createPlan, ok := p.(*CreateLogReplication)
+	require.True(t, ok)
+	require.True(t, createPlan.Detached)
+	require.Equal(t, 1, createPlan.Schema().Len())
+	require.Equal(t, "WORKFLOW_ID", createPlan.OutputNames()[0].ColName.O)
+}
+
 func TestParseDegradeTimeoutOption(t *testing.T) {
 	cases := []struct {
 		name           string

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -127,4 +128,56 @@ func TestWatchRestartCompactedMissedPut(t *testing.T) {
 			return false
 		}
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestRestartHoldWaitsForAllHolders(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		HoldRestart()
+		HoldRestart()
+		t.Cleanup(func() {
+			ReleaseRestart()
+			ReleaseRestart()
+		})
+
+		waitDone := make(chan struct{})
+		go func() {
+			waitRestartHold(nil)
+			close(waitDone)
+		}()
+
+		synctest.Wait()
+		select {
+		case <-waitDone:
+			t.Fatal("restart hold released before all holders finished")
+		default:
+		}
+
+		ReleaseRestart()
+
+		synctest.Wait()
+		select {
+		case <-waitDone:
+			t.Fatal("restart hold released after only one holder finished")
+		default:
+		}
+
+		ReleaseRestart()
+		synctest.Wait()
+		<-waitDone
+	})
+}
+
+func TestWaitRestartHoldCanBeCanceled(t *testing.T) {
+	HoldRestart()
+	defer ReleaseRestart()
+
+	stopCh := make(chan struct{})
+	waitDone := make(chan bool, 1)
+	go func() {
+		waitDone <- waitRestartHold(stopCh)
+	}()
+
+	close(stopCh)
+
+	require.False(t, <-waitDone)
 }

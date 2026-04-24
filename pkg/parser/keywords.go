@@ -723,6 +723,7 @@ var Keywords = []KeywordsType{
 	{"DEGRADE_TIMEOUT", false, "tidb"},
 	{"DEPENDENCY", false, "tidb"},
 	{"DEPTH", false, "tidb"},
+	{"DETACHED", false, "tidb"},
 	{"DISTRIBUTE", false, "tidb"},
 	{"DISTRIBUTION", false, "tidb"},
 	{"DISTRIBUTIONS", false, "tidb"},

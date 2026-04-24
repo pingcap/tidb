@@ -3,6 +3,7 @@ package pkdbrepl
 import (
 	"context"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,6 +26,57 @@ var (
 	// watch. It's guarded by `intest.InTest`, so it won't run in normal builds.
 	watchRestartAfterCreateWatch func()
 )
+
+var restartHoldState struct {
+	mu      sync.Mutex
+	ch      chan struct{}
+	holders int
+}
+
+// HoldRestart sets a barrier that blocks restartProcess until ReleaseRestart is called.
+func HoldRestart() {
+	restartHoldState.mu.Lock()
+	defer restartHoldState.mu.Unlock()
+
+	if restartHoldState.holders == 0 {
+		restartHoldState.ch = make(chan struct{})
+	}
+	restartHoldState.holders++
+}
+
+// ReleaseRestart releases the restart barrier, allowing a pending restart to proceed.
+func ReleaseRestart() {
+	restartHoldState.mu.Lock()
+	defer restartHoldState.mu.Unlock()
+
+	if restartHoldState.holders == 0 {
+		return
+	}
+	restartHoldState.holders--
+	if restartHoldState.holders == 0 {
+		close(restartHoldState.ch)
+		restartHoldState.ch = nil
+	}
+}
+
+func waitRestartHold(stopCh <-chan struct{}) bool {
+	restartHoldState.mu.Lock()
+	ch := restartHoldState.ch
+	restartHoldState.mu.Unlock()
+	if ch == nil {
+		return true
+	}
+	if stopCh == nil {
+		<-ch
+		return true
+	}
+	select {
+	case <-stopCh:
+		return false
+	case <-ch:
+		return true
+	}
+}
 
 func restart() error {
 	executablePath, err := os.Executable()
@@ -151,6 +203,9 @@ func WatchRestart(etcdCli *clientv3.Client, stopCh <-chan struct{}, domain domai
 					return
 				}
 				if snapshot.modRevision != newSnapshot.modRevision {
+					if !waitRestartHold(stopCh) {
+						return
+					}
 					go restartProcess(domain)
 					return
 				}
@@ -167,6 +222,9 @@ func WatchRestart(etcdCli *clientv3.Client, stopCh <-chan struct{}, domain domai
 			// will call Domain.Close() inside restartProcess, but this goroutine is also
 			// created by Domain, so we need to start another goroutine and return after
 			// Domain.Close() is blocked
+			if !waitRestartHold(stopCh) {
+				return
+			}
 			go restartProcess(domain)
 			return
 		}

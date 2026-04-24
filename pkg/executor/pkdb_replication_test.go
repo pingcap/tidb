@@ -4,8 +4,16 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/logreplicationpb"
+	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/rawkv"
@@ -29,11 +37,6 @@ func TestScanReplStateCF(t *testing.T) {
 		pb := &logreplicationpb.LogReplicationState{}
 		err = pb.Unmarshal(v)
 		require.NoError(t, err)
-		if pb.SafeTs == 0 {
-			t.Logf("got safe-ts = 0. pb: %#v", pb)
-		} else {
-			minSafeTs = min(minSafeTs, pb.SafeTs)
-		}
 	}
 	t.Logf("minSafeTs = %d", minSafeTs)
 }
@@ -115,4 +118,90 @@ func TestValidateTiKVConfigEnabledForLogReplication(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+type mockWorkflowListResult struct {
+	workflows []*pdpb.WorkflowInfo
+	err       error
+}
+
+type mockWorkflowLister struct {
+	results []mockWorkflowListResult
+	calls   int
+}
+
+func (m *mockWorkflowLister) ListLogReplWorkflows(context.Context) ([]*pdpb.WorkflowInfo, error) {
+	if len(m.results) == 0 {
+		return nil, nil
+	}
+	idx := m.calls
+	if idx >= len(m.results) {
+		idx = len(m.results) - 1
+	}
+	result := m.results[idx]
+	m.calls++
+	return result.workflows, result.err
+}
+
+func TestPollWorkflowCompleteRetriesListErrors(t *testing.T) {
+	lister := &mockWorkflowLister{
+		results: []mockWorkflowListResult{
+			{err: context.DeadlineExceeded},
+			{err: context.DeadlineExceeded},
+			{workflows: []*pdpb.WorkflowInfo{{Id: 42, State: "COMPLETED"}}},
+		},
+	}
+
+	err := pollWorkflowComplete(context.Background(), lister, 42)
+	require.NoError(t, err)
+	require.Equal(t, 3, lister.calls)
+}
+
+func TestPollWorkflowCompleteReturnsWorkflowNotCancelableOnCancel(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		lister := &mockWorkflowLister{
+			results: []mockWorkflowListResult{
+				{workflows: []*pdpb.WorkflowInfo{{Id: 42, State: "IN_PROGRESS"}}},
+			},
+		}
+		time.AfterFunc(10*time.Millisecond, cancel)
+
+		err := pollWorkflowComplete(ctx, lister, 42)
+		require.ErrorContains(t, err, "workflow 42 cannot be cancelled at the moment")
+		require.GreaterOrEqual(t, lister.calls, 1)
+	})
+}
+
+func TestPollWorkflowCompleteReturnsErrorOnCancelledState(t *testing.T) {
+	lister := &mockWorkflowLister{
+		results: []mockWorkflowListResult{
+			{workflows: []*pdpb.WorkflowInfo{{Id: 42, State: "CANCELLED"}}},
+		},
+	}
+
+	err := pollWorkflowComplete(context.Background(), lister, 42)
+	require.ErrorContains(t, err, "workflow 42 is cancelled")
+	require.Equal(t, 1, lister.calls)
+}
+
+func TestCreateLogReplicationExecNextDetached(t *testing.T) {
+	col := &expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
+	e := &CreateLogReplicationExec{
+		BaseExecutor: exec.NewBaseExecutor(mock.NewContext(), expression.NewSchema(col), 0),
+		Detached:     true,
+		workflowID:   42,
+	}
+
+	req := e.NewChunk()
+	err := e.Next(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, uint64(42), req.GetRow(0).GetUint64(0))
+
+	err = e.Next(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows())
 }

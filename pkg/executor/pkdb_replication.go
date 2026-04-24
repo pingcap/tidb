@@ -3,21 +3,28 @@ package executor
 import (
 	"context"
 	"database/sql"
+	stderrors "errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/domain"
+	pkdbrepl "github.com/pingcap/tidb/pkg/domain/pkdb_repl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 )
 
 const (
@@ -48,6 +55,10 @@ type CreateLogReplicationExec struct {
 	Password          string
 	ProtectionMode    ast.ProtectionMode
 	DegradeTimeoutSec uint64
+	Detached          bool
+
+	workflowID uint64
+	dataFilled bool
 }
 
 // Open implements the Executor Open interface.
@@ -89,7 +100,31 @@ func (e *CreateLogReplicationExec) Open(ctx context.Context) error {
 		ProtectionMode:    astProtectionModeToPB(e.ProtectionMode),
 		DegradeTimeoutSec: e.DegradeTimeoutSec,
 	}
-	return pdCli.CreateLogReplication(ctx, e.Name.L, opts)
+
+	pkdbrepl.HoldRestart()
+	defer pkdbrepl.ReleaseRestart()
+
+	workflowID, err := pdCli.CreateLogReplication(ctx, e.Name.L, opts)
+	if err != nil {
+		return err
+	}
+	if e.Detached {
+		e.workflowID = workflowID
+		return nil
+	}
+
+	return pollWorkflowComplete(ctx, pdCli, workflowID)
+}
+
+// Next implements the Executor Next interface.
+func (e *CreateLogReplicationExec) Next(_ context.Context, req *chunk.Chunk) error {
+	req.GrowAndReset(e.MaxChunkSize())
+	if !e.Detached || e.dataFilled {
+		return nil
+	}
+	req.AppendUint64(0, e.workflowID)
+	e.dataFilled = true
+	return nil
 }
 
 func validateLogReplicationTiKVConfig(
@@ -319,6 +354,60 @@ func astProtectionModeToPB(mode ast.ProtectionMode) pdpb.ProtectionMode {
 	return pbProtectionMode
 }
 
+type logReplWorkflowLister interface {
+	ListLogReplWorkflows(ctx context.Context) ([]*pdpb.WorkflowInfo, error)
+}
+
+func newWorkflowNotCancelableErr(workflowID uint64) error {
+	return errors.Errorf("workflow %d cannot be cancelled at the moment", workflowID)
+}
+
+func pollWorkflowComplete(ctx context.Context, workflowLister logReplWorkflowLister, workflowID uint64) error {
+	bo := backoff.NewExponentialBackOff()
+	bo.InitialInterval = 100 * time.Millisecond
+	bo.RandomizationFactor = 0
+	bo.MaxInterval = time.Second * 2
+	bo.Multiplier = 1.5
+	bo.MaxElapsedTime = 0
+	bo.Reset()
+
+	err := backoff.RetryNotify(func() error {
+		// TODO: optimize by adding a PD API to query workflow status by ID,
+		// instead of listing all workflows and find the target one.
+		workflows, err := workflowLister.ListLogReplWorkflows(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return backoff.Permanent(err)
+			}
+			return err
+		}
+		for _, wf := range workflows {
+			if wf.Id == workflowID {
+				if wf.State == "COMPLETED" {
+					return nil
+				}
+				if wf.State == "CANCELLED" {
+					return backoff.Permanent(errors.Errorf("workflow %d is cancelled", workflowID))
+				}
+				return fmt.Errorf("workflow %d not completed, state=%s", workflowID, wf.State)
+			}
+		}
+		// workflow not found in the list, treat as completed
+		return nil
+	}, backoff.WithContext(bo, ctx), func(err error, next time.Duration) {
+		logutil.Logger(ctx).Info(
+			"poll log replication workflow state",
+			zap.Uint64("workflowID", workflowID),
+			zap.Duration("nextPollIn", next),
+			zap.Error(err),
+		)
+	})
+	if stderrors.Is(err, context.Canceled) {
+		return newWorkflowNotCancelableErr(workflowID)
+	}
+	return err
+}
+
 // AlterLogReplicationExec executes ALTER LOG REPLICATION statement.
 type AlterLogReplicationExec struct {
 	exec.BaseExecutor
@@ -340,7 +429,16 @@ func (e *AlterLogReplicationExec) Open(ctx context.Context) error {
 		DegradeTimeoutSec:  e.DegradeTimeoutSec,
 		NewSourceClusterID: e.NewSourceClusterID,
 	}
-	return pdCli.AlterLogReplication(ctx, e.Name.L, &opts)
+
+	pkdbrepl.HoldRestart()
+	defer pkdbrepl.ReleaseRestart()
+
+	workflowID, err := pdCli.AlterLogReplication(ctx, e.Name.L, &opts)
+	if err != nil {
+		return err
+	}
+
+	return pollWorkflowComplete(ctx, pdCli, workflowID)
 }
 
 // PauseLogReplicationExec executes PAUSE LOG REPLICATION statement.
@@ -355,7 +453,12 @@ func (e *PauseLogReplicationExec) Open(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	pdCli := do.GetPDClient()
 
-	return pdCli.PauseLogReplication(ctx, e.Name.L)
+	workflowID, err := pdCli.PauseLogReplication(ctx, e.Name.L)
+	if err != nil {
+		return err
+	}
+
+	return pollWorkflowComplete(ctx, pdCli, workflowID)
 }
 
 // ResumeLogReplicationExec executes RESUME LOG REPLICATION statement.
@@ -370,7 +473,12 @@ func (e *ResumeLogReplicationExec) Open(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	pdCli := do.GetPDClient()
 
-	return pdCli.ResumeLogReplication(ctx, e.Name.L)
+	workflowID, err := pdCli.ResumeLogReplication(ctx, e.Name.L)
+	if err != nil {
+		return err
+	}
+
+	return pollWorkflowComplete(ctx, pdCli, workflowID)
 }
 
 // DropLogReplicationExec executes DROP LOG REPLICATION statement.
@@ -385,7 +493,12 @@ func (e *DropLogReplicationExec) Open(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	pdCli := do.GetPDClient()
 
-	return pdCli.DropLogReplication(ctx, e.Name.L)
+	workflowID, err := pdCli.DropLogReplication(ctx, e.Name.L)
+	if err != nil {
+		return err
+	}
+
+	return pollWorkflowComplete(ctx, pdCli, workflowID)
 }
 
 // SwitchOverPrimaryExec executes ADMIN SWITCHOVER PRIMARY statement.
@@ -400,7 +513,15 @@ func (e *SwitchOverPrimaryExec) Open(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	pdCli := do.GetPDClient()
 
-	return pdCli.SwitchOverPrimary(ctx, e.NewPrimaryClusterID)
+	pkdbrepl.HoldRestart()
+	defer pkdbrepl.ReleaseRestart()
+
+	workflowID, err := pdCli.SwitchOverPrimary(ctx, e.NewPrimaryClusterID)
+	if err != nil {
+		return err
+	}
+
+	return pollWorkflowComplete(ctx, pdCli, workflowID)
 }
 
 // SwitchOverAsPrimaryExec executes ADMIN SWITCHOVER AS PRIMARY statement.
@@ -414,6 +535,9 @@ func (e *SwitchOverAsPrimaryExec) Open(ctx context.Context) error {
 	do := domain.GetDomain(e.Ctx())
 	pdCli := do.GetPDClient()
 
+	pkdbrepl.HoldRestart()
+	defer pkdbrepl.ReleaseRestart()
+
 	// Check if the current cluster is a standby.
 	localStatus, err := pdCli.GetLogReplLocalStatus(ctx)
 	if err != nil {
@@ -425,7 +549,13 @@ func (e *SwitchOverAsPrimaryExec) Open(ctx context.Context) error {
 
 	// Get current cluster ID and trigger switchover.
 	clusterID := pdCli.GetClusterID(ctx)
-	return pdCli.SwitchOverPrimary(ctx, clusterID)
+	workflowID, err := pdCli.SwitchOverPrimary(ctx, clusterID)
+
+	if err != nil {
+		return err
+	}
+
+	return pollWorkflowComplete(ctx, pdCli, workflowID)
 }
 
 // ActivateStandbyExec executes ADMIN ACTIVATE STANDBY statement.
@@ -451,5 +581,14 @@ func (e *ActivateStandbyExec) Open(ctx context.Context) error {
 	case ast.ActivateStandbyModeForceCommit:
 		opts.ActivateMode = pdpb.ActivateStandbyMode_ACTIVATE_MODE_FORCE_COMMIT
 	}
-	return pdCli.ActivateStandby(ctx, opts)
+
+	pkdbrepl.HoldRestart()
+	defer pkdbrepl.ReleaseRestart()
+
+	workflowID, err := pdCli.ActivateStandby(ctx, opts)
+	if err != nil {
+		return err
+	}
+
+	return pollWorkflowComplete(ctx, pdCli, workflowID)
 }

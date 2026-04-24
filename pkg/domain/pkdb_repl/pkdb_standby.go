@@ -211,7 +211,7 @@ func WatchStandby(ctx context.Context, etcdCli *clientv3.Client, domain domainCl
 
 			watchRevision = watchResp.Header.Revision
 			lastEvent := watchResp.Events[len(watchResp.Events)-1]
-			if handleLatestStandbyEvent(lastEvent, domain) {
+			if handleLatestStandbyEvent(lastEvent, ctx.Done(), domain) {
 				return
 			}
 		}
@@ -229,15 +229,15 @@ func syncStandbyStateFromEtcd(ctx context.Context, etcdCli *clientv3.Client, dom
 	watchRevision = resp.Header.Revision
 
 	if len(resp.Kvs) == 0 {
-		shouldReturn = handleLatestStandbyEvent(&clientv3.Event{Type: mvccpb.DELETE}, domain)
+		shouldReturn = handleLatestStandbyEvent(&clientv3.Event{Type: mvccpb.DELETE}, ctx.Done(), domain)
 		return shouldReturn, nil
 	}
 
-	shouldReturn = handleLatestStandbyEvent(&clientv3.Event{Type: mvccpb.PUT, Kv: resp.Kvs[0]}, domain)
+	shouldReturn = handleLatestStandbyEvent(&clientv3.Event{Type: mvccpb.PUT, Kv: resp.Kvs[0]}, ctx.Done(), domain)
 	return shouldReturn, nil
 }
 
-func handleLatestStandbyEvent(event *clientv3.Event, domain domainCloser) (shouldReturn bool) {
+func handleLatestStandbyEvent(event *clientv3.Event, stopCh <-chan struct{}, domain domainCloser) (shouldReturn bool) {
 	if event.Type == mvccpb.PUT && string(event.Kv.Value) == "1" {
 		if standbyBlockingCh.Load() == nil {
 			enableStandbyMode()
@@ -249,6 +249,9 @@ func handleLatestStandbyEvent(event *clientv3.Event, domain domainCloser) (shoul
 		// will call Domain.Close() inside restartProcess, but this goroutine is also
 		// created by Domain, so we need to start another goroutine and return after
 		// Domain.Close() is blocked
+		if !waitRestartHold(stopCh) {
+			return false
+		}
 		go restartProcess(domain)
 		return true
 	}

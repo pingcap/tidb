@@ -5,9 +5,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
@@ -22,6 +25,7 @@ type CreateLogReplication struct {
 	Password          string
 	ProtectionMode    ast.ProtectionMode
 	DegradeTimeoutSec uint64
+	Detached          bool
 }
 
 // AlterLogReplication represents an ALTER LOG REPLICATION plan.
@@ -135,7 +139,17 @@ func (*PlanBuilder) buildAdminCreateLogReplication(_ context.Context, as *ast.Cr
 	if err := parseDegradeTimeoutOption(&p.DegradeTimeoutSec, p.ProtectionMode, optsMap); err != nil {
 		return nil, err
 	}
+	if _, ok := optsMap[ast.LogReplicationOptDetached]; ok {
+		p.Detached = true
+		p.setSchemaAndNames(buildCreateLogReplicationDetachedFields())
+	}
 	return p, nil
+}
+
+func buildCreateLogReplicationDetachedFields() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "WORKFLOW_ID", mysql.TypeLonglong, 20))
+	return schema.col2Schema(), schema.names
 }
 
 func (*PlanBuilder) buildAdminAlterLogReplication(_ context.Context, as *ast.AlterLogReplication) (base.Plan, error) {

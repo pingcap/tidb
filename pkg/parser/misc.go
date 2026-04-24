@@ -1011,6 +1011,7 @@ var tokenMap = map[string]int{
 	"SOURCE_USER":          sourceUser,
 	"SOURCE_PASSWORD":      sourcePassword,
 	"DEGRADE_TIMEOUT":      degradeTimeout,
+	"DETACHED":             detached,
 	"FORCE_COMMIT":         forceCommit,
 }
 

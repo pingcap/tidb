@@ -939,6 +939,7 @@ type createFunctionPrefix struct {
 	degradeTimeout             "DEGRADE_TIMEOUT"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	detached                   "DETACHED"
 	distribute                 "DISTRIBUTE"
 	distribution               "DISTRIBUTION"
 	distributions              "DISTRIBUTIONS"
@@ -7452,6 +7453,7 @@ TiDBKeyword:
 |	"MAXIMUM_PROTECTION"
 |	"PROTECTION_MODE"
 |	"DEGRADE_TIMEOUT"
+|	"DETACHED"
 
 NotKeywordToken:
 	"ADDDATE"
@@ -15662,11 +15664,11 @@ LoadDataOptionList:
 	}
 
 LoadDataOption:
-	identifier
+	Identifier
 	{
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1)}
 	}
-|	identifier "=" SignedLiteral
+|	Identifier "=" SignedLiteral
 	{
 		$$ = &ast.LoadDataOpt{Name: strings.ToLower($1), Value: $3.(ast.ExprNode)}
 	}
@@ -18307,6 +18309,12 @@ LogReplicationOpt:
 		$$ = &ast.LogReplicationOpt{
 			Tp:    ast.LogReplicationOptDegradeTimeout,
 			Value: $3,
+		}
+	}
+|	"DETACHED"
+	{
+		$$ = &ast.LogReplicationOpt{
+			Tp: ast.LogReplicationOptDetached,
 		}
 	}
 
