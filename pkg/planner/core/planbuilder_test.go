@@ -173,6 +173,27 @@ func TestGetPathByIndexName(t *testing.T) {
 		require.Equal(t, indexHintResolveNotFound, status)
 	})
 
+	t.Run("gc substitute extra paths", func(t *testing.T) {
+		filteredUnsafePaths := []*util.AccessPath{
+			{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_unsafe")}},
+			{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_unsafe_two")}},
+		}
+
+		extraPaths := getGCSubstituteExtraPaths(filteredUnsafePaths, false, nil)
+		require.Len(t, extraPaths, 2)
+		require.Same(t, filteredUnsafePaths[0], extraPaths[0])
+		require.Same(t, filteredUnsafePaths[1], extraPaths[1])
+
+		extraPaths = getGCSubstituteExtraPaths(filteredUnsafePaths, true, nil)
+		require.Nil(t, extraPaths)
+
+		extraPaths = getGCSubstituteExtraPaths(filteredUnsafePaths, false, map[string]struct{}{
+			"idx_unsafe": {},
+		})
+		require.Len(t, extraPaths, 1)
+		require.Same(t, filteredUnsafePaths[1], extraPaths[0])
+	})
+
 	t.Run("ignore exact and prefix-resolved long index without removing shorter sibling", func(t *testing.T) {
 		shortPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no")}}
 		longPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no_delete_flag")}}

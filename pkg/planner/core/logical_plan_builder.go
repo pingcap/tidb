@@ -5034,10 +5034,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
+	possiblePathInfo, err := getPossibleAccessPathInfo(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
 	if err != nil {
 		return nil, err
 	}
+	possiblePaths := possiblePathInfo.paths
+	gcSubstituteExtraPaths := possiblePathInfo.gcSubstituteExtraPaths
 
 	if tableInfo.IsView() {
 		if tn.TableSample != nil {
@@ -5089,6 +5091,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if b.capFlag&canExpandAST == 0 {
 			possiblePaths, err = util.FilterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
 			if err != nil {
+				return nil, err
+			}
+			gcSubstituteExtraPaths, err = util.FilterPathByIsolationRead(b.ctx, gcSubstituteExtraPaths, tblName, dbName)
+			if err != nil && len(gcSubstituteExtraPaths) != 0 {
 				return nil, err
 			}
 		}
@@ -5178,6 +5184,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		IndexMergeHints:        indexMergeHints,
 		PossibleAccessPaths:    possiblePaths,
 		AllPossibleAccessPaths: allPaths,
+		GcSubstituteExtraPaths: gcSubstituteExtraPaths,
 		Columns:                make([]*model.ColumnInfo, 0, countCnt),
 		PartitionNames:         tn.PartitionNames,
 		TblCols:                make([]*expression.Column, 0, countCnt),

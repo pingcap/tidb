@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -70,25 +71,32 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 	if ds.PreferStoreType&h.PreferTiFlash != 0 {
 		return
 	}
-	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	for _, p := range ds.AllPossibleAccessPaths {
-		if p.IsTablePath() {
-			continue
-		}
-		for _, idxPart := range p.Index.Columns {
-			colInfo := ds.TableInfo.Columns[idxPart.Offset]
-			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
-				s := ds.Schema().Columns
-				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
-					// Replacing a literal with a generated column that is itself a pure constant is not
-					// semantically neutral across outer joins, because null-augmentation can turn the
-					// generated column into NULL while the original literal stays constant.
-					if len(expression.ExtractColumns(col.VirtualExpr)) == 0 {
-						continue
-					}
-					exprToColumn[col.VirtualExpr] = col
+		collectGeneratedColumnsFromPath(lp, ds, p, exprToColumn)
+	}
+	for _, p := range ds.GcSubstituteExtraPaths {
+		collectGeneratedColumnsFromPath(lp, ds, p, exprToColumn)
+	}
+}
+
+func collectGeneratedColumnsFromPath(lp base.LogicalPlan, ds *logicalop.DataSource, path *util.AccessPath, exprToColumn ExprColumnMap) {
+	if path == nil || path.IsTablePath() || path.Index == nil {
+		return
+	}
+	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
+	for _, idxPart := range path.Index.Columns {
+		colInfo := ds.TableInfo.Columns[idxPart.Offset]
+		if colInfo.IsGenerated() && !colInfo.GeneratedStored {
+			s := ds.Schema().Columns
+			col := expression.ColInfo2Col(s, colInfo)
+			if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
+				// Replacing a literal with a generated column that is itself a pure constant is not
+				// semantically neutral across outer joins, because null-augmentation can turn the
+				// generated column into NULL while the original literal stays constant.
+				if len(expression.ExtractColumns(col.VirtualExpr)) == 0 {
+					continue
 				}
+				exprToColumn[col.VirtualExpr] = col
 			}
 		}
 	}

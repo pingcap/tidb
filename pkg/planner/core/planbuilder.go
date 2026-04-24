@@ -1312,6 +1312,19 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 }
 
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+	info, err := getPossibleAccessPathInfo(ctx, tableHints, indexHints, tbl, dbName, tblName, check, hasFlagPartitionProcessor)
+	if err != nil {
+		return nil, err
+	}
+	return info.paths, nil
+}
+
+type possibleAccessPathInfo struct {
+	paths                  []*util.AccessPath
+	gcSubstituteExtraPaths []*util.AccessPath
+}
+
+func getPossibleAccessPathInfo(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) (*possibleAccessPathInfo, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1349,6 +1362,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
 	var virtualGeneratedTemporalWithDateIndexes []*model.IndexInfo
+	filteredUnsafePathsForGCSubstitute := make([]*util.AccessPath, 0)
 
 	// When NO_INDEX_LOOKUP_PUSHDOWN hint is specified, we should set `forceNoIndexLookUpPushDown = true` to avoid
 	// using index look up push down even if other hint or system variable `tidb_index_lookup_pushdown_policy`
@@ -1389,6 +1403,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			}
 			if index.ContainsVirtualGeneratedTemporalWithDateColumn(tblInfo) {
 				virtualGeneratedTemporalWithDateIndexes = append(virtualGeneratedTemporalWithDateIndexes, index)
+				if path := buildGcSubstitutePathForFilteredUnsafeIndex(tblInfo, index); path != nil {
+					filteredUnsafePathsForGCSubstitute = append(filteredUnsafePathsForGCSubstitute, path)
+				}
 				continue
 			}
 			if index.InvertedInfo != nil {
@@ -1441,6 +1458,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	hasScanHint, hasUseOrForce := false, false
 	available := make([]*util.AccessPath, 0, len(publicPaths))
 	ignored := make([]*util.AccessPath, 0, len(publicPaths))
+	ignoredFilteredUnsafeIndexes := make(map[string]struct{})
 
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
@@ -1488,7 +1506,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			}
 			path, filteredIndex, resolveStatus := resolveIndexHintByName(publicPaths, virtualGeneratedTemporalWithDateIndexes, idxName, tblInfo)
 			if resolveStatus == indexHintResolveFilteredUnsafe {
-				if hint.HintType != ast.HintIgnore {
+				if hint.HintType == ast.HintIgnore {
+					ignoredFilteredUnsafeIndexes[filteredIndex.Name.L] = struct{}{}
+				} else {
 					hasUseOrForce = true
 					ctx.GetSessionVars().StmtCtx.SetHintWarning(genVirtualGeneratedTemporalWithDateIndexHintWarning(filteredIndex))
 				}
@@ -1580,7 +1600,43 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	return available, nil
+	return &possibleAccessPathInfo{
+		paths:                  available,
+		gcSubstituteExtraPaths: getGCSubstituteExtraPaths(filteredUnsafePathsForGCSubstitute, hasUseOrForce, ignoredFilteredUnsafeIndexes),
+	}, nil
+}
+
+func buildGcSubstitutePathForFilteredUnsafeIndex(tblInfo *model.TableInfo, index *model.IndexInfo) *util.AccessPath {
+	if index.InvertedInfo != nil {
+		return nil
+	}
+	if index.IsColumnarIndex() {
+		// Keep the original substitution behavior for columnar indexes only when the replica is available.
+		if tblInfo.TiFlashReplica == nil || !tblInfo.TiFlashReplica.Available {
+			return nil
+		}
+		path := genTiFlashPath(tblInfo)
+		path.Index = index
+		return path
+	}
+	return &util.AccessPath{Index: index}
+}
+
+func getGCSubstituteExtraPaths(filteredUnsafePaths []*util.AccessPath, hasUseOrForce bool, ignoredFilteredUnsafeIndexes map[string]struct{}) []*util.AccessPath {
+	if hasUseOrForce || len(filteredUnsafePaths) == 0 {
+		return nil
+	}
+	extraPaths := make([]*util.AccessPath, 0, len(filteredUnsafePaths))
+	for _, path := range filteredUnsafePaths {
+		if path.Index == nil {
+			continue
+		}
+		if _, ignored := ignoredFilteredUnsafeIndexes[path.Index.Name.L]; ignored {
+			continue
+		}
+		extraPaths = append(extraPaths, path)
+	}
+	return extraPaths
 }
 
 func removeIgnoredPaths(paths, ignoredPaths []*util.AccessPath) []*util.AccessPath {

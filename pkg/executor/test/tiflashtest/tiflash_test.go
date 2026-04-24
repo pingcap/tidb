@@ -1811,9 +1811,9 @@ func TestMPP47766(t *testing.T) {
 	tk.MustQuery("explain select date(test_time), count(1) as test_date from `traces` group by 1").Check(testkit.Rows(
 		"Projection_4 8000.00 root  test.traces.test_time_gen->Column#6, Column#5",
 		"└─HashAgg_8 8000.00 root  group by:test.traces.test_time_gen, funcs:count(1)->Column#5, funcs:firstrow(test.traces.test_time_gen)->test.traces.test_time_gen",
-		"  └─TableReader_20 10000.00 root  MppVersion: 3, data:ExchangeSender_19",
-		"    └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"      └─TableFullScan_18 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
+		"  └─TableReader_18 10000.00 root  MppVersion: 3, data:ExchangeSender_17",
+		"    └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"      └─TableFullScan_16 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
 	tk.MustQuery("explain select /*+ read_from_storage(tiflash[traces]) */ date(test_time) as test_date, count(1) from `traces` group by 1").
 		Check(testkit.Rows(
 			"TableReader_31 8000.00 root  MppVersion: 3, data:ExchangeSender_30",
