@@ -377,8 +377,14 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 					chunkStats := val.(*tableChunkStat)
 					finishedChunks := chunkStats.finished.Add(1)
 					if chunkStats.finalized.Load() && finishedChunks == chunkStats.sent.Load() {
-						IncCounter(d.metrics.finishedTablesCounter)
-						d.chunkedTables.Delete(td.Meta.ChunkKey())
+						// LoadAndDelete is the atomic claim: only the winner
+						// sees `loaded==true`. The producer defer uses the
+						// same pattern, so the counter increments exactly
+						// once regardless of which side reaches the
+						// termination condition first.
+						if _, loaded := d.chunkedTables.LoadAndDelete(td.Meta.ChunkKey()); loaded {
+							IncCounter(d.metrics.finishedTablesCounter)
+						}
 					}
 				} else {
 					IncCounter(d.metrics.finishedTablesCounter)
@@ -671,13 +677,25 @@ func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *BaseConn, meta Tabl
 		return nil
 	}
 
-	// Update total rows
-	fields, _, _ := pickupPossibleField(tctx, meta, conn)
-	fieldName := ""
-	if len(fields) > 0 {
-		fieldName = fields[0]
+	// Update total rows. Use "*" as the estimation column for string-leading
+	// composite keys; EXPLAIN on a single varchar column under-estimates and
+	// would otherwise make estimateTotalRowsCounter lag behind the chunked
+	// path's estimate (see concurrentDumpTable).
+	fields, isStringField, err := pickupPossibleField(tctx, meta, conn)
+	if err != nil {
+		tctx.L().Debug("pickupPossibleField failed for row estimate",
+			zap.String("database", meta.DatabaseName()),
+			zap.String("table", meta.TableName()),
+			log.ShortError(err))
 	}
-	c := estimateCount(tctx, meta.DatabaseName(), meta.TableName(), conn, fieldName, conf)
+	estimateField := ""
+	if len(fields) > 0 {
+		estimateField = fields[0]
+		if isStringField {
+			estimateField = "*"
+		}
+	}
+	c := estimateCount(tctx, meta.DatabaseName(), meta.TableName(), conn, estimateField, conf)
 	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 
 	if conf.Rows == UnspecifiedSize {
@@ -913,8 +931,9 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	defer func() {
 		chunkStats.finalized.Store(true)
 		if chunkStats.finished.Load() == chunkStats.sent.Load() {
-			IncCounter(d.metrics.finishedTablesCounter)
-			d.chunkedTables.Delete(meta.ChunkKey())
+			if _, loaded := d.chunkedTables.LoadAndDelete(meta.ChunkKey()); loaded {
+				IncCounter(d.metrics.finishedTablesCounter)
+			}
 		}
 	}()
 	if conf.Where == "" {
@@ -960,12 +979,16 @@ func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan
 // (rather than when the first chunk finishes, which was the old behavior
 // noted by the FIXME in startWriters).
 //
-// Invariant: finalized is set to true only after the producer side has
-// finished every sendTaskToChan call for this table. sent is incremented
-// synchronously inside sendTaskToChan before the blocking send, so no
-// sent.Add can race in after finalized=true. Therefore any reader that
-// observes `finalized && finished == sent` can conclude every task has
-// been both sent and completed, and the stats entry is safe to delete.
+// Termination handshake: the producer defer (after it has finished every
+// sendTaskToChan call) sets finalized=true and then checks
+// `finished == sent`. The consumer callback (startWriters) increments
+// finished and then checks `finalized && finished == sent`. Both sides
+// can observe the same termination condition concurrently, so the
+// IncCounter + Delete pair must be atomic w.r.t. the other side.
+// Both sites call chunkedTables.LoadAndDelete and only the side that
+// gets `loaded==true` performs the increment. sent.Add happens
+// synchronously inside sendTaskToChan before the blocking send, so
+// once finalized flips true no new sent.Add can race in.
 type tableChunkStat struct {
 	sent      *gatomic.Int32
 	finished  *gatomic.Int32
@@ -1109,8 +1132,9 @@ func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn 
 	defer func() {
 		chunkStats.finalized.Store(true)
 		if chunkStats.finished.Load() == chunkStats.sent.Load() {
-			IncCounter(d.metrics.finishedTablesCounter)
-			d.chunkedTables.Delete(meta.ChunkKey())
+			if _, loaded := d.chunkedTables.LoadAndDelete(meta.ChunkKey()); loaded {
+				IncCounter(d.metrics.finishedTablesCounter)
+			}
 		}
 	}()
 	for i, partition := range partitions {

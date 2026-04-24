@@ -1023,10 +1023,10 @@ func TestStreamingChunkProgressIntegration(t *testing.T) {
 		}()
 	}
 
-	// Wait for all chunks to be processed (in real code this would be handled by workers)
-	for stats.finished.Load() < int32(numChunks) {
-		time.Sleep(1 * time.Millisecond)
-	}
+	// Wait for all chunks to be processed (in real code this would be handled by workers).
+	require.Eventually(t, func() bool {
+		return stats.finished.Load() >= int32(numChunks)
+	}, 5*time.Second, 1*time.Millisecond)
 
 	// Verify all chunks were tracked
 	require.Equal(t, int32(numChunks), stats.sent.Load(), "All chunks should be sent")

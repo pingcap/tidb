@@ -84,11 +84,19 @@ func (d *Dumper) GetStatus() *DumpStatus {
 			ret.Progress = fmt.Sprintf("%5.2f %%", progress*100)
 		}
 	} else {
-		// Debug: Show ongoing chunk progress even when progressReady is false for streaming tables
+		// Streaming tables set totalChunks incrementally and never flip
+		// progressReady, so surface best-effort progress from the
+		// in-flight counters. totalChunks is loaded before
+		// completedChunks, so concurrent task completions can briefly
+		// push the ratio above 1; clamp for consistency with the
+		// progressReady branch above.
 		totalChunks := d.metrics.totalChunks.Load()
 		completedChunks := d.metrics.completedChunks.Load()
 		if totalChunks > 0 {
 			progress := float64(completedChunks) / float64(totalChunks)
+			if progress > 1 {
+				progress = 1
+			}
 			ret.Progress = fmt.Sprintf("%5.2f %% (streaming)", progress*100)
 		}
 	}
