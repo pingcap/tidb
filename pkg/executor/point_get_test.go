@@ -17,6 +17,8 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -387,22 +389,44 @@ func TestPointGetCoveringIndex(t *testing.T) {
 	tk.MustExec("create table t1(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
 	tk.MustExec("insert into t1 values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
 
-	// Test case 1: Point get with covering index (id2 is both in WHERE and SELECT)
-	// This should use the covering index optimization to avoid fetching row data
+	// Result-correctness checks.
 	tk.MustQuery("SELECT id2 FROM t1 WHERE id2 = 10").Check(testkit.Rows("10"))
 	tk.MustQuery("SELECT id2 FROM t1 WHERE id2 = 20").Check(testkit.Rows("20"))
 	tk.MustQuery("SELECT id2 FROM t1 WHERE id2 = 30").Check(testkit.Rows("30"))
-
-	// Test case 2: Point get with non-covering index (selecting id3 which is not in index)
-	// This should still work but may need to fetch row data
 	tk.MustQuery("SELECT id3 FROM t1 WHERE id2 = 10").Check(testkit.Rows("100"))
 	tk.MustQuery("SELECT id3 FROM t1 WHERE id2 = 20").Check(testkit.Rows("200"))
-
-	// Test case 3: Multiple columns including covering case
 	tk.MustQuery("SELECT id1, id2, id3 FROM t1 WHERE id2 = 10").Check(testkit.Rows("1 10 100"))
-
-	// Test case 4: Verify the optimization doesn't affect non-point-get queries
 	tk.MustQuery("SELECT COUNT(*) FROM t1").Check(testkit.Rows("3"))
+
+	// Prove the covering-index fast path is actually taken: a point get that projects only
+	// indexed columns must issue strictly fewer Snapshot.Get RPCs than one that projects a
+	// non-indexed column on the same row (which still needs the row-key fetch).
+	coveringRPCs := sumNumRPC(t, tk, "explain analyze select id2 from t1 where id2 = 10")
+	nonCoveringRPCs := sumNumRPC(t, tk, "explain analyze select id3 from t1 where id2 = 10")
+	require.Greater(t, coveringRPCs, 0, "covering-index query should still issue the index-key Get")
+	require.Less(t, coveringRPCs, nonCoveringRPCs,
+		"covering-index query (%d RPCs) should issue fewer Snapshot.Get RPCs than non-covering query (%d RPCs); "+
+			"otherwise the buildResultFromIndex fast path is not being taken",
+		coveringRPCs, nonCoveringRPCs)
+}
+
+// sumNumRPC runs `explain analyze` and totals every `num_rpc:<N>` field across all operator
+// rows. It is intentionally coarse: we only need to compare relative counts between two
+// queries to prove whether the covering-index fast path skipped the row-key Get.
+func sumNumRPC(t *testing.T, tk *testkit.TestKit, explainSQL string) int {
+	t.Helper()
+	re := regexp.MustCompile(`num_rpc:(\d+)`)
+	total := 0
+	for _, row := range tk.MustQuery(explainSQL).Rows() {
+		for _, field := range row {
+			for _, m := range re.FindAllStringSubmatch(fmt.Sprint(field), -1) {
+				n, err := strconv.Atoi(m[1])
+				require.NoError(t, err, "parse num_rpc in %q", field)
+				total += n
+			}
+		}
+	}
+	return total
 }
 
 // TestPointGetCoveringIndexForUpdateLocks verifies that SELECT ... FOR UPDATE on a covering
