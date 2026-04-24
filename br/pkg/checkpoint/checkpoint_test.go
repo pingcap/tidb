@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -35,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestCheckpointMetaForBackup(t *testing.T) {
@@ -188,6 +191,30 @@ func (t *mockTimer) GetTS(ctx context.Context) (int64, int64, error) {
 
 func TestCheckpointBackupRunner(t *testing.T) {
 	ctx := context.Background()
+
+	t.Run("checkpoint lock flush stays below info", func(t *testing.T) {
+		base := t.TempDir()
+		s, err := objstore.NewLocalStorage(base)
+		require.NoError(t, err)
+
+		core, recorded := observer.New(zap.InfoLevel)
+		restore := log.ReplaceGlobals(
+			zap.New(core),
+			&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
+		)
+		defer restore()
+
+		cipher := &backuppb.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+			CipherKey:  []byte("01234567890123456789012345678901"),
+		}
+		runner, err := checkpoint.StartCheckpointBackupRunnerForTest(
+			ctx, s, cipher, 5*time.Second, NewMockTimer(10, 10))
+		require.NoError(t, err)
+		runner.WaitForFinish(ctx, true)
+		require.Empty(t, recorded.FilterMessage("start to flush the checkpoint lock").All())
+	})
+
 	base := t.TempDir()
 	s, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
