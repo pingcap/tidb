@@ -904,20 +904,29 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 		return nil
 	}
 
-	// For indexed columns with case-insensitive collations in the result set,
-	// we need to fetch row data to get the correct case of the stored value.
-	// This is because e.idxVals contains the search values, not the stored values.
+	// For string columns, the search value in e.idxVals may legitimately differ from the
+	// stored value under two collation rules that both normalise before comparing:
+	//   - Case-insensitive collations ('foo' matches stored 'Foo'): IsCICollation.
+	//   - PAD SPACE collations ('foo' matches stored 'foo '), which covers every collation
+	//     except truly binary ones (binary, utf8mb4_0900_bin) and the NO-PAD
+	//     utf8mb4_0900_ai_ci — note that utf8mb4_bin is PAD SPACE but case-sensitive, so
+	//     the CI-only check used to miss it. IsPadSpaceCollation is the same helper used
+	//     by pkg/util/ranger for the trailing-space case.
+	// In either case returning e.idxVals[i] directly would return what the user searched
+	// for rather than what the table actually stores, diverging silently from MySQL
+	// behaviour. Fall back to the row-fetch path so the stored value is decoded.
 	for _, col := range schema.Columns {
-		// Check if this column is part of the index
 		for _, idxCol := range e.idxInfo.Columns {
-			if e.tblInfo.Columns[idxCol.Offset].ID == col.ID {
-				// This column is in the index
-				if col.RetType.EvalType() == types.ETString && collate.IsCICollation(col.RetType.GetCollate()) {
-					// For CI collation, the search value might differ from stored value
+			if e.tblInfo.Columns[idxCol.Offset].ID != col.ID {
+				continue
+			}
+			if col.RetType.EvalType() == types.ETString {
+				collation := col.RetType.GetCollate()
+				if collate.IsCICollation(collation) || collate.IsPadSpaceCollation(collation) {
 					return e.buildResultFromRowData(ctx, req, schema, sctx)
 				}
-				break
 			}
+			break
 		}
 	}
 

@@ -460,6 +460,28 @@ func TestPointGetCoveringIndexForUpdateLocks(t *testing.T) {
 	tk1.MustExec("commit")
 }
 
+// TestPointGetCoveringIndexPadSpace verifies the covering-index fast path does not return
+// the search value instead of the stored value for PAD SPACE collations. utf8mb4_bin is
+// PAD SPACE but case-sensitive — the earlier IsCICollation-only check missed it. The fast
+// path must fall back to a row fetch so the trailing space from the stored value is
+// preserved.
+func TestPointGetCoveringIndexPadSpace(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_pad (c varchar(10) collate utf8mb4_bin, unique key uk_c (c))")
+	// Stored value has a trailing space; PAD SPACE semantics make 'foo' equal 'foo ' in
+	// comparisons, so the unique-index lookup for WHERE c = 'foo' matches this row.
+	tk.MustExec("insert into t_pad values ('foo ')")
+
+	// Row-fetch behaviour: the executor must return the stored value, trailing space
+	// included. If the fast path fired without the PAD SPACE guard, it would return
+	// 'foo' instead.
+	tk.MustQuery("select c, length(c) from t_pad where c = 'foo'").Check(testkit.Rows("foo  4"))
+	tk.MustQuery("select c, length(c) from t_pad where c = 'foo '").Check(testkit.Rows("foo  4"))
+}
+
 // TestPointGetCoveringIndexPartitioned verifies the covering-index fast path produces
 // correct results on a partitioned table, both for a local unique index (on the partition
 // key) and for a global unique index (on a non-partition-key column).
