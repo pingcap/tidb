@@ -36,16 +36,18 @@ run_dumpling --rows 5
 for file_path in "$DUMPLING_BASE_NAME"/data/*; do
   base_name=$(basename "$file_path")
   table_name="${base_name%.sql}"
-  
-  # Count the number of chunk files created
-  chunk_count=$(ls -1 "$DUMPLING_OUTPUT_DIR"/composite_string_key.$table_name.*.sql 2>/dev/null | wc -l)
-  
-  # Determine expected chunks based on table row counts
+
+  # Count chunk files via find so the argument list handles odd characters
+  # and we don't depend on `ls` output shape (shellcheck SC2012).
+  chunk_count=$(find "$DUMPLING_OUTPUT_DIR" -maxdepth 1 \
+      -name "composite_string_key.${table_name}.[0-9]*.sql" | wc -l | tr -d ' ')
+
+  # Determine expected chunks based on table row counts.
   # With --rows 5:
-  # comp_str_case_0: 10 rows -> 2 chunks
-  # comp_str_case_1: 10 rows -> 2 chunks  
-  # comp_str_case_2: 12 rows -> 3 chunks
-  # comp_str_case_3: 12 rows -> 3 chunks
+  #   comp_str_case_0: 10 rows -> 2 chunks
+  #   comp_str_case_1: 10 rows -> 2 chunks
+  #   comp_str_case_2: 12 rows -> 3 chunks
+  #   comp_str_case_3: 12 rows -> 3 chunks
   case "$table_name" in
     "comp_str_case_0" | "comp_str_case_1")
       expected_chunks=2
@@ -58,29 +60,32 @@ for file_path in "$DUMPLING_BASE_NAME"/data/*; do
       exit 1
       ;;
   esac
-  
+
   if [ "$chunk_count" -ne "$expected_chunks" ]; then
     echo "ERROR: Expected $expected_chunks chunks for $table_name, but found $chunk_count"
     exit 1
   fi
-  
-  # Compare each chunk file with the expected result file
-  for chunk_file in "$DUMPLING_OUTPUT_DIR"/composite_string_key.$table_name.*.sql; do
+
+  # Compare each chunk file with its expected fixture. Use plain `diff`
+  # (no -B / -w) so whitespace-sensitive regressions — a dropped newline
+  # at a chunk boundary, a rogue space in a quoted value, a mis-escape —
+  # surface instead of being silently ignored.
+  find "$DUMPLING_OUTPUT_DIR" -maxdepth 1 \
+      -name "composite_string_key.${table_name}.[0-9]*.sql" -print0 \
+      | while IFS= read -r -d '' chunk_file; do
     chunk_basename=$(basename "$chunk_file")
-    # Extract the chunk number from the filename (e.g., composite_string_key.comp_str_case_0.000000000.sql -> comp_str_case_0.000000000.sql)
     expected_file="${chunk_basename#composite_string_key.}"
-    
+
     if [ ! -f "$DUMPLING_BASE_NAME/result/$expected_file" ]; then
       echo "ERROR: Expected result file $DUMPLING_BASE_NAME/result/$expected_file not found"
       exit 1
     fi
-    
-    # Compare the chunk with expected result
-    if ! diff -B -w "$chunk_file" "$DUMPLING_BASE_NAME/result/$expected_file"; then
+
+    if ! diff "$chunk_file" "$DUMPLING_BASE_NAME/result/$expected_file"; then
       echo "ERROR: Chunk file $chunk_file does not match expected result $expected_file"
       exit 1
     fi
   done
-  
+
   echo "Table $table_name: Successfully validated $chunk_count chunks"
 done
