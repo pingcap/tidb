@@ -296,12 +296,12 @@ partition by hash (a) partitions 3`)
 	tk.MustExec("analyze table t")
 	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
 	tk.MustQuery(`select b from t where a = 1 or a = 10 or a = 10 or a = 999999`).Sort().Check(testkit.Rows("1", "10"))
-	tk.MustQuery(`explain format='brief' select b from t where a = 1 or a = 10 or a = 10 or a = 999999`).Check(testkit.Rows(""+
-		"PartitionUnion 6.00 root  ",
-		"├─Projection 3.00 root  test.t.b",
-		"│ └─Batch_Point_Get 3.00 root table:t, partition:p0, index:a(a) keep order:false, desc:false",
-		"└─Projection 3.00 root  test.t.b",
-		"  └─Batch_Point_Get 3.00 root table:t, partition:p1, index:a(a) keep order:false, desc:false"))
+	tk.MustQuery(`explain format='plan_tree' select b from t where a = 1 or a = 10 or a = 10 or a = 999999`).Check(testkit.Rows(""+
+		"PartitionUnion root  ",
+		"├─Projection root  test.t.b",
+		"│ └─Batch_Point_Get root table:t, partition:p0, index:a(a) keep order:false, desc:false",
+		"└─Projection root  test.t.b",
+		"  └─Batch_Point_Get root table:t, partition:p1, index:a(a) keep order:false, desc:false"))
 	tk.MustExec(`prepare stmt from 'select b from t where a = 1 or a = 10 or a = 10 or a = 999999'`)
 	tk.MustQuery(`execute stmt`)
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)

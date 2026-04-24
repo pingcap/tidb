@@ -1356,7 +1356,8 @@ func init() {
 	// initially, and then we detect the right version when DDL start.
 	ver := JobVersion1
 	if kerneltype.IsNextGen() {
-		// nextgen doesn't need to consider the compatibility with old TiDB versions,
+		// NextGen doesn't need to consider the compatibility with old TiDB
+		// versions, the initial version can be set to v2 directly.
 		ver = JobVersion2
 	}
 	SetJobVerInUse(ver)

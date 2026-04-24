@@ -2314,18 +2314,19 @@ func TestConnAddMetrics(t *testing.T) {
 
 func TestIssue54335(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
 
 	// There is no underlying netCon, use failpoint to avoid panic
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/FakeClientConn", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeClientConn"))
 	}()
-	tk := testkit.NewTestKit(t, store)
 
 	connID := uint64(1)
-	tk.Session().SetConnectionID(connID)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
-		Session: tk.Session(),
+		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
 	cc := &clientConn{
@@ -2333,6 +2334,7 @@ func TestIssue54335(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(io.Discard)),
 		alloc:      arena.NewAllocator(32 * 1024),
 		chunkAlloc: chunk.NewAllocator(),
 	}
@@ -2346,12 +2348,12 @@ func TestIssue54335(t *testing.T) {
 	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
 	go handle.Run()
 
-	tk.MustExec("use test;")
-	tk.MustExec("CREATE TABLE testTable2 (id bigint,  age int)")
+	session.MustExec(t, se, "use test;")
+	session.MustExec(t, se, "CREATE TABLE testTable2 (id bigint,  age int)")
 	str := fmt.Sprintf("insert into testTable2 values(%d, %d)", 1, 1)
-	tk.MustExec(str)
+	session.MustExec(t, se, str)
 	for range 14 {
-		tk.MustExec("insert into testTable2 select * from testTable2")
+		session.MustExec(t, se, "insert into testTable2 select * from testTable2")
 	}
 
 	times := 100

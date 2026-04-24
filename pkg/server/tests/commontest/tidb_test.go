@@ -3042,7 +3042,7 @@ func (p *mockProxyProtocolProxy) onConn(conn net.Conn) {
 		fmt.Println(err)
 	}
 	defer bconn.Close()
-	ppHeader := p.generateProxyProtocolHeaderV2("tcp4", p.clientAddr, p.frontend)
+	ppHeader := p.generateProxyProtocolHeaderV2("tcp4", p.clientAddr, p.ListenAddr().String())
 	bconn.Write(ppHeader)
 	p.proxyPipe(conn, bconn)
 }
@@ -3100,7 +3100,7 @@ func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr,
 
 func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	cfg := util2.NewTestConfig()
-	cfg.Port = 4999
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
 	cfg.ProxyProtocol.Networks = "*"
@@ -3117,20 +3117,19 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
 	defer func() {
 		server.Close()
 	}()
 	<-server2.RunInGoTestChan
 	require.NotNil(t, server.Listener())
 	require.Nil(t, server.Socket())
+	serverPort := testutil.GetPortFromTCPAddr(server.ListenAddr())
 
 	// Prepare Proxy
-	ppProxy := newMockProxyProtocolProxy("127.0.0.1:5000", "127.0.0.1:4999", "192.168.1.2:60055", false)
+	ppProxy := newMockProxyProtocolProxy("127.0.0.1:0", fmt.Sprintf("127.0.0.1:%d", serverPort), "192.168.1.2:60055", false)
 	go func() {
 		ppProxy.Run()
 	}()
-	time.Sleep(time.Millisecond * 100)
 	defer func() {
 		ppProxy.Close()
 	}()
@@ -3151,7 +3150,7 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	)
 
 	cli2 := testserverclient.NewTestServerClient()
-	cli2.Port = 4999
+	cli2.Port = serverPort
 	cli2.RunTests(t,
 		func(config *mysql.Config) {
 			config.User = "root"
@@ -3691,12 +3690,6 @@ func TestAuditPluginRetrying(t *testing.T) {
 		testResultsMu.Unlock()
 		return res
 	}
-	getTestResultsLen := func() int {
-		testResultsMu.Lock()
-		l := len(testResults)
-		testResultsMu.Unlock()
-		return l
-	}
 	appendTestResult := func(res normalTest) {
 		testResultsMu.Lock()
 		testResults = append(testResults, res)
@@ -3723,50 +3716,29 @@ func TestAuditPluginRetrying(t *testing.T) {
 	// 1. Auto-commit retry
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		db := dbt.GetDB()
+		ctx := context.Background()
+		conn, err := db.Conn(ctx)
+		require.NoError(t, err)
+		defer conn.Close()
 
-		_, err := db.Exec("DROP TABLE IF EXISTS auto_retry_test")
+		_, err = conn.ExecContext(ctx, "SET @@session.tidb_txn_mode = 'optimistic'")
 		require.NoError(t, err)
-		_, err = db.Exec("CREATE TABLE auto_retry_test (id INT PRIMARY KEY, val INT)")
+		_, err = conn.ExecContext(ctx, "DROP TABLE IF EXISTS auto_retry_test")
 		require.NoError(t, err)
-		_, err = db.Exec("INSERT INTO auto_retry_test VALUES (1, 0)")
+		_, err = conn.ExecContext(ctx, "CREATE TABLE auto_retry_test (id INT PRIMARY KEY, val INT)")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "INSERT INTO auto_retry_test VALUES (1, 0)")
 		require.NoError(t, err)
 
-		// a big enough concurrency to trigger retries
-		concurrency := 500
-		db.SetMaxOpenConns(concurrency)
-		db.SetMaxIdleConns(concurrency)
 		updateSQL := "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1"
-		// Usually the following retry-loop will succeed in the first try. However, if we are lucky
-		// enough, it might need more times to trigger the retry.
-		require.Eventually(t, func() bool {
-			resetTestResults()
-			var wg sync.WaitGroup
-			errCh := make(chan error, concurrency)
-			for range concurrency {
-				wg.Go(func() {
-					_, err := db.ExecContext(context.Background(), updateSQL)
-					if err != nil {
-						errCh <- err
-					}
-				})
-			}
-			wg.Wait()
-			close(errCh)
-			for err := range errCh {
-				require.NoError(t, err)
-			}
-
-			return getTestResultsLen() > concurrency
-		}, time.Second*30, time.Millisecond*100)
-
-		testResults := getTestResults()
-		nonRetryingCount := 0
-		for _, res := range testResults {
-			if !res.retrying {
-				nonRetryingCount++
-			}
-		}
-		require.Equal(t, concurrency, nonRetryingCount)
+		resetTestResults()
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `1*return(true)->return(false)`))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+		}()
+		_, err = conn.ExecContext(ctx, updateSQL)
+		require.NoError(t, err)
+		require.Equal(t, []normalTest{{sql: updateSQL, retrying: false}, {sql: updateSQL, retrying: true}}, getTestResults())
 	})
 
 	runExplicitTransactionRetry := func(db *sql.DB, isOptimistic bool) {
@@ -3838,12 +3810,12 @@ func TestAuditPluginRetrying(t *testing.T) {
 			}
 		}
 
-		require.Greater(t, retryingCount, 0)
 		// (BEGIN + UPDATE + COMMIT) * 2 transactions = 6
 		expectedSQLCount := 6
 		if isOptimistic {
 			expectedSQLCount += 2 // extra `SET` variable SQL
 		}
+		require.Greater(t, retryingCount, 0)
 		require.Equal(t, expectedSQLCount, nonRetryingCount)
 	}
 

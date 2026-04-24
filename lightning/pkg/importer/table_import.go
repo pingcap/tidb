@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	"github.com/pingcap/tidb/pkg/errno"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -37,9 +38,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -64,8 +65,8 @@ import (
 type TableImporter struct {
 	// The unique table name in the form "`db`.`tbl`".
 	tableName string
-	dbInfo    *checkpoints.TidbDBInfo
-	tableInfo *checkpoints.TidbTableInfo
+	dbInfo    *importdef.DBInfo
+	tableInfo *importdef.TableInfo
 	tableMeta *mydump.MDTableMeta
 	encTable  table.Table
 	alloc     autoid.Allocators
@@ -84,8 +85,8 @@ type TableImporter struct {
 func NewTableImporter(
 	tableName string,
 	tableMeta *mydump.MDTableMeta,
-	dbInfo *checkpoints.TidbDBInfo,
-	tableInfo *checkpoints.TidbTableInfo,
+	dbInfo *importdef.DBInfo,
+	tableInfo *importdef.TableInfo,
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
@@ -419,6 +420,41 @@ func createColumnPermutation(
 	return colPerm, nil
 }
 
+// estimateCompactionThreshold estimates the SST file compaction threshold by total row file size.
+// With a higher compaction threshold, the compaction time increases, but the iteration time decreases.
+// Try to limit the total SST file count under 500. But compressing 32GB SST files costs about 20min,
+// so set the upper bound to 32GB to avoid too long compaction time.
+// factor is the non-clustered index count, or 1 for the data engine.
+func estimateCompactionThreshold(files []mydump.FileInfo, cp *checkpoints.TableCheckpoint, factor int64) int64 {
+	totalRawFileSize := int64(0)
+	var lastFile string
+	fileSizeMap := make(map[string]int64, len(files))
+	for _, file := range files {
+		fileSizeMap[file.FileMeta.Path] = file.FileMeta.RealSize
+	}
+
+	for _, engineCp := range cp.Engines {
+		for _, chunk := range engineCp.Chunks {
+			if chunk.FileMeta.Path == lastFile {
+				continue
+			}
+			size, ok := fileSizeMap[chunk.FileMeta.Path]
+			if !ok {
+				size = chunk.FileMeta.FileSize
+			}
+			if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+				// Parquet file is compressed, thus estimates with a factor of 2.
+				size *= 2
+			}
+			totalRawFileSize += size
+			lastFile = chunk.FileMeta.Path
+		}
+	}
+	totalRawFileSize *= factor
+
+	return local.EstimateCompactionThreshold2(totalRawFileSize)
+}
+
 func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	indexEngineCp := cp.Engines[common.IndexEngineID]
 	if indexEngineCp == nil {
@@ -457,7 +493,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 			if !common.TableHasAutoRowID(tr.tableInfo.Core) {
 				idxCnt--
 			}
-			threshold := local.EstimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
+			threshold := estimateCompactionThreshold(tr.tableMeta.DataFiles, cp, int64(idxCnt))
 			idxEngineCfg.Local = backend.LocalEngineConfig{
 				Compact:            threshold > 0,
 				CompactConcurrency: 4,

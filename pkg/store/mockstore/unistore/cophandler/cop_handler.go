@@ -139,7 +139,7 @@ func ExecutorListsToTree(exec []*tipb.Executor) *tipb.Executor {
 		case tipb.ExecType_TypeIndexLookUp:
 			parent.IndexLookup.Children = append(parent.IndexLookup.Children, child)
 		default:
-			panic("unsupported dag executor type")
+			panic("unsupported dag parent executor type: " + parent.Tp.String())
 		}
 	}
 

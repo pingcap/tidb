@@ -21,6 +21,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -72,6 +73,7 @@ func NewDeleter(
 	store tidbkv.Storage,
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
+	progressCollector execute.Collector,
 	trafficRec TrafficRecorder,
 ) *Deleter {
 	deleter := &Deleter{
@@ -81,7 +83,7 @@ func NewDeleter(
 		snapshot:   NewLazyRefreshedSnapshot(store, trafficRec),
 		trafficRec: trafficRec,
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, logger)
+	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, progressCollector, logger)
 	var h Handler
 	if kvGroup == external.DataKVGroup {
 		h = NewDataKVHandler(base)

@@ -359,7 +359,7 @@ func TestTTLAutoAnalyze(t *testing.T) {
 
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.True(t, h.HandleAutoAnalyze())
 }
@@ -1841,43 +1841,65 @@ func TestTimerJobAfterDropTable(t *testing.T) {
 	require.True(t, job.Finished)
 }
 
-func TestIterationOfRunningJob(t *testing.T) {
+func testIterationOfRunningJobWithTimeout(t *testing.T, sessionTimeout time.Duration, tableCount int64, sleepPerTable time.Duration) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
-	sessionFactory := sessionFactory(t, dom)
+	sessionFactory := sessionFactoryWithTimeout(t, dom, sessionTimeout)
 
 	m := ttlworker.NewJobManager("test-job-manager", dom.AdvancedSysSessionPool(), store, nil, func() bool { return true })
 
-	se, closeSe := sessionFactory()
-	defer closeSe()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
-	for tableID := int64(0); tableID < 100; tableID++ {
-		testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
-		m.InfoSchemaCache().Tables[testTable.ID] = testTable
+	for tableID := int64(0); tableID < tableCount; tableID++ {
+		func() {
+			se, closeSe := sessionFactory()
+			defer closeSe()
 
-		jobID := uuid.NewString()
-		_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
-		require.NoError(t, err)
-		sql, args := cache.SelectFromTTLTableStatusWithID(tableID)
-		rows, err := se.ExecuteSQL(ctx, sql, args...)
-		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		status, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
-		require.NoError(t, err)
-		require.Equal(t, jobID, status.CurrentJobID)
-		require.Equal(t, m.ID(), status.CurrentJobOwnerID)
+			testTable := &cache.PhysicalTable{ID: tableID, TableInfo: &model.TableInfo{ID: tableID, TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"}}}
+			m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
-		// update the owner id
-		_, err = se.ExecuteSQL(ctx, "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = %?", jobID)
-		require.NoError(t, err)
+			jobID := uuid.NewString()
+			_, err := m.LockJob(context.Background(), se, testTable, se.Now(), jobID, false)
+			require.NoError(t, err)
+			sql, args := cache.SelectFromTTLTableStatusWithID(tableID)
+			rows, err := se.ExecuteSQL(ctx, sql, args...)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			status, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
+			require.NoError(t, err)
+			require.Equal(t, jobID, status.CurrentJobID)
+			require.Equal(t, m.ID(), status.CurrentJobOwnerID)
+
+			// update the owner id
+			_, err = se.ExecuteSQL(ctx, "UPDATE mysql.tidb_ttl_table_status SET current_job_owner_id = 'another-id' WHERE current_job_id = %?", jobID)
+			require.NoError(t, err)
+
+			if sleepPerTable > 0 {
+				time.Sleep(sleepPerTable)
+			}
+		}()
 	}
-	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+	func() {
+		se, closeSe := sessionFactory()
+		defer closeSe()
+		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+	}()
 
-	require.Len(t, m.RunningJobs(), 100)
+	require.Len(t, m.RunningJobs(), int(tableCount))
 	m.CheckNotOwnJob()
 
 	// Now all the jobs should have been removed
 	require.Len(t, m.RunningJobs(), 0)
+}
+
+func TestIterationOfRunningJob(t *testing.T) {
+	t.Run("normal", func(t *testing.T) {
+		testIterationOfRunningJobWithTimeout(t, time.Minute, 100, 0)
+	})
+	t.Run("session-timeout", func(t *testing.T) {
+		// Keep the timeout short enough to catch accidental long-lived session reuse,
+		// but leave headroom for slower CI hosts.
+		testIterationOfRunningJobWithTimeout(t, 3*time.Second, 100, 40*time.Millisecond)
+	})
 }
 
 func TestTTLSummaryForTimeoutJob(t *testing.T) {

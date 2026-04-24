@@ -49,7 +49,7 @@ import (
 )
 
 // SubmitStandaloneTask submits a task to the distribute framework that only runs on the current node.
-// when import from server-disk, pass engine checkpoints too, as scheduler might run on another
+// when import from server-disk, pass engine chunks too, as scheduler might run on another
 // node where we can't access the data files.
 func SubmitStandaloneTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	serverInfo, err := infosync.GetServerInfo()
@@ -185,6 +185,12 @@ type RuntimeInfo struct {
 
 var notAvailable = "N/A"
 
+func (ri *RuntimeInfo) isConflictStep() bool {
+	// Conflict steps track "processed" by conflicted-row count, not by byte size
+	// like other import steps.
+	return ri.Step == proto.ImportStepCollectConflicts || ri.Step == proto.ImportStepConflictResolution
+}
+
 // Percent returns the progress percentage of the current step.
 func (ri *RuntimeInfo) Percent() string {
 	// Currently, we can't track the progress of post process
@@ -225,12 +231,26 @@ func (ri *RuntimeInfo) ETA() string {
 
 // TotalSize returns the total size of the current step in human-readable format.
 func (ri *RuntimeInfo) TotalSize() string {
+	if ri.isConflictStep() {
+		return fmt.Sprintf("%d conflicts", ri.Total)
+	}
 	return units.BytesSize(float64(ri.Total))
 }
 
 // ProcessedSize returns the processed size of the current step in human-readable format.
 func (ri *RuntimeInfo) ProcessedSize() string {
+	if ri.isConflictStep() {
+		return fmt.Sprintf("%d conflicts", ri.Processed)
+	}
 	return units.BytesSize(float64(ri.Processed))
+}
+
+// SpeedStr returns the processing speed of the current step in human-readable format.
+func (ri *RuntimeInfo) SpeedStr() string {
+	if ri.isConflictStep() {
+		return fmt.Sprintf("%d conflicts/s", ri.Speed)
+	}
+	return fmt.Sprintf("%s/s", units.BytesSize(float64(ri.Speed)))
 }
 
 // convertToMySQLTime converts go time to MySQL time with the specified location.
@@ -300,7 +320,7 @@ func GetRuntimeInfoForJob(
 
 	ri.Speed = 0
 	for _, s := range summaries {
-		ri.Processed += s.Bytes.Load()
+		ri.Processed += s.Processed.Load()
 		ri.ImportRows += s.RowCnt.Load()
 		ri.Speed += s.GetSpeedInTimeRange(currentTime, timeRange)
 		if s.UpdateTime().After(latestTime) {
@@ -321,6 +341,10 @@ func GetRuntimeInfoForJob(
 		ri.Total = taskMeta.Summary.EncodeSummary.Bytes
 	case proto.ImportStepMergeSort:
 		ri.Total = taskMeta.Summary.MergeSummary.Bytes
+	case proto.ImportStepCollectConflicts:
+		ri.Total = taskMeta.Summary.CollectConflictsSummary.RowCnt
+	case proto.ImportStepConflictResolution:
+		ri.Total = taskMeta.Summary.ResolveConflictsSummary.RowCnt
 	}
 
 	if !latestTime.IsZero() {

@@ -109,7 +109,7 @@ func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logge
 			return errors.Trace(err)
 		}
 		rowCount += summary.RowCnt.Load()
-		indexKVSize += summary.Bytes.Load()
+		indexKVSize += summary.Processed.Load()
 	}
 	return handle.SendRowAndSizeMeterData(ctx, task, rowCount, 0, indexKVSize, logger)
 }

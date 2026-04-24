@@ -530,27 +530,27 @@ Projection	root		ifnull(explain_easy.t.a, 0)->Column
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(nb, 0) from t;
 id	task	access object	operator info
-Projection	root		cast(explain_easy.t.nb, bigint BINARY)->Column
+Projection	root		ifnull(explain_easy.t.nb, 0)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(nb, 0), ifnull(nc, 0) from t;
 id	task	access object	operator info
-Projection	root		cast(explain_easy.t.nb, bigint BINARY)->Column, cast(explain_easy.t.nc, bigint BINARY)->Column
+Projection	root		ifnull(explain_easy.t.nb, 0)->Column, ifnull(explain_easy.t.nc, 0)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(a, 0), ifnull(nb, 0) from t;
 id	task	access object	operator info
-Projection	root		ifnull(explain_easy.t.a, 0)->Column, cast(explain_easy.t.nb, bigint BINARY)->Column
+Projection	root		ifnull(explain_easy.t.a, 0)->Column, ifnull(explain_easy.t.nb, 0)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(nb, 0), ifnull(nb, 0) from t;
 id	task	access object	operator info
-Projection	root		cast(explain_easy.t.nb, bigint BINARY)->Column, cast(explain_easy.t.nb, bigint BINARY)->Column
+Projection	root		ifnull(explain_easy.t.nb, 0)->Column, ifnull(explain_easy.t.nb, 0)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select 1+ifnull(nb, 0) from t;
 id	task	access object	operator info
-Projection	root		plus(1, cast(explain_easy.t.nb, bigint BINARY))->Column
+Projection	root		plus(1, ifnull(explain_easy.t.nb, 0))->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select 1+ifnull(a, 0) from t;
@@ -560,7 +560,7 @@ Projection	root		plus(1, ifnull(explain_easy.t.a, 0))->Column
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select 1+ifnull(nb, 0) from t where nb=1;
 id	task	access object	operator info
-Projection	root		plus(1, cast(explain_easy.t.nb, bigint BINARY))->Column
+Projection	root		plus(1, ifnull(explain_easy.t.nb, 0))->Column
 └─TableReader	root		data:Selection
   └─Selection	cop[tikv]		eq(explain_easy.t.nb, 1)
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -568,34 +568,33 @@ explain format = 'plan_tree' select * from t ta left outer join t tb on ta.nb = 
 id	task	access object	operator info
 HashJoin	root		left outer join, left side:TableReader, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)], left cond:[gt(explain_easy.t.a, 1)]
 ├─TableReader(Build)	root		data:Selection
-│ └─Selection	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY)
-│   └─TableFullScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
-└─TableReader(Probe)	root		data:Selection
-  └─Selection	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY)
-    └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
+│ └─Selection	cop[tikv]		ifnull(explain_easy.t.nb, 1)
+│   └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	task	access object	operator info
 HashJoin	root		right outer join, left side:TableReader, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)]
 ├─TableReader(Build)	root		data:Selection
-│ └─Selection	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY), gt(explain_easy.t.a, 1)
+│ └─Selection	cop[tikv]		gt(explain_easy.t.a, 1)
 │   └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:Selection
-  └─Selection	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY)
+  └─Selection	cop[tikv]		ifnull(explain_easy.t.nb, 1)
     └─TableFullScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)]
 ├─TableReader(Build)	root		data:Selection
-│ └─Selection	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY), gt(explain_easy.t.a, 1)
+│ └─Selection	cop[tikv]		gt(explain_easy.t.a, 1), ifnull(explain_easy.t.nb, 1)
 │   └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:Selection
-  └─Selection	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY)
+  └─Selection	cop[tikv]		ifnull(explain_easy.t.nb, 1)
     └─TableFullScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'plan_tree' select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	task	access object	operator info
 Projection	root		Column
 └─Apply	root		left outer semi join, left side:Projection, equal:[eq(Column, Column)]
-  ├─Projection(Build)	root		explain_easy.t.a, cast(explain_easy.t.nc, bigint BINARY)->Column
+  ├─Projection(Build)	root		explain_easy.t.a, ifnull(explain_easy.t.nc, 1)->Column
   │ └─TableReader	root		data:TableFullScan
   │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg(Probe)	root		funcs:count(Column)->Column
@@ -763,7 +762,7 @@ explain format = 'plan_tree' select a, b from (select a, b, avg(b) over (partiti
 id	task	access object	operator info
 Projection	root		explain_easy.t.a, explain_easy.t.b
 └─Selection	root		gt(cast(explain_easy.t.a, decimal(10,0) BINARY), Column), lt(explain_easy.t.b, 10)
-  └─Window	root		avg(cast(explain_easy.t.b, decimal(10,0) BINARY))->Column#6 over(partition by explain_easy.t.a)
+  └─Window	root		avg(cast(explain_easy.t.b, decimal(10,0) BINARY))->Column over(partition by explain_easy.t.a)
     └─Sort	root		explain_easy.t.a
       └─TableReader	root		data:Selection
         └─Selection	cop[tikv]		gt(explain_easy.t.a, 10)

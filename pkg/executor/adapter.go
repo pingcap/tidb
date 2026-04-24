@@ -185,8 +185,10 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if len(a.traceID) > 0 {
 		ctx = tikvtrace.ContextWithTraceID(ctx, a.traceID)
 	}
+	ctx = inheritStmtRUV2Context(ctx, a.stmt)
 
 	err = a.stmt.next(ctx, a.executor, req)
+	syncRUV2MetricsAfterExec(a.stmt)
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 		return err
@@ -202,6 +204,25 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		a.stmt.Ctx.GetSessionVars().StmtCtx.AddFoundRows(uint64(numRows))
 	}
 	return nil
+}
+
+func inheritStmtRUV2Context(ctx context.Context, stmt *ExecStmt) context.Context {
+	if stmt == nil || stmt.GoCtx == nil {
+		return ctx
+	}
+	return execdetails.ContextWithInheritedRUV2Details(ctx, stmt.GoCtx)
+}
+
+func syncRUV2MetricsAfterExec(stmt *ExecStmt) {
+	if stmt == nil || stmt.GoCtx == nil {
+		return
+	}
+	sessVars := stmt.Ctx.GetSessionVars()
+	if sessVars.RUV2Metrics == nil {
+		return
+	}
+	ruDetail, _ := stmt.GoCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
+	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
 }
 
 // NewChunk create a chunk base on top-level executor's exec.NewFirstChunk().
@@ -259,7 +280,7 @@ func (a *recordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
 	if !ok {
 		return nil, false, nil
 	}
-	return staticrecordset.New(a.Fields(), e, a.stmt.GetTextToLog(false)), true, nil
+	return staticrecordset.New(a.Fields(), e, a.stmt.GetTextToLog(false), a.stmt.GoCtx), true, nil
 }
 
 // GetExecutor4Test exports the internal executor for test purpose.
@@ -1110,6 +1131,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	}
 
 	err = a.next(ctx, e, exec.TryNewCacheChunk(e))
+	syncRUV2MetricsAfterExec(a)
 	if err != nil {
 		return nil, err
 	}
@@ -1563,6 +1585,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.checkPlanReplayerCapture(txnTS)
 
 	sessVars := a.Ctx.GetSessionVars()
+	sessVars.StmtCtx.ExecRetryCount += uint64(a.retryCount)
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
 	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil || execDetail.SharedLockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
@@ -1699,7 +1722,6 @@ func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
 		return
 	}
 
-	metrics.RUV2ExecutorL5InsertRows.Add(float64(affectedRows))
 	if sessVars.RUV2Metrics != nil {
 		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
 	}
@@ -1708,7 +1730,7 @@ func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
 
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.RUV2Metrics == nil {
+	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
 	}
 
@@ -1717,6 +1739,7 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	if ruDetail == nil {
 		return
 	}
+	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
 
 	weights := sessVars.RUV2Weights()
 	tidbRU := sessVars.RUV2Metrics.CalculateRUValues(weights)
@@ -1858,7 +1881,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		}
 
 		sessVars.StmtCtx.ExecSuccess = succ
-		sessVars.StmtCtx.ExecRetryCount = uint64(a.retryCount)
 		globalRules := vardef.GlobalSlowLogRules.Load()
 		slowItems = PrepareSlowLogItemsForRules(a.GoCtx, globalRules, sessVars)
 		// EffectiveFields is not empty (unique fields for this session including global rules),
@@ -1952,7 +1974,7 @@ func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {
 	hasMPPTraffic := a.updateMPPNetworkTraffic()
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw != nil {
-		tikvExecDetail := tikvExecDetailRaw.(*util.ExecDetails)
+		tikvExecDetail := execdetails.LoadTiKVExecDetails(tikvExecDetailRaw.(*util.ExecDetails))
 		executor_metrics.ExecutorNetworkTransmissionSentTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesSentKVTotal))
 		executor_metrics.ExecutorNetworkTransmissionSentTiKVCrossZone.Add(float64(tikvExecDetail.UnpackedBytesSentKVCrossZone))
 		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesReceivedKVTotal))

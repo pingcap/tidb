@@ -218,8 +218,8 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			vars := p.SCtx().GetSessionVars()
 			savedParallelApply := vars.EnableParallelApply
 			vars.EnableParallelApply = false
-			_, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
-			vars.EnableParallelApply = savedParallelApply
+			defer func() { vars.EnableParallelApply = savedParallelApply }()
+			p.Cte.RecursivePartLogicalPlan, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
 			if err != nil {
 				return nil, false, err
 			}
