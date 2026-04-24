@@ -255,7 +255,7 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 			s.reporter.ReportMinStartTS(store, s.session)
 		case <-s.Done():
 			logutil.BgLogger().Info("server info syncer need to restart")
-			if err := s.Restart(context.Background()); err != nil {
+			if err := s.Restart(etcd.WithClientSource(context.Background(), "infosync")); err != nil {
 				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
 			} else {
 				logutil.BgLogger().Info("server info syncer restarted")
@@ -382,13 +382,13 @@ func (s *Syncer) TopologySyncLoop(exitCh chan struct{}) {
 	for {
 		select {
 		case <-ticker.C:
-			err := s.StoreTopologyInfo(context.Background())
+			err := s.StoreTopologyInfo(etcd.WithClientSource(context.Background(), "infosync"))
 			if err != nil {
 				logutil.BgLogger().Warn("refresh topology in loop failed", zap.Error(err))
 			}
 		case <-s.TopologyDone():
 			logutil.BgLogger().Info("server topology syncer need to restart")
-			if err := s.RestartTopology(context.Background()); err != nil {
+			if err := s.RestartTopology(etcd.WithClientSource(context.Background(), "infosync")); err != nil {
 				logutil.BgLogger().Warn("server topology syncer restart failed", zap.Error(err))
 			} else {
 				logutil.BgLogger().Info("server topology syncer restarted")

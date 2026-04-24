@@ -876,6 +876,7 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		TLS:              tls.TLSConfig(),
+		Source:           "importer",
 	})
 	if err != nil {
 		return errors.Trace(err)

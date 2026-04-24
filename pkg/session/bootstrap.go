@@ -199,7 +199,7 @@ var (
 )
 
 func acquireLock(store kv.Storage) (func(), error) {
-	etcdCli, err := storepkg.NewEtcdCli(store)
+	etcdCli, err := storepkg.NewEtcdCli(store, "bootstrap")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

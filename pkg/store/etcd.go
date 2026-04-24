@@ -15,6 +15,7 @@
 package store
 
 import (
+	"crypto/tls"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -28,11 +29,20 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
+const defaultEtcdClientSource = "store"
+
+func getEtcdClientSource(source []string) string {
+	if len(source) > 0 && source[0] != "" {
+		return source[0]
+	}
+	return defaultEtcdClientSource
+}
+
 // NewEtcdCli creates a new clientv3.Client from store if the store support it.
 // the returned client will have the same keyspace the store, and it might be nil.
 // TODO currently uni-store/mock-tikv/tikv all implements EtcdBackend while they don't support actually.
 // refactor this part.
-func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
+func NewEtcdCli(store kv.Storage, source ...string) (*clientv3.Client, error) {
 	etcdStore, addrs, err := GetEtcdAddrs(store)
 	if err != nil {
 		return nil, err
@@ -40,7 +50,7 @@ func NewEtcdCli(store kv.Storage) (*clientv3.Client, error) {
 	if len(addrs) == 0 {
 		return nil, nil
 	}
-	cli, err := NewEtcdCliWithAddrs(addrs, etcdStore)
+	cli, err := NewEtcdCliWithAddrs(addrs, etcdStore, source...)
 	if err != nil {
 		return nil, err
 	}
@@ -64,17 +74,23 @@ func GetEtcdAddrs(store kv.Storage) (kv.EtcdBackend, []string, error) {
 }
 
 // NewEtcdCliWithAddrs creates a new clientv3.Client with specified addrs and etcd backend.
-func NewEtcdCliWithAddrs(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
+func NewEtcdCliWithAddrs(addrs []string, ebd kv.EtcdBackend, source ...string) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 	backoffCfg := backoff.DefaultConfig
 	backoffCfg.MaxDelay = 3 * time.Second
+	var tlsConfig *tls.Config
+	if ebd != nil {
+		tlsConfig = ebd.TLSConfig()
+	}
+	sourceLabel := getEtcdClientSource(source)
 	cli, err := clientv3.New(clientv3.Config{
 		LogConfig:        &etcdLogCfg,
 		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
+		Source:           sourceLabel,
 		DialOptions: []grpc.DialOption{
 			grpc.WithConnectParams(grpc.ConnectParams{
 				Backoff: backoffCfg,
@@ -84,7 +100,7 @@ func NewEtcdCliWithAddrs(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, 
 				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 			}),
 		},
-		TLS: ebd.TLSConfig(),
+		TLS: tlsConfig,
 	})
 	return cli, err
 }

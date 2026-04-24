@@ -102,7 +102,7 @@ func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.S
 }
 
 func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context, se sessionctx.Context) error {
-	cli, err := GetEtcdClient(se.GetStore())
+	cli, err := GetEtcdClient(se.GetStore(), "importer-precheck")
 	if err != nil {
 		return err
 	}

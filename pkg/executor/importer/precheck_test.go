@@ -166,7 +166,7 @@ func TestCheckRequirements(t *testing.T) {
 		embedEtcd.Close()
 	})
 	backup := importer.GetEtcdClient
-	importer.GetEtcdClient = func(kv.Storage) (*clientv3.Client, error) {
+	importer.GetEtcdClient = func(kv.Storage, ...string) (*clientv3.Client, error) {
 		etcdCli, err := clientv3.New(clientv3.Config{
 			Endpoints: []string{clientAddr},
 		})

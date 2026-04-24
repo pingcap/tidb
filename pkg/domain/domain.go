@@ -170,6 +170,14 @@ type Domain struct {
 	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
+	// `ddlEtcdClient` is dedicated for DDL syncers to avoid mixing keepalive source with domain watch traffic.
+	ddlEtcdClient *clientv3.Client
+	// `infosyncEtcdClient` is dedicated for infosync sessions keepalive.
+	infosyncEtcdClient *clientv3.Client
+	// `serverIDETCDClient` is dedicated for server ID lease keepalive.
+	serverIDETCDClient *clientv3.Client
+	// `logBackupEtcdClient` is dedicated for log backup owner keepalive.
+	logBackupEtcdClient *clientv3.Client
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
 	autoidClient *autoid.ClientDiscover
 	// `unprefixedEtcdCli` will never set the etcd namespace prefix by keyspace.
@@ -508,6 +516,18 @@ func (do *Domain) Close() {
 	if do.unprefixedEtcdCli != nil {
 		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
 	}
+	if do.logBackupEtcdClient != nil {
+		terror.Log(errors.Trace(do.logBackupEtcdClient.Close()))
+	}
+	if do.serverIDETCDClient != nil {
+		terror.Log(errors.Trace(do.serverIDETCDClient.Close()))
+	}
+	if do.infosyncEtcdClient != nil {
+		terror.Log(errors.Trace(do.infosyncEtcdClient.Close()))
+	}
+	if do.ddlEtcdClient != nil {
+		terror.Log(errors.Trace(do.ddlEtcdClient.Close()))
+	}
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
@@ -642,17 +662,41 @@ func (do *Domain) Init(
 		return errors.Trace(err)
 	}
 	if len(addrs) > 0 {
-		cli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
+		// domain client: used only for watches (privilege, sysVarCache, tiflash).
+		cli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore, "domain")
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
 		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
-
 		do.etcdClient = cli
+
+		// DDL client: used by DDL schema/server-state syncers.
+		ddlCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore, "ddl-syncer")
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		etcd.SetEtcdCliByNamespace(ddlCli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
+		do.ddlEtcdClient = ddlCli
+
+		// infosync client: for server info/topology sessions keepalive.
+		infosyncCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore, "infosync")
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		etcd.SetEtcdCliByNamespace(infosyncCli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
+		do.infosyncEtcdClient = infosyncCli
+
+		// server-id client: for server ID session keepalive.
+		serverIDCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore, "server-id")
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		etcd.SetEtcdCliByNamespace(serverIDCli, keyspace.MakeKeyspaceEtcdNamespace(do.store.GetCodec()))
+		do.serverIDETCDClient = serverIDCli
 
 		do.autoidClient = autoid.NewClientDiscover(cli)
 
-		unprefixedEtcdCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore)
+		unprefixedEtcdCli, err2 := kvstore.NewEtcdCliWithAddrs(addrs, etcdStore, "domain-unprefixed")
 		if err2 != nil {
 			return errors.Trace(err2)
 		}
@@ -678,7 +722,7 @@ func (do *Domain) Init(
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(
 		ctx,
-		ddl.WithEtcdClient(do.etcdClient),
+		ddl.WithEtcdClient(do.ddlEtcdClient),
 		ddl.WithStore(do.store),
 		ddl.WithAutoIDClient(do.autoidClient),
 		ddl.WithInfoCache(do.infoCache),
@@ -705,7 +749,7 @@ func (do *Domain) Init(
 	pdCli, pdHTTPCli := do.GetPDClient(), do.GetPDHTTPClient()
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
-		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
+		do.infosyncEtcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
 		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
 	if err != nil {
 		return err
@@ -722,7 +766,7 @@ func (do *Domain) Init(
 	if config.GetGlobalConfig().EnableGlobalKill {
 		do.connIDAllocator = globalconn.NewGlobalAllocator(do.ServerID, config.GetGlobalConfig().Enable32BitsConnectionID)
 
-		if do.etcdClient != nil {
+		if do.serverIDETCDClient != nil {
 			err := do.acquireServerID(ctx)
 			if err != nil {
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
@@ -928,8 +972,15 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
+	logBackupCli, err := kvstore.NewEtcdCli(do.store, "log-backup")
+	if err != nil {
+		logutil.BgLogger().Warn("failed to create dedicated etcd client for log-backup, fallback to domain client", zap.Error(err))
+		logBackupCli = do.etcdClient
+	} else {
+		do.logBackupEtcdClient = logBackupCli
+	}
 	adv := streamhelper.NewTiDBCheckpointAdvancer(env)
-	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
+	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, logBackupCli)
 	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickTimeout())
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
@@ -2009,6 +2060,18 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 	mgr.Close()
 }
 
+type ownerManagerWithClient struct {
+	owner.Manager
+	cli *clientv3.Client
+}
+
+func (m *ownerManagerWithClient) Close() {
+	m.Manager.Close()
+	if m.cli != nil {
+		terror.Log(errors.Trace(m.cli.Close()))
+	}
+}
+
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
 func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 	statsHandle := do.StatsHandle()
@@ -2022,13 +2085,20 @@ func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 // NewOwnerManager returns the owner manager for use outside of the domain.
 func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
-	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(do.ctx, id, do.store, ownerKey)
-	} else {
-		statsOwner = owner.NewOwnerManager(do.ctx, do.etcdClient, prompt, id, ownerKey)
+		return owner.NewMockManager(do.ctx, id, do.store, ownerKey)
 	}
-	return statsOwner
+	ownerEtcdCli, err := kvstore.NewEtcdCli(do.store, prompt)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to create dedicated etcd client for owner, fallback to domain client",
+			zap.String("prompt", prompt), zap.Error(err))
+		return owner.NewOwnerManager(do.ctx, do.etcdClient, prompt, id, ownerKey)
+	}
+	base := owner.NewOwnerManager(do.ctx, ownerEtcdCli, prompt, id, ownerKey)
+	return &ownerManagerWithClient{
+		Manager: base,
+		cli:     ownerEtcdCli,
+	}
 }
 
 func (do *Domain) initStats(ctx context.Context) {
@@ -2602,12 +2672,16 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	if do.serverIDSession != nil {
 		return do.serverIDSession, nil
 	}
+	etcdCli := do.serverIDEtcdClient()
+	if etcdCli == nil {
+		return nil, errors.New("server-id etcd client is nil")
+	}
 
 	// `etcdClient.Grant` needs a shortterm timeout, to avoid blocking if connection to PD lost,
 	//   while `etcdClient.KeepAlive` should be longterm.
 	//   So we separately invoke `etcdClient.Grant` and `concurrency.NewSession` with leaseID.
 	childCtx, cancel := context.WithTimeout(ctx, retrieveServerIDSessionTimeout)
-	resp, err := do.etcdClient.Grant(childCtx, int64(serverIDTTL.Seconds()))
+	resp, err := etcdCli.Grant(etcd.WithClientSource(childCtx, "server-id"), int64(serverIDTTL.Seconds()))
 	cancel()
 	if err != nil {
 		logutil.BgLogger().Error("retrieveServerIDSession.Grant fail", zap.Error(err))
@@ -2615,8 +2689,9 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	}
 	leaseID := resp.ID
 
-	session, err := concurrency.NewSession(do.etcdClient,
-		concurrency.WithLease(leaseID), concurrency.WithContext(context.Background()))
+	session, err := concurrency.NewSession(etcdCli,
+		concurrency.WithLease(leaseID),
+		concurrency.WithContext(etcd.WithClientSource(context.Background(), "server-id")))
 	if err != nil {
 		logutil.BgLogger().Error("retrieveServerIDSession.NewSession fail", zap.Error(err))
 		return nil, err
@@ -2627,6 +2702,10 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 
 func (do *Domain) acquireServerID(ctx context.Context) error {
 	atomic.StoreUint64(&do.serverID, 0)
+	etcdCli := do.serverIDEtcdClient()
+	if etcdCli == nil {
+		return errors.New("server-id etcd client is nil")
+	}
 
 	session, err := do.retrieveServerIDSession(ctx)
 	if err != nil {
@@ -2651,7 +2730,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 		value := "0"
 
 		childCtx, cancel := context.WithTimeout(ctx, acquireServerIDTimeout)
-		txn := do.etcdClient.Txn(childCtx)
+		txn := etcdCli.Txn(etcd.WithClientSource(childCtx, "server-id"))
 		t := txn.If(cmp)
 		resp, err := t.Then(clientv3.OpPut(key, value, clientv3.WithLease(session.Lease()))).Commit()
 		cancel()
@@ -2679,7 +2758,7 @@ func (do *Domain) releaseServerID(context.Context) {
 	}
 	atomic.StoreUint64(&do.serverID, 0)
 
-	if do.etcdClient == nil {
+	if do.serverIDEtcdClient() == nil || do.serverIDSession == nil {
 		return
 	}
 
@@ -2738,6 +2817,10 @@ func (*Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, er
 }
 
 func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
+	etcdCli := do.serverIDEtcdClient()
+	if etcdCli == nil {
+		return errors.New("server-id etcd client is nil")
+	}
 	session, err := do.retrieveServerIDSession(ctx)
 	if err != nil {
 		return err
@@ -2745,7 +2828,7 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, do.ServerID())
 	value := "0"
-	err = ddlutil.PutKVToEtcd(ctx, do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
+	err = ddlutil.PutKVToEtcd(etcd.WithClientSource(ctx, "server-id"), etcdCli, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
 	if err != nil {
 		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
 	} else {
@@ -2753,6 +2836,13 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
 	}
 	return err
+}
+
+func (do *Domain) serverIDEtcdClient() *clientv3.Client {
+	if do.serverIDETCDClient != nil {
+		return do.serverIDETCDClient
+	}
+	return do.etcdClient
 }
 
 func (do *Domain) serverIDKeeper() {
@@ -2789,7 +2879,7 @@ func (do *Domain) serverIDKeeper() {
 		do.isLostConnectionToPD.Store(0)
 		lastSucceedTimestamp = time.Now()
 
-		if err := do.info.ServerInfoSyncer().StoreServerInfo(context.Background()); err != nil {
+		if err := do.info.ServerInfoSyncer().StoreServerInfo(etcd.WithClientSource(context.Background(), "infosync")); err != nil {
 			logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err))
 		}
 	}

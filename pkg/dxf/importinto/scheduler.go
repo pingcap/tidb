@@ -98,7 +98,7 @@ func (t *taskInfo) register(ctx context.Context) {
 	}
 	logger := t.logger
 	if t.taskRegister == nil {
-		client, err := store.NewEtcdCli(t.store)
+		client, err := store.NewEtcdCli(t.store, "dist-task")
 		if err != nil {
 			logger.Warn("get etcd client failed", zap.Error(err))
 			return

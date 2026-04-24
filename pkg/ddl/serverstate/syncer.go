@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	etcdutil "github.com/pingcap/tidb/pkg/util/etcd"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -108,6 +109,7 @@ func NewEtcdSyncer(etcdCli *clientv3.Client, etcdPath string) Syncer {
 
 // Init implements Syncer.Init interface.
 func (s *etcdSyncer) Init(ctx context.Context) error {
+	ctx = etcdutil.WithClientSource(ctx, s.prompt)
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -146,6 +148,7 @@ func (s *etcdSyncer) IsUpgradingState() bool {
 }
 
 func (*etcdSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) ([]*mvccpb.KeyValue, error) {
+	ctx = etcdutil.WithClientSource(ctx, statePrompt)
 	var err error
 	var resp *clientv3.GetResponse
 	for range retryCnt {
@@ -174,6 +177,7 @@ func (*etcdSyncer) getKeyValue(ctx context.Context, etcdCli *clientv3.Client, ke
 
 // GetGlobalState implements Syncer.GetGlobalState interface.
 func (s *etcdSyncer) GetGlobalState(ctx context.Context) (*StateInfo, error) {
+	ctx = etcdutil.WithClientSource(ctx, s.prompt)
 	startTime := time.Now()
 	kvs, err := s.getKeyValue(ctx, s.etcdCli, s.etcdPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
@@ -199,6 +203,7 @@ func (s *etcdSyncer) GetGlobalState(ctx context.Context) (*StateInfo, error) {
 
 // UpdateGlobalState implements Syncer.UpdateGlobalState interface.
 func (s *etcdSyncer) UpdateGlobalState(ctx context.Context, stateInfo *StateInfo) error {
+	ctx = etcdutil.WithClientSource(ctx, s.prompt)
 	startTime := time.Now()
 	stateStr, err := stateInfo.Marshal()
 	if err != nil {

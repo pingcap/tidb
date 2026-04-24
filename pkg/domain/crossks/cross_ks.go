@@ -151,7 +151,7 @@ func (m *Manager) GetOrCreate(
 	)
 
 	var etcdCli *clientv3.Client
-	etcdCli, err = kvstore.NewEtcdCli(store)
+	etcdCli, err = kvstore.NewEtcdCli(store, "cross-ks")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

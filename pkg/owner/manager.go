@@ -145,6 +145,7 @@ type ownerManager struct {
 
 // NewOwnerManager creates a new Manager.
 func NewOwnerManager(ctx context.Context, etcdCli *clientv3.Client, prompt, id, key string) Manager {
+	ctx = etcd.WithClientSource(ctx, prompt)
 	return &ownerManager{
 		etcdCli:      etcdCli,
 		id:           id,

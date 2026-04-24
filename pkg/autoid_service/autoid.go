@@ -312,6 +312,7 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 		Endpoints:        etcdAddr,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
+		Source:           "autoid",
 		DialOptions: []grpc.DialOption{
 			grpc.WithBackoffMaxDelay(time.Second * 3),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
