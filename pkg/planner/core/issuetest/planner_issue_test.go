@@ -279,7 +279,6 @@ func TestIssue61118(t *testing.T) {
 	tk2.MustExec("admin check table t;")
 }
 
-<<<<<<< HEAD
 func TestJoinReorderWithAddSelection(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -311,157 +310,17 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`  └─Projection(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#28`,
 		`    └─TableReader 10000.00 root  data:TableFullScan`,
 		`      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
-=======
-	t.Run("row-in-subquery-with-exists", func(t *testing.T) {
-		tk := newTestKit(t)
-		tk.MustExec("create table t1 (a1 int, b1 int);")
-		tk.MustExec("create table t2 (a2 int, b2 int);")
-		tk.MustExec("insert into t1 values(1,1);")
-		tk.MustQuery(`explain format='brief'
-SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
-FROM t1 AS table1
-WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
-GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer semi join, left side:HashAgg",
-			"├─HashAgg(Build) 1.00 root  group by:Column#24, Column#25, funcs:firstrow(1)->Column#51",
-			"│ └─TableDual 0.00 root  rows:0",
-			"└─HashAgg(Probe) 2.00 root  group by:Column#11, funcs:firstrow(1)->Column#48",
-			"  └─HashJoin 10000.00 root  CARTESIAN left outer semi join, left side:TableReader",
-			"    ├─HashAgg(Build) 1.00 root  group by:Column#10, Column#9, funcs:firstrow(1)->Column#50",
-			"    │ └─TableDual 0.00 root  rows:0",
-			"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-			"      └─TableFullScan 10000.00 cop[tikv] table:table1 keep order:false, stats:pseudo",
-			"ScalarSubQuery N/A root  Output: ScalarQueryCol#16, ScalarQueryCol#17, ScalarQueryCol#18, ScalarQueryCol#19",
-			"└─TableReader 10000.00 root  data:TableFullScan",
-			"  └─TableFullScan 10000.00 cop[tikv] table:SUBQUERY2_t1 keep order:false, stats:pseudo"))
-		tk.MustQuery(`SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
-FROM t1 AS table1
-WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
-GROUP BY field1;`).Check(testkit.Rows("0"))
-	})
+}
 
-	t.Run("rollup-having-exists-nil-expression", func(t *testing.T) {
-		tk := newTestKit(t)
-		tk.MustExec("create table t_panic(a int primary key, b int)")
-		tk.MustExec("insert into t_panic values (1, 2)")
-		// issue:66165
-		tk.MustQuery(`SELECT a*0+1 AS x
-FROM t_panic
-GROUP BY x WITH ROLLUP
-HAVING EXISTS (SELECT 1 FROM t_panic WHERE x IS NULL);`).Check(testkit.Rows("<nil>"))
-	})
-
-	t.Run("merge-join-with-correlated-count", func(t *testing.T) {
-		tk := newTestKit(t)
-		tk.MustExec("create table t1(a int primary key, b int);")
-		tk.MustExec("create table t2(a int, b int, key idx(a));")
-		tk.MustExec("INSERT INTO t1 (a, b) VALUES (1, 100), (2, 200), (3, 300);")
-		tk.MustExec("INSERT INTO t2 (a, b) VALUES (1, 10), (1, 20), (2, 30), (4, 40);")
-		tk.MustExec("set tidb_enable_inl_join_inner_multi_pattern=on;")
-		tk.MustQuery("explain format='brief' select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
-			Check(testkit.Rows(
-				"Projection 1.00 root  test.t1.b, ifnull(Column#12, 0)->Column#12",
-				"└─MergeJoin 1.00 root  left outer join, left side:Point_Get, left key:test.t1.a, right key:test.t2.a",
-				"  ├─StreamAgg(Build) 8.00 root  group by:test.t2.a, funcs:count(Column#13)->Column#12, funcs:firstrow(test.t2.a)->test.t2.a",
-				"  │ └─IndexReader 8.00 root  index:StreamAgg",
-				"  │   └─StreamAgg 8.00 cop[tikv]  group by:test.t2.a, funcs:count(1)->Column#13",
-				"  │     └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx(a) range:[1,1], keep order:true, stats:pseudo",
-				"  └─Point_Get(Probe) 1.00 root table:t1 handle:1"))
-		tk.MustQuery("select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").Check(testkit.Rows("100 2"))
-	})
-
-	t.Run("instance-plan-cache-with-prepare", func(t *testing.T) {
-		tk1 := testkit.NewTestKit(t, store)
-		resetTestDB(t, tk1)
-		tk1.MustExec("set global tidb_enable_instance_plan_cache = 1;")
-		tk1.MustExec("create table t(a timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6), b int, c int, primary key(a), unique key(b,c));")
-		tk1.MustExec("insert into t(b,c) value (1,1);")
-		tk1.MustExec("prepare stmt from 'update t set a = NOW(6) where b = ? and c = ?';")
-		tk1.MustExec("set @a = 1;")
-		tk1.MustExec("execute stmt using @a, @a;")
-		tk1.MustExec("set time_zone='+1:00';")
-		tk1.MustExec("execute stmt using @a, @a;")
-		tk1.MustExec("execute stmt using @a, @a;")
-		tk1.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test;")
-		tk2.MustExec("prepare stmt from 'update t set a = NOW(6) where b = ? and c = ?';")
-		tk2.MustExec("set @a = 1;")
-		tk2.MustExec("execute stmt using @a, @a;")
-		tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-		tk2.MustExec("admin check table t;")
-		tk2.MustExec("set global tidb_enable_instance_plan_cache = 0;")
-	})
-
-	t.Run("virtual-generated-column-substitute", func(t *testing.T) {
-		tk := newTestKit(t)
-		tk.MustExec("CREATE TABLE t0(id int default 1, c0 NUMERIC UNSIGNED ZEROFILL , c1 DECIMAL UNSIGNED  AS (c0) VIRTUAL NOT NULL UNIQUE);")
-		tk.MustExec("insert ignore into t0(c0) values (null);")
-		tk.MustQuery("select * from t0;").Check(testkit.Rows("1 <nil> 0"))
-
-		tk.MustExec("set @@tidb_enable_unsafe_substitute=1")
-		tk.MustExec("CREATE TABLE t1(id int default 1, c0 char(10) , c1 char(10) AS (c0) VIRTUAL NOT NULL UNIQUE);")
-		tk.MustExec("insert ignore into t1(c0) values (null);")
-		tk.MustQuery("select * from t1;").Check(testkit.Rows("1 <nil> "))
-	})
-
-	t.Run("join-reorder-adds-selection", func(t *testing.T) {
-		tk := newTestKit(t)
-		tk.MustExec("create table t0(vkey integer, c3 varchar(0));")
-		tk.MustExec("create table t1(vkey integer, c10 integer);")
-		tk.MustExec("create table t2(c12 integer, c13 integer, c14 varchar(0), c15 double);")
-		tk.MustExec("create table t3(vkey varchar(0), c20 integer);")
-		tk.MustQuery("explain select 0 from t2 join(t3 join t0 a on 0) left join(t1 b left join t1 c on 0) on(c20 = b.vkey) on(c13 = a.vkey) join(select c14 d from(t2 join t3 on c12 = vkey)) e on(c3 = d) where nullif(c15, case when(c.c10) then 0 end);").Check(testkit.Rows(
-			"Projection_34 0.00 root  0->Column#33",
-			"└─HashJoin_50 0.00 root  inner join, equal:[eq(Column#34, Column#35)]",
-			"  ├─HashJoin_71(Build) 0.00 root  inner join, equal:[eq(test.t0.c3, test.t2.c14)]",
-			"  │ ├─Selection_72(Build) 0.00 root  if(eq(test.t2.c15, cast(case(test.t1.c10, 0), double BINARY)), NULL, test.t2.c15)",
-			"  │ │ └─HashJoin_82 0.00 root  left outer join, left side:HashJoin_97, equal:[eq(test.t3.c20, test.t1.vkey)]",
-			"  │ │   ├─HashJoin_97(Build) 0.00 root  inner join, equal:[eq(test.t0.vkey, test.t2.c13)]",
-			"  │ │   │ ├─TableDual_107(Build) 0.00 root  rows:0",
-			"  │ │   │ └─TableReader_106(Probe) 9990.00 root  data:Selection_105",
-			"  │ │   │   └─Selection_105 9990.00 cop[tikv]  not(isnull(test.t2.c13))",
-			"  │ │   │     └─TableFullScan_104 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  │ │   └─HashJoin_115(Probe) 9990.00 root  CARTESIAN left outer join, left side:TableReader_119",
-			"  │ │     ├─TableDual_120(Build) 0.00 root  rows:0",
-			"  │ │     └─TableReader_119(Probe) 9990.00 root  data:Selection_118",
-			"  │ │       └─Selection_118 9990.00 cop[tikv]  not(isnull(test.t1.vkey))",
-			"  │ │         └─TableFullScan_117 10000.00 cop[tikv] table:b keep order:false, stats:pseudo",
-			"  │ └─Projection_126(Probe) 9990.00 root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column#34",
-			"  │   └─TableReader_130 9990.00 root  data:Selection_129",
-			"  │     └─Selection_129 9990.00 cop[tikv]  not(isnull(test.t2.c14))",
-			"  │       └─TableFullScan_128 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  └─Projection_133(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#35",
-			"    └─TableReader_136 10000.00 root  data:TableFullScan_135",
-			"      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
-	})
-
-	// Regression test for https://github.com/pingcap/tidb/issues/66339
-	// Read-only user variables with uppercase names should be converted to constant
-	// and use IndexRangeScan, same as lowercase names.
-	t.Run("issue-66339-readonly-var-uppercase-uses-index-range", func(t *testing.T) {
-		tk := newTestKit(t)
-		tk.MustExec("create table t(a int, key(a))")
-		tk.MustExec("set @a=1")
-		tk.MustHavePlan("select a from t where a=@a", "IndexRangeScan")
-		tk.MustExec("set @A=1")
-		tk.MustHavePlan("select a from t where a=@A", "IndexRangeScan")
-	})
-
-	t.Run("plan-cache-explain-for-connection", func(t *testing.T) {
-		tk := newTestKit(t)
-		tk.MustExec("create table t(a int, b int, c int)")
-		tk.MustExec("create table tt(a int, index idx(a))")
-		tk.MustExec("prepare stmt from 'select * from t where b > (select a from tt where tt.a = t.a and t.b  >= ? and t.b <= ?)'")
-		tk.MustExec("set @a=1, @b=100")
-		tk.MustExec("execute stmt using @a, @b")
-		tkProcess := tk.Session().ShowProcess()
-		ps := []*sessmgr.ProcessInfo{tkProcess}
-		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"IndexRangeScan"})
-	})
->>>>>>> da5c6fdaf3e (planner: fix inconsistent plans for user variables with different casing (#66340))
+func TestIssue66339(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("set @a=1")
+	tk.MustHavePlan("select a from t where a=@a", "IndexRangeScan")
+	tk.MustExec("set @A=1")
+	tk.MustHavePlan("select a from t where a=@A", "IndexRangeScan")
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
