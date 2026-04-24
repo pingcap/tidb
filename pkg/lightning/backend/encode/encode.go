@@ -34,6 +34,8 @@ type EncodingConfig struct {
 	// when encoding.
 	// default false, in this case we will do sharding automatically if needed.
 	UseIdentityAutoRowID bool
+	// SkipTiCIIndexKVs controls whether to skip TiCI index KV encoding.
+	SkipTiCIIndexKVs bool
 }
 
 // EncodingBuilder consists of operations to handle encoding backend row data formats from source.

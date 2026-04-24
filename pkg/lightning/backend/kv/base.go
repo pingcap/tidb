@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -131,6 +132,8 @@ type BaseKVEncoder struct {
 
 	logger      *zap.Logger
 	recordCache []types.Datum
+
+	skipTiCIIndexKVs bool
 }
 
 // NewBaseKVEncoder creates a new BaseKVEncoder.
@@ -172,13 +175,14 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 		return nil, errors.Annotate(err, "failed to parse generated column expressions")
 	}
 	return &BaseKVEncoder{
-		GenCols:         genCols,
-		SessionCtx:      se,
-		table:           config.Table,
-		Columns:         cols,
-		AutoRandomColID: autoRandomColID,
-		AutoIDFn:        autoIDFn,
-		logger:          config.Logger.Logger,
+		GenCols:          genCols,
+		SessionCtx:       se,
+		table:            config.Table,
+		Columns:          cols,
+		AutoRandomColID:  autoRandomColID,
+		AutoIDFn:         autoIDFn,
+		logger:           config.Logger.Logger,
+		skipTiCIIndexKVs: config.SkipTiCIIndexKVs,
 	}, nil
 }
 
@@ -192,9 +196,20 @@ func (e *BaseKVEncoder) GetOrCreateRecord() []types.Datum {
 
 // Record2KV converts a row into a KV pair.
 func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64) (*Pairs, error) {
-	_, err := e.AddRecord(record)
+	recordID, err := e.AddRecord(record)
 	if err != nil {
 		e.logger.Error("kv encode failed",
+			zap.Array("originalRow", RowArrayMarshaller(originalRow)),
+			zap.Array("convertedRow", RowArrayMarshaller(record)),
+			log.ShortError(err),
+		)
+		return nil, errors.Trace(err)
+	}
+	if !e.skipTiCIIndexKVs {
+		err = e.addFullTextIndexKVs(recordID, record)
+	}
+	if err != nil {
+		e.logger.Error("fulltext index kv encode failed",
 			zap.Array("originalRow", RowArrayMarshaller(originalRow)),
 			zap.Array("convertedRow", RowArrayMarshaller(record)),
 			log.ShortError(err),
@@ -208,6 +223,48 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 	}
 	e.recordCache = record[:0]
 	return kvPairs, nil
+}
+
+func (e *BaseKVEncoder) addFullTextIndexKVs(recordID kv.Handle, record []types.Datum) error {
+	var indexVals []types.Datum
+	for _, idx := range e.table.Indices() {
+		idxInfo := idx.Meta()
+		if !shouldEncodeTiCIIndex(idxInfo) {
+			continue
+		}
+		if !tables.IsIndexWritable(idx) {
+			continue
+		}
+		meetPartialCondition, err := idx.MeetPartialCondition(record)
+		if err != nil {
+			return err
+		}
+		if !meetPartialCondition {
+			continue
+		}
+		indexVals, err = idx.FetchValues(record, indexVals)
+		if err != nil {
+			return err
+		}
+		restoredData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), record, nil, idxInfo)
+		if _, err = idx.Create(
+			e.SessionCtx.GetTableCtx(),
+			e.SessionCtx.Txn(),
+			indexVals,
+			recordID,
+			restoredData,
+			table.DupKeyCheckSkip,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func shouldEncodeTiCIIndex(idxInfo *model.IndexInfo) bool {
+	// Hybrid indexes also use TiCI, but their Import Into encode behavior is
+	// validated separately before being enabled here.
+	return idxInfo.FullTextInfo != nil
 }
 
 // AddRecord adds a record into encoder
