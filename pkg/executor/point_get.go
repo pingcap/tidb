@@ -887,7 +887,17 @@ func (*runtimeStatsWithSnapshot) Tp() int {
 	return execdetails.TpRuntimeStatsWithSnapshot
 }
 
-// buildResultFromIndex builds the result directly from index values when the index covers all required columns
+// buildResultFromIndex builds the result directly from index values when the index covers
+// all required columns. It intentionally skips two things the legacy row-fetch path does:
+//
+//   - consistency.Reporter.ReportLookupInconsistent: we never read the row, so a dangling
+//     index entry (index exists but row is gone) is not surfaced as a consistency error.
+//     The trade-off is accepted because detecting dangling indexes is a diagnostic concern
+//     and reviving the row fetch would eliminate the entire performance benefit.
+//   - fillRowChecksum: only relevant when ExtraRowChecksumID is projected, but
+//     checkIndexCoveringColumns never marks that column as covered (it is not stored in
+//     the index), so if it is selected we never reach this fast path and fall back to
+//     buildResultFromRowData, which does call fillRowChecksum.
 func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.Chunk, schema *expression.Schema, sctx sessionctx.Context) error {
 	// First verify that index key exists
 	if len(e.handleVal) == 0 {

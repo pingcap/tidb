@@ -1491,11 +1491,17 @@ func checkIndexCoveringColumns(ctx base.PlanContext, p *physicalop.PointGetPlan,
 		if p.TblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 			continue
 		}
-		// ExtraHandleID / ExtraPhysTblID are synthesized from the handle/partition, not read
-		// from row data. buildResultFromIndex fills the former; if the latter is requested
-		// and not otherwise reconstructable, buildResultFromIndex falls back to a row fetch.
-		if col.ID == model.ExtraHandleID || col.ID == model.ExtraPhysTblID {
+		// ExtraHandleID is synthesized from the handle value and does not need to be read
+		// from row data.
+		if col.ID == model.ExtraHandleID {
 			continue
+		}
+		// ExtraPhysTblID is only filled by the legacy row-fetch path; if it's projected,
+		// reporting "covered" here would be misleading since buildResultFromIndex would
+		// immediately fall back. Treat it as non-covering so the planner and executor
+		// agree that the fast path cannot run.
+		if col.ID == model.ExtraPhysTblID {
+			return false
 		}
 		if !logicalop.IsIndexColsCoveringCol(evalCtx, col, indexColumns, idxColLens, false) {
 			return false
