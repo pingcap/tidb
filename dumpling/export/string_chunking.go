@@ -26,11 +26,12 @@ func (d *Dumper) concurrentDumpStringFields(tctx *tcontext.Context, conn *BaseCo
 		zap.Int64("estimatedChunks", numChunks),
 		zap.Int64("chunkSize", chunkSize))
 
-	return d.streamStringChunks(tctx, conn, meta, taskChan, fields, orderByClause, chunkSize, numChunks, selectField, selectLen)
+	return d.streamStringChunks(tctx, conn, meta, taskChan, fields, orderByClause, chunkSize, selectField, selectLen)
 }
 
-// streamStringChunks generates boundaries incrementally and sends tasks with buffering to handle last chunk detection
-func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task, fields []string, orderByClause string, chunkSize, numChunks int64, selectField string, selectLen int) error {
+// streamStringChunks generates boundaries incrementally and sends tasks with buffering to handle last chunk detection.
+// The estimated chunk count is only used in the caller's startup log; the loop itself streams until the cursor returns no more rows.
+func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task, fields []string, orderByClause string, chunkSize int64, selectField string, selectLen int) error {
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
 

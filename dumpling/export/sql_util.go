@@ -178,16 +178,16 @@ func buildCursorWhereClause(columnNames []string, boundary []string) string {
 				if j > 0 {
 					condition.WriteString(" AND ")
 				}
-				condition.WriteString(fmt.Sprintf("%s = %s", quotedCols[j], escapedBoundary[j]))
+				fmt.Fprintf(&condition, "%s = %s", quotedCols[j], escapedBoundary[j])
 			}
 			condition.WriteString(" AND ")
 		}
 
 		// Add greater than condition for current column
 		if i == len(quotedCols)-1 {
-			condition.WriteString(fmt.Sprintf("%s >= %s", quotedCols[i], escapedBoundary[i]))
+			fmt.Fprintf(&condition, "%s >= %s", quotedCols[i], escapedBoundary[i])
 		} else {
-			condition.WriteString(fmt.Sprintf("%s > %s", quotedCols[i], escapedBoundary[i]))
+			fmt.Fprintf(&condition, "%s > %s", quotedCols[i], escapedBoundary[i])
 		}
 
 		if i > 0 {
@@ -241,13 +241,13 @@ func buildUpperBoundWhereClause(columnNames []string, upperBoundary []string) st
 				if j > 0 {
 					condition.WriteString(" AND ")
 				}
-				condition.WriteString(fmt.Sprintf("%s = %s", quotedCols[j], escapedBoundary[j]))
+				fmt.Fprintf(&condition, "%s = %s", quotedCols[j], escapedBoundary[j])
 			}
 			condition.WriteString(" AND ")
 		}
 
 		// Add less than condition for current column
-		condition.WriteString(fmt.Sprintf("%s < %s", quotedCols[i], escapedBoundary[i]))
+		fmt.Fprintf(&condition, "%s < %s", quotedCols[i], escapedBoundary[i])
 
 		if i > 0 {
 			condition.WriteString(")")
