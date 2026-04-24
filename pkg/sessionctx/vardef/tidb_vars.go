@@ -992,6 +992,14 @@ const (
 	// TODO(crazycs520): remove this after foreign key GA.
 	TiDBEnableForeignKey = "tidb_enable_foreign_key"
 
+	// TiDBEnableDescendingIndex controls whether CREATE INDEX ... (col DESC) is
+	// honored. When off (the default), the DESC keyword is silently ignored to
+	// preserve historical behavior and allow migration scripts written for MySQL
+	// 5.7 to continue working. When on, the descending order is persisted into
+	// IndexColumn and (once supporting TiKV is available) used for physical
+	// encoding. See pingcap/tidb#2519.
+	TiDBEnableDescendingIndex = "tidb_enable_descending_index"
+
 	// TiDBForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
 	TiDBForeignKeyCheckInSharedLock = "tidb_foreign_key_check_in_shared_lock"
 
@@ -1580,6 +1588,7 @@ const (
 	DefTiDBEnableCollectExecutionInfo       = true
 	DefTiDBAllowAutoRandExplicitInsert      = false
 	DefTiDBEnableClusteredIndex             = ClusteredIndexDefModeOn
+	DefTiDBEnableDescendingIndex            = false
 	DefTiDBRedactLog                        = Off
 	DefTiDBRestrictedReadOnly               = false
 	DefTiDBSuperReadOnly                    = false
@@ -1885,8 +1894,11 @@ var (
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
 	DDLDiskQuota = atomic.NewUint64(DefTiDBDDLDiskQuota)
 	// EnableForeignKey indicates whether to enable foreign key feature.
-	EnableForeignKey    = atomic.NewBool(true)
-	EnableRCReadCheckTS = atomic.NewBool(false)
+	EnableForeignKey = atomic.NewBool(true)
+	// EnableDescendingIndex gates persisting the DESC flag on index columns at
+	// CREATE INDEX / CREATE TABLE time. See TiDBEnableDescendingIndex.
+	EnableDescendingIndex = atomic.NewBool(DefTiDBEnableDescendingIndex)
+	EnableRCReadCheckTS   = atomic.NewBool(false)
 	// EnableRowLevelChecksum indicates whether to append checksum to row values.
 	EnableRowLevelChecksum         = atomic.NewBool(DefTiDBEnableRowLevelChecksum)
 	LowResolutionTSOUpdateInterval = atomic.NewUint32(DefTiDBLowResolutionTSOUpdateInterval)

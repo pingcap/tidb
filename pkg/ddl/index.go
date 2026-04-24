@@ -118,6 +118,7 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 	// The sum of length of all index columns.
 	sumLength := 0
+	descEnabled := vardef.EnableDescendingIndex.Load()
 	for _, ip := range indexPartSpecifications {
 		col = model.FindColumnInfo(columns, ip.Column.Name.L)
 		if col == nil {
@@ -131,6 +132,11 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		}
 		if columnarIndexType == model.ColumnarIndexTypeFulltext && !types.IsString(col.FieldType.GetType()) {
 			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support string type, but this is type: %s", col.FieldType.String()))
+		}
+		// Columnar indexes cannot support descending order; reject explicitly.
+		// Fulltext also has its own DESC check in buildFullTextInfoWithCheck.
+		if ip.Desc && columnarIndexType != model.ColumnarIndexTypeNA {
+			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("%s does not support DESC order", columnarIndexType.SQLName()))
 		}
 
 		// return error in strict sql mode
@@ -175,10 +181,14 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 			ctx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(sumLength, maxIndexLength))
 		}
 
+		// When the feature gate is off, preserve historical MySQL 5.7 behavior:
+		// DESC is accepted by the parser but silently ignored. This keeps legacy
+		// migration scripts working unchanged.
 		idxParts = append(idxParts, &model.IndexColumn{
 			Name:   col.Name,
 			Offset: col.Offset,
 			Length: indexColLen,
+			Desc:   ip.Desc && descEnabled,
 		})
 	}
 
@@ -430,6 +440,12 @@ func BuildIndexInfo(
 	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, columnarIndexType)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// Bump the index-metadata version when any descending column is present so
+	// that an older TiDB reading this schema refuses to serve queries against
+	// the index rather than returning wrong results — see IndexInfo.IsServable.
+	if idxInfo.HasDescColumn() {
+		idxInfo.Version = 1
 	}
 
 	if indexOption != nil {

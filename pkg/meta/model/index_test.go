@@ -15,6 +15,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -75,4 +76,51 @@ func TestGlobalIndexV1SupportedForNextGen(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		require.True(t, GetGlobalIndexV1Supported())
 	}
+}
+
+func TestIndexColumnDescRoundTrip(t *testing.T) {
+	// Ascending is the zero value and must be omitted from JSON for backward
+	// compatibility with schemas written before descending indexes were supported.
+	ascCol := IndexColumn{Name: ast.NewCIStr("a"), Offset: 0, Length: -1}
+	ascJSON, err := json.Marshal(ascCol)
+	require.NoError(t, err)
+	require.NotContains(t, string(ascJSON), "desc")
+
+	descCol := IndexColumn{Name: ast.NewCIStr("b"), Offset: 1, Length: -1, Desc: true}
+	descJSON, err := json.Marshal(descCol)
+	require.NoError(t, err)
+	require.Contains(t, string(descJSON), `"desc":true`)
+
+	// Unknown fields from a newer TiDB must decode cleanly on an older binary.
+	var decoded IndexColumn
+	require.NoError(t, json.Unmarshal(descJSON, &decoded))
+	require.True(t, decoded.Desc)
+
+	// Clone preserves Desc.
+	require.True(t, descCol.Clone().Desc)
+}
+
+func TestIndexInfoHasDescColumn(t *testing.T) {
+	c0 := newColumnForTest(0, 0)
+	c1 := newColumnForTest(1, 1)
+
+	idx := newIndexForTest(10, c0, c1)
+	require.False(t, idx.HasDescColumn())
+
+	idx.Columns[1].Desc = true
+	require.True(t, idx.HasDescColumn())
+}
+
+func TestIndexInfoIsServable(t *testing.T) {
+	idx := newIndexForTest(1, newColumnForTest(0, 0))
+
+	// Version 0 (legacy) and 1 (introduces Desc) are both serviceable today.
+	require.True(t, idx.IsServable())
+	idx.Version = 1
+	require.True(t, idx.IsServable())
+
+	// A newer-than-known version must be rejected so old binaries refuse to
+	// serve queries against indexes whose semantics they do not understand.
+	idx.Version = 255
+	require.False(t, idx.IsServable())
 }

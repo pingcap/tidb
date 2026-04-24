@@ -3124,6 +3124,47 @@ func TestIssue52680(t *testing.T) {
 	tk.MustQuery("select * from issue52680").Check(testkit.Rows("1", "2", "3"))
 }
 
+func TestDescendingIndexMetadataPlumbing(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// With the feature gate off (the default), DESC is silently ignored at
+	// DDL time — preserving historical MySQL 5.7 behavior.
+	tk.MustExec("set @@global.tidb_enable_descending_index = off")
+	tk.MustExec("create table t_desc_off (a int, b int, index idx_off (a, b desc))")
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_desc_off"))
+	require.NoError(t, err)
+	idx := tbl.Meta().Indices[0]
+	require.False(t, idx.Columns[0].Desc)
+	require.False(t, idx.Columns[1].Desc, "DESC must be dropped when the feature gate is off")
+	require.Equal(t, uint8(0), idx.Version)
+	tk.MustQuery("select collation from information_schema.statistics where index_name='idx_off' order by seq_in_index").
+		Check(testkit.Rows("A", "A"))
+
+	// With the feature gate on, DESC is persisted and reflected in SHOW CREATE
+	// TABLE and information_schema.STATISTICS. IndexInfo.Version bumps to 1 so
+	// an older TiDB reading this schema will refuse to serve queries.
+	tk.MustExec("set @@global.tidb_enable_descending_index = on")
+	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
+	tk.MustExec("create table t_desc_on (a int, b int, index idx_on (a, b desc))")
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_desc_on"))
+	require.NoError(t, err)
+	idx = tbl.Meta().Indices[0]
+	require.False(t, idx.Columns[0].Desc)
+	require.True(t, idx.Columns[1].Desc)
+	require.Equal(t, uint8(1), idx.Version)
+
+	tk.MustQuery("select collation from information_schema.statistics where index_name='idx_on' order by seq_in_index").
+		Check(testkit.Rows("A", "D"))
+
+	showCreate := tk.MustQuery("show create table t_desc_on").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "`b` DESC", "SHOW CREATE TABLE must preserve DESC in the index definition")
+	require.NotContains(t, showCreate, "`a` DESC", "ascending columns must render without an explicit direction")
+}
+
 func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	originCfg := config.GetGlobalConfig()
