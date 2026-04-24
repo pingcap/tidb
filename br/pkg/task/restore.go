@@ -555,6 +555,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v is an invalid value, please specify 1 or 2",
 			FlagReplicationStoragePhase)
 	}
+	if cfg.FromReplicationStorage && !cfg.UseCheckpoint {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
+			FlagReplicationStoragePhase, flagUseCheckpoint)
+	}
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
@@ -1102,7 +1106,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// For replication storage phase 1, we intentionally keep restore registration
 	// and checkpoint data for the subsequent phase 2 run.
 	if IsStreamRestore(cmdName) && cfg.ReplicationStoragePhase == 1 {
-		log.Info("replication storage phase 1 finished, keep restore task and checkpoint data")
+		if cfg.RestoreID != 0 {
+			if err := restoreRegistry.PauseTask(c, cfg.RestoreID); err != nil {
+				log.Warn("failed to pause restore task from registry after replication storage phase 1",
+					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
+			}
+		}
+		log.Info("replication storage phase 1 finished, paused restore task and kept checkpoint data",
+			zap.Uint64("restoreId", cfg.RestoreID))
 		return nil
 	}
 

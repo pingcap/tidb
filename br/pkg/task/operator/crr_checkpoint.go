@@ -151,7 +151,7 @@ func buildObjectSyncChecker(
 		return upstreamChecker, nil
 	}
 	return nil, fmt.Errorf(
-		"downstream storage must be not be nil when upstream storage cannot check object sync",
+		"downstream storage must not be nil when upstream storage cannot check object sync",
 	)
 }
 
