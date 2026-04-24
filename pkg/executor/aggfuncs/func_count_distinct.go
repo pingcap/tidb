@@ -486,7 +486,6 @@ func (*countPartialWithDistinct) MergePartialResult(_ AggFuncUpdateContext, src 
 		}
 
 		memDelta += d.valSet.Insert(val)
-		memDelta += int64(len(val))
 	}
 	return
 }
