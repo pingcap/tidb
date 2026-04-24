@@ -737,7 +737,6 @@ func (col *Column) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) 
 
 func (col *Column) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
 	fallbackIdx := -1
-	fallbackCnt := 0
 	for i, c := range schema.Columns {
 		if c.EqualColumn(col) {
 			col.Index = i
@@ -745,15 +744,12 @@ func (col *Column) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) 
 		}
 		// Different expression indexes may create hidden generated columns with the same
 		// virtual expression. Prefer the exact column ID when it exists; only fall back
-		// to expression equality when it identifies a single candidate.
-		if c.EqualByExprAndID(ctx, col) {
-			if fallbackCnt == 0 {
-				fallbackIdx = i
-			}
-			fallbackCnt++
+		// to expression equality when the selected schema has no exact column match.
+		if fallbackIdx == -1 && c.EqualByExprAndID(ctx, col) {
+			fallbackIdx = i
 		}
 	}
-	if fallbackCnt == 1 {
+	if fallbackIdx != -1 {
 		col.Index = fallbackIdx
 		return true
 	}
