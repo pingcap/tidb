@@ -265,7 +265,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 	if len(tasks) > 0 {
 		firstTask := tasks[0]
 		logutil.BgLogger().Info("Dispatch mpp tasks", zap.Uint64("timestamp", firstTask.StartTs),
-			zap.Int64s("IDs", taskIDs), zap.Int("task-count", len(taskIDs)),
+			zap.Int64s("IDs", taskIDs),
 			zap.Uint64("QueryTs", firstTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", firstTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", firstTask.MppQueryID.ServerID), zap.Strings("addresses", addresses),
 			zap.String("plan", plannercore.ToString(pf.Sink)),
