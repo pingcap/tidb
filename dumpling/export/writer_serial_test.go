@@ -369,7 +369,7 @@ func TestSQLDataTypes(t *testing.T) {
 		bf := NewBufferWriter()
 
 		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
-			m := newMetrics(conf.PromFactory, conf.Labels)
+		m := newMetrics(conf.PromFactory, conf.Labels)
 		n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), n)
