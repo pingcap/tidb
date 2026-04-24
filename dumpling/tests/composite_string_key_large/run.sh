@@ -57,7 +57,10 @@ for t in range(10):
     tenant = f"tenant-prefix-shared-{t:03d}"
     for e in range(50):
         eid = f"evt-{e:04d}"
-        payload = f"payload for tenant {t} event {e} with 'single' and \"double\" quotes and a backslash \\\\."
+        # Exercise SQL escaping: single/double quotes and a backslash.
+        # Double single-quotes so the literal is valid MySQL.
+        raw = f"payload for tenant {t} event {e} with 'single' and \"double\" quotes and a backslash \\."
+        payload = raw.replace("'", "''")
         rows.append(f"('{tenant}','{eid}','{payload}')")
 print("INSERT INTO events (tenant,event_id,payload) VALUES")
 print(",\n".join(rows) + ";")
