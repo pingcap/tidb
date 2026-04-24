@@ -553,7 +553,6 @@ func (rc *LogClient) InitClients(
 	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	concurrency uint,
 	concurrencyPerStore uint,
-	retainLatestMVCCVersion bool,
 ) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
@@ -580,16 +579,10 @@ func (rc *LogClient) InitClients(
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckBatchDownloadSupport(ctx, stores)
 	})
-	if retainLatestMVCCVersion {
-		createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
-			return importer.CheckBatchDownloadLatestMVCCSupport(ctx, stores)
-		})
-	}
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, rc.regionScanConcurrency,
-		retainLatestMVCCVersion, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, rc.regionScanConcurrency, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompacted, opt)

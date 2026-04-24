@@ -82,11 +82,7 @@ func NewCRRCheckpointService(
 	}
 
 	env := streamhelper.CliEnv(mgr.StoreManager, mgr.GetStore(), etcdCli)
-	syncChecker, err := buildObjectSyncChecker(
-		upstreamStorage,
-		downstreamStorage,
-		cfg.CheckSyncedFromDownstreamStorage,
-	)
+	syncChecker, err := buildObjectSyncChecker(upstreamStorage, downstreamStorage)
 	if err != nil {
 		if downstreamStorage != nil {
 			downstreamStorage.Close()
@@ -96,11 +92,7 @@ func NewCRRCheckpointService(
 		mgr.Close()
 		return nil, nil, err
 	}
-	resumeStateStorage := upstreamStorage
-	if downstreamStorage != nil {
-		resumeStateStorage = downstreamStorage
-	}
-	stateStore, err := buildResumeStateStore(resumeStateStorage, cfg.CRRConfig.StateStorageSubDir)
+	stateStore, err := buildResumeStateStore(upstreamStorage, cfg.CRRConfig.StateStorageSubDir)
 	if err != nil {
 		if downstreamStorage != nil {
 			downstreamStorage.Close()
@@ -151,16 +143,15 @@ func NewCRRCheckpointService(
 func buildObjectSyncChecker(
 	upstreamStorage storeapi.Storage,
 	downstreamStorage storeapi.Storage,
-	checkSyncedFromDownstreamStorage bool,
 ) (service.ObjectSyncChecker, error) {
-	if checkSyncedFromDownstreamStorage && downstreamStorage != nil {
+	if downstreamStorage != nil {
 		return service.NewExistenceSyncChecker(downstreamStorage), nil
 	}
 	if upstreamChecker, ok := upstreamStorage.(service.ObjectSyncChecker); ok {
 		return upstreamChecker, nil
 	}
 	return nil, fmt.Errorf(
-		"downstream storage must be provided when upstream storage cannot check object sync",
+		"downstream storage must be not be nil when upstream storage cannot check object sync",
 	)
 }
 
@@ -170,7 +161,7 @@ type storageResumeStateStore struct {
 }
 
 func buildResumeStateStore(
-	storage storeapi.Storage,
+	upstreamStorage storeapi.Storage,
 	subDir string,
 ) (service.ResumeStateStore, error) {
 	if subDir == "" {
@@ -181,7 +172,7 @@ func buildResumeStateStore(
 		return nil, err
 	}
 	return &storageResumeStateStore{
-		storage: storage,
+		storage: upstreamStorage,
 		path:    path,
 	}, nil
 }

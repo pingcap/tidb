@@ -160,8 +160,6 @@ type SnapFileImporter struct {
 	cond     *sync.Cond
 
 	mergeSst bool
-	// retainLatestMVCCVersion means compacted SSTs are downloaded with newest MVCC versions only.
-	retainLatestMVCCVersion bool
 }
 
 type SnapFileImporterOptions struct {
@@ -173,11 +171,10 @@ type SnapFileImporterOptions struct {
 	tikvStores   []*metapb.Store
 
 	// scanConcurrency is the max in-flight PD scan-region requests during import.
-	scanConcurrency         uint
-	concurrencyPerStore     uint
-	retainLatestMVCCVersion bool
-	createCallBacks         []func(*SnapFileImporter) error
-	closeCallbacks          []func(*SnapFileImporter) error
+	scanConcurrency     uint
+	concurrencyPerStore uint
+	createCallBacks     []func(*SnapFileImporter) error
+	closeCallbacks      []func(*SnapFileImporter) error
 }
 
 func NewSnapFileImporterOptions(
@@ -189,22 +186,20 @@ func NewSnapFileImporterOptions(
 	tikvStores []*metapb.Store,
 	concurrencyPerStore uint,
 	scanConcurrency uint,
-	retainLatestMVCCVersion bool,
 	createCallbacks []func(*SnapFileImporter) error,
 	closeCallbacks []func(*SnapFileImporter) error,
 ) *SnapFileImporterOptions {
 	return &SnapFileImporterOptions{
-		cipher:                  cipher,
-		metaClient:              metaClient,
-		importClient:            importClient,
-		backend:                 backend,
-		rewriteMode:             rewriteMode,
-		tikvStores:              tikvStores,
-		scanConcurrency:         scanConcurrency,
-		concurrencyPerStore:     concurrencyPerStore,
-		retainLatestMVCCVersion: retainLatestMVCCVersion,
-		createCallBacks:         createCallbacks,
-		closeCallbacks:          closeCallbacks,
+		cipher:              cipher,
+		metaClient:          metaClient,
+		importClient:        importClient,
+		backend:             backend,
+		rewriteMode:         rewriteMode,
+		tikvStores:          tikvStores,
+		scanConcurrency:     scanConcurrency,
+		concurrencyPerStore: concurrencyPerStore,
+		createCallBacks:     createCallbacks,
+		closeCallbacks:      closeCallbacks,
 	}
 }
 
@@ -225,19 +220,18 @@ func NewSnapFileImporter(
 		apiVersion: apiVersion,
 		kvMode:     kvMode,
 
-		cipher:                  options.cipher,
-		metaClient:              options.metaClient,
-		backend:                 options.backend,
-		importClient:            options.importClient,
-		downloadTokensMap:       newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
-		ingestTokensMap:         newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
-		rewriteMode:             options.rewriteMode,
-		cacheKey:                fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
-		concurrencyPerStore:     options.concurrencyPerStore,
-		pdReqTokens:             pdReqTokens,
-		cond:                    sync.NewCond(new(sync.Mutex)),
-		closeCallbacks:          options.closeCallbacks,
-		retainLatestMVCCVersion: options.retainLatestMVCCVersion,
+		cipher:              options.cipher,
+		metaClient:          options.metaClient,
+		backend:             options.backend,
+		importClient:        options.importClient,
+		downloadTokensMap:   newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
+		ingestTokensMap:     newStoreTokenChannelMap(options.tikvStores, options.concurrencyPerStore),
+		rewriteMode:         options.rewriteMode,
+		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
+		concurrencyPerStore: options.concurrencyPerStore,
+		pdReqTokens:         pdReqTokens,
+		cond:                sync.NewCond(new(sync.Mutex)),
+		closeCallbacks:      options.closeCallbacks,
 	}
 
 	for _, f := range options.createCallBacks {
@@ -342,18 +336,6 @@ func (importer *SnapFileImporter) CheckBatchDownloadSupport(ctx context.Context,
 	}
 	importer.mergeSst = support
 	return nil
-}
-
-// CheckBatchDownloadLatestMVCCSupport checks all stores implement BatchDownloadLatestMVCC (required for retain-latest-MVCC restore).
-func (importer *SnapFileImporter) CheckBatchDownloadLatestMVCCSupport(ctx context.Context, tikvStores []*metapb.Store) error {
-	storeIDs := make([]uint64, 0, len(tikvStores))
-	for _, s := range tikvStores {
-		if s.State != metapb.StoreState_Up {
-			continue
-		}
-		storeIDs = append(storeIDs, s.Id)
-	}
-	return errors.Trace(importer.importClient.CheckBatchDownloadLatestMVCCSupport(ctx, storeIDs))
 }
 
 // CheckMultiIngestSupport checks whether all stores support multi-ingest
@@ -466,7 +448,7 @@ func (importer *SnapFileImporter) Import(
 			return errors.Trace(errScanRegion)
 		}
 		workerpoolsize := 1
-		if importer.mergeSst || importer.retainLatestMVCCVersion {
+		if importer.mergeSst {
 			workerpoolsize = len(regionInfos)
 		}
 		workerpool := util.NewWorkerPool(uint(workerpoolsize), "restore region")
@@ -622,8 +604,6 @@ func (importer *SnapFileImporter) download(
 		// we treat Txn kv file as Raw kv file. because we don't have table id to decode
 		if importer.kvMode == Raw || importer.kvMode == Txn {
 			downloadMetas, e = importer.downloadRawKVSST(ctx, regionInfo, filesGroup, cipher, apiVersion)
-		} else if importer.kvMode == TiDBCompacted && importer.retainLatestMVCCVersion {
-			downloadMetas, e = importer.batchDownloadNewestVersionSST(ctx, regionInfo, filesGroup, cipher, apiVersion)
 		} else if importer.kvMode == TiDBCompacted && importer.mergeSst {
 			downloadMetas, e = importer.batchDownloadSST(ctx, regionInfo, filesGroup, cipher, apiVersion)
 		} else {
@@ -643,8 +623,6 @@ func (importer *SnapFileImporter) download(
 			logutil.CL(ctx).Info("fail to decrypt when download sst, try again with no-crypt")
 			if importer.kvMode == Raw || importer.kvMode == Txn {
 				downloadMetas, e = importer.downloadRawKVSST(ctx, regionInfo, filesGroup, nil, apiVersion)
-			} else if importer.kvMode == TiDBCompacted && importer.retainLatestMVCCVersion {
-				downloadMetas, e = importer.batchDownloadNewestVersionSST(ctx, regionInfo, filesGroup, nil, apiVersion)
 			} else if importer.kvMode == TiDBCompacted && importer.mergeSst {
 				downloadMetas, e = importer.batchDownloadSST(ctx, regionInfo, filesGroup, nil, apiVersion)
 			} else {
@@ -748,6 +726,7 @@ func (importer *SnapFileImporter) batchDownloadSST(
 			if req == nil {
 				continue
 			}
+			sstMeta.ApiVersion = apiVersion
 			cfReq, exists := downloadReqMap[file.Cf]
 			if !exists {
 				cfReq = &import_sstpb.DownloadRequest{
@@ -837,7 +816,6 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						Start: restoreutils.TruncateTS(resp.Range.GetStart()),
 						End:   restoreutils.TruncateTS(resp.Range.GetEnd()),
 					}
-					sstMeta.ApiVersion = apiVersion
 					resultMetasMap[req.Name] = &sstMeta
 					mu.Unlock()
 				}
@@ -849,133 +827,6 @@ func (importer *SnapFileImporter) batchDownloadSST(
 		return nil, err
 	}
 	return maps.Values(resultMetasMap), nil
-}
-
-func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
-	ctx context.Context,
-	regionInfo *split.RegionInfo,
-	filesGroup []restore.BackupFileSet,
-	cipher *backuppb.CipherInfo,
-	apiVersion kvrpcpb.APIVersion,
-) ([]*import_sstpb.SSTMeta, error) {
-	var mu sync.Mutex
-	downloadReqs := make([]*import_sstpb.DownloadRequest, 0, len(filesGroup))
-	resultMetasMap := make(map[string][]*import_sstpb.SSTMeta)
-	for _, files := range filesGroup {
-		var downloadReq *import_sstpb.DownloadRequest = nil
-		hasWriteCF := false
-		for _, file := range files.SSTFiles {
-			req, sstMeta, err := importer.buildDownloadRequest(file, files.RewriteRules, regionInfo, cipher)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if req == nil {
-				continue
-			}
-			if downloadReq == nil {
-				downloadReq = &import_sstpb.DownloadRequest{
-					Sst:            req.Sst,
-					Name:           req.Name,
-					RewriteRule:    req.RewriteRule,
-					StorageBackend: req.StorageBackend,
-					CipherInfo:     req.CipherInfo,
-					StorageCacheId: req.StorageCacheId,
-					RequestType:    req.RequestType,
-					Context:        req.Context,
-					Ssts:           make(map[string]*import_sstpb.SSTMeta),
-				}
-			}
-			// check the rewrite rule the same
-			if !(bytes.Equal(downloadReq.RewriteRule.NewKeyPrefix, req.RewriteRule.NewKeyPrefix) &&
-				bytes.Equal(downloadReq.RewriteRule.OldKeyPrefix, req.RewriteRule.OldKeyPrefix) &&
-				downloadReq.RewriteRule.IgnoreAfterTimestamp == req.RewriteRule.IgnoreAfterTimestamp) {
-				log.Error("rewrite rule mismatch", zap.Reflect("cfReq", downloadReq.RewriteRule), zap.Reflect("req", req.RewriteRule))
-				return nil, errors.Errorf("rewrite rules mismatch from the overlapped SST files")
-			}
-			if strings.Contains(file.Cf, restoreutils.WriteCFName) {
-				if hasWriteCF && downloadReq.RewriteRule.IgnoreBeforeTimestamp != req.RewriteRule.IgnoreBeforeTimestamp {
-					log.Error("rewrite rule mismatch", zap.Reflect("cfReq", downloadReq.RewriteRule), zap.Reflect("req", req.RewriteRule))
-					return nil, errors.Errorf("rewrite rules mismatch from write CF SST files")
-				}
-				// In BatchDownloadLatestMVCC, the request-level rewrite rule should carry write CF's
-				// lower-bound timestamp, because write CF decides MVCC version visibility.
-				downloadReq.RewriteRule.IgnoreBeforeTimestamp = req.RewriteRule.IgnoreBeforeTimestamp
-				hasWriteCF = true
-			}
-			downloadReq.Ssts[req.Name] = &sstMeta
-		}
-		if downloadReq != nil {
-			downloadReqs = append(downloadReqs, downloadReq)
-		}
-	}
-
-	eg, ectx := errgroup.WithContext(ctx)
-	for _, p := range regionInfo.Region.GetPeers() {
-		peer := p
-		eg.Go(func() error {
-			tokenCh := importer.downloadTokensMap.acquireTokenCh(peer.GetStoreId(), importer.concurrencyPerStore)
-			select {
-			case <-ectx.Done():
-				return ectx.Err()
-			case <-tokenCh:
-			}
-			defer func() {
-				importer.releaseToken(tokenCh)
-			}()
-			for i, downloadReq := range downloadReqs {
-				logger := logutil.CL(ectx).With(zap.Int("filegroup#", i), zap.Int("filegroup.total#", len(downloadReqs)))
-				var err error
-				var resp *import_sstpb.DownloadResponse
-				resp, err = utils.WithRetryV2(ectx, utils.VerboseRetry(utils.NewDownloadSSTBackoffStrategy(), logger), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
-					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
-					defer cancel()
-					logger.Info("Sending batch download latest MVCC SST request.",
-						zap.Uint64("store_id", peer.GetStoreId()),
-						logutil.BriefSSTMetas("ssts", maps.Values(downloadReq.Ssts)),
-						logutil.Region(regionInfo.Region),
-					)
-					return importer.importClient.BatchDownloadLatestMVCC(dctx, peer.GetStoreId(), downloadReq)
-				})
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if resp.GetError() != nil {
-					return errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage())
-				}
-				if resp.GetIsEmpty() {
-					logger.Warn("download file skipped", zap.String("filename", downloadReq.Name),
-						logutil.Region(regionInfo.Region), zap.Error(berrors.ErrKVRangeIsEmpty))
-					continue
-				}
-
-				mu.Lock()
-				// For TiKV server, the input is req.Ssts and the output target is resp.Ssts. Therefore, get
-				// the resp.Ssts as the output of merged SST file.
-				if _, ok := resultMetasMap[downloadReq.Name]; !ok {
-					resultMetas := make([]*import_sstpb.SSTMeta, 0, len(resp.Ssts))
-					for _, sstMeta := range resp.Ssts {
-						sstMeta.Range = &import_sstpb.Range{
-							Start: restoreutils.TruncateTS(resp.Range.GetStart()),
-							End:   restoreutils.TruncateTS(resp.Range.GetEnd()),
-						}
-						sstMeta.ApiVersion = apiVersion
-						resultMetas = append(resultMetas, sstMeta)
-					}
-					resultMetasMap[downloadReq.Name] = resultMetas
-				}
-				mu.Unlock()
-			}
-			return nil
-		})
-	}
-	if err := eg.Wait(); err != nil {
-		return nil, err
-	}
-	finalResultMetas := make([]*import_sstpb.SSTMeta, 0, len(resultMetasMap)*2)
-	for _, sstMetas := range resultMetasMap {
-		finalResultMetas = append(finalResultMetas, sstMetas...)
-	}
-	return finalResultMetas, nil
 }
 
 func (importer *SnapFileImporter) downloadSST(

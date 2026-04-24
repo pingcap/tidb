@@ -1697,24 +1697,6 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.RetainLatestMVCCVersion {
-		hasDMLFiles, err := hasAnyLogFiles(ctx, logFilesIter)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if hasDMLFiles {
-			return errors.Annotatef(
-				berrors.ErrInvalidArgument,
-				"%s requires no user DML log files during point restore (DDL files are allowed), but found log files in (%d, %d]",
-				FlagRetainLatestMVCCVersion,
-				cfg.StartTS,
-				cfg.RestoreTS,
-			)
-		}
-		log.Info("enabled restoring compacted SSTs with newest MVCC versions only; skip user DML log restore",
-			zap.String("flag", FlagRetainLatestMVCCVersion))
-		logFilesIter = iter.FromSlice([]*logclient.LogDataFileInfo{})
-	}
 
 	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
 	if err != nil {
@@ -1873,10 +1855,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)
 
-	err = client.InitClients(
-		ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency),
-		cfg.ConcurrencyPerStore.Value, cfg.RetainLatestMVCCVersion,
-	)
+	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2333,14 +2312,6 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 		return 0, errors.Trace(err)
 	}
 	return currentTS, nil
-}
-
-func hasAnyLogFiles(ctx context.Context, fileIter logclient.LogIter) (bool, error) {
-	r := fileIter.TryNext(ctx)
-	if r.Err != nil {
-		return false, errors.Trace(r.Err)
-	}
-	return !r.Finished, nil
 }
 
 func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {
