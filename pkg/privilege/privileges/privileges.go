@@ -288,8 +288,11 @@ func (p *UserPrivileges) authenticateWithPlugin(user *auth.UserIdentity, authent
 }
 
 func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
-	return p.isValidHashForSlot(record, "primary", record.AuthenticationString) &&
-		p.isValidHashForSlot(record, "secondary", record.AdditionalAuthenticationString)
+	// Only validate the primary hash here. A corrupt secondary must NOT block
+	// login with a valid primary — it is validated at the fallback site in
+	// ConnectionVerification so a bad retained hash degrades to primary-only
+	// auth (with a slot-tagged warning) rather than a hard lockout.
+	return p.isValidHashForSlot(record, "primary", record.AuthenticationString)
 }
 
 // isValidHashForSlot validates a single password hash (primary or secondary)
@@ -720,14 +723,20 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			if !ok && retryable && len(record.AdditionalAuthenticationString) > 0 {
 				// MySQL-compatible dual-password fallback: try the secondary password
 				// stored in user_attributes.$.additional_password with the same plugin.
-				ok, _ = checkHash(record.AdditionalAuthenticationString, "secondary")
-				if ok {
-					// Surface fallback logins so operators can tell which accounts
-					// have finished rotating and can safely DISCARD OLD PASSWORD.
-					logutil.BgLogger().Info("authenticated using retained (secondary) password",
-						zap.String("auth_user", authUser),
-						zap.String("auth_host", authHost),
-						zap.String("auth_plugin", record.AuthPlugin))
+				// Validate the secondary's plugin/length first; a corrupt retained
+				// hash should degrade to primary-only auth (already failed above),
+				// not be sent to the hashing routines. isValidHashForSlot emits the
+				// slot-tagged warning on rejection.
+				if p.isValidHashForSlot(record, "secondary", record.AdditionalAuthenticationString) {
+					ok, _ = checkHash(record.AdditionalAuthenticationString, "secondary")
+					if ok {
+						// Surface fallback logins so operators can tell which accounts
+						// have finished rotating and can safely DISCARD OLD PASSWORD.
+						logutil.BgLogger().Info("authenticated using retained (secondary) password",
+							zap.String("auth_user", authUser),
+							zap.String("auth_host", authHost),
+							zap.String("auth_plugin", record.AuthPlugin))
+					}
 				}
 			}
 			if !ok {
