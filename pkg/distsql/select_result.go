@@ -77,7 +77,7 @@ type SelectResult interface {
 
 // GetSelectResultConcurrency returns the internal cop iterator concurrency for a SelectResult.
 // The bool return value indicates whether the underlying implementation exposes this information.
-func GetSelectResultConcurrency(sr SelectResult) (int, int, bool) {
+func GetSelectResultConcurrency(sr SelectResult) (concurrency int, extraConcurrency int, ok bool) {
 	r, ok := sr.(*selectResult)
 	if !ok || r == nil {
 		return 0, 0, false
@@ -86,8 +86,8 @@ func GetSelectResultConcurrency(sr SelectResult) (int, int, bool) {
 	if !ok {
 		return 0, 0, false
 	}
-	conc, extraConc := ci.GetConcurrency()
-	return conc, extraConc, true
+	concurrency, extraConcurrency = ci.GetConcurrency()
+	return concurrency, extraConcurrency, true
 }
 
 // SelectResultRow indicates the row returned by the SelectResultIter
