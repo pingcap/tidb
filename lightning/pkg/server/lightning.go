@@ -48,12 +48,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/importer"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/lightning/pkg/web"
-=======
-	"github.com/pingcap/tidb/lightning/pkg/importinto"
 	"github.com/pingcap/tidb/lightning/pkg/progress"
->>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 	_ "github.com/pingcap/tidb/pkg/expression" // get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`.
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
@@ -500,62 +495,6 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	if err := taskCfg.TiDB.Security.BuildTLSConfig(); err != nil {
 		return common.ErrInvalidTLSConfig.Wrap(err)
 	}
-
-<<<<<<< HEAD
-=======
-	var mdl *mydump.MDLoader
-	var dbMetas []*mydump.MDDatabaseMeta
-	s := o.dumpFileStorage
-	if taskCfg.TikvImporter.Backend != config.BackendImportInto {
-		mdl, s, err = l.initDataSource(ctx, taskCfg, o)
-		if err != nil {
-			return err
-		}
-
-		dbMetas = mdl.GetDatabases()
-		progress.BroadcastInitProgress(dbMetas)
-	}
-
-	db, keyspaceName, err := initDBAndKeyspace(ctx, taskCfg, o)
-	if err != nil {
-		return err
-	}
-
-	param := &importer.ControllerParam{
-		DBMetas:           dbMetas,
-		Status:            &l.status,
-		DumpFileStorage:   s,
-		OwnExtStorage:     o.dumpFileStorage == nil,
-		DB:                db,
-		CheckpointStorage: o.checkpointStorage,
-		CheckpointName:    o.checkpointName,
-		DupIndicator:      o.dupIndicator,
-		KeyspaceName:      keyspaceName,
-	}
-
-	var procedure LightningImporter
-	procedure, err = newImporter(ctx, taskCfg, param)
-	if err != nil {
-		o.logger.Error("restore failed", log.ShortError(err))
-		return errors.Trace(err)
-	}
-
-	l.cancelLock.Lock()
-	l.importer = procedure
-	l.cancelLock.Unlock()
-
-	failpoint.Inject("orphanWriterGoRoutine", func() {
-		// don't exit too quickly to expose panic
-		defer time.Sleep(time.Second * 10)
-	})
-	defer procedure.Close()
-
-	err = procedure.Run(ctx)
-	return errors.Trace(err)
-}
-
-func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, o *options) (*mydump.MDLoader, storeapi.Storage, error) {
->>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 	s := o.dumpFileStorage
 	if s == nil {
 		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
@@ -604,7 +543,7 @@ func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, 
 	}
 
 	dbMetas := mdl.GetDatabases()
-	web.BroadcastInitProgress(dbMetas)
+	progress.BroadcastInitProgress(dbMetas)
 
 	// db is only not nil in unit test
 	db := o.db

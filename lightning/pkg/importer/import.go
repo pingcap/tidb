@@ -37,13 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/lightning/pkg/web"
-=======
-	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
-	"github.com/pingcap/tidb/lightning/pkg/errormanager"
 	"github.com/pingcap/tidb/lightning/pkg/progress"
->>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"

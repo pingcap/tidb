@@ -30,12 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/lightning/pkg/web"
-=======
-	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	pkgprogress "github.com/pingcap/tidb/lightning/pkg/progress"
->>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 	"github.com/pingcap/tidb/pkg/errno"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -1457,16 +1452,8 @@ func (tr *TableImporter) addIndexes(ctx context.Context, db *sql.DB) (retErr err
 	// Try to add all indexes in one statement.
 	err := tr.executeDDL(ctx, db, singleSQL, func(status *ddlStatus) {
 		if totalRows > 0 {
-<<<<<<< HEAD
-			progress := float64(status.rowCount) / float64(totalRows*len(multiSQLs))
-			if progress > 1 {
-				progress = 1
-			}
-			web.BroadcastTableProgress(tableName, progressStep, progress)
-=======
 			progress := min(float64(status.rowCount)/float64(totalRows*len(multiSQLs)), 1)
 			pkgprogress.BroadcastTableProgress(tableName, progressStep, progress)
->>>>>>> 3c8816c0143 (lightning: remove web interface component (#67984))
 			logger.Info("add index progress", zap.String("progress", fmt.Sprintf("%.1f%%", progress*100)))
 		}
 	})
