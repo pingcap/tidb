@@ -2744,7 +2744,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Paging Prediction Residual (Bytes)",
+               "title": "Paging Prediction Residual Bytes",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -2951,7 +2951,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Paging Settlement Residual (RU)",
+               "title": "Paging Settlement Residual RU",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
