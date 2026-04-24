@@ -221,20 +221,6 @@ func (c *ColumnInfo) IsVirtualGenerated() bool {
 	return c.IsGenerated() && !c.GeneratedStored
 }
 
-// IsVirtualGeneratedTemporalWithDateColumn checks whether the column is a virtual generated
-// column with a temporal type that contains a date part, such as DATE, DATETIME, or TIMESTAMP.
-func (c *ColumnInfo) IsVirtualGeneratedTemporalWithDateColumn() bool {
-	if !c.IsVirtualGenerated() {
-		return false
-	}
-	switch c.GetType() {
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return true
-	default:
-		return false
-	}
-}
-
 // IsChanging checks if the column is a new column added in modify column.
 func (c *ColumnInfo) IsChanging() bool {
 	return strings.HasPrefix(c.Name.O, changingColumnPrefix)

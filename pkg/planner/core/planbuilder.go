@@ -1163,16 +1163,22 @@ const (
 )
 
 func resolveIndexHintByName(publicPaths []*util.AccessPath, filteredUnsafeIndexes []*model.IndexInfo, idxName ast.CIStr, tblInfo *model.TableInfo) (*util.AccessPath, *model.IndexInfo, indexHintResolveStatus) {
-	// Exact names win over prefixes. Check public paths first so a valid index is
-	// never shadowed by a filtered index that happens to share the exact name.
+	// Prefer exact name matches over prefix matches.
+	// Check usable paths before filtered indexes.
 	for _, path := range publicPaths {
+		// Only accept tikv's primary key table path.
 		if path.IsTiKVTablePath() && isPrimaryIndex(idxName) && tblInfo.HasClusteredIndex() {
 			return path, nil, indexHintResolvePublicPath
 		}
-		if path.Index != nil && path.Index.Name.L == idxName.L {
+		if path.Index == nil {
+			continue
+		}
+		if path.Index.Name.L == idxName.L {
 			return path, nil, indexHintResolvePublicPath
 		}
 	}
+	// Check filtered unsafe indexes too, so hints on them can return "inapplicable"
+	// instead of being treated as missing indexes.
 	for _, index := range filteredUnsafeIndexes {
 		if index.Name.L == idxName.L {
 			return nil, index, indexHintResolveFilteredUnsafe
@@ -1183,12 +1189,17 @@ func resolveIndexHintByName(publicPaths []*util.AccessPath, filteredUnsafeIndexe
 	var foundFilteredIndex *model.IndexInfo
 	prefixMatches := 0
 	for _, path := range publicPaths {
-		if path.Index != nil && strings.HasPrefix(path.Index.Name.L, idxName.L) {
+		if path.Index == nil {
+			continue
+		}
+		if strings.HasPrefix(path.Index.Name.L, idxName.L) {
 			foundPath = path
 			foundFilteredIndex = nil
 			prefixMatches++
 		}
 	}
+	// Count filtered unsafe indexes in prefix matching too, so they participate in
+	// ambiguity detection with usable indexes.
 	for _, index := range filteredUnsafeIndexes {
 		if strings.HasPrefix(index.Name.L, idxName.L) {
 			foundPath = nil
@@ -1196,10 +1207,12 @@ func resolveIndexHintByName(publicPaths []*util.AccessPath, filteredUnsafeIndexe
 			prefixMatches++
 		}
 	}
+	// Return only unique prefix matches.
 	if prefixMatches != 1 {
 		return nil, nil, indexHintResolveNotFound
 	}
 	if foundFilteredIndex != nil {
+		// The hint uniquely points to a filtered unsafe index.
 		return nil, foundFilteredIndex, indexHintResolveFilteredUnsafe
 	}
 	return foundPath, nil, indexHintResolvePublicPath
