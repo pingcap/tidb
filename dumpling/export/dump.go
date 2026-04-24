@@ -952,6 +952,17 @@ func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan
 	}
 }
 
+// tableChunkStat tracks per-table chunk progress so finishedTablesCounter
+// is incremented exactly once, when the last chunk of a table is written
+// (rather than when the first chunk finishes, which was the old behavior
+// noted by the FIXME in startWriters).
+//
+// Invariant: finalized is set to true only after the producer side has
+// finished every sendTaskToChan call for this table. sent is incremented
+// synchronously inside sendTaskToChan before the blocking send, so no
+// sent.Add can race in after finalized=true. Therefore any reader that
+// observes `finalized && finished == sent` can conclude every task has
+// been both sent and completed, and the stats entry is safe to delete.
 type tableChunkStat struct {
 	sent      *gatomic.Int32
 	finished  *gatomic.Int32
