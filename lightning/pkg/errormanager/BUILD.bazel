@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "errormanager",
     srcs = ["errormanager.go"],
-    importpath = "github.com/pingcap/tidb/pkg/lightning/errormanager",
+    importpath = "github.com/pingcap/tidb/lightning/pkg/errormanager",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",

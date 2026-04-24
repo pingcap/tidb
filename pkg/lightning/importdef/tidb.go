@@ -12,21 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package checkpoints
+package importdef
 
 import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-// TidbDBInfo is the database info in TiDB.
-type TidbDBInfo struct {
+// DBInfo describes a target TiDB database for import.
+type DBInfo struct {
 	ID     int64
 	Name   string
-	Tables map[string]*TidbTableInfo
+	Tables map[string]*TableInfo
 }
 
-// TidbTableInfo is the table info in TiDB.
-type TidbTableInfo struct {
+// TableInfo describes target and desired TiDB table metadata for import.
+type TableInfo struct {
 	ID   int64
 	DB   string
 	Name string

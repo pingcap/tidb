@@ -18,7 +18,6 @@ go_library(
         "//pkg/util/tiflash",
         "//pkg/util/topsql/stmtstats",
         "@com_github_tikv_client_go_v2//kv",
-        "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
         "@org_uber_go_atomic//:atomic",
     ],
 )
@@ -43,7 +42,6 @@ go_test(
         "//pkg/util/tiflash",
         "//pkg/util/topsql/stmtstats",
         "@com_github_tikv_client_go_v2//kv",
-        "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
         "@org_uber_go_atomic//:atomic",
     ],
 )

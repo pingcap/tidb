@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints/checkpointspb"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/stretchr/testify/require"
