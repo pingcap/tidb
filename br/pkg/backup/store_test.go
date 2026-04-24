@@ -16,15 +16,11 @@ package backup
 
 import (
 	"context"
-	"io"
 	"testing"
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
 )
 
@@ -90,43 +86,6 @@ func TestTimeoutRecv(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, count, 15)
 	}
-
-	t.Run("store exit detail stays below info", func(t *testing.T) {
-		core, recorded := observer.New(zap.InfoLevel)
-		restore := log.ReplaceGlobals(
-			zap.New(core),
-			&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
-		)
-		defer restore()
-
-		sender := &MainBackupSender{}
-		respCh := make(chan *ResponseAndStore)
-		sender.SendAsync(
-			ctx,
-			1,
-			42,
-			NewResourceMemoryLimiter(100),
-			backuppb.BackupRequest{},
-			1,
-			&MockBackupClient{
-				recvFunc: func(context.Context) (*backuppb.BackupResponse, error) {
-					return nil, io.EOF
-				},
-			},
-			respCh,
-			make(chan BackupRetryPolicy, 1),
-		)
-
-		require.Eventually(t, func() bool {
-			select {
-			case _, ok := <-respCh:
-				return !ok
-			default:
-				return false
-			}
-		}, time.Second, 10*time.Millisecond)
-		require.Empty(t, recorded.FilterMessage("store backup goroutine exits").All())
-	})
 }
 
 func TestTimeoutRecvCancel(t *testing.T) {

@@ -14,7 +14,6 @@ import (
 	"github.com/google/btree"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -198,15 +197,7 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	// reset grpc connection every round except key_locked error.
 	reset := true
 	// update incompleteRanges to advance the progress and the request.
-	incompleteRangesUpdateInterval := IncompleteRangesUpdateInterval
-	failpoint.Inject("backup-incomplete-ranges-update-tick", func(val failpoint.Value) {
-		if intervalText, ok := val.(string); ok {
-			if interval, err := time.ParseDuration(intervalText); err == nil && interval > 0 {
-				incompleteRangesUpdateInterval = interval
-			}
-		}
-	})
-	incompleteRangesUpdateTicker := time.NewTicker(incompleteRangesUpdateInterval)
+	incompleteRangesUpdateTicker := time.NewTicker(IncompleteRangesUpdateInterval)
 	defer incompleteRangesUpdateTicker.Stop()
 mainLoop:
 	for {
@@ -293,7 +284,7 @@ mainLoop:
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
-		incompleteRangesUpdateTicker.Reset(incompleteRangesUpdateInterval)
+		incompleteRangesUpdateTicker.Reset(IncompleteRangesUpdateInterval)
 	handleLoop:
 		for {
 			select {
@@ -313,7 +304,7 @@ mainLoop:
 				log.Debug("update the incomplete ranges",
 					zap.Int("incomplete-ranges", len(loop.BackupReq.SubRanges)),
 					zap.Duration("take", elapsed))
-				incompleteRangesUpdateTicker.Reset(max(5*elapsed, incompleteRangesUpdateInterval))
+				incompleteRangesUpdateTicker.Reset(max(5*elapsed, IncompleteRangesUpdateInterval))
 			case storeBackupInfo := <-loop.StateNotifier:
 				if storeBackupInfo.All {
 					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))

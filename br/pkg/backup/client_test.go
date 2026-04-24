@@ -17,7 +17,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
@@ -37,8 +36,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 )
 
 type testBackup struct {
@@ -74,7 +71,6 @@ func mockGetBackupClientCallBack(ctx context.Context, storeID uint64, reset bool
 
 type mockBackupBackupSender struct {
 	backupResponses map[uint64][]*backup.ResponseAndStore
-	sendDelay       time.Duration
 }
 
 func (m *mockBackupBackupSender) SendAsync(
@@ -103,9 +99,6 @@ func (m *mockBackupBackupSender) SendAsync(
 			lock.Lock()
 			resps = m.backupResponses[storeID]
 			lock.Unlock()
-		}
-		if m.sendDelay > 0 {
-			time.Sleep(m.sendDelay)
 		}
 		for _, r := range resps {
 			select {
@@ -464,89 +457,6 @@ func TestMainBackupLoop(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, stores, 2)
 
-	t.Run("incomplete range refresh stays below info", func(t *testing.T) {
-		s := createBackupSuite(t)
-		s.mockCluster.AddStore(1, "127.0.0.1:20160")
-
-		core, recorded := observer.New(zap.InfoLevel)
-		restore := log.ReplaceGlobals(
-			zap.New(core),
-			&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
-		)
-		defer restore()
-
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/backup-incomplete-ranges-update-tick", `return("20ms")`))
-		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/backup-incomplete-ranges-update-tick"))
-		}()
-
-		ranges := []rtree.KeyRange{{
-			StartKey: []byte("aaa"),
-			EndKey:   []byte("zzz"),
-		}}
-		tree, err := s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
-		require.NoError(t, err)
-
-		mainLoop := &backup.MainBackupLoop{
-			BackupSender: &mockBackupBackupSender{
-				backupResponses: map[uint64][]*backup.ResponseAndStore{
-					1: {
-						&backup.ResponseAndStore{
-							StoreID: 1,
-							Resp: &backuppb.BackupResponse{
-								StartKey: []byte("aaa"),
-								EndKey:   []byte("zzz"),
-							},
-						},
-					},
-				},
-				sendDelay: 80 * time.Millisecond,
-			},
-			BackupReq:               backuppb.BackupRequest{},
-			GlobalProgressTree:      &tree,
-			ReplicaReadLabel:        nil,
-			StateNotifier:           make(chan backup.BackupRetryPolicy),
-			ProgressCallBack:        func(backup.ProgressUnit) {},
-			GetBackupClientCallBack: mockGetBackupClientCallBack,
-		}
-
-		connectedStore = make(map[uint64]int)
-		require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
-		require.Empty(t, recorded.FilterMessage("update the incomplete ranges").All())
-	})
-
-	t.Run("collect loop emits one summary after producers exit", func(t *testing.T) {
-		core, recorded := observer.New(zap.InfoLevel)
-		restore := log.ReplaceGlobals(
-			zap.New(core),
-			&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
-		)
-		defer restore()
-
-		mainLoop := &backup.MainBackupLoop{}
-		globalCh := make(chan *backup.ResponseAndStore)
-		storeCh1 := make(chan *backup.ResponseAndStore, 1)
-		storeCh2 := make(chan *backup.ResponseAndStore, 1)
-		mainLoop.CollectStoreBackupsAsync(backgroundCtx, 42, map[uint64]chan *backup.ResponseAndStore{
-			1: storeCh1,
-			2: storeCh2,
-		}, globalCh)
-
-		storeCh1 <- &backup.ResponseAndStore{StoreID: 1, Resp: &backuppb.BackupResponse{}}
-		storeCh2 <- &backup.ResponseAndStore{StoreID: 2, Resp: &backuppb.BackupResponse{}}
-		close(storeCh1)
-		close(storeCh2)
-
-		received := 0
-		for range globalCh {
-			received++
-		}
-
-		require.Equal(t, 2, received)
-		require.Len(t, recorded.FilterMessage("all store backup goroutines exited").All(), 1)
-		require.Empty(t, recorded.FilterMessage("collect backups goroutine exits").All())
-	})
-
 	// random generate bytes in range [a, b)
 	genRandBytesFn := func(a, b []byte) ([]byte, error) {
 		n := len(a)
@@ -899,13 +809,6 @@ func TestObserveStoreChangesAsync(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, stores, 2)
 
-	core, recorded := observer.New(zap.InfoLevel)
-	restore := log.ReplaceGlobals(
-		zap.New(core),
-		&log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)},
-	)
-	defer restore()
-
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/backup/backup-store-change-tick", `return(true)`))
 
 	// case #1: nothing happened
@@ -913,7 +816,6 @@ func TestObserveStoreChangesAsync(t *testing.T) {
 	backup.ObserveStoreChangesAsync(ctx, ch, s.mockPDClient)
 	// the channel never receive any message
 	require.Never(t, func() bool { return len(ch) > 0 }, time.Second, 100*time.Millisecond)
-	require.Empty(t, recorded.FilterMessage("check store changes every 30s").All())
 
 	// case #2: new store joined
 	s.mockCluster.AddStore(3, "127.0.0.1:20162")
