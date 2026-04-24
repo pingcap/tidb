@@ -3165,6 +3165,69 @@ func TestDescendingIndexMetadataPlumbing(t *testing.T) {
 	require.NotContains(t, showCreate, "`a` DESC", "ascending columns must render without an explicit direction")
 }
 
+// explainHas reports whether any line of an EXPLAIN rowset contains the given substring.
+func explainHasString(rows [][]any, substr string) bool {
+	for _, row := range rows {
+		for _, col := range row {
+			if s, ok := col.(string); ok && strings.Contains(s, substr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestDescendingIndexScanDirection verifies that the planner picks the right
+// scan direction once an index column is stored descending. It does NOT verify
+// result correctness — that depends on the physical-encoding work in a later
+// phase. The assertion here is purely on plan shape.
+func TestDescendingIndexScanDirection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_descending_index = on")
+	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
+
+	// Descending-stored single-column index. A forward scan on this index
+	// (physically) yields rows in the declared order; the planner should
+	// therefore reach the required direction by flipping scan.Desc rather
+	// than mirroring the ORDER BY direction unconditionally.
+	tk.MustExec("drop table if exists t_desc")
+	tk.MustExec("create table t_desc (a int, b int, index idx_b_desc (b desc))")
+
+	// ORDER BY b DESC on a DESC-stored index: a FORWARD scan satisfies the
+	// property, so the IndexRangeScan must NOT be marked as a reverse scan.
+	rows := tk.MustQuery("explain format='brief' select b from t_desc use index(idx_b_desc) order by b desc").Rows()
+	require.True(t, explainHasString(rows, "keep order:true"),
+		"DESC idx + ORDER BY DESC: expected keep order:true")
+	require.False(t, explainHasString(rows, "keep order:true, desc"),
+		"DESC idx + ORDER BY DESC: expected forward scan (no ', desc'), got reverse")
+
+	// ORDER BY b ASC on a DESC-stored index: a REVERSE scan satisfies the
+	// property. The scan must be marked as desc.
+	rows = tk.MustQuery("explain format='brief' select b from t_desc use index(idx_b_desc) order by b asc").Rows()
+	require.True(t, explainHasString(rows, "keep order:true, desc"),
+		"DESC idx + ORDER BY ASC: expected reverse scan (', desc')")
+
+	// Mixed-direction composite (a ASC, b DESC) under AllSameOrder sort items
+	// should be rejected by matchProperty, forcing a Sort above the scan.
+	tk.MustExec("drop table if exists t_mixed")
+	tk.MustExec("create table t_mixed (a int, b int, index idx_mixed (a, b desc))")
+	rows = tk.MustQuery("explain format='brief' select a, b from t_mixed use index(idx_mixed) order by a, b").Rows()
+	require.True(t, explainHasString(rows, "Sort"),
+		"mixed-direction idx should not satisfy uniform-ASC ORDER BY without Sort")
+
+	// With the feature gate off, DESC is dropped at DDL time, so the same
+	// index behaves like an ascending one — ORDER BY DESC should drive a
+	// reverse scan, preserving historical behavior.
+	tk.MustExec("set @@global.tidb_enable_descending_index = off")
+	tk.MustExec("drop table if exists t_off")
+	tk.MustExec("create table t_off (a int, b int, index idx_off (b desc))")
+	rows = tk.MustQuery("explain format='brief' select b from t_off use index(idx_off) order by b desc").Rows()
+	require.True(t, explainHasString(rows, "keep order:true, desc"),
+		"feature gate off: DESC must be dropped and reverse scan must remain the path for ORDER BY DESC")
+}
+
 func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	originCfg := config.GetGlobalConfig()

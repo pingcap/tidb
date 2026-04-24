@@ -695,7 +695,12 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	}
 	// Index scan should maintain order (true for both normal sorting via SortItems and partial order via PartialOrderInfo)
 	if prop.NeedKeepOrder() {
-		is.Desc = prop.GetSortDescForKeepOrder()
+		// A descending-stored index column reverses the physical scan order
+		// compared to the ascending default. XOR the required direction with
+		// the index's stored direction (captured by matchProperty) so a DESC
+		// index can satisfy ORDER BY ... DESC with a forward scan, and vice
+		// versa. For all-ascending indexes this collapses to today's behavior.
+		is.Desc = prop.GetSortDescForKeepOrder() != path.MatchedIdxDesc
 		is.KeepOrder = true
 	}
 	return is

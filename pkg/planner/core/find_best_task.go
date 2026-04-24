@@ -1153,11 +1153,31 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	matchResult := property.PropMatched
 	groupByColIdxs := make([]int, 0)
 	colIdx := 0
+	// matchedIdxDescFound/matchedIdxDesc track the stored direction of the
+	// first index column we successfully match against a sort item. Because
+	// prop.AllSameOrder() above guarantees every sort item shares a direction,
+	// the scan can only satisfy the property when every matched index column
+	// shares a direction too (either all ASC or all DESC); otherwise a single
+	// forward-or-reverse cop scan cannot produce the required order. This is
+	// a no-op pre Phase 3 — when no column has Desc=true the check collapses.
+	var matchedIdxDesc bool
+	matchedIdxDescFound := false
 	for _, sortItem := range prop.SortItems {
 		found := false
 		for ; colIdx < len(idxCols); colIdx++ {
 			// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
 			if idxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(idxCols[colIdx]) {
+				// Index columns beyond path.Index.Columns are the appended
+				// CommonHandle PK suffix, which is always ascending.
+				thisIdxDesc := false
+				if path.Index != nil && colIdx < len(path.Index.Columns) {
+					thisIdxDesc = path.Index.Columns[colIdx].Desc
+				}
+				if matchedIdxDescFound && thisIdxDesc != matchedIdxDesc {
+					return property.PropNotMatched
+				}
+				matchedIdxDesc = thisIdxDesc
+				matchedIdxDescFound = true
 				found = true
 				colIdx++
 				break
@@ -1220,8 +1240,12 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		if len(groups) > 0 {
 			path.GroupedRanges = groups
 			path.GroupByColIdxs = groupByColIdxs
+			path.MatchedIdxDesc = matchedIdxDesc
 			return property.PropMatchedNeedMergeSort
 		}
+	}
+	if matchResult == property.PropMatched {
+		path.MatchedIdxDesc = matchedIdxDesc
 	}
 	return matchResult
 }
@@ -2978,7 +3002,9 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		}
 		if !prop.IsSortItemEmpty() {
 			batchPointGetPlan.KeepOrder = true
-			batchPointGetPlan.Desc = prop.SortItems[0].Desc
+			// XOR the required direction with the matched index's stored direction
+			// — see PhysicalIndexScan for the rationale.
+			batchPointGetPlan.Desc = prop.SortItems[0].Desc != candidate.path.MatchedIdxDesc
 		}
 		if candidate.path.IsSingleScan {
 			batchPointGetPlan.SetAccessCols(candidate.path.IdxCols)
