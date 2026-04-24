@@ -2,17 +2,15 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "checkpoints",
-    srcs = [
-        "checkpoints.go",
-        "tidb.go",
-    ],
-    importpath = "github.com/pingcap/tidb/pkg/lightning/checkpoints",
+    srcs = ["checkpoints.go"],
+    importpath = "github.com/pingcap/tidb/lightning/pkg/checkpoints",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/version/build",
-        "//pkg/lightning/checkpoints/checkpointspb",
+        "//lightning/pkg/checkpoints/checkpointspb",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
+        "//pkg/lightning/importdef",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
         "//pkg/lightning/verification",
@@ -41,8 +39,9 @@ go_test(
     shard_count = 25,
     deps = [
         "//br/pkg/version/build",
-        "//pkg/lightning/checkpoints/checkpointspb",
+        "//lightning/pkg/checkpoints/checkpointspb",
         "//pkg/lightning/config",
+        "//pkg/lightning/importdef",
         "//pkg/lightning/mydump",
         "//pkg/lightning/verification",
         "//pkg/meta/model",

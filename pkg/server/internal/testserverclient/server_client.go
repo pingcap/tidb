@@ -2580,6 +2580,10 @@ func (cli *TestServerClient) RunTestInitConnect(t *testing.T) {
 // and not internal SQL statements. Thus, this test is in the server-test suite.
 func (cli *TestServerClient) RunTestInfoschemaClientErrors(t *testing.T) {
 	cli.RunTestsOnNewDB(t, nil, "clientErrors", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("set @@tidb_enable_cache_prepare_stmt = off")
+		defer func() {
+			dbt.MustExec("set @@tidb_enable_cache_prepare_stmt = default")
+		}()
 		clientErrors := []struct {
 			stmt              string
 			incrementWarnings bool
