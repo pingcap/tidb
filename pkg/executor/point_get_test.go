@@ -459,3 +459,54 @@ func TestPointGetCoveringIndexForUpdateLocks(t *testing.T) {
 	tk2.MustExec("rollback")
 	tk1.MustExec("commit")
 }
+
+// TestPointGetCoveringIndexPartitioned verifies the covering-index fast path produces
+// correct results on a partitioned table, both for a local unique index (on the partition
+// key) and for a global unique index (on a non-partition-key column).
+func TestPointGetCoveringIndexPartitioned(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Local unique index: the unique key is on the partition-key column, so each partition
+	// owns its own index entries and the PointGet executor uses GetPhysID to resolve the
+	// partition at execution time.
+	tk.MustExec(`create table t_part_local (
+		id int,
+		val int,
+		UNIQUE KEY uk_id (id)
+	) partition by hash(id) partitions 4`)
+	tk.MustExec("insert into t_part_local values (1, 100), (2, 200), (3, 300), (11, 1100)")
+
+	tk.MustQuery("select id from t_part_local where id = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t_part_local where id = 11").Check(testkit.Rows("11"))
+	tk.MustQuery("select val from t_part_local where id = 1").Check(testkit.Rows("100"))
+
+	covering := sumNumRPC(t, tk, "explain analyze select id from t_part_local where id = 1")
+	nonCovering := sumNumRPC(t, tk, "explain analyze select val from t_part_local where id = 1")
+	require.Less(t, covering, nonCovering,
+		"partitioned local-unique covering case (%d RPCs) should issue fewer RPCs than non-covering (%d RPCs)",
+		covering, nonCovering)
+
+	// Global unique index on a non-partition-key column: the index value carries the
+	// partition ID. Results must still be correct when the fast path is taken.
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer tk.MustExec("set tidb_enable_global_index=default")
+	tk.MustExec(`create table t_part_global (
+		id int PRIMARY KEY,
+		gval int,
+		other int,
+		UNIQUE KEY udx_gval (gval) GLOBAL
+	) partition by hash(id) partitions 4`)
+	tk.MustExec("insert into t_part_global values (1, 10, 100), (2, 20, 200), (3, 30, 300), (11, 40, 400)")
+
+	tk.MustQuery("select gval from t_part_global where gval = 10").Check(testkit.Rows("10"))
+	tk.MustQuery("select gval from t_part_global where gval = 40").Check(testkit.Rows("40"))
+	tk.MustQuery("select other from t_part_global where gval = 10").Check(testkit.Rows("100"))
+
+	coveringG := sumNumRPC(t, tk, "explain analyze select gval from t_part_global where gval = 10")
+	nonCoveringG := sumNumRPC(t, tk, "explain analyze select other from t_part_global where gval = 10")
+	require.Less(t, coveringG, nonCoveringG,
+		"partitioned global-unique covering case (%d RPCs) should issue fewer RPCs than non-covering (%d RPCs)",
+		coveringG, nonCoveringG)
+}
