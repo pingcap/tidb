@@ -974,7 +974,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
+		getBackfillProgressByTableID(tblInfo.ID, metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingColumn = changingCol
 		args.ChangingIdxs = changingIdxs
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
@@ -1194,7 +1194,7 @@ func (w *worker) doModifyColumnIndexReorg(
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
+		getBackfillProgressByTableID(tblInfo.ID, metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), args.OldColumnName.O).Set(0)
 		args.ChangingIdxs = changingIdxInfos
 		failpoint.InjectCall("modifyColumnTypeWithData", job, args)
 		job.FillArgs(args)
@@ -1380,6 +1380,9 @@ func doReorgWorkForModifyColumn(
 		if kv.IsTxnRetryableError(err) || dbterror.ErrNotOwner.Equal(err) {
 			return false, ver, errors.Trace(err)
 		}
+		if isRetryableModifyColumnReorgJobError(err, job.ErrorCount) {
+			return false, ver, errors.Trace(err)
+		}
 		if err1 := rh.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 			logutil.DDLLogger().Warn("run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
 				zap.String("job", job.String()), zap.Error(err1))
@@ -1389,6 +1392,15 @@ func doReorgWorkForModifyColumn(
 		return false, ver, errors.Trace(err)
 	}
 	return true, ver, nil
+}
+
+func isRetryableModifyColumnReorgJobError(err error, jobErrCnt int64) bool {
+	if jobErrCnt+1 >= vardef.GetDDLErrorCountLimit() {
+		return false
+	}
+	// Modify column reorg can return deterministic data conversion errors. Retrying unknown errors may
+	// cause long retry loops and block the job from rolling back.
+	return isRetryableError(err, false)
 }
 
 func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, oldColName ast.CIStr) error {

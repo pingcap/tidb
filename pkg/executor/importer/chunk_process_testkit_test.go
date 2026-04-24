@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -141,8 +140,9 @@ func TestFileChunkProcess(t *testing.T) {
 				return nil
 			}).AnyTimes()
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		checksum := verify.NewKVGroupChecksumWithKeyspace(nil)
 		processor := importer.NewFileChunkProcessor(
@@ -160,7 +160,7 @@ func TestFileChunkProcess(t *testing.T) {
 		require.EqualValues(t, 6, checksumIndexKVCnt)
 		require.EqualValues(t, 3, collector.Rows.Load())
 		require.EqualValues(t, len(sourceData), collector.ReadBytes.Load())
-		require.EqualValues(t, int64(348), collector.Bytes.Load())
+		require.EqualValues(t, int64(348), collector.ProcessedCnt.Load())
 		require.Equal(t, float64(len(sourceData)), metric.ReadCounter(metrics.BytesCounter.WithLabelValues(metric.StateRestored)))
 		require.Equal(t, float64(3), metric.ReadCounter(metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")))
 		require.Equal(t, uint64(2), *metric.ReadHistogram(metrics.RowEncodeSecondsHistogram).Histogram.SampleCount)
@@ -181,8 +181,9 @@ func TestFileChunkProcess(t *testing.T) {
 		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
@@ -209,8 +210,9 @@ func TestFileChunkProcess(t *testing.T) {
 		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
@@ -233,8 +235,9 @@ func TestFileChunkProcess(t *testing.T) {
 		indexWriter := mock.NewMockEngineWriter(ctrl)
 		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("data write error"))
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,
@@ -258,8 +261,9 @@ func TestFileChunkProcess(t *testing.T) {
 		dataWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("index write error"))
 
-		chunkInfo := &checkpoints.ChunkCheckpoint{
-			Chunk: mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		chunkInfo := &importer.Chunk{
+			EndOffset: int64(len(sourceData)),
+			RowIDMax:  10000,
 		}
 		processor := importer.NewFileChunkProcessor(
 			csvParser, encoder, nil,

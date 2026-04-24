@@ -2421,6 +2421,64 @@ select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 set @@tidb_opt_fix_control = default;
+set @orig_tidb_enable_prepared_plan_cache=@@session.tidb_enable_prepared_plan_cache;
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists t1, t2;
+create table t1 (a int, b int);
+create table t2 (a int, b int);
+insert into t1 values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);
+insert into t2 values (2, 2), (3, 3), (4, 4), (5, 5);
+prepare stmt67048a from
+'select t1.a as t1_a, t2.a as t2_a
+from t1 left join t2 on t1.a = t2.b
+where t2.a > ?
+order by t1.a';
+set @v=1;
+execute stmt67048a using @v;
+t1_a	t2_a
+2	2
+3	3
+4	4
+5	5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @v=2;
+execute stmt67048a using @v;
+t1_a	t2_a
+3	3
+4	4
+5	5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+prepare stmt67048b from
+'select t1.a as t1_a, t2.a as t2_a
+from t1 left join t2 on t1.a = t2.b
+where t2.a > ? or t2.a is null
+order by t1.a';
+set @v=1;
+execute stmt67048b using @v;
+t1_a	t2_a
+1	NULL
+2	2
+3	3
+4	4
+5	5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set @v=2;
+execute stmt67048b using @v;
+t1_a	t2_a
+1	NULL
+3	3
+4	4
+5	5
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_prepared_plan_cache=@orig_tidb_enable_prepared_plan_cache;
 drop table if exists t;
 create table t (a int);
 prepare st from 'select * from t where mod(a, 2)=1';

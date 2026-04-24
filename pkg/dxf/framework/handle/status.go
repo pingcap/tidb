@@ -91,6 +91,20 @@ func GetActiveTaskSummary(ctx context.Context) (*storage.ActiveTaskSummary, erro
 	return summary, nil
 }
 
+// ListHistoryTasks lists history tasks with keyset pagination and optional keyspace filter.
+func ListHistoryTasks(ctx context.Context, pageSize int, pageToken int64, keyspace string) (*storage.HistoryTaskPage, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	manager, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return nil, err
+	}
+	page, err := manager.ListHistoryTasks(ctx, pageSize, pageToken, keyspace)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return page, nil
+}
+
 // GetNodesInfo retrieves the number of managed nodes and their CPU count.
 // exported for test.
 func GetNodesInfo(ctx context.Context, manager *storage.TaskManager) (nodeCount int, cpuCount int, err error) {

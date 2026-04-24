@@ -482,6 +482,10 @@ type StatementContext struct {
 	// logical build round produced an order-aware join reorder candidate that is
 	// worth exploring in a dedicated alternative round.
 	AlternativeLogicalPlanOrderAwareJoinReorder bool
+	// AlternativeLogicalPlanPreferCorrelate indicates whether the current logical
+	// build round encountered a non-correlated IN subquery eligible for the
+	// correlate-to-Apply alternative.
+	AlternativeLogicalPlanPreferCorrelate bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -661,6 +665,7 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanDecorrelatedApply = false
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
 	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
+	sc.AlternativeLogicalPlanPreferCorrelate = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has
@@ -679,6 +684,13 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanSameOrderIndexJoin() {
 // logical build round produced an order-aware join reorder candidate.
 func (sc *StatementContext) MarkAlternativeLogicalPlanOrderAwareJoinReorder() {
 	sc.AlternativeLogicalPlanOrderAwareJoinReorder = true
+}
+
+// MarkAlternativeLogicalPlanPreferCorrelate records that the current logical
+// build round encountered a non-correlated IN subquery that is eligible for
+// the correlate-to-Apply alternative.
+func (sc *StatementContext) MarkAlternativeLogicalPlanPreferCorrelate() {
+	sc.AlternativeLogicalPlanPreferCorrelate = true
 }
 
 // CtxID returns the context id of the statement

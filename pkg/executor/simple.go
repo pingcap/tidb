@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -2733,8 +2734,8 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
 	intest.AssertFunc(func() bool {
 		for _, obj := range s.RefreshObjects {
-			switch obj.RefreshObjectScope {
-			case ast.RefreshObjectScopeDatabase, ast.RefreshObjectScopeTable:
+			switch obj.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase, ast.StatsObjectScopeTable:
 				if obj.DBName.L == "" {
 					return false
 				}
@@ -2784,6 +2785,15 @@ func restoreRefreshStatsSQL(s *ast.RefreshStatsStmt) (string, error) {
 	return sb.String(), nil
 }
 
+func restoreFlushStatsDeltaSQL(s *ast.FlushStmt) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := s.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
 func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
 	intest.Assert(len(s.RefreshObjects) > 0, "RefreshObjects should not be empty")
 	intest.AssertFunc(func() bool {
@@ -2792,12 +2802,12 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 		return origCount == len(s.RefreshObjects)
 	}, "RefreshObjects should be deduplicated in the building phase")
 	tableIDs := make([]int64, 0, len(s.RefreshObjects))
-	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].RefreshObjectScope == ast.RefreshObjectScopeGlobal
+	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
 	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	if !isGlobalScope {
 		for _, refreshObject := range s.RefreshObjects {
-			switch refreshObject.RefreshObjectScope {
-			case ast.RefreshObjectScopeDatabase:
+			switch refreshObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
 				exists := is.SchemaExists(refreshObject.DBName)
 				if !exists {
 					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
@@ -2818,7 +2828,7 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 				for _, table := range tables {
 					tableIDs = append(tableIDs, table.ID)
 				}
-			case ast.RefreshObjectScopeTable:
+			case ast.StatsObjectScopeTable:
 				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
 				if err != nil {
 					if infoschema.ErrTableNotExists.Equal(err) {
@@ -2858,6 +2868,126 @@ func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s
 		return h.InitStatsLite(ctx, tableIDs...)
 	}
 	return h.InitStats(ctx, is, tableIDs...)
+}
+
+func appendStatsDeltaTargetTableIDs(targetIDs []int64, tableInfo *model.TableInfo) []int64 {
+	targetIDs = append(targetIDs, tableInfo.ID)
+	if partitionInfo := tableInfo.GetPartitionInfo(); partitionInfo != nil {
+		for _, def := range partitionInfo.Definitions {
+			targetIDs = append(targetIDs, def.ID)
+		}
+	}
+	return targetIDs
+}
+
+func (e *SimpleExec) executeFlushStatsDelta(ctx context.Context, s *ast.FlushStmt) error {
+	intest.AssertFunc(func() bool {
+		for _, obj := range s.FlushObjects {
+			switch obj.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase, ast.StatsObjectScopeTable:
+				if obj.DBName.L == "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, "Flush stats delta broadcast requires database-qualified names")
+	// Note: broadcast serializes the statement back to SQL and every peer reparses it
+	// through the broadcast query path, which does not rerun plan building to fill in
+	// the current database for unqualified table names. `FLUSH STATS_DELTA tbl`
+	// executed in database `db` therefore has to be restored as
+	// `FLUSH STATS_DELTA db.tbl`; otherwise a peer without that current database
+	// cannot resolve the target table.
+	sql, err := restoreFlushStatsDeltaSQL(s)
+	if err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to format flush stats delta statement", zap.Error(err))
+		return err
+	}
+	if e.IsFromRemote {
+		if err := e.executeFlushStatsDeltaOnCurrentInstance(ctx, s); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV from remote", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV from remote", zap.String("sql", sql))
+		return nil
+	}
+	if s.IsCluster {
+		if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast flush stats delta command", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+		return nil
+	}
+	// This is the local, non-CLUSTER path: remote requests are handled above to
+	// avoid rebroadcasting, and without CLUSTER we flush only the current TiDB
+	// instance because pending stats deltas are buffered per instance.
+	if err := e.executeFlushStatsDeltaOnCurrentInstance(ctx, s); err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV on the current instance", zap.String("sql", sql), zap.Error(err))
+		return err
+	}
+	statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV on the current instance", zap.String("sql", sql))
+	return nil
+}
+
+func (e *SimpleExec) executeFlushStatsDeltaOnCurrentInstance(ctx context.Context, s *ast.FlushStmt) error {
+	intest.Assert(len(s.FlushObjects) > 0, "FlushObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.FlushObjects)
+		s.DedupFlushObjects()
+		return origCount == len(s.FlushObjects)
+	}, "FlushObjects should be deduplicated in the building phase")
+
+	targetIDs := make([]int64, 0, len(s.FlushObjects))
+	isGlobalScope := len(s.FlushObjects) == 1 && s.FlushObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, flushObject := range s.FlushObjects {
+			switch flushObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
+				if !is.SchemaExists(flushObject.DBName) {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(flushObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when flushing stats delta", zap.String("db", flushObject.DBName.O))
+					continue
+				}
+				tables, err := is.SchemaTableInfos(ctx, flushObject.DBName)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(tables) == 0 {
+					statslogutil.StatsLogger().Info("No table in the database when flushing stats delta", zap.String("db", flushObject.DBName.O))
+					continue
+				}
+				for _, tableInfo := range tables {
+					targetIDs = appendStatsDeltaTargetTableIDs(targetIDs, tableInfo)
+				}
+			case ast.StatsObjectScopeTable:
+				tableInfo, err := is.TableInfoByName(flushObject.DBName, flushObject.TableName)
+				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(flushObject.DBName, flushObject.TableName))
+						statslogutil.StatsLogger().Warn("Failed to find table when flushing stats delta", zap.String("db", flushObject.DBName.O), zap.String("table", flushObject.TableName.O))
+						continue
+					}
+					return errors.Trace(err)
+				}
+				if tableInfo == nil {
+					intest.Assert(false, "Table should not be nil here")
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(flushObject.DBName, flushObject.TableName))
+					statslogutil.StatsLogger().Warn("Failed to find table when flushing stats delta", zap.String("db", flushObject.DBName.O), zap.String("table", flushObject.TableName.O))
+					continue
+				}
+				targetIDs = appendStatsDeltaTargetTableIDs(targetIDs, tableInfo)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+		if len(targetIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to flush stats delta")
+			return nil
+		}
+	}
+	return domain.GetDomain(e.Ctx()).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
 }
 
 func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
@@ -2933,32 +3063,7 @@ func (e *SimpleExec) executeFlush(ctx context.Context, s *ast.FlushStmt) error {
 	case ast.FlushClientErrorsSummary:
 		errno.FlushStats()
 	case ast.FlushStatsDelta:
-		h := domain.GetDomain(e.Ctx()).StatsHandle()
-		if e.IsFromRemote {
-			err := h.DumpStatsDeltaToKV(true)
-			if err != nil {
-				statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV from remote", zap.Error(err))
-			} else {
-				statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV from remote")
-			}
-			return err
-		}
-		if s.IsCluster {
-			var sb strings.Builder
-			restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-			if err := s.Restore(restoreCtx); err != nil {
-				statslogutil.StatsErrVerboseLogger().Error("Failed to format flush stats delta statement", zap.Error(err))
-				return err
-			}
-			sql := sb.String()
-			if err := broadcast(ctx, e.Ctx(), sql); err != nil {
-				statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast flush stats delta command", zap.String("sql", sql), zap.Error(err))
-				return err
-			}
-			logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
-			return nil
-		}
-		return h.DumpStatsDeltaToKV(true)
+		return e.executeFlushStatsDelta(ctx, s)
 	}
 	return nil
 }
