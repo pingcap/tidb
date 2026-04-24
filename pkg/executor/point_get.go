@@ -416,7 +416,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	// by getAndLock below, and MySQL/InnoDB semantics require locking the clustered row
 	// regardless of which columns are projected.
 	if e.idxInfo != nil && e.coveredByIndex && !e.lock && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
-		return e.buildResultFromIndex(ctx, req, schema, sctx)
+		return e.buildResultFromIndex(ctx, req, schema, sctx, tblID)
 	}
 
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
@@ -898,7 +898,7 @@ func (*runtimeStatsWithSnapshot) Tp() int {
 //     checkIndexCoveringColumns never marks that column as covered (it is not stored in
 //     the index), so if it is selected we never reach this fast path and fall back to
 //     buildResultFromRowData, which does call fillRowChecksum.
-func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.Chunk, schema *expression.Schema, sctx sessionctx.Context) error {
+func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.Chunk, schema *expression.Schema, sctx sessionctx.Context, tblID int64) error {
 	// First verify that index key exists
 	if len(e.handleVal) == 0 {
 		return nil
@@ -923,7 +923,7 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 			if col.RetType.EvalType() == types.ETString {
 				collation := col.RetType.GetCollate()
 				if collate.IsCICollation(collation) || collate.IsPadSpaceCollation(collation) {
-					return e.buildResultFromRowData(ctx, req, schema, sctx)
+					return e.buildResultFromRowData(ctx, req, schema, sctx, tblID)
 				}
 			}
 			break
@@ -947,7 +947,7 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 				if !e.handle.IsInt() {
 					// For common handle, we need to decode the handle value
 					// This is more complex and for now we'll fall back to row fetch
-					return e.buildResultFromRowData(ctx, req, schema, sctx)
+					return e.buildResultFromRowData(ctx, req, schema, sctx, tblID)
 				}
 				idxColMap[col.ID] = types.NewIntDatum(e.handle.IntValue())
 			}
@@ -960,7 +960,7 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 		if !ok {
 			// If column is not in index map, this shouldn't happen with proper covering index detection
 			// Fall back to row data fetch for safety
-			return e.buildResultFromRowData(ctx, req, schema, sctx)
+			return e.buildResultFromRowData(ctx, req, schema, sctx, tblID)
 		}
 		req.AppendDatum(i, &datum)
 	}
@@ -975,9 +975,10 @@ func (e *PointGetExecutor) buildResultFromIndex(ctx context.Context, req *chunk.
 	return nil
 }
 
-// buildResultFromRowData builds the result by fetching and decoding row data (fallback method)
-func (e *PointGetExecutor) buildResultFromRowData(ctx context.Context, req *chunk.Chunk, schema *expression.Schema, sctx sessionctx.Context) error {
-	tblID := GetPhysID(e.tblInfo, e.partitionDefIdx)
+// buildResultFromRowData builds the result by fetching and decoding row data (fallback method).
+// Callers must pass the effective tblID computed in Next — for global indexes this includes
+// the partition ID decoded from the index value, which differs from GetPhysID output.
+func (e *PointGetExecutor) buildResultFromRowData(ctx context.Context, req *chunk.Chunk, schema *expression.Schema, sctx sessionctx.Context, tblID int64) error {
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, e.handle)
 	val, err := e.getAndLock(ctx, key)
 	if err != nil {
