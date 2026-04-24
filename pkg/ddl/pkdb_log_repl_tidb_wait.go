@@ -29,6 +29,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -151,9 +152,19 @@ func (j waitRegionsInit) wait(
 		return err
 	}
 	defer sourcePDCli.Close()
+	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
+		"log replication",
+		sourcePDCli.GetServiceDiscovery(),
+	)
+	defer pdHTTPCli.Close()
 
+	progressTracker := newStandbyInitProgressTracker(pdHTTPCli, etcdCli)
+	estRegionCnt, err := progressTracker.estimateTotalRegionCnt(runCtx)
+	if err != nil {
+		return err
+	}
 	return backoffWait(runCtx, func() (bool, error) {
-		return checkInitedAndUpdateProgress(runCtx, kvCli, sourcePDCli, etcdCli)
+		return progressTracker.checkInitedAndUpdateProgress(runCtx, kvCli, estRegionCnt)
 	})
 }
 
@@ -291,45 +302,6 @@ func (w waitDataSync) wait(runCtx context.Context, sourcePDAddrs []string) error
 type regionCommitIndex struct {
 	region      *metapb.Region
 	commitIndex uint64
-}
-
-func pkdbBatchScanAllRegions(ctx context.Context, pdCli pd.Client) ([]*pd.Region, error) {
-	// TODO(lance6716): This helper materializes *all* regions into memory. On
-	// clusters with a very large region count, this can be slow and can OOM TiDB.
-	// Prefer a streaming/iterator style (consume each batch via callback) for
-	// callers that only need to aggregate a small result (e.g. progress).
-	var (
-		all     []*pd.Region
-		nextKey []byte
-	)
-	for {
-		batch, err := pdCli.BatchScanRegions(
-			ctx,
-			[]pd.KeyRange{{StartKey: nextKey}},
-			pkdbDefaultScanPageSize,
-			pd.WithAllowFollowerHandle(),
-		)
-		if err != nil {
-			return nil, err
-		}
-		if len(batch) == 0 {
-			return nil, errors.New("batch scan regions returned empty batch when scanning all regions")
-		}
-		all = append(all, batch...)
-
-		last := batch[len(batch)-1]
-		if last == nil || last.Meta == nil {
-			return nil, errors.New("batch scan regions returned nil region meta")
-		}
-		endKey := last.Meta.GetEndKey()
-		if len(endKey) == 0 {
-			return all, nil
-		}
-		if bytes.Compare(endKey, nextKey) <= 0 {
-			return nil, errors.New("batch scan regions returned non-progressing end key")
-		}
-		nextKey = endKey
-	}
 }
 
 type regionScanner interface {
@@ -1349,103 +1321,172 @@ func backoffWait(ctx context.Context, f func() (bool, error)) error {
 	return err
 }
 
-func isInited(ctx context.Context, cli *rawkv.Client) (bool, []*logreplicationpb.LogReplicationState, error) {
-	states, err := scanReplStates(ctx, cli)
-	if err != nil {
-		return false, nil, err
-	}
+func checkInited(
+	ctx context.Context,
+	cli rawKVScanClient,
+	resumeKey []byte,
+) (allDone bool, advancedStateCnt int, nextResumeKey []byte, err error) {
+	// resumeKey is also the end key of the last continuous state prefix obtained
+	// from the last call of this function.
+	currResumeKey := resumeKey
+	advancedStateCnt = 0
 
-	var lastEndKey []byte
-	for _, state := range states {
-		if bytes.Compare(state.StartKey, lastEndKey) > 0 {
+	advanceWithState := func(state *logreplicationpb.LogReplicationState) (allDone bool, gap bool) {
+		if bytes.Compare(state.StartKey, currResumeKey) > 0 {
 			logutil.BgLogger().Info(
 				"range gap found during wait for standby init",
-				zap.String("from", redact.Key(lastEndKey)),
+				zap.String("from", redact.Key(currResumeKey)),
 				zap.String("to", redact.Key(state.StartKey)),
 			)
-			return false, states, nil
+			return false, true
 		}
 		if len(state.EndKey) == 0 {
-			return true, states, nil
+			return true, false
 		}
-		if bytes.Compare(state.EndKey, lastEndKey) > 0 {
-			lastEndKey = state.EndKey
+		if bytes.Compare(state.EndKey, currResumeKey) > 0 {
+			currResumeKey = state.EndKey
+			advancedStateCnt++
 		}
+		return false, false
 	}
-	logutil.BgLogger().Info(
-		"range gap found during wait for standby init",
-		zap.String("from", redact.Key(lastEndKey)),
-		zap.String("to", "infinity"),
-	)
-	return false, states, nil
+
+	for {
+		keys, values, err := cli.Scan(ctx, currResumeKey, nil, pkdbDefaultScanPageSize, rawkv.SetColumnFamily(logReplStateCf))
+		if err != nil {
+			return false, 0, nil, err
+		}
+
+		if len(keys) == 0 || !bytes.Equal(keys[0], currResumeKey) {
+			if len(currResumeKey) == 0 {
+				gapEnd := "infinity"
+				if len(keys) > 0 {
+					gapEnd = redact.Key(keys[0])
+				}
+				logutil.BgLogger().Info(
+					"range gap found during wait for standby init",
+					zap.String("from", "min-key"),
+					zap.String("to", gapEnd),
+				)
+				return false, advancedStateCnt, bytes.Clone(currResumeKey), nil
+			}
+
+			// Between two scans, the state whose start key equals scanKey may have been
+			// removed due to region merge. Reverse-scan one KV to see if a previous state
+			// now covers scanKey.
+			_, prevValues, err := cli.ReverseScan(ctx, currResumeKey, nil, 1, rawkv.SetColumnFamily(logReplStateCf))
+			if err != nil {
+				return false, 0, nil, err
+			}
+			if len(prevValues) == 0 {
+				logutil.BgLogger().Info(
+					"range gap found during wait for standby init",
+					zap.String("from", "(unknown prev key)"),
+					zap.String("to", redact.Key(currResumeKey)),
+				)
+				return false, advancedStateCnt, bytes.Clone(currResumeKey), nil
+			}
+
+			prev := &logreplicationpb.LogReplicationState{}
+			if err := prev.Unmarshal(prevValues[0]); err != nil {
+				return false, 0, nil, err
+			}
+			allDone, gap := advanceWithState(prev)
+			if gap {
+				return false, advancedStateCnt, bytes.Clone(currResumeKey), nil
+			}
+			if allDone {
+				return true, advancedStateCnt, nil, nil
+			}
+		}
+
+		for _, v := range values {
+			state := &logreplicationpb.LogReplicationState{}
+			if err := state.Unmarshal(v); err != nil {
+				return false, 0, nil, err
+			}
+			allDone, gap := advanceWithState(state)
+			if gap {
+				return false, advancedStateCnt, bytes.Clone(currResumeKey), nil
+			}
+			if allDone {
+				return true, advancedStateCnt, nil, nil
+			}
+		}
+
+		// continue next scan if we have some progress
+		if len(keys) == pkdbDefaultScanPageSize {
+			continue
+		}
+		logutil.BgLogger().Info(
+			"range gap found during wait for standby init",
+			zap.String("from", redact.Key(currResumeKey)),
+			zap.String("to", "infinity"),
+		)
+		return false, advancedStateCnt, bytes.Clone(currResumeKey), nil
+	}
 }
 
-func checkInitedAndUpdateProgress(
+type standbyInitProgressTracker struct {
+	pdHTTPCli pdhttp.Client
+	etcdCli   clientv3.KV
+
+	doneStateCnt int
+	resumeKey    []byte
+}
+
+// newStandbyInitProgressTracker does not take ownership of given clients.
+func newStandbyInitProgressTracker(pdHTTPCli pdhttp.Client, etcdCli clientv3.KV) *standbyInitProgressTracker {
+	return &standbyInitProgressTracker{
+		pdHTTPCli: pdHTTPCli,
+		etcdCli:   etcdCli,
+	}
+}
+
+func (t *standbyInitProgressTracker) estimateTotalRegionCnt(ctx context.Context) (int, error) {
+	stats, err := t.pdHTTPCli.GetRegionStatusByKeyRange(ctx, pdhttp.NewKeyRange(nil, nil), true)
+	if err != nil {
+		return 0, err
+	}
+	if stats == nil || stats.Count <= 0 {
+		return 0, errors.New("get region count returned non-positive count")
+	}
+	return stats.Count, nil
+}
+
+func (t *standbyInitProgressTracker) checkInitedAndUpdateProgress(
 	ctx context.Context,
-	cli *rawkv.Client,
-	sourcePDCli pd.Client,
-	etcdCli *clientv3.Client,
+	cli rawKVScanClient,
+	estRegionCnt int,
 ) (bool, error) {
-	inited, states, err := isInited(ctx, cli)
+	allDone, advancedStateCnt, resumeKey, err := checkInited(ctx, cli, t.resumeKey)
 	if err != nil {
 		return false, err
 	}
-	if inited {
-		_, err = etcdCli.Put(ctx, constants.PkdbInitPercentage, "100")
+	t.doneStateCnt += advancedStateCnt
+	t.resumeKey = resumeKey
+	if allDone {
+		_, err = t.etcdCli.Put(ctx, constants.PkdbInitPercentage, "100")
 		if err != nil {
 			return false, err
 		}
 		return true, nil
 	}
-	// TODO(lance6716): This scans all regions on every retry to compute a
-	// percentage, which is risky on large-region clusters (time + memory). If we
-	// only need coarse progress, consider sampling, caching, or using PD-side
-	// progress APIs to avoid full scans.
-	regions, err := pkdbBatchScanAllRegions(ctx, sourcePDCli)
-	if err != nil {
-		return false, err
-	}
-	percentage := getStandbyInitPercentage(regions, states)
-	_, err = etcdCli.Put(ctx, constants.PkdbInitPercentage, strconv.FormatFloat(percentage, 'f', -1, 32))
+
+	percentage := t.percentage(estRegionCnt)
+	_, err = t.etcdCli.Put(ctx, constants.PkdbInitPercentage, strconv.FormatFloat(percentage, 'f', -1, 32))
 	return false, err
 }
 
-func getStandbyInitPercentage(regions []*pd.Region, states []*logreplicationpb.LogReplicationState) float64 {
-	done := 0
-	for _, region := range regions {
-		startKey, endKey := region.Meta.StartKey, region.Meta.EndKey
-		allCovered := false
-		for len(states) > 0 {
-			first := states[0]
-			// first is completely before the region.
-			if len(first.EndKey) > 0 && bytes.Compare(first.EndKey, startKey) <= 0 {
-				states = states[1:]
-				continue
-			}
-			// first is completely after the region.
-			if len(endKey) > 0 && bytes.Compare(first.StartKey, endKey) >= 0 {
-				break
-			}
-			// [startKey, first.StartKey) is not covered.
-			if bytes.Compare(first.StartKey, startKey) > 0 {
-				break
-			}
-			// [startKey, first.EndKey) is covered.
-			// [first.EndKey, endKey) need to be checked in next loop.
-			if len(first.EndKey) > 0 && (len(endKey) == 0 || bytes.Compare(first.EndKey, endKey) < 0) {
-				startKey = first.EndKey
-				states = states[1:]
-				continue
-			}
-			allCovered = true
-			break
-		}
-		if allCovered {
-			done++
-		}
+func (t *standbyInitProgressTracker) percentage(estRegionCnt int) float64 {
+	if estRegionCnt <= 0 {
+		return 0
 	}
-
-	return float64(done) / float64(len(regions)) * 100
+	percentage := float64(t.doneStateCnt) / float64(estRegionCnt) * 100
+	// Only write 100% once standby is fully inited.
+	if percentage >= 100 {
+		return float64(t.doneStateCnt) / float64(t.doneStateCnt+1) * 100
+	}
+	return percentage
 }
 
 func scanReplStates(ctx context.Context, cli rawKVScanClient) ([]*logreplicationpb.LogReplicationState, error) {
