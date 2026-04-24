@@ -849,19 +849,22 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		zap.Strings("fields", fields),
 		zap.Bool("isStringField", isStringField))
 
-	// EXPLAIN estimation can return 0 when statistics are absent (e.g. small
-	// or freshly-loaded tables). For string chunking fall back to COUNT(*)
-	// so the rest of this function can reason about a real row count.
-	if count == 0 && isStringField {
+	// EXPLAIN can under-estimate (0, or a small value like 1) on freshly
+	// populated tables whose InnoDB rows statistic hasn't refreshed yet.
+	// For string chunking a pessimistic estimate silently drops us into
+	// the sequential path, so when the EXPLAIN result is below the chunk
+	// threshold we verify with a direct COUNT(*) before giving up on
+	// parallelism. COUNT is authoritative so it's safe to replace count.
+	if isStringField && count < conf.Rows {
 		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` %s",
 			escapeString(db), escapeString(tbl), buildWhereCondition(conf, ""))
 		var directCount sql.NullInt64
+		// simpleQueryWithArgs already iterates rows.Next(); the handler
+		// must not call Next() itself or it will skip past the (single)
+		// COUNT row.
 		err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
-			if rows.Next() {
-				return rows.Scan(&directCount)
-			}
-			return nil
-		}, func() {}, countQuery)
+			return rows.Scan(&directCount)
+		}, func() { directCount = sql.NullInt64{} }, countQuery)
 		if err == nil && directCount.Valid && directCount.Int64 > 0 {
 			count = uint64(directCount.Int64)
 		}

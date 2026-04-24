@@ -20,6 +20,14 @@ for data in "$DUMPLING_BASE_NAME"/data/*; do
   run_sql_file "$data"
 done
 
+# Refresh row statistics so EXPLAIN returns accurate estimates — the
+# streaming chunker falls back to direct COUNT(*) when EXPLAIN under-
+# estimates, but running ANALYZE up-front keeps this integration test
+# deterministic regardless of MySQL/InnoDB stats-refresh timing.
+for table in comp_str_case_0 comp_str_case_1 comp_str_case_2 comp_str_case_3; do
+  run_sql "analyze table composite_string_key.$table"
+done
+
 # Run dumpling with --rows parameter to force chunking
 # With --rows 5, tables will be split into multiple chunks
 # Each chunk should contain a complete INSERT statement with ~5 rows
