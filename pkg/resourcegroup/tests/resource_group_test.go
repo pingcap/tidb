@@ -563,11 +563,8 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("set global tidb_enable_resource_control='on'")
-	// Create the resource group without query limit first because `EXEC_ELAPSED='50ms'`
-	// can be exceeded by a simple query on slow machines.
-	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=()")
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
-	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", fmt.Sprintf("return(%d)", 60)))
 	defer func() {
