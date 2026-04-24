@@ -80,10 +80,9 @@ var (
 	ErrMustChangePassword             = dbterror.ClassExecutor.NewStd(mysql.ErrMustChangePassword)
 
 	// Dual-password (MySQL 8.0 RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) errors.
-	ErrDuplicatePasswordSpecifiedKeywords          = dbterror.ClassExecutor.NewStd(mysql.ErrDuplicatePasswordSpecifiedKeywords)
-	ErrCurrentPasswordCannotBeRetainedPluginChange = dbterror.ClassExecutor.NewStd(mysql.ErrCurrentPasswordCannotBeRetainedPluginChange)
-	ErrCurrentPasswordCannotBeRetainedEmptyNew     = dbterror.ClassExecutor.NewStd(mysql.ErrCurrentPasswordCannotBeRetainedEmptyNew)
-	ErrCurrentPasswordCannotBeRetainedEmptyPrimary = dbterror.ClassExecutor.NewStd(mysql.ErrCurrentPasswordCannotBeRetainedEmptyPrimary)
+	ErrSecondPasswordCannotBeEmpty            = dbterror.ClassExecutor.NewStd(mysql.ErrSecondPasswordCannotBeEmpty)
+	ErrPasswordCannotBeRetainedOnPluginChange = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordCannotBeRetainedOnPluginChange)
+	ErrCurrentPasswordCannotBeRetained        = dbterror.ClassExecutor.NewStd(mysql.ErrCurrentPasswordCannotBeRetained)
 
 	ErrWrongStringLength            = dbterror.ClassDDL.NewStd(mysql.ErrWrongStringLength)
 	ErrUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))

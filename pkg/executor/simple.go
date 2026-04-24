@@ -927,7 +927,11 @@ func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLoc
 		}
 	}
 	if info.retainCurrentPassword && info.discardOldPassword {
-		return exeerrors.ErrDuplicatePasswordSpecifiedKeywords.GenWithStackByArgs()
+		// MySQL does not define a dedicated error code for this combination — its
+		// grammar places RETAIN / DISCARD per user-spec where the pair is not
+		// expressible. TiDB currently attaches them at statement level, so we
+		// reject the combination with a plain error here.
+		return errors.Errorf("RETAIN CURRENT PASSWORD and DISCARD OLD PASSWORD can not be used together")
 	}
 	return nil
 }
@@ -1829,14 +1833,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if plOptions.retainCurrentPassword {
 			// RETAIN requires a new password to be set, with the same plugin, and the new password must be non-empty.
 			if spec.AuthOpt == nil || !(spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString) {
-				return exeerrors.ErrCurrentPasswordCannotBeRetainedEmptyNew.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
+				return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
 			}
 			if spec.AuthOpt.AuthPlugin != "" && spec.AuthOpt.AuthPlugin != currentAuthPlugin {
-				return exeerrors.ErrCurrentPasswordCannotBeRetainedPluginChange.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
+				return exeerrors.ErrPasswordCannotBeRetainedOnPluginChange.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
 			}
 			if (spec.AuthOpt.ByAuthString && spec.AuthOpt.AuthString == "") ||
 				(spec.AuthOpt.ByHashString && spec.AuthOpt.HashString == "") {
-				return exeerrors.ErrCurrentPasswordCannotBeRetainedEmptyNew.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
+				return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
 			}
 		}
 
@@ -2573,7 +2577,7 @@ func buildAdditionalPasswordJSON(ctx context.Context, sqlExecutor sqlexec.SQLExe
 		return "", exeerrors.ErrPasswordNoMatch
 	}
 	if oldPwd == "" {
-		return "", exeerrors.ErrCurrentPasswordCannotBeRetainedEmptyPrimary.GenWithStackByArgs(name, host)
+		return "", exeerrors.ErrSecondPasswordCannotBeEmpty.GenWithStackByArgs(name, host)
 	}
 	encoded, err := json.Marshal(oldPwd)
 	if err != nil {
@@ -2682,7 +2686,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", authplugin)
 		}
 		if s.Password == "" {
-			return exeerrors.ErrCurrentPasswordCannotBeRetainedEmptyNew.GenWithStackByArgs(u, h)
+			return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(u, h)
 		}
 	}
 	if e.Ctx().InSandBoxMode() {

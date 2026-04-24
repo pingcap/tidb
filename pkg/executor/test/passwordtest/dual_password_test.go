@@ -162,8 +162,8 @@ func TestDualPasswordCrossUserRequiresApplicationPasswordAdmin(t *testing.T) {
 	require.NoError(t, authAs(t, tk, "dpvictim", "%", "v2"))
 }
 
-// TestDualPasswordRejectsEmptyPrimary guards the "Empty current password can not
-// be retained as secondary password" branch. A user with an empty current
+// TestDualPasswordRejectsEmptyPrimary guards the MySQL-compatible
+// ER_SECOND_PASSWORD_CANNOT_BE_EMPTY (3878) path: a user with an empty current
 // primary password must not be allowed to promote it to the secondary slot.
 func TestDualPasswordRejectsEmptyPrimary(t *testing.T) {
 	tk := rootTK(t)
@@ -173,7 +173,7 @@ func TestDualPasswordRejectsEmptyPrimary(t *testing.T) {
 
 	err := tk.ExecToErr("ALTER USER dpemptyprim IDENTIFIED BY 'new' RETAIN CURRENT PASSWORD")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "Empty current password")
+	require.Contains(t, err.Error(), "Empty password can not be retained as second password")
 }
 
 func TestDualPasswordShowCreateUserHidesSecondary(t *testing.T) {
