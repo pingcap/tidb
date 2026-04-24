@@ -404,3 +404,34 @@ func TestPointGetCoveringIndex(t *testing.T) {
 	// Test case 4: Verify the optimization doesn't affect non-point-get queries
 	tk.MustQuery("SELECT COUNT(*) FROM t1").Check(testkit.Rows("3"))
 }
+
+// TestPointGetCoveringIndexForUpdateLocks verifies that SELECT ... FOR UPDATE on a covering
+// unique index still locks the underlying row, so another session cannot acquire a conflicting
+// lock while the first transaction is open. The covering-index fast path must not be taken
+// when e.lock is true.
+func TestPointGetCoveringIndexForUpdateLocks(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk1.MustExec("create table t_cover_lock(id1 int, id2 int, id3 int, PRIMARY KEY(id1), UNIQUE KEY udx_id2 (id2))")
+	tk1.MustExec("insert into t_cover_lock values (1, 10, 100)")
+
+	tk1.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk2.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+
+	tk1.MustExec("begin pessimistic")
+	// Covering-index point get with FOR UPDATE — fast path must be disabled.
+	tk1.MustQuery("SELECT id2 FROM t_cover_lock WHERE id2 = 10 FOR UPDATE").Check(testkit.Rows("10"))
+
+	// Another session trying to update the same row must block; use a short lock-wait
+	// timeout so the test fails fast if the row was not locked.
+	tk2.MustExec("set @@innodb_lock_wait_timeout = 1")
+	tk2.MustExec("begin pessimistic")
+	_, err := tk2.Exec("update t_cover_lock set id3 = 999 where id1 = 1")
+	require.Error(t, err, "expected lock-wait timeout because tk1's FOR UPDATE must lock the row even on covering-index fast path")
+	tk2.MustExec("rollback")
+	tk1.MustExec("commit")
+}

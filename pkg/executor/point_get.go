@@ -411,8 +411,11 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	sctx := e.BaseExecutor.Ctx()
 	schema := e.Schema()
 
-	// If the index covers all required columns, build result directly from index values
-	if e.idxInfo != nil && e.coveredByIndex && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
+	// If the index covers all required columns, build result directly from index values.
+	// Skip this fast path under SELECT ... FOR UPDATE: the row-key lock is acquired only
+	// by getAndLock below, and MySQL/InnoDB semantics require locking the clustered row
+	// regardless of which columns are projected.
+	if e.idxInfo != nil && e.coveredByIndex && !e.lock && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		return e.buildResultFromIndex(ctx, req, schema, sctx)
 	}
 
