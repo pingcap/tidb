@@ -123,8 +123,11 @@ if [ "$translations_chunks" -lt 2 ]; then
   exit 1
 fi
 
-# Each chunk must be a self-contained INSERT (per lance6716 review).
-for chunk in "$DUMPLING_OUTPUT_DIR"/$DB_NAME.*.sql; do
+# Each data chunk must be a self-contained INSERT (per lance6716 review).
+# The filename pattern $DB_NAME.<table>.<seq>.sql excludes -schema.sql
+# meta files (which legitimately have no INSERT statement).
+for chunk in $(find "$DUMPLING_OUTPUT_DIR" -maxdepth 1 -type f \
+    \( -name "$DB_NAME.events.[0-9]*.sql" -o -name "$DB_NAME.translations.[0-9]*.sql" \)); do
   if ! grep -q "^INSERT INTO" "$chunk"; then
     echo "FAIL: $chunk missing INSERT prefix"
     exit 1
