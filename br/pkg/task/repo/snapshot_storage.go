@@ -28,7 +28,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	gozap "go.uber.org/zap"
@@ -281,14 +280,35 @@ func (ref *SnapshotStorageRef) Validate(ctx context.Context) error {
 	return nil
 }
 
+// GetBackupMetaBytes loads backup metadata bytes from the derived metadata
+// storage and decrypts them when needed.
+func (ref *SnapshotStorageRef) GetBackupMetaBytes(
+	ctx context.Context,
+	cipherInfo *backuppb.CipherInfo,
+) ([]byte, error) {
+	backupMetaBytes, err := ref.MetadataStorage().ReadFile(ctx, metautil.MetaFile)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	backupMetaBytes, err = metautil.DecryptFullBackupMetaIfNeeded(backupMetaBytes, cipherInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return backupMetaBytes, nil
+}
+
 // LoadBackupMeta loads backup metadata from the derived metadata storage.
 func (ref *SnapshotStorageRef) LoadBackupMeta(
 	ctx context.Context,
 	cipherInfo *backuppb.CipherInfo,
 ) (*backuppb.BackupMeta, error) {
-	backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, ref.MetadataStorage(), cipherInfo)
+	backupMetaBytes, err := ref.GetBackupMetaBytes(ctx, cipherInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
+		return nil, errors.Annotate(err, "parse backupmeta failed")
 	}
 	return backupMeta, nil
 }

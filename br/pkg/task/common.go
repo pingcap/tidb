@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
@@ -907,7 +908,11 @@ func ReadBackupMeta(
 		u.GetGcs().Prefix = oldPrefix
 	}
 
-	backupMeta, err := taskcommon.DecodeBackupMeta(metaData, &cfg.CipherInfo)
+	decryptBackupMeta, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, &cfg.CipherInfo)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	backupMeta, err := taskcommon.DecodeBackupMeta(decryptBackupMeta, nil)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}

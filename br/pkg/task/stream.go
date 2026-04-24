@@ -2018,16 +2018,15 @@ func getFullBackupTS(
 	if err := ref.Validate(ctx); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	backupMeta, err := ref.LoadBackupMeta(ctx, &cfg.CipherInfo)
+	backupMetaBytes, err := ref.GetBackupMetaBytes(ctx, &cfg.CipherInfo)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	backupmeta := &backuppb.BackupMeta{}
-	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptedMetaData, backupmeta); err != nil {
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
 		if cfg.CheckRequirements {
 			return 0, 0, errors.Trace(err)
 		}

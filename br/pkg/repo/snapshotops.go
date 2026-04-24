@@ -452,10 +452,13 @@ func (ops SnapshotOps) deleteSnapshotDataFilesForBackup(
 
 func (ops SnapshotOps) walkFilesWithPrefix(ctx context.Context, prefix string) TrySeq[string] {
 	return func(yield func(error, string) bool) {
-		if err := ops.Storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(filePath string, _ int64) error {
-			yield(nil, filePath)
-			return nil
-		}); err != nil {
+		err := ops.Storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(filePath string, _ int64) error {
+			if yield(nil, filePath) {
+				return nil
+			}
+			return errStopWalkSeq
+		})
+		if err != nil && !errors.ErrorEqual(err, errStopWalkSeq) {
 			yield(errors.Annotatef(err, "walk files with prefix %s", prefix), "")
 		}
 	}

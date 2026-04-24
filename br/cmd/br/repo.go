@@ -30,6 +30,13 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+const (
+	repoSnapshotFlagBackupID = "backup-id"
+	repoSnapshotFlagView     = "view"
+	repoSnapshotFlagYes      = "yes"
+	repoSnapshotFlagYesShort = "y"
+)
+
 // NewRepoCommand returns a repository management subcommand.
 func NewRepoCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -84,7 +91,6 @@ func newRepoSnapshotListCommand() *cobra.Command {
 			return printRepoSnapshotList(cmd, backupIDs)
 		},
 	}
-	_ = cmd.MarkFlagRequired("s")
 	return cmd
 }
 
@@ -104,7 +110,7 @@ func newRepoSnapshotGetCommand() *cobra.Command {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
 			}
-			view, err := cmd.Flags().GetString("view")
+			view, err := cmd.Flags().GetString(repoSnapshotFlagView)
 			if err != nil {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
@@ -117,10 +123,9 @@ func newRepoSnapshotGetCommand() *cobra.Command {
 			}, cmd.OutOrStdout()))
 		},
 	}
-	cmd.Flags().String("backup-id", "", "snapshot backup id")
-	cmd.Flags().String("view", "basic", "metadata view: basic, tables, or files")
-	_ = cmd.MarkFlagRequired("s")
-	_ = cmd.MarkFlagRequired("backup-id")
+	cmd.Flags().String(repoSnapshotFlagBackupID, "", "snapshot backup id")
+	cmd.Flags().String(repoSnapshotFlagView, "basic", "metadata view: basic, tables, or files")
+	_ = cmd.MarkFlagRequired(repoSnapshotFlagBackupID)
 	return cmd
 }
 
@@ -140,7 +145,7 @@ func newRepoSnapshotDeleteCommand() *cobra.Command {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
 			}
-			skipPrompt, err := cmd.Flags().GetBool("yes")
+			skipPrompt, err := cmd.Flags().GetBool(repoSnapshotFlagYes)
 			if err != nil {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
@@ -161,10 +166,9 @@ func newRepoSnapshotDeleteCommand() *cobra.Command {
 			return printRepoSnapshotMutationResult(cmd, "deleted", backupID, result.BackupID, result.MetadataDeleted, result.DataDeleted, result.PendingDeleted)
 		},
 	}
-	cmd.Flags().String("backup-id", "", "snapshot backup id")
-	cmd.Flags().BoolP("yes", "y", false, "skip the confirmation prompt and execute the command directly")
-	_ = cmd.MarkFlagRequired("s")
-	_ = cmd.MarkFlagRequired("backup-id")
+	cmd.Flags().String(repoSnapshotFlagBackupID, "", "snapshot backup id")
+	cmd.Flags().BoolP(repoSnapshotFlagYes, repoSnapshotFlagYesShort, false, "skip the confirmation prompt and execute the command directly")
+	_ = cmd.MarkFlagRequired(repoSnapshotFlagBackupID)
 	return cmd
 }
 
@@ -193,7 +197,7 @@ func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
 			}
-			skipPrompt, err := cmd.Flags().GetBool("yes")
+			skipPrompt, err := cmd.Flags().GetBool(repoSnapshotFlagYes)
 			if err != nil {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
@@ -214,9 +218,8 @@ func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
 			return printRepoSnapshotMutationResult(cmd, "discarded", backupID, result.BackupID, result.MetadataDeleted, result.DataDeleted, result.PendingDeleted)
 		},
 	}
-	cmd.Flags().String("backup-id", "", "snapshot backup id")
-	cmd.Flags().BoolP("yes", "y", false, "skip the confirmation prompt and execute the command directly")
-	_ = cmd.MarkFlagRequired("s")
+	cmd.Flags().String(repoSnapshotFlagBackupID, "", "snapshot backup id")
+	cmd.Flags().BoolP(repoSnapshotFlagYes, repoSnapshotFlagYesShort, false, "skip the confirmation prompt and execute the command directly")
 	return cmd
 }
 
@@ -256,7 +259,6 @@ func newRepoSnapshotOrphansListCommand() *cobra.Command {
 			return nil
 		},
 	}
-	_ = cmd.MarkFlagRequired("s")
 	return cmd
 }
 
@@ -271,7 +273,7 @@ func newRepoSnapshotOrphansDeleteCommand() *cobra.Command {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
 			}
-			skipPrompt, err := cmd.Flags().GetBool("yes")
+			skipPrompt, err := cmd.Flags().GetBool(repoSnapshotFlagYes)
 			if err != nil {
 				cmd.SilenceUsage = false
 				return errors.Trace(err)
@@ -289,8 +291,7 @@ func newRepoSnapshotOrphansDeleteCommand() *cobra.Command {
 			return errors.Trace(err)
 		},
 	}
-	cmd.Flags().BoolP("yes", "y", false, "skip the confirmation prompt and execute the command directly")
-	_ = cmd.MarkFlagRequired("s")
+	cmd.Flags().BoolP(repoSnapshotFlagYes, repoSnapshotFlagYesShort, false, "skip the confirmation prompt and execute the command directly")
 	return cmd
 }
 
@@ -314,7 +315,7 @@ func parseRequiredRepoSnapshotBackupID(cmd *cobra.Command) (repo.BackupID, error
 		return 0, errors.Trace(err)
 	}
 	if backupID.IsZero() {
-		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "--backup-id is required")
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument, "--%s is required", repoSnapshotFlagBackupID)
 	}
 	return backupID, nil
 }

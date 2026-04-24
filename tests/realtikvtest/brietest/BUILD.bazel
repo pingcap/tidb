@@ -32,6 +32,7 @@ go_test(
         "//br/pkg/summary",
         "//br/pkg/task",
         "//br/pkg/task/operator",
+        "//br/pkg/task/repo",
         "//br/pkg/utils",
         "//pkg/config",
         "//pkg/config/kerneltype",

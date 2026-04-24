@@ -84,7 +84,7 @@ func TestDiscardPendingSnapshotStalePendingRemovesOnlyMarker(t *testing.T) {
 
 func TestDiscardPendingSnapshotUnfinishedRemovesMetadataAndData(t *testing.T) {
 	ctx := context.Background()
-	storage := newStartAfterLocalStorage(t, true)
+	storage := newWalkAssertingLocalStorage(t, true)
 	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x2345)
@@ -153,7 +153,7 @@ func TestDiscardPendingSnapshotRejectsTransient(t *testing.T) {
 
 func TestDeleteSnapshotWithoutMetadataUsesStartAfter(t *testing.T) {
 	ctx := context.Background()
-	storage := newStartAfterLocalStorage(t, true)
+	storage := newWalkAssertingLocalStorage(t, true)
 	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x4567)
@@ -200,7 +200,7 @@ func TestDeleteSnapshotRejectsUnsupportedStorage(t *testing.T) {
 
 func TestListAndDeleteSnapshotOrphansUsesStartAfterWhenAvailable(t *testing.T) {
 	ctx := context.Background()
-	storage := newStartAfterLocalStorage(t, true)
+	storage := newWalkAssertingLocalStorage(t, true)
 	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	completedID := repo.BackupID(0x5678)
@@ -237,12 +237,14 @@ func TestDeleteSnapshotWaitsForStartedDeletesAfterWalkError(t *testing.T) {
 	storage.failSubDir = pathJoin("_meta", "snapshot", backupID.StorageName())
 	storage.failPath = repo.SnapshotMetadataFile(backupID)
 
-	resultCh := make(chan repo.SnapshotDeleteResult, 1)
-	errCh := make(chan error, 1)
+	var (
+		result repo.SnapshotDeleteResult
+		err    error
+	)
+	deleteDone := make(chan struct{})
 	go func() {
-		result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
-		resultCh <- result
-		errCh <- err
+		defer close(deleteDone)
+		result, err = snapshotOps.DeleteSnapshot(ctx, backupID)
 	}()
 
 	select {
@@ -252,19 +254,37 @@ func TestDeleteSnapshotWaitsForStartedDeletesAfterWalkError(t *testing.T) {
 	}
 
 	select {
-	case err := <-errCh:
-		result := <-resultCh
+	case <-deleteDone:
 		t.Fatalf("DeleteSnapshot returned before in-flight delete finished: result=%v err=%v", result, err)
 	case <-time.After(100 * time.Millisecond):
 	}
 
 	close(storage.releaseDelete)
+	<-deleteDone
 
-	result := <-resultCh
-	err := <-errCh
 	require.Error(t, err)
 	require.ErrorContains(t, err, "injected walk error")
 	require.Equal(t, 1, result.MetadataDeleted)
+}
+
+func TestDeleteSnapshotStopsWalkingAfterDeleteError(t *testing.T) {
+	ctx := context.Background()
+	backupID := repo.BackupID(0x7ABD)
+	prefix := repo.SnapshotMetadataDir(backupID)
+	paths := []string{
+		pathJoin(prefix, "meta-1"),
+		pathJoin(prefix, "meta-2"),
+		pathJoin(prefix, "meta-3"),
+	}
+	storage := newStopAfterDeleteErrorStorage(t, prefix, paths)
+	snapshotOps := repo.SnapshotOpsExtension(storage)
+
+	result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
+	require.Error(t, err)
+	require.ErrorContains(t, err, paths[0])
+	require.Equal(t, backupID, result.BackupID)
+	require.Zero(t, result.MetadataDeleted)
+	require.Equal(t, int32(2), storage.walked.Load())
 }
 
 func TestDiscardPendingSnapshotReportsPartialMarkerDeletion(t *testing.T) {
@@ -379,22 +399,22 @@ func pathJoin(parts ...string) string {
 	return filepath.ToSlash(filepath.Join(parts...))
 }
 
-type startAfterLocalStorage struct {
+type walkAssertingLocalStorage struct {
 	storeapi.Storage
 	rejectEmptySnapshotWalkAfterFirst bool
 }
 
-func newStartAfterLocalStorage(t *testing.T, rejectEmptySnapshotWalkAfterFirst bool) *startAfterLocalStorage {
+func newWalkAssertingLocalStorage(t *testing.T, rejectEmptySnapshotWalkAfterFirst bool) *walkAssertingLocalStorage {
 	t.Helper()
 	storage, err := objstore.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
-	return &startAfterLocalStorage{
+	return &walkAssertingLocalStorage{
 		Storage:                           storage,
 		rejectEmptySnapshotWalkAfterFirst: rejectEmptySnapshotWalkAfterFirst,
 	}
 }
 
-func (s *startAfterLocalStorage) WalkDir(
+func (s *walkAssertingLocalStorage) WalkDir(
 	ctx context.Context,
 	opt *storeapi.WalkOption,
 	fn func(string, int64) error,
@@ -414,19 +434,37 @@ func (s *startAfterLocalStorage) WalkDir(
 }
 
 type walkErrorDeleteBlockingStorage struct {
-	*startAfterLocalStorage
+	*walkAssertingLocalStorage
 	failSubDir    string
 	failPath      string
 	deleteStarted chan struct{}
 	releaseDelete chan struct{}
 }
 
+type stopAfterDeleteErrorStorage struct {
+	*walkAssertingLocalStorage
+	prefix              string
+	paths               []string
+	firstDeleteReturned chan struct{}
+	walked              atomic.Int32
+}
+
 func newWalkErrorDeleteBlockingStorage(t *testing.T) *walkErrorDeleteBlockingStorage {
 	t.Helper()
 	return &walkErrorDeleteBlockingStorage{
-		startAfterLocalStorage: newStartAfterLocalStorage(t, false),
-		deleteStarted:          make(chan struct{}, 1),
-		releaseDelete:          make(chan struct{}),
+		walkAssertingLocalStorage: newWalkAssertingLocalStorage(t, false),
+		deleteStarted:             make(chan struct{}, 1),
+		releaseDelete:             make(chan struct{}),
+	}
+}
+
+func newStopAfterDeleteErrorStorage(t *testing.T, prefix string, paths []string) *stopAfterDeleteErrorStorage {
+	t.Helper()
+	return &stopAfterDeleteErrorStorage{
+		walkAssertingLocalStorage: newWalkAssertingLocalStorage(t, false),
+		prefix:                    prefix,
+		paths:                     append([]string(nil), paths...),
+		firstDeleteReturned:       make(chan struct{}),
 	}
 }
 
@@ -441,7 +479,7 @@ func (s *walkErrorDeleteBlockingStorage) WalkDir(
 		}
 		return fmt.Errorf("injected walk error for %s", opt.SubDir)
 	}
-	return s.startAfterLocalStorage.WalkDir(ctx, opt, fn)
+	return s.walkAssertingLocalStorage.WalkDir(ctx, opt, fn)
 }
 
 func (s *walkErrorDeleteBlockingStorage) DeleteFile(ctx context.Context, name string) error {
@@ -453,6 +491,41 @@ func (s *walkErrorDeleteBlockingStorage) DeleteFile(ctx context.Context, name st
 		<-s.releaseDelete
 	}
 	return s.Storage.DeleteFile(ctx, name)
+}
+
+func (s *stopAfterDeleteErrorStorage) WalkDir(
+	ctx context.Context,
+	opt *storeapi.WalkOption,
+	fn func(string, int64) error,
+) error {
+	if opt != nil && opt.SubDir == s.prefix {
+		for i, path := range s.paths {
+			if i == 1 {
+				select {
+				case <-s.firstDeleteReturned:
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(5 * time.Second):
+					return fmt.Errorf("timed out waiting for failed delete of %s", s.paths[0])
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			s.walked.Add(1)
+			if err := fn(path, 1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return s.walkAssertingLocalStorage.WalkDir(ctx, opt, fn)
+}
+
+func (s *stopAfterDeleteErrorStorage) DeleteFile(_ context.Context, name string) error {
+	if len(s.paths) > 0 && name == s.paths[0] {
+		close(s.firstDeleteReturned)
+		return fmt.Errorf("failed to delete file %s", name)
+	}
+	return nil
 }
 
 type markerDeletePartialFailureStorage struct {
