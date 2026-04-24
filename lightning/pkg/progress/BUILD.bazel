@@ -1,13 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "web",
-    srcs = [
-        "progress.go",
-        "res.go",  #keep
-        "res_vfsdata.go",
-    ],
-    importpath = "github.com/pingcap/tidb/lightning/pkg/web",
+    name = "progress",
+    srcs = ["progress.go"],
+    importpath = "github.com/pingcap/tidb/lightning/pkg/progress",
     visibility = ["//visibility:public"],
     deps = [
         "//lightning/pkg/checkpoints",

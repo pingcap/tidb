@@ -384,10 +384,6 @@ tools/bin/golangci-lint:
 	$(eval GOLANGCI_LINT_VERSION := $(shell grep 'github.com/golangci/golangci-lint/v2' go.mod | awk '{print $$2}'))
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
 
-.PHONY: tools/bin/vfsgendev
-tools/bin/vfsgendev:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
-
 .PHONY: tools/bin/gotestsum
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
@@ -447,10 +443,6 @@ bench-daily:
 .PHONY: build_tools
 build_tools: build_br build_lightning build_lightning-ctl ## Build all BR and Lightning tools
 
-.PHONY: lightning_web
-lightning_web: ## Build Lightning web UI
-	@cd lightning/web && npm install && npm run build
-
 .PHONY: build_br
 build_br: ## Build BR (backup and restore) tool 
 ifeq ($(shell echo $(GOOS) | tr A-Z a-z),darwin)
@@ -460,10 +452,6 @@ else
 	@echo "Detected non-macOS ($(ARCH)), disabling CGO"
 	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 endif
-
-.PHONY: build_lightning_for_web
-build_lightning_for_web:
-	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 .PHONY: build_lightning
 build_lightning: ## Build TiDB Lightning data import tool
@@ -616,9 +604,8 @@ br_bins:
 	@rm tmp_parser.go
 
 .PHONY: data_parsers
-data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
+data_parsers: pkg/lightning/mydump/parser_generated.go
 	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" lightning/pkg/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
-	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
 
 .PHONY: build_dumpling
 build_dumpling: ## Build Dumpling data export tool

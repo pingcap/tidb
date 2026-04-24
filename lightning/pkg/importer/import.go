@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/errormanager"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -891,7 +891,7 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 				for _, w := range ws {
 					w <- common.NormalizeOrWrapErr(common.ErrUpdateCheckpoint, err)
 				}
-				web.BroadcastCheckpointDiff(cpd)
+				progress.BroadcastCheckpointDiff(cpd)
 			}
 			rc.checkpointsWg.Done()
 		}
@@ -1450,7 +1450,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
-				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
+				progress.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
 				needPostProcess, err := task.tr.importTable(ctx, rc, task.cp)
 				if err != nil && !common.IsContextCanceledError(err) {
@@ -1459,7 +1459,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
-				web.BroadcastError(task.tr.tableName, err)
+				progress.BroadcastError(task.tr.tableName, err)
 				if m, ok := metric.FromContext(ctx); ok {
 					m.RecordTableCount(metric.TableStateCompleted, err)
 				}

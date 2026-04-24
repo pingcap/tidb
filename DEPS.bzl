@@ -7320,19 +7320,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_shurcool_httpgzip",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/shurcooL/httpgzip",
-        sha256 = "70ef73fce2f89d622f828cb439fd6c7b48a7fe63600410a8c0a936042c0e4631",
-        strip_prefix = "github.com/shurcooL/httpgzip@v0.0.0-20190720172056-320755c1c1b0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/shurcooL/httpgzip/com_github_shurcool_httpgzip-v0.0.0-20190720172056-320755c1c1b0.zip",
-            "http://ats.apps.svc/gomod/github.com/shurcooL/httpgzip/com_github_shurcool_httpgzip-v0.0.0-20190720172056-320755c1c1b0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/shurcooL/httpgzip/com_github_shurcool_httpgzip-v0.0.0-20190720172056-320755c1c1b0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shurcooL/httpgzip/com_github_shurcool_httpgzip-v0.0.0-20190720172056-320755c1c1b0.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_shurcool_vfsgen",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/shurcooL/vfsgen",
