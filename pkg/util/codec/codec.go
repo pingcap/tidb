@@ -57,6 +57,26 @@ const (
 // IntHandleFlag is only used to encode int handle key.
 const IntHandleFlag = intFlag
 
+// IsDescFlag reports whether b is a leading flag byte from an EncodeKeyWithDesc
+// descending-column encoding (the bitwise complement of one of the ascending
+// flag bytes supported by peek/DecodeOne). Callers that received column bytes
+// from a heterogeneous source (e.g. tablecodec.DecodeIndexKV mixes key-derived
+// and value-derived bytes) can use this to decide whether the bytes need to be
+// un-complemented before being interpreted as a regular memcomparable datum.
+// See pingcap/tidb#2519.
+func IsDescFlag(b byte) bool {
+	switch b {
+	case ^NilFlag, ^bytesFlag, ^compactBytesFlag, ^intFlag, ^uintFlag,
+		^floatFlag, ^decimalFlag, ^durationFlag:
+		return true
+	}
+	return false
+}
+
+// isDescFlag is the unexported alias kept for in-package call sites that
+// predate IsDescFlag.
+func isDescFlag(b byte) bool { return IsDescFlag(b) }
+
 const (
 	sizeUint64  = unsafe.Sizeof(uint64(0))
 	sizeUint8   = unsafe.Sizeof(uint8(0))
@@ -1709,6 +1729,10 @@ type Decoder struct {
 
 	// buf is only used for DecodeBytes to avoid the cost of makeslice.
 	buf []byte
+	// descBuf is a reusable scratch buffer for the descending-column
+	// auto-detect path so a per-row index scan does not allocate a fresh
+	// slice for every DESC column it decodes (pingcap/tidb#2519).
+	descBuf []byte
 }
 
 // NewDecoder creates a Decoder.
@@ -1720,9 +1744,44 @@ func NewDecoder(chk *chunk.Chunk, timezone *time.Location) *Decoder {
 }
 
 // DecodeOne decodes one value to chunk and returns the remained bytes.
+//
+// Descending-order columns (pingcap/tidb#2519) are written as bitwise-
+// complemented memcomparable bytes. Their leading flag byte is the bit-
+// complement of the ascending flag (e.g. intFlag=0x03 becomes 0xFC, NilFlag
+// =0x00 becomes 0xFF). When the input begins with one of those complemented
+// flags we transparently invert just the bytes this column consumes and fall
+// through to the ascending switch — callers need no schema awareness. The
+// 0xFA collision between ^floatFlag and maxFlag is not observable on stored
+// rows because maxFlag only appears in range sentinels, which never reach
+// this decoder.
 func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (remain []byte, err error) {
 	if len(b) < 1 {
 		return nil, errors.New("invalid encoded key")
+	}
+	if isDescFlag(b[0]) {
+		length, err := peek(b)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Reuse decoder.descBuf instead of allocating a fresh scratch slice
+		// per DESC column. This is on the per-row decode hot path; for a
+		// composite DESC index every row would otherwise drop a few-hundred-
+		// byte allocation. The buffer's contents are not referenced after
+		// the recursive DecodeOne call returns, so reuse is safe even for
+		// variable-length types whose decoded form (Bytes) gets copied into
+		// the chunk inside the ASC branch.
+		if cap(decoder.descBuf) < length {
+			decoder.descBuf = make([]byte, length)
+		} else {
+			decoder.descBuf = decoder.descBuf[:length]
+		}
+		for i := range length {
+			decoder.descBuf[i] = b[i] ^ 0xFF
+		}
+		if _, err := decoder.DecodeOne(decoder.descBuf, colIdx, ft); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return b[length:], nil
 	}
 	chk := decoder.chk
 	flag := b[0]

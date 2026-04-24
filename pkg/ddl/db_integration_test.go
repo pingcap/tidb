@@ -3228,17 +3228,11 @@ func TestDescendingIndexScanDirection(t *testing.T) {
 		"feature gate off: DESC must be dropped and reverse scan must remain the path for ORDER BY DESC")
 }
 
-// TestDescendingIndexInsertsSucceed verifies the TiDB-local half of the
-// DESC-index read/write pipeline: INSERTs go through the new encoder, the
-// mutation-consistency check tolerates the complemented key bytes, and a
-// subsequent SELECT that's served from TiDB's own in-memory path (not the
-// TiKV coprocessor) returns correct results.
-//
-// SELECTs served through the TiKV coprocessor emulation (unistore) still fail
-// because that layer has not yet been taught to decode DESC-complemented index
-// keys; that is the subject of phase 3d (the coordinated TiKV work). Once that
-// lands we will extend this test to cover SELECT end-to-end.
-func TestDescendingIndexInsertsSucceed(t *testing.T) {
+// TestDescendingIndexEndToEnd verifies INSERT + SELECT through a DESC index
+// end-to-end: writes go through the complement-encoded path, the mutation
+// consistency check tolerates them, and the unistore coprocessor emulation
+// decodes the returned keys correctly via auto-detecting DESC flag bytes.
+func TestDescendingIndexEndToEnd(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3247,17 +3241,25 @@ func TestDescendingIndexInsertsSucceed(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	tk2.MustExec("drop table if exists t_desc_write")
-	tk2.MustExec("create table t_desc_write (a int, b int, index idx_b (b desc))")
-	// Multiple inserts must all pass the mutation consistency check — that
-	// check re-decodes the written index key and compared it against the row.
-	tk2.MustExec("insert into t_desc_write values (1, 10), (2, 20), (3, 5), (4, 30), (5, 15)")
+	tk2.MustExec("drop table if exists t_desc_e2e")
+	tk2.MustExec("create table t_desc_e2e (a int, b int, index idx_b (b desc))")
+	tk2.MustExec("insert into t_desc_e2e values (1, 10), (2, 20), (3, 5), (4, 30), (5, 15)")
 
-	// Verify via information_schema that the index really is stored as DESC —
-	// this exercises the Phase 1 plumbing as a sanity check that the feature
-	// gate is on for this session.
-	tk2.MustQuery("select collation from information_schema.statistics where table_name='t_desc_write' and index_name='idx_b'").
+	// Sanity: the index really is stored as DESC.
+	tk2.MustQuery("select collation from information_schema.statistics where table_name='t_desc_e2e' and index_name='idx_b'").
 		Check(testkit.Rows("D"))
+
+	// Point lookup on DESC column must find the row.
+	tk2.MustQuery("select a from t_desc_e2e use index(idx_b) where b = 20").Check(testkit.Rows("2"))
+	tk2.MustQuery("select a from t_desc_e2e use index(idx_b) where b = 5").Check(testkit.Rows("3"))
+	tk2.MustQuery("select a from t_desc_e2e use index(idx_b) where b = 999").Check(testkit.Rows())
+
+	// Full ordered scan of the DESC index returns rows in b-descending order
+	// via a forward keyspace scan (no reverse-scan flag on the IndexReader).
+	tk2.MustQuery("select b from t_desc_e2e use index(idx_b) order by b desc").Check(testkit.Rows("30", "20", "15", "10", "5"))
+	// The ORDER BY ASC variant exercises the reverse-scan path on the DESC
+	// index and must also return the correct order.
+	tk2.MustQuery("select b from t_desc_e2e use index(idx_b) order by b asc").Check(testkit.Rows("5", "10", "15", "20", "30"))
 }
 
 func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
