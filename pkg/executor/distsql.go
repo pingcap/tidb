@@ -1578,7 +1578,7 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		// Currently, completedRows is only produced by index lookup push down which does not support keep order.
 		// for non-keep-order request, the completed rows can be sent to resultCh directly.
 		completedTask = w.buildCompletedTask(*taskID, data.completedRows)
-		*taskID += 1
+		*taskID++
 	}
 
 	var tableLookUpTask *lookupTableTask
@@ -1592,7 +1592,7 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		if w.idxLookup.partitionTableMode {
 			tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 		}
-		*taskID += 1
+		*taskID++
 	}
 
 	finishBuild := time.Now()
