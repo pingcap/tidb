@@ -92,9 +92,9 @@ GRANT ALTER ON privilege__privileges.mask_t TO mask_creator;
 GRANT ALTER ON privilege__privileges.mask_t TO mask_alter;
 GRANT ALTER ON privilege__privileges.mask_t TO mask_drop;
 GRANT ALTER ON privilege__privileges.mask_t TO mask_none;
-GRANT `CREATE MASKING POLICY` ON *.* TO mask_creator;
-GRANT `ALTER MASKING POLICY` ON *.* TO mask_alter;
-GRANT `DROP MASKING POLICY` ON *.* TO mask_drop;
+GRANT CREATE MASKING POLICY ON *.* TO mask_creator;
+GRANT ALTER MASKING POLICY ON *.* TO mask_alter;
+GRANT DROP MASKING POLICY ON *.* TO mask_drop;
 
 connect (mask_none, localhost, mask_none,, privilege__privileges);
 connection mask_none;
@@ -111,6 +111,8 @@ disconnect mask_none;
 connect (mask_creator, localhost, mask_creator,, privilege__privileges);
 connection mask_creator;
 create masking policy p on mask_t(c) as c;
+--error 1227
+create or replace masking policy p on mask_t(c) as mask_full(c, '*');
 --error 1227
 alter table mask_t disable masking policy p;
 --error 1227

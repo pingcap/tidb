@@ -299,11 +299,42 @@ func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
 }
 
 func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
-	MustExec(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
+	mustExecWithInfoSchemaRetry(t, se, fmt.Sprintf("update mysql.tidb set variable_value='%d' where variable_name='tidb_server_version'", ver))
 	if ver <= version195 {
 		// for version <= version195, tidb_enable_dist_task should be disabled before upgrade
-		MustExec(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
+		mustExecWithInfoSchemaRetry(t, se, "update mysql.global_variables set variable_value='off' where variable_name='tidb_enable_dist_task'")
 	}
+}
+
+func mustExecWithInfoSchemaRetry(t *testing.T, se sessiontypes.Session, sql string) {
+	ctx := context.Background()
+	var err error
+	for range 120 {
+		rs, execErr := exec(se, sql)
+		if execErr == nil && rs != nil {
+			execErr = rs.Close()
+		}
+		if execErr == nil {
+			return
+		}
+		if !isInfoSchemaRetryableErr(execErr) {
+			err = execErr
+			break
+		}
+		err = execErr
+		se.RollbackTxn(ctx)
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.NoError(t, err, "sql: %s", sql)
+}
+
+func isInfoSchemaRetryableErr(err error) bool {
+	if domain.ErrInfoSchemaExpired.Equal(err) || domain.ErrInfoSchemaChanged.Equal(err) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Information schema is out of date") ||
+		strings.Contains(msg, "Information schema is changed")
 }
 
 // TestUpgrade tests upgrading

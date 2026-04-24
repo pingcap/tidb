@@ -262,7 +262,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		b.optFlag |= rule.FlagSkewDistinctAgg
 	}
 	// flag it if cte contain aggregation
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	var rollupExpand *logicalop.LogicalExpand
@@ -1725,6 +1725,13 @@ func (b *PlanBuilder) buildFinalProjectionWithMaskingSimple(ctx context.Context,
 		return p, nil
 	}
 
+	// Defensive check: ensure oldLen is within valid bounds
+	// Use the minimum of oldLen and actual schema length to avoid index out of range
+	actualLen := p.Schema().Len()
+	if oldLen < 0 || oldLen > actualLen {
+		oldLen = actualLen
+	}
+
 	// Build a projection that applies masking to the first oldLen columns (non-auxiliary)
 	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, oldLen)}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, oldLen)...)
@@ -1760,8 +1767,12 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 	b.optFlag = b.optFlag | rule.FlagBuildKeyInfo
 	b.optFlag = b.optFlag | rule.FlagPushDownAgg
 	// flag it if cte contain distinct
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
+	}
+	// Defensive check: ensure length is within valid bounds
+	if length < 0 || length > child.Schema().Len() {
+		length = child.Schema().Len()
 	}
 	plan4Agg := logicalop.LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
@@ -1844,15 +1855,25 @@ func (b *PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.
 }
 
 func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.LogicalUnionAll) error {
-	unionCols := make([]*expression.Column, 0, u.Children()[0].Schema().Len())
-	names := make([]*types.FieldName, 0, u.Children()[0].Schema().Len())
+	firstChild := u.Children()[0]
+	firstChildLen := firstChild.Schema().Len()
+	if firstChildLen <= 0 {
+		return errors.New("first child of UNION has empty schema")
+	}
+
+	unionCols := make([]*expression.Column, 0, firstChildLen)
+	names := make([]*types.FieldName, 0, firstChildLen)
 
 	// Infer union result types by its children's schema.
-	for i, col := range u.Children()[0].Schema().Columns {
+	for i, col := range firstChild.Schema().Columns {
 		tmpExprs := make([]expression.Expression, 0, len(u.Children()))
 		tmpExprs = append(tmpExprs, col)
 		resultTp := col.RetType
 		for j := 1; j < len(u.Children()); j++ {
+			// Defensive check: ensure child j has at least i+1 columns
+			if i >= u.Children()[j].Schema().Len() {
+				return errors.Errorf("UNION child %d has %d columns, but child 0 has %d columns", j, u.Children()[j].Schema().Len(), firstChildLen)
+			}
 			tmpExprs = append(tmpExprs, u.Children()[j].Schema().Columns[i])
 			childTp := u.Children()[j].Schema().Columns[i].RetType
 			resultTp = unionJoinFieldType(resultTp, childTp)
@@ -1864,7 +1885,12 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 		resultTp.SetCharset(collation.Charset)
 		resultTp.SetCollate(collation.Collation)
 		b.setUnionFlen(resultTp, tmpExprs)
-		names = append(names, &types.FieldName{ColName: u.Children()[0].OutputNames()[i].ColName})
+
+		// Defensive check: ensure OutputNames has at least i+1 elements
+		if i >= len(firstChild.OutputNames()) {
+			return errors.Errorf("first child has %d columns but only %d output names", firstChildLen, len(firstChild.OutputNames()))
+		}
+		names = append(names, &types.FieldName{ColName: firstChild.OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
@@ -1983,9 +2009,10 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 	}
 
-	if b.buildingSetOprOperands == 0 {
+	if b.buildingSetOprOperands == 0 && !b.isCTE && !b.buildingCTE {
 		// Apply masking at the final result stage (AT RESULT semantics).
 		// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
+		// For CTEs, we skip masking here because CTE definitions should preserve original values.
 		// Pass nil for originalFields as we don't have access to the original field expressions here.
 		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen, nil)
 		if err != nil {
@@ -1995,7 +2022,8 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 
 	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
 	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
-	if oldLen != setOprPlan.Schema().Len() {
+	// Defensive check: ensure oldLen is within valid bounds (schema may have changed after buildDistinct)
+	if oldLen > 0 && oldLen <= setOprPlan.Schema().Len() && oldLen != setOprPlan.Schema().Len() {
 		proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(setOprPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 		proj.SetChildren(setOprPlan)
 		schema := expression.NewSchema(setOprPlan.Schema().Clone().Columns[:oldLen]...)
@@ -2379,7 +2407,7 @@ func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit) (cou
 func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.LogicalPlan, error) {
 	b.optFlag = b.optFlag | rule.FlagPushDownTopN
 	// flag it if cte contain limit
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	var (
@@ -4042,7 +4070,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		// In particular, recursive CTE have separate warnings, so they are no longer called.
 		if b.buildingCTE {
 			if b.isCTE {
-				b.outerCTEs[len(b.outerCTEs)-1].forceInlineByHintOrVar = true
+				if len(b.outerCTEs) > 0 {
+					b.outerCTEs[len(b.outerCTEs)-1].forceInlineByHintOrVar = true
+				}
 			} else if !b.buildingRecursivePartForCTE {
 				// If there has subquery which is not CTE and using `MERGE()` hint, we will show this warning;
 				b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
@@ -4269,7 +4299,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	if sel.OrderBy != nil {
 		// flag it if cte contain order by
-		if b.buildingCTE {
+		if b.buildingCTE && len(b.outerCTEs) > 0 {
 			b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 		}
 		// We need to keep the ORDER BY clause for the following cases:
@@ -4295,9 +4325,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		}
 	}
 
-	if b.buildingSetOprOperands == 0 {
+	if b.buildingSetOprOperands == 0 && !b.isCTE && !b.buildingCTE {
 		// Apply masking at the final result stage (AT RESULT semantics).
 		// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
+		// For CTEs, we skip masking here because:
+		// 1. CTE definitions should preserve original values for correct filtering/joining
+		// 2. Masking is applied when CTE results are materialized to the final output
 		// Pass originalFields so masking is applied to the original expression trees before they were materialized.
 		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen, originalFields)
 		if err != nil {
@@ -4596,6 +4629,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			b.computeCTEInlineFlag(cte)
 
 			if cte.recurLP == nil && cte.isInline {
+				// Save and truncate b.outerCTEs to maintain correct CTE scope during inline
 				saveCte := make([]*cteInfo, len(b.outerCTEs[i:]))
 				copy(saveCte, b.outerCTEs[i:])
 				b.outerCTEs = b.outerCTEs[:i]
@@ -4671,6 +4705,17 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
+	// Set b.isCTE to true to ensure masking is skipped during CTE definition building
+	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior
+	oldIsCTE := b.isCTE
+	oldBuildingCTE := b.buildingCTE
+	b.isCTE = true
+	b.buildingCTE = true
+	defer func() {
+		b.isCTE = oldIsCTE
+		b.buildingCTE = oldBuildingCTE
+	}()
+
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
 	if err != nil {
 		return nil, err
@@ -4678,6 +4723,14 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
+		// Preserve OrigTblName and OrigColName for masking policy lookup
+		// If they are not set, copy from TblName and ColName before overwriting
+		if name.OrigTblName.L == "" {
+			name.OrigTblName = name.TblName
+		}
+		if name.OrigColName.L == "" {
+			name.OrigColName = name.ColName
+		}
 		name.TblName = cte.Name
 		name.DBName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
@@ -4687,6 +4740,10 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
+			// Preserve original column name before overwriting
+			if outPutNames[i].OrigColName.L == "" {
+				outPutNames[i].OrigColName = outPutNames[i].ColName
+			}
 			outPutNames[i].ColName = n
 		}
 	}
@@ -6810,7 +6867,7 @@ func sortWindowSpecs(groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, ord
 }
 
 func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPlan, groupedFuncs map[*ast.WindowSpec][]*ast.WindowFuncExpr, orderedSpec []*ast.WindowSpec, aggMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, map[*ast.WindowFuncExpr]int, error) {
-	if b.buildingCTE {
+	if b.buildingCTE && len(b.outerCTEs) > 0 {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
 	args := make([]ast.ExprNode, 0, 4)

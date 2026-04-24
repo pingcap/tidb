@@ -103,7 +103,7 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 		return nil
 	}
 
-	if tableInfo != nil {
+	if ddlJob.SchemaName != "" && (tableInfo != nil || ddlJob.TableName != "") {
 		switchDBSQL := fmt.Sprintf("use %s;", utils.EncloseName(ddlJob.SchemaName))
 		err = db.se.Execute(ctx, switchDBSQL)
 		if err != nil {

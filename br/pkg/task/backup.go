@@ -572,7 +572,13 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
+	ranges, schemas, policies, err := client.BuildBackupRangeAndSchema(
+		mgr.GetStorage(),
+		cfg.TableFilter,
+		backupTS,
+		isFullBackup(cmdName),
+		!isFullBackup(cmdName),
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}

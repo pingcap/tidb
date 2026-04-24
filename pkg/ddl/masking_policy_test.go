@@ -49,6 +49,18 @@ func TestMaskingPolicyDDLBasic(t *testing.T) {
 		Check(testkit.Rows("0"))
 }
 
+func TestMaskingPolicyMaskNullOnNumeric(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_numeric")
+	tk.MustExec("create table t_numeric (id int primary key, salary decimal(10,2))")
+	tk.MustExec("insert into t_numeric values (1, 85000.00)")
+
+	tk.MustExec("create masking policy p_numeric on t_numeric(salary) as mask_null(salary) enable")
+	tk.MustQuery("select salary is null from t_numeric where id = 1").Check(testkit.Rows("1"))
+}
+
 func TestMaskingPolicyCaseExpression(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -114,6 +126,75 @@ func TestMaskingPolicyCurrentIdentityOperators(t *testing.T) {
 		case when current_role() = 'NONE' then c else mask_full(c, '*') end`)
 	tk.MustQuery("select expression like '%CURRENT_ROLE()%' from mysql.tidb_masking_policy where policy_name = 'p'").
 		Check(testkit.Rows("1"))
+}
+
+func TestMaskingPolicyCTEScenarios(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_cte_src, t_cte_join, t_cte_dst")
+	tk.MustExec("create table t_cte_src(id int primary key, c varchar(20))")
+	tk.MustExec("create table t_cte_join(id int primary key, name varchar(20))")
+	tk.MustExec("create table t_cte_dst(c varchar(20))")
+	tk.MustExec("insert into t_cte_src values (1, 'secret'), (2, 'public')")
+	tk.MustExec("insert into t_cte_join values (1, 'alice'), (2, 'bob')")
+	tk.MustExec("create masking policy p_cte on t_cte_src(c) as mask_full(c, '*') restrict on (insert_into_select) enable")
+
+	tk.MustQuery("with cte as (select c from t_cte_src) select c from cte order by c").Check(testkit.Rows("******", "******"))
+	tk.MustQuery("with cte as (select c from t_cte_src) select count(*) from cte where c = 'secret'").Check(testkit.Rows("1"))
+	tk.MustQuery("with cte as (select id, c from t_cte_src) select j.name, cte.c from t_cte_join j join cte on j.id = cte.id order by j.id").
+		Check(testkit.Rows("alice ******", "bob ******"))
+	tk.MustQuery("with cte1 as (select c from t_cte_src), cte2 as (select c from cte1) select count(*) from cte2 where c = 'secret'").
+		Check(testkit.Rows("1"))
+	tk.MustQuery("with cte as (select c from t_cte_src) select count(*) from (select c from cte group by c) g").
+		Check(testkit.Rows("2"))
+
+	tk.MustGetErrCode("insert into t_cte_dst with cte as (select c from t_cte_src) select c from cte", errno.ErrAccessDeniedToMaskedColumn)
+}
+
+func TestMaskingPolicyCreateOrReplaceCoverage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_or_replace")
+	tk.MustExec("create table t_or_replace(id int primary key, c1 varchar(20), c2 varchar(20))")
+	tk.MustExec("insert into t_or_replace values (1, 'alpha', 'A1'), (2, 'bravo', 'B2')")
+
+	// OR REPLACE should create policy when policy does not exist.
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as c1 enable")
+	tk.MustQuery("select policy_name, column_name, expression, status, restrict_on from mysql.tidb_masking_policy where policy_name='p_or_replace'").
+		Check(testkit.Rows("p_or_replace c1 `c1` ENABLED NONE"))
+
+	// OR REPLACE and IF NOT EXISTS are mutually exclusive.
+	tk.MustGetErrCode(
+		"create or replace masking policy if not exists p_or_replace on t_or_replace(c1) as c1 enable",
+		errno.ErrWrongUsage,
+	)
+
+	// OR REPLACE can update status.
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as c1 disable")
+	tk.MustQuery("select expression, status from mysql.tidb_masking_policy where policy_name='p_or_replace'").
+		Check(testkit.Rows("`c1` DISABLED"))
+
+	// OR REPLACE can update RESTRICT ON.
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as c1 restrict on (insert_into_select) enable")
+	tk.MustQuery("select status, restrict_on from mysql.tidb_masking_policy where policy_name='p_or_replace'").
+		Check(testkit.Rows("ENABLED INSERT_INTO_SELECT"))
+
+	// OR REPLACE with the same policy name on a different column should fail.
+	tk.MustGetErrCode("create or replace masking policy p_or_replace on t_or_replace(c2) as c2 enable", errno.ErrMaskingPolicyExists)
+
+	// OR REPLACE should update updated_at and keep created_at unchanged.
+	tk.MustExec("do sleep(0.01)")
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as mask_full(c1, '*') enable")
+	tk.MustQuery("select timestampdiff(microsecond, created_at, updated_at) > 0 from mysql.tidb_masking_policy where policy_name='p_or_replace'").
+		Check(testkit.Rows("1"))
+
+	// OR REPLACE works for DISABLED -> ENABLED transition.
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as mask_full(c1, '*') disable")
+	tk.MustQuery("select c1 from t_or_replace order by id").Check(testkit.Rows("alpha", "bravo"))
+	tk.MustExec("create or replace masking policy p_or_replace on t_or_replace(c1) as mask_full(c1, '*') enable")
+	tk.MustQuery("select c1 from t_or_replace order by id").Check(testkit.Rows("*****", "*****"))
 }
 
 func TestMaskingPolicyCascadeCleanupOnDrop(t *testing.T) {

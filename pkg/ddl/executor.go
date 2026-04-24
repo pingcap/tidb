@@ -6348,6 +6348,15 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 	if stmt.OrReplace && stmt.IfNotExists {
 		return dbterror.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
 	}
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "CREATE MASKING POLICY"); err != nil {
+		return err
+	}
+	if stmt.OrReplace {
+		// OR REPLACE can update an existing policy, so ALTER privilege is required.
+		if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+			return err
+		}
+	}
 
 	tableIdent := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
 	if tableIdent.Schema.L == "" {
@@ -6389,6 +6398,9 @@ func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateM
 }
 
 func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "CREATE MASKING POLICY"); err != nil {
+		return err
+	}
 	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -6447,6 +6459,9 @@ LIMIT 1`,
 }
 
 func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+		return err
+	}
 	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -6508,6 +6523,9 @@ func (e *executor) AlterTableMaskingPolicy(ctx sessionctx.Context, ident ast.Ide
 }
 
 func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+		return err
+	}
 	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -6561,6 +6579,9 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 }
 
 func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "DROP MASKING POLICY"); err != nil {
+		return err
+	}
 	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
 	if err != nil {
 		return errors.Trace(err)
@@ -6603,6 +6624,18 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 		PolicyID:   policy.ID,
 	}
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+func requireMaskingPolicyDynamicPrivilege(ctx sessionctx.Context, dynamicPriv string) error {
+	checker := privilege.GetPrivilegeManager(ctx)
+	if checker == nil {
+		// Keep behavior for internal/bootstrap sessions without privilege manager.
+		return nil
+	}
+	if checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, dynamicPriv, false) {
+		return nil
+	}
+	return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or " + dynamicPriv)
 }
 
 func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, schemaID int64, policy *model.MaskingPolicyInfo, onExist OnExist) error {

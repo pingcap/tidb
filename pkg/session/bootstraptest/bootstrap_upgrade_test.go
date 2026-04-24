@@ -111,6 +111,19 @@ func revertVersionAndVariables(t *testing.T, se sessiontypes.Session, ver int) {
 	}
 }
 
+const defaultMockUpgradeToVerLatestKind = 0
+
+func enableMockUpgradeForTest(t *testing.T, kind int) {
+	t.Helper()
+	mock := true
+	session.WithMockUpgrade = &mock
+	session.MockUpgradeToVerLatestKind = kind
+	t.Cleanup(func() {
+		mock = false
+		session.MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatestKind
+	})
+}
+
 func TestUpgradeVersion66(t *testing.T) {
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -244,8 +257,7 @@ func TestUpgradeVersion75(t *testing.T) {
 }
 
 func TestUpgradeVersionMockLatest(t *testing.T) {
-	mock := true
-	session.WithMockUpgrade = &mock
+	enableMockUpgradeForTest(t, defaultMockUpgradeToVerLatestKind)
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -308,9 +320,7 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 
 // TestUpgradeVersionWithUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ with HTTP op.
 func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
-	mock := true
-	session.WithMockUpgrade = &mock
-	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
+	enableMockUpgradeForTest(t, session.MockSimpleUpgradeToVerLatest)
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -358,9 +368,7 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 
 // TestUpgradeVersionWithoutUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ without HTTP op.
 func TestUpgradeVersionWithoutUpgradeHTTPOp(t *testing.T) {
-	mock := true
-	session.WithMockUpgrade = &mock
-	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
+	enableMockUpgradeForTest(t, session.MockSimpleUpgradeToVerLatest)
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -482,9 +490,7 @@ func checkDDLJobExecSucc(t *testing.T, se sessiontypes.Session, jobID int64) {
 // Then we do re-upgrade(This operation will pause all DDL jobs by the system).
 func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	// Mock a general and a reorg job in bootstrap.
-	mock := true
-	session.WithMockUpgrade = &mock
-	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
+	enableMockUpgradeForTest(t, session.MockSimpleUpgradeToVerLatest)
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -755,8 +761,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	}
 	session.TestHook = tc
 
-	mock := true
-	session.WithMockUpgrade = &mock
+	enableMockUpgradeForTest(t, defaultMockUpgradeToVerLatestKind)
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)

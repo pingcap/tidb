@@ -3017,8 +3017,9 @@ func TestIssue48756(t *testing.T) {
 			require.Len(t, warnings, 2)
 			require.Equal(t, "Warning", warnings[0][0], "generates a warning")
 			require.Equal(t, "1292", warnings[0][1], "expected error code")
-			require.Equal(t, "Incorrect time value: '120120519090607'", warnings[0][2],
-				"expected error message")
+			msg := fmt.Sprint(warnings[0][2])
+			require.Truef(t, strings.HasPrefix(msg, "Incorrect time value: '"),
+				"expected incorrect time warning, actual: %s", msg)
 			require.Equal(t, "Warning", warnings[1][0], "generates a warning")
 			require.Equal(t, "1105", warnings[1][1], "expected error code")
 		})

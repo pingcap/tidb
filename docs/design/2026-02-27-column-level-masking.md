@@ -2,7 +2,7 @@
 
 - Author(s):     [@tiancaiamao](https://github.com/tiancaiamao)
 - PM:            Frank (feature spec owner)
-- Last updated:  2026-02-27
+- Last updated:  2026-04-16
 - Tracking:      FRM-2351
 - Discussion at: https://github.com/pingcap/tidb/issues/65744
 
@@ -22,12 +22,12 @@ The goal is to protect sensitive data exposure while keeping application SQL beh
 
 ## Background
 
-Enterprises in regulated industries (for example PCI-DSS workloads) require strict control over who can view original column values (PAN, PII, date attributes, etc.).
+Enterprises in regulated industries (for example workloads subject to the Payment Card Industry Data Security Standard (PCI DSS)) require strict control over who can view original column values (Primary Account Number (PAN), Personally Identifiable Information (PII), date attributes, etc.).
 TiDB currently lacks native server-side column masking semantics and depends on application-side SQL function usage, which is hard to enforce consistently.
 
 This proposal closes that gap with native masking policies enforced by TiDB.
 
-## Proposal
+## Design
 
 ### Goals
 
@@ -44,6 +44,7 @@ This proposal closes that gap with native masking policies enforced by TiDB.
 - Masking virtual/generated columns.
 - Full parity with Oracle syntax/API style.
 - Global detached policy binding model (not adopted due to complexity and error risk).
+- Managing cross-component user/role synchronization strategy for BR/TiCDC pipelines.
 
 ### Design overview
 
@@ -51,30 +52,98 @@ This proposal closes that gap with native masking policies enforced by TiDB.
 
 #### Policy model
 
-A masking policy is bound to one table column and contains:
+The implementation treats masking policy as a table-owned schema object, not as a detached global object.
+This is intentionally close to how engineers reason about index-like table attachments:
+create table first, then attach policy, and let table lifecycle drive policy lifecycle.
 
-- Policy identity (`policy_name`).
-- Target binding (`schema/table/column` and internal IDs).
-- SQL expression used for masking logic.
-- Optional restriction set (`RESTRICT ON`).
-- Runtime state (`ENABLED`/`DISABLED`).
+Each policy record carries:
 
-Each column can have at most one masking policy.
+- logical identity (`policy_name`)
+- target binding (`db/table/column`, plus `table_id/column_id`)
+- masking expression
+- optional `RESTRICT ON` operation set
+- runtime status (`ENABLED` / `DISABLED`)
+
+Key design constraints are:
+
+- masking policy scope is per-table, not global
+- `policy_name` uniqueness is enforced inside one table (`table_id + policy_name`)
+- one column can have at most one policy (`table_id + column_id`)
+
+Using per-table scope avoids global name collision and maps naturally to DDL ownership and cleanup logic.
 
 #### Evaluation semantics
 
-Masking is **AT RESULT**:
+Masking is implemented as **AT RESULT** rewriting. In other words, table data and predicate semantics stay unchanged, and masking is applied when producing query results.
 
-- Query planning/execution uses original values.
-- Storage values are unchanged.
-- Returned result values are masked based on policy expression and session identity.
+From an execution perspective:
 
-Implications:
+- planner/executor still use raw values for `JOIN`, `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, set operators
+- returned projection values are rewritten by policy expression based on runtime identity (`current_user()` / `current_role()`)
 
-- `JOIN` / `WHERE` / `GROUP BY` / `HAVING` / `ORDER BY` / set operators still compute on raw values.
-- Users with DML privileges can still write raw values unless blocked by `RESTRICT ON` rules.
+This choice minimizes optimizer/storage regressions and keeps compatibility risk lower than predicate-time rewriting.
+The tradeoff is that raw values can still participate in write/read transformations unless restricted by `RESTRICT ON`.
 
-### SQL syntax
+### Architecture and lifecycle design
+
+This section describes how the feature is expected to be wired in code, so implementation work can be split by ownership instead of by SQL statement list.
+
+#### DDL write path
+
+1. Parse DDL from either `CREATE MASKING POLICY ...` or `ALTER TABLE ... ADD/MODIFY/... MASKING POLICY`.
+2. Resolve target table/column and run target/expression validation.
+3. Persist policy metadata to `mysql.tidb_masking_policy` as the Single Source of Truth (SSOT).
+4. Emit schema change (`ActionCreateMaskingPolicy` / `ActionAlterMaskingPolicy` / `ActionDropMaskingPolicy`).
+5. Invalidate policy cache in `InfoSchema`; actual policy rows are reloaded lazily on next access.
+
+#### Query read path
+
+1. Build plan with current statement `InfoSchema` (or stale/snapshot `InfoSchema` when applicable).
+2. Resolve masking binding by `(table_id, column_id)`.
+3. Rewrite result projection with masking expression (AT RESULT behavior).
+4. For restricted operations (`INSERT ... SELECT`, `UPDATE ... (SELECT ...)`, `DELETE ... (SELECT ...)`, `CTAS`), run restriction check against masked source columns before execution.
+
+#### Metadata maintenance path
+
+- `RENAME TABLE` / `RENAME COLUMN` updates policy metadata binding names while keeping ID-based binding continuity.
+- `DROP COLUMN` / `DROP TABLE` performs synchronous policy cleanup in `mysql.tidb_masking_policy`.
+- Guardrails on masked-column type/length/precision changes prevent policy/column divergence.
+
+#### Component responsibilities
+
+- Parser/AST: SQL grammar and AST nodes for policy DDL + `RESTRICT ON`.
+- DDL: target validation, metadata writes, lifecycle synchronization, schema actions.
+- InfoSchema: delayed loading and cache invalidation model for masking metadata.
+- Planner/Executor: AT RESULT expression rewrite and restricted-operation enforcement.
+- BR/TiCDC integration: carry DDL semantics and preserve cross-cluster binding correctness.
+
+Primary code ownership map (for implementation navigation):
+
+- Parser/AST: `pkg/parser/parser.y`, `pkg/parser/ast/ddl.go`
+- DDL path: `pkg/ddl/executor.go`, `pkg/ddl/masking_policy.go`, `pkg/ddl/table.go`, `pkg/ddl/modify_column.go`
+- InfoSchema loading/cache: `pkg/infoschema/masking_policy.go`, `pkg/infoschema/masking_policy_loader.go`, `pkg/infoschema/builder.go`
+- Planner/executor behavior: `pkg/planner/core/point_get_plan.go`, `pkg/planner/core/masking_policy_restrict.go`, `pkg/executor/show.go`
+- BR integration (design target): restore should replay policy DDL semantics instead of raw row replay for `mysql.tidb_masking_policy`
+
+#### BR restore compatibility design
+
+Masking policy metadata uses `mysql.tidb_masking_policy` as the Single Source of Truth (SSOT), but restore cannot replay source table rows blindly.
+
+Reason:
+
+- BR restores schema first, then restores data.
+- Restored table and column IDs can differ from source cluster IDs.
+- Direct replay of source `mysql.tidb_masking_policy` rows can bind policies to wrong target IDs.
+
+Design:
+
+1. Read source policy rows as logical policy definitions.
+2. Reconstruct canonical `CREATE MASKING POLICY ...` semantics from those definitions.
+3. During restore schema phase, execute reconstructed masking-policy DDL against restored tables.
+4. Let target cluster generate correct target `table_id/column_id` bindings.
+5. Do not directly replay source physical rows for `mysql.tidb_masking_policy`.
+
+### SQL interface (reference)
 
 #### Create / add policy
 
@@ -98,7 +167,10 @@ Rules:
 
 - `OR REPLACE` and `IF NOT EXISTS` are mutually exclusive.
 - Temporary tables, system tables, and views are not supported.
-- One active policy per column.
+- One policy per column (`table_id + column_id` uniqueness).
+- Policy name uniqueness is table-scoped (`table_id + policy_name`).
+- `CREATE MASKING POLICY` and `ALTER TABLE ... ADD MASKING POLICY` are equivalent creation entry points (same internal object model and runtime behavior).
+- The only user-visible syntax difference is that `OR REPLACE` / `IF NOT EXISTS` are available on `CREATE MASKING POLICY`.
 
 #### Alter policy
 
@@ -124,8 +196,13 @@ SHOW MASKING POLICIES FOR <table_name>;
 SHOW MASKING POLICIES FOR <table_name> WHERE column_name = '<column_name>';
 ```
 
-`SHOW CREATE TABLE` returns policy name and state per column in compact form.
-Detailed expressions are exposed via `SHOW MASKING POLICIES ...`.
+Observation boundary:
+
+`SHOW CREATE TABLE` is kept intentionally lightweight: it only tells operators that a policy exists on a column and whether it is enabled.
+It does not try to serialize full policy definition.
+
+Full policy inspection is delegated to `SHOW MASKING POLICIES`, which is the detailed operational surface for expression/restrict metadata.
+This split keeps `SHOW CREATE TABLE` stable/readable while giving tooling a dedicated API for policy introspection.
 
 ### `RESTRICT ON` semantics
 
@@ -143,7 +220,9 @@ Example:
 RESTRICT ON (INSERT_INTO_SELECT, DELETE_SELECT)
 ```
 
-When restricted operations attempt to read from a masked column without required privileges, TiDB should reject execution with a masking access-denied error.
+At execution time, restricted operations are validated against source masked columns.
+The check is semantic: TiDB evaluates whether the current session is effectively allowed to read unmasked source data under the bound policy expression.
+If not allowed, the statement is rejected with masking access-denied error.
 
 ### Expression semantics
 
@@ -171,11 +250,10 @@ Default-deny behavior is recommended: users/roles not matching allow conditions 
   - `mask_char`: Single character used for masking (e.g., '*', 'X')
   - Example: `MASK_PARTIAL(credit_card, 6, 4, '*')` keeps first 6 and last 4 characters
 
-- `MASK_FULL(col, mask_char)` - Masks the entire column value by repeating the specified character
+- `MASK_FULL(col)` - Masks entire column value completely
   - `col`: The column to mask (string, datetime, or numeric types)
-  - `mask_char`: Single character used for masking (e.g., '*', 'X')
   - For datetime types: returns '1970-01-01' (date) or '1970-01-01 00:00:00' (datetime)
-  - Example: `MASK_FULL(ssn, 'X')` returns 'XXXXXXXXX' for a 9-digit SSN
+  - Example: `MASK_FULL(ssn)` returns 'XXXXXXXXX' for a 9-digit SSN
 
 - `MASK_NULL(col)` - Returns NULL for the column value
   - `col`: The column to mask (any supported type)
@@ -192,6 +270,7 @@ Primary supported scope:
 
 - String-like: `VARCHAR`, `CHAR`, `TEXT` family, `BLOB` family
 - Temporal: `DATE`, `TIME`, `DATETIME`, `TIMESTAMP`, `YEAR`
+- Numeric: integer / floating-point / decimal types
 
 For `LONGTEXT` and `BLOB` types, required minimum behavior is:
 
@@ -207,7 +286,7 @@ This prevents policy/column divergence and security gaps.
 
 ### System table design
 
-Masking metadata is stored in:
+Masking metadata is stored in table:
 
 - `mysql.tidb_masking_policy`
 
@@ -215,43 +294,91 @@ Reference schema:
 
 ```sql
 CREATE TABLE mysql.tidb_masking_policy (
-  policy_id BIGINT PRIMARY KEY,
-  schema_name VARCHAR(64) NOT NULL,
-  table_name VARCHAR(64) NOT NULL,
-  table_id BIGINT NOT NULL,
-  column_id BIGINT NOT NULL,
-  column_name VARCHAR(64) NOT NULL,
-  policy_name VARCHAR(64) NOT NULL,
-  masking_type VARCHAR(32) NOT NULL DEFAULT 'CUSTOM',
-  expression TEXT NOT NULL,
-  restrict_on VARCHAR(256) NOT NULL DEFAULT 'NONE',
-  status ENUM('ENABLED', 'DISABLED') DEFAULT 'ENABLED',
-  created_at TIMESTAMP DEFAULT NOW(),
-  created_by VARCHAR(128),
-  updated_by VARCHAR(128),
-  updated_at TIMESTAMP DEFAULT NOW() ON UPDATE NOW(),
-  UNIQUE KEY uk_table_policy (table_id, policy_name),
-  UNIQUE KEY uk_table_column (table_id, column_id),
-  INDEX idx_schema_table (schema_name, table_name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  policy_id bigint(64) NOT NULL AUTO_INCREMENT,
+  policy_name varchar(64) NOT NULL,
+  db_name varchar(64) NOT NULL,
+  table_name varchar(64) NOT NULL,
+  table_id bigint(64) NOT NULL,
+  column_name varchar(64) NOT NULL,
+  column_id bigint(64) NOT NULL,
+  expression text NOT NULL,
+  status varchar(16) NOT NULL,
+  masking_type varchar(32) NOT NULL,
+  restrict_on varchar(256) NOT NULL DEFAULT 'NONE',
+  created_at datetime(6) NOT NULL,
+  updated_at datetime(6) NOT NULL,
+  created_by varchar(288) NOT NULL DEFAULT '',
+  PRIMARY KEY(policy_id),
+  UNIQUE KEY uk_table_policy(table_id, policy_name),
+  UNIQUE KEY uk_table_column(table_id, column_id)
+);
 ```
 
-Notes:
+#### Design decision: Single Source of Truth (SSOT) in `mysql.tidb_masking_policy`
 
-- `table_id`/`column_id` are used as stable bindings across rename operations.
-- `masking_type` is a textual classification for observability (for example `MASK_PARTIAL`, `MASK_FULL`, `CUSTOM`), while runtime behavior is still determined by expression evaluation.
+The storage design intentionally uses `mysql.tidb_masking_policy` as the only runtime source of truth.
+Policy metadata is not duplicated into `TableInfo` and not maintained in a second metadata channel.
+
+Why this direction:
+
+- avoids dual-write ordering and recovery complexity leading to buggy implementation
+- avoids "meta copy A vs system-table copy B" divergence handling
+- tolerance of user misoperation like modify `mysql.tidb_masking_policy` directly
+- keeps policy evolution logic concentrated in one path
+
+This means policy is logically table-owned but physically stored in isolated system-table metadata (closer to privilege metadata storage style).
+Stable binding is still preserved through `table_id/column_id`, so rename operations keep policy association intact.
+On policy-related DDL, in-memory policy cache is invalidated and rebuilt on demand.
+
+### InfoSchema loading model
+
+There is a dependency cycle risk during bootstrap/schema construction:
+
+- reading `mysql.tidb_masking_policy` needs SQL execution
+- SQL execution needs usable `InfoSchema`
+- eager policy materialization during initial `InfoSchema` build would re-enter that dependency
+
+The implementation resolves this by delayed policy loading:
+
+1. build base `InfoSchema` first
+2. after base `InfoSchema` is usable, load policy rows through restricted SQL
+3. materialize in-memory map keyed by `(table_id, column_id)`
+
+This keeps initialization path acyclic while preserving runtime policy correctness.
+
+### Snapshot / stale-read compatibility contract
+
+Because policy metadata is externalized (not embedded in table meta), snapshot behavior must be explicitly defined:
+
+For any statement executed at read timestamp `T`, policy state resolution and table schema resolution must observe the same timeline.
+In practice, old schema + latest policy (or the reverse) is treated as invalid behavior.
+
+Expected behavior for engineering and tests:
+
+- no policy visible at `T` => no masking at `T`
+- enabled policy visible at `T` => masking evaluated by policy definition at `T`
+
+This contract is the compatibility baseline for `tidb_snapshot`, `AS OF TIMESTAMP`, stale transaction modes, and `tidb_read_staleness`.
 
 ### Authorization model
 
 ![Data Access Authorization Logic](./column-level-masking-2.png)
 
-Administrative privileges:
+Masking policy administration uses dynamic privileges at global scope (`ON *.*`):
 
-- `CREATE MASKING POLICY`
-- `ALTER MASKING POLICY`
-- `DROP MASKING POLICY`
+```sql
+GRANT CREATE MASKING POLICY ON *.* TO 'security_admin'@'%';
+GRANT ALTER MASKING POLICY ON *.* TO 'security_admin'@'%';
+GRANT DROP MASKING POLICY ON *.* TO 'security_admin'@'%';
+```
 
-`ALTER MASKING POLICY` covers:
+| Privilege | Description |
+| --- | --- |
+| `CREATE MASKING POLICY` | Allows creating new policy objects and binding them to columns via `ALTER TABLE ... ADD MASKING POLICY` or `CREATE MASKING POLICY`. |
+| `ALTER MASKING POLICY` | Allows modifying existing masking policy definitions, including `SET EXPRESSION`, `SET RESTRICT ON`, and `ENABLE` / `DISABLE`. |
+| `DROP MASKING POLICY` | Allows permanent removal of masking policies from columns/tables. |
+
+`ALTER MASKING POLICY` includes:
 
 - `SET EXPRESSION`
 - `SET RESTRICT ON`
@@ -278,52 +405,52 @@ This design prioritizes predictable SQL behavior and lower rollout risk:
 - Uses per-column binding with stable internal IDs to survive rename operations.
 - Adds optional `RESTRICT ON` controls to satisfy stricter compliance needs without forcing Oracle-like restrictions by default.
 
+### Design tradeoffs
+
+The chosen architecture has clear tradeoffs worth keeping explicit for maintainers:
+
+- Externalized policy storage improves metadata consistency handling, but requires careful cache/snapshot coordination.
+- AT RESULT masking keeps planner/storage behavior stable, but means data-flow restrictions must be handled explicitly through `RESTRICT ON`.
+- Lightweight `SHOW CREATE TABLE` improves readability, but detailed tooling must use `SHOW MASKING POLICIES`.
+
 ### Example Usage
 
 ```sql
 -- Example 1: MASK_PARTIAL - keep first 3 and last 3 characters of a phone number
-CREATE MASKING POLICY p_mask_phone AS
-  MASK_PARTIAL(phone, 3, 3, '*') ENABLE;
-
 CREATE TABLE contacts (
   id INT PRIMARY KEY,
   name VARCHAR(100),
   phone VARCHAR(20)
 );
 
-ALTER TABLE contacts
-  ADD MASKING POLICY p_mask_phone ON (phone) ENABLE;
+CREATE MASKING POLICY p_mask_phone
+  ON contacts(phone)
+  AS MASK_PARTIAL(phone, 3, 3, '*') ENABLE;
 
 INSERT INTO contacts VALUES (1, 'Alice', '1234567890');
 -- Query returns: '123****890' (masked in the middle)
 SELECT phone FROM contacts WHERE id = 1;
 
 -- Example 2: MASK_FULL - completely mask SSN
-CREATE MASKING POLICY p_mask_ssn AS
-  MASK_FULL(ssn, 'X') ENABLE;
+CREATE MASKING POLICY p_mask_ssn
+  ON employees(ssn)
+  AS MASK_FULL(ssn) ENABLE;
 
-ALTER TABLE employees
-  ADD MASKING POLICY p_mask_ssn ON (ssn) ENABLE;
-
--- Query returns: 'XXXXXXXXX' for any 9-digit SSN
+-- Query returns: masked SSN value
 SELECT ssn FROM employees WHERE id = 1;
 
 -- Example 3: MASK_DATE - normalize birth dates
-CREATE MASKING POLICY p_mask_birthdate AS
-  MASK_DATE(birth_date, '1970-01-01') ENABLE;
-
-ALTER TABLE users
-  ADD MASKING POLICY p_mask_birthdate ON (birth_date) ENABLE;
+CREATE MASKING POLICY p_mask_birthdate
+  ON users(birth_date)
+  AS MASK_DATE(birth_date, '1970-01-01') ENABLE;
 
 -- Query returns: '1970-01-01' for any birth date
 SELECT birth_date FROM users WHERE id = 1;
 
 -- Example 4: MASK_NULL - hide salary information
-CREATE MASKING POLICY p_mask_salary AS
-  MASK_NULL(salary) ENABLE;
-
-ALTER TABLE employees
-  ADD MASKING POLICY p_mask_salary ON (salary) ENABLE;
+CREATE MASKING POLICY p_mask_salary
+  ON employees(salary)
+  AS MASK_NULL(salary) ENABLE;
 
 -- Query returns: NULL for all salary values
 SELECT salary FROM employees WHERE id = 1;
@@ -332,11 +459,21 @@ SELECT salary FROM employees WHERE id = 1;
 ## Compatibility
 
 - Syntax and behavior are TiDB-specific (not MySQL-compatible feature parity).
-- BR/TiCDC can carry masking-related DDL and metadata, but user/role tables are not automatically synchronized.
-- Downstream clusters should provision corresponding users/roles to keep expected access behavior.
+- BR/TiCDC can carry masking-related DDL and metadata semantics to downstream clusters.
+- Runtime masking decisions depend on identity evaluation (`current_user()` / `current_role()`), so missing or diverged user/role state in downstream clusters can change effective masking behavior.
+- BR restore should rebuild masking policies by replaying `CREATE MASKING POLICY` semantics against restored target tables, instead of directly replaying source rows from `mysql.tidb_masking_policy` (restored table/column IDs may differ across clusters).
 - Dump/validation tools may see masked values if executed by non-exempt users.
 
+> **Caution**
+> User/role synchronization behavior in BR/TiCDC is out of scope of this masking-policy design.
+> This design only defines masking-policy semantics and metadata behavior.
+> Therefore, downstream masking validation MUST treat user/role alignment as a hard prerequisite.
+> If downstream user/role state is not explicitly reconciled and verified first, masking validation results MUST be considered invalid.
+> Current behavior can vary by component, version, and flags/filters (for example, BR `--with-sys-table` and table filters; TiCDC system-schema filtering), so operators MUST verify actual downstream user/role state in each deployment.
+
 ## Implementation
+
+This section is an implementation scope checklist. Architecture and lifecycle decisions are defined in `Architecture and lifecycle design` above.
 
 High-level implementation scope:
 
@@ -361,8 +498,8 @@ Non-functional expectations:
 
 ## References
 
-- PCI DSS v4.0.1 (PAN display masking requirements)
-- Oracle DBMS_REDACT documentation
-- IBM DB2 `CREATE MASK`
-- SQL Server Dynamic Data Masking
-- Snowflake masking policy syntax
+- [PCI DSS v4.0.1](https://www.pcisecuritystandards.org/standards/pci-dss/) (Primary Account Number (PAN) display masking requirements)
+- [Oracle DBMS_REDACT documentation](https://docs.oracle.com/en/database/oracle/oracle-database/21/arpls/DBMS_REDACT.html#GUID-61439993-CC76-40FF-AC6E-24A323947DA8)
+- [IBM DB2 `CREATE MASK`](https://www.ibm.com/docs/en/db2/12.1.0?topic=statements-create-mask)
+- [SQL Server Dynamic Data Masking](https://docs.microsoft.com/en-us/sql/relational-databases/security/dynamic-data-masking)
+- [Snowflake masking policy syntax](https://docs.snowflake.com/en/sql-reference/sql/create-masking-policy)

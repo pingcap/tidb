@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -82,6 +83,10 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 	tk.MustExec("create table normal (id int, a int, index(a))")
 	tk.MustExec("insert into normal values (1, 1)")
 	createTable(tk)
+
+	// Prime lazy-loaded masking policy metadata before blocking all TiKV requests.
+	// Otherwise planner may query mysql.tidb_masking_policy on first access and hang.
+	_ = domain.GetDomain(tk.Session()).InfoSchema().AllMaskingPolicies()
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcServerBusy", "return(true)"))
 	defer func() {

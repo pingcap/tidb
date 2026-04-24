@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1403,6 +1404,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			return errors.Trace(err)
 		}
 	}
+	ensureDBMapCoversTables(tableMap, dbMap)
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
 
@@ -1958,6 +1960,19 @@ func fallbackStatsTables(tables []*metautil.Table) []*metautil.Table {
 	return newTables
 }
 
+func shouldForceRestoreMaskingPolicySchema(cfg *RestoreConfig, dbName string) bool {
+	return cfg.WithSysTable && !cfg.NoSchema && strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O)
+}
+
+func shouldForceRestoreMaskingPolicyTable(cfg *RestoreConfig, dbName, tableName string) bool {
+	return shouldForceRestoreMaskingPolicySchema(cfg, dbName) && strings.EqualFold(tableName, "tidb_masking_policy")
+}
+
+func isTemporaryMaskingPolicyTable(dbName, tableName string) bool {
+	return strings.EqualFold(dbName, utils.TemporaryDBName(mysql.SystemDB).O) &&
+		strings.EqualFold(tableName, "tidb_masking_policy")
+}
+
 // filterRestoreFiles filters out dbs and tables.
 func filterRestoreFiles(
 	client *snapclient.SnapClient,
@@ -1972,7 +1987,9 @@ func filterRestoreFiles(
 		if checkpoint.IsCheckpointDB(dbName) {
 			continue
 		}
-		if !loadStatsPhysical && !utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
+		if !loadStatsPhysical &&
+			!utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) &&
+			!shouldForceRestoreMaskingPolicySchema(cfg, dbName) {
 			continue
 		}
 		dbMap[db.Info.ID] = db
@@ -1980,10 +1997,10 @@ func filterRestoreFiles(
 			if table.Info == nil {
 				continue
 			}
-			if !(loadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) {
-				if !utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
-					continue
-				}
+			if !shouldForceRestoreMaskingPolicyTable(cfg, dbName, table.Info.Name.O) &&
+				!(loadStatsPhysical && snapclient.IsStatsTemporaryTable(dbName, table.Info.Name.O)) &&
+				!utils.MatchTable(cfg.TableFilter, dbName, table.Info.Name.O, cfg.WithSysTable) {
+				continue
 			}
 
 			// Add table to tableMap using table ID as key
@@ -2107,6 +2124,23 @@ func processLogBackupTableHistory(
 				}
 			}
 		}
+	}
+}
+
+func ensureDBMapCoversTables(tableMap map[int64]*metautil.Table, dbMap map[int64]*metautil.Database) {
+	for tableID, table := range tableMap {
+		if table == nil || table.DB == nil || table.Info == nil {
+			continue
+		}
+		if _, ok := dbMap[table.DB.ID]; ok {
+			continue
+		}
+		dbMap[table.DB.ID] = &metautil.Database{Info: table.DB}
+		log.Warn("database missing after filtering, adding back from selected table",
+			zap.Int64("dbID", table.DB.ID),
+			zap.String("dbName", table.DB.Name.O),
+			zap.Int64("tableID", tableID),
+			zap.String("tableName", table.Info.Name.O))
 	}
 }
 
@@ -2392,13 +2426,25 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 		name := restore.UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}
 		tableNames[name] = true
 		for _, job := range allDDLJobs {
-			if job.BinlogInfo.TableInfo != nil {
-				name = restore.UniqueTableName{DB: job.SchemaName, Table: job.BinlogInfo.TableInfo.Name.String()}
-				if tableIDs[job.TableID] || tableNames[name] {
-					ddlJobs = append(ddlJobs, job)
+			jobTableName := ""
+			if job.BinlogInfo != nil && job.BinlogInfo.TableInfo != nil {
+				jobTableName = job.BinlogInfo.TableInfo.Name.String()
+			} else if job.TableName != "" {
+				// Some DDL jobs (for example masking policy DDL) don't persist BinlogInfo.TableInfo.
+				// Fall back to job.TableName so table-scope restore can still replay them.
+				jobTableName = job.TableName
+			}
+			name = restore.UniqueTableName{DB: job.SchemaName, Table: jobTableName}
+			if (job.TableID != 0 && tableIDs[job.TableID]) || (jobTableName != "" && tableNames[name]) {
+				ddlJobs = append(ddlJobs, job)
+				if job.TableID != 0 {
 					tableIDs[job.TableID] = true
-					// For truncate table, the id may be changed
+				}
+				// For truncate table, the id may be changed.
+				if job.BinlogInfo != nil && job.BinlogInfo.TableInfo != nil && job.BinlogInfo.TableInfo.ID != 0 {
 					tableIDs[job.BinlogInfo.TableInfo.ID] = true
+				}
+				if jobTableName != "" {
 					tableNames[name] = true
 				}
 			}
@@ -2624,7 +2670,7 @@ func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestore
 	if cfg.ExplicitFilter && isPiTR && !isIncremental {
 		for i, table := range tables {
 			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
-			if table.Info.IsSequence() {
+			if table.Info.IsSequence() || isTemporaryMaskingPolicyTable(table.DB.Name.O, table.Info.Name.O) {
 				continue
 			}
 			tableCopy := *table

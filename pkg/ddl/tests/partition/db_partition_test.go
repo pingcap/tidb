@@ -1443,6 +1443,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 				v2 := dom.InfoSchema().SchemaMetaVersion()
 				if v2 > v1 {
 					// Also wait for the new infoschema loading
+					v1 = v2
 					break
 				}
 			}
@@ -1473,8 +1474,20 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	waitFor(4, "delete reorganization")
 	tk2.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk2.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
-	err = tk2.ExecToErr(`insert into test_global values (15,15,15)`)
-	require.NoError(t, err)
+	// The global index cleanup is asynchronous in delete reorganization.
+	// Retry briefly to avoid a race with the old index entry cleanup.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		err = tk2.ExecToErr(`insert into test_global values (15,15,15)`)
+		if err == nil {
+			break
+		}
+		require.ErrorContains(t, err, "[kv:1062]Duplicate entry '15' for key 'test_global.idx_b'")
+		if time.Now().After(deadline) {
+			require.NoError(t, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	tk2.MustExec(`begin`)
 	tk3.MustExec(`commit`)
 	tk.MustExec(`commit`)

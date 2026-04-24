@@ -75,7 +75,14 @@ var allDDLs = []string{
 	"alter table mock_sys_t rename index rename_idx1 to rename_idx2",
 }
 
-var mockLatestVer = currentBootstrapVersion + 1
+var (
+	mockLatestVer = currentBootstrapVersion + 1
+	// baseCurrentBootstrapVersion is the normal bootstrap version without mock upgrade.
+	baseCurrentBootstrapVersion = currentBootstrapVersion
+	// Keep only one mock bootstrap callback even if multiple tests call
+	// addMockBootstrapVersionForTest() in the same process.
+	baseBootstrapVersionCount = len(bootstrapVersion)
+)
 
 func mockUpgradeToVerLatest(s types.Session, ver int64) {
 	logutil.BgLogger().Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
@@ -135,6 +142,10 @@ var TestHook = TestCallback{}
 
 // modifyBootstrapVersionForTest is used to test SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++.
 func modifyBootstrapVersionForTest(ver int64) {
+	if len(bootstrapVersion) > baseBootstrapVersionCount {
+		bootstrapVersion = bootstrapVersion[:baseBootstrapVersionCount]
+	}
+	currentBootstrapVersion = baseCurrentBootstrapVersion
 	if WithMockUpgrade == nil || !*WithMockUpgrade {
 		return
 	}
@@ -154,13 +165,16 @@ const (
 var MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatest
 
 func addMockBootstrapVersionForTest(s types.Session) {
+	if len(bootstrapVersion) > baseBootstrapVersionCount {
+		bootstrapVersion = bootstrapVersion[:baseBootstrapVersionCount]
+	}
+	currentBootstrapVersion = baseCurrentBootstrapVersion
 	if WithMockUpgrade == nil || !*WithMockUpgrade {
 		return
 	}
 
 	TestHook.OnBootstrapBefore(s)
 	if MockUpgradeToVerLatestKind == defaultMockUpgradeToVerLatest {
-		// TODO if we run all tests in this pkg, it will append again, and fail the test.
 		bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
 	} else {
 		bootstrapVersion = append(bootstrapVersion, mockSimpleUpgradeToVerLatest)

@@ -4,7 +4,7 @@ CREATE TABLE privilege__column_masking_policy.t_lifecycle(id INT PRIMARY KEY, c 
 INSERT INTO privilege__column_masking_policy.t_lifecycle VALUES (1, 'alpha'), (2, 'bravo');
 
 CREATE MASKING POLICY p_lifecycle ON privilege__column_masking_policy.t_lifecycle(c)
-  AS CASE WHEN current_user() IN ('root@%', 'cmp_allowed@%') THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+  AS CASE WHEN current_user() IN ('root@%', 'cmp_allowed@%') THEN c ELSE MASK_FULL(c) END ENABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle WHERE column_name = 'c';
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_lifecycle WHERE column_name = 'missing';
@@ -55,7 +55,7 @@ GRANT SELECT ON privilege__column_masking_policy.t_role TO cmp_role_user;
 GRANT cmp_unmask_role TO cmp_role_user;
 
 CREATE MASKING POLICY p_role ON privilege__column_masking_policy.t_role(c)
-  AS CASE WHEN current_role() != 'NONE' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+  AS CASE WHEN current_role() != 'NONE' THEN c ELSE MASK_FULL(c) END ENABLE;
 
 connect (cmp_role_conn, localhost, cmp_role_user,, privilege__column_masking_policy);
 connection cmp_role_conn;
@@ -79,7 +79,7 @@ CREATE USER cmp_runtime;
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE ON privilege__column_masking_policy.* TO cmp_runtime;
 
 CREATE MASKING POLICY p_restrict ON privilege__column_masking_policy.src_restrict(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END
   RESTRICT ON (INSERT_INTO_SELECT, UPDATE_SELECT, DELETE_SELECT) ENABLE;
 
 connect (cmp_runtime_conn, localhost, cmp_runtime,, privilege__column_masking_policy);
@@ -110,7 +110,7 @@ DROP TABLE IF EXISTS privilege__column_masking_policy.t_rename_new;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_rename;
 CREATE TABLE privilege__column_masking_policy.t_rename(id INT PRIMARY KEY, c VARCHAR(20));
 INSERT INTO privilege__column_masking_policy.t_rename VALUES (1, 'echo');
-CREATE MASKING POLICY p_rename ON privilege__column_masking_policy.t_rename(c) AS MASK_FULL(c, '*') ENABLE;
+CREATE MASKING POLICY p_rename ON privilege__column_masking_policy.t_rename(c) AS MASK_FULL(c) ENABLE;
 
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_rename;
 ALTER TABLE privilege__column_masking_policy.t_rename RENAME TO privilege__column_masking_policy.t_rename_new;
@@ -128,7 +128,7 @@ DROP TABLE privilege__column_masking_policy.t_cascade;
 # IT-MASK-P0-006 TestColumnMaskPolicyIfNotExists
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_ifne;
 CREATE TABLE privilege__column_masking_policy.t_ifne(c VARCHAR(20));
-CREATE MASKING POLICY p_ifne ON privilege__column_masking_policy.t_ifne(c) AS MASK_FULL(c, '*') ENABLE;
+CREATE MASKING POLICY p_ifne ON privilege__column_masking_policy.t_ifne(c) AS MASK_FULL(c) ENABLE;
 CREATE MASKING POLICY IF NOT EXISTS p_ifne ON privilege__column_masking_policy.t_ifne(c) AS c DISABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_ifne;
 ALTER TABLE privilege__column_masking_policy.t_ifne DROP MASKING POLICY p_ifne;
@@ -155,7 +155,7 @@ disconnect cmp_query_conn;
 
 connection default;
 ALTER TABLE privilege__column_masking_policy.t_query MODIFY MASKING POLICY p_query
-  SET EXPRESSION = CASE WHEN current_user() NOT IN ('cmp_query@%') THEN c ELSE MASK_FULL(c, '*') END;
+  SET EXPRESSION = CASE WHEN current_user() NOT IN ('cmp_query@%') THEN c ELSE MASK_FULL(c) END;
 
 connect (cmp_query_conn2, localhost, cmp_query,, privilege__column_masking_policy);
 connection cmp_query_conn2;
@@ -171,7 +171,7 @@ DROP TABLE IF EXISTS privilege__column_masking_policy.t_unsup;
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_drop_table;
 CREATE VIEW privilege__column_masking_policy.v_mask AS SELECT c FROM privilege__column_masking_policy.t_lifecycle;
 CREATE TABLE privilege__column_masking_policy.t_gen(a INT, b VARCHAR(20) GENERATED ALWAYS AS (CAST(a AS CHAR)) VIRTUAL);
-CREATE TABLE privilege__column_masking_policy.t_unsup(i INT);
+CREATE TABLE privilege__column_masking_policy.t_unsup(j JSON);
 
 CREATE GLOBAL TEMPORARY TABLE privilege__column_masking_policy.t_tmp(c VARCHAR(20)) ON COMMIT DELETE ROWS;
 --error 8006
@@ -185,7 +185,7 @@ CREATE MASKING POLICY p_system ON mysql.user(User) AS User;
 --error 3106
 CREATE MASKING POLICY p_gen ON privilege__column_masking_policy.t_gen(b) AS b;
 --error 8200
-CREATE MASKING POLICY p_unsup ON privilege__column_masking_policy.t_unsup(i) AS i;
+CREATE MASKING POLICY p_unsup ON privilege__column_masking_policy.t_unsup(j) AS j;
 
 CREATE TABLE privilege__column_masking_policy.t_drop_table(id INT PRIMARY KEY, c VARCHAR(20));
 CREATE MASKING POLICY p_drop_table ON privilege__column_masking_policy.t_drop_table(c) AS c ENABLE;
@@ -197,7 +197,7 @@ SELECT COUNT(*) FROM mysql.tidb_masking_policy WHERE policy_name = 'p_drop_table
 DROP TABLE IF EXISTS privilege__column_masking_policy.t_rename_col;
 CREATE TABLE privilege__column_masking_policy.t_rename_col(id INT PRIMARY KEY, c VARCHAR(20));
 INSERT INTO privilege__column_masking_policy.t_rename_col VALUES (1, 'foxtrot');
-CREATE MASKING POLICY p_rename_col ON privilege__column_masking_policy.t_rename_col(c) AS MASK_FULL(c, '*') ENABLE;
+CREATE MASKING POLICY p_rename_col ON privilege__column_masking_policy.t_rename_col(c) AS MASK_FULL(c) ENABLE;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_rename_col;
 ALTER TABLE privilege__column_masking_policy.t_rename_col RENAME COLUMN c TO c_new;
 SHOW MASKING POLICIES FOR privilege__column_masking_policy.t_rename_col;
@@ -236,9 +236,9 @@ GRANT ALTER ON privilege__column_masking_policy.t_auth_priv TO cmp_mask_creator;
 GRANT ALTER ON privilege__column_masking_policy.t_auth_priv TO cmp_mask_alter;
 GRANT ALTER ON privilege__column_masking_policy.t_auth_priv TO cmp_mask_drop;
 GRANT ALTER ON privilege__column_masking_policy.t_auth_priv TO cmp_mask_none;
-GRANT `CREATE MASKING POLICY` ON *.* TO cmp_mask_creator;
-GRANT `ALTER MASKING POLICY` ON *.* TO cmp_mask_alter;
-GRANT `DROP MASKING POLICY` ON *.* TO cmp_mask_drop;
+GRANT CREATE MASKING POLICY ON *.* TO cmp_mask_creator;
+GRANT ALTER MASKING POLICY ON *.* TO cmp_mask_alter;
+GRANT DROP MASKING POLICY ON *.* TO cmp_mask_drop;
 
 connect (cmp_mask_none_conn, localhost, cmp_mask_none,, privilege__column_masking_policy);
 connection cmp_mask_none_conn;
@@ -247,7 +247,7 @@ CREATE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS c;
 --error 1227
 ALTER TABLE t_auth_priv DISABLE MASKING POLICY p_auth_priv;
 --error 1227
-ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c, '*');
+ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c);
 --error 1227
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET RESTRICT ON (INSERT_INTO_SELECT);
 disconnect cmp_mask_none_conn;
@@ -256,9 +256,11 @@ connect (cmp_mask_creator_conn, localhost, cmp_mask_creator,, privilege__column_
 connection cmp_mask_creator_conn;
 CREATE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS c;
 --error 1227
+CREATE OR REPLACE MASKING POLICY p_auth_priv ON t_auth_priv(c) AS MASK_FULL(c);
+--error 1227
 ALTER TABLE t_auth_priv DISABLE MASKING POLICY p_auth_priv;
 --error 1227
-ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c, '*');
+ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c);
 --error 1227
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET RESTRICT ON (INSERT_INTO_SELECT);
 disconnect cmp_mask_creator_conn;
@@ -267,7 +269,7 @@ connect (cmp_mask_alter_conn, localhost, cmp_mask_alter,, privilege__column_mask
 connection cmp_mask_alter_conn;
 ALTER TABLE t_auth_priv DISABLE MASKING POLICY p_auth_priv;
 ALTER TABLE t_auth_priv ENABLE MASKING POLICY p_auth_priv;
-ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c, '*');
+ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET EXPRESSION = MASK_FULL(c);
 ALTER TABLE t_auth_priv MODIFY MASKING POLICY p_auth_priv SET RESTRICT ON (INSERT_INTO_SELECT, UPDATE_SELECT);
 --error 1227
 ALTER TABLE t_auth_priv DROP MASKING POLICY p_auth_priv;
@@ -288,7 +290,7 @@ CREATE USER cmp_prepare;
 GRANT SELECT ON privilege__column_masking_policy.t_prepare_invalidate TO cmp_prepare;
 
 CREATE MASKING POLICY p_prepare_invalidate ON privilege__column_masking_policy.t_prepare_invalidate(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 
 connect (cmp_prepare_conn, localhost, cmp_prepare,, privilege__column_masking_policy);
 connection cmp_prepare_conn;
@@ -315,7 +317,7 @@ INSERT INTO privilege__column_masking_policy.t_cross_session_rename VALUES (1, '
 CREATE USER cmp_rename;
 GRANT SELECT ON privilege__column_masking_policy.t_cross_session_rename TO cmp_rename;
 CREATE MASKING POLICY p_cross_session_rename ON privilege__column_masking_policy.t_cross_session_rename(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 
 connect (cmp_rename_conn, localhost, cmp_rename,, privilege__column_masking_policy);
 connection cmp_rename_conn;
@@ -363,7 +365,7 @@ INSERT INTO privilege__column_masking_policy.t_txn_mask VALUES (1, 'victor'), (2
 CREATE USER cmp_txn;
 GRANT SELECT ON privilege__column_masking_policy.t_txn_mask TO cmp_txn;
 CREATE MASKING POLICY p_txn_mask ON privilege__column_masking_policy.t_txn_mask(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 
 connect (cmp_txn_conn, localhost, cmp_txn,, privilege__column_masking_policy);
 connection cmp_txn_conn;
@@ -390,7 +392,7 @@ CREATE USER cmp_prepare_dml;
 GRANT SELECT, INSERT ON privilege__column_masking_policy.* TO cmp_prepare_dml;
 
 CREATE MASKING POLICY p_prepare_restrict ON privilege__column_masking_policy.src_prepare_restrict(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END
   RESTRICT ON (INSERT_INTO_SELECT) ENABLE;
 
 connect (cmp_prepare_dml_conn, localhost, cmp_prepare_dml,, privilege__column_masking_policy);
@@ -420,7 +422,7 @@ INSERT INTO privilege__column_masking_policy.t_prepare_toggle VALUES (1, 'xray')
 CREATE USER cmp_prepare_toggle;
 GRANT SELECT ON privilege__column_masking_policy.t_prepare_toggle TO cmp_prepare_toggle;
 CREATE MASKING POLICY p_prepare_toggle ON privilege__column_masking_policy.t_prepare_toggle(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 
 connect (cmp_prepare_toggle_conn, localhost, cmp_prepare_toggle,, privilege__column_masking_policy);
 connection cmp_prepare_toggle_conn;
@@ -450,7 +452,7 @@ INSERT INTO privilege__column_masking_policy.t_prepare_recreate VALUES (1, 'yank
 CREATE USER cmp_prepare_recreate;
 GRANT SELECT ON privilege__column_masking_policy.t_prepare_recreate TO cmp_prepare_recreate;
 CREATE MASKING POLICY p_prepare_recreate ON privilege__column_masking_policy.t_prepare_recreate(c)
-  AS MASK_FULL(c, '*') ENABLE;
+  AS MASK_FULL(c) ENABLE;
 
 connect (cmp_prepare_recreate_conn, localhost, cmp_prepare_recreate,, privilege__column_masking_policy);
 connection cmp_prepare_recreate_conn;
@@ -484,7 +486,7 @@ CREATE USER cmp_view;
 GRANT SELECT ON privilege__column_masking_policy.t_view_mask TO cmp_view;
 GRANT SELECT ON privilege__column_masking_policy.v_view_mask TO cmp_view;
 CREATE MASKING POLICY p_view_mask ON privilege__column_masking_policy.t_view_mask(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END ENABLE;
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END ENABLE;
 
 connect (cmp_view_conn, localhost, cmp_view,, privilege__column_masking_policy);
 connection cmp_view_conn;
@@ -505,7 +507,7 @@ INSERT INTO privilege__column_masking_policy.dst_prepare_ud VALUES ('plain');
 CREATE USER cmp_prepare_ud;
 GRANT SELECT, UPDATE, DELETE ON privilege__column_masking_policy.* TO cmp_prepare_ud;
 CREATE MASKING POLICY p_prepare_ud ON privilege__column_masking_policy.src_prepare_ud(c)
-  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c, '*') END
+  AS CASE WHEN current_user() = 'root@%' THEN c ELSE MASK_FULL(c) END
   RESTRICT ON (UPDATE_SELECT, DELETE_SELECT) ENABLE;
 
 connect (cmp_prepare_ud_conn, localhost, cmp_prepare_ud,, privilege__column_masking_policy);

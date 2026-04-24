@@ -117,7 +117,38 @@ func ifNullFoldHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool
 	return expr, false
 }
 
+// containsUnFoldableFunction checks if an expression or its children contain unFoldableFunctions
+// This is used to prevent CASE WHEN expressions containing functions like current_role() from
+// being constant-folded, since these functions need to be evaluated at runtime.
+func containsUnFoldableFunction(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if containsUnFoldableFunction(arg) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) {
+	// Check if any condition or result expression contains unFoldableFunctions
+	// like current_role(), current_user(), etc.
+	// If so, don't fold the CASE WHEN expression because these functions need
+	// to be evaluated at runtime, not at build time.
+	for _, arg := range expr.GetArgs() {
+		if containsUnFoldableFunction(arg) {
+			logutil.BgLogger().Debug("caseWhenHandler: skipping fold due to unFoldableFunction",
+				zap.String("expr", expr.ExplainInfo(ctx.GetEvalCtx())))
+			return expr, false
+		}
+	}
 	args, l := expr.GetArgs(), len(expr.GetArgs())
 	var isDeferred, isDeferredConst bool
 	for i := 0; i < l-1; i += 2 {
@@ -144,8 +175,8 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 			return foldedExpr, isDeferredConst
 		}
 	}
-	// If the number of arguments in casewhen is odd, and the previous conditions
-	// is false, then the folded else execution body is returned. otherwise
+	// If number of arguments in casewhen is odd, and the previous conditions
+	// is false, then the folded else execution body is returned. Otherwise
 	// the execution body of the else are folded and replaced.
 	if l%2 == 1 {
 		foldedExpr, isDeferred := foldConstant(ctx, args[l-1])
@@ -155,6 +186,11 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 			return foldedExpr, isDeferredConst
 		}
 		return foldedExpr, isDeferredConst
+	}
+	// If case expression contains deferred constants (e.g., ParamMarkers or DeferredExpr like user variables),
+	// return the expression as-is but marked as deferred, so it will be re-evaluated at runtime.
+	if isDeferredConst {
+		return expr, true
 	}
 	return expr, isDeferredConst
 }

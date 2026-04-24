@@ -103,6 +103,7 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
   fi
 
   run_step "ut_failpoint_enable" "make failpoint-enable"
+  run_step "ut_parser_privilege" "pushd pkg/parser >/dev/null && go test -run 'TestPrivilege' -count=1 ./... && popd >/dev/null"
   run_step "ut_ddl" "go test -run 'TestMaskingPolicy' -tags=intest,deadlock ./pkg/ddl"
   run_step "ut_meta" "go test -run 'TestMaskingPolicy' -tags=intest,deadlock ./pkg/meta"
   run_step "ut_planner" "go test -run 'TestMaskingPolicy' -tags=intest,deadlock ./pkg/planner/core"
@@ -110,6 +111,7 @@ if [[ "${SKIP_TESTS}" -eq 0 ]]; then
   run_step "ut_failpoint_disable" "make failpoint-disable"
 
   run_step "it_column_masking" "pushd tests/integrationtest >/dev/null && ./run-tests.sh -r privilege/column_masking_policy && popd >/dev/null"
+  run_step "it_column_masking_cte" "pushd tests/integrationtest >/dev/null && ./run-tests.sh -r privilege/column_masking_cte && popd >/dev/null"
   run_step "it_expression_builtin" "pushd tests/integrationtest >/dev/null && ./run-tests.sh -r expression/builtin && popd >/dev/null"
 
   if [[ "${WITH_LINT}" -eq 1 ]]; then

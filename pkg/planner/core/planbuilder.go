@@ -5570,6 +5570,10 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	case *ast.CreateMaskingPolicyStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CREATE MASKING POLICY")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CREATE MASKING POLICY"}, false, err)
+		if v.OrReplace {
+			err = plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ALTER MASKING POLICY")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ALTER MASKING POLICY"}, false, err)
+		}
 	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)

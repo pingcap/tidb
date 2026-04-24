@@ -379,6 +379,34 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	require.Equal(t, 7, len(ddlJobs))
 }
 
+func TestFilterDDLJobsWithMaskingPolicyDDL(t *testing.T) {
+	tables := []*metautil.Table{{
+		DB: &model.DBInfo{
+			ID:   1,
+			Name: pmodel.NewCIStr("test_db"),
+		},
+		Info: &model.TableInfo{
+			ID:   100,
+			Name: pmodel.NewCIStr("test_table"),
+		},
+	}}
+
+	allDDLJobs := []*model.Job{
+		{
+			SchemaName: "test_db",
+			TableID:    100,
+			TableName:  "test_table",
+			Type:       model.ActionCreateMaskingPolicy,
+			Query:      "CREATE MASKING POLICY p ON test_table(c1) AS c1;",
+			BinlogInfo: &model.HistoryInfo{SchemaVersion: 2},
+		},
+	}
+
+	ddlJobs := task.FilterDDLJobs(allDDLJobs, tables)
+	require.Len(t, ddlJobs, 1)
+	require.Equal(t, model.ActionCreateMaskingPolicy, ddlJobs[0].Type)
+}
+
 func TestFilterDDLJobByRules(t *testing.T) {
 	ddlJobs := []*model.Job{
 		{

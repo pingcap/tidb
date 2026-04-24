@@ -32,14 +32,19 @@ func (c *maskFullFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	}
 	argType := args[0].GetType(ctx.GetEvalCtx())
 	evalTp := argType.EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTp, evalTp, types.ETString)
+	argTps := []types.EvalType{evalTp}
+	if len(args) == 2 {
+		argTps = append(argTps, types.ETString)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
 	bf.tp = argType.Clone()
 	switch evalTp {
 	case types.ETString:
-		if types.IsBinaryStr(argType) || types.IsBinaryStr(args[1].GetType(ctx.GetEvalCtx())) {
+		maskArgIsBinary := len(args) == 2 && types.IsBinaryStr(args[1].GetType(ctx.GetEvalCtx()))
+		if types.IsBinaryStr(argType) || maskArgIsBinary {
 			return &builtinMaskFullBinarySig{bf}, nil
 		}
 		return &builtinMaskFullStringSig{bf}, nil
@@ -81,15 +86,19 @@ func (b *builtinMaskFullStringSig) evalString(ctx EvalContext, row chunk.Row) (s
 	if isNull || err != nil {
 		return "", true, err
 	}
-	mask, isNull, err := b.args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", true, err
+	maskRune := "X"
+	if len(b.args) == 2 {
+		mask, isNull, err := b.args[1].EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+		maskRunes := []rune(mask)
+		if len(maskRunes) != 1 {
+			return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
+		}
+		maskRune = string(maskRunes[0])
 	}
-	maskRunes := []rune(mask)
-	if len(maskRunes) != 1 {
-		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
-	}
-	return strings.Repeat(string(maskRunes[0]), len([]rune(str))), false, nil
+	return strings.Repeat(maskRune, len([]rune(str))), false, nil
 }
 
 type builtinMaskFullBinarySig struct {
@@ -110,12 +119,15 @@ func (b *builtinMaskFullBinarySig) evalString(ctx EvalContext, row chunk.Row) (s
 	if isNull || err != nil {
 		return "", true, err
 	}
-	mask, isNull, err := b.args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", true, err
-	}
-	if len(mask) != 1 {
-		return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
+	mask := "X"
+	if len(b.args) == 2 {
+		mask, isNull, err = b.args[1].EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", true, err
+		}
+		if len(mask) != 1 {
+			return "", true, errIncorrectArgs.GenWithStackByArgs("mask_full")
+		}
 	}
 	return strings.Repeat(mask, len(str)), false, nil
 }
@@ -189,7 +201,7 @@ func (b *builtinMaskFullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	if isNull || err != nil {
 		return 0, true, err
 	}
-	return 1970, false, nil
+	return 0, false, nil
 }
 
 type maskNullFunctionClass struct {
@@ -221,10 +233,11 @@ func (c *maskNullFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		}
 		return &builtinMaskNullDurationSig{bf}, nil
 	case types.ETInt:
-		if argType.GetType() != mysql.TypeYear {
-			return nil, errIncorrectArgs.GenWithStackByArgs("mask_null")
-		}
 		return &builtinMaskNullIntSig{bf}, nil
+	case types.ETReal:
+		return &builtinMaskNullRealSig{bf}, nil
+	case types.ETDecimal:
+		return &builtinMaskNullDecimalSig{bf}, nil
 	default:
 		return nil, errIncorrectArgs.GenWithStackByArgs("mask_null")
 	}
@@ -324,6 +337,52 @@ func (b *builtinMaskNullIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 		return 0, true, nil
 	}
 	return 0, true, nil
+}
+
+type builtinMaskNullRealSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskNullRealSig) Clone() builtinFunc {
+	newSig := &builtinMaskNullRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskNullRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	_, _, err := b.args[0].EvalReal(ctx, row)
+	if err != nil {
+		return 0, true, err
+	}
+	// mask_null(col) always return null, so it equal to just check error
+	return 0, true, nil
+}
+
+type builtinMaskNullDecimalSig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinMaskNullDecimalSig) Clone() builtinFunc {
+	newSig := &builtinMaskNullDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinMaskNullDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
+	_, isNull, err := b.args[0].EvalDecimal(ctx, row)
+	if err != nil {
+		return nil, true, err
+	}
+	if isNull {
+		return nil, true, nil
+	}
+	return nil, true, nil
 }
 
 type maskPartialFunctionClass struct {

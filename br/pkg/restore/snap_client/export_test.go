@@ -39,14 +39,15 @@ var (
 	RestoreLabelKey   = restoreLabelKey
 	RestoreLabelValue = restoreLabelValue
 
-	GetSSTMetaFromFile            = getSSTMetaFromFile
-	GetKeyRangeByMode             = getKeyRangeByMode
-	GetFileRangeKey               = getFileRangeKey
-	GetSortedPhysicalTables       = getSortedPhysicalTables
-	GetMinUserTableID             = getMinUserTableID
-	NotifyUpdateAllUsersPrivilege = notifyUpdateAllUsersPrivilege
-	GetSchemaVersionFromStatsMeta = getSchemaVersionFromStatsMeta
-	UpdateStatsMetaSchema         = updateStatsMetaSchema
+	GetSSTMetaFromFile                       = getSSTMetaFromFile
+	GetKeyRangeByMode                        = getKeyRangeByMode
+	GetFileRangeKey                          = getFileRangeKey
+	GetSortedPhysicalTables                  = getSortedPhysicalTables
+	GetMinUserTableID                        = getMinUserTableID
+	NotifyUpdateAllUsersPrivilege            = notifyUpdateAllUsersPrivilege
+	RestoreMaskingPoliciesFromTemporaryTable = restoreMaskingPoliciesFromTemporaryTable
+	GetSchemaVersionFromStatsMeta            = getSchemaVersionFromStatsMeta
+	UpdateStatsMetaSchema                    = updateStatsMetaSchema
 )
 
 // MockClient create a fake Client used to test.

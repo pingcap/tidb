@@ -21,13 +21,15 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
 const (
-	sysUserTableName = "user"
+	sysUserTableName          = "user"
+	sysMaskingPolicyTableName = "tidb_masking_policy"
 )
 
 var statsTables = map[string]map[string]struct{}{
@@ -48,16 +50,15 @@ var statsTables = map[string]map[string]struct{}{
 
 var renameableSysTables = map[string]map[string]struct{}{
 	"mysql": {
-		"bind_info":           {},
-		"user":                {},
-		"db":                  {},
-		"tables_priv":         {},
-		"columns_priv":        {},
-		"default_roles":       {},
-		"role_edges":          {},
-		"global_priv":         {},
-		"global_grants":       {},
-		"tidb_masking_policy": {}, // column-level masking policies (since v8.5.0)
+		"bind_info":     {},
+		"user":          {},
+		"db":            {},
+		"tables_priv":   {},
+		"columns_priv":  {},
+		"default_roles": {},
+		"role_edges":    {},
+		"global_priv":   {},
+		"global_grants": {},
 	},
 }
 
@@ -282,6 +283,99 @@ func removeUserResourceGroup(ctx context.Context, dbName string, execSQL func(co
 	return nil
 }
 
+func buildCreateMaskingPolicySQL(
+	policyName, dbName, tableName, columnName, expression, status, restrictOn string,
+) string {
+	sql := fmt.Sprintf(
+		"CREATE OR REPLACE MASKING POLICY %s ON %s(%s) AS %s",
+		utils.EncloseName(policyName),
+		utils.EncloseDBAndTable(dbName, tableName),
+		utils.EncloseName(columnName),
+		expression,
+	)
+
+	normalizedRestrictOn := strings.ToUpper(strings.TrimSpace(restrictOn))
+	if normalizedRestrictOn != "" && normalizedRestrictOn != "NONE" {
+		sql = fmt.Sprintf("%s RESTRICT ON (%s)", sql, normalizedRestrictOn)
+	}
+
+	normalizedStatus := strings.ToUpper(strings.TrimSpace(status))
+	if normalizedStatus == "ENABLED" {
+		normalizedStatus = "ENABLE"
+	} else if normalizedStatus == "DISABLED" {
+		normalizedStatus = "DISABLE"
+	}
+	if normalizedStatus != "ENABLE" {
+		normalizedStatus = "DISABLE"
+	}
+	return fmt.Sprintf("%s %s;", sql, normalizedStatus)
+}
+
+func restoreMaskingPoliciesFromTemporaryTable(
+	ctx context.Context,
+	sessionCtx sqlexec.RestrictedSQLExecutor,
+	tempDBName string,
+	withSysTable bool,
+	tableFilter filter.Filter,
+	execSQL func(context.Context, string) error,
+) error {
+	tempTable := utils.EncloseDBAndTable(tempDBName, sysMaskingPolicyTableName)
+
+	// Replay policies as canonical CREATE MASKING POLICY semantics instead of raw row replay.
+	// This lets target cluster bind table_id/column_id with its own IDs.
+	readPoliciesSQL := fmt.Sprintf(
+		`SELECT p.policy_name, p.db_name, p.table_name, p.column_name, p.expression, p.status, p.restrict_on
+FROM %s AS p
+JOIN information_schema.columns AS c
+  ON c.table_schema = p.db_name AND c.table_name = p.table_name AND c.column_name = p.column_name
+ORDER BY p.table_id, p.column_id, p.policy_id`,
+		tempTable,
+	)
+	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	rows, _, err := sessionCtx.ExecRestrictedSQL(
+		internalCtx,
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		readPoliciesSQL,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err) {
+			log.Info("skip restoring masking policies because temporary table doesn't exist",
+				zap.String("table", tempTable),
+				logutil.ShortError(err),
+			)
+			return nil
+		}
+		return errors.Trace(err)
+	}
+
+	for _, row := range rows {
+		dbName := row.GetString(1)
+		tableName := row.GetString(2)
+		// Respect restore filter (for example restore db/table) while still forcing
+		// masking metadata table ingestion from temporary mysql.
+		if !utils.MatchTable(tableFilter, dbName, tableName, withSysTable) {
+			continue
+		}
+		ddl := buildCreateMaskingPolicySQL(
+			row.GetString(0),
+			dbName,
+			tableName,
+			row.GetString(3),
+			row.GetString(4),
+			row.GetString(5),
+			row.GetString(6),
+		)
+		if err := execSQL(internalCtx, ddl); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func shouldForceMaskingPolicyRestore(sysDB, tableName string) bool {
+	return sysDB == mysql.SystemDB && tableName == sysMaskingPolicyTableName
+}
+
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
 func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter, loadSysTablePhysical bool) (rerr error) {
@@ -306,7 +400,13 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 		}
 	}()
 
-	if !f.MatchSchema(sysDB) || !rc.withSysTable {
+	if !rc.withSysTable {
+		log.Info("system database filtered out", zap.String("database", sysDB))
+		return nil
+	}
+
+	needRestoreSchema := f.MatchSchema(sysDB)
+	if !needRestoreSchema && sysDB != mysql.SystemDB {
 		log.Info("system database filtered out", zap.String("database", sysDB))
 		return nil
 	}
@@ -314,6 +414,19 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 	if !ok {
 		log.Info("system database not backed up, skipping", zap.String("database", sysDB))
 		return nil
+	}
+	if !needRestoreSchema && sysDB == mysql.SystemDB {
+		hasMaskingPolicyInBackup := false
+		for _, table := range originDatabase.Tables {
+			if table.Info != nil && table.Info.Name.L == sysMaskingPolicyTableName {
+				hasMaskingPolicyInBackup = true
+				break
+			}
+		}
+		if !hasMaskingPolicyInBackup {
+			log.Info("system database filtered out", zap.String("database", sysDB))
+			return nil
+		}
 	}
 	db, ok, err := rc.getSystemDatabaseByName(ctx, sysDB)
 	if err != nil {
@@ -328,19 +441,20 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 	tablesRestored := make([]string, 0, len(originDatabase.Tables))
 	for _, table := range originDatabase.Tables {
 		tableName := table.Info.Name
-		if f.MatchTable(sysDB, tableName.O) {
-			if loadSysTablePhysical && isRenameableSysTable(sysDB, tableName.O) {
-				continue
-			}
-			if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db); err != nil {
-				log.Warn("error during merging temporary tables into system tables",
-					logutil.ShortError(err),
-					zap.Stringer("table", tableName),
-				)
-				return errors.Annotatef(err, "error during merging temporary tables into system tables, table: %s", tableName)
-			}
-			tablesRestored = append(tablesRestored, tableName.L)
+		if !f.MatchTable(sysDB, tableName.O) && !shouldForceMaskingPolicyRestore(sysDB, tableName.L) {
+			continue
 		}
+		if loadSysTablePhysical && isRenameableSysTable(sysDB, tableName.O) {
+			continue
+		}
+		if err := rc.replaceTemporaryTableToSystable(ctx, table.Info, db, f); err != nil {
+			log.Warn("error during merging temporary tables into system tables",
+				logutil.ShortError(err),
+				zap.Stringer("table", tableName),
+			)
+			return errors.Annotatef(err, "error during merging temporary tables into system tables, table: %s", tableName)
+		}
+		tablesRestored = append(tablesRestored, tableName.L)
 	}
 	if err := rc.afterSystemTablesReplaced(ctx, sysDB, tablesRestored); err != nil {
 		return errors.Annotate(err, "error during extra works after system tables replaced")
@@ -409,7 +523,7 @@ func (rc *SnapClient) afterSystemTablesReplaced(ctx context.Context, db string, 
 }
 
 // replaceTemporaryTableToSystable replaces the temporary table to real system table.
-func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database) error {
+func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *model.TableInfo, db *database, tableFilter filter.Filter) error {
 	dbName := db.Name.L
 	tableName := ti.Name.L
 	execSQL := func(ctx context.Context, sql string) error {
@@ -455,6 +569,29 @@ func (rc *SnapClient) replaceTemporaryTableToSystable(ctx context.Context, ti *m
 		if err := removeUserResourceGroup(ctx, db.TemporaryName.L, execSQL); err != nil {
 			return err
 		}
+	}
+	if dbName == mysql.SystemDB && tableName == sysMaskingPolicyTableName {
+		// Skip when target cluster doesn't have mysql.tidb_masking_policy
+		// (for example, restoring to an older TiDB without masking policy feature).
+		if db.ExistingTables[tableName] == nil {
+			log.Info("skip restoring masking policies because target cluster doesn't support masking policy table",
+				zap.String("table", tableName),
+				zap.Stringer("database", db.Name),
+			)
+			return nil
+		}
+		if err := restoreMaskingPoliciesFromTemporaryTable(
+			ctx,
+			rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor(),
+			db.TemporaryName.L,
+			rc.withSysTable,
+			tableFilter,
+			execSQL,
+		); err != nil {
+			return err
+		}
+		// Policies are restored by replaying logical DDL semantics. Don't REPLACE source rows physically.
+		return nil
 	}
 
 	if db.ExistingTables[tableName] != nil {

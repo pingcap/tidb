@@ -112,6 +112,34 @@ func TestMaskingPolicyCurrentIdentityOperators(t *testing.T) {
 	tkUser.MustQuery("select c from t_identity").Check(testkit.Rows("secret"))
 }
 
+func TestMaskingPolicyCurrentRoleSwitchImmediate(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tkRoot := testkit.NewTestKit(t, store)
+	require.NoError(t, tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tkRoot.MustExec("use test")
+
+	tkRoot.MustExec("drop table if exists t_role_switch")
+	tkRoot.MustExec("drop user if exists u_role_switch")
+	tkRoot.MustExec("drop role if exists r_mask")
+	tkRoot.MustExec("create table t_role_switch(id int primary key, c varchar(20))")
+	tkRoot.MustExec("insert into t_role_switch values (1, 'secret')")
+	tkRoot.MustExec("create user u_role_switch")
+	tkRoot.MustExec("create role r_mask")
+	tkRoot.MustExec("grant r_mask to u_role_switch")
+	tkRoot.MustExec("grant select on test.t_role_switch to u_role_switch")
+	tkRoot.MustExec("create masking policy p_role_switch on t_role_switch(c) as case when current_role() = '`r_mask`@`%`' then c else mask_full(c, '*') end enable")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "u_role_switch", Hostname: "%"}, nil, nil, nil))
+	tkUser.MustExec("use test")
+	tkUser.MustExec("set role r_mask")
+	tkUser.MustQuery("select c from t_role_switch").Check(testkit.Rows("secret"))
+	tkUser.MustExec("set role none")
+	tkUser.MustQuery("select c from t_role_switch").Check(testkit.Rows("******"))
+	tkUser.MustExec("set role r_mask")
+	tkUser.MustQuery("select c from t_role_switch").Check(testkit.Rows("secret"))
+}
+
 func TestMaskingPolicyBatchPointGet(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
