@@ -261,7 +261,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		}
 
 		// Create and buffer the final chunk
-		whereClause := buildLowerBoundWhereClause(orderByColumns, previousBoundary)
+		whereClause := buildCursorWhereClause(orderByColumns, previousBoundary)
 		fullWhere := buildWhereCondition(conf, whereClause)
 		query := buildSelectQuery(db, tbl, selectField, "", fullWhere, orderByClause)
 		finalTask := d.newTaskTableData(meta, newTableData(query, selectLen, false), int(totalChunks), -1)

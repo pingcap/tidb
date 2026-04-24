@@ -259,13 +259,6 @@ func buildUpperBoundWhereClause(columnNames []string, upperBoundary []string) st
 	return strings.Join(conditions, " OR ")
 }
 
-// buildLowerBoundWhereClause builds a WHERE clause with only a lower bound using OR conditions
-// For composite keys: WHERE col1 > val1 OR (col1 = val1 AND col2 > val2) OR (col1 = val1 AND col2 = val2 AND col3 > val3) ...
-func buildLowerBoundWhereClause(columnNames []string, lowerBoundary []string) string {
-	// This is the same as buildCursorWhereClause for > condition
-	return buildCursorWhereClause(columnNames, lowerBoundary)
-}
-
 // buildBoundedWhereClause builds a WHERE clause with both bounds using OR conditions
 // For composite keys: WHERE (lower_conditions) AND (upper_conditions)
 func buildBoundedWhereClause(columnNames []string, lowerBoundary, upperBoundary []string) string {

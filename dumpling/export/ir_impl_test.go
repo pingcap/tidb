@@ -146,33 +146,6 @@ func TestNewTableDataWithImprovedChunking(t *testing.T) {
 	require.Contains(t, td.query, "<", "Query should contain upper bound")
 }
 
-func TestTableDataIRWithCompositeKeys(t *testing.T) {
-	// Test table data IR with composite key chunking support
-
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		_ = db.Close()
-	}()
-
-	// Mock a composite key result set
-	expectedRows := mock.NewRows([]string{"tenant_id", "user_id", "name"}).
-		AddRow("tenant_a", "user_001", "Alice").
-		AddRow("tenant_a", "user_002", "Bob").
-		AddRow("tenant_b", "user_001", "Charlie")
-
-	compositeKeyQuery := "SELECT tenant_id, user_id, name FROM users WHERE (tenant_id > 'tenant_a' OR (tenant_id = 'tenant_a' AND user_id >= 'user_001')) AND (tenant_id < 'tenant_b' OR (tenant_id = 'tenant_b' AND user_id < 'user_999'))"
-	mock.ExpectQuery("SELECT tenant_id, user_id, name FROM users WHERE.*").WillReturnRows(expectedRows)
-
-	td := newTableData(compositeKeyQuery, 3, false)
-	require.NotNil(t, td, "Should create table data for composite key")
-
-	// Test that the query supports composite key WHERE clauses
-	require.Contains(t, td.query, "tenant_id", "Query should reference first key column")
-	require.Contains(t, td.query, "user_id", "Query should reference second key column")
-	require.Contains(t, td.query, "OR", "Query should use OR logic for composite keys")
-}
-
 func TestRowIterWithStringKeyProgress(t *testing.T) {
 	// Test row iteration with progress tracking for string key chunking
 

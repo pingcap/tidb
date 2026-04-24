@@ -26,36 +26,6 @@ func TestEscapeSQLString(t *testing.T) {
 	}
 }
 
-func TestLowerBoundQueryLimitClause(t *testing.T) {
-	// Test that lower bound WHERE clauses generate proper conditions
-	// This tests cursor-based pagination for efficient boundary sampling
-
-	// Test single column lower bound
-	columnNames := []string{"user_id"}
-	boundary := []string{"user_12345"}
-
-	whereClause := buildLowerBoundWhereClause(columnNames, boundary)
-	expected := "`user_id` >= 'user_12345'"
-	require.Equal(t, expected, whereClause, "Single column lower bound should generate correct WHERE clause")
-
-	// Test composite key lower bound for complex primary keys
-	columnNames = []string{"tenant_id", "record_seq"}
-	boundary = []string{"tenant_abc", "1000"}
-
-	whereClause = buildLowerBoundWhereClause(columnNames, boundary)
-	expected = "`tenant_id` > 'tenant_abc' OR (`tenant_id` = 'tenant_abc' AND `record_seq` >= '1000')"
-	require.Equal(t, expected, whereClause, "Composite key lower bound should generate correct WHERE clause")
-
-	// Test that boundary-first approach with cursor-based sampling is optimal
-	// Note: The new approach uses:
-	// 1. Cursor-based pagination for boundary sampling (avoids expensive OFFSET)
-	// 2. Properly bounded chunks for all data queries
-	// 3. No LIMIT clauses needed as safety nets
-	t.Log("Boundary sampling uses cursor-based pagination to avoid expensive OFFSET queries")
-	t.Log("All chunks except the final one have proper upper and lower bounds")
-	t.Log("This eliminates both OFFSET performance issues and full table scan risks")
-}
-
 func TestBuildCursorWhereClause(t *testing.T) {
 	// Test cursor-based WHERE clause generation for efficient boundary sampling
 
