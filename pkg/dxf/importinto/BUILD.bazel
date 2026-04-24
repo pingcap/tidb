@@ -118,6 +118,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/domain/serverinfo",
         "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/mock",
         "//pkg/dxf/framework/planner",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",

@@ -20,15 +20,20 @@ import (
 	"strconv"
 	"testing"
 
+	frameworkmock "github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
@@ -278,6 +283,7 @@ func TestPostProcessTiCIFinishFailureDoesNotAbort(t *testing.T) {
 		ID:           101,
 		Name:         ast.NewCIStr("idx_fulltext"),
 		FullTextInfo: &model.FullTextIndexInfo{},
+		State:        model.StatePublic,
 	}
 	tableInfo := &model.TableInfo{
 		ID:         1,
@@ -300,6 +306,22 @@ func TestPostProcessTiCIFinishFailureDoesNotAbort(t *testing.T) {
 	}
 
 	err := executor.postProcess(context.Background(), &PostProcessStepMeta{TooManyConflictsFromIndex: true}, logger)
+	require.NoError(t, err)
+	require.Len(t, recorded.FilterMessage("failed to finish TiCI index upload for post process").All(), 1)
+
+	ctrl := gomock.NewController(t)
+	taskTbl := frameworkmock.NewMockTaskTable(ctrl)
+	taskTbl.EXPECT().WithNewSession(gomock.Any()).AnyTimes().DoAndReturn(func(fn func(sessionctx.Context) error) error {
+		return fn(nil)
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/skipPostProcessAlterTableMode", "return(true)")
+	core, recorded = observer.New(zap.DebugLevel)
+	logger = zap.New(core)
+	executor.taskTbl = taskTbl
+	executor.logger = logger
+	executor.taskMeta.Plan.Checksum = config.OpLevelOff
+
+	err = executor.postProcess(context.Background(), &PostProcessStepMeta{}, logger)
 	require.NoError(t, err)
 	require.Len(t, recorded.FilterMessage("failed to finish TiCI index upload for post process").All(), 1)
 }
