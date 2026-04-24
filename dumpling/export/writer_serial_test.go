@@ -88,7 +88,6 @@ func TestWriteInsert(t *testing.T) {
 	bf := NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
-	conf.IsStringChunking = false
 	m := newMetrics(conf.PromFactory, conf.Labels)
 	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 	require.NoError(t, err)
@@ -127,7 +126,6 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	bf := NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
-	conf.IsStringChunking = false
 	m := newMetrics(conf.PromFactory, conf.Labels)
 	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 	require.ErrorIs(t, err, rowErr)
@@ -161,7 +159,6 @@ func TestWriteInsertInCsv(t *testing.T) {
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
-	conf.IsStringChunking = false
 	m := newMetrics(cfg.PromFactory, conf.Labels)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 	require.Equal(t, uint64(4), n)
@@ -272,7 +269,6 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
-	conf.IsStringChunking = false
 	m := newMetrics(conf.PromFactory, conf.Labels)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 	require.Equal(t, uint64(3), n)
@@ -373,8 +369,7 @@ func TestSQLDataTypes(t *testing.T) {
 		bf := NewBufferWriter()
 
 		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
-		conf.IsStringChunking = false
-		m := newMetrics(conf.PromFactory, conf.Labels)
+			m := newMetrics(conf.PromFactory, conf.Labels)
 		n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), n)
@@ -473,7 +468,6 @@ func TestWriteInsertWithStatementSizeLimit(t *testing.T) {
 	// This should cause the writer to create multiple INSERT statements
 	statementSizeLimit := uint64(150) // Small enough to fit only 2-3 rows per statement
 	conf := configForWriteSQL(cfg, UnspecifiedSize, statementSizeLimit)
-	conf.IsStringChunking = false
 	m := newMetrics(conf.PromFactory, conf.Labels)
 
 	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
@@ -516,7 +510,6 @@ func TestWriteInsertWithoutStatementSizeLimit(t *testing.T) {
 
 	// No statement size limit
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
-	conf.IsStringChunking = false
 	m := newMetrics(conf.PromFactory, conf.Labels)
 
 	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)
@@ -555,7 +548,6 @@ func TestWriteInsertMultipleStatements(t *testing.T) {
 
 	// Small statement size to force multiple statements
 	conf := configForWriteSQL(cfg, UnspecifiedSize, 50)
-	conf.IsStringChunking = false
 	m := newMetrics(conf.PromFactory, conf.Labels)
 
 	n, err := WriteInsert(tcontext.Background(), conf, tableIR, tableIR, bf, m)

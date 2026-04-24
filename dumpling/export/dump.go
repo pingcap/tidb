@@ -672,7 +672,11 @@ func (d *Dumper) dumpTableData(tctx *tcontext.Context, conn *BaseConn, meta Tabl
 	}
 
 	// Update total rows
-	fieldName, _, _ := pickupPossibleField(tctx, meta, conn)
+	fields, _, _ := pickupPossibleField(tctx, meta, conn)
+	fieldName := ""
+	if len(fields) > 0 {
+		fieldName = fields[0]
+	}
 	c := estimateCount(tctx, meta.DatabaseName(), meta.TableName(), conn, fieldName, conf)
 	AddCounter(d.metrics.estimateTotalRowsCounter, float64(c))
 
@@ -795,9 +799,6 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	conf := d.conf
 	db, tbl := meta.DatabaseName(), meta.TableName()
 
-	// Initialize chunking mode to false (row chunking) by default
-	conf.IsStringChunking = false
-
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB &&
 		conf.ServerInfo.ServerVersion != nil &&
 		(conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 ||
@@ -825,60 +826,35 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		return err
 	}
 
-	field, isStringField, err := pickupPossibleField(tctx, meta, conn)
-	if err != nil || field == "" {
-		// skip split chunk logic if not found proper field
+	fields, isStringField, err := pickupPossibleField(tctx, meta, conn)
+	if err != nil || len(fields) == 0 {
 		tctx.L().Info("fallback to sequential dump due to no proper field. This won't influence the whole dump process",
 			zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
+	field := fields[0]
 
-	// For string fields, check if we have composite keys and get all fields
-	var fields []string
-	if isStringField {
-		// Get all fields for composite string keys
-		fields, _, err = pickupPossibleFieldsForStringChunking(tctx, meta, conn)
-		if err != nil || len(fields) == 0 {
-			tctx.L().Info("fallback to sequential dump due to no proper string fields. This won't influence the whole dump process",
-				zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
-			return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
-		}
-	} else {
-		// For numeric fields, use single field
-		fields = []string{field}
-	}
-
-	// Set chunking mode based on field analysis
-	conf.IsStringChunking = isStringField
-
-	// For string fields, use * for more accurate estimation
-	// This is especially important for composite string keys
+	// For composite string keys EXPLAIN on a single column under-estimates;
+	// use * so the row estimation covers the whole row.
 	estimateField := field
 	if isStringField {
 		estimateField = "*"
 	}
 
 	count := estimateCount(d.tctx, db, tbl, conn, estimateField, conf)
-	tctx.L().Info("get estimated rows count",
+	tctx.L().Debug("get estimated rows count",
 		zap.String("database", db),
 		zap.String("table", tbl),
 		zap.Uint64("estimateCount", count),
-		zap.String("field", field),
 		zap.Strings("fields", fields),
-		zap.String("estimateField", estimateField),
 		zap.Bool("isStringField", isStringField))
 
-	// If estimation returns 0, try a direct count for small tables
-	// This can happen when table statistics are not available
+	// EXPLAIN estimation can return 0 when statistics are absent (e.g. small
+	// or freshly-loaded tables). For string chunking fall back to COUNT(*)
+	// so the rest of this function can reason about a real row count.
 	if count == 0 && isStringField {
-		tctx.L().Info("estimation returned 0 for string field, attempting direct count",
-			zap.String("database", db),
-			zap.String("table", tbl))
-		// For test scenarios with small tables, we can afford a quick count
-		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", escapeString(db), escapeString(tbl))
-		if conf.Where != "" {
-			countQuery += " WHERE " + conf.Where // #nosec G202
-		}
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` %s",
+			escapeString(db), escapeString(tbl), buildWhereCondition(conf, ""))
 		var directCount sql.NullInt64
 		err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
 			if rows.Next() {
@@ -888,8 +864,6 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		}, func() {}, countQuery)
 		if err == nil && directCount.Valid && directCount.Int64 > 0 {
 			count = uint64(directCount.Int64)
-			tctx.L().Info("using direct count result",
-				zap.Uint64("directCount", count))
 		}
 	}
 
@@ -903,12 +877,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
 
-	// Handle string-based chunking
 	if isStringField {
-		tctx.L().Info("using string-based chunking",
-			zap.String("database", db),
-			zap.String("table", tbl),
-			zap.Strings("fields", fields))
 		return d.concurrentDumpStringFields(tctx, conn, meta, taskChan, fields, orderByClause, count)
 	}
 

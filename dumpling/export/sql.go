@@ -1296,23 +1296,29 @@ func simpleQueryWithArgs(ctx context.Context, conn *sql.Conn, handleOneRow func(
 	return errors.Annotatef(rows.Err(), "sql: %s, args: %s", query, args)
 }
 
-func pickupPossibleField(tctx *tcontext.Context, meta TableMeta, db *BaseConn) (string, bool, error) {
-	// try using _tidb_rowid first
+// pickupPossibleField selects columns to chunk on. It prefers a numeric
+// handle (_tidb_rowid or a numeric PK/UK), and falls back to the columns
+// of a string-or-mixed PK/UK when no numeric handle exists. The returned
+// isString is true when the first chunking column is a string type;
+// string chunking callers consume the full slice, numeric callers just
+// use the first element.
+func pickupPossibleField(tctx *tcontext.Context, meta TableMeta, db *BaseConn) ([]string, bool, error) {
 	if meta.HasImplicitRowID() {
-		return "_tidb_rowid", false, nil
+		return []string{"_tidb_rowid"}, false, nil
 	}
-	// try to use pk or uk
 	fieldName, err := getNumericIndex(tctx, db, meta)
 	if err != nil {
-		return "", false, err
+		return nil, false, err
 	}
-
-	// if fieldName == "", there is no proper index, try string chunking
-	if fieldName == "" {
-		return pickupPossibleFieldForStringChunking(tctx, meta, db)
+	if fieldName != "" {
+		return []string{fieldName}, false, nil
 	}
-
-	return fieldName, false, nil
+	// No numeric handle — try string / mixed composite index.
+	fields, isStrings, err := getStringOrNumericIndexColumns(tctx, db, meta)
+	if err != nil || len(fields) == 0 {
+		return nil, false, err
+	}
+	return fields, isStrings[0], nil
 }
 
 func estimateCount(tctx *tcontext.Context, dbName, tableName string, db *BaseConn, field string, conf *Config) uint64 {

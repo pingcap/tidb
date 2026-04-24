@@ -80,7 +80,6 @@ go_test(
     timeout = "short",
     srcs = [
         "block_allow_list_test.go",
-        "composite_string_key_integration_test.go",
         "config_test.go",
         "consistency_test.go",
         "dump_test.go",

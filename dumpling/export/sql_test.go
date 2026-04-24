@@ -1801,11 +1801,15 @@ func TestPickupPossibleField(t *testing.T) {
 			mock.ExpectQuery(query).WillReturnRows(rows)
 		}
 
-		field, _, err := pickupPossibleField(tctx, meta, baseConn)
+		fields, _, err := pickupPossibleField(tctx, meta, baseConn)
 		if expectedErr != nil {
 			require.ErrorIs(t, err, expectedErr)
 		} else {
 			require.NoError(t, err)
+			field := ""
+			if len(fields) > 0 {
+				field = fields[0]
+			}
 			require.Equal(t, testCase.expectedField, field)
 		}
 		require.NoError(t, mock.ExpectationsWereMet())

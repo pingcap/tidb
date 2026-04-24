@@ -10,37 +10,23 @@ import (
 	"go.uber.org/zap"
 )
 
-// concurrentDumpStringFields handles composite key chunking with multiple columns
+// concurrentDumpStringFields handles composite-key chunking where the
+// leading index column is a string. The caller (concurrentDumpTable) has
+// already decided the table is large enough to chunk, so no small-table
+// guard is needed here.
 func (d *Dumper) concurrentDumpStringFields(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task, fields []string, orderByClause string, estimatedCount uint64) error {
-	db, tbl := meta.DatabaseName(), meta.TableName()
-
-	// Calculate total count and chunk parameters
-	totalCount := int64(estimatedCount)
 	chunkSize := int64(d.conf.Rows)
-	if totalCount <= chunkSize {
-		tctx.L().Info("table too small for chunking, using sequential dump",
-			zap.String("database", db), zap.String("table", tbl))
-		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
-	}
-
-	// Calculate number of chunks
-	numChunks := (totalCount + chunkSize - 1) / chunkSize
+	numChunks := (int64(estimatedCount) + chunkSize - 1) / chunkSize
 	selectField, selectLen := meta.SelectedField(), meta.SelectedLen()
 
 	tctx.L().Info("starting streaming string-based chunking",
-		zap.String("database", db),
-		zap.String("table", tbl),
+		zap.String("database", meta.DatabaseName()),
+		zap.String("table", meta.TableName()),
 		zap.Strings("fields", fields),
-		zap.Int64("totalChunks", numChunks),
+		zap.Int64("estimatedChunks", numChunks),
 		zap.Int64("chunkSize", chunkSize))
 
-	// Stream chunk generation and task creation
 	return d.streamStringChunks(tctx, conn, meta, taskChan, fields, orderByClause, chunkSize, numChunks, selectField, selectLen)
-}
-
-// concurrentDumpStringField handles single column chunking (backward compatibility)
-func (d *Dumper) concurrentDumpStringField(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task, field, orderByClause string, estimatedCount uint64) error {
-	return d.concurrentDumpStringFields(tctx, conn, meta, taskChan, []string{field}, orderByClause, estimatedCount)
 }
 
 // streamStringChunks generates boundaries incrementally and sends tasks with buffering to handle last chunk detection
@@ -117,12 +103,6 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			d.chunkedTables.Delete(meta.ChunkKey())
 		}
 	}()
-
-	// Streaming boundary sampling and task creation
-	tctx.L().Info("starting streaming boundary sampling and task creation",
-		zap.String("database", db),
-		zap.String("table", tbl),
-		zap.Int64("estimatedChunks", numChunks))
 
 	var previousBoundary []string
 	// Continue boundary sampling until end of data (ignore numChunks estimate for streaming)
@@ -224,16 +204,14 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		}
 
 		if len(currentBoundary) == 0 {
-			tctx.L().Info("boundary sampling returned no results - reached end of data",
+			tctx.L().Debug("boundary sampling returned no results - reached end of data",
 				zap.String("database", db),
 				zap.String("table", tbl),
 				zap.Int64("chunkIndex", i))
 			break
 		}
 
-		tctx.L().Debug("sampled boundary successfully",
-			zap.String("database", db),
-			zap.String("table", tbl),
+		tctx.L().Debug("sampled boundary",
 			zap.Int64("boundaryIndex", i),
 			zap.Strings("boundary", currentBoundary))
 
@@ -273,11 +251,6 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 	// This happens if the last boundary sampling query returned no results,
 	// meaning we've reached the end of the table, but there might be a partial chunk left.
 	if len(previousBoundary) > 0 && totalChunks > 0 {
-		tctx.L().Info("dumping remaining data after last sampled boundary",
-			zap.String("database", db),
-			zap.String("table", tbl),
-			zap.Strings("lastBoundary", previousBoundary))
-
 		// Send previous buffered chunk (now we know it's not the last)
 		if err := sendBufferedChunk(false); err != nil {
 			return err
@@ -296,17 +269,8 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		totalChunks++
 		// The defer function will send this final chunk marked as last
 	} else if totalChunks == 0 {
-		// This block handles the case where no boundaries were found at all (e.g., very small table)
-		// and no previousBoundary was ever set.
-		tctx.L().Info("no boundaries found, dumping entire table as a single chunk",
-			zap.String("database", db),
-			zap.String("table", tbl))
-
-		var firstWhereClause string
-		if conf.Where != "" {
-			firstWhereClause = conf.Where
-		}
-		query := buildSelectQuery(db, tbl, selectField, "", firstWhereClause, orderByClause)
+		// No boundaries found at all — dump the whole table as one chunk.
+		query := buildSelectQuery(db, tbl, selectField, "", buildWhereCondition(conf, ""), orderByClause)
 		task := d.newTaskTableData(meta, newTableData(query, selectLen, false), 0, 1)
 
 		// Single chunk case - send immediately as we know it's the only one
@@ -320,7 +284,7 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 	tctx.L().Info("completed streaming chunking",
 		zap.String("database", db),
 		zap.String("table", tbl),
-		zap.Int64("totalChunks", totalChunks))
+		zap.Int64("chunks", totalChunks))
 
 	return nil
 }
