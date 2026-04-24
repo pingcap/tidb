@@ -742,6 +742,13 @@ func (d *Dumper) buildConcatTask(tctx *tcontext.Context, conn *BaseConn, meta Ta
 					task := <-tableChan
 					handleSubTask(task)
 				}
+				// concurrentDumpTable may have registered a chunkedTables entry
+				// for this meta, but handleSubTask intercepts every sub-task
+				// without bumping `finished`, so the inner defer leaves the
+				// entry behind with finished < sent. Drop it now so the concat
+				// (or fallback) task is counted exactly once via the
+				// no-tracking branch in startWriters.
+				d.chunkedTables.Delete(meta.ChunkKey())
 				if len(tableDataArr) <= 1 {
 					return nil, nil
 				}
@@ -1003,6 +1010,25 @@ func newTableChunkStat() *tableChunkStat {
 	}
 }
 
+// beginChunkTracking registers a chunk-stat entry for meta and returns a
+// finalizer that closes the producer side of the termination handshake. Use
+// this in producers that emit multiple TaskTableData tasks per table; without
+// it, every task hits the no-tracking branch in startWriters and
+// finishedTablesCounter is incremented once per chunk instead of once per
+// table.
+func (d *Dumper) beginChunkTracking(meta TableMeta) func() {
+	chunkStats := newTableChunkStat()
+	d.chunkedTables.Store(meta.ChunkKey(), chunkStats)
+	return func() {
+		chunkStats.finalized.Store(true)
+		if chunkStats.finished.Load() == chunkStats.sent.Load() {
+			if _, loaded := d.chunkedTables.LoadAndDelete(meta.ChunkKey()); loaded {
+				IncCounter(d.metrics.finishedTablesCounter)
+			}
+		}
+	}
+}
+
 func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn, db, tbl, field string) (minv, maxv *big.Int, err error) {
 	conf, zero := d.conf, &big.Int{}
 	query := fmt.Sprintf("SELECT MIN(`%s`),MAX(`%s`) FROM `%s`.`%s`",
@@ -1070,6 +1096,7 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 	if err != nil {
 		return err
 	}
+	defer d.beginChunkTracking(meta)()
 	return d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, handleVals, "", 0, len(handleVals)+1)
 }
 
@@ -1094,6 +1121,7 @@ func (d *Dumper) concurrentDumpTiDBPartitionTablesWithTableSample(tctx *tcontext
 		totalChunk += len(handleVals) + 1
 	}
 	startChunk := 0
+	defer d.beginChunkTracking(meta)()
 	for i, partition := range d.conf.Partitions {
 		err = d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, pkFields, cachedHandleVals[i], partition, startChunk, totalChunk)
 		if err != nil {
@@ -1127,16 +1155,7 @@ func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn 
 		cachedHandleVals[i] = handleVals
 	}
 
-	chunkStats := newTableChunkStat()
-	d.chunkedTables.Store(meta.ChunkKey(), chunkStats)
-	defer func() {
-		chunkStats.finalized.Store(true)
-		if chunkStats.finished.Load() == chunkStats.sent.Load() {
-			if _, loaded := d.chunkedTables.LoadAndDelete(meta.ChunkKey()); loaded {
-				IncCounter(d.metrics.finishedTablesCounter)
-			}
-		}
-	}()
+	defer d.beginChunkTracking(meta)()
 	for i, partition := range partitions {
 		err := d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, cachedHandleVals[i], partition, startChunkIdx, totalChunk)
 		if err != nil {
