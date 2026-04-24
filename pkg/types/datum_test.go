@@ -398,7 +398,9 @@ func TestEstimatedMemUsage(t *testing.T) {
 		NewBytesDatum(b),
 		NewDecimalDatum(newMyDecimal("1234.1234", t)),
 		NewMysqlEnumDatum(enum),
+		NewTimeDatum(NewTime(FromDate(2025, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, DefaultFsp)),
 	}
+	// Time packs into Datum.i, so KindMysqlTime adds no bytes beyond sizeOfEmptyDatum.
 	bytesConsumed := 10 * (len(datumArray)*sizeOfEmptyDatum +
 		sizeOfMyDecimal +
 		len(b)*2 +
@@ -679,11 +681,8 @@ func BenchmarkCompareDatumByReflect(b *testing.B) {
 }
 
 // BenchmarkDatumCopy exercises Datum.Copy on a heterogeneous slice that
-// contains a Time datum. This is the most direct measurement of Datum
-// struct size: every byte saved from the struct shows up in B/op here.
-// With Time packed into d.i, the KindMysqlTime branch of Copy is gone
-// and the per-copy allocation count drops by one vs. the old
-// interface-boxed representation.
+// contains a Time datum. With move of Time into d.i, it should be more efficient
+// both for the copying as well as for allocations.
 func BenchmarkDatumCopy(b *testing.B) {
 	src, _ := prepareCompareDatums()
 	dst := make([]Datum, len(src))
@@ -697,8 +696,7 @@ func BenchmarkDatumCopy(b *testing.B) {
 }
 
 // BenchmarkDatumSetMysqlTime asserts that SetMysqlTime is alloc-free.
-// With Time packed into d.i (rather than boxed through d.x any), every
-// call should be 0 B/op / 0 allocs/op.
+// Storing Time inline in d.i means every call should be 0 B/op / 0 allocs/op.
 func BenchmarkDatumSetMysqlTime(b *testing.B) {
 	t := NewTime(FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), mysql.TypeTimestamp, 6)
 	var d Datum
