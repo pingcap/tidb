@@ -191,7 +191,7 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 		}
 		for i, idx := range e.indexes {
 			if idx != nil && idx.Global {
-				keyRange, _ := distsql.IndexRangesToKVRanges(e.ctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, e.ranges[i])
+				keyRange, _ := distsql.IndexRangesToKVRangesWithDesc(e.ctx.GetDistSQLCtx(), e.table.Meta().ID, idx.ID, indexColDescFlags(idx), e.ranges[i])
 				e.partitionKeyRanges[i] = [][]kv.KeyRange{keyRange.FirstPartitionRange()}
 			} else {
 				for _, pKeyRanges := range tmpPartitionKeyRanges {
@@ -253,7 +253,7 @@ func (e *IndexMergeReaderExecutor) buildKeyRangesForTable(tbl table.Table) (rang
 			ranges = append(ranges, keyRanges)
 			continue
 		}
-		keyRange, err := distsql.IndexRangesToKVRanges(dctx, getPhysicalTableID(tbl), e.indexes[i].ID, e.ranges[i])
+		keyRange, err := distsql.IndexRangesToKVRangesWithDesc(dctx, getPhysicalTableID(tbl), e.indexes[i].ID, indexColDescFlags(e.indexes[i]), e.ranges[i])
 		if err != nil {
 			return nil, err
 		}

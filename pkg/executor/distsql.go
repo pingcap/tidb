@@ -336,7 +336,7 @@ func (e *IndexReaderExecutor) buildKVRangesForIndexReader() ([]kv.KeyRange, erro
 
 	results := make([]kv.KeyRange, 0, len(groupedRanges))
 	for _, ranges := range groupedRanges {
-		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, nil)
+		kvRanges, err := buildKeyRanges(e.dctx, ranges, e.partRangeMap, tableIDs, e.index.ID, indexColDescFlags(e.index), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -619,6 +619,7 @@ func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 	rangeOverrideForPartitionID map[int64][]*ranger.Range,
 	physicalIDs []int64,
 	indexID int64,
+	desc []bool,
 	memTracker *memory.Tracker,
 ) ([][]kv.KeyRange, error) {
 	results := make([][]kv.KeyRange, 0, len(physicalIDs))
@@ -633,7 +634,7 @@ func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 			}
 			results = append(results, rRanges.FirstPartitionRange())
 		} else {
-			singleRanges, err := distsql.IndexRangesToKVRangesWithInterruptSignal(dctx, physicalID, indexID, ranges, memTracker, nil)
+			singleRanges, err := distsql.IndexRangesToKVRangesWithDescAndInterruptSignal(dctx, physicalID, indexID, desc, ranges, memTracker, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -661,7 +662,7 @@ func (e *IndexLookUpExecutor) buildTableKeyRanges() (err error) {
 	kvRanges := make([][]kv.KeyRange, 0, len(groupedRanges))
 	physicalTblIDsForPartitionKVRanges := make([]int64, 0, len(tableIDs)*len(groupedRanges))
 	for _, ranges := range groupedRanges {
-		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, e.memTracker)
+		kvRange, err := buildKeyRanges(e.dctx, ranges, e.partitionRangeMap, tableIDs, e.index.ID, indexColDescFlags(e.index), e.memTracker)
 		if err != nil {
 			return err
 		}

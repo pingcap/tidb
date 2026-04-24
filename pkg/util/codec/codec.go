@@ -1608,6 +1608,34 @@ func peek(b []byte) (length int, err error) {
 		l, err = types.PeekBytesAsJSON(b)
 	case vectorFloat32Flag:
 		l, err = types.PeekBytesAsVectorFloat32(b)
+	// Descending-order flags (pingcap/tidb#2519). EncodeKeyWithDesc writes
+	// bitwise-complemented bytes, so the leading flag becomes ^original. We
+	// compute the length of the column exactly as for the ascending variant
+	// because complement preserves byte count. Variable-length types need to
+	// walk group markers in complement space — we do so by complementing a
+	// scratch copy of the body.
+	case ^NilFlag:
+		// NULL in descending encoding has no body bytes.
+	case ^intFlag, ^uintFlag, ^floatFlag, ^durationFlag:
+		l = 8
+	case ^bytesFlag:
+		tmp := make([]byte, len(b))
+		for i := range b {
+			tmp[i] = b[i] ^ 0xFF
+		}
+		l, err = peekBytes(tmp)
+	case ^compactBytesFlag:
+		tmp := make([]byte, len(b))
+		for i := range b {
+			tmp[i] = b[i] ^ 0xFF
+		}
+		l, err = peekCompactBytes(tmp)
+	case ^decimalFlag:
+		tmp := make([]byte, len(b))
+		for i := range b {
+			tmp[i] = b[i] ^ 0xFF
+		}
+		l, err = types.DecimalPeak(tmp)
 	default:
 		return 0, errors.Errorf("invalid encoded key flag %v", flag)
 	}

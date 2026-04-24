@@ -15,6 +15,7 @@
 package distsql
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"sort"
@@ -701,15 +702,31 @@ func PartitionHandlesToKVRanges(handles []kv.Handle) ([]kv.KeyRange, []int) {
 	return krs, hints
 }
 
-// IndexRangesToKVRanges converts index ranges to "KeyRange".
+// IndexRangesToKVRanges converts index ranges to "KeyRange". For indexes with
+// any descending-order column, use IndexRangesToKVRangesWithDesc.
 func IndexRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
-	return IndexRangesToKVRangesWithInterruptSignal(dctx, tid, idxID, ranges, nil, nil)
+	return IndexRangesToKVRangesWithDescAndInterruptSignal(dctx, tid, idxID, nil, ranges, nil, nil)
+}
+
+// IndexRangesToKVRangesWithDesc is like IndexRangesToKVRanges but threads a
+// per-column desc flag slice down to the byte encoder. Columns marked
+// descending are complemented and, if the resulting byte low/high pair is
+// inverted, automatically swapped. See EncodeIndexKeyWithDesc.
+func IndexRangesToKVRangesWithDesc(dctx *distsqlctx.DistSQLContext, tid, idxID int64, desc []bool, ranges []*ranger.Range) (*kv.KeyRanges, error) {
+	return IndexRangesToKVRangesWithDescAndInterruptSignal(dctx, tid, idxID, desc, ranges, nil, nil)
 }
 
 // IndexRangesToKVRangesWithInterruptSignal converts index ranges to "KeyRange".
 // The process can be interrupted by set `interruptSignal` to true.
 func IndexRangesToKVRangesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, tid, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
-	keyRanges, err := indexRangesToKVRangesForTablesWithInterruptSignal(dctx, []int64{tid}, idxID, ranges, memTracker, interruptSignal)
+	return IndexRangesToKVRangesWithDescAndInterruptSignal(dctx, tid, idxID, nil, ranges, memTracker, interruptSignal)
+}
+
+// IndexRangesToKVRangesWithDescAndInterruptSignal is the full-featured entry
+// point that takes both per-column desc flags and an interrupt signal. The
+// other IndexRangesToKVRanges* helpers delegate here with sensible defaults.
+func IndexRangesToKVRangesWithDescAndInterruptSignal(dctx *distsqlctx.DistSQLContext, tid, idxID int64, desc []bool, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
+	keyRanges, err := indexRangesToKVRangesForTablesWithInterruptSignal(dctx, []int64{tid}, idxID, desc, ranges, memTracker, interruptSignal)
 	if err != nil {
 		return nil, err
 	}
@@ -719,13 +736,19 @@ func IndexRangesToKVRangesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, t
 
 // IndexRangesToKVRangesForTables converts indexes ranges to "KeyRange".
 func IndexRangesToKVRangesForTables(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range) (*kv.KeyRanges, error) {
-	return indexRangesToKVRangesForTablesWithInterruptSignal(dctx, tids, idxID, ranges, nil, nil)
+	return indexRangesToKVRangesForTablesWithInterruptSignal(dctx, tids, idxID, nil, ranges, nil, nil)
 }
 
-// IndexRangesToKVRangesForTablesWithInterruptSignal converts indexes ranges to "KeyRange".
-// The process can be interrupted by set `interruptSignal` to true.
-func indexRangesToKVRangesForTablesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
-	return indexRangesToKVWithoutSplit(dctx, tids, idxID, ranges, memTracker, interruptSignal)
+// IndexRangesToKVRangesForTablesWithDesc is the desc-aware variant of
+// IndexRangesToKVRangesForTables.
+func IndexRangesToKVRangesForTablesWithDesc(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, desc []bool, ranges []*ranger.Range) (*kv.KeyRanges, error) {
+	return indexRangesToKVRangesForTablesWithInterruptSignal(dctx, tids, idxID, desc, ranges, nil, nil)
+}
+
+// indexRangesToKVRangesForTablesWithInterruptSignal converts index ranges to
+// "KeyRange". The process can be interrupted by setting `interruptSignal` to true.
+func indexRangesToKVRangesForTablesWithInterruptSignal(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, desc []bool, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
+	return indexRangesToKVWithoutSplit(dctx, tids, idxID, desc, ranges, memTracker, interruptSignal)
 }
 
 // CommonHandleRangesToKVRanges converts common handle ranges to "KeyRange".
@@ -782,7 +805,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.MetaOn
 	return true
 }
 
-func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
+func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, idxID int64, desc []bool, ranges []*ranger.Range, memTracker *memory.Tracker, interruptSignal *atomic.Value) (*kv.KeyRanges, error) {
 	krs := make([][]kv.KeyRange, len(tids))
 	for i := range krs {
 		krs[i] = make([]kv.KeyRange, 0, len(ranges))
@@ -796,7 +819,7 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
 	// check the interrupt signal periodically.
 	for i, ran := range ranges {
-		low, high, err := EncodeIndexKey(dctx, ran)
+		low, high, err := EncodeIndexKeyWithDesc(dctx, ran, desc)
 		if err != nil {
 			return nil, err
 		}
@@ -827,8 +850,30 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 	return kv.NewPartitionedKeyRanges(krs), nil
 }
 
-// EncodeIndexKey gets encoded keys containing low and high
+// EncodeIndexKey gets encoded keys containing low and high.
+// For indexes that contain descending-order columns, use EncodeIndexKeyWithDesc.
 func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) (low, high []byte, err error) {
+	return EncodeIndexKeyWithDesc(dctx, ran, nil)
+}
+
+// EncodeIndexKeyWithDesc encodes a range's bounds into the byte low/high pair
+// fed to TiKV, honoring per-column descending-order flags (pingcap/tidb#2519).
+//
+// When desc is nil or all-false the result is byte-identical to EncodeIndexKey:
+// no allocations beyond what the ascending path already needs, no semantic
+// change. When any column is descending, its memcomparable bytes are
+// bitwise-complemented so forward byte-order iteration yields the declared
+// direction.
+//
+// Descending encoding reverses comparison order, so a semantic range like
+// `col IN (low, high)` can encode to byte low ≥ byte high. If that happens
+// we swap the two byte strings and swap the LowExclude/HighExclude flags,
+// restoring a well-ordered [byteLow, byteHigh] pair before the usual
+// PrefixNext adjustments run. This one-shot swap is correct for single-
+// column DESC ranges and for composite ranges whose differentiating column
+// is DESC; point ranges (byteLow == byteHigh) skip the swap and behave
+// identically to the ascending path.
+func EncodeIndexKeyWithDesc(dctx *distsqlctx.DistSQLContext, ran *ranger.Range, desc []bool) (low, high []byte, err error) {
 	tz := time.UTC
 	errCtx := errctx.StrictNoWarningContext
 	if dctx != nil {
@@ -836,24 +881,66 @@ func EncodeIndexKey(dctx *distsqlctx.DistSQLContext, ran *ranger.Range) (low, hi
 		errCtx = dctx.ErrCtx
 	}
 
-	low, err = codec.EncodeKey(tz, nil, ran.LowVal...)
+	hasDesc := false
+	for _, d := range desc {
+		if d {
+			hasDesc = true
+			break
+		}
+	}
+
+	if !hasDesc {
+		low, err = codec.EncodeKey(tz, nil, ran.LowVal...)
+	} else {
+		low, err = codec.EncodeKeyWithDesc(tz, nil, desc, ran.LowVal...)
+	}
 	err = errCtx.HandleError(err)
 	if err != nil {
 		return nil, nil, err
 	}
-	if ran.LowExclude {
-		low = kv.Key(low).PrefixNext()
+	if !hasDesc {
+		high, err = codec.EncodeKey(tz, nil, ran.HighVal...)
+	} else {
+		high, err = codec.EncodeKeyWithDesc(tz, nil, desc, ran.HighVal...)
 	}
-	high, err = codec.EncodeKey(tz, nil, ran.HighVal...)
 	err = errCtx.HandleError(err)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if !ran.HighExclude {
+	lowExclude, highExclude := ran.LowExclude, ran.HighExclude
+	if hasDesc && bytes.Compare(low, high) > 0 {
+		// The semantic low encoded to a larger byte than the semantic high
+		// because descending columns flip byte ordering. Swap so the caller
+		// always sees a well-ordered [low, high] pair, and swap the exclude
+		// flags so PrefixNext gets applied to the correct side.
+		low, high = high, low
+		lowExclude, highExclude = highExclude, lowExclude
+	}
+
+	if lowExclude {
+		low = kv.Key(low).PrefixNext()
+	}
+	if !highExclude {
 		high = kv.Key(high).PrefixNext()
 	}
 	return low, high, nil
+}
+
+// indexDescFlags returns a per-column descending-order slice derived from
+// idxInfo, or nil when the index has no DESC columns. Returning nil lets
+// downstream encoders stay on the ascending fast path. Used at distsql
+// callsites that have an *IndexInfo in hand but were originally written
+// against the legacy idxID-only range helpers.
+func indexDescFlags(idxInfo *model.IndexInfo) []bool {
+	if idxInfo == nil || !idxInfo.HasDescColumn() {
+		return nil
+	}
+	desc := make([]bool, len(idxInfo.Columns))
+	for i, c := range idxInfo.Columns {
+		desc[i] = c.Desc
+	}
+	return desc
 }
 
 // BuildTableRanges returns the key ranges encompassing the entire table,
@@ -871,7 +958,7 @@ func BuildTableRanges(tbl *model.TableInfo) ([]kv.KeyRange, error) {
 		if idx.State != model.StatePublic || !idx.Global {
 			continue
 		}
-		idxRanges, err := IndexRangesToKVRanges(nil, tbl.ID, idx.ID, ranger.FullRange())
+		idxRanges, err := IndexRangesToKVRangesWithDesc(nil, tbl.ID, idx.ID, indexDescFlags(idx), ranger.FullRange())
 		if err != nil {
 			return nil, err
 		}
@@ -908,7 +995,7 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 			continue
 		}
 		ranges = ranger.FullRange()
-		idxRanges, err := IndexRangesToKVRanges(nil, tblID, index.ID, ranges)
+		idxRanges, err := IndexRangesToKVRangesWithDesc(nil, tblID, index.ID, indexDescFlags(index), ranges)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
