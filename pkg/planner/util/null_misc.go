@@ -62,7 +62,9 @@ import (
 // classify that exact value. This recovers cases such as COALESCE/IF/IFNULL
 // that may hide NULL but still collapse after nullification. The bridge stays
 // conservative for plan-cache-sensitive expressions by refusing to treat
-// ParamMarker/DeferredExpr values as static fold results.
+// ParamMarker/DeferredExpr values as static fold results. DeferredExpr can
+// still be inspected symbolically, but its runtime value must not be folded or
+// classified as a compile-time constant.
 
 // nullRejectProof holds the two proof results for a sub-expression.
 // See the file-level comment above for the full model.
@@ -71,7 +73,8 @@ type nullRejectProof struct {
 	mustNull bool
 }
 
-// allConstants checks whether the expression tree consists entirely of constants.
+// allConstants checks whether the expression tree can be attempted as a static
+// constant tree without lazy constants.
 func allConstants(ctx expression.BuildContext, expr expression.Expression) bool {
 	if expression.MaybeOverOptimized4PlanCache(ctx, expr) {
 		return false
@@ -85,18 +88,16 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 		}
 		return true
 	case *expression.Constant:
-		return true
+		return v.ParamMarker == nil && v.DeferredExpr == nil
 	}
 	return false
 }
 
 // IsNullRejected proves whether `predicate` can be TRUE after every column in
 // `innerSchema` is replaced with SQL NULL.
-func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression,
-	skipPlanCacheCheck bool) bool {
-	_ = skipPlanCacheCheck // kept for API compatibility; the new proof does not use EvaluateExprWithNull
+func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predicate expression.Expression) bool {
 	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
-	return proveNullRejected(ctx, innerSchema, predicate).nonTrue
+	return proveNullRejected(ctx, innerSchema, predicate, true).nonTrue
 }
 
 // proveNullRejected recursively proves the two proof bits for one expression.
@@ -119,13 +120,20 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 //	2 > 2
 //
 // so the predicate is nonTrue.
+//
+// allowNullifiedFold is false when proving a Constant.DeferredExpr. In that
+// mode the proof remains purely symbolic so execution-time dependent values are
+// not folded during optimization.
 func proveNullRejected(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
 	expr expression.Expression,
+	allowNullifiedFold bool,
 ) nullRejectProof {
-	if cons, ok := tryFoldNullifiedConstant(ctx, innerSchema, expr); ok {
-		return proofFromConstant(ctx, cons)
+	if allowNullifiedFold {
+		if cons, ok := tryFoldNullifiedConstant(ctx, innerSchema, expr); ok {
+			return proofFromConstant(ctx, cons)
+		}
 	}
 
 	switch x := expr.(type) {
@@ -141,9 +149,12 @@ func proveNullRejected(
 			return nullRejectProof{nonTrue: true, mustNull: true}
 		}
 	case *expression.Constant:
+		if x.ParamMarker == nil && x.DeferredExpr != nil {
+			return proveNullRejected(ctx, innerSchema, x.DeferredExpr, false)
+		}
 		return proofFromConstant(ctx, x)
 	case *expression.ScalarFunction:
-		return proveNullRejectedScalarFunc(ctx, innerSchema, x)
+		return proveNullRejectedScalarFunc(ctx, innerSchema, x, allowNullifiedFold)
 	}
 	return nullRejectProof{}
 }
@@ -162,18 +173,19 @@ func proveNullRejectedScalarFunc(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
 	expr *expression.ScalarFunction,
+	allowNullifiedFold bool,
 ) nullRejectProof {
 	switch expr.FuncName.L {
 	case ast.LogicAnd:
-		lhs := proveNullRejected(ctx, innerSchema, expr.GetArgs()[0])
-		rhs := proveNullRejected(ctx, innerSchema, expr.GetArgs()[1])
+		lhs := proveNullRejected(ctx, innerSchema, expr.GetArgs()[0], allowNullifiedFold)
+		rhs := proveNullRejected(ctx, innerSchema, expr.GetArgs()[1], allowNullifiedFold)
 		return nullRejectProof{
 			nonTrue:  lhs.nonTrue || rhs.nonTrue,
 			mustNull: lhs.mustNull && rhs.mustNull,
 		}
 	case ast.LogicOr:
-		lhs := proveNullRejected(ctx, innerSchema, expr.GetArgs()[0])
-		rhs := proveNullRejected(ctx, innerSchema, expr.GetArgs()[1])
+		lhs := proveNullRejected(ctx, innerSchema, expr.GetArgs()[0], allowNullifiedFold)
+		rhs := proveNullRejected(ctx, innerSchema, expr.GetArgs()[1], allowNullifiedFold)
 		return nullRejectProof{
 			nonTrue:  lhs.nonTrue && rhs.nonTrue,
 			mustNull: lhs.mustNull && rhs.mustNull,
@@ -190,25 +202,25 @@ func proveNullRejectedScalarFunc(
 		// NOT(TRUE) = FALSE, so it is null-rejected.
 		if child, ok := expr.GetArgs()[0].(*expression.ScalarFunction); ok && child.FuncName.L == ast.IsNull {
 			return nullRejectProof{
-				nonTrue: proveNullRejected(ctx, innerSchema, child.GetArgs()[0]).mustNull,
+				nonTrue: proveNullRejected(ctx, innerSchema, child.GetArgs()[0], allowNullifiedFold).mustNull,
 			}
 		}
 		// General NOT: NOT(NULL) = NULL (nonTrue), but NOT(FALSE) = TRUE
 		// (not nonTrue). So nonTrue requires child.mustNull, not just
 		// child.nonTrue.
-		child := proveNullRejected(ctx, innerSchema, expr.GetArgs()[0])
+		child := proveNullRejected(ctx, innerSchema, expr.GetArgs()[0], allowNullifiedFold)
 		return nullRejectProof{
 			nonTrue:  child.mustNull,
 			mustNull: child.mustNull,
 		}
 	case ast.In:
-		return proveNullRejectedIn(ctx, innerSchema, expr)
+		return proveNullRejectedIn(ctx, innerSchema, expr, allowNullifiedFold)
 	case ast.IsNull:
 		return nullRejectProof{}
 	}
 
 	if mode, ok := nullRejectRejectNullTests[expr.FuncName.L]; ok {
-		child := proveNullRejected(ctx, innerSchema, expr.GetArgs()[0])
+		child := proveNullRejected(ctx, innerSchema, expr.GetArgs()[0], allowNullifiedFold)
 		return nullRejectProof{
 			nonTrue:  child.mustNull,
 			mustNull: child.mustNull && mode == nullRejectTestKeepsNull,
@@ -217,7 +229,7 @@ func proveNullRejectedScalarFunc(
 
 	if _, ok := nullRejectNullPreservingFunctions[expr.FuncName.L]; ok {
 		for _, arg := range expr.GetArgs() {
-			if proveNullRejected(ctx, innerSchema, arg).mustNull {
+			if proveNullRejected(ctx, innerSchema, arg, allowNullifiedFold).mustNull {
 				return nullRejectProof{nonTrue: true, mustNull: true}
 			}
 		}
@@ -232,18 +244,19 @@ func proveNullRejectedIn(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
 	expr *expression.ScalarFunction,
+	allowNullifiedFold bool,
 ) nullRejectProof {
 	args := expr.GetArgs()
 	if len(args) == 0 {
 		return nullRejectProof{}
 	}
-	valueProof := proveNullRejected(ctx, innerSchema, args[0])
+	valueProof := proveNullRejected(ctx, innerSchema, args[0], allowNullifiedFold)
 	if valueProof.mustNull {
 		return nullRejectProof{nonTrue: true, mustNull: true}
 	}
 	allListMustNull := true
 	for _, arg := range args[1:] {
-		if !proveNullRejected(ctx, innerSchema, arg).mustNull {
+		if !proveNullRejected(ctx, innerSchema, arg, allowNullifiedFold).mustNull {
 			allListMustNull = false
 			break
 		}

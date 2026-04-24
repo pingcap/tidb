@@ -3422,9 +3422,8 @@ explain format='plan_tree' SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(
 id	task	access object	operator info
 Selection	root		not(istrue_with_null(plus(0, and(eq(planner__core__integration.t1.a, 30), eq(planner__core__integration.t2.b, 1)))))
 └─MergeJoin	root		left outer join, left side:TableReader, left key:planner__core__integration.t1.a, right key:planner__core__integration.t2.a
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(istrue_with_null(plus(0, and(eq(planner__core__integration.t2.a, 30), eq(planner__core__integration.t2.b, 1)))))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
 SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));

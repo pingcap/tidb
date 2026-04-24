@@ -163,7 +163,48 @@ func getStore(path string) (storeapi.Storage, error) {
 
 // WriteParquetFile writes a simple Parquet file with the specified columns and number of rows.
 // It's used for test and DON'T use this function to generate large Parquet files.
-func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...parquet.WriterProperty) error {
+func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int, addOpts ...any) error {
+	fields := make([]schema.Node, len(pcolumns))
+	opts := make([]parquet.WriterProperty, 0, len(pcolumns)*2)
+	for i, pc := range pcolumns {
+		typeLen := -1
+		if pc.TypeLen > 0 {
+			typeLen = pc.TypeLen
+		}
+		field, err := schema.NewPrimitiveNodeConverted(
+			pc.Name,
+			parquet.Repetitions.Optional,
+			pc.Type, pc.Converted,
+			typeLen, pc.Precision, pc.Scale,
+			-1,
+		)
+		if err != nil {
+			return err
+		}
+		fields[i] = field
+		opts = append(opts, parquet.WithDictionaryFor(pc.Name, true))
+		opts = append(opts, parquet.WithCompressionFor(pc.Name, compress.Codecs.Snappy))
+	}
+
+	var writerOpts []file.WriteOption
+	for _, opt := range addOpts {
+		switch v := opt.(type) {
+		case parquet.WriterProperty:
+			opts = append(opts, v)
+		case file.WriteOption:
+			writerOpts = append(writerOpts, v)
+		default:
+			return fmt.Errorf("unsupported parquet writer option type %T", opt)
+		}
+	}
+	props := parquet.NewWriterProperties(opts...)
+	writerOpts = append(writerOpts, file.WithWriterProps(props))
+
+	node, err := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
+	if err != nil {
+		return err
+	}
+
 	s, err := getStore(path)
 	if err != nil {
 		return err
@@ -174,30 +215,7 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int,
 	}
 	wrapper := &writeWrapper{Writer: writer}
 
-	fields := make([]schema.Node, len(pcolumns))
-	opts := make([]parquet.WriterProperty, 0, len(pcolumns)*2)
-	for i, pc := range pcolumns {
-		typeLen := -1
-		if pc.TypeLen > 0 {
-			typeLen = pc.TypeLen
-		}
-		if fields[i], err = schema.NewPrimitiveNodeConverted(
-			pc.Name,
-			parquet.Repetitions.Optional,
-			pc.Type, pc.Converted,
-			typeLen, pc.Precision, pc.Scale,
-			-1,
-		); err != nil {
-			return err
-		}
-		opts = append(opts, parquet.WithDictionaryFor(pc.Name, true))
-		opts = append(opts, parquet.WithCompressionFor(pc.Name, compress.Codecs.Snappy))
-	}
-
-	node, _ := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
-	opts = append(opts, addOpts...)
-	props := parquet.NewWriterProperties(opts...)
-	pw := file.NewParquetWriter(wrapper, node, file.WithWriterProps(props))
+	pw := file.NewParquetWriter(wrapper, node, writerOpts...)
 	//nolint: errcheck
 	defer pw.Close()
 

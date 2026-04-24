@@ -911,6 +911,12 @@ func ReadBackupMeta(
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptBackupMeta, backupMeta); err != nil {
+		if cfg.CheckRequirements {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", zap.Error(err))
+	}
 	return u, s, backupMeta, nil
 }
 

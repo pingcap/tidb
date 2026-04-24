@@ -32,9 +32,10 @@ import (
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints/checkpointspb"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
@@ -597,7 +598,7 @@ type TaskCheckpoint struct {
 
 // DB is the interface for a checkpoint database.
 type DB interface {
-	Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error
+	Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*importdef.DBInfo) error
 	TaskCheckpoint(ctx context.Context) (*TaskCheckpoint, error)
 	Get(ctx context.Context, tableName string) (*TableCheckpoint, error)
 	Close() error
@@ -719,7 +720,7 @@ func NewNullCheckpointsDB() *NullCheckpointsDB {
 }
 
 // Initialize implements the DB interface.
-func (*NullCheckpointsDB) Initialize(context.Context, *config.Config, map[string]*TidbDBInfo) error {
+func (*NullCheckpointsDB) Initialize(context.Context, *config.Config, map[string]*importdef.DBInfo) error {
 	return nil
 }
 
@@ -796,7 +797,7 @@ func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (
 }
 
 // Initialize implements the DB interface.
-func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
+func (cpdb *MySQLCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*importdef.DBInfo) error {
 	// We can have at most 65535 placeholders https://stackoverflow.com/q/4922345/
 	// Since this step is not performance critical, we just insert the rows one-by-one.
 	s := common.SQLWithRetry{DB: cpdb.db, Logger: log.Wrap(logutil.Logger(ctx))}
@@ -1266,7 +1267,7 @@ func (cpdb *FileCheckpointsDB) save() error {
 }
 
 // Initialize implements CheckpointsDB.Initialize.
-func (cpdb *FileCheckpointsDB) Initialize(_ context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
+func (cpdb *FileCheckpointsDB) Initialize(_ context.Context, cfg *config.Config, dbInfo map[string]*importdef.DBInfo) error {
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 

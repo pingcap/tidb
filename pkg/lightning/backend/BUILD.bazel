@@ -8,8 +8,8 @@ go_library(
     deps = [
         "//pkg/ingestor/engineapi",
         "//pkg/lightning/backend/encode",
-        "//pkg/lightning/checkpoints",
         "//pkg/lightning/common",
+        "//pkg/lightning/importdef",
         "//pkg/lightning/log",
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",

@@ -21,8 +21,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -51,17 +52,17 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 	// 2. initialize with checkpoint data.
 	cfg := newTestConfig()
 	cfg.TikvImporter.AddIndexBySQL = addIndexBySQL
-	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
+	err = cpdb.Initialize(ctx, cfg, map[string]*importdef.DBInfo{
 		"db1": {
 			Name: "db1",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"t1": {Name: "t1"},
 				"t2": {Name: "t2"},
 			},
 		},
 		"db2": {
 			Name: "db2",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"t3": {
 					Name: "t3",
 					Desired: &model.TableInfo{
