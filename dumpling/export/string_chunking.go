@@ -198,7 +198,13 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 				}
 			}
 			return nil
-		}, func() {}, sampleQuery)
+		}, func() {
+			// Reset between QuerySQL retries: drop any partial boundary the
+			// row callback may have written on the previous attempt, so the
+			// caller's len(currentBoundary)==0 check after the call reflects
+			// the *retried* attempt rather than stale state.
+			currentBoundary = nil
+		}, sampleQuery)
 
 		if err != nil {
 			tctx.L().Warn("failed to sample boundary, stopping boundary collection",
