@@ -3309,6 +3309,47 @@ func TestDescendingIndexSysvarIsCreateTimeOnly(t *testing.T) {
 	}
 }
 
+// TestDescOnClusteredPrimaryKeyIsRejected verifies the DDL guard that
+// refuses DESC on the columns of a clustered PRIMARY KEY. The PK columns
+// determine the row's physical key bytes; allowing DESC there would
+// require coordinated changes across many code paths that currently
+// assume the row key is ordered ascending. The DDL guard protects us
+// until that work is done.
+func TestDescOnClusteredPrimaryKeyIsRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_descending_index = on")
+	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@tidb_enable_clustered_index = ON")
+
+	// Sanity: sysvar is actually on for this session before exercising DDL.
+	tk2.MustQuery("select @@global.tidb_enable_descending_index").Check(testkit.Rows("1"))
+
+	// Multi-column PRIMARY KEY ... CLUSTERED with DESC must error.
+	tk2.MustExec("drop table if exists t_clustered_desc")
+	err := tk2.ExecToErr("create table t_clustered_desc (a int, b int, c int, primary key (a, b desc) clustered)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "DESC is not supported on the columns of a clustered PRIMARY KEY")
+
+	// Single-int PRIMARY KEY with DESC also rejected (PKIsHandle path).
+	err = tk2.ExecToErr("create table t_pk_handle_desc (a int, b int, primary key (a desc) clustered)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "DESC is not supported on the columns of a clustered PRIMARY KEY")
+
+	// NONCLUSTERED primary key with DESC is fine — at this layer it's
+	// just a unique secondary index.
+	tk2.MustExec("drop table if exists t_nonclustered_desc")
+	tk2.MustExec("create table t_nonclustered_desc (a int, b int, primary key (a desc) nonclustered)")
+
+	// Regular DESC index on a clustered table is fine — only the PK
+	// columns themselves are restricted.
+	tk2.MustExec("drop table if exists t_clustered_secondary_desc")
+	tk2.MustExec("create table t_clustered_secondary_desc (a varchar(10), b int, primary key (a) clustered, index idx_b (b desc))")
+}
+
 // TestExpressionIndexDescPersists verifies that DESC on an expression index
 // part is preserved end-to-end. The parser already accepts
 // `INDEX((expr) DESC)`; this test asserts the rest of the pipeline (DDL,

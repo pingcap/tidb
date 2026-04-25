@@ -1337,6 +1337,18 @@ func BuildTableInfo(
 			isSingleIntPK := isSingleIntPKFromTableInfo(constr, tbInfo)
 
 			if ShouldBuildClusteredIndex(ctx.GetClusteredIndexDefMode(), constr.Option, isSingleIntPK) {
+				// Reject DESC on the columns of a clustered PRIMARY KEY.
+				// For PKIsHandle (single-int PK) the column becomes the
+				// row's int handle directly and BuildIndexInfo is never
+				// invoked, so this guard catches that case. For
+				// IsCommonHandle the same check fires again inside
+				// BuildIndexInfo for defence-in-depth. See pingcap/tidb#2519.
+				for _, key := range constr.Keys {
+					if key.Desc {
+						return nil, errors.Errorf(
+							"DESC is not supported on the columns of a clustered PRIMARY KEY; either drop the DESC keyword or declare the primary key as NONCLUSTERED")
+					}
+				}
 				if isSingleIntPK {
 					tbInfo.PKIsHandle = true
 				} else {

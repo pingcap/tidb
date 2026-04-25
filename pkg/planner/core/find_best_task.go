@@ -1172,8 +1172,13 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		for ; colIdx < len(idxCols); colIdx++ {
 			// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
 			if idxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(idxCols[colIdx]) {
-				// Index columns beyond path.Index.Columns are the appended
-				// CommonHandle PK suffix, which is always ascending.
+				// Index columns at colIdx >= len(path.Index.Columns) are the
+				// appended CommonHandle PK suffix. DDL rejects DESC on the
+				// columns of a clustered PRIMARY KEY (see BuildIndexInfo in
+				// pkg/ddl/index.go), so those suffix columns are guaranteed
+				// to be ascending and the default below is safe. If that
+				// guard is ever loosened, this code must be updated to read
+				// per-column direction from the primary index metadata.
 				thisIdxDesc := false
 				if path.Index != nil && colIdx < len(path.Index.Columns) {
 					thisIdxDesc = path.Index.Columns[colIdx].Desc

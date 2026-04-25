@@ -441,6 +441,18 @@ func BuildIndexInfo(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Reject DESC on a clustered PRIMARY KEY. For PKIsHandle the PK column is
+	// the row's int handle itself (encoded ascending and never going through
+	// the DESC-aware index encoder), and for IsCommonHandle the PK columns
+	// determine the row-key byte order, which the common-handle range builder
+	// does not yet encode with per-column DESC awareness. Allowing DESC here
+	// would silently miscompare row keys, so error out at DDL time. A
+	// NONCLUSTERED primary key is encoded just like any unique secondary
+	// index and supports DESC normally.
+	if isPrimary && idxInfo.HasDescColumn() && (tblInfo.IsCommonHandle || tblInfo.PKIsHandle) {
+		return nil, errors.Errorf(
+			"DESC is not supported on the columns of a clustered PRIMARY KEY; either drop the DESC keyword or declare the primary key as NONCLUSTERED")
+	}
 	// Bump the index-metadata version when any descending column is present so
 	// that an older TiDB reading this schema refuses to serve queries against
 	// the index rather than returning wrong results — see IndexInfo.IsServable.
