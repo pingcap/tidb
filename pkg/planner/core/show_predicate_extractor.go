@@ -87,7 +87,7 @@ func (e *ShowBaseExtractor) ExplainInfo() string {
 	switch e.ShowStmt.Tp {
 	case ast.ShowVariables, ast.ShowColumns:
 		key = fieldKey
-	case ast.ShowTables, ast.ShowTableStatus:
+	case ast.ShowTables, ast.ShowMaterializedViews, ast.ShowMaterializedViewLogs, ast.ShowTableStatus:
 		key = tableKey
 	case ast.ShowDatabases:
 		key = databaseKey

@@ -650,6 +650,14 @@ func (e *ShowExec) fetchShowMaterializedViews(ctx context.Context) error {
 	}
 
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	var (
+		fieldFilter       string
+		fieldPatternsLike collate.WildcardPattern
+	)
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
 	type mvRow struct {
 		id   int64
 		name string
@@ -660,6 +668,12 @@ func (e *ShowExec) fetchShowMaterializedViews(ctx context.Context) error {
 			continue
 		}
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tbl.Name.O, "", mysql.AllPrivMask) {
+			continue
+		}
+		if fieldFilter != "" && tbl.Name.L != fieldFilter {
+			continue
+		}
+		if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(tbl.Name.L) {
 			continue
 		}
 		rows = append(rows, mvRow{id: tbl.ID, name: tbl.Name.O})
@@ -693,6 +707,14 @@ func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
 	}
 
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	var (
+		fieldFilter       string
+		fieldPatternsLike collate.WildcardPattern
+	)
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
 	type mlogRow struct {
 		id       int64
 		name     string
@@ -705,6 +727,12 @@ func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
 			continue
 		}
 		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tbl.Name.O, "", mysql.AllPrivMask) {
+			continue
+		}
+		if fieldFilter != "" && tbl.Name.L != fieldFilter {
+			continue
+		}
+		if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(tbl.Name.L) {
 			continue
 		}
 		baseID := tbl.MaterializedViewLog.BaseTableID
