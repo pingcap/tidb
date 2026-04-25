@@ -29,12 +29,15 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -78,9 +81,22 @@ import (
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
+
+// MinTiKVVersionForDescIndex is the lowest TiKV semver that contains the
+// DESC-aware coprocessor decoder added for pingcap/tidb#2519. The CREATE
+// INDEX path refuses to persist a column with Desc=true unless every TiKV
+// store reports at least this version, so the cluster can never end up in
+// a state where TiDB writes complemented index bytes that TiKV mis-decodes.
+//
+// Update this constant in lockstep with the actual TiKV release that ships
+// the Rust counterpart of phase 3d-B; the placeholder used during initial
+// development is intentionally well past current stable so the gate fails
+// closed in any pre-release deployment.
+const MinTiKVVersionForDescIndex = "9.0.0"
 
 const (
 	expressionIndexPrefix = "_V$"
@@ -1086,6 +1102,21 @@ func (e *executor) createTableWithInfoJob(
 	schema, ok := is.SchemaByName(dbName)
 	if !ok {
 		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+	}
+
+	// Run the descending-index TiKV-version gate at the shared chokepoint
+	// for CREATE TABLE so CreateTableWithInfo and BatchCreateTableWithInfo
+	// are covered alongside CreateTable. If any index in the about-to-be-
+	// persisted TableInfo carries Desc=true and the cluster contains a
+	// TiKV that cannot decode descending keys, fail early before the DDL
+	// job is queued. See pingcap/tidb#2519.
+	for _, idx := range tbInfo.Indices {
+		if idx.HasDescColumn() {
+			if err = checkTiKVSupportsDescIndex(ctx); err != nil {
+				return nil, errors.Trace(err)
+			}
+			break
+		}
 	}
 
 	if err = handleTablePlacement(ctx, tbInfo); err != nil {
@@ -4703,6 +4734,11 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if hasDescIndexColumn(indexColumns) {
+		if err := checkTiKVSupportsDescIndex(ctx); err != nil {
+			return err
+		}
+	}
 	if _, err = CheckPKOnGeneratedColumn(tblInfo, indexPartSpecifications); err != nil {
 		return err
 	}
@@ -4943,6 +4979,95 @@ func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt
 		stmt.IndexPartSpecifications, stmt.IndexOption, stmt.IfNotExists)
 }
 
+// hasDescIndexColumn reports whether any built IndexColumn carries Desc=true.
+func hasDescIndexColumn(cols []*model.IndexColumn) bool {
+	for _, c := range cols {
+		if c.Desc {
+			return true
+		}
+	}
+	return false
+}
+
+// checkTiKVSupportsDescIndex returns an error if any non-TiFlash store in
+// the cluster runs a TiKV version below MinTiKVVersionForDescIndex. Called
+// when CREATE INDEX would persist a column with Desc=true. Mock stores
+// (which never satisfy tikv.Storage) silently pass — the auto-detection
+// path in the unistore coprocessor handles them.
+func checkTiKVSupportsDescIndex(ctx sessionctx.Context) error {
+	tikvStore, ok := ctx.GetStore().(tikv.Storage)
+	if !ok {
+		return nil
+	}
+	pdCli := tikvStore.GetRegionCache().PDClient()
+	if pdCli == nil {
+		return nil
+	}
+	stores, err := pdCli.GetAllStores(context.Background())
+	if err != nil {
+		return errors.Annotate(err, "checking TiKV cluster version for descending index")
+	}
+	// In production we fail closed on missing versions. The mock store
+	// fixture used in `intest` builds reports empty versions for every
+	// replica; tolerate that case so integration tests can exercise
+	// descending-index DDL without spinning up a real PD.
+	return checkStoresMeetDescIndexMinVersion(stores, MinTiKVVersionForDescIndex, intest.InTest)
+}
+
+// checkStoresMeetDescIndexMinVersion is the pure version-comparison core of
+// checkTiKVSupportsDescIndex, split out so the caller can pass a mocked
+// store list in unit tests without spinning up a PD client.
+//
+// tolerateMissingVersion controls how to treat stores that report an empty
+// version string. The production caller passes false (fail closed); the
+// in-process test caller passes true so the mock-store fixture, which never
+// fills in a version, doesn't block descending-index DDL.
+// Garbage (unparsable) version strings always fail closed because they are
+// unambiguously a misconfiguration, never a fixture artifact.
+func checkStoresMeetDescIndexMinVersion(stores []*metapb.Store, minVersion string, tolerateMissingVersion bool) error {
+	required, err := semver.NewVersion(minVersion)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, s := range stores {
+		if s.GetState() == metapb.StoreState_Tombstone {
+			continue
+		}
+		if storeIsTiFlash(s) {
+			continue
+		}
+		if s.Version == "" {
+			if tolerateMissingVersion {
+				continue
+			}
+			return errors.Errorf(
+				"cannot create descending-order index: TiKV store %d at %s has not reported a version yet; retry after the cluster has reported its store versions",
+				s.Id, s.Address)
+		}
+		actual, parseErr := semver.NewVersion(strings.TrimPrefix(s.Version, "v"))
+		if parseErr != nil {
+			return errors.Annotatef(parseErr,
+				"cannot create descending-order index: TiKV store %d at %s reports an unparsable version %q",
+				s.Id, s.Address, s.Version)
+		}
+		if actual.LessThan(*required) {
+			return errors.Errorf(
+				"cannot create descending-order index: TiKV store %d at %s reports version %s, which is below the minimum %s required by this feature; upgrade TiKV before retrying",
+				s.Id, s.Address, s.Version, minVersion)
+		}
+	}
+	return nil
+}
+
+func storeIsTiFlash(store *metapb.Store) bool {
+	for _, label := range store.Labels {
+		if label.Key == placement.EngineLabelKey && label.Value == placement.EngineLabelTiFlash {
+			return true
+		}
+	}
+	return false
+}
+
 // addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
 func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName ast.CIStr, indexInfo *model.IndexInfo) error {
 	sctx := ctx.GetSessionVars()
@@ -5007,6 +5132,12 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if hasDescIndexColumn(indexColumns) {
+		if err := checkTiKVSupportsDescIndex(ctx); err != nil {
+			return err
+		}
 	}
 
 	if err = checkCreateGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns, unique, indexOption != nil && indexOption.Global); err != nil {
