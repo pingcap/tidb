@@ -3251,6 +3251,39 @@ func TestDescendingIndexScanDirection(t *testing.T) {
 		"feature gate off: DESC must be dropped and reverse scan must remain the path for ORDER BY DESC")
 }
 
+// TestExpressionIndexDescPersists verifies that DESC on an expression index
+// part is preserved end-to-end. The parser already accepts
+// `INDEX((expr) DESC)`; this test asserts the rest of the pipeline (DDL,
+// SHOW CREATE TABLE, INFORMATION_SCHEMA) reflects the order correctly.
+func TestExpressionIndexDescPersists(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_descending_index = on")
+	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk2.MustExec("drop table if exists t_expr_desc")
+	tk2.MustExec("create table t_expr_desc (a int, b int, key idx_expr ((a + b) desc))")
+
+	is := domain.GetDomain(tk2.Session()).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_expr_desc"))
+	require.NoError(t, err)
+	idx := tbl.Meta().Indices[0]
+	require.Equal(t, "idx_expr", idx.Name.L)
+	require.True(t, idx.Columns[0].Desc, "expression index column must be marked DESC")
+	require.Equal(t, uint8(1), idx.Version, "DESC expression index must bump IndexInfo.Version")
+
+	// SHOW CREATE TABLE must round-trip the DESC.
+	showCreate := tk2.MustQuery("show create table t_expr_desc").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "DESC", "SHOW CREATE TABLE must preserve DESC on the expression part")
+
+	// information_schema reports collation 'D' for the expression part.
+	tk2.MustQuery("select collation from information_schema.statistics where table_name='t_expr_desc' and index_name='idx_expr'").
+		Check(testkit.Rows("D"))
+}
+
 // TestMixedDirectionCompositeIndex covers the MySQL 8.0 flagship use case:
 // a composite index with mixed ASC/DESC columns must satisfy "ORDER BY"
 // requests that match its direction vector (forward) or are the bitwise
