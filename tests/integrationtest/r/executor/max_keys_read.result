@@ -66,6 +66,19 @@ set @@session.tidb_max_keys_read = 0;
 select /*+ SET_VAR(tidb_max_keys_read=5) */ count(*) from t_mrs;
 Error 8274 (HY000): tidb_max_keys_read limit exceeded
 flush status;
+select count(*) from t_mrs;
+count(*)
+20
+show status like 'tidb_keys_examined';
+Variable_name	Value
+tidb_keys_examined	20
+select count(*) from t_mrs;
+count(*)
+20
+show status like 'tidb_keys_examined';
+Variable_name	Value
+tidb_keys_examined	40
+flush status;
 show status like 'tidb_keys_examined';
 Variable_name	Value
 tidb_keys_examined	0

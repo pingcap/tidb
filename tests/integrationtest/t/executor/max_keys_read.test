@@ -66,7 +66,12 @@ set @@session.tidb_max_keys_read = 0;
 -- error 8274
 select /*+ SET_VAR(tidb_max_keys_read=5) */ count(*) from t_mrs;
 
-# tidb_keys_examined is a session-scope status variable reset by FLUSH STATUS.
+# tidb_keys_examined accumulates examined keys across statements; FLUSH STATUS resets it.
+flush status;
+select count(*) from t_mrs;
+show status like 'tidb_keys_examined';
+select count(*) from t_mrs;
+show status like 'tidb_keys_examined';
 flush status;
 show status like 'tidb_keys_examined';
 
