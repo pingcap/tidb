@@ -175,26 +175,33 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 			for j, val := range values {
 				if val == nil {
 					currentBoundary[j] = ""
-				} else {
-					// Convert SQL driver value to string properly
-					switch v := val.(type) {
-					case string:
-						currentBoundary[j] = v
-					case []byte:
-						currentBoundary[j] = string(v)
-					case int64:
-						currentBoundary[j] = strconv.FormatInt(v, 10)
-					case int32:
-						currentBoundary[j] = strconv.FormatInt(int64(v), 10)
-					case int:
-						currentBoundary[j] = strconv.Itoa(v)
-					case float64:
-						currentBoundary[j] = strconv.FormatFloat(v, 'f', -1, 64)
-					case float32:
-						currentBoundary[j] = strconv.FormatFloat(float64(v), 'f', -1, 32)
-					default:
-						currentBoundary[j] = fmt.Sprintf("%v", v)
-					}
+					continue
+				}
+				// Supported driver-returned types for boundary columns. The
+				// MySQL driver returns []byte for string/binary/DECIMAL/DATE*
+				// (parseTime is not enabled, see GetDriverConfig), int64 for
+				// integers, and float64 for floating-point — all of which
+				// round-trip safely through the WHERE-clause builders. Any
+				// other type would silently produce a malformed predicate, so
+				// fail loudly instead.
+				switch v := val.(type) {
+				case string:
+					currentBoundary[j] = v
+				case []byte:
+					currentBoundary[j] = string(v)
+				case int64:
+					currentBoundary[j] = strconv.FormatInt(v, 10)
+				case int32:
+					currentBoundary[j] = strconv.FormatInt(int64(v), 10)
+				case int:
+					currentBoundary[j] = strconv.Itoa(v)
+				case float64:
+					currentBoundary[j] = strconv.FormatFloat(v, 'f', -1, 64)
+				case float32:
+					currentBoundary[j] = strconv.FormatFloat(float64(v), 'f', -1, 32)
+				default:
+					return fmt.Errorf("unsupported boundary column type %T for %s in table `%s`.`%s`",
+						v, orderByColumns[j], db, tbl)
 				}
 			}
 			return nil
@@ -207,12 +214,19 @@ func (d *Dumper) streamStringChunks(tctx *tcontext.Context, conn *BaseConn, meta
 		}, sampleQuery)
 
 		if err != nil {
-			tctx.L().Warn("failed to sample boundary, stopping boundary collection",
+			// Don't swallow sampling failures: with `break` the loop would fall
+			// through to the post-loop branches and either dump the entire table
+			// as one un-chunked task (when the very first sample fails) or emit
+			// an oversized tail chunk from the last good boundary to +∞ (when a
+			// later sample fails). Both silently degrade the dump. Propagate so
+			// the job-level retry/backoff applies and the caller sees the
+			// failure.
+			tctx.L().Warn("failed to sample boundary, aborting string-key chunking",
 				zap.String("database", db),
 				zap.String("table", tbl),
 				zap.Int64("chunkIndex", i),
 				zap.Error(err))
-			break
+			return err
 		}
 
 		if len(currentBoundary) == 0 {
