@@ -130,10 +130,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, idxID)
 
-	ticiHeaderCommitTS := uint64(0)
-	if currentIdx != nil && currentIdx.HybridInfo != nil {
-		ticiHeaderCommitTS = sm.ScanSnapshotTS
-	}
+	ticiHeaderCommitTS := getTiCIHeaderCommitTSForCloudImport(currentIdx, sm.ScanSnapshotTS)
 
 	all := external.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
@@ -195,6 +192,13 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return err
 	}
 	return kv.ErrKeyExists
+}
+
+func getTiCIHeaderCommitTSForCloudImport(currentIdx *model.IndexInfo, scanSnapshotTS uint64) uint64 {
+	if currentIdx == nil || !currentIdx.IsTiCIIndex() {
+		return 0
+	}
+	return scanSnapshotTS
 }
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
