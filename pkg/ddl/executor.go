@@ -92,10 +92,13 @@ import (
 // store reports at least this version, so the cluster can never end up in
 // a state where TiDB writes complemented index bytes that TiKV mis-decodes.
 //
-// Update this constant in lockstep with the actual TiKV release that ships
-// the Rust counterpart of phase 3d-B; the placeholder used during initial
-// development is intentionally well past current stable so the gate fails
-// closed in any pre-release deployment.
+// TODO(release): bump this in lockstep with the TiKV release that contains
+// the matching Rust changes (split_datum / decode_one_with_desc auto-detect
+// of complemented flag bytes). The placeholder below intentionally sits
+// well past the most recent stable release so the gate fails closed in any
+// pre-release deployment — operators who flip tidb_enable_descending_index
+// on a cluster that hasn't been upgraded will see a clear "upgrade TiKV"
+// error rather than silently corrupting their indexes.
 const MinTiKVVersionForDescIndex = "9.0.0"
 
 const (
