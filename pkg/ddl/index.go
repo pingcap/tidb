@@ -110,6 +110,29 @@ var DefaultCumulativeTimeout = 1 * time.Minute
 // exported for testing.
 var DefaultAnalyzeCheckInterval = 10 * time.Second
 
+// ApplyDescGateToIndexParts implements the create-time-only semantics of the
+// `tidb_enable_descending_index` system variable (pingcap/tidb#2519).
+//
+// It is called by SQL-frontend DDL paths (CreateTable, CreateIndex,
+// CreatePrimaryKey, ...) on the AST IndexPartSpecification slice BEFORE the
+// DDL job is enqueued. When the gate is off, every Desc flag is cleared so
+// the rest of the DDL pipeline — including the DDL owner replaying the job —
+// sees an unconditional ASC layout. When the gate is on, Desc is left intact.
+//
+// Re-reading the global atomic from buildIndexColumns at job-execution time
+// would be wrong: a `SET GLOBAL tidb_enable_descending_index` between
+// statement submission and DDL owner replay would silently flip the persisted
+// schema. Baking the decision in here at submission time makes the result
+// independent of any later toggling.
+func ApplyDescGateToIndexParts(parts []*ast.IndexPartSpecification) {
+	if vardef.EnableDescendingIndex.Load() {
+		return
+	}
+	for _, ip := range parts {
+		ip.Desc = false
+	}
+}
+
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
@@ -118,7 +141,6 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
 	// The sum of length of all index columns.
 	sumLength := 0
-	descEnabled := vardef.EnableDescendingIndex.Load()
 	for _, ip := range indexPartSpecifications {
 		col = model.FindColumnInfo(columns, ip.Column.Name.L)
 		if col == nil {
@@ -133,8 +155,13 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		if columnarIndexType == model.ColumnarIndexTypeFulltext && !types.IsString(col.FieldType.GetType()) {
 			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support string type, but this is type: %s", col.FieldType.String()))
 		}
-		// Columnar indexes cannot support descending order; reject explicitly.
-		// Fulltext also has its own DESC check in buildFullTextInfoWithCheck.
+		// Columnar indexes (vector / inverted / fulltext) cannot support
+		// descending order regardless of the gate. ApplyDescGateToIndexParts
+		// has already cleared Desc when the gate is off, so reaching this
+		// branch means the user explicitly asked for DESC on a columnar
+		// index with the gate ON — surface the limitation instead of
+		// silently dropping the keyword. Fulltext repeats this check in
+		// buildFullTextInfoWithCheck for defence in depth.
 		if ip.Desc && columnarIndexType != model.ColumnarIndexTypeNA {
 			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("%s does not support DESC order", columnarIndexType.SQLName()))
 		}
@@ -181,14 +208,18 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 			ctx.AppendWarning(dbterror.ErrTooLongKey.FastGenByArgs(sumLength, maxIndexLength))
 		}
 
-		// When the feature gate is off, preserve historical MySQL 5.7 behavior:
-		// DESC is accepted by the parser but silently ignored. This keeps legacy
-		// migration scripts working unchanged.
+		// ip.Desc has already been gated at the SQL frontend by
+		// ApplyDescGateToIndexParts: when tidb_enable_descending_index is OFF,
+		// every part comes in with Desc=false, preserving historical MySQL 5.7
+		// behaviour for legacy migration scripts. We can therefore copy the
+		// flag through unconditionally — re-reading the global atomic here
+		// would race with `SET GLOBAL` between job submission and DDL owner
+		// replay.
 		idxParts = append(idxParts, &model.IndexColumn{
 			Name:   col.Name,
 			Offset: col.Offset,
 			Length: indexColLen,
-			Desc:   ip.Desc && descEnabled,
+			Desc:   ip.Desc,
 		})
 	}
 

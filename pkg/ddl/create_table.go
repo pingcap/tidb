@@ -786,6 +786,14 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
 func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
+	// Apply tidb_enable_descending_index gate up front, before any constraint
+	// processing. See ApplyDescGateToIndexParts for the rationale: baking the
+	// decision in at submission time prevents a `SET GLOBAL` between statement
+	// submission and DDL owner replay from silently flipping the persisted
+	// schema.
+	for _, c := range s.Constraints {
+		ApplyDescGateToIndexParts(c.Keys)
+	}
 	colDefs := s.Cols
 	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {

@@ -4718,6 +4718,11 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		return infoschema.ErrMultiplePriKey
 	}
 
+	// Apply tidb_enable_descending_index gate at the SQL frontend, before
+	// the DDL job is enqueued. See ApplyDescGateToIndexParts for the
+	// rationale (avoid races between SET GLOBAL and DDL owner replay).
+	ApplyDescGateToIndexParts(indexPartSpecifications)
+
 	// Primary keys cannot include expression index parts. A primary key requires the generated column to be stored,
 	// but expression index parts are implemented as virtual generated columns, not stored generated columns.
 	for _, idxPart := range indexPartSpecifications {
@@ -4877,6 +4882,14 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
+
+	// Apply tidb_enable_descending_index gate at the SQL frontend, before
+	// the DDL job is enqueued. With the gate off, Desc is cleared here so
+	// the columnar-DESC reject in buildIndexColumns never fires — that
+	// preserves the historical "DESC silently dropped" behaviour for
+	// columnar indexes when the feature is disabled. With the gate on,
+	// columnar DESC stays Desc=true and gets a clear error downstream.
+	ApplyDescGateToIndexParts(indexPartSpecifications)
 
 	var columnarIndexType model.ColumnarIndexType
 	switch indexOption.Tp {
@@ -5111,6 +5124,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
+
+	// Apply tidb_enable_descending_index gate at the SQL frontend, before
+	// the DDL job is enqueued. See ApplyDescGateToIndexParts.
+	ApplyDescGateToIndexParts(indexPartSpecifications)
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, ifNotExists)
