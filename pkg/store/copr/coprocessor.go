@@ -50,6 +50,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	util2 "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -210,6 +211,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
+		maxKeysRead:      req.MaxKeysRead,
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -1000,6 +1002,9 @@ type copIterator struct {
 
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
+
+	maxKeysRead uint64        // global limit from kv.Request (0 = unlimited)
+	keysRead    atomic.Uint64 // cumulative storage engine keys read across all completed tasks
 }
 
 type liteCopIteratorWorker struct {
@@ -1030,6 +1035,9 @@ type copIteratorWorker struct {
 	storeBatchedNum         *atomic.Uint64
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
+
+	maxKeysRead uint64         // global limit (0 = unlimited)
+	keysRead    *atomic.Uint64 // shared with copIterator for cumulative tracking
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -1224,6 +1232,8 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		storeBatchedNum:         &it.storeBatchedNum,
 		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
 		stats:                   it.stats,
+		maxKeysRead:             it.maxKeysRead,
+		keysRead:                &it.keysRead,
 	}
 }
 
@@ -1455,6 +1465,26 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.Trace(resp.err)
 	}
 
+	// Accumulate keys read and enforce the tidb_max_keys_read cap. Both the lite
+	// single-task path and the concurrent worker path funnel responses through
+	// here, so doing it here covers both uniformly. Sequential tasks pick up the
+	// updated remaining budget at handleTaskOnce dispatch via keysRead.Load().
+	if it.maxKeysRead > 0 {
+		if resp.detail != nil && resp.detail.ScanDetail != nil {
+			if scanned := uint64(resp.detail.ScanDetail.ProcessedKeys); scanned > 0 {
+				it.keysRead.Add(scanned)
+			}
+		}
+		if it.keysRead.Load() > it.maxKeysRead {
+			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+				close(it.finishCh)
+			}
+			// Return resp (non-nil) so the caller can still merge CopRuntimeStats
+			// into StmtCtx.ExecDetails, which flows into tidb_keys_examined.
+			return resp, exeerrors.ErrMaxKeysReadExceeded
+		}
+	}
+
 	err := it.store.CheckVisibility(it.req.StartTs)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1655,6 +1685,17 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
 	}
 
+	// All concurrent tasks get the full remaining budget; the cumulative check
+	// in Next() enforces the global limit.
+	var taskMaxKeysRead uint64
+	if worker.maxKeysRead > 0 {
+		scanned := worker.keysRead.Load()
+		if scanned >= worker.maxKeysRead {
+			return nil, exeerrors.ErrMaxKeysReadExceeded
+		}
+		taskMaxKeysRead = worker.maxKeysRead - scanned
+	}
+
 	copReq := coprocessor.Request{
 		Tp:              worker.req.Tp,
 		StartTs:         worker.req.StartTs,
@@ -1662,6 +1703,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		Ranges:          task.ranges.ToPBRanges(),
 		SchemaVer:       worker.req.SchemaVar,
 		PagingSize:      task.pagingSize,
+		MaxKeysRead:     taskMaxKeysRead,
 		Tasks:           task.ToPBBatchTasks(),
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,

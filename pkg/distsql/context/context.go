@@ -83,6 +83,7 @@ type DistSQLContext struct {
 	RUConsumptionReporter         resourcegroup.ConsumptionReporter
 	TiKVClientReadTimeout         uint64
 	MaxExecutionTime              uint64
+	MaxKeysRead                   uint64
 
 	ReplicaClosestReadThreshold int64
 	ConnectionID                uint64

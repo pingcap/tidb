@@ -1,0 +1,74 @@
+select @@session.tidb_max_keys_read;
+@@session.tidb_max_keys_read
+0
+select @@global.tidb_max_keys_read;
+@@global.tidb_max_keys_read
+0
+set @@session.tidb_max_keys_read = 100;
+select @@session.tidb_max_keys_read;
+@@session.tidb_max_keys_read
+100
+set @@global.tidb_max_keys_read = 200;
+select @@global.tidb_max_keys_read;
+@@global.tidb_max_keys_read
+200
+select @@session.tidb_max_keys_read;
+@@session.tidb_max_keys_read
+100
+set @@session.tidb_max_keys_read = 0;
+select @@session.tidb_max_keys_read;
+@@session.tidb_max_keys_read
+0
+set @@global.tidb_max_keys_read = 0;
+select @@global.tidb_max_keys_read;
+@@global.tidb_max_keys_read
+0
+set @@session.tidb_max_keys_read = -1;
+select @@session.tidb_max_keys_read;
+@@session.tidb_max_keys_read
+0
+select /*+ SET_VAR(tidb_max_keys_read=999) */ @@tidb_max_keys_read;
+@@tidb_max_keys_read
+999
+select @@session.tidb_max_keys_read;
+@@session.tidb_max_keys_read
+0
+set @@session.tidb_max_keys_read = 50;
+select /*+ SET_VAR(tidb_max_keys_read=0) */ @@tidb_max_keys_read;
+@@tidb_max_keys_read
+0
+select @@session.tidb_max_keys_read;
+@@session.tidb_max_keys_read
+50
+set @@session.tidb_max_keys_read = 0;
+drop table if exists t_mrs;
+create table t_mrs (id int primary key auto_increment, val int);
+insert into t_mrs (val) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
+insert into t_mrs (val) values (11),(12),(13),(14),(15),(16),(17),(18),(19),(20);
+set @@session.tidb_max_keys_read = 100;
+select count(*) from t_mrs;
+count(*)
+20
+select /*+ SET_VAR(tidb_max_keys_read=2) */ * from t_mrs;
+Error 8274 (HY000): tidb_max_keys_read limit exceeded
+set @@session.tidb_max_keys_read = 2;
+select /*+ SET_VAR(tidb_max_keys_read=0) */ count(*) from t_mrs;
+count(*)
+20
+set @@session.tidb_max_keys_read = 100;
+select /*+ SET_VAR(tidb_max_keys_read=5) */ * from t_mrs;
+Error 8274 (HY000): tidb_max_keys_read limit exceeded
+set @@session.tidb_max_keys_read = 1;
+insert into t_mrs (val) values (21);
+update t_mrs set val = val + 100 where id = 1;
+delete from t_mrs where id = 21;
+set @@session.tidb_max_keys_read = 0;
+select /*+ SET_VAR(tidb_max_keys_read=5) */ count(*) from t_mrs;
+Error 8274 (HY000): tidb_max_keys_read limit exceeded
+flush status;
+show status like 'tidb_keys_examined';
+Variable_name	Value
+tidb_keys_examined	0
+set @@session.tidb_max_keys_read = 0;
+set @@global.tidb_max_keys_read = 0;
+drop table t_mrs;
