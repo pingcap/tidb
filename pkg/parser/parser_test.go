@@ -1298,9 +1298,13 @@ func TestDBAStmt(t *testing.T) {
 		{"show create materialized view log on t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `t`"},
 		// for show materialized views
 		{"show materialized views", true, "SHOW MATERIALIZED VIEWS"},
+		{"show materialized views from test", true, "SHOW MATERIALIZED VIEWS IN `test`"},
+		{"show materialized views in test like 'mv%'", true, "SHOW MATERIALIZED VIEWS IN `test` LIKE _UTF8MB4'mv%'"},
 		{"show materialized views where mview_id = 1", true, "SHOW MATERIALIZED VIEWS WHERE `mview_id`=1"},
 		// for show materialized view logs
 		{"show materialized view logs", true, "SHOW MATERIALIZED VIEW LOGS"},
+		{"show materialized view logs from test", true, "SHOW MATERIALIZED VIEW LOGS IN `test`"},
+		{"show materialized view logs in test like '$mlog$%'", true, "SHOW MATERIALIZED VIEW LOGS IN `test` LIKE _UTF8MB4'$mlog$%'"},
 		{"show materialized view logs where mlog_id = 1", true, "SHOW MATERIALIZED VIEW LOGS WHERE `mlog_id`=1"},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},

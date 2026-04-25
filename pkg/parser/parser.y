@@ -12072,19 +12072,29 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
-|	"SHOW" "MATERIALIZED" "VIEWS" WhereClauseOptional
+|	"SHOW" "MATERIALIZED" "VIEWS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
 	{
 		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViews}
-		if $4 != nil {
-			stmt.Where = $4.(ast.ExprNode)
+		stmt.DBName = $4
+		if $5 != nil {
+			if x, ok := $5.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $5.(ast.ExprNode)
+			}
 		}
 		$$ = stmt
 	}
-|	"SHOW" "MATERIALIZED" "VIEW" "LOGS" WhereClauseOptional
+|	"SHOW" "MATERIALIZED" "VIEW" "LOGS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
 	{
 		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViewLogs}
-		if $5 != nil {
-			stmt.Where = $5.(ast.ExprNode)
+		stmt.DBName = $5
+		if $6 != nil {
+			if x, ok := $6.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $6.(ast.ExprNode)
+			}
 		}
 		$$ = stmt
 	}

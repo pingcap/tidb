@@ -3366,8 +3366,10 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			restoreShowDatabaseNameOpt()
 		case ShowMaterializedViews:
 			ctx.WriteKeyWord("MATERIALIZED VIEWS")
+			restoreShowDatabaseNameOpt()
 		case ShowMaterializedViewLogs:
 			ctx.WriteKeyWord("MATERIALIZED VIEW LOGS")
+			restoreShowDatabaseNameOpt()
 		case ShowOpenTables:
 			ctx.WriteKeyWord("OPEN TABLES")
 			restoreShowDatabaseNameOpt()
