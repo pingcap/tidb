@@ -36,7 +36,9 @@ func TestKeywords(t *testing.T) {
 }
 
 func TestKeywordsLength(t *testing.T) {
-	require.Equal(t, 679, len(parser.Keywords))
+	// 681 = 679 baseline + 2 (OLD, RETAIN) added by the dual-password feature
+	// (both non-reserved, so the reserved count is unchanged).
+	require.Equal(t, 681, len(parser.Keywords))
 
 	reservedNr := 0
 	for _, kw := range parser.Keywords {
