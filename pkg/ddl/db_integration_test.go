@@ -3251,6 +3251,64 @@ func TestDescendingIndexScanDirection(t *testing.T) {
 		"feature gate off: DESC must be dropped and reverse scan must remain the path for ORDER BY DESC")
 }
 
+// TestDescendingIndexSysvarIsCreateTimeOnly nails down the gate's semantic:
+// tidb_enable_descending_index controls whether *new* CREATE INDEX statements
+// persist DESC, but turning it off later must not invalidate or rewrite any
+// existing DESC index. The persisted IndexColumn.Desc + IndexInfo.Version
+// remain in metadata, the planner keeps using the index, and INSERT/SELECT
+// continue to round-trip correctly.
+func TestDescendingIndexSysvarIsCreateTimeOnly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_descending_index = on")
+	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	// Create the DESC index while the gate is ON.
+	tk2.MustExec("drop table if exists t_sysvar_flip")
+	tk2.MustExec("create table t_sysvar_flip (a int, b int, index idx_b (b desc))")
+	tk2.MustExec("insert into t_sysvar_flip values (1, 5), (2, 20), (3, 12)")
+
+	// Flip the gate OFF in a fresh session and reload the schema.
+	tk.MustExec("set @@global.tidb_enable_descending_index = off")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	// Existing DESC index metadata must survive the flip.
+	is := domain.GetDomain(tk3.Session()).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_sysvar_flip"))
+	require.NoError(t, err)
+	idx := tbl.Meta().Indices[0]
+	require.True(t, idx.Columns[0].Desc, "existing DESC index must remain DESC after sysvar flip")
+	require.Equal(t, uint8(1), idx.Version)
+
+	// Reads against the DESC index continue to work.
+	tk3.MustQuery("select b from t_sysvar_flip use index(idx_b) order by b desc").
+		Check(testkit.Rows("20", "12", "5"))
+
+	// Inserts continue to be encoded correctly (the table's existing index
+	// has Desc=true, so GenIndexKey will go through the DESC path even
+	// though the gate is off).
+	tk3.MustExec("insert into t_sysvar_flip values (4, 30)")
+	tk3.MustQuery("select b from t_sysvar_flip use index(idx_b) order by b desc").
+		Check(testkit.Rows("30", "20", "12", "5"))
+
+	// A *new* index built while the gate is off must drop DESC silently
+	// (preserving MySQL 5.7 compatibility for migration scripts).
+	tk3.MustExec("alter table t_sysvar_flip add index idx_a (a desc)")
+	is = domain.GetDomain(tk3.Session()).InfoSchema()
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_sysvar_flip"))
+	require.NoError(t, err)
+	for _, idx := range tbl.Meta().Indices {
+		if idx.Name.L == "idx_a" {
+			require.False(t, idx.Columns[0].Desc, "new index built with gate off must drop DESC")
+			require.Equal(t, uint8(0), idx.Version, "new ASC-only index must stay at Version=0")
+		}
+	}
+}
+
 // TestExpressionIndexDescPersists verifies that DESC on an expression index
 // part is preserved end-to-end. The parser already accepts
 // `INDEX((expr) DESC)`; this test asserts the rest of the pipeline (DDL,
