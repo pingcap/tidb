@@ -4519,6 +4519,14 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		options = append(options, &loadDataOpt)
 	}
 	tnW := b.resolveCtx.GetTableName(ld.Table)
+	// Same servability fence as INSERT (pingcap/tidb#2519): LOAD DATA writes
+	// every secondary index of the target table, so an unservable index
+	// would be silently mis-maintained without this guard.
+	if tnW != nil && tnW.TableInfo != nil {
+		if err := checkAllIndicesServable(tnW.TableInfo); err != nil {
+			return nil, err
+		}
+	}
 	p := LoadData{
 		FileLocRef:         ld.FileLocRef,
 		OnDuplicate:        ld.OnDuplicate,
@@ -4771,6 +4779,11 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, errors.Errorf("IMPORT INTO does not support temporary table")
 	} else if tnW.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return nil, errors.Errorf("IMPORT INTO does not support cached table")
+	}
+	// Same servability fence as INSERT (pingcap/tidb#2519): IMPORT INTO
+	// writes every secondary index of the target table.
+	if err := checkAllIndicesServable(tnW.TableInfo); err != nil {
+		return nil, err
 	}
 	p := ImportInto{
 		Path:               ld.Path,
