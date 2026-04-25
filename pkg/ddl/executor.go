@@ -1107,21 +1107,6 @@ func (e *executor) createTableWithInfoJob(
 		return nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 
-	// Run the descending-index TiKV-version gate at the shared chokepoint
-	// for CREATE TABLE so CreateTableWithInfo and BatchCreateTableWithInfo
-	// are covered alongside CreateTable. If any index in the about-to-be-
-	// persisted TableInfo carries Desc=true and the cluster contains a
-	// TiKV that cannot decode descending keys, fail early before the DDL
-	// job is queued. See pingcap/tidb#2519.
-	for _, idx := range tbInfo.Indices {
-		if idx.HasDescColumn() {
-			if err = checkTiKVSupportsDescIndex(ctx); err != nil {
-				return nil, errors.Trace(err)
-			}
-			break
-		}
-	}
-
 	if err = handleTablePlacement(ctx, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1154,6 +1139,20 @@ func (e *executor) createTableWithInfoJob(
 			return nil, err
 		default:
 			return nil, err
+		}
+	}
+
+	// Run the descending-index TiKV-version gate at the shared chokepoint
+	// for CREATE TABLE so CreateTableWithInfo and BatchCreateTableWithInfo
+	// are covered alongside CreateTable. Placed AFTER the OnExistIgnore
+	// short-circuit so a no-op `CREATE TABLE IF NOT EXISTS` against an
+	// existing table never makes a PD round-trip. See pingcap/tidb#2519.
+	for _, idx := range tbInfo.Indices {
+		if idx.HasDescColumn() {
+			if err = checkTiKVSupportsDescIndex(ctx); err != nil {
+				return nil, errors.Trace(err)
+			}
+			break
 		}
 	}
 
