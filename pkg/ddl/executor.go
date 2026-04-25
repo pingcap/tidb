@@ -5018,7 +5018,12 @@ func checkTiKVSupportsDescIndex(ctx sessionctx.Context) error {
 	if pdCli == nil {
 		return nil
 	}
-	stores, err := pdCli.GetAllStores(context.Background())
+	// Bound the PD round-trip so an unreachable PD doesn't hang DDL
+	// indefinitely. 5s matches the pattern used elsewhere for short PD
+	// metadata lookups in this package.
+	pdCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stores, err := pdCli.GetAllStores(pdCtx)
 	if err != nil {
 		return errors.Annotate(err, "checking TiKV cluster version for descending index")
 	}
