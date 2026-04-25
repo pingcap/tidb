@@ -1271,6 +1271,22 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
+// checkAllIndicesServable returns an error if tableInfo carries any public
+// index whose metadata format is newer than this TiDB binary understands.
+// Used by DML builders (INSERT/UPDATE/DELETE) to fail fast before reaching
+// table-level mutation paths that would silently mis-maintain the index.
+func checkAllIndicesServable(tableInfo *model.TableInfo) error {
+	for _, idx := range tableInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if !idx.IsServable() {
+			return idx.UnservableErr(tableInfo.Name.O)
+		}
+	}
+	return nil
+}
+
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -1345,6 +1361,18 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				if latestIndex, ok := latestIndexes[index.ID]; !ok || latestIndex.State != model.StatePublic {
 					continue
 				}
+			}
+			// Refuse to plan against an index whose metadata format is newer
+			// than this binary understands (pingcap/tidb#2519). Silently
+			// skipping would risk wrong results — surface a clear error so
+			// the operator upgrades TiDB or drops the index.
+			//
+			// This check fires AFTER latest-index reconciliation so a snapshot
+			// copy of an index that the latest schema has dropped or moved out
+			// of StatePublic gets skipped before we error on its (now
+			// irrelevant) format version.
+			if !index.IsServable() {
+				return nil, index.UnservableErr(tblName.O)
 			}
 			if index.InvertedInfo != nil {
 				invertedIndexes[index.Name.L] = struct{}{}
@@ -4070,6 +4098,14 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		if insert.IsReplace {
 			err = errors.Errorf("replace into sequence %s is not supported now", tableInfo.Name.O)
 		}
+		return nil, err
+	}
+	// Refuse INSERT/REPLACE if any of the table's indexes uses a metadata
+	// version newer than this TiDB binary understands — maintaining such an
+	// index would risk wrong rows or mismatched encoding (pingcap/tidb#2519).
+	// SELECT/UPDATE/DELETE plans are guarded by getPossibleAccessPaths, but
+	// INSERT VALUES never enumerates access paths, so check explicitly here.
+	if err := checkAllIndicesServable(tableInfo); err != nil {
 		return nil, err
 	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.

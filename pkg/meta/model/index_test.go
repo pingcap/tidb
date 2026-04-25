@@ -124,3 +124,21 @@ func TestIndexInfoIsServable(t *testing.T) {
 	idx.Version = 255
 	require.False(t, idx.IsServable())
 }
+
+func TestIndexInfoUnservableErr(t *testing.T) {
+	idx := newIndexForTest(7, newColumnForTest(0, 0))
+	idx.Version = 99
+
+	err := idx.UnservableErr("orders")
+	require.Error(t, err)
+	// The message must name the index, the table, and the version mismatch
+	// so an operator can decide whether to upgrade or DROP INDEX.
+	msg := err.Error()
+	require.Contains(t, msg, idx.Name.O)
+	require.Contains(t, msg, "orders")
+	require.Contains(t, msg, "99")
+	require.Contains(t, msg, "DROP INDEX")
+
+	// Empty table name is allowed (callers without context just leave it off).
+	require.NotPanics(t, func() { _ = idx.UnservableErr("") })
+}

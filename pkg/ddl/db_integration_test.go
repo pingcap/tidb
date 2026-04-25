@@ -3262,6 +3262,42 @@ func TestDescendingIndexEndToEnd(t *testing.T) {
 	tk2.MustQuery("select b from t_desc_e2e use index(idx_b) order by b asc").Check(testkit.Rows("5", "10", "15", "20", "30"))
 }
 
+// TestUnservableIndexRejectsQueries exercises the IsServable fence: if a
+// table contains an index whose metadata Version is newer than this binary
+// understands, every plan-building entry point (SELECT, INSERT) must surface
+// a clear error rather than silently produce wrong rows.
+func TestUnservableIndexRejectsQueries(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_unservable")
+	tk.MustExec("create table t_unservable (a int, b int, key idx_b (b))")
+
+	// Forge a forward-version index by mutating the in-memory schema. We
+	// can't create one through DDL because the current TiDB binary won't
+	// emit Version > maxKnownIndexVersion — the point of the fence is to
+	// guard a downlevel binary reading what some future binary wrote.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_unservable"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	require.Len(t, tblInfo.Indices, 1)
+	tblInfo.Indices[0].Version = 99
+
+	// SELECT planning must reject the table because the planner's
+	// getPossibleAccessPaths walks tableInfo.Indices.
+	_, err = tk.Exec("select * from t_unservable where b = 1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "metadata version 99")
+	require.Contains(t, err.Error(), "DROP INDEX")
+
+	// INSERT VALUES doesn't enumerate access paths but still lands on the
+	// same fence via checkAllIndicesServable in buildInsert.
+	_, err = tk.Exec("insert into t_unservable values (1, 2)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "metadata version 99")
+}
+
 func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	originCfg := config.GetGlobalConfig()

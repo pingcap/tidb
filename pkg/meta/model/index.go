@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -302,6 +303,23 @@ const maxKnownIndexVersion uint8 = 1
 // than risk returning wrong rows.
 func (index *IndexInfo) IsServable() bool {
 	return index.Version <= maxKnownIndexVersion
+}
+
+// UnservableErr returns the error to surface when an unservable index is
+// encountered during query planning or DDL. The message names the index and
+// the version mismatch so an operator can tell whether to upgrade TiDB or
+// drop the index before downgrading.
+func (index *IndexInfo) UnservableErr(tableName string) error {
+	return errors.Errorf(
+		"index `%s`%s uses metadata version %d, which is newer than this TiDB binary supports (max %d); upgrade TiDB or DROP INDEX to roll back",
+		index.Name.O, formatTableQualifier(tableName), index.Version, maxKnownIndexVersion)
+}
+
+func formatTableQualifier(tableName string) string {
+	if tableName == "" {
+		return ""
+	}
+	return " on table `" + tableName + "`"
 }
 
 // HasDescColumn reports whether any column of the index is stored in descending order.
