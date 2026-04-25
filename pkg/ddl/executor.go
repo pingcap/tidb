@@ -5070,7 +5070,16 @@ func checkStoresMeetDescIndexMinVersion(stores []*metapb.Store, minVersion strin
 				"cannot create descending-order index: TiKV store %d at %s reports an unparsable version %q",
 				s.Id, s.Address, s.Version)
 		}
-		if actual.LessThan(*required) {
+		// Compare on Major.Minor.Patch only — strict semver treats pre-release
+		// labels as lower than the corresponding stable, so a `9.0.0-beta.2`
+		// nightly that DOES contain the feature would otherwise be rejected
+		// by a `9.0.0` floor. Operators routinely run pre-release/RC clusters
+		// for testing; once the feature lands on a release branch the
+		// nightly/beta tag for that branch is a stronger guarantee than the
+		// strict-semver lexicographic ordering, not a weaker one.
+		base := *actual
+		base.PreRelease = ""
+		if base.LessThan(*required) {
 			return errors.Errorf(
 				"cannot create descending-order index: TiKV store %d at %s reports version %s, which is below the minimum %s required by this feature; upgrade TiKV before retrying",
 				s.Id, s.Address, s.Version, minVersion)

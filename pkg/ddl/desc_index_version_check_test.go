@@ -122,4 +122,32 @@ func TestCheckStoresMeetDescIndexMinVersion(t *testing.T) {
 		err := checkStoresMeetDescIndexMinVersion(nil, "definitely-not-semver", failClosed)
 		require.Error(t, err)
 	})
+
+	t.Run("pre-release at the floor base version is accepted", func(t *testing.T) {
+		// Strict semver treats `9.0.0-beta.2` < `9.0.0`, but a nightly /
+		// release-candidate cluster cut from the branch that contains the
+		// feature does carry the new decoder. Reject only when the base
+		// (Major.Minor.Patch) is below the floor; pre-release tags at the
+		// floor base pass. tiup playground reports versions like
+		// `9.0.0-beta.2` so this is what the e2e runner relies on.
+		stores := []*metapb.Store{
+			storeAt(1, "9.0.0-beta.2", false),
+			storeAt(2, "9.0.0-rc.1", false),
+		}
+		require.NoError(t, checkStoresMeetDescIndexMinVersion(stores, minVer, failClosed))
+	})
+
+	t.Run("pre-release below the floor base still fails", func(t *testing.T) {
+		// `8.5.0-beta.2`'s base (8.5.0) is below the floor (9.0.0), so the
+		// pre-release relaxation must NOT let it through. This guards
+		// against accidentally degrading the check to "any pre-release
+		// passes".
+		stores := []*metapb.Store{
+			storeAt(1, "8.5.0-beta.2", false),
+		}
+		err := checkStoresMeetDescIndexMinVersion(stores, minVer, failClosed)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "store 1")
+		require.Contains(t, err.Error(), "8.5.0-beta.2")
+	})
 }
