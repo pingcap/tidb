@@ -1080,10 +1080,12 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	}
 
 	// Match SortItems physical property.
-	all, _ := prop.AllSameOrder()
-	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
-	// it needs not to keep order for index scan.
-	if prop.IsSortItemEmpty() || !all {
+	// We no longer reject mixed-direction sort items up-front (pingcap/tidb#2519):
+	// the per-item loop below decides whether a forward or reverse scan can
+	// satisfy the request, and rejects the path only when the per-column
+	// mismatch pattern is itself mixed (some columns naturally satisfied,
+	// others requiring a flipped scan — unsatisfiable by any single scan).
+	if prop.IsSortItemEmpty() {
 		return property.PropNotMatched
 	}
 
@@ -1153,15 +1155,18 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	matchResult := property.PropMatched
 	groupByColIdxs := make([]int, 0)
 	colIdx := 0
-	// matchedIdxDescFound/matchedIdxDesc track the stored direction of the
-	// first index column we successfully match against a sort item. Because
-	// prop.AllSameOrder() above guarantees every sort item shares a direction,
-	// the scan can only satisfy the property when every matched index column
-	// shares a direction too (either all ASC or all DESC); otherwise a single
-	// forward-or-reverse cop scan cannot produce the required order. This is
-	// a no-op pre Phase 3 — when no column has Desc=true the check collapses.
-	var matchedIdxDesc bool
-	matchedIdxDescFound := false
+	// matchedScanDescSet/matchedScanDesc record whether a forward or a reverse
+	// cop scan satisfies the property. For each (sortItem, idxCol) pair the
+	// "natural" direction is forward iff sortItem.Desc == idxCol.Desc;
+	// otherwise the scan would have to be reversed for that single column.
+	// All matched pairs must agree — if some need forward and others reverse,
+	// no single scan direction can satisfy the property and we reject the
+	// path. This is the unlock for mixed-direction composites such as
+	// INDEX(a ASC, b DESC) satisfying ORDER BY a ASC, b DESC with a forward
+	// scan, or INDEX(a, b) (both ASC) satisfying ORDER BY a DESC, b DESC
+	// with a reverse scan. See pingcap/tidb#2519.
+	var matchedScanDesc bool
+	matchedScanDescSet := false
 	for _, sortItem := range prop.SortItems {
 		found := false
 		for ; colIdx < len(idxCols); colIdx++ {
@@ -1173,11 +1178,12 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 				if path.Index != nil && colIdx < len(path.Index.Columns) {
 					thisIdxDesc = path.Index.Columns[colIdx].Desc
 				}
-				if matchedIdxDescFound && thisIdxDesc != matchedIdxDesc {
+				thisScanDesc := sortItem.Desc != thisIdxDesc
+				if matchedScanDescSet && thisScanDesc != matchedScanDesc {
 					return property.PropNotMatched
 				}
-				matchedIdxDesc = thisIdxDesc
-				matchedIdxDescFound = true
+				matchedScanDesc = thisScanDesc
+				matchedScanDescSet = true
 				found = true
 				colIdx++
 				break
@@ -1240,12 +1246,12 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		if len(groups) > 0 {
 			path.GroupedRanges = groups
 			path.GroupByColIdxs = groupByColIdxs
-			path.MatchedIdxDesc = matchedIdxDesc
+			path.MatchedScanDesc = matchedScanDesc
 			return property.PropMatchedNeedMergeSort
 		}
 	}
 	if matchResult == property.PropMatched {
-		path.MatchedIdxDesc = matchedIdxDesc
+		path.MatchedScanDesc = matchedScanDesc
 	}
 	return matchResult
 }
@@ -3002,9 +3008,10 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		}
 		if !prop.IsSortItemEmpty() {
 			batchPointGetPlan.KeepOrder = true
-			// XOR the required direction with the matched index's stored direction
-			// — see PhysicalIndexScan for the rationale.
-			batchPointGetPlan.Desc = prop.SortItems[0].Desc != candidate.path.MatchedIdxDesc
+			// matchProperty already encoded "do we need to flip the byte
+			// scan?" into MatchedScanDesc, accounting for any descending
+			// columns in the index. Just consume that decision.
+			batchPointGetPlan.Desc = candidate.path.MatchedScanDesc
 		}
 		if candidate.path.IsSingleScan {
 			batchPointGetPlan.SetAccessCols(candidate.path.IdxCols)

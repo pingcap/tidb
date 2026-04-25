@@ -3209,13 +3209,36 @@ func TestDescendingIndexScanDirection(t *testing.T) {
 	require.True(t, explainHasString(rows, "keep order:true, desc"),
 		"DESC idx + ORDER BY ASC: expected reverse scan (', desc')")
 
-	// Mixed-direction composite (a ASC, b DESC) under AllSameOrder sort items
-	// should be rejected by matchProperty, forcing a Sort above the scan.
+	// Mixed-direction composite (a ASC, b DESC) — this is the MySQL 8.0
+	// flagship use case. Forward scan satisfies "ORDER BY a ASC, b DESC"
+	// directly; reverse scan satisfies "ORDER BY a DESC, b ASC"; uniform
+	// "ORDER BY a, b" is unsatisfiable by either direction and must fall
+	// back to a Sort.
 	tk.MustExec("drop table if exists t_mixed")
 	tk.MustExec("create table t_mixed (a int, b int, index idx_mixed (a, b desc))")
+
+	// Matching the index direction-for-direction: forward scan, no Sort.
+	rows = tk.MustQuery("explain format='brief' select a, b from t_mixed use index(idx_mixed) order by a asc, b desc").Rows()
+	require.False(t, explainHasString(rows, "Sort"),
+		"INDEX(a, b DESC) ORDER BY a ASC, b DESC must use the index without a Sort")
+	require.True(t, explainHasString(rows, "keep order:true"),
+		"forward scan should keep order")
+	require.False(t, explainHasString(rows, "keep order:true, desc"),
+		"forward scan must not be marked desc")
+
+	// Inverted direction-for-direction: reverse scan, still no Sort.
+	rows = tk.MustQuery("explain format='brief' select a, b from t_mixed use index(idx_mixed) order by a desc, b asc").Rows()
+	require.False(t, explainHasString(rows, "Sort"),
+		"INDEX(a, b DESC) ORDER BY a DESC, b ASC must use the index in reverse without a Sort")
+	require.True(t, explainHasString(rows, "keep order:true, desc"),
+		"reverse scan should be marked desc")
+
+	// Mixed mismatch: forward gives (a ASC, b DESC), reverse gives (a DESC,
+	// b ASC); neither matches "ORDER BY a, b" uniformly ASC, so a Sort is
+	// required.
 	rows = tk.MustQuery("explain format='brief' select a, b from t_mixed use index(idx_mixed) order by a, b").Rows()
 	require.True(t, explainHasString(rows, "Sort"),
-		"mixed-direction idx should not satisfy uniform-ASC ORDER BY without Sort")
+		"INDEX(a, b DESC) ORDER BY a ASC, b ASC is unsatisfiable; expected a Sort")
 
 	// With the feature gate off, DESC is dropped at DDL time, so the same
 	// index behaves like an ascending one — ORDER BY DESC should drive a
@@ -3226,6 +3249,47 @@ func TestDescendingIndexScanDirection(t *testing.T) {
 	rows = tk.MustQuery("explain format='brief' select b from t_off use index(idx_off) order by b desc").Rows()
 	require.True(t, explainHasString(rows, "keep order:true, desc"),
 		"feature gate off: DESC must be dropped and reverse scan must remain the path for ORDER BY DESC")
+}
+
+// TestMixedDirectionCompositeIndex covers the MySQL 8.0 flagship use case:
+// a composite index with mixed ASC/DESC columns must satisfy "ORDER BY"
+// requests that match its direction vector (forward) or are the bitwise
+// complement of it (reverse), with row data coming back correctly ordered.
+func TestMixedDirectionCompositeIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_descending_index = on")
+	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk2.MustExec("drop table if exists t_mixed_e2e")
+	tk2.MustExec("create table t_mixed_e2e (a int, b int, index idx_ab (a, b desc))")
+	// Two values of a, several b values per a, and one DISTINCT b across
+	// the two groups so the join key isn't trivial.
+	tk2.MustExec("insert into t_mixed_e2e values (1, 10), (1, 5), (1, 15), (2, 20), (2, 8), (2, 12)")
+
+	// Forward scan satisfies ORDER BY a ASC, b DESC: rows must come back
+	// (a ascending, b descending within each a).
+	tk2.MustQuery("select a, b from t_mixed_e2e use index(idx_ab) order by a asc, b desc").Check(testkit.Rows(
+		"1 15", "1 10", "1 5",
+		"2 20", "2 12", "2 8",
+	))
+
+	// Reverse scan satisfies ORDER BY a DESC, b ASC.
+	tk2.MustQuery("select a, b from t_mixed_e2e use index(idx_ab) order by a desc, b asc").Check(testkit.Rows(
+		"2 8", "2 12", "2 20",
+		"1 5", "1 10", "1 15",
+	))
+
+	// "ORDER BY a, b" is unsatisfiable by either direction; results must
+	// still be correct (planner falls back to a Sort) but we don't assert
+	// scan direction here, just row order.
+	tk2.MustQuery("select a, b from t_mixed_e2e use index(idx_ab) order by a, b").Check(testkit.Rows(
+		"1 5", "1 10", "1 15",
+		"2 8", "2 12", "2 20",
+	))
 }
 
 // TestDescendingIndexEndToEnd verifies INSERT + SELECT through a DESC index
