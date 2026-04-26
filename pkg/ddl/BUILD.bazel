@@ -42,7 +42,15 @@ go_library(
         "index.go",
         "index_cop.go",
         "index_merge_tmp.go",
+<<<<<<< HEAD
         "job_table.go",
+=======
+        "index_presplit.go",
+        "job_scheduler.go",
+        "job_submitter.go",
+        "job_worker.go",
+        "metabuild.go",
+>>>>>>> 177a03c8e51 (ddl: support pre-split index regions before creating index (#57553))
         "mock.go",
         "multi_schema_change.go",
         "options.go",
@@ -137,6 +145,7 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/domainutil",
         "//pkg/util/engine",
         "//pkg/util/filter",
