@@ -3492,6 +3492,29 @@ func TestUnservableIndexRejectsQueries(t *testing.T) {
 	_, err = tk.Exec("insert into t_unservable values (1, 2)")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "metadata version 99")
+
+	// Writable non-public states must also be fenced. tables.IsIndexWritable
+	// returns true for StateWriteOnly and StateWriteReorganization, so the
+	// mutation paths in pkg/table/tables/tables.go would write to an index
+	// in those states. checkAllIndicesServable must reject them too,
+	// otherwise an older TiDB binary running DML against a table whose
+	// new-format index is mid-DDL would silently corrupt the index.
+	for _, st := range []model.SchemaState{model.StateWriteOnly, model.StateWriteReorganization} {
+		tblInfo.Indices[0].State = st
+		_, err = tk.Exec("insert into t_unservable values (3, 4)")
+		require.Errorf(t, err, "INSERT must fail when index is in %s with unservable version", st)
+		require.Contains(t, err.Error(), "metadata version 99")
+	}
+
+	// And the inverse: StateDeleteOnly / StateDeleteReorganization are NOT
+	// writable, so the fence intentionally lets them through. Restore to
+	// public afterwards so the table-cleanup teardown is well-formed.
+	for _, st := range []model.SchemaState{model.StateDeleteOnly, model.StateDeleteReorganization} {
+		tblInfo.Indices[0].State = st
+		_, err = tk.Exec("insert into t_unservable values (5, 6)")
+		require.NoErrorf(t, err, "INSERT must pass when index is in %s (not writable, fence intentionally skips)", st)
+	}
+	tblInfo.Indices[0].State = model.StatePublic
 }
 
 func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {

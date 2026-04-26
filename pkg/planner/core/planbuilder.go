@@ -1271,13 +1271,25 @@ func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.Tabl
 	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
-// checkAllIndicesServable returns an error if tableInfo carries any public
-// index whose metadata format is newer than this TiDB binary understands.
-// Used by DML builders (INSERT/UPDATE/DELETE) to fail fast before reaching
-// table-level mutation paths that would silently mis-maintain the index.
+// checkAllIndicesServable returns an error if tableInfo carries any
+// writable index whose metadata format is newer than this TiDB binary
+// understands. Used by DML builders (INSERT / REPLACE / UPDATE / DELETE
+// / LOAD DATA / IMPORT INTO) to fail fast before reaching table-level
+// mutation paths that would silently mis-maintain the index.
+//
+// "Writable" here matches `tables.IsIndexWritable`, i.e. every state
+// except StateDeleteOnly / StateDeleteReorganization. Restricting to
+// StatePublic is wrong: StateWriteOnly and StateWriteReorganization
+// indexes (mid-DDL) are also written by `addRowIndices` and
+// `rebuildUpdateRecordIndices` in pkg/table/tables/tables.go via the
+// same IsIndexWritable predicate. An older TiDB binary running DML
+// against a table whose new DESC index is in WriteOnly would otherwise
+// pass the planner gate and corrupt the index in the mutation path.
 func checkAllIndicesServable(tableInfo *model.TableInfo) error {
 	for _, idx := range tableInfo.Indices {
-		if idx.State != model.StatePublic {
+		// Mirror tables.IsIndexWritable on the bare IndexInfo, so the
+		// fence stays in lockstep with the actual write predicate.
+		if idx.State == model.StateDeleteOnly || idx.State == model.StateDeleteReorganization {
 			continue
 		}
 		if !idx.IsServable() {
