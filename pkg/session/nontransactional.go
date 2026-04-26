@@ -430,7 +430,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 		}
 	})
 	if err != nil {
-		logutil.Logger(ctx).Error("Non-transactional DML SQL failed", zap.String("job", dmlSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
+		logutil.Logger(ctx).Info("Non-transactional DML SQL failed", zap.String("job", dmlSQLInLog), zap.Error(err), zap.Int("jobID", job.jobID), zap.Int("jobSize", job.jobSize))
 		job.err = err
 	} else {
 		logutil.Logger(ctx).Info("Non-transactional DML SQL finished successfully", zap.Int("jobID", job.jobID),
