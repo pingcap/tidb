@@ -14,7 +14,20 @@
 
 //go:build go1.22
 
+<<<<<<< HEAD:pkg/util/fastrand/runtime_1.22.go
 package fastrand
+=======
+var longTests = map[string][]string{
+	"pkg/ttl/ttlworker": {
+		"TestParallelLockNewJob",
+		"TestParallelLockNewTask",
+		"TestJobManagerWithFault",
+	},
+	"pkg/ttl/cache": {
+		"TestRegionDisappearDuringSplitRange",
+	},
+}
+>>>>>>> fc28ff6fa1b (ttl: fix the issue that TTL cannot start if regions are merged frequently (#61530)):tools/check/longtests.go
 
 import (
 	_ "unsafe" // required by go:linkname
