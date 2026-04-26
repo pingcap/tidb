@@ -646,12 +646,7 @@ func NewBackend(
 	if config.DupeDetectEnabled {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	var writeLimiter StoreWriteLimiter
-	if config.StoreWriteBWLimit > 0 {
-		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
-	} else {
-		writeLimiter = noopStoreWriteLimiter{}
-	}
+	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	alloc := manual.Allocator{}
 	if RunInTest {
 		alloc.RefCnt = new(atomic.Int64)
@@ -1350,6 +1345,11 @@ func (local *Backend) generateJobForRange(
 			job.stage = regionScanned
 		}
 		failpoint.Return(injected.jobs, injected.err)
+	})
+	failpoint.Inject("mockRegionSplitKeys", func(val failpoint.Value) {
+		if i64, ok := val.(int64); ok {
+			regionSplitKeys = i64
+		}
 	})
 
 	start, end := keyRange.Start, keyRange.End
