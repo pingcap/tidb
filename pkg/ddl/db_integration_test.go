@@ -3301,12 +3301,19 @@ func TestDescendingIndexSysvarIsCreateTimeOnly(t *testing.T) {
 	is = domain.GetDomain(tk3.Session()).InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_sysvar_flip"))
 	require.NoError(t, err)
+	var newIdx *model.IndexInfo
 	for _, idx := range tbl.Meta().Indices {
 		if idx.Name.L == "idx_a" {
-			require.False(t, idx.Columns[0].Desc, "new index built with gate off must drop DESC")
-			require.Equal(t, uint8(0), idx.Version, "new ASC-only index must stay at Version=0")
+			newIdx = idx
+			break
 		}
 	}
+	// Assert presence outside the loop — without this, an upstream
+	// regression that fails to create idx_a (or renames it) would make
+	// the assertions vacuously skip and the test would falsely pass.
+	require.NotNil(t, newIdx, "expected idx_a to be present after ALTER TABLE")
+	require.False(t, newIdx.Columns[0].Desc, "new index built with gate off must drop DESC")
+	require.Equal(t, uint8(0), newIdx.Version, "new ASC-only index must stay at Version=0")
 }
 
 // TestDescOnClusteredPrimaryKeyIsRejected verifies the DDL guard that
