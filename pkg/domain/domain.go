@@ -2270,6 +2270,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		return nil
 	}
 	do.SetStatsUpdating(true)
+	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
 	// The stats updated worker doesn't require the stats initialization to be completed.
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
@@ -2390,7 +2391,38 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
+<<<<<<< HEAD
 			err = statsHandle.LoadNeededHistograms()
+=======
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) asyncLoadHistogram() {
+	defer util.Recover(metrics.LabelDomain, "asyncLoadStats", nil, false)
+	lease := do.statsLease
+	if lease == 0 {
+		lease = 3 * time.Second
+	}
+	cleanupTicker := time.NewTicker(lease)
+	defer func() {
+		cleanupTicker.Stop()
+		logutil.BgLogger().Info("asyncLoadStats exited.")
+	}()
+	select {
+	case <-do.StatsHandle().InitStatsDone:
+	case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+		return
+	}
+	statsHandle := do.StatsHandle()
+	var err error
+	for {
+		select {
+		case <-cleanupTicker.C:
+			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
+>>>>>>> 0be1983389d (domain: move async load stats into single goroutine (#58302))
 			if err != nil {
 				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
 			}
