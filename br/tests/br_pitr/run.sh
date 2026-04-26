@@ -73,6 +73,7 @@ current_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
 echo "restart a services"
 restart_services_allowing_huge_index
 
+<<<<<<< HEAD
 # PITR restore
 echo "run pitr"
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1 || ( cat $res_file && exit 1 )
@@ -89,3 +90,51 @@ expect_delete_range=$(($incremental_delete_range_count-$prepare_delete_range_cou
 check_contains "DELETE_RANGE_CNT: $expect_delete_range"
 ## check feature compatibility between PITR and accelerate indexing
 bash $CUR/check/check_ingest_repair.sh
+=======
+file_corruption() {
+    echo "corrupt the whole log files"
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
+        echo "corrupt the log file $filename"
+        filename_temp=$filename"_temp"
+        echo "corruption" > $filename_temp
+        cat $filename >> $filename_temp
+        mv $filename_temp $filename
+        truncate -s -11 $filename
+    done
+}
+
+# file corruption
+file_corruption
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success on file corruption'
+    exit 1
+fi
+
+# start a new cluster for corruption
+echo "restart a services"
+restart_services
+
+file_lost() {
+    echo "lost the whole log files"
+    for filename in $(find $TEST_DIR/$PREFIX/log -regex ".*\.log" | grep -v "schema-meta"); do
+        echo "lost the log file $filename"
+        filename_temp=$filename"_temp"
+        mv $filename $filename_temp
+    done
+}
+
+# file lost
+file_lost
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+restore_fail=0
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" || restore_fail=1
+export GO_FAILPOINTS=""
+if [ $restore_fail -ne 1 ]; then
+    echo 'pitr success on file lost'
+    exit 1
+fi
+>>>>>>> c7d09e6fa1e (br: fix br integration test file corruption (#56799))
