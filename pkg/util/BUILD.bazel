@@ -36,6 +36,7 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/disk",
         "//pkg/util/execdetails",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/tls",
