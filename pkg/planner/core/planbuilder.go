@@ -4792,11 +4792,6 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	} else if tnW.TableInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return nil, errors.Errorf("IMPORT INTO does not support cached table")
 	}
-	// Same servability fence as INSERT (pingcap/tidb#2519): IMPORT INTO
-	// writes every secondary index of the target table.
-	if err := checkAllIndicesServable(tnW.TableInfo); err != nil {
-		return nil, err
-	}
 	p := ImportInto{
 		Path:               ld.Path,
 		Format:             ld.Format,
@@ -4844,6 +4839,15 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		}
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs(db, tableInfo.Name.O)
+	}
+	// Same servability fence as INSERT (pingcap/tidb#2519): IMPORT INTO
+	// writes every secondary index of the target table. Run it against
+	// the same latest-schema snapshot the rest of buildImportInto uses
+	// — `tnW.TableInfo` can be stale here, so checking it would let an
+	// older TiDB miss a writable newer-format index that exists only in
+	// the latest schema.
+	if err := checkAllIndicesServable(tableInPlan.Meta()); err != nil {
+		return nil, err
 	}
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), ast.NewCIStr(""), tableInfo)
 	if err != nil {
