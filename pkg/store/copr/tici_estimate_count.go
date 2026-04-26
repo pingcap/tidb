@@ -78,12 +78,6 @@ func (s *Store) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCount
 	if !ok {
 		return 0, errors.Errorf("unexpected EstimateTiCICount response type %T", resp.Resp)
 	}
-	for _, retry := range pbResp.RetryShards {
-		cache.InvalidateCachedShard(retry.ShardId)
-	}
-	if len(pbResp.RetryShards) > 0 {
-		return 0, errors.New("TiCI estimate count requires shard cache refresh")
-	}
 	if pbResp.OtherError != "" {
 		return 0, errors.New(pbResp.OtherError)
 	}
