@@ -9,6 +9,10 @@ go_test(
         "operator_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 39,
+>>>>>>> 8a733f3e0f7 (ddl: add realtikv test case for merge temp index (#64436))
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -22,6 +26,11 @@ go_test(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/testkit",
+<<<<<<< HEAD
+=======
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util",
+>>>>>>> 8a733f3e0f7 (ddl: add realtikv test case for merge temp index (#64436))
         "//pkg/util/chunk",
         "//tests/realtikvtest",
         "@com_github_ngaut_pools//:pools",
