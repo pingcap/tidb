@@ -10,7 +10,11 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 3,
+=======
+    shard_count = 12,
+>>>>>>> c2477aa751a (planner: fix only full group constant collector can not feel column = unary-op(constant). (#63028))
     deps = [
         "//pkg/parser",
         "//pkg/planner",
