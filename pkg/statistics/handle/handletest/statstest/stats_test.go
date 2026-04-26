@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -817,6 +818,9 @@ func TestInitStatsForTableWithTopNButNoBuckets(t *testing.T) {
 // - Memory becomes full after TopN load
 // - TopN should be loaded but buckets should be blocked
 func TestInitStatsMemoryFullBlocksBucketsButKeepsTopN(t *testing.T) {
+	// Clear process-global async-load queue so leftover items from earlier
+	// tests do not trigger premature bucket loads here.
+	asyncload.AsyncLoadHistogramNeededItems.Clear()
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -839,9 +843,12 @@ func TestInitStatsMemoryFullBlocksBucketsButKeepsTopN(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
-	// Verify the table has buckets before testing
-	rows := tk.MustQuery("select count(*) from mysql.stats_buckets where table_id = " +
-		fmt.Sprintf("%d", tbl.Meta().ID) + " and is_index = 1").Rows()
+	// Verify the table has buckets before testing. After the stats_buckets ->
+	// stats_data migration bucket data is persisted as proto-marshaled blobs
+	// in mysql.stats_data under type IN (1, 2), not per-bucket rows in
+	// mysql.stats_buckets.
+	rows := tk.MustQuery("select count(*) from mysql.stats_data where table_id = " +
+		fmt.Sprintf("%d", tbl.Meta().ID) + " and type = 2").Rows()
 	bucketCount := rows[0][0].(string)
 	require.NotEqual(t, "0", bucketCount, "table should have buckets for this test")
 

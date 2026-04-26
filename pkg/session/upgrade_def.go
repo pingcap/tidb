@@ -493,6 +493,10 @@ const (
 	// Add the default value management for `tidb_analyze_distsql_scan_concurrency`.
 	// If the cluster is upgraded from a version that has no such variable, we set it to the global.tidb_distsql_scan_concurrency value.
 	version258 = 258
+
+	// version259
+	// Add mysql.stats_data table for per-table statistics data.
+	version259 = 259
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -506,7 +510,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version258
+var currentBootstrapVersion int64 = version259
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -689,6 +693,7 @@ var (
 		{version: version256, fn: upgradeToVer256},
 		{version: version257, fn: upgradeToVer257},
 		{version: version258, fn: upgradeToVer258},
+		{version: version259, fn: upgradeToVer259},
 	}
 )
 
@@ -2108,4 +2113,8 @@ func upgradeToVer258(s sessionapi.Session, _ int64) {
 		return
 	}
 	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDistSQLScanConcurrency, rows[0].GetString(0))
+}
+
+func upgradeToVer259(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, metadef.CreateStatsDataTable)
 }

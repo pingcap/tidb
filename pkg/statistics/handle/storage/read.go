@@ -17,12 +17,14 @@ package storage
 import (
 	"context"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -109,6 +112,12 @@ func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.Ta
 
 // HistogramFromStorageWithPriority wraps the HistogramFromStorage with the given kv.Priority.
 // Sync load and async load will use high priority to get data.
+//
+// Reads bucket data from mysql.stats_data first (the new clustered-PK
+// storage). On miss, falls back to mysql.stats_buckets (the legacy storage)
+// to keep upgraded clusters functional until the next ANALYZE re-populates
+// the histogram via the new path. The migration invariant is that bucket
+// data for a given histogram lives in exactly one of the two tables.
 func HistogramFromStorageWithPriority(
 	sctx sessionctx.Context,
 	tableID int64,
@@ -129,6 +138,139 @@ func HistogramFromStorageWithPriority(
 	case kv.PriorityLow:
 		selectPrefix += "low_priority "
 	}
+	hg, found, err := histogramFromStatsDataWithPriority(sctx, selectPrefix, tableID, colID, tp, distinct, isIndex, ver, nullCount, totColSize, corr)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		return hg, nil
+	}
+	logLegacyBucketFallbackOnce(tableID, colID, isIndex)
+	return histogramFromLegacyStatsBucketsWithPriority(sctx, selectPrefix, tableID, colID, tp, distinct, isIndex, ver, nullCount, totColSize, corr)
+}
+
+// legacyBucketFallbackLogged tracks (table_id, is_index, hist_id) tuples for
+// which we have already emitted a "falling back to stats_buckets" INFO log.
+// Each migrated-away histogram logs once per process lifetime, bounding log
+// volume at O(histograms with pre-migration data) rather than O(reads).
+var legacyBucketFallbackLogged sync.Map
+
+// logLegacyBucketFallbackOnce logs an INFO line the first time the priority
+// reader falls back to mysql.stats_buckets for this (tableID, isIndex, histID),
+// and is a no-op on subsequent calls. Useful for tracking rolling-upgrade
+// migration progress: the log count decreases over time as ANALYZE writes
+// each histogram's data into mysql.stats_data.
+func logLegacyBucketFallbackOnce(tableID, histID int64, isIndex int) {
+	key := struct {
+		tableID int64
+		histID  int64
+		isIndex int
+	}{tableID, histID, isIndex}
+	if _, loaded := legacyBucketFallbackLogged.LoadOrStore(key, struct{}{}); loaded {
+		return
+	}
+	statslogutil.StatsLogger().Info(
+		"stats_data miss, falling back to legacy stats_buckets for this histogram; will be migrated by next ANALYZE",
+		zap.Int64("table_id", tableID),
+		zap.Int64("hist_id", histID),
+		zap.Int("is_index", isIndex),
+	)
+}
+
+// histogramFromStatsDataWithPriority reads a histogram's buckets from
+// mysql.stats_data, where each row stores all buckets of one histogram as a
+// single proto-marshaled blob. Returns (nil, false, nil) if no row exists for
+// (table_id, type, hist_id).
+func histogramFromStatsDataWithPriority(
+	sctx sessionctx.Context,
+	selectPrefix string,
+	tableID int64,
+	colID int64,
+	tp *types.FieldType,
+	distinct int64,
+	isIndex int,
+	ver uint64,
+	nullCount int64,
+	totColSize int64,
+	corr float64,
+) (*statistics.Histogram, bool, error) {
+	bucketType := metadef.StatsDataTypeColBucket
+	if isIndex != 0 {
+		bucketType = metadef.StatsDataTypeIdxBucket
+	}
+	rows, _, err := util.ExecRows(sctx,
+		selectPrefix+"value from mysql.stats_data where table_id = %? and type = %? and hist_id = %?",
+		tableID, bucketType, colID)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, false, nil
+	}
+	blob := rows[0].GetBytes(0)
+	var protoHg tipb.Histogram
+	if err := protoHg.Unmarshal(blob); err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	parsed := statistics.HistogramFromProto(&protoHg)
+	// Reconstruct a histogram with the caller-provided metadata (tp,
+	// distinct, nullCount, ver, totColSize, corr) and convert each bound from
+	// blob back to the column's native type. For index histograms, bounds
+	// stay in their already-byte form (matching the legacy index read path).
+	// Apply the same bypass for new-collation column types as the legacy
+	// reader: if the column is a string type other than ENUM/SET, use TypeBlob
+	// to avoid utf8 validation issues.
+	decodeTp := tp
+	if isIndex != 1 && tp.EvalType() == types.ETString && tp.GetType() != mysql.TypeEnum && tp.GetType() != mysql.TypeSet {
+		decodeTp = types.NewFieldType(mysql.TypeBlob)
+	}
+	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, parsed.Len(), totColSize)
+	hg.Correlation = corr
+	// proto's per-bucket Count is a delta from the previous bucket (same
+	// convention as legacy stats_buckets). Accumulate into a running total so
+	// the in-memory histogram ends up with cumulative counts, matching
+	// histogramFromLegacyStatsBucketsWithPriority.
+	totalCount := int64(0)
+	for i := range parsed.Len() {
+		bucket := parsed.Buckets[i]
+		var lowerBound, upperBound types.Datum
+		if isIndex == 1 {
+			lowerBound = *parsed.GetLower(i)
+			upperBound = *parsed.GetUpper(i)
+		} else {
+			lowerBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, *parsed.GetLower(i), decodeTp)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			upperBound, err = convertBoundFromBlob(statistics.UTCWithAllowInvalidDateCtx, *parsed.GetUpper(i), decodeTp)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+		}
+		totalCount += bucket.Count
+		hg.AppendBucketWithNDV(&lowerBound, &upperBound, totalCount, bucket.Repeat, bucket.NDV)
+	}
+	hg.PreCalculateScalar()
+	return hg, true, nil
+}
+
+// histogramFromLegacyStatsBucketsWithPriority reads a histogram from the
+// legacy per-bucket-row mysql.stats_buckets table. Used as fallback when
+// stats_data has no row for the histogram (typically pre-migration data on
+// an upgraded cluster).
+func histogramFromLegacyStatsBucketsWithPriority(
+	sctx sessionctx.Context,
+	selectPrefix string,
+	tableID int64,
+	colID int64,
+	tp *types.FieldType,
+	distinct int64,
+	isIndex int,
+	ver uint64,
+	nullCount int64,
+	totColSize int64,
+	corr float64,
+) (*statistics.Histogram, error) {
 	rows, fields, err := util.ExecRows(sctx, selectPrefix+"count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)

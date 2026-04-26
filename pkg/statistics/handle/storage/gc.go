@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -167,6 +168,9 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64, soft bool
 		if _, err = util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
 			return err
 		}
+		if _, err = util.Exec(sctx, "delete from mysql.stats_data where table_id = %?", statsID); err != nil {
+			return err
+		}
 		if _, err = util.Exec(sctx, "delete from mysql.column_stats_usage where table_id = %?", statsID); err != nil {
 			return err
 		}
@@ -252,8 +256,21 @@ func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int
 	if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
 		return err
 	}
-	// delete all buckets
+	// delete all buckets from the legacy stats_buckets table
 	if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
+		return err
+	}
+	// also delete the matching row in stats_data, where bucket data lives
+	// after the stats_buckets -> stats_data migration. Type maps from is_index:
+	// is_index=0 -> col bucket (1), is_index=1 -> idx bucket (2). The
+	// migration invariant is that bucket data for a given histogram lives in
+	// exactly one of the two tables, so at most one of these DELETEs touches
+	// a row, but both are issued unconditionally to keep correctness simple.
+	bucketType := metadef.StatsDataTypeColBucket
+	if isIndex != 0 {
+		bucketType = metadef.StatsDataTypeIdxBucket
+	}
+	if _, err = util.Exec(sctx, "delete from mysql.stats_data where table_id = %? and type = %? and hist_id = %?", physicalID, bucketType, histID); err != nil {
 		return err
 	}
 	// delete all fm sketch

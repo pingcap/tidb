@@ -237,8 +237,11 @@ func TestLoadCorruptedStatistics(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	tableID := tableInfo.ID
-	// Corrupt the statistics.
-	testKit.MustExec("UPDATE mysql.stats_buckets SET upper_bound = 'who knows what it is' WHERE table_id = ?;", tableID)
+	// Corrupt the statistics. Bucket data lives in mysql.stats_data as a
+	// proto-marshaled blob (type IN (1, 2) for col/idx buckets) after the
+	// stats_buckets -> stats_data migration; writing garbage into the value
+	// column yields an unparsable blob, which is the equivalent corruption.
+	testKit.MustExec("UPDATE mysql.stats_data SET value = 'who knows what it is' WHERE table_id = ? AND type IN (1, 2);", tableID)
 	// This will add the table to the AsyncLoadHistogramNeededItems.
 	testKit.MustExec("SELECT * FROM t1 WHERE b = 2;")
 

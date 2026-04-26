@@ -16,6 +16,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/statistics",
+        "//pkg/statistics/asyncload",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/internal",
         "//pkg/testkit",

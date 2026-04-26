@@ -30,6 +30,13 @@ import (
 )
 
 func TestLoadStats(t *testing.T) {
+	// AsyncLoadHistogramNeededItems is a process-wide global that earlier
+	// tests (e.g. TestLoadPredicateColumns) can leave populated. Since this
+	// test asserts that the index histogram is not loaded yet at line 86,
+	// any leftover item whose TableID happens to match the new table's ID
+	// would cause LoadNeededHistograms to load the index prematurely. Clear
+	// the queue up front to make the test independent of suite ordering.
+	asyncload.AsyncLoadHistogramNeededItems.Clear()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")

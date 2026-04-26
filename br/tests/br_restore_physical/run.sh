@@ -70,8 +70,9 @@ check_not_contains "Fallback to logically load "
 
 # check
 echo "=== Verifying restore results ==="
-## check statistic data
-run_sql "SELECT * FROM mysql.stats_buckets buckets JOIN INFORMATION_SCHEMA.TABLES tables ON buckets.table_id = tables.TIDB_TABLE_ID WHERE tables.TABLE_SCHEMA = 'test_stats' and tables.TABLE_NAME = 't1' limit 5;"
+## check statistic data — bucket data lives in mysql.stats_data with
+## type IN (1, 2) after the stats_buckets -> stats_data migration.
+run_sql "SELECT * FROM mysql.stats_data d JOIN INFORMATION_SCHEMA.TABLES tables ON d.table_id = tables.TIDB_TABLE_ID WHERE tables.TABLE_SCHEMA = 'test_stats' and tables.TABLE_NAME = 't1' and d.type IN (1, 2) limit 5;"
 check_contains "1. row"
 ### TODO: remove if tidb support reload stats
 ###run_sql "explain select * from test_stats.t1 where a = 3"
