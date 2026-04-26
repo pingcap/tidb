@@ -95,8 +95,169 @@ func newContext(store kv.Storage) sessionctx.Context {
 
 const defaultWaitReorgTimeout = 10 * time.Second
 
+<<<<<<< HEAD
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
 var ReorgWaitTimeout = 5 * time.Second
+=======
+	ctx := newReorgExprCtx()
+	evalCtx := ctx.GetStaticEvalCtx().Apply(
+		exprstatic.WithSQLMode(reorgMeta.SQLMode),
+		exprstatic.WithLocation(loc),
+		exprstatic.WithTypeFlags(reorgTypeFlagsWithSQLMode(reorgMeta.SQLMode)),
+		exprstatic.WithErrLevelMap(reorgErrLevelsWithSQLMode(reorgMeta.SQLMode)),
+		exprstatic.WithWarnHandler(warnHandler),
+	)
+	return ctx.Apply(exprstatic.WithEvalCtx(evalCtx)), nil
+}
+
+// reorgTableMutateContext implements table.MutateContext for reorganization.
+type reorgTableMutateContext struct {
+	exprCtx            exprctx.ExprContext
+	encodingConfig     tblctx.RowEncodingConfig
+	mutateBuffers      *tblctx.MutateBuffers
+	shardID            *variable.RowIDShardGenerator
+	reservedRowIDAlloc stmtctx.ReservedRowIDAlloc
+}
+
+// AlternativeAllocators implements table.MutateContext.AlternativeAllocators.
+func (*reorgTableMutateContext) AlternativeAllocators(*model.TableInfo) (autoid.Allocators, bool) {
+	// No alternative allocators for all tables because temporary tables
+	// are not supported (temporary tables do not have any data in TiKV) in reorganization.
+	return autoid.Allocators{}, false
+}
+
+// GetExprCtx implements table.MutateContext.GetExprCtx.
+func (ctx *reorgTableMutateContext) GetExprCtx() exprctx.ExprContext {
+	return ctx.exprCtx
+}
+
+// ConnectionID implements table.MutateContext.ConnectionID.
+func (*reorgTableMutateContext) ConnectionID() uint64 {
+	return 0
+}
+
+// InRestrictedSQL implements table.MutateContext.InRestrictedSQL.
+func (*reorgTableMutateContext) InRestrictedSQL() bool {
+	return false
+}
+
+// TxnAssertionLevel implements table.MutateContext.TxnAssertionLevel.
+func (*reorgTableMutateContext) TxnAssertionLevel() variable.AssertionLevel {
+	// Because only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method,
+	// we can just return `AssertionLevelOff`.
+	return variable.AssertionLevelOff
+}
+
+// EnableMutationChecker implements table.MutateContext.EnableMutationChecker.
+func (*reorgTableMutateContext) EnableMutationChecker() bool {
+	// Because only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method,
+	// we can just return false.
+	return false
+}
+
+// GetRowEncodingConfig implements table.MutateContext.GetRowEncodingConfig.
+func (ctx *reorgTableMutateContext) GetRowEncodingConfig() tblctx.RowEncodingConfig {
+	return ctx.encodingConfig
+}
+
+// GetMutateBuffers implements table.MutateContext.GetMutateBuffers.
+func (ctx *reorgTableMutateContext) GetMutateBuffers() *tblctx.MutateBuffers {
+	return ctx.mutateBuffers
+}
+
+// GetRowIDShardGenerator implements table.MutateContext.GetRowIDShardGenerator.
+func (ctx *reorgTableMutateContext) GetRowIDShardGenerator() *variable.RowIDShardGenerator {
+	return ctx.shardID
+}
+
+// GetReservedRowIDAlloc implements table.MutateContext.GetReservedRowIDAlloc.
+func (ctx *reorgTableMutateContext) GetReservedRowIDAlloc() (*stmtctx.ReservedRowIDAlloc, bool) {
+	return &ctx.reservedRowIDAlloc, true
+}
+
+// GetStatisticsSupport implements table.MutateContext.GetStatisticsSupport.
+func (*reorgTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool) {
+	// We can just return `(nil, false)` because:
+	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
+	// - DDL reorg do need to collect statistics in this way.
+	return nil, false
+}
+
+// GetCachedTableSupport implements table.MutateContext.GetCachedTableSupport.
+func (*reorgTableMutateContext) GetCachedTableSupport() (tblctx.CachedTableSupport, bool) {
+	// We can just return `(nil, false)` because:
+	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
+	// - It is not allowed to execute DDL on a cached table.
+	return nil, false
+}
+
+// GetTemporaryTableSupport implements table.MutateContext.GetTemporaryTableSupport.
+func (*reorgTableMutateContext) GetTemporaryTableSupport() (tblctx.TemporaryTableSupport, bool) {
+	// We can just return `(nil, false)` because:
+	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
+	// - Temporary tables do not have any data in TiKV.
+	return nil, false
+}
+
+// GetExchangePartitionDMLSupport implements table.MutateContext.GetExchangePartitionDMLSupport.
+func (*reorgTableMutateContext) GetExchangePartitionDMLSupport() (tblctx.ExchangePartitionDMLSupport, bool) {
+	// We can just return `(nil, false)` because:
+	// - Only `index.Create` and `index.Delete` are invoked in reorganization which does not use this method.
+	return nil, false
+}
+
+// newReorgTableMutateContext creates a new table.MutateContext for reorganization.
+func newReorgTableMutateContext(exprCtx exprctx.ExprContext) table.MutateContext {
+	rowEncoder := &rowcodec.Encoder{
+		Enable: variable.GetDDLReorgRowFormat() != variable.DefTiDBRowFormatV1,
+	}
+
+	encodingConfig := tblctx.RowEncodingConfig{
+		IsRowLevelChecksumEnabled: rowEncoder.Enable,
+		RowEncoder:                rowEncoder,
+	}
+
+	return &reorgTableMutateContext{
+		exprCtx:        exprCtx,
+		encodingConfig: encodingConfig,
+		mutateBuffers:  tblctx.NewMutateBuffers(&variable.WriteStmtBufs{}),
+		// Though currently, `RowIDShardGenerator` is not required in DDL reorg,
+		// we still provide a valid one to keep the context complete and to avoid panic if it is used in the future.
+		shardID: variable.NewRowIDShardGenerator(
+			rand.New(rand.NewSource(time.Now().UnixNano())), // #nosec G404
+			variable.DefTiDBShardAllocateStep,
+		),
+	}
+}
+
+func reorgTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
+	return types.StrictFlags.
+		WithTruncateAsWarning(!mode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(mode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!mode.HasStrictMode() || mode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
+}
+
+func reorgErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
+	return errctx.LevelMap{
+		errctx.ErrGroupTruncate:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupBadNull:   errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupNoDefault: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
+			!mode.HasErrorForDivisionByZeroMode(),
+			!mode.HasStrictMode(),
+		),
+	}
+}
+
+func reorgTimeZoneWithTzLoc(tzLoc *model.TimeZoneLocation) (*time.Location, error) {
+	if tzLoc == nil {
+		// It is set to SystemLocation to be compatible with nil LocationInfo.
+		return timeutil.SystemLocation(), nil
+	}
+	return tzLoc.GetLocation()
+}
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477))
 
 func (rc *reorgCtx) notifyJobState(state model.JobState) {
 	atomic.StoreInt32((*int32)(&rc.jobState), int32(state))
