@@ -429,6 +429,12 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema model.CIStr, tabl
 		nameToCol[c.Name.L] = c
 	}
 	for _, index := range table.Indices {
+<<<<<<< HEAD
+=======
+		if !ex.HasIndex(index.Name.L) || index.State != model.StatePublic {
+			continue
+		}
+>>>>>>> 78e306d3781 (executor: filter non-public indexes for I_S.statistics (#61285))
 		nonUnique := "1"
 		if index.Unique {
 			nonUnique = "0"
