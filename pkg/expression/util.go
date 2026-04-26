@@ -1542,7 +1542,10 @@ func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 			}
 			v.DeferredExpr = nil // do nothing since v.Value has already been evaluated in this case.
 		case *ScalarFunction:
-			return RemoveMutableConst(ctx, v.GetArgs())
+			err := RemoveMutableConst(ctx, v.GetArgs())
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
