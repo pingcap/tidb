@@ -261,7 +261,7 @@ func extractBestCNFItemRanges(sctx planctx.PlanContext, conds []expression.Expre
 		// We build ranges for `(a,b) in ((1,1),(1,2))` and get `[1 1, 1 1] [1 2, 1 2]`, which are point ranges and we can
 		// append `c = 1` to the point ranges. However, if we choose to merge consecutive ranges here, we get `[1 1, 1 2]`,
 		// which are not point ranges, and we cannot append `c = 1` anymore.
-		res, err := detachCondAndBuildRangeWithoutMerging(sctx, tmpConds, cols, lengths, rangeMaxSize, convertToSortKey)
+		res, err := detachCondAndBuildRange(sctx, tmpConds, cols, lengths, rangeMaxSize, convertToSortKey, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -418,7 +418,7 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 		if eqOrInCount > 0 {
 			newCols := d.cols[eqOrInCount:]
 			newLengths := d.lengths[eqOrInCount:]
-			tailRes, err := DetachCondAndBuildRangeForIndex(d.sctx, newConditions, newCols, newLengths, d.rangeMaxSize)
+			tailRes, err := detachCondAndBuildRange(d.sctx, newConditions, newCols, newLengths, d.rangeMaxSize, d.convertToSortKey, d.mergeConsecutive)
 			if err != nil {
 				return nil, err
 			}
@@ -892,16 +892,15 @@ func DetachCondAndBuildRangeForIndex(sctx planctx.PlanContext, conditions []expr
 	return d.detachCondAndBuildRangeForCols()
 }
 
-// detachCondAndBuildRangeWithoutMerging detaches the index filters from table filters and uses them to build ranges.
-// When building ranges, it doesn't merge consecutive ranges.
-func detachCondAndBuildRangeWithoutMerging(sctx planctx.PlanContext, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int, rangeMaxSize int64, convertToSortKey bool) (*DetachRangeResult, error) {
+// detachCondAndBuildRange detaches the index filters from table filters and uses them to build ranges.
+func detachCondAndBuildRange(sctx planctx.PlanContext, conditions []expression.Expression, cols []*expression.Column,
+	lengths []int, rangeMaxSize int64, convertToSortKey bool, mergeConsecutive bool) (*DetachRangeResult, error) {
 	d := &rangeDetacher{
 		sctx:             sctx,
 		allConds:         conditions,
 		cols:             cols,
 		lengths:          lengths,
-		mergeConsecutive: false,
+		mergeConsecutive: mergeConsecutive,
 		convertToSortKey: convertToSortKey,
 		rangeMaxSize:     rangeMaxSize,
 	}
@@ -914,7 +913,7 @@ func detachCondAndBuildRangeWithoutMerging(sctx planctx.PlanContext, conditions 
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForPartition(sctx planctx.PlanContext, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64) (*DetachRangeResult, error) {
-	return detachCondAndBuildRangeWithoutMerging(sctx, conditions, cols, lengths, rangeMaxSize, false)
+	return detachCondAndBuildRange(sctx, conditions, cols, lengths, rangeMaxSize, false, false)
 }
 
 type rangeDetacher struct {
