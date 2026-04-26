@@ -6,6 +6,12 @@ go_test(
     srcs = [
         "db_partition_test.go",
         "main_test.go",
+<<<<<<< HEAD
+=======
+        "multi_domain_test.go",
+        "placement_test.go",
+        "reorg_partition_test.go",
+>>>>>>> 1e24d396082 (*: Drop partition DDL handling for overlapping partitions during State Changes (#56082))
     ],
     flaky = True,
     shard_count = 45,
@@ -36,6 +42,11 @@ go_test(
         "//pkg/types",
         "//pkg/util/codec",
         "//pkg/util/dbterror",
+<<<<<<< HEAD
+=======
+        "//pkg/util/logutil",
+        "//pkg/util/mathutil",
+>>>>>>> 1e24d396082 (*: Drop partition DDL handling for overlapping partitions during State Changes (#56082))
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
