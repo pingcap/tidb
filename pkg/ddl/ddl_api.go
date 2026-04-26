@@ -6883,6 +6883,10 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		return doNothing, nil
 	}
 
+	if err = checkIndexLengthWithNewCharset(tblInfo, toCharset, toCollate); err != nil {
+		return doNothing, err
+	}
+
 	for _, col := range tblInfo.Columns {
 		if col.GetType() == mysql.TypeVarchar {
 			if err = types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
@@ -6904,6 +6908,30 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 	return doNothing, nil
+}
+
+func checkIndexLengthWithNewCharset(tblInfo *model.TableInfo, toCharset, toCollate string) error {
+	// Copy all columns and replace the charset and collate.
+	columns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		newCol := col.Clone()
+		if field_types.HasCharset(&newCol.FieldType) {
+			newCol.SetCharset(toCharset)
+			newCol.SetCollate(toCollate)
+		} else {
+			newCol.SetCharset(charset.CharsetBin)
+			newCol.SetCollate(charset.CharsetBin)
+		}
+		columns = append(columns, newCol)
+	}
+
+	for _, indexInfo := range tblInfo.Indices {
+		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenameIndex renames an index.
