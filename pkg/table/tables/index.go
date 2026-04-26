@@ -268,6 +268,12 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			if err != nil {
 				return nil, err
 			}
+<<<<<<< HEAD
+=======
+			if keyIsTempIdxKey {
+				metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, false)
+			}
+>>>>>>> 69738701ab7 (ddl/ingest: record merge temp index rate and refine metrics (#62586))
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
@@ -275,6 +281,10 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if err != nil {
 					return nil, err
 				}
+<<<<<<< HEAD
+=======
+				metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, true)
+>>>>>>> 69738701ab7 (ddl/ingest: record merge temp index rate and refine metrics (#62586))
 			}
 			if !opt.IgnoreAssertion && (!opt.Untouched) {
 				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
@@ -328,8 +338,30 @@ func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if needPresumeNotExists {
 					flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 				}
+<<<<<<< HEAD
 				if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() &&
 					!vars.InRestrictedSQL && vars.ConnectionID > 0 {
+=======
+				err = txn.GetMemBuffer().Set(key, val)
+				if err != nil {
+					return nil, err
+				}
+				if keyIsTempIdxKey {
+					metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, false)
+				}
+				if len(tempKey) > 0 {
+					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
+					val = tempVal.Encode(value)
+					err = txn.GetMemBuffer().Set(tempKey, val)
+					if err != nil {
+						return nil, err
+					}
+					metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, true)
+				}
+			} else if lazyCheck {
+				flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
+				if opt.PessimisticLazyDupKeyCheck() == table.DupKeyCheckInPrewrite && txn.IsPessimistic() {
+>>>>>>> 69738701ab7 (ddl/ingest: record merge temp index rate and refine metrics (#62586))
 					flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 				}
 				err = txn.GetMemBuffer().SetWithFlags(key, val, flags...)
@@ -477,6 +509,10 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
+<<<<<<< HEAD
+=======
+				metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
+>>>>>>> 69738701ab7 (ddl/ingest: record merge temp index rate and refine metrics (#62586))
 			}
 		} else {
 			if len(key) > 0 {
@@ -499,6 +535,10 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
+<<<<<<< HEAD
+=======
+				metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
+>>>>>>> 69738701ab7 (ddl/ingest: record merge temp index rate and refine metrics (#62586))
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {
