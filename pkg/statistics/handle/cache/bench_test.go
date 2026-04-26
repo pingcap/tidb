@@ -35,7 +35,9 @@ func benchCopyAndUpdate(b *testing.B, c types.StatsCache) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			t1.PhysicalID = rand.Int63()
-			c.UpdateStatsCache([]*statistics.Table{t1}, nil)
+			c.UpdateStatsCache(types.CacheUpdate{
+				Updated: []*statistics.Table{t1},
+			})
 		}()
 	}
 	wg.Wait()
@@ -51,7 +53,9 @@ func benchPutGet(b *testing.B, c types.StatsCache) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			t1.PhysicalID = rand.Int63()
-			c.UpdateStatsCache([]*statistics.Table{t1}, nil)
+			c.UpdateStatsCache(types.CacheUpdate{
+				Updated: []*statistics.Table{t1},
+			})
 		}(i)
 	}
 	for i := 0; i < b.N; i++ {
@@ -73,7 +77,9 @@ func benchGet(b *testing.B, c types.StatsCache) {
 			defer w.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			t1.PhysicalID = rand.Int63()
-			c.UpdateStatsCache([]*statistics.Table{t1}, nil)
+			c.UpdateStatsCache(types.CacheUpdate{
+				Updated: []*statistics.Table{t1},
+			})
 		}(i)
 	}
 	w.Wait()

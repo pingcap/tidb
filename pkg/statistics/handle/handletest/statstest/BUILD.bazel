@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 12,
+    shard_count = 13,
     deps = [
         "//pkg/config",
         "//pkg/parser/model",
