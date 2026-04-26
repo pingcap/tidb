@@ -45,22 +45,9 @@ type tableHistID struct {
 
 // StatsTableRowCache is used to cache the count of table rows.
 type StatsTableRowCache struct {
-	modifyTime time.Time
-	tableRows  map[int64]uint64
-	colLength  map[tableHistID]uint64
-	dirtyIDs   []int64
-	mu         syncutil.RWMutex
-}
-
-// Invalidate invalidates the cache of the table with id.
-func (c *StatsTableRowCache) Invalidate(tblID int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// To prevent the cache from becoming too large,
-	// we only record the latest 100 dirty tables that have been modified.
-	if len(c.dirtyIDs) < 100 {
-		c.dirtyIDs = append(c.dirtyIDs, tblID)
-	}
+	tableRows map[int64]uint64
+	colLength map[tableHistID]uint64
+	mu        syncutil.RWMutex
 }
 
 // GetTableRows gets the count of table rows.
@@ -77,34 +64,8 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 	return c.colLength[id]
 }
 
-func (c *StatsTableRowCache) updateDirtyIDs(sctx sessionctx.Context) error {
-	if len(c.dirtyIDs) > 0 {
-		tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
-		if err != nil {
-			return err
-		}
-		for id, tr := range tableRows {
-			c.tableRows[id] = tr
-		}
-		colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
-		if err != nil {
-			return err
-		}
-		for id, cl := range colLength {
-			c.colLength[id] = cl
-		}
-		c.dirtyIDs = c.dirtyIDs[:0]
-	}
-	return nil
-}
-
 // UpdateByID tries to update the cache by table ID.
 func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
-		return c.updateDirtyIDs(sctx)
-	}
 	tableRows, err := getRowCountTables(sctx, id)
 	if err != nil {
 		return err
@@ -113,11 +74,12 @@ func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.tableRows[id] = tableRows[id]
 	for k, v := range colLength {
 		c.colLength[k] = v
 	}
-	c.modifyTime = time.Now()
 	return nil
 }
 

@@ -20,7 +20,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+=======
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+>>>>>>> 2214bd07fc6 (statistics: Remove the ineffective dirty IDs from the row count cache (#56287))
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -121,7 +125,11 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	if _, err := util.Exec(sctx, sql, tableID, modifyCount, count, version, source); err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	cache.TableRowStatsCache.Invalidate(tableID)
+=======
+
+>>>>>>> 2214bd07fc6 (statistics: Remove the ineffective dirty IDs from the row count cache (#56287))
 	return nil
 }
 
