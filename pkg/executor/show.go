@@ -1325,9 +1325,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
-	// add partition info here.
-	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
-
 	if tableInfo.TTLInfo != nil {
 		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
 		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
@@ -1379,6 +1376,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			return err
 		}
 	}
+
+	// add partition info here.
+	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
