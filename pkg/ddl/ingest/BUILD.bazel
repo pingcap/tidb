@@ -86,7 +86,7 @@ go_test(
         "//pkg/errno",
         "//pkg/parser/model",
         "//pkg/testkit",
-        "//tests/realtikvtest",
+        "//pkg/testkit/testfailpoint",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
