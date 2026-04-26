@@ -381,4 +381,4 @@ replace (
 
 replace github.com/pingcap/kvproto => github.com/wshwsh12/kvproto v0.0.0-20260426130351-2e7900002769
 
-replace github.com/tikv/client-go/v2 => github.com/wshwsh12/client-go/v2 v2.0.0-20260426131630-a74d865e86d0
+replace github.com/tikv/client-go/v2 => github.com/wshwsh12/client-go/v2 v2.0.0-20260426134524-a38bc276f49f

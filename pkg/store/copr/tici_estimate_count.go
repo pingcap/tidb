@@ -68,7 +68,7 @@ func (s *Store) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCount
 	if err != nil {
 		return 0, err
 	}
-	clientReq := tikvrpc.NewRequest(tikvrpc.CmdEstimateTiCICount, pbReq)
+	clientReq := tikvrpc.NewRequest(tikvrpc.CmdGetEstimateTiCICount, pbReq)
 	clientReq.StoreTp = getEndPointType(kv.TiFlash)
 	resp, err := s.GetTiKVClient().SendRequest(ctx, group.addr, clientReq, timeout)
 	if err != nil {

@@ -1838,8 +1838,8 @@ github.com/vbauerster/mpb/v7 v7.5.3 h1:BkGfmb6nMrrBQDFECR/Q7RkKCw7ylMetCb4079CGs
 github.com/vbauerster/mpb/v7 v7.5.3/go.mod h1:i+h4QY6lmLvBNK2ah1fSreiw3ajskRlBp9AhY/PnuOE=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f h1:9DDCDwOyEy/gId+IEMrFHLuQ5R/WV0KNxWLler8X2OY=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f/go.mod h1:8sdOQnirw1PrcnTJYkmW1iOHtUmblMmGdUOHyWYycLI=
-github.com/wshwsh12/client-go/v2 v2.0.0-20260426131630-a74d865e86d0 h1:JWdgi+2juQkzpN62GmkBsv9dNP3m28bD1wBmACtuXfM=
-github.com/wshwsh12/client-go/v2 v2.0.0-20260426131630-a74d865e86d0/go.mod h1:131MZ2i4C0Dn1XRUHWzKi7lw6uzTIAogQja1Kh8R6+0=
+github.com/wshwsh12/client-go/v2 v2.0.0-20260426134524-a38bc276f49f h1:yzRtFz73FB7kxDIL+dJjneFJuTEDabZt3qDyIjr1Bvw=
+github.com/wshwsh12/client-go/v2 v2.0.0-20260426134524-a38bc276f49f/go.mod h1:131MZ2i4C0Dn1XRUHWzKi7lw6uzTIAogQja1Kh8R6+0=
 github.com/wshwsh12/kvproto v0.0.0-20260426130351-2e7900002769 h1:A3TN4k1ArFoEoQi22Aqr3+zV7OojCrOe5foKz1GtrE8=
 github.com/wshwsh12/kvproto v0.0.0-20260426130351-2e7900002769/go.mod h1:z6+aAHB7dBkA+LyinEX+48/ImRJ3jag0Hg0c7wkhEvE=
 github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 h1:S2dVYn90KE98chqDkyE9Z4N61UnQd+KOfgp5Iu53llk=
