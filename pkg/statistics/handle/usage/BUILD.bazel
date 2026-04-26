@@ -26,7 +26,11 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/sqlescape",
         "@com_github_pingcap_errors//:errors",
+<<<<<<< HEAD
         "@org_uber_go_zap//:zap",
+=======
+        "@com_github_pingcap_failpoint//:failpoint",
+>>>>>>> 5e73267e719 (statistics: do not record historical stats meta if the table is locked (#57636))
     ],
 )
 
