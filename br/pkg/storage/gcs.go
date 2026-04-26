@@ -113,7 +113,17 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 // DeleteFile delete the file in storage
 func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 	object := s.objectName(name)
+<<<<<<< HEAD
 	err := s.bucket.Object(object).Delete(ctx)
+=======
+	err := s.GetBucketHandle().Object(object).Delete(ctx)
+	// for delete single file, files are deleted should be considered
+	if err != nil {
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
+			return nil
+		}
+	}
+>>>>>>> 014ed7becad (br: fix bug file-not-found error for gcs (#65058))
 	return errors.Trace(err)
 }
 
