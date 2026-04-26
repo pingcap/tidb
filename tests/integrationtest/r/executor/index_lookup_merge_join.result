@@ -11,6 +11,7 @@ insert into t1 values(1,1,1,1),(2,2,2,2),(3,3,3,3);
 insert into t2 values(1,1,1,1),(2,2,2,2);
 explain format = 'brief' select /*+ inl_merge_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.a and t1.c = t2.c and t1.b = t2.b order by t1.a desc;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 IndexMergeJoin	100000000.00	root		left outer join, inner:Projection, outer key:executor__index_lookup_merge_join.t1.a, executor__index_lookup_merge_join.t1.c, executor__index_lookup_merge_join.t1.b, inner key:executor__index_lookup_merge_join.t2.a, executor__index_lookup_merge_join.t2.c, executor__index_lookup_merge_join.t2.b
 ├─Projection(Build)	10000.00	root		executor__index_lookup_merge_join.t1.a, executor__index_lookup_merge_join.t1.b, executor__index_lookup_merge_join.t1.c, executor__index_lookup_merge_join.t1.d
 │ └─IndexLookUp	10000.00	root		
@@ -20,6 +21,14 @@ IndexMergeJoin	100000000.00	root		left outer join, inner:Projection, outer key:e
   └─IndexLookUp	10000.00	root		
     ├─IndexRangeScan(Build)	10000.00	cop[tikv]	table:t2, index:PRIMARY(a, b, c)	range: decided by [eq(executor__index_lookup_merge_join.t2.a, executor__index_lookup_merge_join.t1.a) eq(executor__index_lookup_merge_join.t2.b, executor__index_lookup_merge_join.t1.b) eq(executor__index_lookup_merge_join.t2.c, executor__index_lookup_merge_join.t1.c)], keep order:true, desc, stats:pseudo
     └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+=======
+Sort	12500.00	root		executor__index_lookup_merge_join.t1.a:desc
+└─HashJoin	12500.00	root		left outer join, left side:TableReader, equal:[eq(executor__index_lookup_merge_join.t1.a, executor__index_lookup_merge_join.t2.a) eq(executor__index_lookup_merge_join.t1.c, executor__index_lookup_merge_join.t2.c) eq(executor__index_lookup_merge_join.t1.b, executor__index_lookup_merge_join.t2.b)]
+  ├─TableReader(Build)	10000.00	root		data:TableFullScan
+  │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+>>>>>>> 8d02f1fc8a1 (planner: fix the wrong join estimation depending on missing or uninitialized stats (#61604))
 select /*+ inl_merge_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.a and t1.c = t2.c and t1.b = t2.b order by t1.a desc;
 a	b	c	d	a	b	c	d
 3	3	3	3	NULL	NULL	NULL	NULL
