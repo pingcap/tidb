@@ -5006,9 +5006,23 @@ func hasDescIndexColumn(cols []*model.IndexColumn) bool {
 
 // checkTiKVSupportsDescIndex returns an error if any non-TiFlash store in
 // the cluster runs a TiKV version below MinTiKVVersionForDescIndex. Called
-// when CREATE INDEX would persist a column with Desc=true. Mock stores
-// (which never satisfy tikv.Storage) silently pass — the auto-detection
-// path in the unistore coprocessor handles them.
+// when CREATE INDEX would persist a column with Desc=true.
+//
+// Two test-only escape hatches keep the check from blocking development:
+//
+//  1. Stores that never satisfy `tikv.Storage` — i.e. backends like the
+//     pure-Go mock used by some unit tests — short-circuit at the type
+//     assertion below; the unistore coprocessor used by those backends
+//     auto-detects DESC flag bytes, so the version gate is unnecessary.
+//
+//  2. MockStore-backed integration tests (`intest` builds) DO satisfy
+//     `tikv.Storage` and reach the PD-lookup path, but the mock fixture
+//     never fills in the `Version` string on its stores. The
+//     `tolerateMissingVersion=intest.InTest` flag passed to
+//     checkStoresMeetDescIndexMinVersion is what lets those tests
+//     proceed; production callers pass `false` and fail closed on a
+//     missing version. Do NOT remove the intest branch — it is not
+//     dead code, it covers MockStore.
 func checkTiKVSupportsDescIndex(ctx sessionctx.Context) error {
 	tikvStore, ok := ctx.GetStore().(tikv.Storage)
 	if !ok {
