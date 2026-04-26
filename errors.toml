@@ -291,6 +291,11 @@ error = '''
 failed to write and ingest
 '''
 
+["BR:Restore:ErrTablesAlreadyExisted"]
+error = '''
+tables already existed in restored cluster
+'''
+
 ["BR:Restore:ErrUnsupportedSysTable"]
 error = '''
 the system table isn't supported for restoring yet
