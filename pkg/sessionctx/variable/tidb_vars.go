@@ -1491,6 +1491,7 @@ const (
 	DefDivPrecisionIncrement                          = 4
 	DefTiDBDMLType                                    = "STANDARD"
 	DefGroupConcatMaxLen                              = uint64(1024)
+	DefTiDBLoadBindingTimeout                         = 200
 )
 
 // Process global variables.
