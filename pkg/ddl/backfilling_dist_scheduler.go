@@ -148,11 +148,11 @@ func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step
 	}
 }
 
-func skipMergeSort(stats []external.MultipleFilesStat) bool {
+func skipMergeSort(stats []external.MultipleFilesStat, concurrency int) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return external.GetMaxOverlappingTotal(stats) <= external.GetAdjustedMergeSortOverlapThreshold(concurrency)
 }
 
 // OnDone implements scheduler.Extension interface.
@@ -511,7 +511,7 @@ func generateMergePlan(
 
 	allSkip := true
 	for _, multiStats := range multiStatsGroup {
-		if !skipMergeSort(multiStats) {
+		if !skipMergeSort(multiStats, task.Concurrency) {
 			allSkip = false
 			break
 		}

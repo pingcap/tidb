@@ -301,8 +301,14 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
+<<<<<<< HEAD
 		ExecuteNodesCnt:      len(execIDs),
 		Store:                sch.storeWithPD,
+=======
+		ExecuteNodesCnt:      nodeCnt,
+		Store:                sch.store,
+		ThreadCnt:            task.Concurrency,
+>>>>>>> 06674e23094 (*: adjusts the merge sort overlap threshold/merge sort file count step based on concurrency (#62483))
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
