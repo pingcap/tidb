@@ -174,10 +174,21 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges
 		if limit != UnspecifiedLimit && len(res) >= limit {
 			break
 		}
-		loc, err := c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
-		if err != nil {
-			return res, derr.ToTiDBErr(err)
+
+		var err error
+		loc := c.TryLocateKey(ranges.At(0).StartKey)
+		if loc == nil {
+			// load the regions in the key range into region cache, we don't use the returned locations for minimal change.
+			_, err = c.LoadRegionsInKeyRange(bo.TiKVBackoffer(), ranges.RefAt(0).StartKey, ranges.RefAt(0).EndKey)
+			if err != nil {
+				logutil.Logger(bo.GetCtx()).Warn("Failed to load regions in key range", zap.Error(err))
+			}
+			loc, err = c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
+			if err != nil {
+				return res, derr.ToTiDBErr(err)
+			}
 		}
+
 		failpoint.Inject("SplitRangesHangCausedKill", func(val failpoint.Value) {
 			if val.(bool) {
 				if killer != nil {
