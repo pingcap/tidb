@@ -120,7 +120,11 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (rowUnchanged, foundDupKey bool, err error) {
 	for _, uk := range r.uniqueKeys {
+<<<<<<< HEAD
 		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
+=======
+		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn)
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 		if err != nil {
 			return false, false, err
 		}
