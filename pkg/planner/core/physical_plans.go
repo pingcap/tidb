@@ -1072,8 +1072,12 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 type PhysicalProjection struct {
 	physicalSchemaProducer
 
-	Exprs                []expression.Expression
-	CalculateNoDelay     bool
+	Exprs            []expression.Expression
+	CalculateNoDelay bool
+
+	// AvoidColumnEvaluator is ONLY used to avoid building columnEvaluator
+	// for the expressions of Projection which is child of Union operator.
+	// Related issue: TiDB#8141(https://github.com/pingcap/tidb/issues/8141)
 	AvoidColumnEvaluator bool
 }
 
