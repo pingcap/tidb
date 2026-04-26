@@ -2065,3 +2065,47 @@ avg(nullif(77.15, PI()))
 77.1500000000000000000000000000000000
 Level	Code	Message
 Warning	1265	Data truncated for column '%s' at row %d
+drop table if exists t_a;
+CREATE TABLE `t_a` (
+`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',
+`a` bigint(20) unsigned NOT NULL DEFAULT '0' COMMENT 'merchant id',
+`b` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total amount',
+`c` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'settlement amount',
+`d` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total fee',
+`e` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'settle time',
+`f` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'create time',
+`g` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'is deleted',
+PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='settlement table';
+explain format = 'brief' SELECT
+MAX(id) AS id,
+LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
+a,
+SUM(b) AS total_amount,
+SUM(c) AS settlement_amount,
+SUM(d) AS total_fee
+FROM `t_a`
+WHERE `f` >= 1753632000
+AND `f` <= 1753718399
+AND `g` = 0
+GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+id	estRows	task	access object	operator info
+Projection	1.00	root		Column#9, left(cast(from_unixtime(cast(executor__aggregate.t_a.e, decimal(10,0) UNSIGNED BINARY)), var_string(19)), 10)->Column#13, executor__aggregate.t_a.a, Column#10, Column#11, Column#12
+└─HashAgg	1.00	root		group by:Column#19, Column#21, funcs:max(Column#15)->Column#9, funcs:sum(Column#16)->Column#10, funcs:sum(Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:firstrow(Column#19)->executor__aggregate.t_a.a, funcs:firstrow(Column#20)->executor__aggregate.t_a.e
+  └─Projection	1.00	root		executor__aggregate.t_a.id->Column#15, executor__aggregate.t_a.b->Column#16, executor__aggregate.t_a.c->Column#17, executor__aggregate.t_a.d->Column#18, executor__aggregate.t_a.a->Column#19, executor__aggregate.t_a.e->Column#20, left(cast(from_unixtime(cast(executor__aggregate.t_a.e, decimal(10,0) UNSIGNED BINARY)), var_string(19)), 10)->Column#21
+    └─TableReader	1.00	root		data:Selection
+      └─Selection	1.00	cop[tikv]		eq(executor__aggregate.t_a.g, 0), ge(executor__aggregate.t_a.f, 1753632000), le(executor__aggregate.t_a.f, 1753718399)
+        └─TableFullScan	10000.00	cop[tikv]	table:t_a	keep order:false, stats:pseudo
+SELECT
+MAX(id) AS id,
+LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
+a,
+SUM(b) AS total_amount,
+SUM(c) AS settlement_amount,
+SUM(d) AS total_fee
+FROM `t_a`
+WHERE `f` >= 1753632000
+AND `f` <= 1753718399
+AND `g` = 0
+GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+id	settle_time	a	total_amount	settlement_amount	total_fee
