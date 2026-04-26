@@ -2699,7 +2699,18 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
 		batchPointGetPlan.accessCols = ds.TblCols
-		batchPointGetPlan.HandleColOffset = ds.handleCols.GetCol(0).Index
+		found := false
+		for i := range ds.Columns {
+			if ds.Columns[i].ID == ds.handleCols.GetCol(0).ID {
+				batchPointGetPlan.HandleColOffset = ds.Columns[i].Offset
+				found = true
+				break
+			}
+		}
+		if !found {
+			return invalidTask
+		}
+
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
 			batchPointGetPlan.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.QueryBlockOffset())
