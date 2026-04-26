@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,56 +14,51 @@
 
 package collate
 
-<<<<<<< HEAD
-import "github.com/pingcap/tidb/pkg/util/stringutil"
-=======
 import (
+	_ "embed"
+	"encoding/binary"
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
->>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
 
-type gbkChineseCICollator struct {
+//go:embed gb18030_weight.data
+var gb18030WeightData []byte
+
+const (
+	// Unicode code points up to U+10FFFF can be encoded as GB18030.
+	gb18030MaxCodePoint = 0x10FFFF
+)
+
+type gb18030ChineseCICollator struct {
+}
+
+// Clone implements Collator interface.
+func (*gb18030ChineseCICollator) Clone() Collator {
+	return new(gb18030ChineseCICollator)
 }
 
 // Compare implements Collator interface.
-func (*gbkChineseCICollator) Compare(a, b string) int {
-<<<<<<< HEAD
-	a = truncateTailingSpace(a)
-	b = truncateTailingSpace(b)
-
-	r1, r2 := rune(0), rune(0)
-	ai, bi := 0, 0
-	for ai < len(a) && bi < len(b) {
-		r1, ai = decodeRune(a, ai)
-		r2, bi = decodeRune(b, bi)
-
-		cmp := int(gbkChineseCISortKey(r1)) - int(gbkChineseCISortKey(r2))
-		if cmp != 0 {
-			return sign(cmp)
-		}
-	}
-	return sign((len(a) - ai) - (len(b) - bi))
-=======
-	return compareCommon(a, b, gbkChineseCISortKey)
->>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
+func (*gb18030ChineseCICollator) Compare(a, b string) int {
+	return compareCommon(a, b, gb18030ChineseCISortKey)
 }
 
 // Key implements Collator interface.
-func (g *gbkChineseCICollator) Key(str string) []byte {
+func (g *gb18030ChineseCICollator) Key(str string) []byte {
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
+// ImmutableKey implement Collator interface.
+func (g *gb18030ChineseCICollator) ImmutableKey(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
 // KeyWithoutTrimRightSpace implement Collator interface.
-func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
+func (*gb18030ChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
-	i := 0
+	i, rLen := 0, 0
 	r := rune(0)
 	for i < len(str) {
-<<<<<<< HEAD
-		r, i = decodeRune(str, i)
-=======
 		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
 		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
 		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
@@ -74,42 +69,47 @@ func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 		}
 
 		i = i + rLen
->>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
-		u16 := gbkChineseCISortKey(r)
-		if u16 > 0xFF {
-			buf = append(buf, byte(u16>>8))
+		u32 := gb18030ChineseCISortKey(r)
+		if u32 > 0xFFFFFF {
+			buf = append(buf, byte(u32>>24))
 		}
-		buf = append(buf, byte(u16))
+		if u32 > 0xFFFF {
+			buf = append(buf, byte(u32>>16))
+		}
+		if u32 > 0xFF {
+			buf = append(buf, byte(u32>>8))
+		}
+		buf = append(buf, byte(u32))
 	}
 	return buf
 }
 
 // Pattern implements Collator interface.
-func (*gbkChineseCICollator) Pattern() WildcardPattern {
-	return &gbkChineseCIPattern{}
+func (*gb18030ChineseCICollator) Pattern() WildcardPattern {
+	return &gb18030ChineseCIPattern{}
 }
 
-type gbkChineseCIPattern struct {
+type gb18030ChineseCIPattern struct {
 	patChars []rune
 	patTypes []byte
 }
 
 // Compile implements WildcardPattern interface.
-func (p *gbkChineseCIPattern) Compile(patternStr string, escape byte) {
+func (p *gb18030ChineseCIPattern) Compile(patternStr string, escape byte) {
 	p.patChars, p.patTypes = stringutil.CompilePatternInner(patternStr, escape)
 }
 
 // DoMatch implements WildcardPattern interface.
-func (p *gbkChineseCIPattern) DoMatch(str string) bool {
+func (p *gb18030ChineseCIPattern) DoMatch(str string) bool {
 	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
-		return gbkChineseCISortKey(a) == gbkChineseCISortKey(b)
+		return gb18030ChineseCISortKey(a) == gb18030ChineseCISortKey(b)
 	})
 }
 
-func gbkChineseCISortKey(r rune) uint32 {
-	if r > 0xFFFF {
+func gb18030ChineseCISortKey(r rune) uint32 {
+	if r > gb18030MaxCodePoint {
 		return 0x3F
 	}
 
-	return uint32(gbkChineseCISortKeyTable[r])
+	return binary.LittleEndian.Uint32(gb18030WeightData[4*r : 4*r+4])
 }
