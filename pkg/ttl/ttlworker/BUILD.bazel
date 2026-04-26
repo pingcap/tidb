@@ -24,6 +24,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/util",
         "//pkg/store/driver/error",
         "//pkg/timer/api",
         "//pkg/timer/runtime",
