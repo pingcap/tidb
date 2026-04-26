@@ -416,6 +416,33 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram,
 	return nil, nil, nil, nil, false
 }
 
+<<<<<<< HEAD
+=======
+// IsAnalyzed checks whether the table is analyzed or not by checking its last analyze's timestamp value.
+// A valid timestamp must be greater than 0.
+func (t *Table) IsAnalyzed() bool {
+	return t.LastAnalyzeVersion > 0
+}
+
+// IsEligibleForAnalysis checks whether the table is eligible for analysis.
+func (t *Table) IsEligibleForAnalysis() bool {
+	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
+	// 2. If the table is too small, we don't want to waste time to analyze it.
+	//    Leave the opportunity to other bigger tables.
+	if !t.MeetAutoAnalyzeMinCnt() || t.Pseudo {
+		return false
+	}
+
+	return true
+}
+
+// MeetAutoAnalyzeMinCnt checks whether the table meets the minimum count required for auto-analyze.
+func (t *Table) MeetAutoAnalyzeMinCnt() bool {
+	return t != nil && t.RealtimeCount >= AutoAnalyzeMinCnt
+}
+
+>>>>>>> 9f3ae48f30b (statistics: ignore system tables in stats cache (#64097))
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
