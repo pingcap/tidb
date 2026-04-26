@@ -37,6 +37,7 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/paging",
+        "//pkg/util/size",
         "//pkg/util/tiflash",
         "//pkg/util/tiflashcompute",
         "//pkg/util/tracing",
