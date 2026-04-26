@@ -405,7 +405,68 @@ func splitAndValidateTableRanges(
 	startKey, endKey kv.Key,
 	limit int,
 ) ([]kv.KeyRange, error) {
+<<<<<<< HEAD
 	ranges, err := splitTableRanges(t, store, startKey, endKey, limit)
+=======
+	if len(startKey) == 0 && len(endKey) == 0 {
+		logutil.DDLLogger().Info("load empty range",
+			zap.Int64("physicalTableID", pid))
+		return []kv.KeyRange{}, nil
+	}
+
+	s, ok := store.(tikv.Storage)
+	if !ok {
+		// Only support split ranges in tikv.Storage now.
+		logutil.DDLLogger().Info("load table ranges failed, unsupported storage",
+			zap.String("storage", fmt.Sprintf("%T", store)),
+			zap.Int64("physicalTableID", pid))
+		return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
+	}
+	failpoint.Inject("setLimitForLoadTableRanges", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			limit = v
+		}
+	})
+
+	rc := s.GetRegionCache()
+	maxSleep := 10000 // ms
+	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
+	var ranges []kv.KeyRange
+	maxRetryTimes := util.DefaultMaxRetries
+	failpoint.Inject("loadTableRangesNoRetry", func() {
+		maxRetryTimes = 1
+	})
+	err := util.RunWithRetry(maxRetryTimes, util.RetryInterval, func() (bool, error) {
+		logutil.DDLLogger().Info("load table ranges from PD",
+			zap.Int64("physicalTableID", pid),
+			zap.String("start key", hex.EncodeToString(startKey)),
+			zap.String("end key", hex.EncodeToString(endKey)))
+		failpoint.Inject("loadTableRangesFromPDErr", func(val failpoint.Value) {
+			if msg, ok := val.(string); ok && msg != "" {
+				failpoint.Return(false, errors.New(msg))
+			}
+		})
+		rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		var mockErr bool
+		failpoint.InjectCall("beforeLoadRangeFromPD", &mockErr)
+		if mockErr {
+			return false, kv.ErrTxnRetryable
+		}
+
+		ranges = make([]kv.KeyRange, 0, len(rs))
+		for _, r := range rs {
+			ranges = append(ranges, kv.KeyRange{StartKey: r.StartKey(), EndKey: r.EndKey()})
+		}
+		err = validateAndFillRanges(ranges, startKey, endKey)
+		if err != nil {
+			return true, errors.Trace(err)
+		}
+		return false, nil
+	})
+>>>>>>> d15bed39426 (ddl: retry modify column reorg on transient errors (#67713))
 	if err != nil {
 		return nil, err
 	}
