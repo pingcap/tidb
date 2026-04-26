@@ -5181,7 +5181,15 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
-	if hasDescIndexColumn(indexColumns) {
+	// Skip the cluster-version preflight for hypothetical indexes
+	// (CREATE HYPO INDEX). Hypo indexes are planner-only — they never
+	// produce KV mutations and never reach a TiKV coprocessor — so an
+	// older or unhealthy TiKV cluster has no bearing on whether the
+	// index can be defined. Without this guard, `CREATE HYPO INDEX
+	// ... DESC` would either fail on an out-of-date cluster or block
+	// for the PD round-trip even though it is a no-op on storage.
+	isHypo := indexOption != nil && indexOption.Tp == ast.IndexTypeHypo
+	if hasDescIndexColumn(indexColumns) && !isHypo {
 		if err := checkTiKVSupportsDescIndex(ctx); err != nil {
 			return err
 		}
