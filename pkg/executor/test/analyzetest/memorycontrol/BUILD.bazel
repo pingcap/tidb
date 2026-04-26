@@ -8,6 +8,7 @@ go_test(
         "memory_control_test.go",
     ],
     flaky = True,
+    race = "on",
     shard_count = 5,
     deps = [
         "//pkg/config",
