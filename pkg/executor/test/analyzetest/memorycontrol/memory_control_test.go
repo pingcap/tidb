@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -30,21 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
-
-func isFailpointInjectionEnabled(t *testing.T) bool {
-	t.Helper()
-	const fpName = "github.com/pingcap/tidb/pkg/executor/test/analyzetest/memorycontrol/checkFailpointInjectionForMemoryControlTests"
-	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fpName))
-	}()
-
-	injected := false
-	failpoint.Inject("checkFailpointInjectionForMemoryControlTests", func() {
-		injected = true
-	})
-	return injected
-}
 
 func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -137,7 +123,6 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	failpointInjected := isFailpointInjectionEnabled(t)
 	originalVal1 := tk.MustQuery("select @@global.tidb_mem_oom_action").Rows()[0][0].(string)
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
 	//originalVal2 := tk.MustQuery("select @@global.tidb_server_memory_limit").Rows()[0][0].(string)
@@ -208,15 +193,13 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	require.Len(t, childTrackers, 0)
 
 	h.HandleAutoAnalyze()
-	rs := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
-	rows := rs.Rows()
-	if failpointInjected {
-		require.NotEmpty(t, rows)
-		failReason := rows[0][0].(string)
-		require.True(t, strings.Contains(failReason, "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))
-	} else {
-		require.Len(t, rows, 0)
-	}
+	var rows [][]any
+	require.Eventually(t, func() bool {
+		rows = tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed").Rows()
+		return len(rows) > 0
+	}, 5*time.Second, 100*time.Millisecond)
+	failReason := rows[0][0].(string)
+	require.True(t, strings.Contains(failReason, "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))
 
 	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
