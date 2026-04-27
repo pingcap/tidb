@@ -202,9 +202,7 @@ func newCopyInterceptorStorage(t *testing.T, s storeapi.Storage, onCopy func()) 
 }
 
 func (s *copyInterceptorStorage) CopyFrom(ctx context.Context, from storeapi.Storage, spec storeapi.CopySpec) error {
-	if s.onCopy != nil {
-		s.onCopy()
-	}
+	s.onCopy()
 	return s.copier.CopyFrom(ctx, from, spec)
 }
 
