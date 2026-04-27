@@ -77,6 +77,7 @@ go_test(
         "azblob_test.go",
         "batch_test.go",
         "compress_test.go",
+        "export_test.go",
         "gcs_test.go",
         "local_test.go",
         "locking_test.go",
@@ -86,7 +87,7 @@ go_test(
     ],
     embed = [":objstore"],
     flaky = True,
-    shard_count = 45,
+    shard_count = 50,
     deps = [
         "//pkg/objstore/compressedio",
         "//pkg/objstore/objectio",
