@@ -15,6 +15,18 @@ go_library(
         "//pkg/planner/util/optimizetrace",
         "//pkg/planner/util/utilfuncp",
         "//pkg/util/execdetails",
+<<<<<<< HEAD
+=======
+        "//pkg/util/hint",
+        "//pkg/util/intest",
+        "//pkg/util/intset",
+        "//pkg/util/logutil",
+        "//pkg/util/plancodec",
+        "//pkg/util/ranger",
+        "//pkg/util/ranger/context",
+        "//pkg/util/redact",
+        "//pkg/util/set",
+>>>>>>> 6ed8d498fd6 (pkg/planner: preserve suffix order for MergeJoin with constant leading keys (#68001))
         "//pkg/util/size",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
