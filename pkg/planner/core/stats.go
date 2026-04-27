@@ -273,7 +273,11 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 		return 0, false
 	}
 	tzName, tzOffset := timeutil.Zone(sctx.GetSessionVars().Location())
-	count, err := provider.EstimateTiCICount(context.Background(), &kv.TiCIEstimateCountRequest{
+	ctx := sctx.GetTraceCtx()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	count, err := provider.EstimateTiCICount(ctx, &kv.TiCIEstimateCountRequest{
 		TableID:        tableID,
 		IndexID:        path.Index.ID,
 		StartTS:        readTS,
@@ -287,7 +291,7 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 		return 0, false
 	}
 	plannerCount := min(float64(count), float64(ds.StatisticTable.RealtimeCount))
-	logutil.BgLogger().Info("TiCI estimate count succeeded",
+	logutil.BgLogger().Debug("TiCI estimate count succeeded",
 		zap.Int64("tableID", tableID),
 		zap.String("indexName", path.Index.Name.O),
 		zap.Int64("indexID", path.Index.ID),
