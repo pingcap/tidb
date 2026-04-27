@@ -139,10 +139,8 @@ func TestConcurrentBindingCacheReloadAndMatch(t *testing.T) {
 		}
 	})
 
-	for i, worker := range workers {
-		lookup := hotLookups[i%len(hotLookups)]
-		worker, lookup := worker, lookup
-		wg.Go(func() {
+	runMatchWorker := func(worker *testkit.TestKit, lookup hotBindingLookup) func() {
+		return func() {
 			<-start
 			matchCount := 0
 			for ctx.Err() == nil {
@@ -153,7 +151,12 @@ func TestConcurrentBindingCacheReloadAndMatch(t *testing.T) {
 				}
 				matchCount++
 			}
-		})
+		}
+	}
+
+	for i, worker := range workers {
+		lookup := hotLookups[i%len(hotLookups)]
+		wg.Go(runMatchWorker(worker, lookup))
 	}
 
 	close(start)
