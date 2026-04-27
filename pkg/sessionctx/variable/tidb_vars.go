@@ -1205,7 +1205,7 @@ const (
 	DefTiFlashMemQuotaQueryPerNode                 = 0
 	DefTiFlashQuerySpillRatio                      = 0.7
 	DefTiDBEnableTiFlashPipelineMode               = true
-	DefTiDBMPPStoreFailTTL                         = "60s"
+	DefTiDBMPPStoreFailTTL                         = "0s"
 	DefTiDBTxnMode                                 = ""
 	DefTiDBRowFormatV1                             = 1
 	DefTiDBRowFormatV2                             = 2
