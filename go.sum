@@ -804,8 +804,8 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
-github.com/tikv/client-go/v2 v2.0.8-0.20260319064229-5cba4fc2f3a9 h1:HS34CjLWzXPqdhmI+WQ2VfxH41gTSkssDq+BcWU433I=
-github.com/tikv/client-go/v2 v2.0.8-0.20260319064229-5cba4fc2f3a9/go.mod h1:ZneDDnz21EbwEDPcTfUceqAGIX77UD+zRkXzDswM/4s=
+github.com/tikv/client-go/v2 v2.0.8-0.20260420090212-754a707563bd h1:/YCt5BQYvPbp5QtVVTR6Z35uL0CoCEV3HP+ezXsl+xs=
+github.com/tikv/client-go/v2 v2.0.8-0.20260420090212-754a707563bd/go.mod h1:U3yIqdfS7ONRA+1Ospy0lujvkii1xi9mZAzLprFIMac=
 github.com/tikv/pd/client v0.0.0-20260310072508-b936d55fc33e h1:QZZVH1lvNLCb3VndhRhW1dPFe9GITjJuNqOoFP0JeTw=
 github.com/tikv/pd/client v0.0.0-20260310072508-b936d55fc33e/go.mod h1:X3T+jK+4bLbDKgupmzvVXuySnCNV4Lfdm/bL8TAw3ik=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
@@ -938,8 +938,8 @@ golang.org/x/crypto v0.0.0-20220518034528-6f7dac969898/go.mod h1:IxCIyHEi3zRg3s0
 golang.org/x/crypto v0.7.0/go.mod h1:pYwdfH91IfpZVANVyUOhSIPZaFoJGxTFbZhFTx+dXZU=
 golang.org/x/crypto v0.13.0/go.mod h1:y6Z2r+Rw4iayiXXAIxJIDAJ1zMW4yaTpebo8fPOliYc=
 golang.org/x/crypto v0.14.0/go.mod h1:MVFd36DqK4CsrnJYDkBA3VC4m2GkXAM0PvzMCn4JQf4=
-golang.org/x/crypto v0.44.0 h1:A97SsFvM3AIwEEmTBiaxPPTYpDC47w720rdiiUvgoAU=
-golang.org/x/crypto v0.44.0/go.mod h1:013i+Nw79BMiQiMsOPcVCB5ZIJbYkerPrGnOa00tvmc=
+golang.org/x/crypto v0.45.0 h1:jMBrvKuj23MTlT0bQEOBcAE0mjg8mK9RXFhRH6nyF3Q=
+golang.org/x/crypto v0.45.0/go.mod h1:XTGrrkGJve7CYK7J8PEww4aY7gM3qMCElcJQ8n8JdX4=
 golang.org/x/exp v0.0.0-20180321215751-8460e604b9de/go.mod h1:CJ0aWSM057203Lf6IL+f9T1iT9GByDxfZKAQTCR3kQA=
 golang.org/x/exp v0.0.0-20190121172915-509febef88a4/go.mod h1:CJ0aWSM057203Lf6IL+f9T1iT9GByDxfZKAQTCR3kQA=
 golang.org/x/exp v0.0.0-20190306152737-a1d7652674e8/go.mod h1:CJ0aWSM057203Lf6IL+f9T1iT9GByDxfZKAQTCR3kQA=
