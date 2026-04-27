@@ -241,9 +241,12 @@ func TestTwoStates(t *testing.T) {
 
 	times := 0
 	var checkErr error
-	failpointHookAvailable := false
+	// Probe whether the current test surface rewrote failpoint.InjectCall into
+	// failpoint.Call. marker.go leaves InjectCall as a noop in plain go test, so
+	// only the failpoint wrapper can observe intermediate schema states here.
+	afterWaitSchemaSyncedHookAvailable := false
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(*model.Job) {
-		failpointHookAvailable = true
+		afterWaitSchemaSyncedHookAvailable = true
 	})
 	mustExec(probeTableSQL)
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
@@ -304,7 +307,7 @@ func TestTwoStates(t *testing.T) {
 			runStateChecks(job.SchemaState)
 		})
 		mustExec(alterTableSQL)
-		require.Equal(t, 3, times, "TestTwoStates requires a failpoint-enabled run to observe the three intermediate add-column states; use tools/check/failpoint-go-test.sh for pkg/ddl")
+		require.Equal(t, 3, times, "TestTwoStates requires failpoint-go-test.sh so afterWaitSchemaSynced is rewritten and the three intermediate add-column states are observable")
 	}
 	runWithoutFailpointHook := func() {
 		// Plain `go test` without failpoint source rewriting leaves InjectCall as
@@ -323,7 +326,7 @@ func TestTwoStates(t *testing.T) {
 		require.NoError(t, testInfo.compileSQL(3))
 		mustExec(alterTableSQL)
 	}
-	if failpointHookAvailable {
+	if afterWaitSchemaSyncedHookAvailable {
 		runWithFailpointHook()
 	} else {
 		runWithoutFailpointHook()
