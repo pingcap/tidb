@@ -26,11 +26,14 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1064,6 +1067,41 @@ func TestReadError(t *testing.T) {
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg, &errorReader{}, int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
 	require.NoError(t, err)
 	require.Regexp(t, "fake read error", parser.ReadRow().Error())
+}
+
+// TestReadBlockSurfacesTruncatedZstd writes a zstd-compressed CSV file into
+// the in-memory storage, slices off the trailing bytes (so the zstd decoder
+// hits the truncation mid-frame), and asserts that ReadRow propagates the
+// underlying io.ErrUnexpectedEOF. Without this, a truncated source file is
+// silently treated as an empty last chunk by blockParser.readBlock and
+// downstream callers (e.g. the IMPORT INTO size sampler) report 0-byte input.
+func TestReadBlockSurfacesTruncatedZstd(t *testing.T) {
+	var compressed bytes.Buffer
+	zw, err := zstd.NewWriter(&compressed)
+	require.NoError(t, err)
+	_, err = zw.Write([]byte("a,b,c\n1,2,3\n4,5,6\n"))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	truncated := compressed.Bytes()[:compressed.Len()-4]
+
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+	const path = "truncated.csv.zstd"
+	require.NoError(t, store.WriteFile(ctx, path, truncated))
+
+	reader, err := mydump.OpenReader(
+		ctx,
+		&mydump.SourceFileMeta{Path: path, Compression: mydump.CompressionZStd},
+		store,
+		compressedio.DecompressConfig{ZStdDecodeConcurrency: 1},
+	)
+	require.NoError(t, err)
+	defer reader.Close()
+
+	cfg := config.CSVConfig{FieldsTerminatedBy: ",", FieldsEnclosedBy: `"`}
+	parser, err := mydump.NewCSVParser(ctx, &cfg, reader, int64(config.ReadBlockSize), ioWorkersForCSV, false, nil)
+	require.NoError(t, err)
+	require.ErrorIs(t, parser.ReadRow(), io.ErrUnexpectedEOF)
 }
 
 // TestSyntaxErrorLog checks that a syntax error won't dump huge strings into the log.
