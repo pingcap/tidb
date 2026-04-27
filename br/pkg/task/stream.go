@@ -1119,6 +1119,11 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
+	// Reclaim a stale truncate lock left behind by a previous run that
+	// crashed or was killed before its lease could expire on the storage.
+	if _, err := objstore.CleanUpStaleLock(ctx, extStorage, truncateLockPath); err != nil {
+		return err
+	}
 	lock, err := objstore.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock)
 	if err != nil {
 		return err
@@ -1126,6 +1131,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
 		return lock.Unlock(ctx)
 	})
+	// Truncation can comfortably outlast a single lease TTL on large logs,
+	// so renew in the background and abort the run if the lease is lost.
+	lock.StartRenewal(ctx, cancelFn)
 
 	sp, err := stream.GetTSFromFile(ctx, extStorage, stream.TruncateSafePointFileName)
 	if err != nil {
@@ -1553,6 +1561,10 @@ func restoreStream(
 	if !skipCleanup {
 		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
 	}
+	// Renew the read lease in the background; if the lease is permanently
+	// lost, cancel the restore context so in-flight work fails fast rather
+	// than continuing under a stale lock.
+	migs.ReadLock.StartRenewal(ctx, cancelFn)
 
 	defer client.RestoreSSTStatisticFields(&extraFields)
 
