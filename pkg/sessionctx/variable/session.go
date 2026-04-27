@@ -1178,6 +1178,9 @@ type SessionVars struct {
 	// TiDBOptEnableAdvancedJoinReorder controls whether to use the advanced join reorder framework.
 	TiDBOptEnableAdvancedJoinReorder bool
 
+	// TiDBOptJoinReorderThroughProj enables join reorder to look through projections.
+	TiDBOptJoinReorderThroughProj bool
+
 	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
 	// reordered join trees when applicable.
 	TiDBOptJoinReorderThroughSel bool
@@ -2234,6 +2237,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		IndexJoinCostFactor:           DefOptIndexJoinCostFactor,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
+		TiDBOptJoinReorderThroughProj: DefTiDBOptJoinReorderThroughProj,
 		TiDBOptJoinReorderThroughSel:  DefTiDBOptJoinReorderThroughSel,
 		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
