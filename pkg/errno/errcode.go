@@ -1177,6 +1177,9 @@ const (
 
 	ErrProcedureDisabled = 8810
 
+	// 8802 ~ 8804 are reserved for LBAC errors.
+	// 8805 ~ 8809 are reserved for tablegroup errors.
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002
