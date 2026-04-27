@@ -326,19 +326,17 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int, created_at datetime, index idx(id, created_at))")
 
-	// insert ten rows, the 2,3,4,6,9,10 of them are expired
-	for i := 1; i <= 10; i++ {
-		t := time.Now()
-		if i%2 == 0 || i%3 == 0 {
-			t = t.Add(-time.Hour * 48)
-		}
-
-		tk.MustExec("insert into t values(?, ?)", i, t.Format(time.RFC3339))
+	for i := 1; i <= 3; i++ {
+		tk.MustExec("insert into t values(?, ?)", i, time.Now().Format(time.RFC3339))
 	}
 	tk.MustExec("analyze table t")
 	rows := tk.MustQuery("show stats_meta").Rows()
 	require.Equal(t, rows[0][4], "0")
-	require.Equal(t, rows[0][5], "10")
+	require.Equal(t, rows[0][5], "3")
+
+	for i := 4; i <= 10; i++ {
+		tk.MustExec("insert into t values(?, ?)", i, time.Now().Add(-time.Hour*48).Format(time.RFC3339))
+	}
 	tk.MustExec("alter table t ttl = `created_at` + interval 1 day")
 
 	retryTime := 300

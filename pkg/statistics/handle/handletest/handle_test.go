@@ -688,7 +688,7 @@ func TestFlushPendingStatsDeltaBeforeAnalyze(t *testing.T) {
 
 	tk.MustExec("flush stats_delta test.t")
 	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableID)).Check(testkit.Rows(
-		"10 5",
+		"5 0",
 	))
 }
 

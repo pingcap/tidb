@@ -3312,6 +3312,14 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	if b.ctx.GetSessionVars().InRestrictedSQL {
 		autoAnalyze = "auto "
 	}
+	// buildAnalyzeSamplingPushdown reads base count / modify_count from mysql.stats_meta
+	// while constructing column analyze tasks. Flush pending deltas first so the base
+	// values include pre-analyze changes and later delta dumps cannot double count them.
+	// TODO: Determine whether context.Background is appropriate here; if not, use the proper statement context.
+	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats), b.ctx, v); err != nil {
+		b.err = err
+		return nil
+	}
 	exprCtx := b.ctx.GetExprCtx()
 	for _, task := range v.ColTasks {
 		// ColumnInfos2ColumnsAndNames will use the `colInfos` to find the unique id for the column,
