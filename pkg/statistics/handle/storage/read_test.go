@@ -134,7 +134,7 @@ func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
-	tk.MustExec("flush stats_delta")
+	tk.MustExec("flush stats_delta *.*")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("analyze table t")
 	tk.MustExec("set tidb_opt_objective='determinate';")
