@@ -230,6 +230,15 @@ func (r *RowReceiverArr) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bo
 	}
 }
 
+func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
+	rawBytes := make([]sql.RawBytes, len(r.receivers))
+	for i, receiver := range r.receivers {
+		receiver.GetRawBytes()
+		rawBytes[i] = receiver.GetRawBytes()[0]
+	}
+	return rawBytes
+}
+
 // SQLTypeNumber implements RowReceiverStringer which represents numeric type columns in database
 type SQLTypeNumber struct {
 	SQLTypeString
@@ -251,6 +260,10 @@ func (s SQLTypeNumber) WriteToBufferInCsv(bf *bytes.Buffer, _ bool, opt *csvOpti
 	} else {
 		bf.WriteString(opt.nullValue)
 	}
+}
+
+func (s *SQLTypeNumber) GetRawBytes() []sql.RawBytes {
+	return []sql.RawBytes{s.RawBytes}
 }
 
 // SQLTypeString implements RowReceiverStringer which represents string type columns in database
@@ -283,6 +296,10 @@ func (s *SQLTypeString) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash boo
 	} else {
 		bf.WriteString(opt.nullValue)
 	}
+}
+
+func (s *SQLTypeString) GetRawBytes() []sql.RawBytes {
+	return []sql.RawBytes{s.RawBytes}
 }
 
 // SQLTypeBytes implements RowReceiverStringer which represents bytes type columns in database
@@ -320,4 +337,8 @@ func (s *SQLTypeBytes) WriteToBufferInCsv(bf *bytes.Buffer, escapeBackslash bool
 	} else {
 		bf.WriteString(opt.nullValue)
 	}
+}
+
+func (s *SQLTypeBytes) GetRawBytes() []sql.RawBytes {
+	return []sql.RawBytes{s.RawBytes}
 }

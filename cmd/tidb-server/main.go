@@ -141,10 +141,10 @@ const (
 	nmDisconnectOnExpiredPassword = "disconnect-on-expired-password"
 	nmKeyspaceName                = "keyspace-name"
 	nmTiDBServiceScope            = "tidb-service-scope"
-
 	nmStandby           = "standby"
 	nmActivationTimeout = "activation-timeout"
 	nmMaxIdleSeconds    = "max-idle-seconds"
+	nmExportID = "export-id"
 )
 
 const (
@@ -212,6 +212,7 @@ var (
 	standbyMode       *bool
 	activationTimeout *uint
 	maxIdleSeconds    *uint
+	exportID          *string
 )
 
 func initFlagSet() *flag.FlagSet {
@@ -268,7 +269,7 @@ func initFlagSet() *flag.FlagSet {
 	keyspaceName = fset.String(nmKeyspaceName, "", "keyspace name.")
 	serviceScope = fset.String(nmTiDBServiceScope, "", "tidb service scope")
 	help = fset.Bool("help", false, "show the usage")
-
+	exportID = fset.String(nmExportID, "", "export id")
 	// Standby
 	standbyMode = flagBoolean(fset, nmStandby, false, "start tidb-server as standby")
 	activationTimeout = fset.Uint(nmActivationTimeout, 0, "max time in second allowed for tidb to activate from standby, 0 means no limit")
@@ -784,6 +785,10 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 
 	if actualFlags[nmMaxIdleSeconds] {
 		cfg.Standby.MaxIdleSeconds = *maxIdleSeconds
+	}
+
+	if actualFlags[nmExportID] {
+		cfg.ExportID = *exportID
 	}
 }
 

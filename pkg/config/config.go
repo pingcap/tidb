@@ -202,6 +202,7 @@ type Config struct {
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
 	DeployMode                 deploymode.Mode         `toml:"deploy-mode" json:"deploy-mode"`
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
+	ExportID                   string                  `toml:"export-id" json:"export-id"`
 	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Instance                   Instance                `toml:"instance" json:"instance"`
@@ -1195,6 +1196,7 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
+	ExportID:                  "",
 }
 
 var (

@@ -84,6 +84,9 @@ const (
 	flagClusterSSLCert           = "cluster-ssl-cert"
 	flagClusterSSLKey            = "cluster-ssl-key"
 	flagPartitions               = "partitions"
+	flagParquetCompress          = "parquet-compress"
+	flagParquetPageSize          = "parquet-page-size"
+	flagParquetRowGroupSize      = "parquet-row-group-size"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -208,7 +211,24 @@ type Config struct {
 	ClusterSSLCA   string
 	ClusterSSLCert string
 	ClusterSSLKey  string
+
+	ParquetCompressType ParquetCompressType
+	ParquetPageSize     int64
+	ParquetRowGroupSize int64
 }
+
+type ParquetCompressType string
+
+const (
+	// NoCompression won't compress given bytes.
+	NoCompression ParquetCompressType = "no-compression"
+	// Gzip will compress given bytes in gzip format.
+	Gzip ParquetCompressType = "gz"
+	// Snappy will compress given bytes in snappy format.
+	Snappy ParquetCompressType = "snappy"
+	// Zstd will compress given bytes in zstd format.
+	Zstd ParquetCompressType = "zst"
+)
 
 // ServerInfoUnknown is the unknown database type to dumpling
 var ServerInfoUnknown = version.ServerInfo{
@@ -354,7 +374,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
-	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
+	flags.String(flagFiletype, "", "The type of export file (sql/csv/parquet)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
@@ -387,6 +407,9 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
 	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
+	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
+	flags.Int64(flagParquetPageSize, 1024*1024, "Parquet page size in bytes")
+	flags.Int64(flagParquetRowGroupSize, 16*1024*1024, "Parquet row group size in bytes")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -633,6 +656,20 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Errorf("%s is only supported when dumping whole table to csv, not compatible with %s", flagCsvOutputDialect, conf.FileType)
 	}
 	conf.CsvOutputDialect, err = ParseOutputDialect(dialect)
+
+	parquetCompressType, err := flags.GetString(flagParquetCompress)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetCompressType, err = ParseParquetCompressType(parquetCompressType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetPageSize, err = flags.GetInt64(flagParquetPageSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.ParquetRowGroupSize, err = flags.GetInt64(flagParquetRowGroupSize)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -738,6 +775,21 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
+func ParseParquetCompressType(compressType string) (ParquetCompressType, error) {
+	switch compressType {
+	case "no-compression":
+		return NoCompression, nil
+	case "gzip", "gz":
+		return Gzip, nil
+	case "", "snappy":
+		return Snappy, nil
+	case "zstd", "zst":
+		return Zstd, nil
+	default:
+		return NoCompression, errors.Errorf("unknown compress type %s", compressType)
+	}
+}
+
 func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
@@ -829,6 +881,10 @@ func adjustFileFormat(conf *Config) error {
 			return errors.Errorf("unsupported config.FileType '%s' when we specify --sql, please unset --filetype or set it to 'csv'", conf.FileType)
 		}
 	case FileFormatCSVString:
+	case FileFormatParquetString:
+		if conf.CompressType != compressedio.NoCompression {
+			return errors.Errorf("parquet does not support --compress, please unset it or use --parquet-compress instead")
+		}
 	default:
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 	}

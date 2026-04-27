@@ -11,11 +11,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
@@ -589,6 +591,107 @@ func wrapStringWith(str string, wrapper string) string {
 	return fmt.Sprintf("%s%s%s", wrapper, str, wrapper)
 }
 
+type wrappedWriter struct {
+	ctx context.Context
+	w   objectio.Writer
+}
+
+func (w *wrappedWriter) Write(p []byte) (n int, err error) {
+	return w.w.Write(w.ctx, p)
+}
+
+func WriteInsertInParquet(
+	pCtx *tcontext.Context,
+	cfg *Config,
+	meta TableMeta,
+	tblIR TableDataIR,
+	w objectio.Writer,
+	metrics *metrics,
+) (n uint64, err error) {
+	fileRowIter := tblIR.Rows()
+	if !fileRowIter.HasNext() {
+		return 0, fileRowIter.Error()
+	}
+
+	// parquet need to get more information from tableMeta
+	opts := []parquetfile.WriterOption{
+		parquetfile.WithCompression(getParquetCompress(cfg.ParquetCompressType)),
+		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
+		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
+	}
+	writer, err := parquetfile.NewParquetWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, meta.ColumnInfos(), opts...)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	var (
+		row            = MakeRowReceiver(meta.ColumnTypes())
+		counter        uint64
+		selectedFields = meta.SelectedField()
+	)
+
+	finishedRowsGauge := metrics.finishedRowsGauge.With(nil)
+	defer func() {
+		if err != nil {
+			pCtx.L().Warn("fail to dumping table(chunk), will revert some metrics and start a retry if possible",
+				zap.String("database", meta.DatabaseName()),
+				zap.String("table", meta.TableName()),
+				zap.Uint64("finished rows", counter),
+				log.ShortError(err))
+			finishedRowsGauge.Sub(float64(counter))
+		} else {
+			pCtx.L().Debug("finish dumping table(chunk)",
+				zap.String("database", meta.DatabaseName()),
+				zap.String("table", meta.TableName()),
+				zap.Uint64("finished rows", counter))
+			summary.CollectSuccessUnit("total rows", 1, counter)
+		}
+	}()
+
+	// add row to parquet writer, it will flush to buffer when reach row group size
+	for fileRowIter.HasNext() {
+		if selectedFields != "" {
+			if err = fileRowIter.Decode(row); err != nil {
+				return counter, errors.Trace(err)
+			}
+			err = writer.Write((*row).GetRawBytes())
+			if err != nil {
+				return counter, errors.Trace(err)
+			}
+		}
+		counter++
+		finishedRowsGauge.Add(1)
+		fileRowIter.Next()
+		if cfg.FileSize != UnspecifiedSize && writer.EstimateFileSize() >= cfg.FileSize {
+			break
+		}
+	}
+
+	// write remain data and meta file
+	if err = writer.Close(); err != nil {
+		return counter, errors.Trace(err)
+	}
+	if err = fileRowIter.Error(); err != nil {
+		return counter, errors.Trace(err)
+	}
+	return counter, nil
+}
+
+func getParquetCompress(tp ParquetCompressType) compress.Compression {
+	switch tp {
+	case NoCompression:
+		return compress.Codecs.Uncompressed
+	case Gzip:
+		return compress.Codecs.Gzip
+	case Snappy:
+		return compress.Codecs.Snappy
+	case Zstd:
+		return compress.Codecs.Zstd
+	default:
+		return parquetfile.DefaultCompressionType
+	}
+}
+
 // FileFormat is the format that output to file. Currently we support SQL text and CSV file format.
 type FileFormat int32
 
@@ -599,6 +702,8 @@ const (
 	FileFormatSQLText
 	// FileFormatCSV indicates the given file type is csv type
 	FileFormatCSV
+	// FileFormatParquet indicates the given file type is parquet type
+	FileFormatParquet
 )
 
 const (
@@ -606,6 +711,8 @@ const (
 	FileFormatSQLTextString = "sql"
 	// FileFormatCSVString indicates the string/suffix of csv type file
 	FileFormatCSVString = "csv"
+	// FileFormatParquetString indicates the string/suffix of parquet type file
+	FileFormatParquetString = "parquet"
 )
 
 // String implement Stringer.String method.
@@ -615,6 +722,8 @@ func (f FileFormat) String() string {
 		return strings.ToUpper(FileFormatSQLTextString)
 	case FileFormatCSV:
 		return strings.ToUpper(FileFormatCSVString)
+	case FileFormatParquet:
+		return strings.ToUpper(FileFormatParquetString)
 	default:
 		return "unknown"
 	}
@@ -630,6 +739,8 @@ func (f FileFormat) Extension() string {
 		return FileFormatSQLTextString
 	case FileFormatCSV:
 		return FileFormatCSVString
+	case FileFormatParquet:
+		return FileFormatParquetString
 	default:
 		return "unknown_format"
 	}
@@ -649,6 +760,8 @@ func (f FileFormat) WriteInsert(
 		return WriteInsert(pCtx, cfg, meta, tblIR, w, metrics)
 	case FileFormatCSV:
 		return WriteInsertInCsv(pCtx, cfg, meta, tblIR, w, metrics)
+	case FileFormatParquet:
+		return WriteInsertInParquet(pCtx, cfg, meta, tblIR, w, metrics)
 	default:
 		return 0, errors.Errorf("unknown file format")
 	}
