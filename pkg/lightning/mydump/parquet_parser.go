@@ -352,13 +352,20 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 }
 
 func (pp *ParquetParser) buildRowGroupParser() (err error) {
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
-	eg.SetLimit(8)
-
-	builder, err := pp.getBuilder(egCtx)
+	// Bind the per-column wrappers/readers to pp.ctx (which lives for the whole
+	// parser), not to the errgroup-derived ctx. errgroup.WithContext cancels its
+	// derived ctx when Wait() returns; if the wrappers below were opened with
+	// that ctx, every read against the resulting readers in rgp.init/readRow
+	// would fail with context.Canceled. Reproduces with row groups larger than
+	// rowGroupInMemoryThreshold (the in-memory path preloads bytes, so its
+	// readers don't depend on the ctx after construction).
+	builder, err := pp.getBuilder(pp.ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(pp.ctx)
+	eg.SetLimit(8)
 
 	readers := make([]*file.Reader, pp.fileMeta.NumColumns())
 	defer func() {
@@ -373,6 +380,14 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 
 	for i := range pp.fileMeta.NumColumns() {
 		eg.Go(func() error {
+			// Honour egCtx for sibling-failure short-circuit, but the
+			// wrapper/reader themselves are built off pp.ctx via builder.
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			default:
+			}
+
 			wrapper, err := builder(i)
 			if err != nil {
 				return errors.Trace(err)
