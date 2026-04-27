@@ -1764,7 +1764,7 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
 			// AnalyzeStateSkipped may come from older owners before this branch
 			// was split; run FinishIndexUpload once for compatibility.
-			taskID := strconv.FormatInt(job.ID, 10)
+			taskID := ticiTaskIDForDDL(job.ID)
 			// FinishIndexUpload should run after the reorg ingest
 			// completes using the lightweight helper
 			// to finalize TiCI uploads here.
@@ -1956,7 +1956,7 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 		case model.AnalyzeStateRunning, model.AnalyzeStateSkipped:
 			// AnalyzeStateSkipped may come from older owners before this branch
 			// was split; run FinishIndexUpload once for compatibility.
-			taskID := strconv.FormatInt(job.ID, 10)
+			taskID := ticiTaskIDForDDL(job.ID)
 			// FinishIndexUpload should run after the reorg ingest
 			// completes using the lightweight helper
 			// to finalize TiCI uploads here.
@@ -4392,6 +4392,16 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
+// TaskKey generates a task key for the backfill job.
+func TaskKey(jobID int64, mergeTempIdx bool) string {
+	return ddlutil.BuildBackfillTaskKey(jobID, mergeTempIdx)
+}
+
+// ticiTaskIDForDDL identifies the primary TiCI add-index backfill task.
+func ticiTaskIDForDDL(jobID int64) string {
+	return TaskKey(jobID, false)
+}
+
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
@@ -4399,7 +4409,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
-	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
+	taskKey := TaskKey(reorgInfo.Job.ID, false)
 	g, ctx := errgroup.WithContext(w.workCtx)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 

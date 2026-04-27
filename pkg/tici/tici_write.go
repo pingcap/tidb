@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
@@ -107,6 +108,33 @@ func getEtcdClient() (*clientv3.Client, error) {
 	})
 }
 
+func newTiCIDataWriterGroupManagerCtx(ctx context.Context, getClient func() (*etcd.Client, error), keyspaceID uint32) (*ManagerCtx, *etcd.Client, error) {
+	failpoint.Inject("MockNewTiCIDataWriterGroupManagerCtx", func(val failpoint.Value) {
+		if enabled, ok := val.(bool); ok && enabled {
+			mockCtx, cancel := context.WithCancel(ctx)
+			mgrCtx := &ManagerCtx{
+				ctx:    mockCtx,
+				cancel: cancel,
+			}
+			mgrCtx.SetKeyspaceID(keyspaceID)
+			failpoint.Return(mgrCtx, (*etcd.Client)(nil), nil)
+		}
+	})
+	etcdClient, err := getClient()
+	if err != nil {
+		return nil, nil, err
+	}
+	mgrCtx, err := newManagerCtxFunc(ctx, etcdClient.GetClient())
+	if err != nil {
+		if etcdClient != nil {
+			_ = etcdClient.Close()
+		}
+		return nil, nil, err
+	}
+	mgrCtx.SetKeyspaceID(keyspaceID)
+	return mgrCtx, etcdClient, nil
+}
+
 // NewTiCIDataWriterGroup constructs a DataWriterGroup covering the given indexIDs of the given table.
 func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Client, error), tblInfo *model.TableInfo, schema string, tidbTaskID string, keyspaceID uint32, newIndexIDs []int64) (*DataWriterGroup, error) {
 	if len(newIndexIDs) == 0 {
@@ -119,18 +147,17 @@ func NewTiCIDataWriterGroup(ctx context.Context, getEtcdClient func() (*etcd.Cli
 		zap.Int64s("newIndexIDs", newIndexIDs),
 	)
 
-	etcdClient, err := getEtcdClient()
+	mgrCtx, etcdClient, err := newTiCIDataWriterGroupManagerCtx(ctx, getEtcdClient, keyspaceID)
 	if err != nil {
 		return nil, err
 	}
-	mgrCtx, err := NewManagerCtx(ctx, etcdClient.GetClient())
-	if err != nil {
-		return nil, err
-	}
-	mgrCtx.SetKeyspaceID(keyspaceID)
 
 	indexMeta, err := NewTiCIIndexMeta(ctx, tblInfo, newIndexIDs, schema, tidbTaskID, mgrCtx)
 	if err != nil {
+		mgrCtx.Close()
+		if etcdClient != nil {
+			_ = etcdClient.Close()
+		}
 		return nil, err
 	}
 

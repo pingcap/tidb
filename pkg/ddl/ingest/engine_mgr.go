@@ -16,10 +16,10 @@ package ingest
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -68,7 +68,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 		}
 	}
 	if len(newTiCIIndexIDs) > 0 && !bc.ticiWriterGroupInitialized {
-		taskID := strconv.FormatInt(bc.jobID, 10)
+		taskID := ddlutil.BuildBackfillTaskKey(bc.jobID, false)
 		if err := bc.backend.InitTiCIWriterGroup(bc.ctx, nil, tbl.Meta(), bc.schemaName, taskID, newTiCIIndexIDs); err != nil {
 			return nil, err
 		}

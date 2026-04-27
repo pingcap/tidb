@@ -16,14 +16,18 @@ package tici
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/docker/go-units"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -129,4 +133,42 @@ func TestTiCIDataWriterGroup_FinishIndexUpload(t *testing.T) {
 	group := newTiCIDataWriterGroupForTest(ctx, ticiMgr, tbl, "testdb")
 	err := group.FinishIndexUpload(ctx)
 	assert.NoError(t, err)
+}
+
+func TestNewTiCIDataWriterGroupUsesInjectedManagerFactory(t *testing.T) {
+	ctx := context.Background()
+	tbl := &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t"), Indices: []*model.IndexInfo{
+		{ID: 2, Name: pmodel.NewCIStr("idx"), FullTextInfo: &model.FullTextIndexInfo{}},
+	}}
+	mockClient := new(MockMetaServiceClient)
+	ticiMgr := newTestTiCIManagerCtx(mockClient)
+	keyspaceID := uint32(123)
+	taskID := "ddl/backfill/123"
+
+	originalNewManagerCtx := newManagerCtxFunc
+	getClient := func() (*etcd.Client, error) {
+		return etcd.NewClient(nil, ""), nil
+	}
+	newManagerCtxFunc = func(_ context.Context, _ *clientv3.Client) (*ManagerCtx, error) {
+		return ticiMgr, nil
+	}
+	t.Cleanup(func() {
+		newManagerCtxFunc = originalNewManagerCtx
+	})
+
+	mockClient.
+		On("GetImportStoragePrefix", mock.Anything, mock.MatchedBy(func(req *GetImportStoragePrefixRequest) bool {
+			return req.GetTidbTaskId() == taskID &&
+				req.GetTableId() == tbl.ID &&
+				slices.Equal(req.GetIndexIds(), []int64{2}) &&
+				req.GetKeyspaceId() == keyspaceID
+		})).
+		Return(&GetImportStoragePrefixResponse{Status: ErrorCode_SUCCESS, JobId: 100, StorageUri: "s3://my-bucket/prefix"}, nil).
+		Once()
+
+	group, err := NewTiCIDataWriterGroup(ctx, getClient, tbl, "testdb", taskID, keyspaceID, []int64{2})
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	require.Equal(t, keyspaceID, ticiMgr.getKeyspaceID())
+	mockClient.AssertExpectations(t)
 }
