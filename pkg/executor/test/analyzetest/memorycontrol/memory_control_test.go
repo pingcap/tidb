@@ -108,19 +108,6 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 }
 
 func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
-	restoreIntestState := func() {}
-	if !intest.InTest || !intest.EnableAssert {
-		oldInTest := intest.InTest
-		oldEnableAssert := intest.EnableAssert
-		intest.InTest = true
-		intest.EnableAssert = true
-		restoreIntestState = func() {
-			intest.InTest = oldInTest
-			intest.EnableAssert = oldEnableAssert
-		}
-	}
-	defer restoreIntestState()
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	originalVal1 := tk.MustQuery("select @@global.tidb_mem_oom_action").Rows()[0][0].(string)
@@ -193,11 +180,19 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	require.Len(t, childTrackers, 0)
 
 	h.HandleAutoAnalyze()
+	// Poll in the main test goroutine because TestKit assertions are not safe inside require.Eventually callbacks.
 	var rows [][]any
-	require.Eventually(t, func() bool {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
 		rows = tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed").Rows()
-		return len(rows) > 0
-	}, 5*time.Second, 100*time.Millisecond)
+		if len(rows) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			require.FailNow(t, "auto analyze job did not report the expected failed analyze row")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	failReason := rows[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))
 
