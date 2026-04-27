@@ -717,3 +717,20 @@ func TestGetRestoreDataHybridKeepsRawHandleDatum(t *testing.T) {
 	require.Equal(t, types.KindInt64, rsData[0].Kind())
 	require.Equal(t, int64(3), rsData[0].GetInt64())
 }
+
+func TestGetTiCIHeaderCommitTSForCloudImport(t *testing.T) {
+	scanSnapshotTS := uint64(123456789)
+
+	require.Zero(t, getTiCIHeaderCommitTSForCloudImport(nil, scanSnapshotTS))
+	require.Zero(t, getTiCIHeaderCommitTSForCloudImport(&model.IndexInfo{}, scanSnapshotTS))
+
+	fullTextIdx := &model.IndexInfo{
+		FullTextInfo: &model.FullTextIndexInfo{},
+	}
+	require.Equal(t, scanSnapshotTS, getTiCIHeaderCommitTSForCloudImport(fullTextIdx, scanSnapshotTS))
+
+	hybridIdx := &model.IndexInfo{
+		HybridInfo: &model.HybridIndexInfo{},
+	}
+	require.Equal(t, scanSnapshotTS, getTiCIHeaderCommitTSForCloudImport(hybridIdx, scanSnapshotTS))
+}

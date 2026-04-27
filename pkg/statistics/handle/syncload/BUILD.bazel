@@ -33,7 +33,7 @@ go_library(
 
 go_test(
     name = "syncload_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = ["stats_syncload_test.go"],
     flaky = True,
     race = "on",

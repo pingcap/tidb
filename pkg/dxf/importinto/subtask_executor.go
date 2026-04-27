@@ -170,7 +170,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		)
 		localChecksum.AddRawGroup(id, cksum.Size, cksum.KVs, cksum.Sum)
 	}
-	encodeStepChecksum := localChecksum.MergedChecksum()
+	encodeStepChecksum := importer.MainChecksumForValidation(plan, localChecksum)
 	deletedRowsChecksum := subtaskMeta.DeletedRowsChecksum.ToKVChecksum()
 	finalChecksum := encodeStepChecksum
 	finalChecksum.Sub(deletedRowsChecksum)
@@ -188,13 +188,14 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		mgr := local.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
 			uint(plan.DistSQLScanConcurrency), bfWeight, resourcegroup.DefaultResourceGroupName)
 		defer mgr.Close()
+		checksumTableInfo := importer.TableInfoForRemoteChecksumValidation(plan)
 		return importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
 			func() (*local.RemoteChecksum, error) {
 				ctxWithLogger := logutil.WithLogger(ctx, logger)
 				return mgr.Checksum(ctxWithLogger, &checkpoints.TidbTableInfo{
 					DB:   plan.DBName,
 					Name: plan.TableInfo.Name.L,
-					Core: plan.TableInfo,
+					Core: checksumTableInfo,
 				})
 			},
 		)
