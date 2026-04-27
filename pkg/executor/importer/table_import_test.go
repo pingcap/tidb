@@ -86,6 +86,19 @@ func TestPrepareSortDir(t *testing.T) {
 	require.Nil(t, info)
 }
 
+func TestTiCITaskIDForImporter(t *testing.T) {
+	t.Run("prefer explicit tici task id", func(t *testing.T) {
+		controller := &LoadDataController{TiDBTaskIDForTiCI: "import-into/123"}
+		require.Equal(t, "import-into/123", ticiTaskIDForImporter(controller, "99"))
+	})
+
+	t.Run("fallback to importer id", func(t *testing.T) {
+		controller := &LoadDataController{}
+		require.Equal(t, "99", ticiTaskIDForImporter(controller, "99"))
+		require.Equal(t, "99", ticiTaskIDForImporter(nil, "99"))
+	})
+}
+
 func TestCalculateSubtaskCnt(t *testing.T) {
 	tests := []struct {
 		totalSize       int64

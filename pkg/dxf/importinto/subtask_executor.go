@@ -16,7 +16,6 @@ package importinto
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -143,12 +142,12 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		}()
 		backend := tableImporter.Backend()
 		if backend != nil {
-			// Re-initialize TiCI writer group with the same taskID to get the same ticiJobID
-			taskIDStr := strconv.FormatInt(p.taskID, 10)
-			// The newIndexIDs is not critical here as we only need to get the ticiJobID by taskID.
+			// Re-initialize TiCI writer group with the same task key to get the same TiCI job ID.
+			tidbTaskID := ticiTaskIDForImportInto(p.taskMeta.JobID)
+			// The newIndexIDs is not critical here as we only need to get the ticiJobID by task key.
 			// Now we collect all the tici indexIDs because `InitTiCIWriterGroup` require a non-empty indexIDs.
 			newIndexIDs := tici.GetTiCIIndexIDs(plan.TableInfo)
-			if err := backend.InitTiCIWriterGroup(ctx, plan.TableInfo, plan.DBName, taskIDStr, newIndexIDs); err != nil {
+			if err := backend.InitTiCIWriterGroup(ctx, plan.TableInfo, plan.DBName, tidbTaskID, newIndexIDs); err != nil {
 				logger.Warn("failed to init TiCI writer group for post process", zap.Error(err))
 				// Continue with other post process steps even if we can't init TiCI writer group
 			} else {

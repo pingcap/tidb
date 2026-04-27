@@ -370,6 +370,10 @@ type LoadDataController struct {
 
 	Table table.Table
 
+	// TiDBTaskIDForTiCI is the TiDB-side task identifier forwarded to TiCI.
+	// When empty, importer-local id is used as the fallback for non-DXF paths.
+	TiDBTaskIDForTiCI string
+
 	// how input field(or input column) from data file is mapped, either to a column or variable.
 	// if there's NO column list clause in SQL statement, then it's table's columns
 	// else it's user defined list.
