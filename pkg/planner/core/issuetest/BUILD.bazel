@@ -11,11 +11,13 @@ go_test(
     flaky = True,
     shard_count = 13,
     deps = [
+        "//pkg/errno",
         "//pkg/parser",
         "//pkg/planner",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
+        "//pkg/session/sessmgr",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
