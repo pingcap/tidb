@@ -170,15 +170,50 @@ func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t value(1,1), (2,2);")
+	h := dom.StatsHandle()
+	tk.MustExec("flush stats_delta")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("analyze table t")
+	tk.MustExec("set tidb_opt_objective='determinate';")
+	tk.MustQuery("select * from t where a = 2 and b = 2 and _tidb_rowid > 0;").Check(testkit.Rows("2 2"))
 
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	h := dom.StatsHandle()
-	// Make sure this table exists in stats cache so the old path would touch session context.
+	colAID := tableInfo.Columns[0].ID
+	colBID := tableInfo.Columns[1].ID
+	// 1. query-triggered async loading should enqueue only real columns (a, b) and should never enqueue the internal pseudo column _tidb_rowid (ID=-1).
+	require.Eventually(t, func() bool {
+		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+		hasA, hasB := false, false
+		for _, item := range items {
+			if item.TableID != tableInfo.ID || item.IsIndex {
+				continue
+			}
+			// if column _tidb_rowid (ID=-1) should never enqueue,
+			if item.ID <= 0 {
+				return false
+			}
+			if item.ID == colAID {
+				hasA = true
+			}
+			if item.ID == colBID {
+				hasB = true
+			}
+		}
+		return hasA && hasB
+	}, 5*time.Second, 100*time.Millisecond)
+
+	// Clear query-triggered items so this test can isolate the nil-sctx internal-column path.
+	clearAsyncLoadHistogramNeededItems()
+
+	// 2. even if an internal pseudo column item (ID=-1) is inserted into the queue by mistake,
+	// LoadNeededHistograms should skip it safely and remove it without panic.
 	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.NotNil(t, statsTbl)
 	require.Equal(t, tableInfo.ID, statsTbl.PhysicalID)
