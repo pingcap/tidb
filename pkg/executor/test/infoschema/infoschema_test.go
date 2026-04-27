@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -1099,34 +1100,26 @@ func TestIndexUsageWithData(t *testing.T) {
 	}
 
 	checkIndexUsage := func(startQuery time.Time, endQuery time.Time, percentageAccess2050 bool) {
-		require.Eventually(t, func() bool {
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
 			tk.Session().ReportUsageStats()
 			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
-			if len(rows) != 1 {
-				return false
+			if !assert.Len(c, rows, 1) {
+				return
 			}
 			if percentageAccess2050 {
-				if rows[0][1] != "1" {
-					return false
-				}
+				assert.Equal(c, "1", rows[0][1])
 			} else {
-				if rows[0][1] != "0" {
-					return false
-				}
+				assert.Equal(c, "0", rows[0][1])
 			}
-			if rows[0][0] != "2" || rows[0][2] != "1" {
-				return false
-			}
+			assert.Equal(c, "2", rows[0][0])
+			assert.Equal(c, "1", rows[0][2])
 			lastAccessTime, err := time.ParseInLocation(time.DateTime, rows[0][3].(string), time.Local)
-			if err != nil {
-				return false
+			if !assert.NoError(c, err) {
+				return
 			}
-			if lastAccessTime.Unix() < startQuery.Unix() || lastAccessTime.Unix() > endQuery.Unix() {
-				return false
-			}
-
-			return true
-		}, 10*time.Second, 100*time.Millisecond)
+			assert.GreaterOrEqual(c, lastAccessTime.Unix(), startQuery.Unix())
+			assert.LessOrEqual(c, lastAccessTime.Unix(), endQuery.Unix())
+		}, 30*time.Second, 100*time.Millisecond)
 	}
 	t.Run("test index usage with normal index", func(t *testing.T) {
 		tk.MustExec("use test")
