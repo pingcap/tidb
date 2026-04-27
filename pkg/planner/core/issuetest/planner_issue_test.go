@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -363,6 +365,17 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`  └─Projection_133(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#28`,
 		`    └─TableReader_136 10000.00 root  data:TableFullScan_135`,
 		`      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
+
+	prepareSharedTestKit := func(t *testing.T) *testkit.TestKit {
+		t.Helper()
+		tk.MustExec("drop database if exists test")
+		tk.MustExec("create database test")
+		tk.MustExec("use test")
+		tk.MustExec("set @@sql_mode = default")
+		tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern='OFF'")
+		tk.MustExec("set @@tidb_enable_unsafe_substitute=0")
+		return tk
+	}
 
 	// Regression test for https://github.com/pingcap/tidb/issues/66339
 	// Read-only user variables with uppercase names should be converted to constant
