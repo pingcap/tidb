@@ -141,7 +141,11 @@ func TestPBMemoryLeak(t *testing.T) {
 
 	runtime.GC()
 	_, inUseAfterSecondScan := readMem()
-	require.Less(t, memDiff(inUseAfterSecondScan, inUseAfterWarmup), delta)
+	heapGrowth := int64(inUseAfterSecondScan) - int64(inUseAfterWarmup)
+	if heapGrowth < 0 {
+		heapGrowth = 0
+	}
+	require.Less(t, heapGrowth, int64(delta))
 }
 
 // nolint:unused
