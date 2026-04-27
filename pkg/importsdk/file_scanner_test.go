@@ -320,6 +320,47 @@ func TestFileScanner(t *testing.T) {
 		require.Positive(t, tableEstimates["with_csv"].TiKVSize)
 	})
 
+	t.Run("EstimateImportDataSizeCompressedCSV", func(t *testing.T) {
+		estimateDir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(estimateDir, "db1.compressed_csv-schema.sql"),
+			[]byte("CREATE TABLE db1.compressed_csv (id INT PRIMARY KEY, v VARCHAR(255), KEY idx_v (v));"),
+			0o644,
+		))
+
+		var rawData strings.Builder
+		for i := 1; i <= 200; i++ {
+			_, err := fmt.Fprintf(&rawData, "%d,%s\n", i, strings.Repeat("a", 128))
+			require.NoError(t, err)
+		}
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		_, err := gz.Write([]byte(rawData.String()))
+		require.NoError(t, err)
+		require.NoError(t, gz.Close())
+		compressedSize := int64(buf.Len())
+		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1.compressed_csv.001.csv.gz"), buf.Bytes(), 0o644))
+
+		estimateScanner, err := NewFileScanner(ctx, "file://"+estimateDir, db, defaultSDKConfig())
+		require.NoError(t, err)
+		defer estimateScanner.Close()
+
+		metas, err := estimateScanner.GetTableMetas(ctx)
+		require.NoError(t, err)
+		require.Len(t, metas, 1)
+		require.Equal(t, compressedSize, metas[0].TotalSize)
+
+		estimate, err := estimateScanner.EstimateImportDataSize(ctx)
+		require.NoError(t, err)
+		require.Len(t, estimate.Tables, 1)
+		require.Equal(t, "compressed_csv", estimate.Tables[0].Table)
+		require.Greater(t, estimate.Tables[0].SourceSize, compressedSize)
+		require.Positive(t, estimate.Tables[0].TiKVSize)
+		require.Equal(t, estimate.Tables[0].SourceSize, estimate.TotalSourceSize)
+		require.Equal(t, estimate.Tables[0].TiKVSize, estimate.TotalTiKVSize)
+	})
+
 	t.Run("EstimateImportDataSizeSkipInvalidFiles", func(t *testing.T) {
 		estimateDir := t.TempDir()
 		require.NoError(t, os.WriteFile(filepath.Join(estimateDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0o644))
@@ -425,14 +466,16 @@ func TestFileScannerWithEstimateRealSize(t *testing.T) {
 	metas1, err := scanner1.GetTableMetas(ctx)
 	require.NoError(t, err)
 	require.Len(t, metas1, 1)
-	require.Greater(t, metas1[0].TotalSize, compressedSize)
+	require.Equal(t, compressedSize, metas1[0].TotalSize)
+	require.Len(t, metas1[0].DataFiles, 1)
+	require.Equal(t, compressedSize, metas1[0].DataFiles[0].Size)
 
 	db2, _, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db2.Close()
 
 	cfg2 := defaultSDKConfig()
-	WithEstimateRealSize(false)(cfg2)
+	WithEstimateRealSize(true)(cfg2)
 	scanner2, err := NewFileScanner(ctx, "file://"+tmpDir, db2, cfg2)
 	require.NoError(t, err)
 	defer scanner2.Close()
@@ -440,9 +483,7 @@ func TestFileScannerWithEstimateRealSize(t *testing.T) {
 	metas2, err := scanner2.GetTableMetas(ctx)
 	require.NoError(t, err)
 	require.Len(t, metas2, 1)
-	require.Equal(t, compressedSize, metas2[0].TotalSize)
-	require.Len(t, metas2[0].DataFiles, 1)
-	require.Equal(t, compressedSize, metas2[0].DataFiles[0].Size)
+	require.Greater(t, metas2[0].TotalSize, compressedSize)
 }
 
 func TestFileScannerWithSkipInvalidFiles(t *testing.T) {

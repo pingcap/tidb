@@ -56,7 +56,10 @@ type fileScanner struct {
 	config             *SDKConfig
 }
 
-const redactedInvalidSourcePath = "<redacted-invalid-source>"
+const (
+	redactedInvalidSourcePath        = "<redacted-invalid-source>"
+	maxEstimateSourceSizeSampleFiles = 3
+)
 
 // NewFileScanner creates a new FileScanner
 func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDKConfig) (FileScanner, error) {
@@ -219,7 +222,15 @@ func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSi
 	}
 	for _, dbMeta := range dbMetas {
 		for _, tblMeta := range dbMeta.Tables {
-			singleReplicaSize, err := s.estimateOneTableSize(ctx, tblMeta)
+			sourceSize, err := s.estimateTableSourceSize(ctx, tblMeta)
+			if err != nil {
+				if s.config.skipInvalidFiles {
+					s.logger.Warn("skipping table during source size estimation", zap.String("database", dbMeta.Name), zap.String("table", tblMeta.Name), zap.Error(err))
+					continue
+				}
+				return nil, err
+			}
+			singleReplicaSize, err := s.estimateOneTableSize(ctx, tblMeta, sourceSize)
 			if err != nil {
 				if s.config.skipInvalidFiles {
 					s.logger.Warn("skipping table during size estimation", zap.String("database", dbMeta.Name), zap.String("table", tblMeta.Name), zap.Error(err))
@@ -230,7 +241,7 @@ func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSi
 			tableEstimate := TableDataSizeEstimate{
 				Database:   dbMeta.Name,
 				Table:      tblMeta.Name,
-				SourceSize: tblMeta.TotalSize,
+				SourceSize: sourceSize,
 				TiKVSize:   singleReplicaSize,
 			}
 			result.Tables = append(result.Tables, tableEstimate)
@@ -239,6 +250,124 @@ func (s *fileScanner) EstimateImportDataSize(ctx context.Context) (*ImportDataSi
 		}
 	}
 	return result, nil
+}
+
+func (s *fileScanner) estimateTableSourceSize(ctx context.Context, tblMeta *mydump.MDTableMeta) (int64, error) {
+	var (
+		sourceSize      int64
+		compressedFiles []mydump.FileInfo
+		parquetFiles    []mydump.FileInfo
+	)
+	for _, file := range tblMeta.DataFiles {
+		switch file.FileMeta.Type {
+		case mydump.SourceTypeCSV, mydump.SourceTypeSQL:
+			if file.FileMeta.Compression == mydump.CompressionNone {
+				sourceSize += file.FileMeta.FileSize
+			} else {
+				compressedFiles = append(compressedFiles, file)
+			}
+		case mydump.SourceTypeParquet:
+			parquetFiles = append(parquetFiles, file)
+		default:
+			return 0, errors.Errorf("unsupported source format %v", file.FileMeta.Type)
+		}
+	}
+
+	compressedSourceSize, err := s.estimateCompressedSourceSize(ctx, compressedFiles)
+	if err != nil {
+		return 0, err
+	}
+	parquetSourceSize, err := s.estimateParquetSourceSize(ctx, parquetFiles)
+	if err != nil {
+		return 0, err
+	}
+	return sourceSize + compressedSourceSize + parquetSourceSize, nil
+}
+
+func storageSize(files []mydump.FileInfo) int64 {
+	var total int64
+	for _, file := range files {
+		total += file.FileMeta.FileSize
+	}
+	return total
+}
+
+func (s *fileScanner) estimateCompressedSourceSize(ctx context.Context, files []mydump.FileInfo) (int64, error) {
+	totalStorageSize := storageSize(files)
+	if len(files) == 0 || totalStorageSize == 0 {
+		return totalStorageSize, nil
+	}
+
+	sampleCandidates := make([]mydump.FileInfo, 0, len(files))
+	for _, file := range files {
+		if file.FileMeta.FileSize > 0 {
+			sampleCandidates = append(sampleCandidates, file)
+		}
+	}
+
+	var (
+		sampledStorageSize int64
+		weightedRatio      float64
+	)
+	for _, file := range pickSampleFiles(sampleCandidates, maxEstimateSourceSizeSampleFiles) {
+		ratio, err := mydump.SampleFileCompressRatio(ctx, file.FileMeta, s.store)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		sampledStorageSize += file.FileMeta.FileSize
+		weightedRatio += ratio * float64(file.FileMeta.FileSize)
+	}
+	if sampledStorageSize == 0 {
+		return totalStorageSize, nil
+	}
+	return int64(float64(totalStorageSize) * weightedRatio / float64(sampledStorageSize)), nil
+}
+
+func (s *fileScanner) estimateParquetSourceSize(ctx context.Context, files []mydump.FileInfo) (int64, error) {
+	totalStorageSize := storageSize(files)
+	if len(files) == 0 || totalStorageSize == 0 {
+		return totalStorageSize, nil
+	}
+
+	sampleCandidates := make([]mydump.FileInfo, 0, len(files))
+	for _, file := range files {
+		if file.FileMeta.FileSize > 0 {
+			sampleCandidates = append(sampleCandidates, file)
+		}
+	}
+
+	var (
+		sampledStorageSize int64
+		sampledSourceSize  float64
+	)
+	for _, file := range pickSampleFiles(sampleCandidates, maxEstimateSourceSizeSampleFiles) {
+		rowCount, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, file.FileMeta.Path, s.store)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		sampledStorageSize += file.FileMeta.FileSize
+		sampledSourceSize += float64(rowCount) * rowSize
+	}
+	if sampledStorageSize == 0 || sampledSourceSize == 0 {
+		return totalStorageSize, nil
+	}
+	return int64(float64(totalStorageSize) * sampledSourceSize / float64(sampledStorageSize)), nil
+}
+
+func pickSampleFiles(files []mydump.FileInfo, maxCount int) []mydump.FileInfo {
+	if maxCount <= 0 || len(files) <= maxCount {
+		return files
+	}
+	if maxCount == 1 {
+		return files[:1]
+	}
+	samples := make([]mydump.FileInfo, 0, maxCount)
+	lastFileIdx := len(files) - 1
+	lastSampleIdx := maxCount - 1
+	for i := range maxCount {
+		samples = append(samples, files[i*lastFileIdx/lastSampleIdx])
+	}
+	return samples
 }
 
 func (s *fileScanner) Close() error {
@@ -309,6 +438,7 @@ func createDataFileMeta(file mydump.FileInfo) DataFileMeta {
 func (s *fileScanner) estimateOneTableSize(
 	ctx context.Context,
 	tblMeta *mydump.MDTableMeta,
+	sourceSize int64,
 ) (int64, error) {
 	if len(tblMeta.DataFiles) == 0 {
 		return 0, nil
@@ -349,9 +479,9 @@ func (s *fileScanner) estimateOneTableSize(
 		return 0, nil
 	}
 	if sampledSize.SourceSize <= 0 || sampledSize.TotalKVSize() <= 0 {
-		return tblMeta.TotalSize, nil
+		return sourceSize, nil
 	}
-	return int64(float64(tblMeta.TotalSize) * float64(sampledSize.TotalKVSize()) / float64(sampledSize.SourceSize)), nil
+	return int64(float64(sourceSize) * float64(sampledSize.TotalKVSize()) / float64(sampledSize.SourceSize)), nil
 }
 
 func (s *fileScanner) buildEstimateSampleConfig(format string) *execimporter.KVSizeSampleConfig {

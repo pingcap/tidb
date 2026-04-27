@@ -51,8 +51,8 @@ func defaultSDKConfig() *SDKConfig {
 		charset:          "auto",
 		csvConfig:        defaultCfg.Mydumper.CSV,
 		dataCharacterSet: defaultCfg.Mydumper.DataCharacterSet,
-		// Estimate the real size (uncompressed / row-oriented) for compressed/parquet data files by default.
-		estimateRealSize: true,
+		// Skip real-size estimation by default to keep SDK initialization fast for many large compressed files.
+		estimateRealSize: false,
 	}
 }
 
