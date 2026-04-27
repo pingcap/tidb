@@ -850,9 +850,15 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.Logic
 	mergedSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 
 	remainOtherConds, leftConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		if expression.IsMutableEffectsExpr(expr) {
+			return false
+		}
 		return expression.ExprFromSchema(expr, leftPlan.Schema()) && !expression.ExprFromSchema(expr, rightPlan.Schema())
 	})
 	remainOtherConds, rightConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
+		if expression.IsMutableEffectsExpr(expr) {
+			return false
+		}
 		return expression.ExprFromSchema(expr, rightPlan.Schema()) && !expression.ExprFromSchema(expr, leftPlan.Schema())
 	})
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
@@ -874,9 +880,15 @@ func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.Logic
 		remainOBOtherConds := make([]expression.Expression, len(joinType.outerBindCondition))
 		copy(remainOBOtherConds, joinType.outerBindCondition)
 		remainOBOtherConds, obLeftConds = expression.FilterOutInPlace(remainOBOtherConds, func(expr expression.Expression) bool {
+			if expression.IsMutableEffectsExpr(expr) {
+				return false
+			}
 			return expression.ExprFromSchema(expr, leftPlan.Schema()) && !expression.ExprFromSchema(expr, rightPlan.Schema())
 		})
 		remainOBOtherConds, obRightConds = expression.FilterOutInPlace(remainOBOtherConds, func(expr expression.Expression) bool {
+			if expression.IsMutableEffectsExpr(expr) {
+				return false
+			}
 			return expression.ExprFromSchema(expr, rightPlan.Schema()) && !expression.ExprFromSchema(expr, leftPlan.Schema())
 		})
 		// _ here make the linter happy.

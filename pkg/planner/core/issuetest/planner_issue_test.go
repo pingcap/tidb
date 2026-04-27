@@ -841,6 +841,41 @@ ORDER BY field1`).Check(testkit.Rows())
 		))
 		tk.MustExec("rollback")
 	}
+
+	// issue-67802-mutable-user-var-join-cond-should-not-become-inner-side-filter
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("set @@sql_mode = default")
+		tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern='OFF'")
+		tk.MustExec("set @@tidb_enable_unsafe_substitute=0")
+
+		tk.MustExec("create table t1(a int)")
+		tk.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
+		tk.MustExec("create table t2(a int)")
+		tk.MustExec("insert into t2 values (1), (3), (5), (7), (9)")
+		tk.MustExec("create table t3(a int)")
+		tk.MustExec("insert into t3 values (1), (4), (7), (10)")
+		tk.MustExec("set @var1 = 6")
+		tk.MustExec("analyze table t1, t2, t3 all columns")
+
+		query := `SELECT t1.a, t2.a, t3.a, (@var1:= @var1+0) AS var
+FROM t1
+LEFT JOIN t2 ON t1.a=t2.a AND t2.a < @var1
+LEFT JOIN t3 ON t1.a=t3.a AND t3.a < @var1
+ORDER BY t1.a, t2.a, t3.a, var`
+		tk.MustQuery(query).Check(testkit.Rows(
+			"1 1 1 6",
+			"2 <nil> <nil> 6",
+			"3 3 <nil> 6",
+			"4 <nil> 4 6",
+			"5 5 <nil> 6",
+			"6 <nil> <nil> 6",
+			"7 <nil> <nil> 6",
+			"8 <nil> <nil> 6",
+			"9 <nil> <nil> 6",
+			"10 <nil> <nil> 6",
+		))
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
