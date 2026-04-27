@@ -44,10 +44,20 @@ func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
-func waitAtLeastEvents(t *testing.T, sub *streamhelper.FlushSubscriber, expected int) {
-	require.Eventually(t, func() bool {
-		return len(sub.Events()) >= expected
-	}, 30*time.Second, 10*time.Millisecond)
+func waitCheckpoint(t *testing.T, sub *streamhelper.FlushSubscriber, checkpoint uint64) *spans.ValueSortedFull {
+	t.Helper()
+	merged := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	deadline := time.After(30 * time.Second)
+	for merged.MinValue() < checkpoint {
+		select {
+		case evt, ok := <-sub.Events():
+			require.True(t, ok, "subscriber closed before reaching checkpoint %d", checkpoint)
+			merged.Merge(evt)
+		case <-deadline:
+			require.FailNowf(t, "timed out waiting for checkpoint", "expected %d, got %d", checkpoint, merged.MinValue())
+		}
+	}
+	return merged
 }
 
 func TestSubBasic(t *testing.T) {
@@ -59,17 +69,25 @@ func TestSubBasic(t *testing.T) {
 	sub := streamhelper.NewSubscriber(c, c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
 	const flushRounds = 10
-	expectedEvents := len(c.RegionList()) * flushRounds
 	var cp uint64
-	for range flushRounds {
+	for range flushRounds - 1 {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
+	fp := "github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend"
+	req.NoError(failpoint.Enable(fp, "pause"))
+	releaseErr := make(chan error, 1)
+	cp = c.advanceCheckpoints()
+	c.flushAll()
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		releaseErr <- failpoint.Disable(fp)
+	}()
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
-	waitAtLeastEvents(t, sub, expectedEvents)
+	s := waitCheckpoint(t, sub, cp)
+	req.NoError(<-releaseErr)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
 	for k := range sub.Events() {
 		s.Merge(k)
 	}
