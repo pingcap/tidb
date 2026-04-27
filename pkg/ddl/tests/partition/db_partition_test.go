@@ -2912,7 +2912,7 @@ func TestIssue40135Ver2(t *testing.T) {
 	})
 	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
 	wg.Wait()
-	require.ErrorContains(t, checkErr, "Unsupported modify column, decreasing length of int may result in truncation and change of partition")
+	require.ErrorContains(t, checkErr, "can't change the partitioning column, since it would require reorganize all partitions")
 	tk.MustQuery("show create table t40135").Check(testkit.Rows("" +
 		"t40135 CREATE TABLE `t40135` (\n" +
 		"  `a` bigint(20) DEFAULT '6243108',\n" +

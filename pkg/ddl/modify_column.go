@@ -1584,9 +1584,6 @@ func checkTypeChangeForExprBasedPartition(partExpr string, col, newCol *model.Co
 	}
 	if _, hasNoFunc := usageKinds[partitionExprColumnUsageKindNoFunc]; hasNoFunc {
 		if !isAllowedTypeChangeForNoFuncExprPartition(col, newCol) {
-			if isIntLengthDecreasing(col, newCol) {
-				return dbterror.ErrUnsupportedModifyColumn.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
-			}
 			return partitionTypeChangeNotAllowedErr()
 		}
 	}
@@ -1611,13 +1608,6 @@ func classifyPartitionExprFuncUsage(fc *ast.FuncCallExpr) partitionExprColumnUsa
 		return partitionExprColumnUsageKindToDays
 	case ast.Extract:
 		return partitionExprColumnUsageKindExtract
-	case ast.UnixTimestamp:
-		// Do not allow UNIX_TIMESTAMP here.
-		// UNIX_TIMESTAMP only accepts TIMESTAMP input, but MODIFY/CHANGE COLUMN
-		// revalidates the new type through isColTypeAllowedAsPartitioningCol, and
-		// TIMESTAMP does not pass that check. So no partition-column type change
-		// can be allowed here.
-		return partitionExprColumnUsageKindUnsupported
 	default:
 		return partitionExprColumnUsageKindUnsupported
 	}
@@ -1725,7 +1715,7 @@ func isPartitionColumnTypeChanged(col, newCol *model.ColumnInfo) bool {
 	if col.GetType() != newCol.GetType() {
 		return true
 	}
-	if col.GetFlen() != newCol.GetFlen() {
+	if !mysql.IsIntegerType(col.GetType()) && col.GetFlen() != newCol.GetFlen() {
 		return true
 	}
 	if col.GetDecimal() != newCol.GetDecimal() {
@@ -1784,12 +1774,6 @@ func isEnumSetTailAppend(col, newCol *model.ColumnInfo) bool {
 	default:
 		return false
 	}
-}
-
-func isIntLengthDecreasing(col, newCol *model.ColumnInfo) bool {
-	return mysql.IsIntegerType(col.GetType()) &&
-		mysql.IsIntegerType(newCol.GetType()) &&
-		mysql.DefaultLengthOfMysqlTypes[newCol.GetType()] < mysql.DefaultLengthOfMysqlTypes[col.GetType()]
 }
 
 func partitionTypeChangeNotAllowedErr() error {

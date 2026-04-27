@@ -333,6 +333,21 @@ func TestModifyColumnPartitionedTableKeyPartitionAllowlist(t *testing.T) {
 			checkRows: []string{"3"},
 		},
 		{
+			name:      "integer display width change",
+			tableName: "t_key_wl_display_width",
+			preSQLs: []string{
+				`drop table if exists t_key_wl_display_width`,
+				`create table t_key_wl_display_width (
+					a tinyint(3),
+					b int
+				) partition by key(a) partitions 3`,
+				`insert into t_key_wl_display_width values (1,10),(2,20),(3,30)`,
+			},
+			alterSQL:  `alter table t_key_wl_display_width modify column a tinyint(1)`,
+			checkSQL:  `select count(*) from t_key_wl_display_width`,
+			checkRows: []string{"3"},
+		},
+		{
 			name:      "string widening",
 			tableName: "t_key_wl_str",
 			preSQLs: []string{
