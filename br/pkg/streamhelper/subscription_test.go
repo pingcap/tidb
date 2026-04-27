@@ -43,12 +43,20 @@ func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
 	)
 
 	last := len(sub.Events())
+	seenEvents := last > 0
 	stableSince := time.Now()
 	require.Eventually(t, func() bool {
 		current := len(sub.Events())
 		if current != last {
 			last = current
+			seenEvents = seenEvents || current > 0
 			stableSince = time.Now()
+			return false
+		}
+		if current > 0 {
+			seenEvents = true
+		}
+		if !seenEvents {
 			return false
 		}
 		return time.Since(stableSince) >= quietWindow
@@ -87,6 +95,36 @@ func TestSubBasic(t *testing.T) {
 }
 
 func TestNormalError(t *testing.T) {
+	t.Run("waits for first event before dropping", func(t *testing.T) {
+		const delayedFlush = 700 * time.Millisecond
+
+		req := require.New(t)
+		ctx := context.Background()
+		c := createFakeCluster(t, 4, true)
+		c.splitAndScatter("0001", "0002", "0003", "0008", "0009")
+		installSubscribeSupport(c)
+
+		sub := streamhelper.NewSubscriber(c, c)
+		req.NoError(sub.UpdateStoreTopology(ctx))
+
+		checkpointReady := make(chan uint64, 1)
+		go func() {
+			time.Sleep(delayedFlush)
+			cp := c.advanceCheckpoints()
+			c.flushAll()
+			checkpointReady <- cp
+		}()
+
+		waitPendingEvents(t, sub)
+		sub.Drop()
+		s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+		for k := range sub.Events() {
+			s.Merge(k)
+		}
+
+		req.Equal(<-checkpointReady, s.MinValue())
+	})
+
 	req := require.New(t)
 	ctx := context.Background()
 	c := createFakeCluster(t, 4, true)
