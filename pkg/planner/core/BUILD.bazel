@@ -295,6 +295,7 @@ go_test(
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/store/mockstore",
         "//pkg/table",
+        "//pkg/table/tables",
         "//pkg/testkit",
         "//pkg/testkit/external",
         "//pkg/testkit/testdata",
