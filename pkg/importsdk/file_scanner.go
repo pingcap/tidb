@@ -345,6 +345,9 @@ func (s *fileScanner) estimateParquetSourceSize(ctx context.Context, files []myd
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		if rowCount == 0 {
+			continue
+		}
 		sampledStorageSize += file.FileMeta.FileSize
 		sampledSourceSize += float64(rowCount) * rowSize
 	}
