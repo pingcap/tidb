@@ -439,7 +439,37 @@ func TestOwnerDropped(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
 	installSubscribeSupport(c)
-	env := newTestEnv(c, t)
+	getSubscriberReached := make(chan struct{})
+	beforeManualPollReached := make(chan struct{})
+	releaseSubscriber := make(chan struct{})
+	releaseManualPoll := make(chan struct{})
+	stopDone := make(chan struct{})
+	var getSubscriberReachedOnce sync.Once
+	var beforeManualPollReachedOnce sync.Once
+	timingHooksEnabled := atomic.NewBool(false)
+	// Keep the synchronization local to this fake env rather than a package-global
+	// failpoint: the flaky window is bounded by the subscription refresh (`Stores`)
+	// and the fallback manual poll (`RegionScan`). By wiring the hooks through this
+	// env, the repro stays test-local, immutable after construction, and the manual
+	// poll hook can wait for `OnStop` to finish before the poll phase is allowed to
+	// start, which makes the owner-loss handoff deterministic.
+	env := newTestEnv(c, t, withTestEnvTimingHooks(
+		func() {
+			if !timingHooksEnabled.Load() {
+				return
+			}
+			getSubscriberReachedOnce.Do(func() { close(getSubscriberReached) })
+			<-releaseSubscriber
+		},
+		func() {
+			if !timingHooksEnabled.Load() {
+				return
+			}
+			<-stopDone
+			beforeManualPollReachedOnce.Do(func() { close(beforeManualPollReached) })
+			<-releaseManualPoll
+		},
+	))
 	defer func() {
 		if t.Failed() {
 			fmt.Println(c)
@@ -450,37 +480,21 @@ func TestOwnerDropped(t *testing.T) {
 	adv.OnStart(ctx)
 	adv.SpawnSubscriptionHandler(ctx)
 	require.NoError(t, adv.OnTick(ctx))
-	getSubscriberReached := make(chan struct{}, 1)
-	beforeManualPollReached := make(chan struct{}, 1)
-	releaseSubscriber := make(chan struct{})
-	releaseManualPoll := make(chan struct{})
-	env.setTimingHooks(func() {
-		select {
-		case getSubscriberReached <- struct{}{}:
-		default:
-		}
-		<-releaseSubscriber
-	}, func() {
-		select {
-		case beforeManualPollReached <- struct{}{}:
-		default:
-		}
-		<-releaseManualPoll
-	})
-	defer env.setTimingHooks(nil, nil)
+	timingHooksEnabled.Store(true)
 
 	tickDone := make(chan error, 1)
 	go func() {
 		tickDone <- adv.OnTick(ctx)
 	}()
+	// First hold the subscription refresh in-flight, then stop the owner. The
+	// fallback manual poll hook waits on `stopDone`, so the poll phase cannot start
+	// before the owner drop has completed.
 	<-getSubscriberReached
-	stopDone := make(chan struct{})
 	go func() {
 		adv.OnStop()
 		close(stopDone)
 	}()
 	close(releaseSubscriber)
-	<-stopDone
 	<-beforeManualPollReached
 	cp := c.advanceCheckpoints()
 	c.flushAll()

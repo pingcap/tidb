@@ -100,15 +100,30 @@ type testEnv struct {
 	beforeStores func()
 	beforeScan   func()
 
-	mu     sync.Mutex
-	hookMu sync.Mutex
+	mu sync.Mutex
 	pd.Client
 }
 
-func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
+type testEnvOption func(*testEnv)
+
+// withTestEnvTimingHooks installs test-local immutable hooks at the fake-cluster
+// boundaries used by subscription refresh and fallback polling. This keeps the
+// synchronization scoped to a single test environment instead of a package-global
+// failpoint shared by the whole package.
+func withTestEnvTimingHooks(beforeStores, beforeScan func()) testEnvOption {
+	return func(env *testEnv) {
+		env.beforeStores = beforeStores
+		env.beforeScan = beforeScan
+	}
+}
+
+func newTestEnv(c *fakeCluster, t *testing.T, opts ...testEnvOption) *testEnv {
 	env := &testEnv{
 		Cluster: c.Cluster,
 		testCtx: t,
+	}
+	for _, opt := range opts {
+		opt(env)
 	}
 	rngs := env.ranges
 	if len(rngs) == 0 {
@@ -235,19 +250,9 @@ func (t *testEnv) putTask() {
 	}
 }
 
-func (t *testEnv) setTimingHooks(beforeStores, beforeScan func()) {
-	t.hookMu.Lock()
-	defer t.hookMu.Unlock()
-	t.beforeStores = beforeStores
-	t.beforeScan = beforeScan
-}
-
 func (t *testEnv) Stores(ctx context.Context) ([]streamhelper.Store, error) {
-	t.hookMu.Lock()
-	hook := t.beforeStores
-	t.hookMu.Unlock()
-	if hook != nil {
-		hook()
+	if t.beforeStores != nil {
+		t.beforeStores()
 	}
 	return t.Cluster.Stores(ctx)
 }
@@ -258,11 +263,8 @@ func (t *testEnv) RegionScan(
 	endKey []byte,
 	limit int,
 ) ([]streamhelper.RegionWithLeader, error) {
-	t.hookMu.Lock()
-	hook := t.beforeScan
-	t.hookMu.Unlock()
-	if hook != nil {
-		hook()
+	if t.beforeScan != nil {
+		t.beforeScan()
 	}
 	return t.Cluster.RegionScan(ctx, key, endKey, limit)
 }
