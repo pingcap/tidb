@@ -128,6 +128,7 @@ run_sql_as user2 "123456" "select count(*) from db2.t1" || true
 check_contains "SELECT command denied to user"
 # user3 can only query db1.t1 using ssl
 # ci env uses mariadb client, ssl flag is different with mysql client
+# enforce a non-SSL attempt first; disable SSL mode explicitly.
 run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl-mode=DISABLED || true
 check_contains "Access denied for user"
 run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl

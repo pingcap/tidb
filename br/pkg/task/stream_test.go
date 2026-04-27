@@ -178,7 +178,7 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	var fullBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := storage.NewLocalStorage(testDir)
+	stg, err := storage.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -187,21 +187,55 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	data, err := proto.Marshal(&m)
 	require.Nil(t, err)
 
-	err = storage.WriteFile(context.TODO(), metautil.MetaFile, data)
+	err = stg.WriteFile(context.TODO(), metautil.MetaFile, data)
 	require.Nil(t, err)
 
 	cfg := Config{
 		Storage: testDir,
 	}
 	_, err = getLogInfo(context.TODO(), &cfg)
-	require.Error(t, err, errors.Annotate(berrors.ErrStorageUnknown,
-		"the storage has been used for full backup"))
+	require.ErrorIs(t, err, berrors.ErrStorageUnknown)
+	require.ErrorContains(t, err, "the storage has been used for full backup")
+
+	t.Run("full backup ts checks backupmeta compatibility", func(t *testing.T) {
+		testDir := t.TempDir()
+		stg, err := storage.NewLocalStorage(testDir)
+		require.NoError(t, err)
+
+		const fullBackupTS uint64 = 223344
+		const fullClusterID uint64 = 556677
+		m := backuppb.BackupMeta{
+			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
+			ClusterVersion:      "8.5.6",
+			BrVersion:           "v8.5.6",
+			EndVersion:          fullBackupTS,
+			ClusterId:           fullClusterID,
+		}
+		data, err := proto.Marshal(&m)
+		require.NoError(t, err)
+		require.NoError(t, stg.WriteFile(context.TODO(), metautil.MetaFile, data))
+
+		restoreCfg := &RestoreConfig{
+			Config: Config{
+				CheckRequirements: true,
+			},
+			FullBackupStorage: testDir,
+		}
+		_, _, err = getFullBackupTS(context.TODO(), restoreCfg)
+		require.ErrorContains(t, err, "requires schema version")
+
+		restoreCfg.CheckRequirements = false
+		startTS, clusterID, err := getFullBackupTS(context.TODO(), restoreCfg)
+		require.NoError(t, err)
+		require.Equal(t, fullBackupTS, startTS)
+		require.Equal(t, fullClusterID, clusterID)
+	})
 }
 
 func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	var startLogBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := storage.NewLocalStorage(testDir)
+	stg, err := storage.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -210,7 +244,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	data, err := proto.Marshal(&m)
 	require.Nil(t, err)
 
-	err = storage.WriteFile(context.TODO(), metautil.MetaFile, data)
+	err = stg.WriteFile(context.TODO(), metautil.MetaFile, data)
 	require.Nil(t, err)
 
 	cfg := Config{
@@ -219,6 +253,34 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	logInfo, err := getLogInfo(context.TODO(), &cfg)
 	require.Nil(t, err)
 	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
+
+	t.Run("log info checks backupmeta compatibility", func(t *testing.T) {
+		testDir := t.TempDir()
+		stg, err := storage.NewLocalStorage(testDir)
+		require.NoError(t, err)
+
+		m := backuppb.BackupMeta{
+			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
+			ClusterVersion:      "8.5.6",
+			BrVersion:           "v8.5.6",
+			StartVersion:        startLogBackupTS,
+		}
+		data, err := proto.Marshal(&m)
+		require.NoError(t, err)
+		require.NoError(t, stg.WriteFile(context.TODO(), metautil.MetaFile, data))
+
+		cfg := Config{
+			Storage:           testDir,
+			CheckRequirements: true,
+		}
+		_, err = getLogInfo(context.TODO(), &cfg)
+		require.ErrorContains(t, err, "requires schema version")
+
+		cfg.CheckRequirements = false
+		logInfo, err := getLogInfo(context.TODO(), &cfg)
+		require.NoError(t, err)
+		require.Equal(t, startLogBackupTS, logInfo.logMinTS)
+	})
 }
 
 func TestGetExternalStorageOptions(t *testing.T) {

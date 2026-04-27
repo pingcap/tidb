@@ -1518,7 +1518,7 @@ const (
 	DefTiDBAnalyzeColumnOptions                       = "ALL"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
-	DefTiDBAutoAnalyzeConcurrency                     = 1
+	DefTiDBAutoAnalyzeConcurrency                     = 3
 	DefTiDBEnablePrepPlanCache                        = true
 	DefTiDBPrepPlanCacheSize                          = 100
 	DefTiDBSessionPlanCacheSize                       = 100
@@ -1557,8 +1557,8 @@ const (
 	MinDDLReorgBatchSize                  int32  = 32
 	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
 	MinExpensiveTxnTimeThreshold          uint64 = 60 // 60s
-	DefTiDBAutoBuildStatsConcurrency             = 1
-	DefTiDBSysProcScanConcurrency                = 1
+	DefTiDBAutoBuildStatsConcurrency             = DefBuildStatsConcurrency
+	DefTiDBSysProcScanConcurrency                = DefAnalyzeDistSQLScanConcurrency
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
 	DefTiDBForeignKeyCheckInSharedLock           = false

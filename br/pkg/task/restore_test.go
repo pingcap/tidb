@@ -300,6 +300,7 @@ func TestFilterDDLJobs(t *testing.T) {
 	require.NoError(t, err)
 	// check the schema version
 	require.Equal(t, int32(metautil.MetaV1), mockMeta.Version)
+	require.Equal(t, backuppb.BackupSchemaVersion, mockMeta.BackupSchemaVersion)
 	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	require.NoError(t, err)
@@ -365,6 +366,7 @@ func TestFilterDDLJobsV2(t *testing.T) {
 	require.NoError(t, err)
 	// check the schema version
 	require.Equal(t, int32(metautil.MetaV2), mockMeta.Version)
+	require.Equal(t, backuppb.BackupSchemaVersion, mockMeta.BackupSchemaVersion)
 	metaReader := metautil.NewMetaReader(mockMeta, s.Storage, &cipher)
 	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
 	require.NoError(t, err)

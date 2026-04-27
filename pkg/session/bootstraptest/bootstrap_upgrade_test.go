@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -1057,4 +1058,28 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 		require.Equal(t, "PREDICATE", row.GetString(0))
 		domCurrent.Close()
 	})
+}
+
+func TestAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_auto_analyze_concurrency'").Check(testkit.Rows(strconv.Itoa(variable.DefTiDBAutoAnalyzeConcurrency)))
+
+	upgradeFromVersion := session.CurrentBootstrapVersion - 1
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(upgradeFromVersion))
+	require.NoError(t, txn.Commit(context.Background()))
+	revertVersionAndVariables(t, tk.Session(), int(upgradeFromVersion))
+	tk.MustExec("update mysql.global_variables set variable_value='8' where variable_name='tidb_auto_analyze_concurrency'")
+	session.UnsetStoreBootstrapped(store.UUID())
+	dom.Close()
+
+	domUpgraded, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domUpgraded.Close()
+
+	testkit.NewTestKit(t, store).MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_auto_analyze_concurrency'").Check(testkit.Rows("8"))
 }
