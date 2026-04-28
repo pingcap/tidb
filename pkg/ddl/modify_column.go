@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -346,7 +347,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	if job.SchemaState == model.StateNone {
-		err = postCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
+		err = reCheckPartitionModifiableColumn(w, tblInfo, oldCol, args.Column)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -1422,55 +1423,47 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 }
 
 func preCheckPartitionModifiableColumn(sctx sessionctx.Context, t table.Table, col, newCol *table.Column) error {
-	// Check that the column change does not affect the partitioning column
-	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if t.Meta().Partition != nil {
-		pt, ok := t.(table.PartitionedTable)
-		if !ok {
-			// Should never happen!
-			return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
-		}
-		for _, name := range pt.GetPartitionColumnNames() {
-			if strings.EqualFold(name.L, col.Name.L) {
-				return checkPartitionColumnModifiable(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
-			}
-		}
-	}
-	return nil
+	return checkPartitionModifiableColumn(sctx, t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
 }
 
-func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+func reCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	if tblInfo.Partition == nil {
+		return nil
+	}
+	sctx, err := w.sessPool.Get()
+	if err != nil {
+		return err
+	}
+	defer w.sessPool.Put(sctx)
+	return checkPartitionModifiableColumn(sctx, tblInfo, col, newCol)
+}
+
+func checkPartitionModifiableColumn(
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	col, newCol *model.ColumnInfo,
+) error {
 	// Check that the column change does not affect the partitioning column
 	// It must keep the same type, int [unsigned], [var]char, date[time]
-	if tblInfo.Partition != nil {
-		sctx, err := w.sessPool.Get()
-		if err != nil {
-			return err
-		}
-		defer w.sessPool.Put(sctx)
-		if len(tblInfo.Partition.Columns) > 0 {
-			for _, pc := range tblInfo.Partition.Columns {
-				if strings.EqualFold(pc.L, col.Name.L) {
-					err := checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-			return nil
-		}
-		partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		var partCol *model.ColumnInfo
-		for _, pc := range partCols {
-			if strings.EqualFold(pc.Name.L, col.Name.L) {
-				partCol = pc
-				break
+	if tblInfo.Partition == nil {
+		return nil
+	}
+
+	if len(tblInfo.Partition.Columns) > 0 {
+		for _, pc := range tblInfo.Partition.Columns {
+			if strings.EqualFold(pc.L, col.Name.L) {
+				return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
 			}
 		}
-		if partCol != nil {
+		return nil
+	}
+
+	partCols, err := extractPartitionColumns(tblInfo.Partition.Expr, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, pc := range partCols {
+		if strings.EqualFold(pc.Name.L, col.Name.L) {
 			return checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
 		}
 	}
@@ -1484,25 +1477,14 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 	if !isColTypeAllowedAsPartitioningCol(tblInfo.Partition.Type, newCol.FieldType) {
 		return dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(newCol.Name.O)
 	}
-	pi := tblInfo.GetPartitionInfo()
-	if len(pi.Columns) == 0 {
-		// non COLUMNS partitioning, only checks INTs, not their actual range
-		// There are many edge cases, like when truncating SQL Mode is allowed
-		// which will change the partitioning expression value resulting in a
-		// different partition. Better be safe and not allow decreasing of length.
-		// TODO: Should we allow it in strict mode? Wait for a use case / request.
-		if newCol.FieldType.GetFlen() < col.FieldType.GetFlen() {
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStack("Unsupported modify column, decreasing length of int may result in truncation and change of partition")
-		}
-	}
-	// Basically only allow changes of the length/decimals for the column
-	// Note that enum is not allowed, so elems are not checked
-	// TODO: support partition by ENUM
 	if newCol.FieldType.EvalType() != col.FieldType.EvalType() ||
-		newCol.FieldType.GetFlag() != col.FieldType.GetFlag() ||
+		!isAllowedPartitionColumnFlagChange(col.FieldType.GetFlag(), newCol.FieldType.GetFlag()) ||
 		newCol.FieldType.GetCollate() != col.FieldType.GetCollate() ||
 		newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
-		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
+		return partitionTypeChangeNotAllowedErr()
+	}
+	if err := checkPartitionColumnTypeChangeAllowlist(tblInfo, col, newCol); err != nil {
+		return err
 	}
 	// Generate a new PartitionInfo and validate it together with the new column definition
 	// Checks if all partition definition values are compatible.
@@ -1543,6 +1525,259 @@ func checkPartitionColumnModifiable(sctx sessionctx.Context, tblInfo *model.Tabl
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStack("New column does not match partition definitions: %s", err.Error())
 	}
 	return nil
+}
+
+func isAllowedPartitionColumnFlagChange(oldFlag, newFlag uint) bool {
+	if oldFlag == newFlag {
+		return true
+	}
+	// Allow default-only change (NoDefaultValueFlag), and allow NOT NULL -> NULL.
+	allowedChangedFlags := mysql.NoDefaultValueFlag
+	if mysql.HasNotNullFlag(oldFlag) && !mysql.HasNotNullFlag(newFlag) {
+		allowedChangedFlags |= mysql.NotNullFlag
+	}
+	return oldFlag&^allowedChangedFlags == newFlag&^allowedChangedFlags
+}
+
+type partitionExprColumnUsageKind byte
+
+const (
+	partitionExprColumnUsageKindNoFunc partitionExprColumnUsageKind = iota
+	partitionExprColumnUsageKindToDays
+	partitionExprColumnUsageKindExtract
+	partitionExprColumnUsageKindUnsupported
+)
+
+func checkPartitionColumnTypeChangeAllowlist(tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil || !isPartitionColumnTypeChanged(col, newCol) {
+		return nil
+	}
+
+	switch pi.Type {
+	case ast.PartitionTypeKey:
+		if isAllowedTypeChangeForKeyPartition(col, newCol) {
+			return nil
+		}
+	case ast.PartitionTypeRange, ast.PartitionTypeList, ast.PartitionTypeHash:
+		if len(pi.Columns) > 0 {
+			if pi.Type == ast.PartitionTypeHash {
+				return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("unexpected HASH partition metadata with column list")
+			}
+			if isAllowedTypeChangeForRangeListColumnsPartition(col, newCol) {
+				return nil
+			}
+			return partitionTypeChangeNotAllowedErr()
+		}
+		return checkTypeChangeForExprBasedPartition(pi.Expr, col, newCol)
+	}
+	return partitionTypeChangeNotAllowedErr()
+}
+
+func checkTypeChangeForExprBasedPartition(partExpr string, col, newCol *model.ColumnInfo) error {
+	usageKinds := collectPartitionExprColumnUsageKinds(partExpr, col.Name.L)
+	if usageKinds == nil {
+		return partitionTypeChangeNotAllowedErr()
+	}
+	if _, hasUnsupported := usageKinds[partitionExprColumnUsageKindUnsupported]; hasUnsupported {
+		return partitionTypeChangeNotAllowedErr()
+	}
+	if _, hasNoFunc := usageKinds[partitionExprColumnUsageKindNoFunc]; hasNoFunc {
+		if !isAllowedTypeChangeForNoFuncExprPartition(col, newCol) {
+			return partitionTypeChangeNotAllowedErr()
+		}
+	}
+	if _, hasToDays := usageKinds[partitionExprColumnUsageKindToDays]; hasToDays {
+		if !isAllowedTypeChangeForToDaysExprPartition(col, newCol) {
+			return partitionTypeChangeNotAllowedErr()
+		}
+	}
+	if _, hasExtract := usageKinds[partitionExprColumnUsageKindExtract]; hasExtract {
+		if !isAllowedTypeChangeForExtractExprPartition(col, newCol) {
+			return partitionTypeChangeNotAllowedErr()
+		}
+	}
+	return nil
+}
+
+func classifyPartitionExprFuncUsage(fc *ast.FuncCallExpr) partitionExprColumnUsageKind {
+	// Known funcs use fixed kinds.
+	// Other funcs are unsupported now.
+	switch fc.FnName.L {
+	case ast.ToDays:
+		return partitionExprColumnUsageKindToDays
+	case ast.Extract:
+		return partitionExprColumnUsageKindExtract
+	default:
+		return partitionExprColumnUsageKindUnsupported
+	}
+}
+
+func collectPartitionExprColumnUsageKinds(partExpr, targetColumn string) map[partitionExprColumnUsageKind]struct{} {
+	expr, err := generatedexpr.ParseExpression(partExpr)
+	if err != nil {
+		return nil
+	}
+	usageKinds := make(map[partitionExprColumnUsageKind]struct{})
+	collectPartitionExprColumnUsageKindsFromExpr(expr, targetColumn, partitionExprColumnUsageKindNoFunc, usageKinds)
+	if len(usageKinds) == 0 {
+		return nil
+	}
+	return usageKinds
+}
+
+func collectPartitionExprColumnUsageKindsFromExpr(
+	expr ast.ExprNode,
+	targetColumn string,
+	currentKind partitionExprColumnUsageKind,
+	usageKinds map[partitionExprColumnUsageKind]struct{},
+) {
+	// Walk the partition expr tree with recursion.
+	switch v := expr.(type) {
+	case *ast.ColumnNameExpr:
+		// Record this use only when the column name matches targetColumn.
+		// Example that matches this if:
+		// partExpr: "TO_DAYS(part_a_col) + 1", targetColumn: "part_a_col".
+		if v.Name.Name.L == targetColumn {
+			usageKinds[currentKind] = struct{}{}
+		}
+	case *ast.FuncCallExpr:
+		// Any unsupported func on the path keeps this path unsupported.
+		innerKind := mergePartitionExprUsageKind(currentKind, classifyPartitionExprFuncUsage(v))
+		for _, arg := range v.Args {
+			collectPartitionExprColumnUsageKindsFromExpr(arg, targetColumn, innerKind, usageKinds)
+		}
+	case *ast.ParenthesesExpr:
+		// For "(x)", keep the same kind.
+		// Example: "(TO_DAYS(a))" keeps kind "to_days" for "a".
+		collectPartitionExprColumnUsageKindsFromExpr(v.Expr, targetColumn, currentKind, usageKinds)
+	case *ast.BinaryOperationExpr:
+		// Visit both sides for exprs like "a + b".
+		collectPartitionExprColumnUsageKindsFromExpr(v.L, targetColumn, currentKind, usageKinds)
+		collectPartitionExprColumnUsageKindsFromExpr(v.R, targetColumn, currentKind, usageKinds)
+	case *ast.UnaryOperationExpr:
+		// Visit unary expr like "-a".
+		collectPartitionExprColumnUsageKindsFromExpr(v.V, targetColumn, currentKind, usageKinds)
+	case ast.ValueExpr, *ast.TimeUnitExpr:
+		// Literal values and EXTRACT units do not use partition columns.
+		return
+	default:
+		usageKinds[partitionExprColumnUsageKindUnsupported] = struct{}{}
+	}
+}
+
+func mergePartitionExprUsageKind(parentKind, funcKind partitionExprColumnUsageKind) partitionExprColumnUsageKind {
+	// Keep unsupported once it appears in parent path or current func.
+	// Example: FLOOR(TO_DAYS(a)) -> "a" stays unsupported.
+	if parentKind == partitionExprColumnUsageKindUnsupported {
+		return parentKind
+	}
+	return funcKind
+}
+
+func isAllowedTypeChangeForKeyPartition(col, newCol *model.ColumnInfo) bool {
+	if isIntegerTypeWidening(col, newCol) {
+		return true
+	}
+	if isStringLengthExtension(col, newCol) {
+		return true
+	}
+	return isEnumSetTailAppend(col, newCol)
+}
+
+func isAllowedTypeChangeForRangeListColumnsPartition(col, newCol *model.ColumnInfo) bool {
+	if isIntegerTypeWidening(col, newCol) {
+		return true
+	}
+	if isTimeFspExtended(col, newCol) && (col.GetType() == mysql.TypeDuration || col.GetType() == mysql.TypeDatetime) {
+		return true
+	}
+	if isStringLengthExtension(col, newCol) {
+		return true
+	}
+	return false
+}
+
+func isAllowedTypeChangeForNoFuncExprPartition(col, newCol *model.ColumnInfo) bool {
+	return isIntegerTypeWidening(col, newCol)
+}
+
+func isAllowedTypeChangeForToDaysExprPartition(col, newCol *model.ColumnInfo) bool {
+	return isTimeFspExtended(col, newCol) && col.GetType() == mysql.TypeDatetime
+}
+
+func isAllowedTypeChangeForExtractExprPartition(col, newCol *model.ColumnInfo) bool {
+	return isTimeFspExtended(col, newCol) &&
+		(col.GetType() == mysql.TypeDuration || col.GetType() == mysql.TypeDatetime)
+}
+
+func isPartitionColumnTypeChanged(col, newCol *model.ColumnInfo) bool {
+	if col.GetType() != newCol.GetType() {
+		return true
+	}
+	if !mysql.IsIntegerType(col.GetType()) && col.GetFlen() != newCol.GetFlen() {
+		return true
+	}
+	if col.GetDecimal() != newCol.GetDecimal() {
+		return true
+	}
+	oldElems := col.GetElems()
+	newElems := newCol.GetElems()
+	if len(oldElems) != len(newElems) {
+		return true
+	}
+	for i, oldElem := range oldElems {
+		if oldElem != newElems[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func isIntegerTypeWidening(col, newCol *model.ColumnInfo) bool {
+	return mysql.IsIntegerType(col.GetType()) &&
+		mysql.IsIntegerType(newCol.GetType()) &&
+		mysql.DefaultLengthOfMysqlTypes[newCol.GetType()] > mysql.DefaultLengthOfMysqlTypes[col.GetType()]
+}
+
+func isStringLengthExtension(col, newCol *model.ColumnInfo) bool {
+	oldTp := col.GetType()
+	newTp := newCol.GetType()
+	switch {
+	case oldTp == mysql.TypeString && newTp == mysql.TypeString:
+		if types.IsBinaryStr(&col.FieldType) || types.IsBinaryStr(&newCol.FieldType) {
+			return false
+		}
+	case oldTp == newTp && (oldTp == mysql.TypeVarchar || oldTp == mysql.TypeVarString):
+	default:
+		return false
+	}
+	return newCol.GetFlen() > col.GetFlen()
+}
+
+func isTimeFspExtended(col, newCol *model.ColumnInfo) bool {
+	if col.GetType() != newCol.GetType() {
+		return false
+	}
+	if col.GetType() != mysql.TypeDuration &&
+		col.GetType() != mysql.TypeDatetime {
+		return false
+	}
+	return newCol.GetDecimal() > col.GetDecimal()
+}
+
+func isEnumSetTailAppend(col, newCol *model.ColumnInfo) bool {
+	switch col.GetType() {
+	case mysql.TypeEnum, mysql.TypeSet:
+		return col.GetType() == newCol.GetType() &&
+			!IsElemsChangedToModifyColumn(col.GetElems(), newCol.GetElems())
+	default:
+		return false
+	}
+}
+
+func partitionTypeChangeNotAllowedErr() error {
+	return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
 }
 
 var colStateOrd = map[model.SchemaState]int{
