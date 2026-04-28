@@ -1741,7 +1741,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
 	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
-	hasApplicationPasswordAdminPriv := checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
+	// Defer the APPLICATION_PASSWORD_ADMIN lookup until we know the statement
+	// actually carries RETAIN CURRENT PASSWORD or DISCARD OLD PASSWORD. This
+	// keeps the privilege-call count unchanged for the common ALTER USER path
+	// (and for the mock-based pkg/extension auth tests).
+	dualPwdRequested := plOptions.retainCurrentPassword || plOptions.discardOldPassword
+	hasApplicationPasswordAdminPriv := false
+	if dualPwdRequested {
+		hasApplicationPasswordAdminPriv = checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
+	}
 
 	var authTokenOptions []*ast.AuthTokenOrTLSOption
 	for _, authTokenOrTLSOption := range s.AuthTokenOrTLSOptions {
