@@ -411,6 +411,66 @@ func makeMaterializedViewRefreshResultStale(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("insert into t_mv_refresh_result values (3, 30)")
 }
 
+func requireRefreshInfoSnapshotMatchesLatestSuccessHist(t *testing.T, tk *testkit.TestKit, schema, view string) {
+	t.Helper()
+
+	histRows := tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_READ_TSO, REFRESH_COMMIT_TSO from mysql.tidb_mview_refresh_hist where MV_SCHEMA = '%s' and MV_NAME = '%s' and REFRESH_STATUS = 'success' order by REFRESH_JOB_ID desc limit 1",
+		schema,
+		view,
+	)).Rows()
+	require.Len(t, histRows, 1)
+	refreshReadTSO, err := strconv.ParseUint(fmt.Sprintf("%v", histRows[0][0]), 10, 64)
+	require.NoError(t, err)
+	refreshCommitTSO, err := strconv.ParseUint(fmt.Sprintf("%v", histRows[0][1]), 10, 64)
+	require.NoError(t, err)
+	require.NotZero(t, refreshReadTSO)
+	require.NotZero(t, refreshCommitTSO)
+
+	// MockTiKV tests need a GC safe point before enabling stale reads.
+	mustSetMockGCSafePoint(t, tk, time.Now().Add(-time.Hour))
+	tk.MustExec("set @@tidb_snapshot = '" + strconv.FormatUint(refreshCommitTSO, 10) + "'")
+	defer tk.MustExec("set @@tidb_snapshot = ''")
+
+	tk.MustQuery(fmt.Sprintf(
+		"select r.LAST_SUCCESS_READ_TSO from information_schema.tables t join mysql.tidb_mview_refresh_info r on t.tidb_table_id = r.MVIEW_ID where t.table_schema = '%s' and t.table_name = '%s'",
+		schema,
+		view,
+	)).Check(testkit.Rows(strconv.FormatUint(refreshReadTSO, 10)))
+}
+
+func requireRefreshInfoSnapshotMatchesHistAtCommitTSO(
+	t *testing.T,
+	tk *testkit.TestKit,
+	schema string,
+	view string,
+	refreshCommitTSO uint64,
+) {
+	t.Helper()
+
+	histRows := tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_READ_TSO from mysql.tidb_mview_refresh_hist where MV_SCHEMA = '%s' and MV_NAME = '%s' and REFRESH_STATUS = 'success' and REFRESH_COMMIT_TSO = %d",
+		schema,
+		view,
+		refreshCommitTSO,
+	)).Rows()
+	require.Len(t, histRows, 1)
+	refreshReadTSO, err := strconv.ParseUint(fmt.Sprintf("%v", histRows[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.NotZero(t, refreshReadTSO)
+
+	// MockTiKV tests need a GC safe point before enabling stale reads.
+	mustSetMockGCSafePoint(t, tk, time.Now().Add(-time.Hour))
+	tk.MustExec("set @@tidb_snapshot = '" + strconv.FormatUint(refreshCommitTSO, 10) + "'")
+	defer tk.MustExec("set @@tidb_snapshot = ''")
+
+	tk.MustQuery(fmt.Sprintf(
+		"select r.LAST_SUCCESS_READ_TSO from information_schema.tables t join mysql.tidb_mview_refresh_info r on t.tidb_table_id = r.MVIEW_ID where t.table_schema = '%s' and t.table_name = '%s'",
+		schema,
+		view,
+	)).Check(testkit.Rows(strconv.FormatUint(refreshReadTSO, 10)))
+}
+
 func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -458,9 +518,9 @@ func TestMaterializedViewRefreshCompleteBasic(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf(
 		"select REFRESH_STATUS, REFRESH_METHOD = 'complete delta apply manual', REFRESH_ENDTIME is not null, REFRESH_ROWS is null, "+
 			"REFRESH_DURATION_SEC = cast(timestampdiff(microsecond, REFRESH_TIME, REFRESH_ENDTIME) as decimal(18,6)) / 1000000, REFRESH_DURATION_SEC >= 0, "+
-			"REFRESH_READ_TSO > 0, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
+			"REFRESH_READ_TSO > 0, REFRESH_COMMIT_TSO > REFRESH_READ_TSO, REFRESH_FAILED_REASON is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
 		mviewID,
-	)).Check(testkit.Rows("success 1 1 1 1 1 1 1"))
+	)).Check(testkit.Rows("success 1 1 1 1 1 1 1 1"))
 }
 
 func TestMaterializedViewRefreshFastStatementResult(t *testing.T) {
@@ -472,6 +532,14 @@ func TestMaterializedViewRefreshFastStatementResult(t *testing.T) {
 	requireRefreshMVStatementResult(t, tk, 1, 1, 1)
 	require.Equal(t, 3.0, readAffectedRowsMetricValue(t, "RefreshMV")-beforeRefreshMV)
 	tk.MustQuery("select * from mv_refresh_result order by a").Check(testkit.Rows("1 11 1", "3 30 1"))
+}
+
+func TestMaterializedViewRefreshFastCommitTSOSnapshotMatchesRefreshInfo(t *testing.T) {
+	tk := setupMaterializedViewRefreshStatementResultTest(t)
+	makeMaterializedViewRefreshResultStale(t, tk)
+
+	tk.MustExec("refresh materialized view mv_refresh_result fast")
+	requireRefreshInfoSnapshotMatchesLatestSuccessHist(t, tk, "test", "mv_refresh_result")
 }
 
 func TestMaterializedViewRefreshFastAsOfTimestampStatementResult(t *testing.T) {
@@ -491,6 +559,24 @@ func TestMaterializedViewRefreshFastAsOfTimestampStatementResult(t *testing.T) {
 	))
 	requireRefreshMVStatementResult(t, tk, 1, 1, 1)
 	tk.MustQuery("select * from mv_refresh_result order by a").Check(testkit.Rows("1 11 1", "3 30 1"))
+}
+
+func TestMaterializedViewRefreshFastAsOfTimestampCommitTSOSnapshotMatchesRefreshInfo(t *testing.T) {
+	tk := setupMaterializedViewRefreshStatementResultTest(t)
+	tk.MustExec("set time_zone = '+00:00'")
+	makeMaterializedViewRefreshResultStale(t, tk)
+	targetTime := time.Now().UTC().Add(50 * time.Millisecond).Truncate(time.Millisecond)
+	sleepUntilTarget := time.Until(targetTime.Add(20 * time.Millisecond))
+	if sleepUntilTarget > 0 {
+		time.Sleep(sleepUntilTarget)
+	}
+	mustSetMockGCSafePoint(t, tk, targetTime.Add(-time.Hour))
+
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_result fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	requireRefreshInfoSnapshotMatchesLatestSuccessHist(t, tk, "test", "mv_refresh_result")
 }
 
 func TestMaterializedViewRefreshFastAsOfTimestampNoOpStatementResult(t *testing.T) {
@@ -536,6 +622,14 @@ func TestMaterializedViewRefreshCompleteDeltaApplyStatementResult(t *testing.T) 
 	tk.MustQuery("select * from mv_refresh_result order by a").Check(testkit.Rows("1 11 1", "3 30 1"))
 }
 
+func TestMaterializedViewRefreshCompleteDeltaApplyCommitTSOSnapshotMatchesRefreshInfo(t *testing.T) {
+	tk := setupMaterializedViewRefreshStatementResultTest(t)
+	makeMaterializedViewRefreshResultStale(t, tk)
+
+	tk.MustExec("refresh materialized view mv_refresh_result complete delta apply")
+	requireRefreshInfoSnapshotMatchesLatestSuccessHist(t, tk, "test", "mv_refresh_result")
+}
+
 func TestMaterializedViewRefreshCompleteInPlaceStatementResult(t *testing.T) {
 	tk := setupMaterializedViewRefreshStatementResultTest(t)
 	makeMaterializedViewRefreshResultStale(t, tk)
@@ -545,6 +639,14 @@ func TestMaterializedViewRefreshCompleteInPlaceStatementResult(t *testing.T) {
 	tk.MustQuery("select * from mv_refresh_result order by a").Check(testkit.Rows("1 11 1", "3 30 1"))
 }
 
+func TestMaterializedViewRefreshCompleteInPlaceCommitTSOSnapshotMatchesRefreshInfo(t *testing.T) {
+	tk := setupMaterializedViewRefreshStatementResultTest(t)
+	makeMaterializedViewRefreshResultStale(t, tk)
+
+	tk.MustExec("refresh materialized view mv_refresh_result complete in place")
+	requireRefreshInfoSnapshotMatchesLatestSuccessHist(t, tk, "test", "mv_refresh_result")
+}
+
 func TestMaterializedViewRefreshCompleteOutOfPlaceStatementResult(t *testing.T) {
 	tk := setupMaterializedViewRefreshStatementResultTest(t)
 	makeMaterializedViewRefreshResultStale(t, tk)
@@ -552,6 +654,46 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceStatementResult(t *testing.T) 
 	tk.MustExec("refresh materialized view mv_refresh_result complete out of place")
 	requireRefreshMVStatementResult(t, tk, 2, 0, 0)
 	tk.MustQuery("select * from mv_refresh_result order by a").Check(testkit.Rows("1 11 1", "3 30 1"))
+}
+
+func TestMaterializedViewRefreshCompleteOutOfPlacePreservesPreviousCommitTSOSnapshot(t *testing.T) {
+	tk := setupMaterializedViewRefreshStatementResultTest(t)
+
+	beforeCutoverMViewIDRows := tk.MustQuery(
+		"select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_result'",
+	).Rows()
+	require.Len(t, beforeCutoverMViewIDRows, 1)
+	beforeCutoverMViewID, err := strconv.ParseInt(fmt.Sprintf("%v", beforeCutoverMViewIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	makeMaterializedViewRefreshResultStale(t, tk)
+	tk.MustExec("refresh materialized view mv_refresh_result fast")
+
+	previousRefreshRows := tk.MustQuery("select REFRESH_COMMIT_TSO from mysql.tidb_mview_refresh_hist where MV_SCHEMA = 'test' and MV_NAME = 'mv_refresh_result' and REFRESH_STATUS = 'success' order by REFRESH_JOB_ID desc limit 1").Rows()
+	require.Len(t, previousRefreshRows, 1)
+	previousRefreshCommitTSO, err := strconv.ParseUint(fmt.Sprintf("%v", previousRefreshRows[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.NotZero(t, previousRefreshCommitTSO)
+
+	tk.MustExec("update t_mv_refresh_result set b = 12 where a = 1")
+	tk.MustExec("insert into t_mv_refresh_result values (4, 40)")
+	tk.MustExec("refresh materialized view mv_refresh_result complete out of place")
+
+	afterCutoverMViewIDRows := tk.MustQuery(
+		"select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_refresh_result'",
+	).Rows()
+	require.Len(t, afterCutoverMViewIDRows, 1)
+	afterCutoverMViewID, err := strconv.ParseInt(fmt.Sprintf("%v", afterCutoverMViewIDRows[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.NotEqual(t, beforeCutoverMViewID, afterCutoverMViewID)
+
+	requireRefreshInfoSnapshotMatchesHistAtCommitTSO(
+		t,
+		tk,
+		"test",
+		"mv_refresh_result",
+		previousRefreshCommitTSO,
+	)
 }
 
 func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {

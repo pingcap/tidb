@@ -789,6 +789,7 @@ const (
 		REFRESH_STATUS varchar(16) DEFAULT NULL,
 		REFRESH_ROWS bigint DEFAULT NULL,
 		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
+		REFRESH_COMMIT_TSO bigint unsigned DEFAULT NULL,
 		REFRESH_FAILED_REASON text DEFAULT NULL,
 		CANCEL_REQUESTED_AT datetime(6) DEFAULT NULL,
 		CANCEL_REQUESTED_BY varchar(512) DEFAULT NULL,
@@ -796,6 +797,7 @@ const (
 		PRIMARY KEY(REFRESH_JOB_ID),
 		KEY idx_mview_time (MVIEW_ID, REFRESH_TIME),
 		KEY idx_mv_name_time (MV_SCHEMA, MV_NAME, REFRESH_TIME),
+		KEY idx_mv_name_commit_tso (MV_SCHEMA, MV_NAME, REFRESH_COMMIT_TSO),
 		KEY idx_mview_status (MVIEW_ID, REFRESH_STATUS, REFRESH_TIME),
 		KEY idx_refresh_duration_sec (REFRESH_DURATION_SEC),
 		KEY idx_refresh_time (REFRESH_TIME),
@@ -1299,12 +1301,16 @@ const (
 	// Add LAST_HEARTBEAT_AT to MV refresh/purge history tables.
 	version225 = 225
 
-	// next version should start with 226
+	// version 226
+	// Add REFRESH_COMMIT_TSO and lookup index to MV refresh history table.
+	version226 = 226
+
+	// next version should start with 227
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version225
+var currentBootstrapVersion int64 = version226
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1485,6 +1491,7 @@ var (
 		upgradeToVer223,
 		upgradeToVer224,
 		upgradeToVer225,
+		upgradeToVer226,
 	}
 )
 
@@ -3414,6 +3421,14 @@ func upgradeToVer225(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `LAST_HEARTBEAT_AT` datetime(6) DEFAULT NULL AFTER `CANCEL_REQUESTED_BY`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `LAST_HEARTBEAT_AT` datetime(6) DEFAULT NULL AFTER `CANCEL_REQUESTED_BY`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer226(s sessiontypes.Session, ver int64) {
+	if ver >= version226 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `REFRESH_COMMIT_TSO` bigint unsigned DEFAULT NULL AFTER `REFRESH_READ_TSO`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_mv_name_commit_tso (MV_SCHEMA, MV_NAME, REFRESH_COMMIT_TSO)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

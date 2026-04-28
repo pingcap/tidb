@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/bits"
 	"strconv"
@@ -2708,6 +2709,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 					mviewID,
 					refreshHistStatusFailed,
 					refreshHistFailedReadTSO,
+					nil,
 					histTime(refreshStart),
 					histTime(refreshEndAt),
 					nil,
@@ -2767,6 +2769,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				mviewID,
 				refreshHistStatusSuccess,
 				&buildReadTSO,
+				nil,
 				histTime(refreshStart),
 				histTime(refreshEndAt),
 				nil,
@@ -2900,6 +2903,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				mviewID,
 				refreshHistStatusFailed,
 				refreshHistFailedReadTSO,
+				nil,
 				histTime(refreshStart),
 				histTime(refreshEndAt),
 				nil,
@@ -3041,6 +3045,13 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if txnCommitTimerStarted && txnTotalDur == 0 {
 		txnTotalDur = time.Since(txnCommitStart)
 	}
+	refreshCommitTSO, err := getSessionLastTxnCommitTSO(refreshSctx)
+	if err != nil {
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(
+			errors.Annotate(err, "refresh materialized view: refresh committed but failed to capture refresh commit tso"),
+		)
+		refreshCommitTSO = nil
+	}
 	applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, refreshStmtResult)
 
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.finalizeHist, func() error {
@@ -3052,6 +3063,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			mviewID,
 			refreshHistStatusSuccess,
 			&refreshReadTSO,
+			refreshCommitTSO,
 			histTime(refreshStart),
 			histTime(refreshEndAt),
 			refreshRows,
@@ -4449,6 +4461,7 @@ func finalizeRefreshHistWithRetry(
 	mviewID int64,
 	refreshStatus string,
 	refreshReadTSO *uint64,
+	refreshCommitTSO *uint64,
 	refreshStartAt time.Time,
 	refreshEndAt time.Time,
 	refreshRows *int64,
@@ -4461,6 +4474,7 @@ func finalizeRefreshHistWithRetry(
 		mviewID,
 		refreshStatus,
 		refreshReadTSO,
+		refreshCommitTSO,
 		refreshStartAt,
 		refreshEndAt,
 		refreshRows,
@@ -4476,6 +4490,7 @@ func finalizeRefreshHistWithRetry(
 		mviewID,
 		refreshStatus,
 		refreshReadTSO,
+		refreshCommitTSO,
 		refreshStartAt,
 		refreshEndAt,
 		refreshRows,
@@ -4501,6 +4516,7 @@ func finalizeRefreshHist(
 	mviewID int64,
 	refreshStatus string,
 	refreshReadTSO *uint64,
+	refreshCommitTSO *uint64,
 	refreshStartAt time.Time,
 	refreshEndAt time.Time,
 	refreshRows *int64,
@@ -4515,6 +4531,10 @@ func finalizeRefreshHist(
 	var refreshReadTSOArg any
 	if refreshReadTSO != nil {
 		refreshReadTSOArg = *refreshReadTSO
+	}
+	var refreshCommitTSOArg any
+	if refreshCommitTSO != nil {
+		refreshCommitTSOArg = *refreshCommitTSO
 	}
 	var refreshRowsArg any
 	if refreshRows != nil {
@@ -4531,6 +4551,7 @@ SET
 	REFRESH_ROWS = %?,
 	REFRESH_DURATION_SEC = %?,
 	REFRESH_READ_TSO = %?,
+	REFRESH_COMMIT_TSO = %?,
 	REFRESH_FAILED_REASON = %?
 WHERE REFRESH_JOB_ID = %?
   AND MVIEW_ID = %?`
@@ -4542,6 +4563,7 @@ WHERE REFRESH_JOB_ID = %?
 		refreshRowsArg,
 		formatDurationSecondsBetween(refreshStartAt, refreshEndAt),
 		refreshReadTSOArg,
+		refreshCommitTSOArg,
 		refreshFailedReasonArg,
 		refreshJobID,
 		mviewID,
@@ -4552,4 +4574,31 @@ WHERE REFRESH_JOB_ID = %?
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+type lastTxnCommitTSInfo struct {
+	CommitTS uint64 `json:"commit_ts"`
+	ErrMsg   string `json:"error,omitempty"`
+}
+
+func getSessionLastTxnCommitTSO(sctx sessionctx.Context) (*uint64, error) {
+	if sctx == nil || sctx.GetSessionVars() == nil {
+		return nil, errors.New("refresh materialized view: session vars are nil")
+	}
+	lastTxnInfo := sctx.GetSessionVars().LastTxnInfo
+	if len(lastTxnInfo) == 0 {
+		return nil, errors.New("refresh materialized view: last transaction info is empty")
+	}
+	var txnInfo lastTxnCommitTSInfo
+	if err := json.Unmarshal([]byte(lastTxnInfo), &txnInfo); err != nil {
+		return nil, errors.Annotate(err, "refresh materialized view: invalid last transaction info")
+	}
+	if txnInfo.CommitTS == 0 {
+		if txnInfo.ErrMsg != "" {
+			return nil, errors.Errorf("refresh materialized view: last transaction info reports error %s", txnInfo.ErrMsg)
+		}
+		return nil, errors.New("refresh materialized view: last transaction info missing commit tso")
+	}
+	commitTSO := txnInfo.CommitTS
+	return &commitTSO, nil
 }
