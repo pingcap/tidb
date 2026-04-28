@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/rawkv"
@@ -152,7 +153,7 @@ func TestPollWorkflowCompleteRetriesListErrors(t *testing.T) {
 		},
 	}
 
-	err := pollWorkflowComplete(context.Background(), lister, 42)
+	err := pollWorkflowComplete(context.Background(), lister, 42, &sqlkiller.SQLKiller{})
 	require.NoError(t, err)
 	require.Equal(t, 3, lister.calls)
 }
@@ -169,7 +170,7 @@ func TestPollWorkflowCompleteReturnsWorkflowNotCancelableOnCancel(t *testing.T) 
 		}
 		time.AfterFunc(10*time.Millisecond, cancel)
 
-		err := pollWorkflowComplete(ctx, lister, 42)
+		err := pollWorkflowComplete(ctx, lister, 42, &sqlkiller.SQLKiller{})
 		require.ErrorContains(t, err, "workflow 42 cannot be cancelled at the moment")
 		require.GreaterOrEqual(t, lister.calls, 1)
 	})
@@ -182,9 +183,16 @@ func TestPollWorkflowCompleteReturnsErrorOnCancelledState(t *testing.T) {
 		},
 	}
 
-	err := pollWorkflowComplete(context.Background(), lister, 42)
+	err := pollWorkflowComplete(context.Background(), lister, 42, &sqlkiller.SQLKiller{})
 	require.ErrorContains(t, err, "workflow 42 is cancelled")
 	require.Equal(t, 1, lister.calls)
+}
+
+func TestPollWorkflowCompleteGetKilled(t *testing.T) {
+	killer := sqlkiller.SQLKiller{}
+	killer.SendKillSignal(sqlkiller.QueryInterrupted)
+	err := pollWorkflowComplete(context.Background(), nil, 42, &killer)
+	require.ErrorContains(t, err, "Query execution was interrupted")
 }
 
 func TestCreateLogReplicationExecNextDetached(t *testing.T) {

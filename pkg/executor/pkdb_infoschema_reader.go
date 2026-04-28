@@ -59,8 +59,8 @@ func (e *memtableRetriever) setDataForLogReplStatusGlobal(ctx context.Context, s
 			row[6].SetUint64(status.CheckpointTs) // CHECKPOINT_TS
 			goTime := oracle.GetTimeFromTS(status.CheckpointTs)
 			checkpointTime := types.NewTime(types.FromGoTime(goTime), mysql.TypeTimestamp, types.DefaultFsp)
-			row[7].SetMysqlTime(checkpointTime)            // CHECKPOINT_TIME
-			row[8].SetUint64(uint64(status.CheckpointLag)) // CHECKPOINT_LAG
+			row[7].SetMysqlTime(checkpointTime)               // CHECKPOINT_TIME
+			row[8].SetUint64(uint64(status.CheckpointLagSec)) // CHECKPOINT_LAG
 		}
 
 		row[9].SetFloat32(status.InitializingProgress) // INITIALIZING_PROGRESS
@@ -206,7 +206,7 @@ func (e *memtableRetriever) setDataForLogReplStatusLocal(ctx context.Context, sc
 		kvs["failover_ready"] = status.GetFailoverReady()
 		if status.GetCheckpointTs() > 0 {
 			kvs["checkpoint_ts"] = strconv.FormatUint(status.GetCheckpointTs(), 10)
-			kvs["checkpoint_lag"] = (time.Second * time.Duration(status.GetCheckpointLag())).String()
+			kvs["checkpoint_lag"] = (time.Second * time.Duration(status.GetCheckpointLagSec())).String()
 		} else {
 			kvs["checkpoint_ts"] = "NULL"
 			kvs["checkpoint_lag"] = "NULL"
