@@ -324,12 +324,8 @@ func restoreTableInfoFromUnwrapped(ctx *format.RestoreCtx, table []any, tableNam
 	ctx.WritePlain(")")
 
 	collate := table[tableInfoTupleIndexCollate].(string)
-	// MySQL's collation name is "<charset>_<suffix>" or "binary".
-	cs, _, _ := strings.Cut(collate, "_")
-	ctx.WriteKeyWord(" CHARSET ")
-	ctx.WriteKeyWord(cs)
 	ctx.WriteKeyWord(" COLLATE ")
-	ctx.WriteKeyWord(collate)
+	ctx.WritePlain(collate)
 
 	if bits := table[tableInfoTupleIndexShardRowIDBits].(uint64); bits > 0 {
 		ctx.WriteKeyWord(" SHARD_ROW_ID_BITS ")

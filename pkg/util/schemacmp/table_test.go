@@ -509,25 +509,25 @@ func TestTableString(t *testing.T) {
 		{
 			"CREATE TABLE tb (a INT, b INT)",
 			// the `tbl` name is hardcoded, it's not used.
-			"create table `tbl`(`a` int(11), `b` int(11)) charset utf8mb4 collate utf8mb4_bin",
+			"create table `tbl`(`a` int(11), `b` int(11)) collate utf8mb4_bin",
 		},
 		{
 			"CREATE TABLE tb (a VARCHAR(20) CHARACTER SET utf8, b INT)",
-			"create table `tbl`(`a` varchar(20) character set utf8 collate utf8_bin, `b` int(11)) charset utf8mb4 collate utf8mb4_bin",
+			"create table `tbl`(`a` varchar(20) character set utf8 collate utf8_bin, `b` int(11)) collate utf8mb4_bin",
 		},
 		{
 			"CREATE TABLE tb (a VARCHAR(20), b INT) COLLATE utf8mb4_general_ci",
-			"create table `tbl`(`a` varchar(20) character set utf8mb4 collate utf8mb4_general_ci, `b` int(11)) charset utf8mb4 collate utf8mb4_general_ci",
+			"create table `tbl`(`a` varchar(20) character set utf8mb4 collate utf8mb4_general_ci, `b` int(11)) collate utf8mb4_general_ci",
 		},
 		{
 			"CREATE TABLE tb (a VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b INT)",
-			"create table `tbl`(`a` varchar(20) character set utf8mb4 collate utf8mb4_general_ci, `b` int(11)) charset utf8mb4 collate utf8mb4_bin",
+			"create table `tbl`(`a` varchar(20) character set utf8mb4 collate utf8mb4_general_ci, `b` int(11)) collate utf8mb4_bin",
 		},
-		{"CREATE TABLE tb (a VARCHAR(20)) CHARSET=binary", "create table `tbl`(`a` varbinary(20)) charset binary collate binary"},
-		{"CREATE TABLE tb (a VARCHAR(20)) COLLATE=binary", "create table `tbl`(`a` varbinary(20)) charset binary collate binary"},
+		{"CREATE TABLE tb (a VARCHAR(20)) CHARSET=binary", "create table `tbl`(`a` varbinary(20)) collate binary"},
+		{"CREATE TABLE tb (a VARCHAR(20)) COLLATE=binary", "create table `tbl`(`a` varbinary(20)) collate binary"},
 		{
 			"CREATE TABLE tb (a VARCHAR(20)) CHARSET=binary COLLATE=binary",
-			"create table `tbl`(`a` varbinary(20)) charset binary collate binary",
+			"create table `tbl`(`a` varbinary(20)) collate binary",
 		},
 	}
 

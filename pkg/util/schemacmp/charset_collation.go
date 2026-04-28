@@ -125,11 +125,7 @@ func (a collationLattice) Compare(other Lattice) (int, error) {
 		return 0, incompatibleCollationError(a.unwrapString(), b.unwrapString())
 	}
 
-	cmp, err := a.charset.Compare(b.charset)
-	if err != nil {
-		return 0, err
-	}
-	return cmp, nil
+	return a.charset.Compare(b.charset)
 }
 
 func (a collationLattice) Join(other Lattice) (Lattice, error) {
