@@ -10,12 +10,15 @@ aliases:
   sig-critical-approvers-tidb-server:
     - yudongusa
     - terry1purcell
+    - likidu
   sig-critical-approvers-tidb-lightning:
     - yudongusa
     - terry1purcell
+    - likidu
   sig-critical-approvers-parser:
     - yudongusa
     - terry1purcell
+    - likidu
   sig-critical-approvers-dep:
     - bb7133
     - cfzjywxk
