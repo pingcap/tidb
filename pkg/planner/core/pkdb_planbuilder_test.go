@@ -93,6 +93,16 @@ func TestIllegalAlterLogRepl(t *testing.T) {
 			errMsg: "DEGRADE_TIMEOUT is required when PROTECTION_MODE is MAXIMUM_AVAILABILITY",
 		},
 		{
+			name: "invalid-protection-mode",
+			a: &ast.AlterLogReplication{
+				Name: model.NewCIStr("repl"),
+				Opts: []*ast.LogReplicationOpt{
+					{Tp: ast.LogReplicationOptProtectionMode, UintValue: 3},
+				},
+			},
+			errMsg: "invalid PROTECTION_MODE value: 3, expected one of 0, 1, 2",
+		},
+		{
 			name: "invalid-degrade-timeout-value",
 			a: &ast.AlterLogReplication{
 				Name: model.NewCIStr("repl"),
@@ -143,6 +153,21 @@ func TestBuildAdminCreateLogReplicationDetached(t *testing.T) {
 	require.True(t, createPlan.Detached)
 	require.Equal(t, 1, createPlan.Schema().Len())
 	require.Equal(t, "WORKFLOW_ID", createPlan.OutputNames()[0].ColName.O)
+}
+
+func TestIllegalCreateLogReplication(t *testing.T) {
+	b := &PlanBuilder{}
+	ctx := context.Background()
+
+	p, err := b.buildAdminCreateLogReplication(ctx, &ast.CreateLogReplication{
+		Name: model.NewCIStr("repl"),
+		Opts: []*ast.LogReplicationOpt{
+			{Tp: ast.LogReplicationOptSourceHost, Value: "127.0.0.1"},
+			{Tp: ast.LogReplicationOptProtectionMode, UintValue: 3},
+		},
+	})
+	require.Nil(t, p)
+	require.ErrorContains(t, err, "invalid PROTECTION_MODE value: 3, expected one of 0, 1, 2")
 }
 
 func TestParseDegradeTimeoutOption(t *testing.T) {

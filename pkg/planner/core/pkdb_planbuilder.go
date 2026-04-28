@@ -113,6 +113,16 @@ func getLogReplOptsMap(opts []*ast.LogReplicationOpt) (map[ast.LogReplicationOpt
 	return optsMap, nil
 }
 
+func validateProtectionMode(mode ast.ProtectionMode) error {
+	switch mode {
+	case ast.ProtectionModeMaximumPerformance, ast.ProtectionModeMaximumProtection,
+		ast.ProtectionModeMaximumAvailability:
+		return nil
+	default:
+		return errors.Errorf("invalid PROTECTION_MODE value: %d, expected one of 0, 1, 2", mode)
+	}
+}
+
 func (*PlanBuilder) buildAdminCreateLogReplication(_ context.Context, as *ast.CreateLogReplication) (base.Plan, error) {
 	optsMap, err := getLogReplOptsMap(as.Opts)
 	if err != nil {
@@ -135,6 +145,9 @@ func (*PlanBuilder) buildAdminCreateLogReplication(_ context.Context, as *ast.Cr
 	}
 	if opt, ok := optsMap[ast.LogReplicationOptProtectionMode]; ok {
 		p.ProtectionMode = ast.ProtectionMode(opt.UintValue)
+		if err := validateProtectionMode(p.ProtectionMode); err != nil {
+			return nil, err
+		}
 	}
 	if err := parseDegradeTimeoutOption(&p.DegradeTimeoutSec, p.ProtectionMode, optsMap); err != nil {
 		return nil, err
@@ -172,6 +185,9 @@ func (*PlanBuilder) buildAdminAlterLogReplication(_ context.Context, as *ast.Alt
 	}
 	if opt, ok := optsMap[ast.LogReplicationOptProtectionMode]; ok {
 		p.ProtectionMode = ast.ProtectionMode(opt.UintValue)
+		if err := validateProtectionMode(p.ProtectionMode); err != nil {
+			return nil, err
+		}
 	}
 	if err := parseDegradeTimeoutOption(&p.DegradeTimeoutSec, p.ProtectionMode, optsMap); err != nil {
 		return nil, err
