@@ -433,7 +433,7 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 	finalSSTCount := len(suite.sstFiles(resumedBackupID))
 	require.Equal(t, failedBackupID, resumedBackupID)
 	require.GreaterOrEqual(t, finalSSTCount, partialSSTCount)
-	require.Empty(t, suite.pendingFiles())
+	require.Equal(t, []repo.BackupID{failedBackupID}, suite.pendingBackupIDs())
 	require.ElementsMatch(t, []repo.BackupID{failedBackupID}, suite.allMetadataBackupIDs())
 	require.ElementsMatch(t, []repo.BackupID{failedBackupID}, suite.allDataBackupIDs())
 

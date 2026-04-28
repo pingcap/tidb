@@ -19,13 +19,13 @@
 
 - Repo currently creates pending markers only when snapshot checkpoint mode is enabled.
 - Startup scans `_meta/pending/<config-hash>/` for repo backups of the same immutable backup config. The on-storage config-hash directory name is upper-case hex.
-- If a pending entry already has final `backupmeta`, BR removes it as stale metadata.
-- If a pending entry has checkpoint metadata but no final `backupmeta`, BR fails fast instead of implicitly resuming.
-- If a pending entry has neither checkpoint metadata nor final `backupmeta`, BR treats it as inconsistent repo state and reports an operator-visible error.
+- A pending marker intentionally outlives a successful checkpointed backup. If a pending entry already has final `backupmeta`, BR treats it as an expected stale marker and may remove it during later stale-marker cleanup.
+- If a pending entry has checkpoint metadata but no final `backupmeta`, BR treats it as an unfinished resumable backup. Exactly one matching unfinished backup is resumed; multiple matching unfinished backups are rejected as ambiguous.
+- If a pending entry has neither checkpoint metadata nor final `backupmeta`, BR treats it as a marker-only cleanup leftover and removes the marker plus any checkpoint debris during stale-marker cleanup.
 
 ## Repo Management Commands
 
-- `br repo snapshot ...` now covers listing, inspecting, deleting completed snapshots, discarding unfinished snapshots, and managing orphan snapshot objects.
+- `br repo snapshot ...` now covers listing, inspecting, deleting completed snapshots, and discarding unfinished snapshots. There is no user-facing `br repo snapshot orphans` command; full data-prefix scans are optional repair/audit tooling rather than routine repo UX.
 - Pending snapshot discard distinguishes stale markers from unfinished checkpoint-backed backups and preserves the same on-storage state classification used by backup startup checks.
 
 ## CLI Progress Integration
@@ -33,5 +33,5 @@
 - Repo snapshot commands now route long-running work through `ConsoleGlue` so CLI users get terminal progress feedback instead of a silent wait.
 - `ConsoleGlue` now supports dynamic-total progress bars for workloads that discover more work while running.
 - Repo mutation plumbing keeps the public `SnapshotOps` methods as the primary entrypoints and threads progress observation through function options instead of separate `WithCallback` variants.
-- Metadata scans use a single-step ConsoleGlue task indicator, while destructive commands (`snapshot delete`, `snapshot pending discard`, `snapshot orphans delete`) grow the progress total as objects are discovered and advance it as each object deletion finishes.
+- Metadata scans use a single-step ConsoleGlue task indicator, while destructive commands (`snapshot delete`, `snapshot pending discard`) grow the progress total as objects are discovered and advance it as each object deletion finishes.
 - Dynamic progress currently covers metadata files, snapshot data files, and pending marker files, so the visual progress still converges to the same mutation summary printed after the command completes.

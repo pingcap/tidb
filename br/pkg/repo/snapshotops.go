@@ -191,67 +191,6 @@ func (ops SnapshotOps) inspectPendingBackupState(
 	return PendingBackupStateStale, nil
 }
 
-func (ops SnapshotOps) ListSnapshotOrphans(ctx context.Context) ([]string, error) {
-	result := make([]string, 0)
-	for err, orphanPath := range ops.WalkSnapshotOrphans(ctx) {
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		result = append(result, orphanPath)
-	}
-	return result, nil
-}
-
-func (ops SnapshotOps) WalkSnapshotOrphans(ctx context.Context) TrySeq[string] {
-	completed, err := ListCompletedSnapshotIDs(ctx, ops.Storage)
-	if err != nil {
-		return func(yield func(error, string) bool) {
-			yield(errors.Annotatef(err, "list completed snapshot IDs"), "")
-		}
-	}
-
-	completedSet := make(map[BackupID]struct{}, len(completed))
-	for _, id := range completed {
-		completedSet[id] = struct{}{}
-	}
-
-	if err := ops.requireRepoStartAfter(); err != nil {
-		return func(yield func(error, string) bool) {
-			yield(errors.Trace(err), "")
-		}
-	}
-
-	return func(yield func(error, string) bool) {
-		for err, head := range ops.walkSnapshotStoreBackupHeads(ctx) {
-			if err != nil {
-				yield(errors.Annotatef(err, "walk snapshot store backup heads"), "")
-				return
-			}
-			if _, ok := completedSet[head.BackupID]; ok {
-				continue
-			}
-			for err, dataFile := range ops.walkSnapshotDataFilesForStoreBackup(ctx, head.StoreID, head.BackupID) {
-				if err != nil {
-					yield(errors.Annotatef(
-						err,
-						"walk snapshot data files for store %d backup %s",
-						head.StoreID,
-						head.BackupID,
-					), "")
-					return
-				}
-				if !yield(nil, dataFile.Path) {
-					return
-				}
-			}
-		}
-	}
-}
-
-func (ops SnapshotOps) DeleteSnapshotOrphans(ctx context.Context, options ...SnapshotMutationOption) (int, error) {
-	return ops.deleteFilesFromStream(ctx, ops.WalkSnapshotOrphans(ctx), collectSnapshotMutationOptions(options))
-}
-
 func filePathStream(paths []string) TrySeq[string] {
 	return func(yield func(error, string) bool) {
 		for _, filePath := range paths {
@@ -517,30 +456,6 @@ func (ops SnapshotOps) walkSnapshotStoreHeads(ctx context.Context) TrySeq[Snapsh
 	}
 }
 
-func (ops SnapshotOps) walkSnapshotStoreBackupHeads(ctx context.Context) TrySeq[SnapshotDataFile] {
-	return func(yield func(error, SnapshotDataFile) bool) {
-		cursor := ""
-		for {
-			found := false
-			for err, dataFile := range ops.walkSnapshotDataFilesAfter(ctx, cursor) {
-				if err != nil {
-					yield(errors.Annotatef(err, "walk snapshot data files after %q", cursor), SnapshotDataFile{})
-					return
-				}
-				found = true
-				cursor = snapshotStoreBackupEndAnchor(dataFile.StoreID, dataFile.BackupID)
-				if !yield(nil, dataFile) {
-					return
-				}
-				break
-			}
-			if !found {
-				return
-			}
-		}
-	}
-}
-
 func (ops SnapshotOps) walkSnapshotDataFilesForStoreBackup(
 	ctx context.Context,
 	storeID uint64,
@@ -576,11 +491,6 @@ func (ops SnapshotOps) walkSnapshotDataFilesAfter(ctx context.Context, startAfte
 
 func snapshotStoreBackupAnchor(storeID uint64, backupID BackupID) string {
 	return SnapshotStoreDataPrefix(storeID, backupID)
-}
-
-func snapshotStoreBackupEndAnchor(storeID uint64, backupID BackupID) string {
-	// '/' sorts before digits, so appending '0' skips the entire `backupID/` subtree.
-	return snapshotStoreBackupAnchor(storeID, backupID) + "0"
 }
 
 func snapshotStoreEndAnchor(storeID uint64) string {

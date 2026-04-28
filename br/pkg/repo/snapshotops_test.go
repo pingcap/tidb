@@ -198,35 +198,6 @@ func TestDeleteSnapshotRejectsUnsupportedStorage(t *testing.T) {
 	requireFileExists(ctx, t, storage, repo.PendingFile([]byte("hash"), backupID))
 }
 
-func TestListAndDeleteSnapshotOrphansUsesStartAfterWhenAvailable(t *testing.T) {
-	ctx := context.Background()
-	storage := newWalkAssertingLocalStorage(t, true)
-	snapshotOps := repo.SnapshotOpsExtension(storage)
-
-	completedID := repo.BackupID(0x5678)
-	orphanID := repo.BackupID(0x6789)
-	createBackupMeta(ctx, t, storage, completedID)
-	createDataFile(ctx, t, storage, 1, completedID, "keep-a.sst")
-	createDataFile(ctx, t, storage, 1, completedID, "keep-b.sst")
-	createDataFile(ctx, t, storage, 1, orphanID, "orphan-a.sst")
-	createDataFile(ctx, t, storage, 2, orphanID, "orphan-b.sst")
-
-	orphans, err := snapshotOps.ListSnapshotOrphans(ctx)
-	require.NoError(t, err)
-	require.ElementsMatch(t, []string{
-		repo.SnapshotStoreDataPrefix(1, orphanID) + "/orphan-a.sst",
-		repo.SnapshotStoreDataPrefix(2, orphanID) + "/orphan-b.sst",
-	}, orphans)
-
-	deleted, err := snapshotOps.DeleteSnapshotOrphans(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 2, deleted)
-	requireFileExists(ctx, t, storage, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep-a.sst")
-	requireFileExists(ctx, t, storage, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep-b.sst")
-	requireFileMissing(ctx, t, storage, repo.SnapshotStoreDataPrefix(1, orphanID)+"/orphan-a.sst")
-	requireFileMissing(ctx, t, storage, repo.SnapshotStoreDataPrefix(2, orphanID)+"/orphan-b.sst")
-}
-
 func TestDeleteSnapshotWaitsForStartedDeletesAfterWalkError(t *testing.T) {
 	ctx := context.Background()
 	storage := newWalkErrorDeleteBlockingStorage(t)

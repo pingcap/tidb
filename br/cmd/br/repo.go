@@ -67,7 +67,6 @@ func newRepoSnapshotCommand() *cobra.Command {
 		newRepoSnapshotGetCommand(),
 		newRepoSnapshotDeleteCommand(),
 		newRepoSnapshotPendingCommand(),
-		newRepoSnapshotOrphansCommand(),
 	)
 	return cmd
 }
@@ -240,91 +239,6 @@ func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().String(repoSnapshotFlagBackupID, "", "snapshot backup id")
-	cmd.Flags().BoolP(
-		repoSnapshotFlagYes,
-		repoSnapshotFlagYesShort,
-		false,
-		"skip the confirmation prompt and execute the command directly",
-	)
-	return cmd
-}
-
-func newRepoSnapshotOrphansCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "orphans",
-		Short: "manage orphan snapshot objects",
-	}
-	cmd.AddCommand(
-		newRepoSnapshotOrphansListCommand(),
-		newRepoSnapshotOrphansDeleteCommand(),
-	)
-	return cmd
-}
-
-func newRepoSnapshotOrphansListCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "list orphan snapshot objects",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := parseRepoSnapshotConfig(cmd)
-			if err != nil {
-				cmd.SilenceUsage = false
-				return errors.Trace(err)
-			}
-			ctx := GetDefaultContext()
-			orphanPaths, err := taskrepo.RunRepoSnapshotOrphansList(
-				ctx,
-				tidbGlue,
-				taskrepo.RepoSnapshotOrphansConfig{Config: cfg},
-			)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			for _, orphanPath := range orphanPaths {
-				if _, err := fmt.Fprintln(cmd.OutOrStdout(), orphanPath); err != nil {
-					return errors.Trace(err)
-				}
-			}
-			return nil
-		},
-	}
-	return cmd
-}
-
-func newRepoSnapshotOrphansDeleteCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "delete",
-		Short: "delete orphan snapshot objects",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := parseRepoSnapshotConfig(cmd)
-			if err != nil {
-				cmd.SilenceUsage = false
-				return errors.Trace(err)
-			}
-			skipPrompt, err := cmd.Flags().GetBool(repoSnapshotFlagYes)
-			if err != nil {
-				cmd.SilenceUsage = false
-				return errors.Trace(err)
-			}
-			ctx := GetDefaultContext()
-			deleted, err := taskrepo.RunRepoSnapshotOrphansDelete(
-				ctx,
-				tidbGlue,
-				taskrepo.RepoSnapshotOrphansConfig{Config: cfg, SkipPrompt: skipPrompt},
-			)
-			if err != nil {
-				if berrors.Is(err, berrors.ErrOperationAborted) {
-					_, err = fmt.Fprintln(cmd.OutOrStdout(), "operation canceled")
-					return errors.Trace(err)
-				}
-				return errors.Trace(err)
-			}
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "deleted %d orphan objects\n", deleted)
-			return errors.Trace(err)
-		},
-	}
 	cmd.Flags().BoolP(
 		repoSnapshotFlagYes,
 		repoSnapshotFlagYesShort,

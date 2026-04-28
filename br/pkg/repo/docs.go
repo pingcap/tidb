@@ -28,8 +28,9 @@
 // the root guard file. NewPrefixedStorage is a prefix-rewriting storage wrapper
 // that exposes relative paths under one repository subdirectory.
 //
-// snapshotscan.go and SnapshotOps enumerate pending markers, completed
-// snapshots, and orphaned data. Pending state is derived from backup metadata
-// versus checkpoint metadata, and deleting one backup's data requires backend
-// support for WalkDir StartAfter.
+// snapshotscan.go and SnapshotOps enumerate pending markers and completed
+// snapshots, with optional data-prefix repair helpers for non-routine audits.
+// Pending markers may outlive successful backups; pending state is derived from
+// backup metadata versus checkpoint metadata. Deleting one backup's data requires
+// backend support for WalkDir StartAfter.
 package repo

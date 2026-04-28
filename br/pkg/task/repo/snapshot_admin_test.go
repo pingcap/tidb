@@ -249,63 +249,6 @@ func TestRunRepoSnapshotPendingDiscardConfirmationAbortKeepsFiles(t *testing.T) 
 	})
 }
 
-func TestRunRepoSnapshotOrphansDeleteConfirmationSamplesOnly(t *testing.T) {
-	t.Run("exact_count_abort_keeps_files", func(t *testing.T) {
-		ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-		defer storage.Close()
-
-		completedID := repo.BackupID(0x4103)
-		orphanID := repo.BackupID(0x4104)
-		orphanPathA := repo.SnapshotStoreDataPrefix(1, orphanID) + "/a.sst"
-		orphanPathB := repo.SnapshotStoreDataPrefix(2, orphanID) + "/b.sst"
-		createBackupMeta(ctx, t, storage, completedID)
-		require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
-		require.NoError(t, storage.WriteFile(ctx, orphanPathA, []byte("a")))
-		require.NoError(t, storage.WriteFile(ctx, orphanPathB, []byte("b")))
-
-		console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
-		deleted, err := RunRepoSnapshotOrphansDelete(ctx, console, RepoSnapshotOrphansConfig{Config: cfg})
-		require.Zero(t, deleted)
-		require.Error(t, err)
-		require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
-		require.Empty(t, console.progressBars)
-		require.Equal(t, []string{"Continue? "}, console.prompts)
-		require.Contains(t, console.output.String(), "About to delete 2 orphan snapshot object")
-		require.Contains(t, console.output.String(), orphanPathA)
-		requireRepoSnapshotFileExists(ctx, t, storage, orphanPathA)
-		requireRepoSnapshotFileExists(ctx, t, storage, orphanPathB)
-	})
-
-	t.Run("sample_limit_abort_keeps_files", func(t *testing.T) {
-		ctx, cfg, storage := newRepoSnapshotTestEnv(t)
-		defer storage.Close()
-
-		completedID := repo.BackupID(0x4105)
-		orphanID := repo.BackupID(0x4106)
-		createBackupMeta(ctx, t, storage, completedID)
-		require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(1, completedID)+"/keep.sst", []byte("keep")))
-		for i := range repoSnapshotPromptSampleLimit + 2 {
-			path := fmt.Sprintf("%s/%02d.sst", repo.SnapshotStoreDataPrefix(1, orphanID), i)
-			require.NoError(t, storage.WriteFile(ctx, path, []byte("orphan")))
-		}
-
-		console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
-		deleted, err := RunRepoSnapshotOrphansDelete(ctx, console, RepoSnapshotOrphansConfig{Config: cfg})
-		require.Zero(t, deleted)
-		require.Error(t, err)
-		require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
-		require.Empty(t, console.progressBars)
-		require.Equal(t, []string{"Continue? "}, console.prompts)
-		require.Contains(t, console.output.String(), "The exact count is not precomputed before confirmation")
-		require.Equal(t, repoSnapshotPromptSampleLimit, bytes.Count(console.output.Bytes(), []byte("  - ")))
-		require.Contains(t, console.output.String(), "... more orphan objects may exist")
-		for i := range repoSnapshotPromptSampleLimit + 2 {
-			path := fmt.Sprintf("%s/%02d.sst", repo.SnapshotStoreDataPrefix(1, orphanID), i)
-			requireRepoSnapshotFileExists(ctx, t, storage, path)
-		}
-	})
-}
-
 func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storeapi.Storage) {
 	t.Helper()
 

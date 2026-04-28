@@ -489,9 +489,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 	var (
-		preparedStorage           *taskrepo.PreparedRepoSnapshotBackup
-		perStoreBackupAdapters    []backup.PerStoreBackupAdapter
-		removePendingMarkerOnExit bool
+		preparedStorage        *taskrepo.PreparedRepoSnapshotBackup
+		perStoreBackupAdapters []backup.PerStoreBackupAdapter
 	)
 	if cfg.Layout.IsRepo() {
 		if err = client.SetStorage(ctx, u, &opts); err != nil {
@@ -521,16 +520,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if err := taskrepo.ActivateSnapshotBackupResume(ctx, client, preparedStorage, cfgHash); err != nil {
 			return errors.Trace(err)
 		}
-		defer func() {
-			if !removePendingMarkerOnExit {
-				return
-			}
-			if err := preparedStorage.RootStorage.DeleteFile(ctx, preparedStorage.PendingMarkerPath); err != nil {
-				log.Warn("failed to remove repo pending marker",
-					zap.String("path", preparedStorage.PendingMarkerPath),
-					zap.Error(err))
-			}
-		}()
 	} else {
 		if err = client.SetStorageAndCheckNotInUse(ctx, u, &opts); err != nil {
 			return errors.Trace(err)
@@ -757,10 +746,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 				log.Warn("failed to remove checkpoint data for backup", zap.Error(removeErr))
 				return
 			}
-			if preparedStorage != nil {
-				removePendingMarkerOnExit = true
-			}
 			log.Info("the checkpoint data for backup is removed.")
+			if preparedStorage != nil {
+				log.Info("repo pending marker is kept for later stale-marker cleanup",
+					zap.String("path", preparedStorage.PendingMarkerPath))
+			}
 		}()
 	}
 
@@ -834,7 +824,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	// Since backupmeta is flushed on the external storage,
 	// we can remove the gc safepoint keeper and let the deferred checkpoint
-	// cleanup remove the pending marker afterward.
+	// cleanup remove checkpoint data. For repo backups, the pending marker
+	// intentionally outlives this backup and is retired by later stale-marker
+	// cleanup or snapshot deletion.
 	gcSafePointKeeperRemovable = true
 	if preparedStorage != nil {
 		log.Info("completed repo snapshot backup", zap.String("backup-id", preparedStorage.BackupID.String()))

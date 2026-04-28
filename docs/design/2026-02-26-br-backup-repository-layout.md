@@ -23,7 +23,6 @@
       - [Discard Pending Backup](#discard-pending-backup)
       - [List](#list)
       - [Backupmeta of a Backup](#backupmeta-of-a-backup)
-      - [Orphans](#orphans)
     - [Compatibility](#compatibility)
     - [Misc](#misc)
       - [Backend Compatibility of Prefix Rewriting](#backend-compatibility-of-prefix-rewriting)
@@ -74,7 +73,7 @@ s3://bucket/prefix/
 
 Reserved entries at the repo root:
 - `_meta/repo.json` identifies a BR repo and records layout metadata such as repo version, repo ID, and creator. It must not contain secrets.
-- `_meta/pending/` stores repo-level pointers to unfinished snapshot backups. It is the fast-path index for resume, fresh-attempt, or discard decisions and avoids scanning all historical snapshots in `_meta/snapshot/`.
+- `_meta/pending/` stores repo-level markers for checkpointed snapshot backup attempts. A marker is created before the attempt can write snapshot data and is intentionally allowed to outlive the backup attempt; after a successful backup it becomes a stale marker that can be retired later. This marker directory is the fast-path index for resume, fresh-attempt, discard, and stale-marker cleanup decisions, and avoids scanning all historical snapshots in `_meta/snapshot/` or all data shards in `_data/snapshot/` for routine operations.
 - `backup.lock` is a human-readable guard file. It marks the path as BR-managed repository storage and prevents legacy single-backup BR from treating the repo root as an empty backup directory.
 
 Example `_meta/repo.json`:
@@ -117,7 +116,7 @@ Lifecycle:
 - A new repo backup begins by selecting one per-backup namespace: with `--use-checkpoint=true`, BR resumes exactly one matching unfinished backup when present and allocates a fresh `<backup-id>` when none exists; with `--use-checkpoint=false`, BR always allocates a fresh `<backup-id>`. The selected namespace stores metadata under `_meta/snapshot/<backup-id>/...` and data under `_data/snapshot/<store-id>/<backup-id>/...`.
 - While the backup is running, checkpoint artifacts and temporary metadata accumulate under that per-backup metadata namespace. This namespace is the canonical record of the backup's in-progress state.
 - The backup remains unfinished until its final `backupmeta` is durable. Checkpoint cleanup is part of the success path, not a separate logical backup.
-- Once the final `backupmeta` is durable and checkpoint cleanup has finished, the backup is complete and becomes a normal historical snapshot in the repo.
+- Once the final `backupmeta` is durable and checkpoint cleanup has finished, the backup is complete and becomes a normal historical snapshot in the repo. The pending marker, when present, intentionally outlives this transition; it is not part of the committed backup metadata and may be removed later as a stale marker.
 - If execution is interrupted before completion, the partially written per-backup metadata and data remain attributable to the same `<backup-id>`, so later resume, inspection, or cleanup can target one concrete backup attempt.
 - Current implementation classifies pending state by probing this namespace: final `backupmeta` means a stale pending marker, checkpoint metadata without final `backupmeta` means an unfinished resumable backup, and marker-only leftovers are treated as stale cleanup leftovers rather than as resumable state.
 
@@ -130,13 +129,14 @@ Config hash:
 - This RFC refers to that value as `<config-hash-hex>`.
 
 Pending index:
-- For unfinished backups, BR also keeps a small pointer file at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
-- This lets routine startup find relevant unfinished attempts by enumerating `_meta/pending/<config-hash-hex>/` instead of scanning all historical backups.
+- For checkpointed backup attempts, BR also keeps a small marker file at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
+- The marker lifetime is deliberately longer than the backup attempt. BR creates the marker before issuing TiKV backup requests, keeps it after final `backupmeta` becomes durable, and retires it only through later stale-marker cleanup, `pending discard`, or `snapshot delete`.
+- This lets routine startup find relevant unfinished attempts by enumerating `_meta/pending/<config-hash-hex>/` instead of scanning all historical backups or all data shards.
 - Current implementation stores checkpoint state under `_meta/snapshot/<backup-id>/checkpoints/backup/...` and classifies each pending marker by checking `backupmeta` first, then `checkpoints/backup/checkpoint.meta`.
-- Stale pending pointers left behind after a completed backup are treated as cleanup leftovers and removed automatically when BR scans that config-hash directory.
+- Stale pending markers for completed backups are expected after successful backups and are removed automatically when BR scans that config-hash directory.
 - Marker-only pending leftovers are also treated as stale cleanup leftovers: when BR scans that config-hash directory, it removes the marker and any checkpoint debris instead of surfacing a special error.
 
-This keeps “find unfinished backup” cost proportional to the number of unfinished backups, not the number of historical backups in the repo.
+This keeps “find unfinished backup” cost proportional to the number of indexed backup attempts, not the number of historical backups or data objects in the repo. A full `_data/snapshot/` scan can still be used as an optional repair/audit procedure, but it is not required for normal resume or cleanup flows.
 
 ### TiKV SST Object Keys
 
@@ -173,7 +173,7 @@ Semantics:
 - Creates a snapshot backup in the repo and selects a PD TSO `<backup-id>` for this run or resumed run.
 - With checkpoint mode enabled, computes `<config-hash-hex>` for the current logical backup configuration and creates `_meta/pending/<config-hash-hex>/<backup-id>.json` before issuing TiKV backup requests.
 - Writes metadata under `_meta/snapshot/<backup-id>/` and SSTs under `_data/snapshot/<store-id>/<backup-id>/`.
-- With checkpoint mode enabled, removes `_meta/pending/<config-hash-hex>/<backup-id>.json` on the success path after final `backupmeta` is durable and checkpoint artifacts are cleaned up.
+- With checkpoint mode enabled, leaves `_meta/pending/<config-hash-hex>/<backup-id>.json` in place on the success path after final `backupmeta` is durable and checkpoint artifacts are cleaned up. The marker becomes stale and can be removed by a later stale-marker sweep or by `snapshot delete`.
 - Prints `<backup-id>` on success.
 
 Pending backup behavior:
@@ -243,30 +243,16 @@ Semantics:
 - `delete` removes the specified backup's snapshot metadata, snapshot data, and any pending markers for that `<backup-id>`.
 - `delete` still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the upper-case hex `<backup-id>` subprefix in each shard. This data scan currently requires WalkDir `StartAfter` support.
 
-#### Orphans
-
-Command:
-- `br repo snapshot orphans list -s <repo>`
-- `br repo snapshot orphans delete -s <repo>`
-
-Semantics:
-- `orphans list` prints SST objects whose `<backup-id>` is not present as a completed snapshot metadata entry under `_meta/snapshot/<backup-id>/backupmeta[.XXXXXXX]`.
-- `orphans delete` deletes SST objects whose `<backup-id>` is not present as a completed snapshot metadata entry.
-- Current implementation finds orphans by comparing completed snapshot IDs with upper-case hex `<backup-id>` subprefixes found under each store shard in `_data/snapshot/`.
-- Unfinished backups without final `backupmeta` therefore look like orphans to this command family; `pending discard` is the more targeted cleanup path when pending markers still exist.
-- These commands currently require WalkDir `StartAfter` support.
-- This is still expected to be more expensive than listing known backups.
-
 ### Compatibility
 
 - BR: new `--storage-layout=repo`, `br repo` subcommands, and layout helper.
 - TiKV: repo does not require a new TiKV-side path hook. The baseline deployment path relies on BR rewriting the per-request `StorageBackend` prefix per store.
 - PD: backup ID allocation via TSO.
 - Current implementation rejects repo snapshot backup on HDFS and noop storage.
-- Current implementation recognizes WalkDir `StartAfter` support only for `s3://`, `ks3://`, `gcs://`, and `file://` storages. Repo restore and the data-scanning repo admin paths (`snapshot delete`, unfinished `pending discard`, `orphans list/delete`) are therefore limited to those storages today.
+- Current implementation recognizes WalkDir `StartAfter` support only for `s3://`, `ks3://`, `gcs://`, and `file://` storages. Repo restore and the data-scanning repo admin paths (`snapshot delete`, unfinished `pending discard`) are therefore limited to those storages today.
 - Upgrade: legacy layout remains supported; repo is opt-in.
 - Downgrade: avoid writing repo from older BR; repo marker signals layout.
-- External tools: restore/list/delete/orphan-cleanup/pending-discard must use repo-aware logic.
+- External tools: restore/list/delete/pending-discard must use repo-aware logic. Full data-prefix orphan scanning, if an external maintenance tool chooses to do it, is optional repair/audit work rather than a required BR repo command.
 
 ### Misc
 
@@ -304,7 +290,7 @@ Scope:
 
 Repo behavior:
 - Verify repo marker and `backup.lock` creation.
-- Verify checkpointed backup creates a pending pointer at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
+- Verify checkpointed backup creates a pending marker at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
 - Verify backup-id is PD-assigned as a user-facing `uint64`.
 - Verify the on-storage `<backup-id>` path segment is fixed-width upper-case hex.
 - Verify the baseline implementation path can produce `_data/snapshot/<store-id>/<backup-id>/...` by rewriting the per-store `StorageBackend` prefix.
@@ -315,13 +301,12 @@ Repo behavior:
 - Verify `--use-checkpoint=false` starts a fresh backup and leaves existing unfinished backups for later inspection or explicit discard.
 - Verify `br repo snapshot list` returns completed backups only.
 - Verify unfinished-backup lookup only enumerates `_meta/pending/<config-hash-hex>/` in the normal path.
-- Verify a stale pending file for a completed backup is removed instead of forcing a resume.
+- Verify a checkpointed successful backup leaves its pending file in place after the backup finishes.
+- Verify a stale pending file for a completed backup is removed by a later stale-marker cleanup instead of forcing a resume.
 - Verify marker-only pending leftovers are treated as stale cleanup leftovers rather than as resumable backups.
 - Verify `pending discard` distinguishes stale vs unfinished targets and deletes the correct scope for each.
 - Verify `snapshot get --view basic|tables|files` returns the documented metadata views.
 - Verify `snapshot delete` deletes matching data, metadata, and pending markers, and still works by data-prefix scan when metadata is missing.
-- Verify `snapshot orphans list` outputs only orphan SSTs.
-- Verify `snapshot orphans delete` deletes only orphan SSTs.
 - Verify checkpoint artifacts are stored under `_meta/snapshot/<backup-id>/checkpoints/backup/...`.
 - Verify repo reader and destructive admin paths enforce the current WalkDir `StartAfter` capability gate.
 
@@ -336,7 +321,7 @@ Repo scenarios:
 - A controller retries the same failed backup CR through its existing retry mechanism and invokes BR with `--use-checkpoint=true`; the unfinished backup continues instead of being replaced.
 - A controller observes a fresh-attempt signal, such as CR recreation or changed retry annotation/token, and invokes BR with `--use-checkpoint=false`; a new backup starts without resuming the old unfinished backup.
 - Metadata loss for a backup: `snapshot delete` still deletes by prefix.
-- Orphan scan detects unexpected per-backup subprefixes under store shards, including unfinished backups that have data files but no final `backupmeta`.
+- Optional repair/audit tooling may full-scan data shards to detect unexpected per-backup subprefixes, but routine cleanup should rely on pending markers and targeted backup IDs.
 
 ### Compatibility Tests
 
@@ -352,7 +337,7 @@ Compatibility coverage:
 ### Benchmark Tests
 
 - Prefix scan cost for `snapshot delete` when metadata is missing and BR must enumerate per-store backup subprefixes.
-- Listing cost for `snapshot orphans list` over many store shards and per-backup subprefixes, and its impact on API rate limits.
+- Cost of an optional full data-prefix repair/audit scan over many store shards and per-backup subprefixes, and its impact on API rate limits.
 
 ## Impacts & Risks
 
@@ -362,7 +347,8 @@ Impacts:
 
 Risks:
 - Incorrect prefix matching could delete wrong objects.
-- `snapshot orphans list/delete` still requires storage enumeration and can be expensive on very large repos.
+- Keeping pending markers after successful backups adds benign stale-marker entries; stale cleanup must remain cheap and must not confuse them with resumable backups.
+- Optional full data-prefix repair/audit scans still require storage enumeration and can be expensive on very large repos, so they should not be part of routine backup startup or cleanup.
 - Incorrect handling of pending markers could either block future backups unnecessarily or discard data from the wrong unfinished backup.
 - The baseline backend-prefix-rewrite path relies on backend-specific prefix semantics and correct per-store request construction; mistakes there could place SSTs under the wrong prefix.
 - The backend-prefix-rewrite compatibility path may not be supportable on every BR backend; claiming universal support would overstate what current HDFS/noop implementations can do.
@@ -374,6 +360,7 @@ Risks:
 - Metadata-driven delete only: fails when metadata is lost.
 - Finding unfinished backups by scanning `_meta/snapshot/*`: simple, but startup cost grows with total historical backups instead of active unfinished backups.
 - Pending index keyed only by `<backup-id>`: simpler naming, but requires scanning all unfinished backups in the repo instead of directly narrowing to one logical backup configuration.
+- User-facing orphan scan subcommand: not included in the v1 UX because the pending marker intentionally outlives the backup attempt and provides a cheaper routine cleanup index. A full data-prefix scan remains possible as optional repair/audit tooling.
 - Repo via per-request backend-prefix rewriting: baseline deployment path that avoids a hard dependency on TiKV upgrade, but shifts correctness risk to backend-prefix handling and per-store request mutation.
 - Future TiKV-side path hook such as `file_prefix`: could be added later as an implementation optimization without changing the repo storage layout or user-facing semantics.
 - Dedup/compaction: higher complexity, out of scope initially.

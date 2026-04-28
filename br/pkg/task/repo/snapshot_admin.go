@@ -63,11 +63,6 @@ type RepoSnapshotPendingDiscardConfig struct {
 
 type RepoSnapshotPendingDiscardResult = repo.PendingDiscardResult
 
-type RepoSnapshotOrphansConfig struct {
-	Config
-	SkipPrompt bool
-}
-
 type repoSnapshotConsole interface {
 	glue.ConsoleGlue
 	StartProgressBar(title string, total int, extraFields ...glue.ExtraField) glue.ProgressWaiter
@@ -84,8 +79,6 @@ const (
 	repoSnapshotMetaViewBasic  repoSnapshotMetaView = "basic"
 	repoSnapshotMetaViewTables repoSnapshotMetaView = "tables"
 	repoSnapshotMetaViewFiles  repoSnapshotMetaView = "files"
-
-	repoSnapshotPromptSampleLimit = 5
 )
 
 type repoSnapshotBasicView struct {
@@ -268,53 +261,6 @@ func RunRepoSnapshotPendingDiscard(
 	})
 }
 
-func RunRepoSnapshotOrphansList(
-	ctx context.Context,
-	consoleGlue glue.ConsoleGlue,
-	cfg RepoSnapshotOrphansConfig,
-) ([]string, error) {
-	console := normalizeRepoSnapshotConsole(consoleGlue)
-	return runRepoSnapshotSpinnerTask(ctx, console, "Listing orphan snapshot objects...", nil, func(taskCtx context.Context) ([]string, error) {
-		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storeapi.Storage) ([]string, error) {
-			return repo.SnapshotOpsExtension(storage).ListSnapshotOrphans(taskCtx)
-		})
-	})
-}
-
-func RunRepoSnapshotOrphansDelete(
-	ctx context.Context,
-	consoleGlue glue.ConsoleGlue,
-	cfg RepoSnapshotOrphansConfig,
-) (int, error) {
-	console := normalizeRepoSnapshotConsole(consoleGlue)
-	deletedCount := 0
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (int, error) {
-		snapshotOps := repo.SnapshotOpsExtension(storage)
-		hasOrphans, err := confirmRepoSnapshotOrphansDelete(ctx, console, &cfg, snapshotOps)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		if !hasOrphans {
-			return 0, nil
-		}
-		return runRepoSnapshotDynamicProgressTask(
-			ctx,
-			console,
-			"Deleting orphan snapshot objects...",
-			[]glue.ExtraField{withDeletedObjectsExtraField("orphan-objects#", func() int { return deletedCount })},
-			func(progress repoSnapshotDynamicProgressTaskContext) (int, error) {
-				deleted, err := snapshotOps.DeleteSnapshotOrphans(
-					progress.Context,
-					repo.WithMutationDiscoveredProgress(func(count int) { progress.AddTotal(int64(count)) }),
-					repo.WithMutationDeletedProgress(func(count int) { progress.Advance(int64(count)) }),
-				)
-				deletedCount = deleted
-				return deleted, err
-			},
-		)
-	})
-}
-
 func normalizeRepoSnapshotConsole(consoleGlue glue.ConsoleGlue) repoSnapshotConsole {
 	if consoleGlue == nil {
 		return glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}
@@ -447,61 +393,6 @@ func confirmRepoSnapshotPendingDiscard(
 		return errors.Trace(berrors.ErrOperationAborted)
 	}
 	return nil
-}
-
-func confirmRepoSnapshotOrphansDelete(
-	ctx context.Context,
-	console repoSnapshotConsole,
-	cfg *RepoSnapshotOrphansConfig,
-	snapshotOps repo.SnapshotOps,
-) (bool, error) {
-	if !shouldConfirmRepoSnapshotMutation(console, cfg.SkipPrompt) {
-		return true, nil
-	}
-	samplePaths, hasMore, err := collectRepoSnapshotOrphanSamples(ctx, snapshotOps, repoSnapshotPromptSampleLimit)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	if len(samplePaths) == 0 {
-		return false, nil
-	}
-	if hasMore {
-		console.Println("About to delete orphan snapshot objects.")
-		console.Printf("The exact count is not precomputed before confirmation; showing the first %d discovered object(s).\n", len(samplePaths))
-	} else {
-		console.Printf("About to delete %d orphan snapshot object(s).\n", len(samplePaths))
-	}
-	console.Println("These objects are not referenced by any completed snapshot backup and will be permanently removed.")
-	console.Println("Sample orphan objects:")
-	for _, orphanPath := range samplePaths {
-		console.Printf("  - %s\n", orphanPath)
-	}
-	if hasMore {
-		console.Println("  ... more orphan objects may exist")
-	}
-	if !console.PromptBool("Continue? ") {
-		return false, errors.Trace(berrors.ErrOperationAborted)
-	}
-	return true, nil
-}
-
-func collectRepoSnapshotOrphanSamples(
-	ctx context.Context,
-	snapshotOps repo.SnapshotOps,
-	limit int,
-) ([]string, bool, error) {
-	samplePaths := make([]string, 0, limit)
-	for err, orphanPath := range snapshotOps.WalkSnapshotOrphans(ctx) {
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if len(samplePaths) < limit {
-			samplePaths = append(samplePaths, orphanPath)
-			continue
-		}
-		return samplePaths, true, nil
-	}
-	return samplePaths, false, nil
 }
 
 func printRepoSnapshotConfirmField(console repoSnapshotConsole, key string, value string) {
