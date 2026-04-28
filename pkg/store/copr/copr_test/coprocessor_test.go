@@ -207,6 +207,7 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 			MinPagingSize   uint64
 			MaxPagingSize   uint64
 			PagingSizeBytes uint64
+			RCNonBurstable  bool
 		}{
 			Enable:        true,
 			MinPagingSize: 1,

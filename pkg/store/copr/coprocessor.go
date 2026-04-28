@@ -2916,12 +2916,18 @@ func optRowHint(req *kv.Request) bool {
 }
 
 // pagingBytesEligible checks whether byte-budget paging should be applied.
-// Only DAG requests on TiKV support byte-budget paging.
+// Only DAG requests on TiKV bound to a Resource Control group whose
+// BurstLimit is non-negative (hard-capped at RU_PER_SEC) are eligible:
+// for burstable/unlimited groups (or when RC is disabled) the per-page
+// byte break adds RPC overhead without bounding any token budget.
 func pagingBytesEligible(req *kv.Request) bool {
 	if req.StoreType != kv.TiKV {
 		return false
 	}
 	if req.Tp != kv.ReqTypeDAG {
+		return false
+	}
+	if !req.Paging.RCNonBurstable {
 		return false
 	}
 	return true

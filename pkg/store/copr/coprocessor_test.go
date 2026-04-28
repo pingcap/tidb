@@ -701,20 +701,27 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 }
 
 func TestPagingBytesEligible(t *testing.T) {
-	// Eligible: TiKV + DAG
+	// Eligible: TiKV + DAG + RC-capped group.
 	req := &kv.Request{
 		Tp:        kv.ReqTypeDAG,
 		StoreType: kv.TiKV,
 	}
+	req.Paging.RCNonBurstable = true
 	require.True(t, pagingBytesEligible(req))
 
-	// Not eligible: TiFlash
+	// Not eligible: TiFlash.
 	req2 := &kv.Request{Tp: kv.ReqTypeDAG, StoreType: kv.TiFlash}
+	req2.Paging.RCNonBurstable = true
 	require.False(t, pagingBytesEligible(req2))
 
-	// Not eligible: non-DAG
+	// Not eligible: non-DAG.
 	req3 := &kv.Request{Tp: kv.ReqTypeAnalyze, StoreType: kv.TiKV}
+	req3.Paging.RCNonBurstable = true
 	require.False(t, pagingBytesEligible(req3))
+
+	// Not eligible: RC disabled or current group is burstable/unlimited.
+	req4 := &kv.Request{Tp: kv.ReqTypeDAG, StoreType: kv.TiKV}
+	require.False(t, pagingBytesEligible(req4))
 }
 
 func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
@@ -736,6 +743,7 @@ func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
 	req := &kv.Request{}
 	req.Paging.Enable = true
 	req.Paging.MinPagingSize = paging.MinPagingSize
+	req.Paging.RCNonBurstable = true
 
 	// With pagingSizeBytes set, tasks should carry the byte budget.
 	tasks, err := buildCopTasks(bo, buildCopRanges("a", "c"), &buildCopTaskOpt{

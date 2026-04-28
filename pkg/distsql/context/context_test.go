@@ -83,6 +83,7 @@ func TestContextDetach(t *testing.T) {
 		MinPagingSize:                 1,
 		MaxPagingSize:                 1,
 		PagingSizeBytes:               1,
+		RCNonBurstable:                true,
 		RequestSourceType:             "a",
 		ExplicitRequestSourceType:     "b",
 		StoreBatchSize:                1,

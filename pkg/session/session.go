@@ -3466,6 +3466,17 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 				ruConsumptionReporter = rgCtl
 			}
 		}
+		// rcNonBurstable gates byte-budget paging: only forward
+		// PagingSizeBytes when Resource Control is enabled and the current
+		// resource group is hard-capped at RU_PER_SEC. The default group
+		// is treated as a normal group; if its BurstLimit has been altered
+		// to a non-negative value, byte-budget paging will trigger.
+		rcNonBurstable := false
+		if vardef.EnableResourceControl.Load() && dom != nil && sc.ResourceGroupName != "" {
+			if rg, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(sc.ResourceGroupName)); ok {
+				rcNonBurstable = rg.GetBurstLimitAdjusted() >= 0
+			}
+		}
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -3506,6 +3517,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			MinPagingSize:                 vars.MinPagingSize,
 			MaxPagingSize:                 vars.MaxPagingSize,
 			PagingSizeBytes:               vars.PagingSizeBytes,
+			RCNonBurstable:                rcNonBurstable,
 			RequestSourceType:             vars.RequestSourceType,
 			ExplicitRequestSourceType:     vars.ExplicitRequestSourceType,
 			StoreBatchSize:                vars.StoreBatchSize,

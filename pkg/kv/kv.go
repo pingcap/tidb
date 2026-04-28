@@ -636,6 +636,12 @@ type Request struct {
 		// PagingSizeBytes is the byte budget per page.
 		// 0 means disabled (no byte-budget paging).
 		PagingSizeBytes uint64
+		// RCNonBurstable is true when the request is bound to a Resource
+		// Control resource group whose adjusted BurstLimit is non-negative
+		// (hard-capped at RU_PER_SEC). Used as an additional gate for
+		// PagingSizeBytes: byte-budget paging only delivers RU value for
+		// RC-capped groups.
+		RCNonBurstable bool
 	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
