@@ -33,6 +33,7 @@ import (
 )
 
 func BenchmarkDetachCondAndBuildRangeForIndex(b *testing.B) {
+	b.ReportAllocs()
 	store := testkit.CreateMockStore(b)
 	testKit := testkit.NewTestKit(b, store)
 	testKit.MustExec("USE test")

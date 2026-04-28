@@ -141,19 +141,7 @@ func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 		}
 		return fullRange, true, nil
 	}
-	ranges := make(Ranges, 0, len(convertedPoints)/2)
-	for i := 0; i < len(convertedPoints); i += 2 {
-		startPoint, endPoint := convertedPoints[i], convertedPoints[i+1]
-		ran := &Range{
-			LowVal:      []types.Datum{startPoint.value},
-			LowExclude:  startPoint.excl,
-			HighVal:     []types.Datum{endPoint.value},
-			HighExclude: endPoint.excl,
-			Collators:   []collate.Collator{collate.GetCollator(newTp.GetCollate())},
-		}
-		ranges = append(ranges, ran)
-	}
-	return ranges, false, nil
+	return buildSingleColumnRanges(convertedPoints, collate.GetCollator(newTp.GetCollate())), false, nil
 }
 
 func convertPoint(sctx *rangerctx.RangerContext, point *point, newTp *types.FieldType) (*point, error) {
@@ -393,19 +381,33 @@ func points2TableRanges(sctx *rangerctx.RangerContext, rangePoints []*point, new
 	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(convertedPoints) > rangeMaxSize {
 		return FullIntRange(mysql.HasUnsignedFlag(newTp.GetFlag())), true, nil
 	}
-	ranges := make(Ranges, 0, len(convertedPoints)/2)
-	for i := 0; i < len(convertedPoints); i += 2 {
-		startPoint, endPoint := convertedPoints[i], convertedPoints[i+1]
-		ran := &Range{
-			LowVal:      []types.Datum{startPoint.value},
-			LowExclude:  startPoint.excl,
-			HighVal:     []types.Datum{endPoint.value},
-			HighExclude: endPoint.excl,
-			Collators:   []collate.Collator{collate.GetCollator(newTp.GetCollate())},
-		}
-		ranges = append(ranges, ran)
+	return buildSingleColumnRanges(convertedPoints, collate.GetCollator(newTp.GetCollate())), false, nil
+}
+
+// buildSingleColumnRanges groups all single-column range payloads into shared backing arrays
+// so range construction does not allocate tiny []Datum/[]Collator slices for every interval.
+func buildSingleColumnRanges(convertedPoints []*point, collator collate.Collator) Ranges {
+	rangeCount := len(convertedPoints) / 2
+	ranges := make(Ranges, 0, rangeCount)
+	lowVals := make([]types.Datum, rangeCount)
+	highVals := make([]types.Datum, rangeCount)
+	collators := make([]collate.Collator, rangeCount)
+	for i := 0; i < rangeCount; i++ {
+		collators[i] = collator
 	}
-	return ranges, false, nil
+	for i := 0; i < rangeCount; i++ {
+		startPoint, endPoint := convertedPoints[i*2], convertedPoints[i*2+1]
+		lowVals[i] = startPoint.value
+		highVals[i] = endPoint.value
+		ranges = append(ranges, &Range{
+			LowVal:      lowVals[i : i+1 : i+1],
+			LowExclude:  startPoint.excl,
+			HighVal:     highVals[i : i+1 : i+1],
+			HighExclude: endPoint.excl,
+			Collators:   collators[i : i+1 : i+1],
+		})
+	}
+	return ranges
 }
 
 // buildColumnRange builds range from CNF conditions.
