@@ -462,7 +462,7 @@ func TestBuildTiCIPreSplitReportGroupsForImportInto(t *testing.T) {
 		keys = append(keys, fmt.Appendf(nil, "%05d", i))
 		values = append(values, []byte("value-value-value"))
 	}
-	kvMeta := writeSortedKVMetaForImportIntoTest(t, ctx, store, "/tici-presplit", keys, values)
+	kvMeta := writeSortedKVMetaForImportIntoTest(ctx, t, store, "/tici-presplit", keys, values)
 
 	reportGroups, err := buildTiCIPreSplitReportGroupsForImportInto(ctx, store, []ticiPreSplitImportKVMetaGroup{{
 		indexID: 77,
@@ -501,8 +501,8 @@ func TestGenerateWriteIngestSpecsTiCIPreSplitBestEffort(t *testing.T) {
 	sortDir := t.TempDir()
 	sortStore, err := objstore.NewLocalStorage(sortDir)
 	require.NoError(t, err)
-	dataMeta := writeSortedKVMetaForImportIntoTest(t, ctx, sortStore, "/data", [][]byte{[]byte("d1")}, [][]byte{[]byte("row")})
-	indexMeta := writeSortedKVMetaForImportIntoTest(t, ctx, sortStore, "/index", [][]byte{[]byte("i1")}, [][]byte{[]byte("idx")})
+	dataMeta := writeSortedKVMetaForImportIntoTest(ctx, t, sortStore, "/data", [][]byte{[]byte("d1")}, [][]byte{[]byte("row")})
+	indexMeta := writeSortedKVMetaForImportIntoTest(ctx, t, sortStore, "/index", [][]byte{[]byte("i1")}, [][]byte{[]byte("idx")})
 	encodeMeta := &ImportStepMeta{
 		SortedDataMeta: dataMeta,
 		SortedIndexMetas: map[int64]*external.SortedKVMeta{
@@ -565,10 +565,10 @@ func TestGenerateWriteIngestSpecsTiCIPreSplitUsesMergedMeta(t *testing.T) {
 	sortDir := t.TempDir()
 	sortStore, err := objstore.NewLocalStorage(sortDir)
 	require.NoError(t, err)
-	encodeDataMeta := writeSortedKVMetaForImportIntoTest(t, ctx, sortStore, "/encode-data", [][]byte{[]byte("encode-d")}, [][]byte{[]byte("row")})
-	encodeIndexMeta := writeSortedKVMetaForImportIntoTest(t, ctx, sortStore, "/encode-index", [][]byte{[]byte("encode-i")}, [][]byte{[]byte("idx")})
-	mergedDataMeta := writeSortedKVMetaForImportIntoTest(t, ctx, sortStore, "/merged-data", [][]byte{[]byte("merged-d")}, [][]byte{[]byte("row")})
-	mergedIndexMeta := writeSortedKVMetaForImportIntoTest(t, ctx, sortStore, "/merged-index", [][]byte{[]byte("merged-i-1"), []byte("merged-i-2")}, [][]byte{[]byte("idx-1"), []byte("idx-2")})
+	encodeDataMeta := writeSortedKVMetaForImportIntoTest(ctx, t, sortStore, "/encode-data", [][]byte{[]byte("encode-d")}, [][]byte{[]byte("row")})
+	encodeIndexMeta := writeSortedKVMetaForImportIntoTest(ctx, t, sortStore, "/encode-index", [][]byte{[]byte("encode-i")}, [][]byte{[]byte("idx")})
+	mergedDataMeta := writeSortedKVMetaForImportIntoTest(ctx, t, sortStore, "/merged-data", [][]byte{[]byte("merged-d")}, [][]byte{[]byte("row")})
+	mergedIndexMeta := writeSortedKVMetaForImportIntoTest(ctx, t, sortStore, "/merged-index", [][]byte{[]byte("merged-i-1"), []byte("merged-i-2")}, [][]byte{[]byte("idx-1"), []byte("idx-2")})
 
 	encodeMeta := &ImportStepMeta{
 		SortedDataMeta: encodeDataMeta,
@@ -704,8 +704,8 @@ func mockRegionSplitConfigFetchError(t *testing.T) {
 }
 
 func writeSortedKVMetaForImportIntoTest(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	store *objstore.LocalStorage,
 	prefix string,
 	keys [][]byte,
