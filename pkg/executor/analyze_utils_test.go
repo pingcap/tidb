@@ -49,5 +49,6 @@ func TestCollectStatsDeltaFlushObjectsForAnalyzeDottedNames(t *testing.T) {
 
 	require.ElementsMatch(t, [][2]string{
 		{"a.b", "c"},
+		{"a", "b.c"},
 	}, targets)
 }

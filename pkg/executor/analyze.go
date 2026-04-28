@@ -130,14 +130,18 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 // so each target table is included once even if it has multiple column tasks.
 func collectStatsDeltaFlushObjectsForAnalyze(plan *core.Analyze) []*ast.StatsObject {
 	flushObjects := make([]*ast.StatsObject, 0, len(plan.ColTasks))
-	seenObjects := make(map[string]struct{}, len(plan.ColTasks))
+	type statsObjectKey struct {
+		dbName    string
+		tableName string
+	}
+	seenObjects := make(map[statsObjectKey]struct{}, len(plan.ColTasks))
 	appendFlushObject := func(task core.AnalyzeColumnsTask) {
 		dbName, tableName := task.DBName, task.TableName
 		if dbName == "" || tableName == "" {
 			intest.Assert(false, "analyze column task must have database-qualified table name")
 			return
 		}
-		key := dbName + "." + tableName
+		key := statsObjectKey{dbName: dbName, tableName: tableName}
 		if _, ok := seenObjects[key]; ok {
 			return
 		}
