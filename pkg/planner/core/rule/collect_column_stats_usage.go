@@ -153,6 +153,11 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.PhysicalTableID)
 	}
 	for _, col := range ds.Schema().Columns {
+		// Internal pseudo columns (for example, _tidb_rowid with ID -1) don't have persisted stats.
+		// Skip them when collecting predicate/histogram-needed columns.
+		if col.ID <= 0 {
+			continue
+		}
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
 	}
