@@ -16,6 +16,7 @@ package taskrepo
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -40,6 +41,22 @@ import (
 
 type RepoSnapshotListConfig struct {
 	Config
+}
+
+// RepoSnapshotBackupStatus is the lifecycle status shown by snapshot list.
+type RepoSnapshotBackupStatus string
+
+const (
+	// RepoSnapshotBackupStatusDone means completed snapshot metadata exists.
+	RepoSnapshotBackupStatusDone RepoSnapshotBackupStatus = "DONE"
+	// RepoSnapshotBackupStatusPending means the snapshot only has pending backup markers.
+	RepoSnapshotBackupStatusPending RepoSnapshotBackupStatus = "PENDING"
+)
+
+// RepoSnapshotListItem is one row returned by the snapshot list operation.
+type RepoSnapshotListItem struct {
+	BackupID repo.BackupID
+	Status   RepoSnapshotBackupStatus
 }
 
 type RepoSnapshotGetConfig struct {
@@ -114,14 +131,15 @@ type repoSnapshotDeletePreview struct {
 	Pending    repo.PendingBackup
 }
 
-func RunRepoSnapshotList(
+// RunRepoSnapshotListItems lists snapshot backups with their display status.
+func RunRepoSnapshotListItems(
 	ctx context.Context,
 	console glue.ConsoleOperations,
 	cfg RepoSnapshotListConfig,
-) ([]repo.BackupID, error) {
-	return runRepoSnapshotSpinnerTask(ctx, console, "Listing snapshot backups...", nil, func(taskCtx context.Context) ([]repo.BackupID, error) {
-		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storeapi.Storage) ([]repo.BackupID, error) {
-			return listRepoSnapshotBackupIDs(taskCtx, storage)
+) ([]RepoSnapshotListItem, error) {
+	return runRepoSnapshotSpinnerTask(ctx, console, "Listing snapshot backups...", nil, func(taskCtx context.Context) ([]RepoSnapshotListItem, error) {
+		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storeapi.Storage) ([]RepoSnapshotListItem, error) {
+			return listRepoSnapshotBackups(taskCtx, storage)
 		})
 	})
 }
@@ -248,7 +266,7 @@ func RunRepoSnapshotPendingDiscard(
 	})
 }
 
-func listRepoSnapshotBackupIDs(ctx context.Context, storage storeapi.Storage) ([]repo.BackupID, error) {
+func listRepoSnapshotBackups(ctx context.Context, storage storeapi.Storage) ([]RepoSnapshotListItem, error) {
 	completedIDs, err := repo.ListCompletedSnapshotIDs(ctx, storage)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -257,24 +275,26 @@ func listRepoSnapshotBackupIDs(ctx context.Context, storage storeapi.Storage) ([
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ids := make([]repo.BackupID, 0, len(completedIDs)+len(pendingBackups))
+
+	backups := make([]RepoSnapshotListItem, 0, len(completedIDs)+len(pendingBackups))
 	seen := make(map[repo.BackupID]struct{}, len(completedIDs)+len(pendingBackups))
-	for _, backupID := range completedIDs {
+	appendBackup := func(backupID repo.BackupID, status RepoSnapshotBackupStatus) {
 		if _, ok := seen[backupID]; ok {
-			continue
+			return
 		}
 		seen[backupID] = struct{}{}
-		ids = append(ids, backupID)
+		backups = append(backups, RepoSnapshotListItem{BackupID: backupID, Status: status})
+	}
+	for _, backupID := range completedIDs {
+		appendBackup(backupID, RepoSnapshotBackupStatusDone)
 	}
 	for _, pending := range pendingBackups {
-		if _, ok := seen[pending.BackupID]; ok {
-			continue
-		}
-		seen[pending.BackupID] = struct{}{}
-		ids = append(ids, pending.BackupID)
+		appendBackup(pending.BackupID, RepoSnapshotBackupStatusPending)
 	}
-	slices.Sort(ids)
-	return ids, nil
+	slices.SortFunc(backups, func(a, b RepoSnapshotListItem) int {
+		return cmp.Compare(a.BackupID, b.BackupID)
+	})
+	return backups, nil
 }
 
 func withDeletedObjectsExtraField(key string, count func() int) glue.ExtraField {

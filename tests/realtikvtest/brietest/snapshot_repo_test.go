@@ -297,9 +297,12 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 	ctx := context.Background()
 	console := glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}
 
-	backupIDs, err := taskrepo.RunRepoSnapshotList(ctx, console, taskrepo.RepoSnapshotListConfig{Config: cfg})
+	backups, err := taskrepo.RunRepoSnapshotListItems(ctx, console, taskrepo.RepoSnapshotListConfig{Config: cfg})
 	require.NoError(t, err)
-	require.Equal(t, []repo.BackupID{backupID1, backupID2}, backupIDs)
+	require.Equal(t, []taskrepo.RepoSnapshotListItem{
+		{BackupID: backupID1, Status: taskrepo.RepoSnapshotBackupStatusDone},
+		{BackupID: backupID2, Status: taskrepo.RepoSnapshotBackupStatusDone},
+	}, backups)
 
 	tablesPayload, err := taskrepo.RunRepoSnapshotGet(ctx, console, taskrepo.RepoSnapshotGetConfig{
 		Config:   cfg,
@@ -338,9 +341,11 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 	suite.requirePathExists(repo.SnapshotMetadataFile(backupID2))
 	require.NotEmpty(t, suite.sstFiles(backupID2))
 
-	backupIDs, err = taskrepo.RunRepoSnapshotList(ctx, console, taskrepo.RepoSnapshotListConfig{Config: cfg})
+	backups, err = taskrepo.RunRepoSnapshotListItems(ctx, console, taskrepo.RepoSnapshotListConfig{Config: cfg})
 	require.NoError(t, err)
-	require.Equal(t, []repo.BackupID{backupID2}, backupIDs)
+	require.Equal(t, []taskrepo.RepoSnapshotListItem{
+		{BackupID: backupID2, Status: taskrepo.RepoSnapshotBackupStatusDone},
+	}, backups)
 
 	suite.tk.MustExec("drop database " + suite.dbName)
 	suite.restore(backupID2)

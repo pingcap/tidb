@@ -81,9 +81,12 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 		createPendingMarker(ctx, t, storage, backupID)
 		createPendingCheckpoint(ctx, t, storage, pendingID)
 
-		backupIDs, err := RunRepoSnapshotList(ctx, console, RepoSnapshotListConfig{Config: cfg})
+		backups, err := RunRepoSnapshotListItems(ctx, console, RepoSnapshotListConfig{Config: cfg})
 		require.NoError(t, err)
-		require.Equal(t, []repo.BackupID{pendingID, backupID}, backupIDs)
+		require.Equal(t, []RepoSnapshotListItem{
+			{BackupID: pendingID, Status: RepoSnapshotBackupStatusPending},
+			{BackupID: backupID, Status: RepoSnapshotBackupStatusDone},
+		}, backups)
 	})
 
 	t.Run("basic", func(t *testing.T) {

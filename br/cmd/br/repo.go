@@ -84,7 +84,7 @@ func newRepoSnapshotListCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			backupIDs, err := taskrepo.RunRepoSnapshotList(
+			backups, err := taskrepo.RunRepoSnapshotListItems(
 				ctx,
 				glue.GetConsole(tidbGlue),
 				taskrepo.RepoSnapshotListConfig{Config: cfg},
@@ -92,7 +92,7 @@ func newRepoSnapshotListCommand() *cobra.Command {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			return printRepoSnapshotList(cmd, backupIDs)
+			return printRepoSnapshotList(cmd, backups)
 		},
 	}
 	return cmd
@@ -287,13 +287,19 @@ func parseRequiredRepoSnapshotBackupID(cmd *cobra.Command) (repo.BackupID, error
 	return backupID, nil
 }
 
-func printRepoSnapshotList(cmd *cobra.Command, backupIDs []repo.BackupID) error {
+func printRepoSnapshotList(cmd *cobra.Command, backups []taskrepo.RepoSnapshotListItem) error {
 	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "BACKUP ID\tBACKUP TIME (EST.)"); err != nil {
+	if _, err := fmt.Fprintln(tw, "BACKUP ID\tBACKUP TIME (EST.)\tSTATUS"); err != nil {
 		return errors.Trace(err)
 	}
-	for _, backupID := range backupIDs {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\n", backupID.String(), formatRepoSnapshotTime(backupID)); err != nil {
+	for _, backup := range backups {
+		if _, err := fmt.Fprintf(
+			tw,
+			"%s\t%s\t%s\n",
+			backup.BackupID.String(),
+			formatRepoSnapshotTime(backup.BackupID),
+			backup.Status,
+		); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -317,5 +323,5 @@ func printRepoSnapshotMutationResult(
 }
 
 func formatRepoSnapshotTime(backupID repo.BackupID) string {
-	return utils.FormatDate(oracle.GetTimeFromTS(uint64(backupID)))
+	return utils.FormatDate(oracle.GetTimeFromTS(uint64(backupID)).Local())
 }
