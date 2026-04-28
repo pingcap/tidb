@@ -20,7 +20,6 @@ import (
 	"math"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -260,7 +259,6 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 	}
 	readTS, err := sessiontxn.GetTxnManager(sctx).GetStmtReadTS()
 	if err != nil {
-		logutil.BgLogger().Warn("failed to get TiCI estimate count read ts", zap.Error(err), zap.Int64("tableID", ds.PhysicalTableID), zap.Int64("indexID", path.Index.ID))
 		return 0, false
 	}
 	tableID := ds.PhysicalTableID
@@ -269,7 +267,6 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 	}
 	keyRanges, err := distsql.TiCIIndexRangesToKVRanges(sctx.GetDistSQLCtx(), []int64{tableID}, path.Index.ID, path.Ranges, getTiCIShardType(ds, path))
 	if err != nil {
-		logutil.BgLogger().Warn("failed to build TiCI estimate count key ranges", zap.Error(err), zap.Int64("tableID", tableID), zap.Int64("indexID", path.Index.ID))
 		return 0, false
 	}
 	tzName, tzOffset := timeutil.Zone(sctx.GetSessionVars().Location())
@@ -285,9 +282,8 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 		KeyRanges:      keyRanges,
 		TimeZoneName:   tzName,
 		TimeZoneOffset: tzOffset,
-	}, 50*time.Millisecond)
+	})
 	if err != nil {
-		logutil.BgLogger().Warn("failed to estimate TiCI search path row count", zap.Error(err), zap.Int64("tableID", tableID), zap.Int64("indexID", path.Index.ID))
 		return 0, false
 	}
 	plannerCount := min(float64(count), float64(ds.StatisticTable.RealtimeCount))

@@ -16,7 +16,6 @@ package kv
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -34,5 +33,5 @@ type TiCIEstimateCountRequest struct {
 
 // TiCIEstimateCountProvider is implemented by stores that can estimate TiCI row counts.
 type TiCIEstimateCountProvider interface {
-	EstimateTiCICount(ctx context.Context, req *TiCIEstimateCountRequest, timeout time.Duration) (uint64, error)
+	EstimateTiCICount(ctx context.Context, req *TiCIEstimateCountRequest) (uint64, error)
 }
