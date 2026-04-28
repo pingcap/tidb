@@ -1946,6 +1946,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 			id bigint primary key auto_increment,
 			s varchar(20),
 			g varchar(20) generated always as (lower(s)) virtual,
+			key(g),
 			key idx_exp_lower ((lower(s)))
 		)`)
 		tk.MustExec("insert into t_bug(s) values ('B'),('a')")
@@ -1956,6 +1957,13 @@ func TestVirtualExprPushDown(t *testing.T) {
 			"    ├─IndexRangeScan(Build) cop[tikv] table:t_bug, index:idx_exp_lower(lower(`s`)) range:[\"a\",+inf], keep order:false, stats:pseudo",
 			"    └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
 		tk.MustQuery("select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
+		tk.MustQuery("explain format='plan_tree' select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows(
+			"Projection root  test.t_bug.id, test.t_bug.s, test.t_bug.g",
+			"└─IndexLookUp root  limit embedded(offset:0, count:1)",
+			"  ├─Limit(Build) cop[tikv]  offset:0, count:1",
+			"  │ └─IndexRangeScan cop[tikv] table:t_bug, index:g(g) range:[\"a\",+inf], keep order:true, stats:pseudo",
+			"  └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
+		tk.MustQuery("select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
 
 		tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
