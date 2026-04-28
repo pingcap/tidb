@@ -780,6 +780,57 @@ type PlanCacheStmt struct {
 	tbls   []table.Table
 }
 
+// PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.
+// It holds the result of a full Prepare flow so that subsequent Prepares of
+// the same SQL text can skip the expensive Preprocess + PlanBuilder.Build.
+type PrepareStmtCacheEntry struct {
+	Stmt       *PlanCacheStmt
+	Fields     []*resolve.ResultField
+	ParamCount int
+}
+
+// ExtractAndSortParamMarkers extracts ParamMarkerExpr nodes from the AST,
+// sorts them by position, assigns their order indices, and initialises each
+// marker's Datum to NULL (matching the behaviour of GeneratePlanCacheStmtWithAST
+// for prepared statements where the actual parameter values are not yet known).
+func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
+	var extractor paramMarkerExtractor
+	stmtNode.Accept(&extractor)
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) int {
+		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
+	})
+	for i, m := range extractor.markers {
+		m.SetOrder(i)
+		p := m.(*driver.ParamMarkerExpr)
+		p.Datum.SetNull()
+		p.InExecute = false
+	}
+	return extractor.markers
+}
+
+// CollectPlanCacheStmtInfo walks the AST to populate the limits, hasSubquery,
+// and tables fields of stmt. It must be called on the fresh AST after a
+// re-parse so that limit nodes and table references point into the new tree.
+func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, stmtNode ast.StmtNode) {
+	processor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: stmt}
+	stmtNode.Accept(processor)
+}
+
+// DBName returns the dbName field (used for metadata lock during Execute).
+func (s *PlanCacheStmt) DBName() []ast.CIStr { return s.dbName }
+
+// Tbls returns the tbls field (used for metadata lock during Execute).
+func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
+
+// SetDBNameAndTbls sets the dbName and tbls fields, cloning the input slices
+// so that this PlanCacheStmt owns independent backing arrays. This is required
+// because planCachePreprocess replaces tbls[i] in-place during Execute, and
+// sharing the backing array with a cached template would cause cross-stmt contamination.
+func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []ast.CIStr, tbls []table.Table) {
+	s.dbName = slices.Clone(dbName)
+	s.tbls = slices.Clone(tbls)
+}
+
 // GetPreparedStmt extract the prepared statement from the execute statement.
 func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCacheStmt, error) {
 	if stmt.PrepStmt != nil {
