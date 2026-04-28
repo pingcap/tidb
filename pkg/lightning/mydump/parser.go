@@ -317,13 +317,10 @@ func (parser *blockParser) readBlock() error {
 
 	n, err := parser.reader.ReadFull(parser.blockBuf)
 
-	// io.ReadFull only returns io.ErrUnexpectedEOF when the underlying reader
-	// gave us at least one byte before signaling EOF (a normal short read at
-	// the tail of the stream) or when the underlying reader actively returned
-	// io.ErrUnexpectedEOF (e.g. a compressed stream was truncated). The (n=0,
-	// ErrUnexpectedEOF) pair therefore indicates the underlying reader saw the
-	// stream end mid-frame and must be surfaced as a real error; otherwise a
-	// truncated zstd/gzip data file looks like a clean, empty last chunk.
+	// (n=0, ErrUnexpectedEOF) is only produced when the underlying reader
+	// itself reported truncation (e.g. zstd/gzip frame cut mid-block); a
+	// normal tail short read always carries n>0. Surface it instead of
+	// treating the truncated stream as a clean last chunk.
 	if err == io.ErrUnexpectedEOF && n == 0 {
 		return errors.Trace(err)
 	}

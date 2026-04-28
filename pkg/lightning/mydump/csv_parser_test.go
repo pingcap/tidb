@@ -1069,12 +1069,6 @@ func TestReadError(t *testing.T) {
 	require.Regexp(t, "fake read error", parser.ReadRow().Error())
 }
 
-// TestReadBlockSurfacesTruncatedZstd writes a zstd-compressed CSV file into
-// the in-memory storage, slices off the trailing bytes (so the zstd decoder
-// hits the truncation mid-frame), and asserts that ReadRow propagates the
-// underlying io.ErrUnexpectedEOF. Without this, a truncated source file is
-// silently treated as an empty last chunk by blockParser.readBlock and
-// downstream callers (e.g. the IMPORT INTO size sampler) report 0-byte input.
 func TestReadBlockSurfacesTruncatedZstd(t *testing.T) {
 	var compressed bytes.Buffer
 	zw, err := zstd.NewWriter(&compressed)
