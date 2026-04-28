@@ -74,16 +74,16 @@ type snapshotMutationOptions struct {
 	onDelete   func(int)
 }
 
-// WithMutationDiscoveredProgress reports discovered object counts while a repo
-// snapshot mutation runs. The callback receives the delta for the current event.
+// WithMutationDiscoveredProgress reports discovered object-count deltas during mutations.
+// For example, pass `func(n int) { total += n }` to grow a dynamic progress bar.
 func WithMutationDiscoveredProgress(onDiscover func(int)) SnapshotMutationOption {
 	return func(opts *snapshotMutationOptions) {
 		opts.onDiscover = onDiscover
 	}
 }
 
-// WithMutationDeletedProgress reports deleted object counts while a repo
-// snapshot mutation runs. The callback receives the delta for the current event.
+// WithMutationDeletedProgress reports deleted object-count deltas during mutations.
+// For example, pass `func(n int) { done += n }` to advance a dynamic progress bar.
 func WithMutationDeletedProgress(onDelete func(int)) SnapshotMutationOption {
 	return func(opts *snapshotMutationOptions) {
 		opts.onDelete = onDelete
@@ -114,14 +114,22 @@ func (opts snapshotMutationOptions) deleted(count int) {
 	opts.onDelete(count)
 }
 
+// SnapshotOpsExtension wraps repo-root storage with snapshot management helpers.
+// For example, `SnapshotOpsExtension(root).DeleteSnapshot(ctx, id)` deletes one
+// snapshot.
 func SnapshotOpsExtension(storage storeapi.Storage) SnapshotOps {
 	return SnapshotOps{Storage: storage}
 }
 
+// ListPendingBackups returns all pending backups with stale or unfinished state.
+// For example, a marker whose backup has `backupmeta` is returned as stale.
 func (ops SnapshotOps) ListPendingBackups(ctx context.Context) ([]PendingBackup, error) {
 	return listPendingBackups(ctx, ops.Storage, WalkPendingMarkers(ctx, ops.Storage))
 }
 
+// ListPendingBackupsForConfigHash returns pending backups under one config hash.
+// For example, backup startup uses it with the current config hash to find
+// resumable attempts.
 func (ops SnapshotOps) ListPendingBackupsForConfigHash(
 	ctx context.Context,
 	configHash []byte,
@@ -248,6 +256,9 @@ func (ops SnapshotOps) deleteFilesFromStream(
 	return deletedCount, nil
 }
 
+// DeleteSnapshot removes one backup's metadata, data files, and pending markers.
+// For example, BackupID(0xF00D) deletes `_meta/snapshot/000000000000F00D` and
+// matching data prefixes.
 func (ops SnapshotOps) DeleteSnapshot(
 	ctx context.Context,
 	backupID BackupID,
@@ -292,9 +303,8 @@ func supportsRepoStartAfter(storage storeapi.Storage) bool {
 	return false
 }
 
-// ValidateRepoStartAfterSupport checks whether the resolved storage exposes
-// WalkDir StartAfter, which repo snapshot operations use to scan one backup's
-// data files without rewalking unrelated snapshot objects.
+// ValidateRepoStartAfterSupport checks whether storage can use WalkDir StartAfter.
+// For example, `file://...` and `s3://...` storage URIs pass this check.
 func ValidateRepoStartAfterSupport(storage storeapi.Storage) error {
 	if supportsRepoStartAfter(storage) {
 		return nil
@@ -310,6 +320,9 @@ func (ops SnapshotOps) requireRepoStartAfter() error {
 	return ValidateRepoStartAfterSupport(ops.Storage)
 }
 
+// DiscardPendingSnapshot cleans up one pending backup according to its state.
+// For example, stale pending deletes markers only; unfinished pending also
+// deletes metadata and data.
 func (ops SnapshotOps) DiscardPendingSnapshot(
 	ctx context.Context,
 	target PendingBackup,

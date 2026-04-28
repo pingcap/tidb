@@ -78,18 +78,9 @@ type TrySeq[T any] = iter.Seq2[error, T]
 
 var errStopWalkSeq = errors.New("stop walk seq")
 
-// ListCompletedSnapshotIDs scans repo snapshot metadata under
-// `_meta/snapshot/` and returns the unique backup IDs that have at least one
-// completed metadata object.
-// A snapshot counts as completed when the repository contains `backupmeta` or
-// `backupmeta.*` under `_meta/snapshot/<backup-id>/`. This only reflects the
-// metadata layout; it does not verify pending markers or data files.
-// The storage must expose repository-root-relative object keys through
-// `WalkDir` and support walking the `_meta/snapshot` subtree, so callers should
-// pass the repository root storage view rather than a prefixed per-backup view.
-// It returns an error if storage walking fails or if a candidate metadata path
-// under that subtree has an invalid backup-id segment. The returned slice is
-// deduplicated and sorted in ascending BackupID order.
+// ListCompletedSnapshotIDs returns sorted backup IDs that have completed metadata.
+// For example, `_meta/snapshot/000000000000F00D/backupmeta` yields
+// BackupID(0xF00D).
 func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]BackupID, error) {
 	ids := make(map[BackupID]struct{})
 	err := storage.WalkDir(
@@ -117,6 +108,9 @@ func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]
 	return out, nil
 }
 
+// WalkPendingMarkers streams valid pending marker objects under `_meta/pending/`.
+// For example, `_meta/pending/<hash>/000000000000F00D.json` yields
+// BackupID(0xF00D).
 func WalkPendingMarkers(ctx context.Context, storage storeapi.Storage) TrySeq[PendingMarker] {
 	return walkPendingMarkers(ctx, storage, &storeapi.WalkOption{SubDir: pendingRootDir})
 }
@@ -134,6 +128,9 @@ func walkPendingMarkers(
 	)
 }
 
+// WalkSnapshotDataFiles streams valid snapshot data objects under `_data/snapshot/`.
+// For example, `_data/snapshot/7/000000000000F00D/a.sst` yields StoreID 7 and
+// BackupID(0xF00D).
 func WalkSnapshotDataFiles(
 	ctx context.Context,
 	storage storeapi.Storage,
@@ -174,6 +171,9 @@ func walkParsedSeq[T any](
 	}
 }
 
+// ParseCompletedSnapshotMetaPath parses a completed snapshot metadata path.
+// For example, `_meta/snapshot/000000000000F00D/backupmeta` returns
+// BackupID(0xF00D), true, nil.
 func ParseCompletedSnapshotMetaPath(filePath string) (id BackupID, parsed bool, err error) {
 	parts := splitRepoPath(filePath)
 	if len(parts) < 2 || parts[0] != "_meta" || parts[1] != "snapshot" {
@@ -201,6 +201,9 @@ func ParseCompletedSnapshotMetaPath(filePath string) (id BackupID, parsed bool, 
 	return backupID, true, nil
 }
 
+// ParsePendingMarkerPath parses one repo pending marker path.
+// For example, `_meta/pending/ABCD/000000000000F00D.json` returns a marker with
+// BackupID(0xF00D).
 func ParsePendingMarkerPath(filePath string) (marker PendingMarker, parsed bool, err error) {
 	parts := splitRepoPath(filePath)
 	if len(parts) < 2 || parts[0] != "_meta" || parts[1] != "pending" {
@@ -227,6 +230,9 @@ func ParsePendingMarkerPath(filePath string) (marker PendingMarker, parsed bool,
 	}, true, nil
 }
 
+// ParseSnapshotDataFilePath parses one repo snapshot data object path.
+// For example, `_data/snapshot/7/000000000000F00D/a.sst` returns StoreID 7 and
+// BackupID(0xF00D).
 func ParseSnapshotDataFilePath(filePath string) (dataFile SnapshotDataFile, parsed bool, err error) {
 	parts := splitRepoPath(filePath)
 	if len(parts) < 2 || parts[0] != "_data" || parts[1] != "snapshot" {
