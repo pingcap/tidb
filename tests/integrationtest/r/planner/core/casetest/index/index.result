@@ -462,7 +462,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-set @@tidb_opt_range_max_size = 2300;
+set @@tidb_opt_range_max_size = 1900;
 explain format='plan_tree' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
 id	task	access object	operator info
 IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.b, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
@@ -476,7 +476,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
-Warning	1105	Memory capacity of 2300 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
+Warning	1105	Memory capacity of 1900 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
 set @@tidb_opt_range_max_size = 1500;
 explain format='plan_tree' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
 id	task	access object	operator info

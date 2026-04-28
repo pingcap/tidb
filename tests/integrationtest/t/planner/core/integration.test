@@ -1906,19 +1906,19 @@ create table t4 (a int, b int, c int, index idx_a_b(a, b));
 set @@tidb_opt_range_max_size=0;
 --enable_warnings
 explain format='plan_tree' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
-set @@tidb_opt_range_max_size=1000;
+set @@tidb_opt_range_max_size=800;
 explain format='plan_tree' select * from t1 where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 set @@tidb_opt_range_max_size=0;
 explain format='plan_tree' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
-set @@tidb_opt_range_max_size=1000;
+set @@tidb_opt_range_max_size=800;
 explain format='plan_tree' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 set @@tidb_opt_range_max_size=0;
 explain format='plan_tree' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
-set @@tidb_opt_range_max_size=1000;
+set @@tidb_opt_range_max_size=800;
 explain format='plan_tree' select /*+ use_index(t3, a) */ * from t3 where a in (1, 3, 5) and pk in (2, 4, 6);
 set @@tidb_opt_range_max_size=0;
 explain format='plan_tree' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
-set @@tidb_opt_range_max_size=1000;
+set @@tidb_opt_range_max_size=800;
 explain format='plan_tree' select /*+ use_index(t4, idx_a_b) */ * from t4 where a in (1, 3, 5) and b = 2;
 --disable_warnings
 set @@tidb_opt_range_max_size=DEFAULT;
