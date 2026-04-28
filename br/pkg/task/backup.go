@@ -96,6 +96,7 @@ type BackupConfig struct {
 	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
+	SkipPrompt       bool              `json:"skip-prompt" toml:"skip-prompt"`
 	Layout           repo.Layout       `json:"storage-layout" toml:"storage-layout"`
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
@@ -193,6 +194,10 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 		return errors.Trace(err)
 	}
 	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.SkipPrompt, err = flags.GetBool(flagYes)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -496,8 +501,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if err = client.SetStorage(ctx, u, &opts); err != nil {
 			return errors.Trace(err)
 		}
-		preparedStorage, err = taskrepo.PrepareRepoSnapshotBackup(ctx, u, client.GetBaseStorage(), taskrepo.SnapshotBackupStorageParams{
+		preparedStorage, err = taskrepo.PrepareRepoSnapshotBackup(ctx, glue.GetConsole(g), u, client.GetBaseStorage(), taskrepo.SnapshotBackupStorageParams{
 			UseCheckpoint: cfg.UseCheckpoint,
+			SkipPrompt:    cfg.SkipPrompt,
 			ConfigHash:    cfgHash,
 			CreatedBy:     taskrepo.RepoCreatedBy(g.GetVersion()),
 			AllocateBackupID: func(ctx context.Context) (repo.BackupID, error) {
@@ -902,6 +908,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 func DefaultBackupConfig(commonConfig Config) BackupConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
 	DefineBackupFlags(fs)
+	taskrepo.DefineSnapshotRepoWriterFlags(fs)
 	cfg := BackupConfig{}
 	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {

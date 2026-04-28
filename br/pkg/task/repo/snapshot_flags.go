@@ -24,11 +24,21 @@ import (
 	"github.com/spf13/pflag"
 )
 
-const flagBackupID = "backup-id"
+const (
+	flagBackupID = "backup-id"
+	flagYes      = "yes"
+	flagYesShort = "y"
+)
 
 // DefineSnapshotRepoWriterFlags defines the snapshot repo flags used by snapshot writers.
 func DefineSnapshotRepoWriterFlags(flags *pflag.FlagSet) {
 	defineSnapshotRepoLayoutFlag(flags)
+	flags.BoolP(
+		flagYes,
+		flagYesShort,
+		false,
+		"skip the resume confirmation prompt and resume the unfinished backup directly",
+	)
 }
 
 // DefineSnapshotRepoReaderFlags defines the snapshot repo flags used by snapshot readers.

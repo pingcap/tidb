@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -213,7 +214,7 @@ func TestPrepareRepoSnapshotBackupStartsNewWithoutPending(t *testing.T) {
 	}
 	cfgHash := []byte("hash")
 
-	resolved, err := PrepareRepoSnapshotBackup(ctx, rootBackend, storage, SnapshotBackupStorageParams{
+	resolved, err := PrepareRepoSnapshotBackup(ctx, glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}, rootBackend, storage, SnapshotBackupStorageParams{
 		UseCheckpoint: true,
 		ConfigHash:    cfgHash,
 		CreatedBy:     "test",
@@ -245,8 +246,9 @@ func TestPrepareRepoSnapshotBackupResumePendingBackup(t *testing.T) {
 		BackupTS:    0x2222,
 	}))
 
+	console := newRepoSnapshotTestConsole("y\n")
 	allocateCalled := false
-	resolved, err := PrepareRepoSnapshotBackup(ctx, rootBackend, storage, SnapshotBackupStorageParams{
+	resolved, err := PrepareRepoSnapshotBackup(ctx, console.Operations(), rootBackend, storage, SnapshotBackupStorageParams{
 		UseCheckpoint: true,
 		ConfigHash:    cfgHash,
 		CreatedBy:     "test",
@@ -261,6 +263,13 @@ func TestPrepareRepoSnapshotBackupResumePendingBackup(t *testing.T) {
 	require.Equal(t, repo.PendingFile(cfgHash, backupID), resolved.PendingMarkerPath)
 	require.True(t, resolved.ResumeFromCheckpoint)
 	require.Contains(t, resolved.MetadataStorage().URI(), repo.SnapshotMetadataDir(backupID))
+
+	output := console.output.String()
+	require.Contains(t, output, "Found an unfinished repo snapshot backup")
+	require.Contains(t, output, backupID.String())
+	require.Contains(t, output, repo.PendingConfigHashStorageName(cfgHash))
+	require.Contains(t, output, repo.PendingFile(cfgHash, backupID))
+	require.Contains(t, output, "Resume this backup?")
 }
 
 func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *testing.T) {
@@ -330,7 +339,7 @@ func TestPrepareRepoSnapshotBackupRejectsAmbiguousResume(t *testing.T) {
 		}))
 	}
 
-	_, prepErr := PrepareRepoSnapshotBackup(ctx, rootBackend, storage, SnapshotBackupStorageParams{
+	_, prepErr := PrepareRepoSnapshotBackup(ctx, glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}, rootBackend, storage, SnapshotBackupStorageParams{
 		UseCheckpoint: true,
 		ConfigHash:    cfgHash,
 		CreatedBy:     "test",
@@ -361,7 +370,7 @@ func TestPrepareRepoSnapshotBackupWithoutCheckpointStartsFreshDespitePending(t *
 		BackupTS:    0x2222,
 	}))
 
-	resolved, err := PrepareRepoSnapshotBackup(ctx, rootBackend, storage, SnapshotBackupStorageParams{
+	resolved, err := PrepareRepoSnapshotBackup(ctx, glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}, rootBackend, storage, SnapshotBackupStorageParams{
 		UseCheckpoint: false,
 		ConfigHash:    cfgHash,
 		CreatedBy:     "test",

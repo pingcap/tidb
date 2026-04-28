@@ -84,7 +84,11 @@ func newRepoSnapshotListCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			backupIDs, err := taskrepo.RunRepoSnapshotList(ctx, glue.GetConsole(tidbGlue), taskrepo.RepoSnapshotListConfig{Config: cfg})
+			backupIDs, err := taskrepo.RunRepoSnapshotList(
+				ctx,
+				glue.GetConsole(tidbGlue),
+				taskrepo.RepoSnapshotListConfig{Config: cfg},
+			)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -116,11 +120,16 @@ func newRepoSnapshotGetCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			return errors.Trace(taskrepo.RunRepoSnapshotGetTo(ctx, glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}, taskrepo.RepoSnapshotGetConfig{
-				Config:   cfg,
-				BackupID: backupID,
-				View:     view,
-			}, cmd.OutOrStdout()))
+			return errors.Trace(taskrepo.RunRepoSnapshotGetTo(
+				ctx,
+				glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}},
+				taskrepo.RepoSnapshotGetConfig{
+					Config:   cfg,
+					BackupID: backupID,
+					View:     view,
+				},
+				cmd.OutOrStdout(),
+			))
 		},
 	}
 	cmd.Flags().String(repoSnapshotFlagBackupID, "", "snapshot backup id")
@@ -216,11 +225,15 @@ func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			result, err := taskrepo.RunRepoSnapshotPendingDiscard(ctx, glue.GetConsole(tidbGlue), taskrepo.RepoSnapshotPendingDiscardConfig{
-				Config:     cfg,
-				BackupID:   backupID,
-				SkipPrompt: skipPrompt,
-			})
+			result, err := taskrepo.RunRepoSnapshotPendingDiscard(
+				ctx,
+				glue.GetConsole(tidbGlue),
+				taskrepo.RepoSnapshotPendingDiscardConfig{
+					Config:     cfg,
+					BackupID:   backupID,
+					SkipPrompt: skipPrompt,
+				},
+			)
 			if err != nil {
 				if berrors.Is(err, berrors.ErrOperationAborted) {
 					_, err = fmt.Fprintln(cmd.OutOrStdout(), "operation canceled")

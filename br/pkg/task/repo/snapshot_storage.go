@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -80,7 +81,9 @@ func (prepared *PreparedRepoSnapshotBackup) RewriteStoreResponseFiles(storeID ui
 }
 
 type SnapshotBackupStorageParams struct {
-	UseCheckpoint    bool
+	UseCheckpoint bool
+	// SkipPrompt resumes the matching unfinished backup without asking the user.
+	SkipPrompt       bool
 	ConfigHash       []byte
 	CreatedBy        string
 	AllocateBackupID func(context.Context) (repo.BackupID, error)
@@ -93,6 +96,7 @@ type repoBackupAttempt struct {
 
 func PrepareRepoSnapshotBackup(
 	ctx context.Context,
+	console glue.ConsoleOperations,
 	rootBackend *backuppb.StorageBackend,
 	rootStorage storeapi.Storage,
 	params SnapshotBackupStorageParams,
@@ -104,12 +108,18 @@ func PrepareRepoSnapshotBackup(
 		return nil, errors.Trace(err)
 	}
 
-	cfgHashDirName := repo.PendingConfigHashStorageName(params.ConfigHash)
 	resumableBackups, err := collectResumablePendingBackups(ctx, rootStorage, params.ConfigHash)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	attempt, err := chooseRepoBackupAttempt(params.UseCheckpoint, resumableBackups, cfgHashDirName)
+	attempt, err := chooseRepoBackupAttempt(
+		console,
+		params.UseCheckpoint,
+		params.SkipPrompt,
+		rootStorage,
+		params.ConfigHash,
+		resumableBackups,
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -165,19 +175,30 @@ func ActivateSnapshotBackupResume(
 }
 
 func chooseRepoBackupAttempt(
+	console glue.ConsoleOperations,
 	useCheckpoint bool,
+	skipPrompt bool,
+	rootStorage storeapi.Storage,
+	cfgHash []byte,
 	resumableBackups []repo.BackupID,
-	cfgHashDirName string,
 ) (repoBackupAttempt, error) {
 	if !useCheckpoint {
 		return repoBackupAttempt{}, nil
 	}
+	cfgHashDirName := repo.PendingConfigHashStorageName(cfgHash)
 	switch len(resumableBackups) {
 	case 0:
 		return repoBackupAttempt{}, nil
 	case 1:
+		backupID := resumableBackups[0]
+		if !confirmRepoSnapshotResume(console, skipPrompt, rootStorage, cfgHash, backupID) {
+			log.Info("starting a fresh repo snapshot backup after resume prompt was declined",
+				gozap.String("backup-id", backupID.String()),
+				gozap.String("config-hash", cfgHashDirName))
+			return repoBackupAttempt{}, nil
+		}
 		return repoBackupAttempt{
-			backupID:             resumableBackups[0],
+			backupID:             backupID,
 			resumeFromCheckpoint: true,
 		}, nil
 	default:
@@ -187,6 +208,26 @@ func chooseRepoBackupAttempt(
 			cfgHashDirName, formatRepoBackupIDs(resumableBackups),
 		)
 	}
+}
+
+func confirmRepoSnapshotResume(
+	console glue.ConsoleOperations,
+	skipPrompt bool,
+	rootStorage storeapi.Storage,
+	cfgHash []byte,
+	backupID repo.BackupID,
+) bool {
+	if skipPrompt || !console.IsInteractive() {
+		return true
+	}
+	console.Println("Found an unfinished repo snapshot backup that matches this backup command.")
+	printRepoSnapshotConfirmField(console, "backup-id", backupID.String())
+	printRepoSnapshotConfirmField(console, "backup-time", formatRepoSnapshotBackupTime(backupID))
+	printRepoSnapshotConfirmField(console, "config-hash", repo.PendingConfigHashStorageName(cfgHash))
+	printRepoSnapshotConfirmField(console, "metadata-uri", repo.NewPrefixedStorage(rootStorage, repo.SnapshotMetadataDir(backupID)).URI())
+	printRepoSnapshotConfirmField(console, "pending-marker", repo.PendingFile(cfgHash, backupID))
+	console.Println("Choosing yes resumes from its checkpoint. Choosing no starts a fresh backup and leaves the unfinished backup unchanged.")
+	return console.PromptBool("Resume this backup? ")
 }
 
 func formatRepoBackupIDs(ids []repo.BackupID) string {
