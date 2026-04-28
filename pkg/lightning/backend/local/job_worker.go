@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	goerrors "errors"
 	"io"
 	"strings"
 	"sync"
@@ -323,7 +324,25 @@ func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error
 }
 
 // we don't need to limit write speed as we write to tikv-worker.
-func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
+func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (ret *tikvWriteResult, err error) {
+	var cancel context.CancelFunc
+	timeout := 15 * time.Minute
+	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
+	defer cancel()
+
+	wctx := ctx
+	defer func() {
+		if err == nil {
+			return
+		}
+		if errors.Cause(err) == context.DeadlineExceeded {
+			if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+				tidblogutil.Logger(ctx).Info("experiencing a wait timeout while writing to tikv-worker")
+				err = errors.Trace(cause)
+			}
+		}
+	}()
+
 	firstKey, _, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
 	if err != nil {
 		return nil, errors.Trace(err)
