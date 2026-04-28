@@ -139,6 +139,26 @@ func TestNormalize(t *testing.T) {
 		}
 		require.Equalf(t, referenceDigest, digest.String(), "sql %d: %s", i, sql)
 	}
+
+	const normalizedBetweenRightOperandWithParens = "select * from `t` where `a` between `b` and ( `c` and `d` )"
+	const normalizedBetweenRightOperandWithoutParens = "select * from `t` where `a` between `b` and `c` and `d`"
+	normalizedBetweenWithParens, digestBetweenWithParens := parser.NormalizeDigestForBinding(
+		"select * from t where a between b and (c and d)",
+	)
+	require.Equal(t, normalizedBetweenRightOperandWithParens, normalizedBetweenWithParens)
+	normalizedBetweenWithoutParens, digestBetweenWithoutParens := parser.NormalizeDigestForBinding(
+		"select * from t where a between b and c and d",
+	)
+	require.Equal(t, normalizedBetweenRightOperandWithoutParens, normalizedBetweenWithoutParens)
+	require.NotEqual(t, normalizedBetweenWithoutParens, normalizedBetweenWithParens)
+	require.NotEqual(t, digestBetweenWithoutParens.String(), digestBetweenWithParens.String())
+
+	const normalizedScalarSubqueryWithParens = "select * from `t` where ( select ? where `a` = ? )"
+	normalizedScalarSubquery, digestScalarSubquery := parser.NormalizeDigestForBinding(
+		"select * from t where (select 1 where a = 1)",
+	)
+	require.Equal(t, normalizedScalarSubqueryWithParens, normalizedScalarSubquery)
+	require.Equal(t, digestScalarSubquery.String(), parser.DigestNormalized(normalizedScalarSubquery).String())
 }
 
 func TestNormalizeRedact(t *testing.T) {

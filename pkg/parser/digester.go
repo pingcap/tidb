@@ -370,6 +370,15 @@ func (d *sqlDigester) reduceRedundantParenthesesForBinding() {
 // canRemoveBindingParens decides whether one parenthesized range can be
 // removed without changing binding matching semantics.
 //
+// BETWEEN is intentionally left out of this token-based reducer. Its syntax
+// reuses "and" as part of the operator, so flattening either operand can turn
+// "a between b and (c and d)" into "a between b and c and d", which changes
+// the expression shape.
+//
+// Scalar subqueries are also left unchanged. They require at least one outer
+// pair in expression position, so flattening "(select 1 where a = 1)" would
+// produce invalid SQL text.
+//
 // Step 1. Find the lowest-precedence operator inside the pair. This operator
 // represents the whole inner expression for grouping purposes.
 //
@@ -387,6 +396,13 @@ func (d *sqlDigester) reduceRedundantParenthesesForBinding() {
 //     on the left and a boundary on the right. Step 3 keeps the pair, because
 //     removing it would regroup the expression as "(a and b) or c".
 func (d *sqlDigester) canRemoveBindingParens(openIdx, closeIdx int, matches []int, removed []bool) bool {
+	if d.bindingParenStartsSubquery(openIdx, removed) {
+		return false
+	}
+	if d.bindingParenTouchesBetween(openIdx, closeIdx, matches, removed) {
+		return false
+	}
+
 	innerPrec, ok := d.bindingParenInnerPrecedence(openIdx, closeIdx, matches, removed)
 	if !ok {
 		return false
@@ -403,6 +419,76 @@ func (d *sqlDigester) canRemoveBindingParens(openIdx, closeIdx int, matches []in
 		return false
 	}
 	return leftPrec <= innerPrec && rightPrec <= innerPrec
+}
+
+// bindingParenStartsSubquery reports parentheses whose inner expression starts
+// with a subquery. The reducer keeps them so the normalized SQL stays valid.
+func (d *sqlDigester) bindingParenStartsSubquery(openIdx int, removed []bool) bool {
+	firstIdx := d.nextActiveTokenIndex(openIdx, removed)
+	if firstIdx == -1 {
+		return false
+	}
+	switch d.tokens[firstIdx].lit {
+	case "select", "with":
+		return true
+	default:
+		return false
+	}
+}
+
+// bindingParenTouchesBetween reports parenthesis pairs that participate in a
+// BETWEEN expression. The reducer leaves all of them unchanged, because this
+// token-only pass does not track BETWEEN's full operand structure safely.
+func (d *sqlDigester) bindingParenTouchesBetween(openIdx, closeIdx int, matches []int, removed []bool) bool {
+	prevIdx := d.prevActiveTokenIndex(openIdx, removed)
+	if prevIdx != -1 {
+		switch d.tokens[prevIdx].lit {
+		case "between":
+			return true
+		case "and":
+			if d.bindingParenIsBetweenRightOperand(prevIdx, matches, removed) {
+				return true
+			}
+		}
+	}
+
+	for i := openIdx + 1; i < closeIdx; i++ {
+		if removed[i] {
+			continue
+		}
+		switch d.tokens[i].lit {
+		case "(":
+			i = matches[i]
+			if i == -1 {
+				return false
+			}
+		case "between":
+			return true
+		}
+	}
+	return false
+}
+
+// bindingParenIsBetweenRightOperand checks whether the given "and" token is
+// the separator between the low and high operands of a BETWEEN expression.
+func (d *sqlDigester) bindingParenIsBetweenRightOperand(andIdx int, matches []int, removed []bool) bool {
+	for i := andIdx - 1; i >= 0; i-- {
+		if removed[i] {
+			continue
+		}
+		switch d.tokens[i].lit {
+		case ")":
+			i = matches[i]
+			if i == -1 {
+				return false
+			}
+		case "between":
+			return true
+		case "and", "or", "xor", "where", "having", "on", "when", "then", "else", ",", "(":
+			return false
+		}
+	}
+	return false
 }
 
 // bindingParenInnerPrecedence returns the lowest-precedence operator that
