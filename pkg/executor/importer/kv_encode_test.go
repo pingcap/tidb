@@ -20,8 +20,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -84,4 +87,183 @@ func TestKVEncoderForDupResolve(t *testing.T) {
 		})
 		require.Greater(t, handleLargerThanOneCount, 1)
 	})
+}
+
+func TestTableKVEncoderFullTextTiCIIndexKVs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_tici(a bigint primary key clustered, b int, c text, index idx_b(b))")
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	origTbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_tici"))
+	require.NoError(t, err)
+
+	const ticiIndexID int64 = 1001
+	tblMeta := origTbl.Meta().Clone()
+	tblMeta.Indices = append(tblMeta.Indices, &model.IndexInfo{
+		ID:    ticiIndexID,
+		Name:  ast.NewCIStr("idx_tici"),
+		State: model.StatePublic,
+		Columns: []*model.IndexColumn{
+			{Name: ast.NewCIStr("c"), Offset: 2, Length: types.UnspecifiedLength},
+		},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	})
+	tbl := table.MockTableFromMeta(tblMeta)
+	require.NotNil(t, tbl)
+
+	normalIndexID := findIndexIDByName(t, tblMeta, "idx_b")
+	row := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewStringDatum("doc")}
+
+	cfg := &encode.EncodingConfig{
+		Table:                tbl,
+		UseIdentityAutoRowID: true,
+	}
+	dupResolveEncoder := newTableKVEncoderForTest(t, tbl, cfg, true)
+	dupResolvePairs, err := dupResolveEncoder.Encode(row, 1)
+	require.NoError(t, err)
+	dupResolveIndexIDs := collectIndexIDs(t, dupResolvePairs)
+	require.Equal(t, 1, countRecordKeys(dupResolvePairs))
+	require.Equal(t, []int64{normalIndexID}, dupResolveIndexIDs)
+	require.NotContains(t, dupResolveIndexIDs, ticiIndexID)
+	require.False(t, cfg.SkipTiCIIndexKVs)
+
+	normalEncoder := newTableKVEncoderForTest(t, tbl, cfg, false)
+	normalPairs, err := normalEncoder.Encode(row, 1)
+	require.NoError(t, err)
+	normalIndexIDs := collectIndexIDs(t, normalPairs)
+	require.Equal(t, 1, countRecordKeys(normalPairs))
+	require.ElementsMatch(t, []int64{normalIndexID, ticiIndexID}, normalIndexIDs)
+}
+
+func TestTableKVEncoderFullTextTiCIIndexKVsForPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_tici_partitioned(
+		a bigint primary key clustered,
+		b int,
+		c text,
+		index idx_b(b)
+	) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than maxvalue
+	)`)
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	origTbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_tici_partitioned"))
+	require.NoError(t, err)
+
+	const ticiIndexID int64 = 1002
+	tblMeta := origTbl.Meta().Clone()
+	tblMeta.Indices = append(tblMeta.Indices, &model.IndexInfo{
+		ID:    ticiIndexID,
+		Name:  ast.NewCIStr("idx_tici_partitioned"),
+		State: model.StatePublic,
+		Columns: []*model.IndexColumn{
+			{Name: ast.NewCIStr("c"), Offset: 2, Length: types.UnspecifiedLength},
+		},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	})
+	tbl := table.MockTableFromMeta(tblMeta)
+	require.NotNil(t, tbl)
+	require.NotNil(t, tblMeta.Partition)
+	require.Len(t, tblMeta.Partition.Definitions, 2)
+
+	row := []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewStringDatum("doc")}
+	normalEncoder := newTableKVEncoderForTest(t, tbl, nil, false)
+	normalPairs, err := normalEncoder.Encode(row, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, countRecordKeys(normalPairs))
+
+	expectedPartitionID := tblMeta.Partition.Definitions[0].ID
+	indexTableIDs := collectIndexTableIDs(t, normalPairs)
+	require.Equal(t, []int64{expectedPartitionID}, indexTableIDs[ticiIndexID])
+}
+
+func newTableKVEncoderForTest(t *testing.T, tbl table.Table, cfg *encode.EncodingConfig, dupResolve bool) *importer.TableKVEncoder {
+	t.Helper()
+	fieldMappings := make([]*importer.FieldMapping, 0, len(tbl.VisibleCols()))
+	for _, col := range tbl.VisibleCols() {
+		fieldMappings = append(fieldMappings, &importer.FieldMapping{Column: col})
+	}
+	if cfg == nil {
+		cfg = &encode.EncodingConfig{
+			Table:                tbl,
+			UseIdentityAutoRowID: true,
+		}
+	}
+	controller := &importer.LoadDataController{
+		ASTArgs:       &importer.ASTArgs{},
+		Plan:          &importer.Plan{},
+		Table:         tbl,
+		InsertColumns: tbl.VisibleCols(),
+		FieldMappings: fieldMappings,
+	}
+	var (
+		encoder *importer.TableKVEncoder
+		err     error
+	)
+	if dupResolve {
+		encoder, err = importer.NewTableKVEncoderForDupResolve(cfg, controller)
+	} else {
+		encoder, err = importer.NewTableKVEncoder(cfg, controller)
+	}
+	require.NoError(t, err)
+	return encoder
+}
+
+func findIndexIDByName(t *testing.T, tblInfo *model.TableInfo, indexName string) int64 {
+	t.Helper()
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.L == indexName {
+			return idx.ID
+		}
+	}
+	require.FailNow(t, "index not found", indexName)
+	return 0
+}
+
+func collectIndexIDs(t *testing.T, kvPairs *kv.Pairs) []int64 {
+	t.Helper()
+	indexIDs := make([]int64, 0)
+	for _, pair := range kvPairs.Pairs {
+		if !tablecodec.IsIndexKey(pair.Key) {
+			continue
+		}
+		indexID, err := tablecodec.DecodeIndexID(pair.Key)
+		require.NoError(t, err)
+		indexIDs = append(indexIDs, indexID)
+	}
+	return indexIDs
+}
+
+func collectIndexTableIDs(t *testing.T, kvPairs *kv.Pairs) map[int64][]int64 {
+	t.Helper()
+	tableIDsByIndexID := make(map[int64][]int64)
+	for _, pair := range kvPairs.Pairs {
+		if !tablecodec.IsIndexKey(pair.Key) {
+			continue
+		}
+		tableID, indexID, isRecordKey, err := tablecodec.DecodeKeyHead(pair.Key)
+		require.NoError(t, err)
+		require.False(t, isRecordKey)
+		tableIDsByIndexID[indexID] = append(tableIDsByIndexID[indexID], tableID)
+	}
+	return tableIDsByIndexID
+}
+
+func countRecordKeys(pairs *kv.Pairs) int {
+	cnt := 0
+	for _, pair := range pairs.Pairs {
+		if tablecodec.IsRecordKey(pair.Key) {
+			cnt++
+		}
+	}
+	return cnt
 }
