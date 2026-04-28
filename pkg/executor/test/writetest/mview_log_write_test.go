@@ -145,6 +145,24 @@ func TestMLogInsert(t *testing.T) {
 	))
 }
 
+func TestMLogInsertGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_gen (" +
+		"id bigint primary key," +
+		"base int not null," +
+		"gv int as (base + 1) virtual," +
+		"gs int as (base + 2) stored" +
+		")")
+	tk.MustExec("create materialized view log on t_gen (id, gv, gs)")
+
+	tk.MustExec("insert into t_gen(id, base) values (1, 10), (2, 20)")
+	tk.MustQuery("select id, gv, gs, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_gen` order by id").
+		Check(testkit.Rows("1 11 12 I 1", "2 21 22 I 1"))
+}
+
 func TestMLogInsertSelect(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1059,6 +1077,138 @@ func TestMLogVirtualGeneratedColumn(t *testing.T) {
 		"1 10 30 U -1",
 		"1 11 31 U 1",
 	))
+}
+
+func TestMLogUpdateTrackedGeneratedColumnOnly(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		name  string
+		table string
+		mlog  string
+		kind  string
+	}{
+		{name: "stored", table: "t_stored", mlog: "`$mlog$t_stored`", kind: "stored"},
+		{name: "virtual", table: "t_virtual", mlog: "`$mlog$t_virtual`", kind: "virtual"},
+	}
+	for _, ca := range cases {
+		t.Run(ca.name, func(t *testing.T) {
+			tk.MustExec("create table " + ca.table + " (a int primary key, b int, c int, d int as (b+c) " + ca.kind + ")")
+			tk.MustExec("create materialized view log on " + ca.table + " (a, d)")
+
+			tk.MustExec("insert into " + ca.table + " (a, b, c) values (1, 10, 20)")
+			execAsMViewMaintenance(tk, "delete from "+ca.mlog)
+			tk.MustExec("update " + ca.table + " set b=11 where a=1")
+
+			tk.MustQuery(
+				"select a, d, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from " + ca.mlog,
+			).Sort().Check(testkit.Rows(
+				"1 30 U -1",
+				"1 31 U 1",
+			))
+		})
+	}
+}
+
+func TestMLogAlterAddGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (id int primary key, tracked int)")
+	tk.MustExec("create materialized view log on t (id, tracked)")
+
+	tk.MustExec("alter table t add column gv int as (tracked + 1) virtual")
+	err := tk.ExecToErr("alter table t add column gs int as (tracked + 2) stored")
+	require.ErrorContains(t, err, "Adding generated stored column through ALTER TABLE")
+
+	tk.MustExec("insert into t (id, tracked) values (1, 10)")
+	tk.MustQuery("select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`").
+		Check(testkit.Rows("1 10 I 1"))
+	tk.MustQuery("select id, tracked, gv from t").Check(testkit.Rows("1 10 11"))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set tracked=20 where id=1")
+	tk.MustQuery("select id, tracked, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`").Sort().
+		Check(testkit.Rows("1 10 U -1", "1 20 U 1"))
+	tk.MustQuery("select id, tracked, gv from t").Check(testkit.Rows("1 20 21"))
+}
+
+func TestMLogAlterDropTrackedGeneratedColumnCurrentBehavior(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		name  string
+		table string
+		kind  string
+	}{
+		{name: "stored", table: "t_drop_stored", kind: "stored"},
+		{name: "virtual", table: "t_drop_virtual", kind: "virtual"},
+	}
+	for _, ca := range cases {
+		t.Run(ca.name, func(t *testing.T) {
+			tk.MustExec("create table " + ca.table + " (id int primary key, base int, g int as (base + 1) " + ca.kind + ")")
+			tk.MustExec("create materialized view log on " + ca.table + " (id, g)")
+			tk.MustExec("alter table " + ca.table + " drop column g")
+
+			err := tk.ExecToErr("insert into " + ca.table + " values (1, 10)")
+			require.ErrorContains(t, err, "wrap table with mlog: base column g not found")
+			err = tk.ExecToErr("update " + ca.table + " set base=11 where id=1")
+			require.ErrorContains(t, err, "wrap table with mlog: base column g not found")
+			err = tk.ExecToErr("delete from " + ca.table + " where id=1")
+			require.ErrorContains(t, err, "wrap table with mlog: base column g not found")
+		})
+	}
+}
+
+func TestMLogAlterGeneratedColumnConstraints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, base int, gv int as (base + 1) virtual, gs int as (base + 2) stored)")
+	tk.MustExec("create materialized view log on t (id, gv, gs)")
+
+	err := tk.ExecToErr("alter table t rename column base to base2")
+	require.ErrorContains(t, err, "generated column dependency")
+	err = tk.ExecToErr("alter table t modify column base bigint")
+	require.ErrorContains(t, err, "generated column dependency")
+	err = tk.ExecToErr("alter table t modify column gv bigint")
+	require.ErrorContains(t, err, "Changing the STORED status")
+}
+
+func TestMLogAlterModifyTrackedVirtualGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (id int primary key, base int, g int as (base + 1) virtual)")
+	tk.MustExec("create materialized view log on t (id, g)")
+	tk.MustExec("alter table t modify column g int as (base + 2) virtual")
+
+	tk.MustExec("insert into t (id, base) values (1, 10)")
+	tk.MustQuery("select id, g, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`").
+		Check(testkit.Rows("1 12 I 1"))
+
+	execAsMViewMaintenance(tk, "delete from `$mlog$t`")
+	tk.MustExec("update t set base=20 where id=1")
+	tk.MustQuery("select id, g, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t`").Sort().
+		Check(testkit.Rows("1 12 U -1", "1 22 U 1"))
+}
+
+func TestMLogAlterRenameTrackedGeneratedColumnCurrentBehavior(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, base int, g int as (base + 1) virtual)")
+	tk.MustExec("create materialized view log on t (id, g)")
+	tk.MustExec("alter table t rename column g to g2")
+
+	err := tk.ExecToErr("insert into t (id, base) values (1, 10)")
+	require.ErrorContains(t, err, "wrap table with mlog: base column g not found")
 }
 
 func TestMLogAutoIncrement(t *testing.T) {
