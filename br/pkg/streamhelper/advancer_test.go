@@ -551,7 +551,6 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	adv2 := streamhelper.NewCheckpointAdvancer(env)
 	adv2.UpdateCheckPointLagLimit(time.Minute)
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	adv2.OnStart(ctx2)
 
 	for range 5 {
 		c.advanceClusterTimeBy(2 * time.Minute)
@@ -568,6 +567,7 @@ func TestOwnerChangeCheckPointLagged(t *testing.T) {
 	// stop advancer1, and advancer2 should take over
 	cancel1()
 	log.Info("advancer1 owner canceled, and advancer2 become owner")
+	adv2.OnStart(ctx2)
 	adv2.OnBecomeOwner(ctx2)
 	require.NoError(t, adv2.OnTick(ctx2))
 
@@ -688,7 +688,9 @@ func TestUnregisterAfterPause(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	env.PauseTask(ctx, "whole")
 	c.advanceClusterTimeBy(1 * time.Minute)
-	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
 	env.unregisterTask()
 	require.Eventually(t, func() bool {
 		return !adv.HasTask()
@@ -700,7 +702,9 @@ func TestUnregisterAfterPause(t *testing.T) {
 		return adv.HasTask()
 	}, 5*time.Second, 100*time.Millisecond)
 
-	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "check point lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
 
 	env.unregisterTask()
 	// wait for the task to be deleted
@@ -713,6 +717,9 @@ func TestUnregisterAfterPause(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	env.PauseTask(ctx, "whole")
 	c.advanceClusterTimeBy(1 * time.Minute)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.NoError(c, adv.OnTick(ctx))
+	}, 5*time.Second, 100*time.Millisecond)
 	env.unregisterTask()
 	require.Eventually(t, func() bool {
 		return !adv.HasTask()
@@ -723,7 +730,9 @@ func TestUnregisterAfterPause(t *testing.T) {
 		return adv.HasTask()
 	}, 5*time.Second, 100*time.Millisecond)
 
-	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.ErrorContains(c, adv.OnTick(ctx), "check point lagged too large")
+	}, 5*time.Second, 100*time.Millisecond)
 }
 
 // If the start ts is *NOT* lagged, even both the cluster and pd are lagged, the task should run normally.

@@ -1202,24 +1202,27 @@ func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
 func TestTiFlashProgressCache(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	se := session.CreateSessionAndSetID(t, s.store)
+	defer se.Close()
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	CheckTableAvailable(s.dom, t, 1, []string{})
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "drop table if exists ddltiflash")
+	session.MustExec(t, se, "create table ddltiflash(z int)")
+	session.MustExec(t, se, "alter table ddltiflash set tiflash replica 1")
+	WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", []string{"ddltiflash"}, ddl.PollTiFlashInterval*RoundToBeAvailable*10)
 
 	tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 0)
 	// after available, it will still update progress cache.
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	require.Eventually(t, func() bool {
+		progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
+		return isExist && progress == 1
+	}, ddl.PollTiFlashInterval*RoundToBeAvailable*10, ddl.PollTiFlashInterval/2)
 	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 	require.True(t, isExist)
-	require.True(t, progress == 1)
+	require.Equal(t, 1.0, progress)
 }
 
 func TestTiFlashProgressAvailableList(t *testing.T) {

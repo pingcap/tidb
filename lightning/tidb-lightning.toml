@@ -2,8 +2,8 @@
 [lightning]
 
 # Listening address for the HTTP server (set to empty string to disable).
-# The server is responsible for the web interface, submitting import tasks,
-# serving Prometheus metrics and exposing debug profiling data.
+# The server is responsible for submitting import tasks, serving Prometheus
+# metrics and exposing debug profiling data.
 status-addr = ":8289"
 
 # Toggle server mode.

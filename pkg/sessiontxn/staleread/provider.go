@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
-	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 )
 
@@ -254,13 +253,9 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 	}
 
 	sessVars := p.sctx.GetSessionVars()
-	ruv2Interceptor := driver.NewStatementRUV2RPCInterceptor(sessVars.RUV2Metrics)
 
 	var snapshot kv.Snapshot
 	if txn.Valid() {
-		if ruv2Interceptor != nil {
-			txn.SetOption(kv.RPCInterceptor, ruv2Interceptor)
-		}
 		snapshot = txn.GetSnapshot()
 	} else {
 		snapshot = internal.GetSnapshotWithTS(
@@ -268,9 +263,6 @@ func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, 
 			p.ts,
 			temptable.SessionSnapshotInterceptor(p.sctx, p.is),
 		)
-		if ruv2Interceptor != nil {
-			snapshot.SetOption(kv.RPCInterceptor, ruv2Interceptor)
-		}
 	}
 
 	replicaReadType := sessVars.GetReplicaRead()

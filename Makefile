@@ -343,11 +343,11 @@ failpoint-disable: tools/bin/failpoint-ctl
 
 .PHONY: bazel-failpoint-enable
 bazel-failpoint-enable:
-	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
+	find $$PWD/ -mindepth 1 -maxdepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
 
 .PHONY: bazel-failpoint-disable
 bazel-failpoint-disable:
-	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
+	find $$PWD/ -mindepth 1 -maxdepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
 
 .PHONY: tools/bin/ut
 tools/bin/ut: tools/check/ut.go tools/check/longtests.go
@@ -383,10 +383,6 @@ tools/bin/errdoc-gen:
 tools/bin/golangci-lint:
 	$(eval GOLANGCI_LINT_VERSION := $(shell grep 'github.com/golangci/golangci-lint/v2' go.mod | awk '{print $$2}'))
 	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-
-.PHONY: tools/bin/vfsgendev
-tools/bin/vfsgendev:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/shurcooL/vfsgen/cmd/vfsgendev@0d455de
 
 .PHONY: tools/bin/gotestsum
 tools/bin/gotestsum:
@@ -447,10 +443,6 @@ bench-daily:
 .PHONY: build_tools
 build_tools: build_br build_lightning build_lightning-ctl ## Build all BR and Lightning tools
 
-.PHONY: lightning_web
-lightning_web: ## Build Lightning web UI
-	@cd lightning/web && npm install && npm run build
-
 .PHONY: build_br
 build_br: ## Build BR (backup and restore) tool 
 ifeq ($(shell echo $(GOOS) | tr A-Z a-z),darwin)
@@ -460,10 +452,6 @@ else
 	@echo "Detected non-macOS ($(ARCH)), disabling CGO"
 	CGO_ENABLED=0 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 endif
-
-.PHONY: build_lightning_for_web
-build_lightning_for_web:
-	CGO_ENABLED=1 $(GOBUILD_NO_TAGS) -tags dev $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) lightning/cmd/tidb-lightning/main.go
 
 .PHONY: build_lightning
 build_lightning: ## Build TiDB Lightning data import tool
@@ -616,9 +604,8 @@ br_bins:
 	@rm tmp_parser.go
 
 .PHONY: data_parsers
-data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
-	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
-	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
+data_parsers: pkg/lightning/mydump/parser_generated.go
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" lightning/pkg/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
 
 .PHONY: build_dumpling
 build_dumpling: ## Build Dumpling data export tool
@@ -713,9 +700,23 @@ bazel_test: bazel-failpoint-enable bazel_prepare ## Run all tests using Bazel
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
+.PHONY: bazel_ci_test
+bazel_ci_test: bazel-failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
+		--define gotags=$(UNIT_TEST_TAGS) \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
+
+.PHONY: bazel_ci_test_ddlargsv1
+bazel_ci_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
+		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
+		-- //... -//cmd/... -//tests/graceshutdown/... \
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
+
 .PHONY: bazel_coverage_test
 bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS) \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
@@ -723,7 +724,7 @@ bazel_coverage_test: bazel-failpoint-enable bazel_ci_simple_prepare
 
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=HOST_CPUS*0.9 --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --build_tests_only --test_keep_going=false \
 		--combined_report=lcov \
 		--define gotags=$(UNIT_TEST_TAGS),ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
