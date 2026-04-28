@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/task"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
@@ -83,7 +84,7 @@ func newRepoSnapshotListCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			backupIDs, err := taskrepo.RunRepoSnapshotList(ctx, tidbGlue, taskrepo.RepoSnapshotListConfig{Config: cfg})
+			backupIDs, err := taskrepo.RunRepoSnapshotList(ctx, glue.GetConsole(tidbGlue), taskrepo.RepoSnapshotListConfig{Config: cfg})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -115,7 +116,7 @@ func newRepoSnapshotGetCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			return errors.Trace(taskrepo.RunRepoSnapshotGetTo(ctx, nil, taskrepo.RepoSnapshotGetConfig{
+			return errors.Trace(taskrepo.RunRepoSnapshotGetTo(ctx, glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}, taskrepo.RepoSnapshotGetConfig{
 				Config:   cfg,
 				BackupID: backupID,
 				View:     view,
@@ -150,7 +151,7 @@ func newRepoSnapshotDeleteCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			result, err := taskrepo.RunRepoSnapshotDelete(ctx, tidbGlue, taskrepo.RepoSnapshotDeleteConfig{
+			result, err := taskrepo.RunRepoSnapshotDelete(ctx, glue.GetConsole(tidbGlue), taskrepo.RepoSnapshotDeleteConfig{
 				Config:     cfg,
 				BackupID:   backupID,
 				SkipPrompt: skipPrompt,
@@ -215,7 +216,7 @@ func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			ctx := GetDefaultContext()
-			result, err := taskrepo.RunRepoSnapshotPendingDiscard(ctx, tidbGlue, taskrepo.RepoSnapshotPendingDiscardConfig{
+			result, err := taskrepo.RunRepoSnapshotPendingDiscard(ctx, glue.GetConsole(tidbGlue), taskrepo.RepoSnapshotPendingDiscardConfig{
 				Config:     cfg,
 				BackupID:   backupID,
 				SkipPrompt: skipPrompt,

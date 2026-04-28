@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/task"
@@ -294,12 +295,13 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 
 	cfg := suite.taskConfig()
 	ctx := context.Background()
+	console := glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}
 
-	backupIDs, err := taskrepo.RunRepoSnapshotList(ctx, nil, taskrepo.RepoSnapshotListConfig{Config: cfg})
+	backupIDs, err := taskrepo.RunRepoSnapshotList(ctx, console, taskrepo.RepoSnapshotListConfig{Config: cfg})
 	require.NoError(t, err)
 	require.Equal(t, []repo.BackupID{backupID1, backupID2}, backupIDs)
 
-	tablesPayload, err := taskrepo.RunRepoSnapshotGet(ctx, nil, taskrepo.RepoSnapshotGetConfig{
+	tablesPayload, err := taskrepo.RunRepoSnapshotGet(ctx, console, taskrepo.RepoSnapshotGetConfig{
 		Config:   cfg,
 		BackupID: backupID2,
 		View:     "tables",
@@ -322,7 +324,7 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 		TableName: "t",
 	}, tables[0])
 
-	result, err := taskrepo.RunRepoSnapshotDelete(ctx, nil, taskrepo.RepoSnapshotDeleteConfig{
+	result, err := taskrepo.RunRepoSnapshotDelete(ctx, console, taskrepo.RepoSnapshotDeleteConfig{
 		Config:   cfg,
 		BackupID: backupID1,
 	})
@@ -336,7 +338,7 @@ func TestSnapshotRepoSuiteTaskCompletedSnapshotAdmin(t *testing.T) {
 	suite.requirePathExists(repo.SnapshotMetadataFile(backupID2))
 	require.NotEmpty(t, suite.sstFiles(backupID2))
 
-	backupIDs, err = taskrepo.RunRepoSnapshotList(ctx, nil, taskrepo.RepoSnapshotListConfig{Config: cfg})
+	backupIDs, err = taskrepo.RunRepoSnapshotList(ctx, console, taskrepo.RepoSnapshotListConfig{Config: cfg})
 	require.NoError(t, err)
 	require.Equal(t, []repo.BackupID{backupID2}, backupIDs)
 

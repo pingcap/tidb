@@ -18,6 +18,7 @@ go_library(
     deps = [
         "//br/pkg/conn",
         "//br/pkg/errors",
+        "//br/pkg/glue",
         "//br/pkg/gluetidb",
         "//br/pkg/gluetikv",
         "//br/pkg/logutil",

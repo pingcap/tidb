@@ -191,6 +191,9 @@ func (ops ConsoleOperations) OutputIsTTY() bool {
 //
 // Note': Maybe replace the old `StartProgress` with `mpb` too.
 func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFields ...ExtraField) ProgressWaiter {
+	if ops.Overrides.StartProgressBar != nil {
+		return ops.Overrides.StartProgressBar(title, total, extraFields...)
+	}
 	if !ops.OutputIsTTY() {
 		return ops.startProgressBarOverDummy(title, total, extraFields...)
 	}
@@ -200,6 +203,9 @@ func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFiel
 // StartDynamicProgressBar starts a progress bar whose total can grow while the
 // task is running.
 func (ops ConsoleOperations) StartDynamicProgressBar(title string, extraFields ...ExtraField) DynamicProgressWaiter {
+	if ops.Overrides.StartDynamicProgressBar != nil {
+		return ops.Overrides.StartDynamicProgressBar(title, extraFields...)
+	}
 	if !ops.OutputIsTTY() {
 		return ops.startDynamicProgressBarOverDummy(title, extraFields...)
 	}

@@ -57,6 +57,7 @@ func decodeRepoSnapshotJSONStream[T any](t *testing.T, payload []byte) []T {
 func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 	ctx, cfg, storage := newRepoSnapshotTestEnv(t)
 	defer storage.Close()
+	console := glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}
 
 	backupID := repo.BackupID(0x1237)
 	createBackupMeta(ctx, t, storage, backupID, func(meta *backuppb.BackupMeta) {
@@ -76,7 +77,7 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 	})
 
 	t.Run("basic", func(t *testing.T) {
-		result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
+		result, err := RunRepoSnapshotGet(ctx, console, RepoSnapshotGetConfig{
 			Config:   cfg,
 			BackupID: backupID,
 		})
@@ -107,7 +108,7 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 	})
 
 	t.Run("tables", func(t *testing.T) {
-		result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
+		result, err := RunRepoSnapshotGet(ctx, console, RepoSnapshotGetConfig{
 			Config:   cfg,
 			BackupID: backupID,
 			View:     "tables",
@@ -136,7 +137,7 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 		for i, useV2 := range []bool{false, true} {
 			filesBackupID := backupID + repo.BackupID(i+1)
 			createBackupMetaWithFiles(ctx, t, storage, filesBackupID, useV2, files)
-			result, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
+			result, err := RunRepoSnapshotGet(ctx, console, RepoSnapshotGetConfig{
 				Config:   cfg,
 				BackupID: filesBackupID,
 				View:     "files",
@@ -149,7 +150,7 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 	})
 
 	t.Run("invalid_view", func(t *testing.T) {
-		_, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
+		_, err := RunRepoSnapshotGet(ctx, console, RepoSnapshotGetConfig{
 			Config:   cfg,
 			BackupID: backupID,
 			View:     "unknown",
@@ -165,7 +166,7 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 			meta.EndVersion = 100
 		})
 
-		_, err := RunRepoSnapshotGet(ctx, nil, RepoSnapshotGetConfig{
+		_, err := RunRepoSnapshotGet(ctx, console, RepoSnapshotGetConfig{
 			Config:   cfg,
 			BackupID: invalidBackupID,
 		})
@@ -189,8 +190,8 @@ func TestRunRepoSnapshotDeleteConfirmationAbortKeepsFiles(t *testing.T) {
 	createPendingMarker(ctx, t, storage, backupID)
 	require.NoError(t, storage.WriteFile(ctx, dataPath, []byte("a")))
 
-	console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
-	result, err := RunRepoSnapshotDelete(ctx, console, RepoSnapshotDeleteConfig{
+	console := newRepoSnapshotTestConsole("n\n")
+	result, err := RunRepoSnapshotDelete(ctx, console.Operations(), RepoSnapshotDeleteConfig{
 		Config:   cfg,
 		BackupID: backupID,
 	})
@@ -198,7 +199,7 @@ func TestRunRepoSnapshotDeleteConfirmationAbortKeepsFiles(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
 	require.Empty(t, console.progressBars)
-	require.Equal(t, []string{"Continue? "}, console.prompts)
+	require.Contains(t, console.output.String(), "Continue? (y/N) ")
 	require.Contains(t, console.output.String(), backupID.String())
 	require.Contains(t, console.output.String(), "backup-size")
 	require.Contains(t, console.output.String(), "pending-markers")
@@ -215,7 +216,8 @@ func TestRunRepoSnapshotPendingDiscardConfirmationAbortKeepsFiles(t *testing.T) 
 		createPendingCheckpoint(ctx, t, storage, repo.BackupID(0x101))
 		createPendingCheckpoint(ctx, t, storage, repo.BackupID(0x102))
 
-		_, err := RunRepoSnapshotPendingDiscard(ctx, nil, RepoSnapshotPendingDiscardConfig{Config: cfg})
+		console := glue.ConsoleOperations{ConsoleGlue: glue.NoOPConsoleGlue{}}
+		_, err := RunRepoSnapshotPendingDiscard(ctx, console, RepoSnapshotPendingDiscardConfig{Config: cfg})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "backup id is required")
 	})
@@ -230,8 +232,8 @@ func TestRunRepoSnapshotPendingDiscardConfirmationAbortKeepsFiles(t *testing.T) 
 		createPendingCheckpoint(ctx, t, storage, backupID)
 		require.NoError(t, storage.WriteFile(ctx, dataPath, []byte("a")))
 
-		console := &repoSnapshotTestConsole{interactive: true, promptResponses: []bool{false}}
-		result, err := RunRepoSnapshotPendingDiscard(ctx, console, RepoSnapshotPendingDiscardConfig{
+		console := newRepoSnapshotTestConsole("n\n")
+		result, err := RunRepoSnapshotPendingDiscard(ctx, console.Operations(), RepoSnapshotPendingDiscardConfig{
 			Config:   cfg,
 			BackupID: backupID,
 		})
@@ -239,7 +241,7 @@ func TestRunRepoSnapshotPendingDiscardConfirmationAbortKeepsFiles(t *testing.T) 
 		require.Error(t, err)
 		require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
 		require.Empty(t, console.progressBars)
-		require.Equal(t, []string{"Continue? "}, console.prompts)
+		require.Contains(t, console.output.String(), "Continue? (y/N) ")
 		require.Contains(t, console.output.String(), backupID.String())
 		require.Contains(t, console.output.String(), "state: unfinished")
 		require.Contains(t, console.output.String(), "pending-markers: 1")
@@ -404,16 +406,39 @@ func newFileForView(
 }
 
 type repoSnapshotTestConsole struct {
-	glue.NoOPConsoleGlue
-	progressBars    []*repoSnapshotTestProgress
-	waitErr         error
-	interactive     bool
-	promptResponses []bool
-	prompts         []string
-	output          bytes.Buffer
+	progressBars []*repoSnapshotTestProgress
+	waitErr      error
+	interactive  bool
+	input        bytes.Buffer
+	output       bytes.Buffer
 }
 
-func (c *repoSnapshotTestConsole) StartProgressBar(
+func newRepoSnapshotTestConsole(input string) *repoSnapshotTestConsole {
+	console := &repoSnapshotTestConsole{interactive: true}
+	_, _ = console.input.WriteString(input)
+	return console
+}
+
+func (c *repoSnapshotTestConsole) Operations() glue.ConsoleOperations {
+	return glue.ConsoleOperations{
+		ConsoleGlue: c,
+		Overrides: glue.ConsoleOperationsOverrides{
+			StartProgressBar:        c.startProgressBar,
+			StartDynamicProgressBar: c.startDynamicProgressBar,
+			IsInteractive:           func() bool { return c.interactive },
+		},
+	}
+}
+
+func (c *repoSnapshotTestConsole) In() io.Reader {
+	return &c.input
+}
+
+func (c *repoSnapshotTestConsole) Out() io.Writer {
+	return &c.output
+}
+
+func (c *repoSnapshotTestConsole) startProgressBar(
 	title string,
 	total int,
 	extraFields ...glue.ExtraField,
@@ -427,38 +452,13 @@ func (c *repoSnapshotTestConsole) StartProgressBar(
 	return progress
 }
 
-func (c *repoSnapshotTestConsole) StartDynamicProgressBar(
+func (c *repoSnapshotTestConsole) startDynamicProgressBar(
 	title string,
 	extraFields ...glue.ExtraField,
 ) glue.DynamicProgressWaiter {
 	progress := &repoSnapshotTestProgress{title: title, waitErr: c.waitErr, extraFields: extraFields}
 	c.progressBars = append(c.progressBars, progress)
 	return progress
-}
-
-func (c *repoSnapshotTestConsole) PromptBool(p string) bool {
-	c.prompts = append(c.prompts, p)
-	if !c.interactive {
-		return true
-	}
-	if len(c.promptResponses) == 0 {
-		return true
-	}
-	answer := c.promptResponses[0]
-	c.promptResponses = c.promptResponses[1:]
-	return answer
-}
-
-func (c *repoSnapshotTestConsole) Println(args ...any) {
-	_, _ = fmt.Fprintln(&c.output, args...)
-}
-
-func (c *repoSnapshotTestConsole) Printf(format string, args ...any) {
-	_, _ = fmt.Fprintf(&c.output, format, args...)
-}
-
-func (c *repoSnapshotTestConsole) IsInteractive() bool {
-	return c.interactive
 }
 
 type repoSnapshotTestProgress struct {
