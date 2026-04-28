@@ -203,9 +203,10 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 		Concurrency:    15,
 		StoreBatchSize: 3,
 		Paging: struct {
-			Enable        bool
-			MinPagingSize uint64
-			MaxPagingSize uint64
+			Enable          bool
+			MinPagingSize   uint64
+			MaxPagingSize   uint64
+			PagingSizeBytes uint64
 		}{
 			Enable:        true,
 			MinPagingSize: 1,
