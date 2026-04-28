@@ -2719,7 +2719,7 @@ func (b *PlanBuilder) newVariableVars(ctx context.Context, collate string, conte
 		}
 
 		b.procedureNowContext = handleProcedureCon
-		if x.ControlHandle == ast.PROCEDUR_CONTINUE {
+		if x.ControlHandle == ast.ProcedureContinue {
 			// if continue ,need save current execution pointer.
 			exec := &ProcedureSaveIP{
 				context: handleProcedureCon,
@@ -2741,7 +2741,7 @@ func (b *PlanBuilder) newVariableVars(ctx context.Context, collate string, conte
 		}
 
 		b.procedureGoSet = b.procedureGoSet[:len(b.procedureGoSet)-1]
-		if x.ControlHandle == ast.PROCEDUR_CONTINUE {
+		if x.ControlHandle == ast.ProcedureContinue {
 			// recover execute ,after handler block.
 			exec := &ProcedureOutputIP{
 				context: handleProcedureCon,

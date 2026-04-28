@@ -62,16 +62,18 @@ type AlterProcedureArgs struct {
 	Name   pmodel.CIStr `json:"name,omitempty"`
 	Type   string       `json:"type,omitempty"`
 
-	Comment      *string `json:"comment,omitempty"`
-	SecurityType *string `json:"security_type,omitempty"`
+	Comment         *string `json:"comment,omitempty"`
+	SecurityType    *string `json:"security_type,omitempty"`
+	IsDeterministic *int64  `json:"is_deterministic,omitempty"`
+	SQLDataAccess   *string `json:"sql_data_access,omitempty"`
 }
 
 func (a *AlterProcedureArgs) getArgsV1(*Job) []any {
-	return []any{a.Schema, a.Name, a.Type, a.Comment, a.SecurityType}
+	return []any{a.Schema, a.Name, a.Type, a.Comment, a.SecurityType, a.IsDeterministic, a.SQLDataAccess}
 }
 
 func (a *AlterProcedureArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.Schema, &a.Name, &a.Type, &a.Comment, &a.SecurityType))
+	return errors.Trace(job.decodeArgs(&a.Schema, &a.Name, &a.Type, &a.Comment, &a.SecurityType, &a.IsDeterministic, &a.SQLDataAccess))
 }
 
 // GetAlterProcedureArgs gets the args for alter procedure/function job.

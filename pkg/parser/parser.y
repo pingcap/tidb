@@ -16697,7 +16697,7 @@ SpPdparam:
 	Identifier Type OptCollate
 	{
 		x := &ast.StoreParameter{
-			Paramstatus:     ast.MODE_IN,
+			Paramstatus:     ast.ModeIn,
 			ParamType:       $2.(*types.FieldType),
 			ParamName:       $1,
 			OmitParamStatus: true,
@@ -16719,15 +16719,15 @@ SpPdparam:
 ProcedureInOut:
 	"IN"
 	{
-		$$ = ast.MODE_IN
+		$$ = ast.ModeIn
 	}
 |	"OUT"
 	{
-		$$ = ast.MODE_OUT
+		$$ = ast.ModeOut
 	}
 |	"INOUT"
 	{
-		$$ = ast.MODE_INOUT
+		$$ = ast.ModeInOut
 	}
 
 ProcedureStatementStmt:
@@ -16868,11 +16868,11 @@ SQLStateText:
 ProcedureHandlerType:
 	"CONTINUE"
 	{
-		$$ = ast.PROCEDUR_CONTINUE
+		$$ = ast.ProcedureContinue
 	}
 |	"EXIT"
 	{
-		$$ = ast.PROCEDUR_EXIT
+		$$ = ast.ProcedureExit
 	}
 
 ProcedureHcondList:
@@ -16896,21 +16896,21 @@ ProcedureHcond:
 	/* SQLSTATEs 01??? */
 	{
 		$$ = &ast.ProcedureErrorCon{
-			ErrorCon: ast.PROCEDUR_SQLWARNING,
+			ErrorCon: ast.ProcedureSQLWarning,
 		}
 	}
 |	"NOT" "FOUND"
 	/* SQLSTATEs 02??? */
 	{
 		$$ = &ast.ProcedureErrorCon{
-			ErrorCon: ast.PROCEDUR_NOT_FOUND,
+			ErrorCon: ast.ProcedureNotFound,
 		}
 	}
 |	"SQLEXCEPTION"
 	/* All other SQLSTATEs */
 	{
 		$$ = &ast.ProcedureErrorCon{
-			ErrorCon: ast.PROCEDUR_SQLEXCEPTION,
+			ErrorCon: ast.ProcedureSQLException,
 		}
 	}
 
@@ -17306,53 +17306,65 @@ ProcedureChistic:
 	"COMMENT" stringLit
 	{
 		$$ = &ast.ProcedureComment{
-			Type:    ast.PROCEDURCOMMENT,
+			Type:    ast.ProcedureCommentType,
 			Comment: $2,
 		}
 	}
 |	"SQL" "SECURITY" "DEFINER"
 	{
 		$$ = &ast.ProcedureSecurity{
-			Type:     ast.PROCEDURSECURITY,
+			Type:     ast.ProcedureSecurityType,
 			Security: model.SecurityDefiner,
 		}
 	}
 |	"SQL" "SECURITY" "INVOKER"
 	{
 		$$ = &ast.ProcedureSecurity{
-			Type:     ast.PROCEDURSECURITY,
+			Type:     ast.ProcedureSecurityType,
 			Security: model.SecurityInvoker,
 		}
 	}
 |	"DETERMINISTIC"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureDeterministic{
+			Type:          ast.ProcedureDeterministicType,
+			Deterministic: true,
+		}
 	}
 |	"NOT" "DETERMINISTIC"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureDeterministic{
+			Type:          ast.ProcedureDeterministicType,
+			Deterministic: false,
+		}
 	}
 |	"NO" "SQL"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureSQLDataAccess{
+			Type:          ast.ProcedureSQLDataAccessType,
+			SQLDataAccess: ast.RoutineNoSQL,
+		}
 	}
 |	"READS" "SQL" "DATA"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureSQLDataAccess{
+			Type:          ast.ProcedureSQLDataAccessType,
+			SQLDataAccess: ast.RoutineReadsSQLData,
+		}
 	}
 |	"MODIFIES" "SQL" "DATA"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureSQLDataAccess{
+			Type:          ast.ProcedureSQLDataAccessType,
+			SQLDataAccess: ast.RoutineModifiesSQLData,
+		}
 	}
 |	"CONTAINS" "SQL"
 	{
-		// Parse and ignore it. Just for compatibility.
-		$$ = nil
+		$$ = &ast.ProcedureSQLDataAccess{
+			Type:          ast.ProcedureSQLDataAccessType,
+			SQLDataAccess: ast.RoutineContainsSQL,
+		}
 	}
 |	"LANGUAGE" "SQL"
 	{
@@ -17466,7 +17478,7 @@ StoredFunctionParam:
 	Identifier Type OptCollate
 	{
 		x := &ast.StoreParameter{
-			Paramstatus:     ast.MODE_IN,
+			Paramstatus:     ast.ModeIn,
 			ParamType:       $2.(*types.FieldType),
 			ParamName:       $1,
 			OmitParamStatus: true,

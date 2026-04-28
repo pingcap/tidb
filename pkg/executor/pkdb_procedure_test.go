@@ -2644,6 +2644,51 @@ func TestProcedureComment(t *testing.T) {
 	tk.MustQuery("select routine_comment from information_schema.routines").Check(testkit.Rows("114"))
 }
 
+func TestShowCreateFunctionCharacteristics(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec(`create function fn_show_create() returns int deterministic reads sql data sql security invoker comment 'this is simple' return 1;`)
+
+	tk.MustQuery(`select is_deterministic, sql_data_access, security_type, routine_comment
+		from information_schema.routines
+		where routine_schema = 'test' and specific_name = 'fn_show_create'`).Check(testkit.Rows(
+		"YES READS SQL DATA INVOKER this is simple",
+	))
+	tk.MustQuery(`select options from mysql.routines where route_schema = 'test' and name = 'fn_show_create' and type = 'FUNCTION'`).Check(testkit.Rows(
+		"DETERMINISTIC READS SQL DATA SQL SECURITY INVOKER COMMENT 'this is simple'",
+	))
+	tk.MustQuery("show create function fn_show_create").Check(testkit.Rows(
+		"fn_show_create ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  " +
+			"CREATE FUNCTION `fn_show_create`()\nRETURNS int(11) DETERMINISTIC READS SQL DATA SQL SECURITY INVOKER COMMENT 'this is simple'\nreturn 1 utf8mb4 utf8mb4_bin utf8mb4_bin",
+	))
+}
+
+func TestAlterFunctionCharacteristicsUpdatesMetadata(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec(`create function fn_alter_characteristics() returns int not deterministic contains sql return 1;`)
+
+	tk.MustExec(`alter function fn_alter_characteristics deterministic reads sql data;`)
+	tk.MustQuery(`select is_deterministic, sql_data_access
+		from mysql.routines
+		where route_schema = 'test' and name = 'fn_alter_characteristics' and type = 'FUNCTION'`).Check(testkit.Rows(
+		"1 READS SQL DATA",
+	))
+	tk.MustQuery(`select options
+		from mysql.routines
+		where route_schema = 'test' and name = 'fn_alter_characteristics' and type = 'FUNCTION'`).Check(testkit.Rows(
+		"DETERMINISTIC READS SQL DATA",
+	))
+	tk.MustQuery("show create function fn_alter_characteristics").Check(testkit.Rows(
+		"fn_alter_characteristics ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION  " +
+			"CREATE FUNCTION `fn_alter_characteristics`()\nRETURNS int(11) DETERMINISTIC READS SQL DATA\nreturn 1 utf8mb4 utf8mb4_bin utf8mb4_bin",
+	))
+}
+
 func TestInformationSchemaParametersForStoredRoutines(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -30,6 +31,174 @@ import (
 )
 
 const maxRoutineCommentLen = 65535
+
+func restoreRoutineCharacteristics(characteristics []ast.ProcedureCharacteristic) (*string, error) {
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	wrote := false
+	for _, characteristic := range characteristics {
+		if characteristic == nil {
+			continue
+		}
+		if wrote {
+			restoreCtx.WritePlain(" ")
+		}
+		if err := characteristic.Restore(restoreCtx); err != nil {
+			return nil, err
+		}
+		wrote = true
+	}
+	if !wrote {
+		return nil, nil
+	}
+	options := buf.String()
+	return &options, nil
+}
+
+func extractRoutineCharacteristics(characteristics []ast.ProcedureCharacteristic) (comment, securityType string, isDeterministic int64, sqlDataAccess string, options *string, err error) {
+	comment = ""
+	securityType = "DEFINER"
+	isDeterministic = 0
+	sqlDataAccess = string(ast.RoutineContainsSQL)
+
+	options, err = restoreRoutineCharacteristics(characteristics)
+	if err != nil {
+		return "", "", 0, "", nil, err
+	}
+
+	for _, characteristic := range characteristics {
+		switch x := characteristic.(type) {
+		case *ast.ProcedureComment:
+			comment = x.Comment
+			if utf8.RuneCountInString(comment) > maxRoutineCommentLen {
+				return "", "", 0, "", nil, exeerrors.ErrTooLongRoutineComment.GenWithStackByArgs(comment, maxRoutineCommentLen)
+			}
+		case *ast.ProcedureSecurity:
+			securityType = x.Security.String()
+		case *ast.ProcedureDeterministic:
+			if x.Deterministic {
+				isDeterministic = 1
+			} else {
+				isDeterministic = 0
+			}
+		case *ast.ProcedureSQLDataAccess:
+			sqlDataAccess = string(x.SQLDataAccess)
+		case nil:
+			continue
+		default:
+			_ = errors.Errorf("unsupported procedure characteristic type %T", characteristic)
+		}
+	}
+	return comment, securityType, isDeterministic, sqlDataAccess, options, nil
+}
+
+func parseRoutineCharacteristics(options string) ([]ast.ProcedureCharacteristic, error) {
+	if strings.TrimSpace(options) == "" {
+		return nil, nil
+	}
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("create function p() returns int "+options+" return 1", "", "")
+	if err != nil {
+		return nil, err
+	}
+	createFn, ok := stmt.(*ast.CreateProcedureInfo)
+	if !ok {
+		return nil, errors.Errorf("unexpected statement type %T", stmt)
+	}
+	characteristics := make([]ast.ProcedureCharacteristic, 0, len(createFn.Characteristics))
+	for _, characteristic := range createFn.Characteristics {
+		if characteristic != nil {
+			characteristics = append(characteristics, characteristic)
+		}
+	}
+	return characteristics, nil
+}
+
+func withRoutineComment(characteristics []ast.ProcedureCharacteristic, comment string) []ast.ProcedureCharacteristic {
+	out := make([]ast.ProcedureCharacteristic, 0, len(characteristics)+1)
+	found := false
+	for _, characteristic := range characteristics {
+		if _, ok := characteristic.(*ast.ProcedureComment); ok {
+			found = true
+			if comment != "" {
+				out = append(out, &ast.ProcedureComment{Type: ast.ProcedureCommentType, Comment: comment})
+			}
+			continue
+		}
+		out = append(out, characteristic)
+	}
+	if comment != "" && !found {
+		out = append(out, &ast.ProcedureComment{Type: ast.ProcedureCommentType, Comment: comment})
+	}
+	return out
+}
+
+func withRoutineSecurity(characteristics []ast.ProcedureCharacteristic, securityType string) []ast.ProcedureCharacteristic {
+	out := make([]ast.ProcedureCharacteristic, 0, len(characteristics)+1)
+	found := false
+	for _, characteristic := range characteristics {
+		security, ok := characteristic.(*ast.ProcedureSecurity)
+		if !ok {
+			out = append(out, characteristic)
+			continue
+		}
+		found = true
+		if strings.EqualFold(securityType, "INVOKER") {
+			out = append(out, &ast.ProcedureSecurity{Type: ast.ProcedureSecurityType, Security: pmodel.SecurityInvoker})
+		}
+		_ = security
+	}
+	if !found && strings.EqualFold(securityType, "INVOKER") {
+		out = append(out, &ast.ProcedureSecurity{Type: ast.ProcedureSecurityType, Security: pmodel.SecurityInvoker})
+	}
+	return out
+}
+
+func withRoutineDeterministic(characteristics []ast.ProcedureCharacteristic, isDeterministic int64) []ast.ProcedureCharacteristic {
+	out := make([]ast.ProcedureCharacteristic, 0, len(characteristics)+1)
+	found := false
+	for _, characteristic := range characteristics {
+		if _, ok := characteristic.(*ast.ProcedureDeterministic); ok {
+			found = true
+			out = append(out, &ast.ProcedureDeterministic{
+				Type:          ast.ProcedureDeterministicType,
+				Deterministic: isDeterministic == 1,
+			})
+			continue
+		}
+		out = append(out, characteristic)
+	}
+	if !found {
+		out = append(out, &ast.ProcedureDeterministic{
+			Type:          ast.ProcedureDeterministicType,
+			Deterministic: isDeterministic == 1,
+		})
+	}
+	return out
+}
+
+func withRoutineSQLDataAccess(characteristics []ast.ProcedureCharacteristic, sqlDataAccess string) []ast.ProcedureCharacteristic {
+	out := make([]ast.ProcedureCharacteristic, 0, len(characteristics)+1)
+	found := false
+	for _, characteristic := range characteristics {
+		if _, ok := characteristic.(*ast.ProcedureSQLDataAccess); ok {
+			found = true
+			out = append(out, &ast.ProcedureSQLDataAccess{
+				Type:          ast.ProcedureSQLDataAccessType,
+				SQLDataAccess: ast.RoutineSQLDataAccess(sqlDataAccess),
+			})
+			continue
+		}
+		out = append(out, characteristic)
+	}
+	if !found {
+		out = append(out, &ast.ProcedureSQLDataAccess{
+			Type:          ast.ProcedureSQLDataAccessType,
+			SQLDataAccess: ast.RoutineSQLDataAccess(sqlDataAccess),
+		})
+	}
+	return out
+}
 
 /// DDL Executor part.
 
@@ -50,20 +219,9 @@ func (e *executor) CreateProcedure(ctx sessionctx.Context, stmt *ast.CreateProce
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(procSchema)
 	}
 
-	var comment string
-	securityType := "DEFINER"
-	for _, characteristic := range stmt.Characteristics {
-		switch x := characteristic.(type) {
-		case *ast.ProcedureComment:
-			comment = x.Comment
-			if utf8.RuneCountInString(comment) > maxRoutineCommentLen {
-				return exeerrors.ErrTooLongRoutineComment.GenWithStackByArgs(comment, maxRoutineCommentLen)
-			}
-		case *ast.ProcedureSecurity:
-			securityType = x.Security.String()
-		default:
-			_ = errors.Errorf("unsupported procedure characteristic type %T", characteristic)
-		}
+	comment, securityType, isDeterministic, sqlDataAccess, options, err := extractRoutineCharacteristics(stmt.Characteristics)
+	if err != nil {
+		return err
 	}
 
 	var parameterStr strings.Builder
@@ -122,8 +280,8 @@ func (e *executor) CreateProcedure(ctx sessionctx.Context, stmt *ast.CreateProce
 		DefinitionUTF8: bodyStr,
 		ParameterStr:   parameterStr.String(),
 
-		IsDeterministic: 1,
-		SQLDataAccess:   "CONTAINS SQL",
+		IsDeterministic: isDeterministic,
+		SQLDataAccess:   sqlDataAccess,
 		SecurityType:    securityType,
 		Definer:         definer,
 		SQLMode:         sqlMode,
@@ -133,6 +291,7 @@ func (e *executor) CreateProcedure(ctx sessionctx.Context, stmt *ast.CreateProce
 		SchemaCollation:     dbInfo.Collate,
 
 		Comment:          comment,
+		Options:          options,
 		ExternalLanguage: "SQL",
 		State:            model.StateNone,
 	}
@@ -461,8 +620,10 @@ func (e *executor) AlterProcedure(ctx sessionctx.Context, stmt *ast.AlterProcedu
 	}
 
 	var (
-		comment      *string
-		securityType *string
+		comment         *string
+		securityType    *string
+		isDeterministic *int64
+		sqlDataAccess   *string
 	)
 	for _, characteristic := range stmt.Characteristics {
 		switch x := characteristic.(type) {
@@ -475,6 +636,15 @@ func (e *executor) AlterProcedure(ctx sessionctx.Context, stmt *ast.AlterProcedu
 		case *ast.ProcedureSecurity:
 			v := x.Security.String()
 			securityType = &v
+		case *ast.ProcedureDeterministic:
+			v := int64(0)
+			if x.Deterministic {
+				v = 1
+			}
+			isDeterministic = &v
+		case *ast.ProcedureSQLDataAccess:
+			v := string(x.SQLDataAccess)
+			sqlDataAccess = &v
 		default:
 			_ = errors.Errorf("unsupported %s characteristic type %T", strings.ToLower(routineType), characteristic)
 		}
@@ -501,11 +671,13 @@ func (e *executor) AlterProcedure(ctx sessionctx.Context, stmt *ast.AlterProcedu
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.AlterProcedureArgs{
-		Schema:       routineSchema,
-		Name:         routineName,
-		Type:         routineType,
-		Comment:      comment,
-		SecurityType: securityType,
+		Schema:          routineSchema,
+		Name:            routineName,
+		Type:            routineType,
+		Comment:         comment,
+		SecurityType:    securityType,
+		IsDeterministic: isDeterministic,
+		SQLDataAccess:   sqlDataAccess,
 	}
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
@@ -616,18 +788,22 @@ func (w *worker) onCreateProcedure(jobCtx *jobContext, job *model.Job) (ver int6
 	}
 
 	// Insert routine.
+	var options any
+	if procInfo.Options != nil {
+		options = *procInfo.Options
+	}
 	_, err = w.sess.Execute(
 		internalCtx,
 		`INSERT INTO %n.%n (
 			route_schema, name, type, definition, definition_utf8, parameter_str,
 			is_deterministic, sql_data_access, security_type, definer, sql_mode,
 			character_set_client, connection_collation, schema_collation,
-			created, last_altered, comment, external_language
+			created, last_altered, comment, options, external_language
 		) VALUES (
 			%?, %?, %?, %?, %?, %?,
 			%?, %?, %?, %?, %?,
 			%?, %?, %?,
-			now(6), now(6), %?, %?
+			now(6), now(6), %?, %?, %?
 		)`,
 		"create-procedure-insert",
 		mysql.SystemDB,
@@ -647,6 +823,7 @@ func (w *worker) onCreateProcedure(jobCtx *jobContext, job *model.Job) (ver int6
 		procInfo.CollationConnection,
 		procInfo.SchemaCollation,
 		procInfo.Comment,
+		options,
 		procInfo.ExternalLanguage,
 	)
 	if err != nil {
@@ -887,7 +1064,7 @@ func (w *worker) onAlterProcedure(jobCtx *jobContext, job *model.Job) (ver int64
 	internalCtx := kv.WithInternalSourceType(jobCtx.stepCtx, kv.InternalTxnProcedure)
 	existsRows, err := w.sess.Execute(
 		internalCtx,
-		"SELECT 1 FROM %n.%n WHERE route_schema=%? AND name=%? AND type=%? LIMIT 1",
+		"SELECT options FROM %n.%n WHERE route_schema=%? AND name=%? AND type=%? LIMIT 1",
 		"alter-procedure-check-exists",
 		mysql.SystemDB,
 		mysql.Routines,
@@ -903,9 +1080,39 @@ func (w *worker) onAlterProcedure(jobCtx *jobContext, job *model.Job) (ver int64
 		return ver, exeerrors.ErrSpDoesNotExist.GenWithStackByArgs(args.Type, args.Schema.O+"."+args.Name.O)
 	}
 
+	updateOptions := args.Comment != nil || args.SecurityType != nil || args.IsDeterministic != nil || args.SQLDataAccess != nil
+	var options *string
+	if updateOptions {
+		var characteristics []ast.ProcedureCharacteristic
+		if !existsRows[0].IsNull(0) {
+			characteristics, err = parseRoutineCharacteristics(existsRows[0].GetString(0))
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+		if args.Comment != nil {
+			characteristics = withRoutineComment(characteristics, *args.Comment)
+		}
+		if args.SecurityType != nil {
+			characteristics = withRoutineSecurity(characteristics, *args.SecurityType)
+		}
+		if args.IsDeterministic != nil {
+			characteristics = withRoutineDeterministic(characteristics, *args.IsDeterministic)
+		}
+		if args.SQLDataAccess != nil {
+			characteristics = withRoutineSQLDataAccess(characteristics, *args.SQLDataAccess)
+		}
+		options, err = restoreRoutineCharacteristics(characteristics)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
 	updateSQL := strings.Builder{}
 	updateSQL.WriteString("UPDATE %n.%n SET last_altered = now(6)")
-	params := make([]any, 0, 7)
+	params := make([]any, 0, 11)
 	params = append(params, mysql.SystemDB, mysql.Routines)
 	if args.Comment != nil {
 		updateSQL.WriteString(", comment = %?")
@@ -914,6 +1121,22 @@ func (w *worker) onAlterProcedure(jobCtx *jobContext, job *model.Job) (ver int64
 	if args.SecurityType != nil {
 		updateSQL.WriteString(", security_type = %?")
 		params = append(params, *args.SecurityType)
+	}
+	if args.IsDeterministic != nil {
+		updateSQL.WriteString(", is_deterministic = %?")
+		params = append(params, *args.IsDeterministic)
+	}
+	if args.SQLDataAccess != nil {
+		updateSQL.WriteString(", sql_data_access = %?")
+		params = append(params, *args.SQLDataAccess)
+	}
+	if updateOptions {
+		updateSQL.WriteString(", options = %?")
+		if options == nil {
+			params = append(params, nil)
+		} else {
+			params = append(params, *options)
+		}
 	}
 	updateSQL.WriteString(" WHERE route_schema = %? AND name = %? AND type = %?")
 	params = append(params, args.Schema.O, args.Name.O, args.Type)

@@ -1196,9 +1196,9 @@ func buildRoutineParameterRows(schema pmodel.CIStr, routine *model.ProcedureInfo
 	for idx, param := range stmt.ProcedureParam {
 		mode := "IN"
 		switch param.Paramstatus {
-		case ast.MODE_OUT:
+		case ast.ModeOut:
 			mode = "OUT"
-		case ast.MODE_INOUT:
+		case ast.ModeInOut:
 			mode = "INOUT"
 		}
 		rows = append(rows, buildParameterRow(schema.O, routine.Name.O, idx+1, mode, param.ParamName, param.ParamType, routine.Type))

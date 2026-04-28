@@ -14,9 +14,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -160,6 +163,157 @@ func procedureExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 	return "", false, err
 }
 
+func restoreRoutineCharacteristics(characteristics []ast.ProcedureCharacteristic) (string, error) {
+	var buf strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &buf)
+	wrote := false
+	for _, characteristic := range characteristics {
+		if characteristic == nil {
+			continue
+		}
+		if wrote {
+			restoreCtx.WritePlain(" ")
+		}
+		if err := characteristic.Restore(restoreCtx); err != nil {
+			return "", err
+		}
+		wrote = true
+	}
+	return buf.String(), nil
+}
+
+func parseRoutineCharacteristics(options string) ([]ast.ProcedureCharacteristic, error) {
+	if strings.TrimSpace(options) == "" {
+		return nil, nil
+	}
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("create function p() returns int "+options+" return 1", "", "")
+	if err != nil {
+		return nil, err
+	}
+	createFn, ok := stmt.(*ast.CreateProcedureInfo)
+	if !ok {
+		return nil, errors.Errorf("unexpected statement type %T", stmt)
+	}
+	characteristics := make([]ast.ProcedureCharacteristic, 0, len(createFn.Characteristics))
+	for _, characteristic := range createFn.Characteristics {
+		if characteristic != nil {
+			characteristics = append(characteristics, characteristic)
+		}
+	}
+	return characteristics, nil
+}
+
+func withRoutineComment(characteristics []ast.ProcedureCharacteristic, comment string) []ast.ProcedureCharacteristic {
+	out := make([]ast.ProcedureCharacteristic, 0, len(characteristics)+1)
+	found := false
+	for _, characteristic := range characteristics {
+		if _, ok := characteristic.(*ast.ProcedureComment); ok {
+			found = true
+			if comment != "" {
+				out = append(out, &ast.ProcedureComment{Type: ast.ProcedureCommentType, Comment: comment})
+			}
+			continue
+		}
+		out = append(out, characteristic)
+	}
+	if comment != "" && !found {
+		out = append(out, &ast.ProcedureComment{Type: ast.ProcedureCommentType, Comment: comment})
+	}
+	return out
+}
+
+func withRoutineSecurity(characteristics []ast.ProcedureCharacteristic, securityType string) []ast.ProcedureCharacteristic {
+	out := make([]ast.ProcedureCharacteristic, 0, len(characteristics)+1)
+	found := false
+	for _, characteristic := range characteristics {
+		security, ok := characteristic.(*ast.ProcedureSecurity)
+		if !ok {
+			out = append(out, characteristic)
+			continue
+		}
+		found = true
+		if strings.EqualFold(securityType, "INVOKER") {
+			out = append(out, &ast.ProcedureSecurity{Type: ast.ProcedureSecurityType, Security: pmodel.SecurityInvoker})
+		}
+		_ = security
+	}
+	if !found && strings.EqualFold(securityType, "INVOKER") {
+		out = append(out, &ast.ProcedureSecurity{Type: ast.ProcedureSecurityType, Security: pmodel.SecurityInvoker})
+	}
+	return out
+}
+
+func buildShowCreateFunctionOptions(routine *model.ProcedureInfo) (string, error) {
+	if routine == nil {
+		return "", nil
+	}
+	var characteristics []ast.ProcedureCharacteristic
+	if routine.Options != nil {
+		parsed, err := parseRoutineCharacteristics(*routine.Options)
+		if err != nil {
+			return "", err
+		}
+		characteristics = parsed
+	}
+	if routine.Options == nil {
+		if strings.EqualFold(routine.SecurityType, "INVOKER") {
+			characteristics = append(characteristics, &ast.ProcedureSecurity{
+				Type:     ast.ProcedureSecurityType,
+				Security: pmodel.SecurityInvoker,
+			})
+		}
+		if routine.Comment != "" {
+			characteristics = append(characteristics, &ast.ProcedureComment{
+				Type:    ast.ProcedureCommentType,
+				Comment: routine.Comment,
+			})
+		}
+	} else {
+		characteristics = withRoutineSecurity(characteristics, routine.SecurityType)
+		characteristics = withRoutineComment(characteristics, routine.Comment)
+	}
+	return restoreRoutineCharacteristics(characteristics)
+}
+
+func buildShowCreateFunction(routine *model.ProcedureInfo) (string, error) {
+	_, retTypeText, bodyText, err := infoschema.ParseStoredFunctionDefinition(routine.DefinitionUTF8, routine.SQLMode)
+	if err != nil {
+		return "", err
+	}
+	options, err := buildShowCreateFunctionOptions(routine)
+	if err != nil {
+		return "", err
+	}
+
+	var builder strings.Builder
+	builder.WriteString(" CREATE ")
+	if routine.Definer != "" {
+		strs := strings.Split(routine.Definer, "@")
+		if len(strs) != 2 {
+			return "", errors.Errorf("get definer `%s` failed, the definer must be the form of `user`@`host`", routine.Definer)
+		}
+		builder.WriteString("DEFINER=`")
+		builder.WriteString(strs[0])
+		builder.WriteString("`@`")
+		builder.WriteString(strs[1])
+		builder.WriteString("` ")
+	}
+	builder.WriteString("FUNCTION `")
+	builder.WriteString(routine.Name.O)
+	builder.WriteString("`(")
+	builder.WriteString(routine.ParameterStr)
+	builder.WriteString(")\nRETURNS ")
+	builder.WriteString(retTypeText)
+	if options != "" {
+		builder.WriteString(" ")
+		builder.WriteString(options)
+	}
+	builder.WriteString("\n")
+	builder.WriteString(bodyText)
+	return builder.String(), nil
+}
+
 // getProcedureInfo read stored procedure content.
 func getProcedureInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, db string, tp ast.ShowStmtType) (*plannercore.ProcedurebodyInfo, error) {
 	tpStr := "PROCEDURE"
@@ -167,9 +321,8 @@ func getProcedureInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 		tpStr = "FUNCTION"
 	}
 	sql := new(strings.Builder)
-	//heads []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
-	sqlescape.MustFormatSQL(sql, "select name, sql_mode, definition_utf8, parameter_str, character_set_client, connection_collation,")
-	sqlescape.MustFormatSQL(sql, "schema_collation, comment, security_type, definer from %n.%n where route_schema = %? and name = %? and type = %? ", mysql.SystemDB, mysql.Routines, db, name, tpStr)
+	sqlescape.MustFormatSQL(sql, "select route_schema,name,type,definition_utf8,parameter_str,is_deterministic,sql_data_access,security_type,definer,sql_mode,")
+	sqlescape.MustFormatSQL(sql, "character_set_client,connection_collation,schema_collation,created,last_altered,comment,options,external_language from %n.%n where route_schema = %? and name = %? and type = %? ", mysql.SystemDB, mysql.Routines, db, name, tpStr)
 
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
@@ -189,28 +342,39 @@ func getProcedureInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name
 	if len(rows) != 1 {
 		return nil, errors.New("Multiple stored procedures found in table " + mysql.Routines)
 	}
+	routine, err := infoschema.DecodeRoutineMetadataRow(rows[0])
+	if err != nil {
+		return nil, err
+	}
 	procedureBodyInfo := &plannercore.ProcedurebodyInfo{}
-	procedureBodyInfo.Name = rows[0].GetString(0)
-	procedureBodyInfo.Procedurebody = " CREATE "
-	if len(rows[0].GetString(9)) != 0 {
-		strs := strings.Split(rows[0].GetString(9), "@")
-		if len(strs) != 2 {
-			return nil, errors.Errorf("get definer `%s` failed, the definer must be the form of `user`@`host`", rows[0].GetString(9))
+	procedureBodyInfo.Name = routine.Name.O
+	if tp == ast.ShowCreateFunction {
+		procedureBodyInfo.Procedurebody, err = buildShowCreateFunction(routine.ProcedureInfo)
+		if err != nil {
+			return nil, err
 		}
-		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "DEFINER=" + "`" + strs[0] + "`@`" + strs[1] + "` "
+	} else {
+		procedureBodyInfo.Procedurebody = " CREATE "
+		if len(routine.Definer) != 0 {
+			strs := strings.Split(routine.Definer, "@")
+			if len(strs) != 2 {
+				return nil, errors.Errorf("get definer `%s` failed, the definer must be the form of `user`@`host`", routine.Definer)
+			}
+			procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "DEFINER=" + "`" + strs[0] + "`@`" + strs[1] + "` "
+		}
+		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + tpStr + " `" + routine.Name.O + "`(" + routine.ParameterStr + ")\n"
+		if len(routine.Comment) != 0 {
+			procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "COMMENT '" + routine.Comment + "' \n"
+		}
+		if routine.SecurityType == "INVOKER" {
+			procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "SQL SECURITY INVOKER \n"
+		}
+		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + routine.DefinitionUTF8
 	}
-	procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + tpStr + " `" + rows[0].GetString(0) + "`(" + rows[0].GetString(3) + ")\n"
-	if len(rows[0].GetString(7)) != 0 {
-		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "COMMENT '" + rows[0].GetString(7) + "' \n"
-	}
-	if rows[0].GetEnum(8).String() == "INVOKER" {
-		procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + "SQL SECURITY INVOKER \n"
-	}
-	procedureBodyInfo.Procedurebody = procedureBodyInfo.Procedurebody + rows[0].GetString(2)
-	procedureBodyInfo.SQLMode = rows[0].GetSet(1).String()
-	procedureBodyInfo.CharacterSetClient = rows[0].GetString(4)
-	procedureBodyInfo.CollationConnection = rows[0].GetString(5)
-	procedureBodyInfo.ShemaCollation = rows[0].GetString(6)
+	procedureBodyInfo.SQLMode = routine.SQLMode
+	procedureBodyInfo.CharacterSetClient = routine.CharacterSetClient
+	procedureBodyInfo.CollationConnection = routine.CollationConnection
+	procedureBodyInfo.ShemaCollation = routine.SchemaCollation
 	return procedureBodyInfo, nil
 }
 
@@ -428,16 +592,16 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 		// input variable is @name
 		case *ast.VariableExpr:
 			name := s.Procedure.Args[i].(*ast.VariableExpr).Name
-			if (param.ParamType == ast.MODE_IN) || (param.ParamType == ast.MODE_INOUT) {
+			if (param.ParamType == ast.ModeIn) || (param.ParamType == ast.ModeInOut) {
 				err := e.inParam(ctx, param, name)
 				if err != nil {
 					return err
 				}
 			}
-			if param.ParamType == ast.MODE_INOUT {
+			if param.ParamType == ast.ModeInOut {
 				e.outVarParam[param.DeclName] = name
 			}
-			if param.ParamType == ast.MODE_OUT {
+			if param.ParamType == ast.ModeOut {
 				e.outVarParam[param.DeclName] = name
 			}
 		case *ast.ColumnNameExpr:
@@ -447,7 +611,7 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 				if err != nil {
 					return err
 				}
-				if param.ParamType == ast.MODE_OUT || param.ParamType == ast.MODE_INOUT {
+				if param.ParamType == ast.ModeOut || param.ParamType == ast.ModeInOut {
 					routineName := s.Procedure.Schema.String() + "." + s.Procedure.FnName.String()
 					if v.Name.Table.L != "new" {
 						return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, routineName)
@@ -458,14 +622,14 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 						return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, routineName)
 					}
 				}
-				if param.ParamType == ast.MODE_OUT {
+				if param.ParamType == ast.ModeOut {
 					datum.SetNull()
 				}
 				err = plannercore.UpdateVariableVar(param.DeclName, datum, e.Ctx().GetSessionVars())
 				if err != nil {
 					return err
 				}
-				if param.ParamType == ast.MODE_OUT || param.ParamType == ast.MODE_INOUT {
+				if param.ParamType == ast.ModeOut || param.ParamType == ast.ModeInOut {
 					e.outTriggerParam[param.DeclName] = idx
 				}
 				break
@@ -483,12 +647,12 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 			if err != nil {
 				return err
 			}
-			if param.ParamType == ast.MODE_INOUT || param.ParamType == ast.MODE_OUT {
+			if param.ParamType == ast.ModeInOut || param.ParamType == ast.ModeOut {
 				e.outLocalParam[param.DeclName] = s.Procedure.Args[i].(*ast.ColumnNameExpr).Name.Name.O
 			}
 		case *driver.ValueExpr:
 			// out variable must @name
-			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
+			if (param.ParamType == ast.ModeOut) || (param.ParamType == ast.ModeInOut) {
 				return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, s.Procedure.Schema.String()+"."+s.Procedure.FnName.String())
 			}
 			err := plannercore.UpdateVariableVar(param.DeclName, v.Datum, e.Ctx().GetSessionVars())
@@ -497,7 +661,7 @@ func (e *ProcedureExec) callParam(ctx context.Context, s *ast.CallStmt) error {
 			}
 		default:
 			// out variable must @name
-			if (param.ParamType == ast.MODE_OUT) || (param.ParamType == ast.MODE_INOUT) {
+			if (param.ParamType == ast.ModeOut) || (param.ParamType == ast.ModeInOut) {
 				return exeerrors.ErrSpNotVarArg.GenWithStackByArgs(i+1, s.Procedure.Schema.String()+"."+s.Procedure.FnName.String())
 			}
 			exec := plannercore.ProcedureCompileAndExec(e.executeWithSameContext)

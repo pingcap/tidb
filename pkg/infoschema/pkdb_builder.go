@@ -4,7 +4,7 @@ package infoschema
 
 import (
 	"context"
-	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -97,29 +97,53 @@ func (b *Builder) reloadRoutines() error {
 }
 
 func getStoredFuncRetType(defUTF8, sqlModeStr string) *ptypes.FieldType {
-	sqlMode, err := mysql.GetSQLMode(sqlModeStr)
+	retType, _, _, err := ParseStoredFunctionDefinition(defUTF8, sqlModeStr)
 	if err != nil {
-		logutil.BgLogger().Error("failed to parse SQL mode from string",
+		logutil.BgLogger().Error("failed to parse stored function definition",
+			zap.String("definition_utf8", defUTF8),
 			zap.String("sql_mode", sqlModeStr),
 			zap.Error(err))
 		return nil
 	}
+	return retType
+}
+
+// ParseStoredFunctionDefinition parses a stored function definition fragment from mysql.routines.
+// The input definition must be in the form "RETURNS <type> <body>" without the leading CREATE FUNCTION header.
+func ParseStoredFunctionDefinition(defUTF8, sqlModeStr string) (*ptypes.FieldType, string, string, error) {
+	sqlMode, err := mysql.GetSQLMode(sqlModeStr)
+	if err != nil {
+		return nil, "", "", errors.Trace(err)
+	}
 
 	p := parser.New()
 	p.SetSQLMode(sqlMode)
-	createFnSQL := "create function p() " + defUTF8
-	stmt, err := p.ParseOneStmt(createFnSQL, "", "")
+	stmt, err := p.ParseOneStmt("create function p() "+defUTF8, "", "")
 	if err != nil {
-		logutil.BgLogger().Error("failed to parse create function statement",
-			zap.Error(err))
-		return nil
+		return nil, "", "", errors.Trace(err)
 	}
 	createFn, ok := stmt.(*parserast.CreateProcedureInfo)
-	if !ok || createFn.FunctionInfo.RetType == nil {
-		logutil.BgLogger().Error("failed to parse create function ret type",
-			zap.String("statementType", fmt.Sprintf("%T", stmt)),
-			zap.Bool("retTypeIsNil", ok && createFn.FunctionInfo.RetType == nil))
-		return nil
+	if !ok {
+		return nil, "", "", errors.Errorf("unexpected statement type %T", stmt)
 	}
-	return createFn.FunctionInfo.RetType
+	if createFn.FunctionInfo.RetType == nil {
+		return nil, "", "", errors.New("stored function return type is nil")
+	}
+	if createFn.ProcedureBody == nil {
+		return nil, "", "", errors.New("stored function body is nil")
+	}
+	bodyText := createFn.ProcedureBody.Text()
+	rest, ok := strings.CutPrefix(defUTF8, "RETURNS ")
+	if !ok {
+		return nil, "", "", errors.New("stored function definition does not start with RETURNS")
+	}
+	suffix := " " + bodyText
+	if !strings.HasSuffix(rest, suffix) {
+		return nil, "", "", errors.New("stored function definition does not end with procedure body")
+	}
+	retTypeText := strings.TrimSpace(strings.TrimSuffix(rest, suffix))
+	if retTypeText == "" {
+		return nil, "", "", errors.New("stored function return type text is empty")
+	}
+	return createFn.FunctionInfo.RetType, retTypeText, bodyText, nil
 }
