@@ -198,7 +198,7 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				job.convertStageTo(needRescan)
 				return nil
 			}
-			res, err := w.writeFn(ctx, job)
+			res, err := w.writeWithTimeout(ctx, job)
 			err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 			if err != nil {
 				if !w.isRetryableImportTiKVError(err) {
@@ -267,6 +267,27 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 	}
 }
 
+func (w *regionJobBaseWorker) writeWithTimeout(
+	ctx context.Context,
+	job *regionJob,
+) (ret *tikvWriteResult, err error) {
+	timeout := 15 * time.Minute
+	ctx, cancel := context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
+	defer cancel()
+
+	ret, err = w.writeFn(ctx, job)
+	if err == nil {
+		return ret, nil
+	}
+	if errors.Cause(err) == context.DeadlineExceeded {
+		if cause := context.Cause(ctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
+			tidblogutil.Logger(ctx).Info("experiencing a wait timeout while writing to TiKV")
+			err = errors.Trace(cause)
+		}
+	}
+	return ret, err
+}
+
 func (*regionJobBaseWorker) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
 	// io.EOF is not retryable in normal case
@@ -324,25 +345,7 @@ func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error
 }
 
 // we don't need to limit write speed as we write to tikv-worker.
-func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (ret *tikvWriteResult, err error) {
-	var cancel context.CancelFunc
-	timeout := 15 * time.Minute
-	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
-	defer cancel()
-
-	wctx := ctx
-	defer func() {
-		if err == nil {
-			return
-		}
-		if errors.Cause(err) == context.DeadlineExceeded {
-			if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
-				tidblogutil.Logger(ctx).Info("experiencing a wait timeout while writing to tikv-worker")
-				err = errors.Trace(cause)
-			}
-		}
-	}()
-
+func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
 	firstKey, _, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
 	if err != nil {
 		return nil, errors.Trace(err)

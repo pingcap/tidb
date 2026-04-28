@@ -306,18 +306,22 @@ func TestCloudRegionJobWorker(t *testing.T) {
 		require.True(t, ctrl.Satisfied())
 	})
 
-	t.Run("timeout while creating ingest client should return retryable error", func(t *testing.T) {
+	t.Run("timeout while creating ingest client should be handled by runJob wrapper", func(t *testing.T) {
 		job := &regionJob{
 			keyRange:   engineapi.Range{Start: []byte("a"), End: []byte("z")},
 			stage:      regionScanned,
 			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
+			region: &split.RegionInfo{Region: &metapb.Region{
+				Id: 1, Peers: []*metapb.Peer{{StoreId: 1}},
+			}, Leader: &metapb.Peer{StoreId: 1}},
 		}
 		mockIngestCli.EXPECT().WriteClient(gomock.Any(), gomock.Any()).Return(nil, context.DeadlineExceeded)
 		ctx, cancel := context.WithTimeoutCause(context.Background(), 0, common.ErrWriteTooSlow)
 		defer cancel()
-		writeRes, err := cloudW.write(ctx, job)
-		require.ErrorIs(t, err, common.ErrWriteTooSlow)
-		require.Nil(t, writeRes)
+		err := cloudW.runJob(ctx, job)
+		require.NoError(t, err)
+		require.Equal(t, needRescan, job.stage)
+		require.ErrorIs(t, job.lastRetryableErr, common.ErrWriteTooSlow)
 		require.True(t, ctrl.Satisfied())
 	})
 

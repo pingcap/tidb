@@ -339,34 +339,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		failpoint.Return(front.write.result, err)
 	})
 
-	var cancel context.CancelFunc
-	// set a timeout for the write operation, if it takes too long, we will return with common.ErrWriteTooSlow and let caller retry the whole job instead of being stuck forever.
-	timeout := 15 * time.Minute
-	ctx, cancel = context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
-	defer cancel()
-
-	// A defer function to handle all DeadlineExceeded errors that may occur
-	// during the write operation using this context with 15 minutes timeout.
-	// When the error is "context deadline exceeded", we will check if the cause
-	// is common.ErrWriteTooSlow and return the common.ErrWriteTooSlow instead so
-	// our caller would be able to retry this doWrite operation. By doing this
-	// defer we are hoping to handle all DeadlineExceeded error during this
-	// write, either from gRPC stream or write limiter WaitN operation.
-	wctx := ctx
-	defer func() {
-		if err == nil {
-			return
-		}
-		if errors.Cause(err) == context.DeadlineExceeded {
-			if cause := context.Cause(wctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
-				tidblogutil.Logger(ctx).Info("Experiencing a wait timeout while writing to tikv",
-					zap.Int("store-write-bwlimit", local.BackendConfig.StoreWriteBWLimit),
-					zap.Int("limit-size", local.writeLimiter.Limit()))
-				err = errors.Trace(cause) // return the common.ErrWriteTooSlow instead to let caller retry it
-			}
-		}
-	}()
-
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
 	kvBatchSize := local.KVWriteBatchSize
@@ -486,6 +458,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 	}
 
 	// preparation work for the write timeout fault injection, only enabled if the following failpoint is enabled
+	wctx := ctx
 	wcancel := func() {}
 	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
 		var innerTimeout time.Duration
