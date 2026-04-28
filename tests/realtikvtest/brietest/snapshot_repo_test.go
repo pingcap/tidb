@@ -92,7 +92,7 @@ func (s *snapshotRepoSuite) backupConfig() task.BackupConfig {
 	cfg := task.DefaultBackupConfig(task.DefaultConfig())
 	task.ApplyTiDBRuntimeConfig(&cfg.Config)
 	cfg.Storage = s.repoURI
-	cfg.Layout = repo.LayoutRepoV1
+	cfg.Layout = repo.LayoutRepo
 	cfg.UseCheckpoint = true
 	cfg.CheckRequirements = false
 	cfg.Checksum = false
@@ -108,7 +108,7 @@ func (s *snapshotRepoSuite) restoreConfig(backupID repo.BackupID) task.RestoreCo
 	cfg := task.DefaultRestoreConfig(task.DefaultConfig())
 	task.ApplyTiDBRuntimeConfig(&cfg.Config)
 	cfg.Storage = s.repoURI
-	cfg.Layout = repo.LayoutRepoV1
+	cfg.Layout = repo.LayoutRepo
 	cfg.BackupID = backupID
 	cfg.UseCheckpoint = false
 	cfg.CheckRequirements = false

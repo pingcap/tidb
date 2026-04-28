@@ -443,8 +443,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if cfg.UseCheckpoint {
 		err = version.CheckCheckpointSupport()
 		if err != nil {
-			if cfg.SnapshotBackupOptions.IsRepoV1() {
-				return errors.Annotate(err, "repo-v1 snapshot backup requires checkpoint support")
+			if cfg.SnapshotBackupOptions.IsRepo() {
+				return errors.Annotate(err, "repo snapshot backup requires checkpoint support")
 			}
 			log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
 			cfg.UseCheckpoint = false
@@ -486,22 +486,22 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 	var (
-		preparedStorage           *taskrepo.PreparedRepoV1SnapshotBackup
+		preparedStorage           *taskrepo.PreparedRepoSnapshotBackup
 		perStoreBackupAdapters    []backup.PerStoreBackupAdapter
 		removePendingMarkerOnExit bool
 	)
-	if cfg.SnapshotBackupOptions.IsRepoV1() {
+	if cfg.SnapshotBackupOptions.IsRepo() {
 		if err = client.SetStorage(ctx, u, &opts); err != nil {
 			return errors.Trace(err)
 		}
-		preparedStorage, err = taskrepo.PrepareRepoV1SnapshotBackup(ctx, u, client.GetBaseStorage(), taskrepo.SnapshotBackupStorageParams{
+		preparedStorage, err = taskrepo.PrepareRepoSnapshotBackup(ctx, u, client.GetBaseStorage(), taskrepo.SnapshotBackupStorageParams{
 			OnPending:  cfg.SnapshotBackupOptions.OnPending,
 			ConfigHash: cfgHash,
 			CreatedBy:  taskrepo.RepoCreatedBy(g.GetVersion()),
 			AllocateBackupID: func(ctx context.Context) (repo.BackupID, error) {
 				backupTS, err := client.GetCurrentTS(ctx)
 				if err != nil {
-					return 0, errors.Annotate(err, "allocate repo-v1 backup id")
+					return 0, errors.Annotate(err, "allocate repo backup id")
 				}
 				backupID, err := repo.NewBackupID(backupTS)
 				if err != nil {
@@ -523,7 +523,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 				return
 			}
 			if err := preparedStorage.RootStorage.DeleteFile(ctx, preparedStorage.PendingMarkerPath); err != nil {
-				log.Warn("failed to remove repo-v1 pending marker",
+				log.Warn("failed to remove repo pending marker",
 					zap.String("path", preparedStorage.PendingMarkerPath),
 					zap.Error(err))
 			}
@@ -671,7 +671,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if err == nil {
 			gcSafePointKeeperRemovable = true
 			if preparedStorage != nil {
-				log.Info("completed repo-v1 snapshot backup", zap.String("backup-id", preparedStorage.BackupID.String()))
+				log.Info("completed repo snapshot backup", zap.String("backup-id", preparedStorage.BackupID.String()))
 				g.Record("backup id", uint64(preparedStorage.BackupID))
 			}
 			summary.SetSuccessStatus(true)
@@ -834,7 +834,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// cleanup remove the pending marker afterward.
 	gcSafePointKeeperRemovable = true
 	if preparedStorage != nil {
-		log.Info("completed repo-v1 snapshot backup", zap.String("backup-id", preparedStorage.BackupID.String()))
+		log.Info("completed repo snapshot backup", zap.String("backup-id", preparedStorage.BackupID.String()))
 		g.Record("backup id", uint64(preparedStorage.BackupID))
 	}
 

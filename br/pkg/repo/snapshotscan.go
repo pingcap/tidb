@@ -29,7 +29,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// PendingMarker describes one repo-v1 marker object under `_meta/pending/`.
+// PendingMarker describes one repo marker object under `_meta/pending/`.
 // A pending marker means BR recorded a snapshot backup attempt in the repository
 // and has not yet discarded that attempt. Its presence alone does not prove the
 // backup is resumable or completed; callers must still inspect the snapshot
@@ -49,7 +49,7 @@ type PendingMarker struct {
 	Path string
 }
 
-// SnapshotDataFile describes one repo-v1 snapshot data object under
+// SnapshotDataFile describes one repo snapshot data object under
 // `_data/snapshot/`.
 // The stable directory layout is `_data/snapshot/<store-id>/<backup-id>/<...>`.
 // All files with the same StoreID and BackupID belong to the same per-store
@@ -78,7 +78,7 @@ type TrySeq[T any] = iter.Seq2[error, T]
 
 var errStopWalkSeq = errors.New("stop walk seq")
 
-// ListCompletedSnapshotIDs scans repo-v1 snapshot metadata under
+// ListCompletedSnapshotIDs scans repo snapshot metadata under
 // `_meta/snapshot/` and returns the unique backup IDs that have at least one
 // completed metadata object.
 // A snapshot counts as completed when the repository contains `backupmeta` or
@@ -184,7 +184,7 @@ func ParseCompletedSnapshotMetaPath(filePath string) (id BackupID, parsed bool, 
 			parsed,
 			err,
 			filePath,
-			"skip non-completed repo-v1 snapshot metadata path while scanning completed snapshots",
+			"skip non-completed repo snapshot metadata path while scanning completed snapshots",
 		)
 	}()
 	if len(parts) < 4 {
@@ -207,7 +207,7 @@ func ParsePendingMarkerPath(filePath string) (marker PendingMarker, parsed bool,
 		return PendingMarker{}, false, nil
 	}
 	defer func() {
-		logSkippedRepoPath(parsed, err, filePath, "skip invalid repo-v1 pending marker path while scanning pending markers")
+		logSkippedRepoPath(parsed, err, filePath, "skip invalid repo pending marker path while scanning pending markers")
 	}()
 	if len(parts) != 4 {
 		return PendingMarker{}, false, nil
@@ -237,7 +237,7 @@ func ParseSnapshotDataFilePath(filePath string) (dataFile SnapshotDataFile, pars
 			parsed,
 			err,
 			filePath,
-			"skip invalid repo-v1 snapshot data path while scanning snapshot data files",
+			"skip invalid repo snapshot data path while scanning snapshot data files",
 		)
 	}()
 	if len(parts) < 5 {

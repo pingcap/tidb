@@ -353,7 +353,7 @@ type immutableRestoreConfig struct {
 func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 	layout := ""
 	backupID := ""
-	if cfg.Layout.IsRepoV1() {
+	if cfg.Layout.IsRepo() {
 		layout = cfg.Layout.String()
 		backupID = cfg.BackupID.String()
 	}

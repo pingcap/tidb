@@ -163,7 +163,7 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 		}
 		if found {
 			return errors.Errorf(
-				"storage %s already contains repo-v1 snapshot artifact "+
+				"storage %s already contains repo snapshot artifact "+
 					"under %q",
 				storage.URI(),
 				prefix,

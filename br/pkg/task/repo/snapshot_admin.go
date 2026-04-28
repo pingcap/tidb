@@ -613,14 +613,14 @@ func selectPendingBackupForDiscard(
 	backups []repo.PendingBackup,
 ) (*repo.PendingBackup, error) {
 	if len(backups) == 0 {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "no pending repo-v1 snapshot backups were found")
+		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "no pending repo snapshot backups were found")
 	}
 	if backupID.IsZero() {
 		if len(backups) != 1 {
 			return nil, errors.Annotatef(
 				berrors.ErrInvalidArgument,
-				"found multiple pending repo-v1 snapshot backups: %s; backup id is required",
-				formatRepoV1BackupIDs(extractPendingBackupIDs(backups)),
+				"found multiple pending repo snapshot backups: %s; backup id is required",
+				formatRepoBackupIDs(extractPendingBackupIDs(backups)),
 			)
 		}
 		return &backups[0], nil
@@ -630,7 +630,7 @@ func selectPendingBackupForDiscard(
 			return &backups[i], nil
 		}
 	}
-	return nil, errors.Annotatef(berrors.ErrInvalidArgument, "pending repo-v1 snapshot backup %s was not found", backupID)
+	return nil, errors.Annotatef(berrors.ErrInvalidArgument, "pending repo snapshot backup %s was not found", backupID)
 }
 
 func extractPendingBackupIDs(backups []repo.PendingBackup) []repo.BackupID {

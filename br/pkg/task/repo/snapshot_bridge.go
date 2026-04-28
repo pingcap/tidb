@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
-// WritePendingSnapshot creates the pending marker object for a repo-v1 snapshot backup.
+// WritePendingSnapshot creates the pending marker object for a repo snapshot backup.
 func WritePendingSnapshot(ctx context.Context, rootStorage storeapi.Storage, pendingFile string) error {
 	return writePendingSnapshot(ctx, rootStorage, pendingFile)
 }

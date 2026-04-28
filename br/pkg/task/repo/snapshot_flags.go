@@ -26,19 +26,19 @@ import (
 
 const flagBackupID = "backup-id"
 
-// SnapshotBackupOptions groups repo-v1 snapshot backup policy while keeping
+// SnapshotBackupOptions groups repo snapshot backup policy while keeping
 // the existing flat flag/config surface.
 type SnapshotBackupOptions struct {
 	Layout    repo.Layout     `json:"storage-layout" toml:"storage-layout"`
 	OnPending OnPendingAction `json:"on-pending" toml:"on-pending"`
 }
 
-func (o SnapshotBackupOptions) IsRepoV1() bool {
-	return o.Layout.IsRepoV1()
+func (o SnapshotBackupOptions) IsRepo() bool {
+	return o.Layout.IsRepo()
 }
 
 func (o SnapshotBackupOptions) HashLayoutTag() string {
-	if !o.IsRepoV1() {
+	if !o.IsRepo() {
 		return ""
 	}
 	return o.Layout.String()
@@ -64,18 +64,18 @@ func ParseSnapshotBackupOptionsFromFlags(flags *pflag.FlagSet) (SnapshotBackupOp
 func DefineSnapshotRepoWriterFlags(flags *pflag.FlagSet) {
 	defineSnapshotRepoLayoutFlag(flags)
 	flags.String(flagOnPending, string(OnPendingError),
-		"how repo-v1 snapshot backup handles matching pending backups, one of error, resume, or new")
+		"how repo snapshot backup handles matching pending backups, one of error, resume, or new")
 }
 
 // DefineSnapshotRepoReaderFlags defines the snapshot repo flags used by snapshot readers.
 func DefineSnapshotRepoReaderFlags(flags *pflag.FlagSet) {
 	defineSnapshotRepoLayoutFlag(flags)
-	flags.String(flagBackupID, "", "snapshot backup id in repo-v1 layout")
+	flags.String(flagBackupID, "", "snapshot backup id in repo layout")
 }
 
 func defineSnapshotRepoLayoutFlag(flags *pflag.FlagSet) {
 	flags.String(flagStorageLayout, string(repo.LayoutLegacy),
-		"snapshot storage layout, one of legacy or repo-v1")
+		"snapshot storage layout, one of legacy or repo")
 }
 
 // ParseSnapshotStorageLayoutFlag parses the shared snapshot storage layout flag.
@@ -108,22 +108,22 @@ func ParseSnapshotBackupIDFlag(flags *pflag.FlagSet) (repo.BackupID, error) {
 
 // ValidateSnapshotRestoreStorage validates the layout/backup-id combination for a snapshot reference.
 func ValidateSnapshotRestoreStorage(layout repo.Layout, backupID repo.BackupID) error {
-	if layout.IsRepoV1() && backupID.IsZero() {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s is required when --%s=repo-v1", flagBackupID, flagStorageLayout)
+	if layout.IsRepo() && backupID.IsZero() {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s is required when --%s=repo", flagBackupID, flagStorageLayout)
 	}
-	if !layout.IsRepoV1() && !backupID.IsZero() {
-		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s requires --%s=repo-v1", flagBackupID, flagStorageLayout)
+	if !layout.IsRepo() && !backupID.IsZero() {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s requires --%s=repo", flagBackupID, flagStorageLayout)
 	}
 	return nil
 }
 
 // SnapshotRegistrationFilterHashInput builds the restore-registration hash input for snapshot restores.
 //
-// BackupID is enough to scope repo-v1 restores because it is the stable identifier of one snapshot backup:
+// BackupID is enough to scope repo restores because it is the stable identifier of one snapshot backup:
 // it names the metadata directory "_meta/snapshot/<backup-id>/" and the per-store data directory
 // "_data/snapshot/<store-id>/<backup-id>/". A zero backup id means the restore is not bound to a specific
-// repo-v1 snapshot, so the plain filter list is sufficient. A non-zero backup id must participate in the hash
-// so two repo-v1 snapshots restored with the same table filters do not share one restore registration.
+// repo snapshot, so the plain filter list is sufficient. A non-zero backup id must participate in the hash
+// so two repo snapshots restored with the same table filters do not share one restore registration.
 func SnapshotRegistrationFilterHashInput(filterStrings []string, backupID repo.BackupID) string {
 	joined := strings.Join(filterStrings, registry.FilterSeparator)
 	if backupID.IsZero() {
@@ -132,7 +132,7 @@ func SnapshotRegistrationFilterHashInput(filterStrings []string, backupID repo.B
 	backupIDString := backupID.String()
 	var builder strings.Builder
 	builder.Grow(len(joined) + len(backupIDString) + 32)
-	builder.WriteString("repo-v1")
+	builder.WriteString("repo")
 	builder.WriteByte(0)
 	builder.WriteString(joined)
 	builder.WriteByte(0)

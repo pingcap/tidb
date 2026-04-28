@@ -945,7 +945,7 @@ func TestHash(t *testing.T) {
 		{
 			name: "repo_v1_layout_changes_hash",
 			modifyFunc: func(cfg *task.RestoreConfig) {
-				cfg.Layout = repo.LayoutRepoV1
+				cfg.Layout = repo.LayoutRepo
 				cfg.BackupID = repo.BackupID(0x1234)
 			},
 			expectEqual: false,
@@ -953,7 +953,7 @@ func TestHash(t *testing.T) {
 		{
 			name: "repo_v1_backup_id_changes_hash",
 			modifyFunc: func(cfg *task.RestoreConfig) {
-				cfg.Layout = repo.LayoutRepoV1
+				cfg.Layout = repo.LayoutRepo
 				cfg.BackupID = repo.BackupID(0x5678)
 			},
 			expectEqual: false,

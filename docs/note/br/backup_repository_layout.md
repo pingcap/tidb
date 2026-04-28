@@ -1,24 +1,24 @@
 # BR Backup Repository Layout Notes
 
-## Snapshot Repo-V1 Initial Wiring
+## Snapshot Repo Initial Wiring
 
-- `br backup full|db|table --storage-layout=repo-v1` now treats `--storage` as a repository root.
-- The first repo-v1 backup initializes `_meta/repo.json` and keeps a root `backup.lock` as the long-lived guard file.
+- `br backup full|db|table --storage-layout=repo` now treats `--storage` as a repository root.
+- The first repo backup initializes `_meta/repo.json` and keeps a root `backup.lock` as the long-lived guard file.
 - Snapshot metadata and checkpoint files are written through a prefixed storage view rooted at `_meta/snapshot/<backup-id>/`.
 - Snapshot SST requests are rewritten per store so the TiKV target backend prefix becomes `_data/snapshot/<store-id>/<backup-id>/...`.
 
 ## Backup ID And Restore Binding
 
 - `backup-id` is allocated from a fresh PD TSO, exposed to users as decimal `uint64`, and encoded as fixed-width upper-case hex only in storage paths.
-- `br restore full|db|table --storage-layout=repo-v1 --backup-id <id>` resolves metadata from `_meta/snapshot/<backup-id>/backupmeta` while still using the repo root backend for data files.
-- `br restore point --full-backup-storage <repo> --storage-layout=repo-v1 --backup-id <id>` reuses the same snapshot reference flags for the full backup it restores before log replay.
-- `br operator checksum-as -s <repo> --storage-layout=repo-v1 --backup-id <id>` resolves rewrite-rule metadata from the same per-backup snapshot metadata view instead of the repo root.
+- `br restore full|db|table --storage-layout=repo --backup-id <id>` resolves metadata from `_meta/snapshot/<backup-id>/backupmeta` while still using the repo root backend for data files.
+- `br restore point --full-backup-storage <repo> --storage-layout=repo --backup-id <id>` reuses the same snapshot reference flags for the full backup it restores before log replay.
+- `br operator checksum-as -s <repo> --storage-layout=repo --backup-id <id>` resolves rewrite-rule metadata from the same per-backup snapshot metadata view instead of the repo root.
 - Legacy snapshot backup and restore keep the old root-level `backupmeta` layout unchanged.
 
 ## Pending Marker Semantics
 
-- Repo-v1 currently creates pending markers only when snapshot checkpoint mode is enabled.
-- Startup scans `_meta/pending/<config-hash>/` for repo-v1 backups of the same immutable backup config. The on-storage config-hash directory name is upper-case hex.
+- Repo currently creates pending markers only when snapshot checkpoint mode is enabled.
+- Startup scans `_meta/pending/<config-hash>/` for repo backups of the same immutable backup config. The on-storage config-hash directory name is upper-case hex.
 - If a pending entry already has final `backupmeta`, BR removes it as stale metadata.
 - If a pending entry has checkpoint metadata but no final `backupmeta`, BR fails fast instead of implicitly resuming.
 - If a pending entry has neither checkpoint metadata nor final `backupmeta`, BR treats it as inconsistent repo state and reports an operator-visible error.

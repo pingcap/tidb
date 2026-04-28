@@ -445,7 +445,7 @@ type Client struct {
 	clusterID uint64
 
 	// Most backups use one external storage, so these two fields normally point to the same object.
-	// Repo-v1 snapshot backups split them on purpose:
+	// Repo snapshot backups split them on purpose:
 	//   - storage keeps the original/root backend view for data files and repo-level operations.
 	//   - metaStorage is the metadata view used for backupmeta/checkpoint/lock files.
 	storage     storeapi.Storage

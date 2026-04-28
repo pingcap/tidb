@@ -179,7 +179,7 @@ type RegistrationInfo struct {
 	// filter patterns
 	FilterStrings []string
 	// FilterHashInput is the exact input hashed into filter_hash when looking up
-	// or creating registrations. It should already include any repo-v1 backup scope.
+	// or creating registrations. It should already include any repo backup scope.
 	FilterHashInput string
 
 	// time range for restore

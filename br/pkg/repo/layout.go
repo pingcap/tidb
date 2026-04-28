@@ -31,7 +31,7 @@ type Layout string
 
 const (
 	LayoutLegacy Layout = "legacy"
-	LayoutRepoV1 Layout = "repo-v1"
+	LayoutRepo   Layout = "repo"
 )
 
 func ParseLayout(raw string) (Layout, error) {
@@ -39,7 +39,7 @@ func ParseLayout(raw string) (Layout, error) {
 	if layout == "" {
 		return LayoutLegacy, nil
 	}
-	if layout == LayoutLegacy || layout == LayoutRepoV1 {
+	if layout == LayoutLegacy || layout == LayoutRepo {
 		return layout, nil
 	}
 	return "", errors.Errorf("unknown storage layout %q", raw)
@@ -52,11 +52,11 @@ func (l Layout) String() string {
 	return string(l)
 }
 
-func (l Layout) IsRepoV1() bool {
-	return l == LayoutRepoV1
+func (l Layout) IsRepo() bool {
+	return l == LayoutRepo
 }
 
-// BackupID is the stable identifier of one snapshot instance in repo-v1.
+// BackupID is the stable identifier of one snapshot instance in repo.
 type BackupID uint64
 
 const (

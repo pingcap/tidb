@@ -31,9 +31,9 @@ func TestLayoutAndBackupID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, repo.LayoutLegacy, layout)
 
-	layout, err = repo.ParseLayout("repo-v1")
+	layout, err = repo.ParseLayout("repo")
 	require.NoError(t, err)
-	require.Equal(t, repo.LayoutRepoV1, layout)
+	require.Equal(t, repo.LayoutRepo, layout)
 
 	_, err = repo.ParseLayout("unknown")
 	require.Error(t, err)
@@ -125,6 +125,6 @@ func TestEnsureRepoRejectsExistingRepoArtifactsWithoutMeta(t *testing.T) {
 
 		_, err := repo.EnsureRepo(ctx, storage, "br test")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "repo-v1 snapshot artifact")
+		require.Contains(t, err.Error(), "repo snapshot artifact")
 	}
 }

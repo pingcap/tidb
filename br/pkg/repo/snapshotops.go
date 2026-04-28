@@ -353,22 +353,22 @@ func supportsRepoStartAfter(storage storeapi.Storage) bool {
 	return false
 }
 
-// ValidateRepoV1StartAfterSupport checks whether the resolved storage exposes
-// WalkDir StartAfter, which repo-v1 snapshot operations use to scan one backup's
+// ValidateRepoStartAfterSupport checks whether the resolved storage exposes
+// WalkDir StartAfter, which repo snapshot operations use to scan one backup's
 // data files without rewalking unrelated snapshot objects.
-func ValidateRepoV1StartAfterSupport(storage storeapi.Storage) error {
+func ValidateRepoStartAfterSupport(storage storeapi.Storage) error {
 	if supportsRepoStartAfter(storage) {
 		return nil
 	}
 	return errors.Annotatef(
 		berrors.ErrUnsupportedOperation,
-		"storage %s does not support WalkDir StartAfter required by repo-v1 snapshot operations",
+		"storage %s does not support WalkDir StartAfter required by repo snapshot operations",
 		storage.URI(),
 	)
 }
 
 func (ops SnapshotOps) requireRepoStartAfter() error {
-	return ValidateRepoV1StartAfterSupport(ops.Storage)
+	return ValidateRepoStartAfterSupport(ops.Storage)
 }
 
 func (ops SnapshotOps) DiscardPendingSnapshot(

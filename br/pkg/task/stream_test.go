@@ -285,7 +285,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	})
 }
 
-func TestGetFullBackupTSReadsRepoV1MetadataStorage(t *testing.T) {
+func TestGetFullBackupTSReadsRepoMetadataStorage(t *testing.T) {
 	ctx := context.Background()
 	testDir := t.TempDir()
 	storage, err := objstore.NewLocalStorage(testDir)
@@ -310,7 +310,7 @@ func TestGetFullBackupTSReadsRepoV1MetadataStorage(t *testing.T) {
 			CipherInfo: *cipher,
 		},
 		FullBackupStorage: testDir,
-		Layout:            repo.LayoutRepoV1,
+		Layout:            repo.LayoutRepo,
 		BackupID:          backupID,
 	})
 	require.NoError(t, err)

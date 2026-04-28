@@ -118,7 +118,7 @@ func TestDiscardPendingSnapshotUnfinishedRejectsUnsupportedStorage(t *testing.T)
 
 	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(ctx, t, storage, backupID))
 	require.Error(t, err)
-	require.ErrorContains(t, err, "repo-v1 snapshot operations")
+	require.ErrorContains(t, err, "repo snapshot operations")
 	require.True(t, errors.ErrorEqual(err, berrors.ErrUnsupportedOperation))
 	require.Equal(t, backupID, result.BackupID)
 	require.Zero(t, result.MetadataDeleted)
@@ -187,7 +187,7 @@ func TestDeleteSnapshotRejectsUnsupportedStorage(t *testing.T) {
 
 	result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "repo-v1 snapshot operations")
+	require.ErrorContains(t, err, "repo snapshot operations")
 	require.True(t, errors.ErrorEqual(err, berrors.ErrUnsupportedOperation))
 	require.Equal(t, backupID, result.BackupID)
 	require.Zero(t, result.MetadataDeleted)

@@ -13,9 +13,9 @@
 // limitations under the License.
 
 // Package repo defines BR snapshot storage layouts and the helpers that operate
-// on the repo-v1 layout.
+// on the repo layout.
 //
-// Repo-v1 treats --storage as a shared snapshot repository. The stable paths
+// Repo treats --storage as a shared snapshot repository. The stable paths
 // are "_meta/repo.json", "backup.lock" at the repository root,
 // "_meta/snapshot/<backup-id>/", "_meta/pending/<config-hash>/<backup-id>.json",
 // and "_data/snapshot/<store-id>/<backup-id>/".
@@ -24,7 +24,7 @@
 // rendered as 16-character upper-case hexadecimal in storage paths.
 //
 // meta.go initializes and validates a repository root by rejecting legacy or
-// stray repo-v1 snapshot artifacts, writing "_meta/repo.json", and creating
+// stray repo snapshot artifacts, writing "_meta/repo.json", and creating
 // the root guard file. NewPrefixedStorage is a prefix-rewriting storage wrapper
 // that exposes relative paths under one repository subdirectory.
 //
