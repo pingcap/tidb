@@ -35,7 +35,7 @@ type ticiEstimateShardGroup struct {
 
 // EstimateTiCICount picks one TiFlash store, estimates the matching rows on that store,
 // and then scales the result by the ratio of total hit shards to sampled-store hit shards.
-func (s *Store) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCountRequest) (uint64, error) {
+func (s *Store) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCountRequest, timeout time.Duration) (uint64, error) {
 	if req == nil {
 		return 0, errors.New("TiCI estimate count request is nil")
 	}
@@ -70,12 +70,7 @@ func (s *Store) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCount
 	}
 	clientReq := tikvrpc.NewRequest(tikvrpc.CmdGetEstimateTiCICount, pbReq)
 	clientReq.StoreTp = getEndPointType(kv.TiFlash)
-	// SendRequest requires a timeout, so only mirror the caller ctx deadline when it exists.
-	rpcTimeout := time.Duration(1<<63 - 1)
-	if deadline, ok := ctx.Deadline(); ok {
-		rpcTimeout = time.Until(deadline)
-	}
-	resp, err := s.GetTiKVClient().SendRequest(ctx, group.addr, clientReq, rpcTimeout)
+	resp, err := s.GetTiKVClient().SendRequest(ctx, group.addr, clientReq, timeout)
 	if err != nil {
 		return 0, err
 	}

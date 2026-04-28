@@ -20,6 +20,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -282,7 +283,7 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 		KeyRanges:      keyRanges,
 		TimeZoneName:   tzName,
 		TimeZoneOffset: tzOffset,
-	})
+	}, 50*time.Millisecond)
 	if err != nil {
 		return 0, false
 	}
