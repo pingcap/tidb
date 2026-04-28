@@ -501,6 +501,23 @@ func (c *Column) SetNulls(begin, end int, isNull bool) {
 	}
 }
 
+// HasNull returns true if there is any null value in this Column.
+func (c *Column) HasNull() bool {
+	var i int
+	for ; i+8 <= c.length; i += 8 {
+		// 0 is null and 1 is not null
+		if c.nullBitmap[i>>3] != 0xFF {
+			return true
+		}
+	}
+	for ; i < c.length; i++ {
+		if c.IsNull(i) {
+			return true
+		}
+	}
+	return false
+}
+
 // nullCount returns the number of nulls in this Column.
 func (c *Column) nullCount() int {
 	var cnt, i int

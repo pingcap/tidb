@@ -56,9 +56,6 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 	if e.TargetTable == nil {
 		return nil, errors.New("TargetTable is nil")
 	}
-	if e.TargetInfo != nil && e.TargetInfo.ID != e.TargetTable.Meta().ID {
-		return nil, errors.Errorf("TargetInfo.ID(%d) does not match TargetTable.ID(%d)", e.TargetInfo.ID, e.TargetTable.Meta().ID)
-	}
 	if e.TargetHandleCols == nil {
 		return nil, errors.New("TargetHandleCols is nil")
 	}

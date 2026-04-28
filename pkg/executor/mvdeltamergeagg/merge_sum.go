@@ -21,6 +21,18 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
+func validateCountExprNotNull(countCol *chunk.Column, numRows int) error {
+	if !countCol.HasNull() {
+		return nil
+	}
+	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		if countCol.IsNull(rowIdx) {
+			return errors.Errorf("count(expr) is null at row %d", rowIdx)
+		}
+	}
+	return nil
+}
+
 func validateSumValueTypes(outputTp, deltaTp *types.FieldType) error {
 	if outputTp == nil || deltaTp == nil {
 		return errors.New("SUM mapping type is unavailable")
@@ -110,7 +122,7 @@ func (e *Exec) buildSumMerger(
 			retTp:       retTp,
 		}, nil
 	case types.ETReal:
-		return &sumRealMerger{
+		return &sumFloat64Merger{
 			outputCols:  []int{outputColID},
 			deltaRef:    deltaRef,
 			countRef:    countRef,
@@ -187,11 +199,11 @@ func (m *sumIntMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.C
 		return nil
 	}
 
+	if err := validateCountExprNotNull(countCol, numRows); err != nil {
+		return err
+	}
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if countCol.IsNull(rowIdx) {
-			return errors.Errorf("count(expr) is null at row %d", rowIdx)
-		}
 		if countVals[rowIdx] < 0 {
 			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
 		}
@@ -281,11 +293,11 @@ func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 		return nil
 	}
 
+	if err := validateCountExprNotNull(countCol, numRows); err != nil {
+		return err
+	}
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if countCol.IsNull(rowIdx) {
-			return errors.Errorf("count(expr) is null at row %d", rowIdx)
-		}
 		if countVals[rowIdx] < 0 {
 			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
 		}
@@ -319,7 +331,7 @@ func (m *sumUintMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 	return nil
 }
 
-type sumRealMerger struct {
+type sumFloat64Merger struct {
 	outputCols  []int
 	deltaRef    depRef
 	countRef    depRef
@@ -327,11 +339,11 @@ type sumRealMerger struct {
 	retTp       *types.FieldType
 }
 
-func (m *sumRealMerger) outputColIDs() []int {
+func (m *sumFloat64Merger) outputColIDs() []int {
 	return m.outputCols
 }
 
-func (m *sumRealMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
+func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Column, outputCols []*chunk.Column, _ *mvMergeAggWorkerData) error {
 	if len(outputCols) != 1 {
 		return errors.Errorf("sum merger expects exactly 1 output column slot, got %d", len(outputCols))
 	}
@@ -371,11 +383,11 @@ func (m *sumRealMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.
 		return nil
 	}
 
+	if err := validateCountExprNotNull(countCol, numRows); err != nil {
+		return err
+	}
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if countCol.IsNull(rowIdx) {
-			return errors.Errorf("count(expr) is null at row %d", rowIdx)
-		}
 		if countVals[rowIdx] < 0 {
 			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
 		}
@@ -446,21 +458,19 @@ func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 				resultVals[rowIdx] = deltaVals[rowIdx]
 				continue
 			}
-			var sum types.MyDecimal
-			if err := types.DecimalAdd(&oldVals[rowIdx], &deltaVals[rowIdx], &sum); err != nil {
+			if err := types.DecimalAdd(&oldVals[rowIdx], &deltaVals[rowIdx], &resultVals[rowIdx]); err != nil {
 				return err
 			}
-			resultVals[rowIdx] = sum
 		}
 		outputCols[0] = resultCol
 		return nil
 	}
 
+	if err := validateCountExprNotNull(countCol, numRows); err != nil {
+		return err
+	}
 	countVals := countCol.Int64s()
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
-		if countCol.IsNull(rowIdx) {
-			return errors.Errorf("count(expr) is null at row %d", rowIdx)
-		}
 		if countVals[rowIdx] < 0 {
 			return errors.Errorf("count(expr) becomes negative (%d) at row %d", countVals[rowIdx], rowIdx)
 		}
@@ -478,11 +488,9 @@ func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 		case deltaIsNull:
 			resultVals[rowIdx] = oldVals[rowIdx]
 		default:
-			var sum types.MyDecimal
-			if err := types.DecimalAdd(&oldVals[rowIdx], &deltaVals[rowIdx], &sum); err != nil {
+			if err := types.DecimalAdd(&oldVals[rowIdx], &deltaVals[rowIdx], &resultVals[rowIdx]); err != nil {
 				return err
 			}
-			resultVals[rowIdx] = sum
 		}
 	}
 	outputCols[0] = resultCol

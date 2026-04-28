@@ -657,6 +657,30 @@ func TestNull(t *testing.T) {
 	require.Equal(t, 8, col.nullCount())
 }
 
+func TestHasNull(t *testing.T) {
+	col := newFixedLenColumn(sizeFloat64, 32)
+
+	col.ResizeFloat64(0, false)
+	require.False(t, col.HasNull())
+
+	col.ResizeFloat64(8, false)
+	require.False(t, col.HasNull())
+
+	col.ResizeFloat64(9, false)
+	require.False(t, col.HasNull())
+
+	col.SetNull(8, true)
+	require.True(t, col.HasNull())
+	col.SetNull(8, false)
+	require.False(t, col.HasNull())
+
+	col.SetNull(0, true)
+	require.True(t, col.HasNull())
+
+	col.ResizeFloat64(9, true)
+	require.True(t, col.HasNull())
+}
+
 func TestSetNulls(t *testing.T) {
 	col := newFixedLenColumn(sizeFloat64, 32)
 	col.ResizeFloat64(1024, true)
