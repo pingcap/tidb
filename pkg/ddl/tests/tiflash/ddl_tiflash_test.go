@@ -1333,6 +1333,7 @@ func TestTiFlashPartitionNotAvailable(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	se := session.CreateSessionAndSetID(t, s.store)
+	defer se.Close()
 	transitionTimeout := ddl.PollTiFlashInterval * RoundToBeAvailable * 6
 
 	session.MustExec(t, se, "use test")
