@@ -54,10 +54,12 @@ type addIndexProgressLogKey struct {
 
 var addIndexProgressLogState sync.Map // map[addIndexProgressLogKey]GetIndexProgressResponse_State
 
-var mockTiCICreateIndexRequest atomic.Value          // stores []byte of CreateIndexRequest for tests.
-var mockTiCIAddPartitionRequest atomic.Value         // stores []byte of AddPartitionRequest for tests.
-var mockTiCIDropPartitionRequest atomic.Value        // stores []byte of DropPartitionRequest for tests.
-var mockTiCIPreSplitImportShardsRequest atomic.Value // stores []byte of PreSplitImportShardsRequest for tests.
+var mockTiCICreateIndexRequest atomic.Value            // stores []byte of CreateIndexRequest for tests.
+var mockTiCIAddPartitionRequest atomic.Value           // stores []byte of AddPartitionRequest for tests.
+var mockTiCIDropPartitionRequest atomic.Value          // stores []byte of DropPartitionRequest for tests.
+var mockTiCIGetImportStoragePrefixRequest atomic.Value // stores []byte of GetImportStoragePrefixRequest for tests.
+var mockTiCIFinishIndexUploadRequest atomic.Value      // stores []byte of FinishImportIndexUploadRequest for tests.
+var mockTiCIPreSplitImportShardsRequest atomic.Value   // stores []byte of PreSplitImportShardsRequest for tests.
 
 // GetMockTiCICreateIndexRequest returns the marshaled CreateIndexRequest bytes captured by the
 // `MockCreateTiCIIndexRequest` failpoint. It returns nil if nothing was captured.
@@ -114,6 +116,44 @@ func GetMockTiCIDropPartitionRequest() []byte {
 // ResetMockTiCIDropPartitionRequest clears the captured request for tests.
 func ResetMockTiCIDropPartitionRequest() {
 	mockTiCIDropPartitionRequest.Store([]byte{})
+}
+
+// GetMockTiCIGetImportStoragePrefixRequest returns the marshaled GetImportStoragePrefixRequest bytes captured by the
+// `MockGetCloudStoragePrefix` failpoint. It returns nil if nothing was captured.
+func GetMockTiCIGetImportStoragePrefixRequest() []byte {
+	v := mockTiCIGetImportStoragePrefixRequest.Load()
+	if v == nil {
+		return nil
+	}
+	b, ok := v.([]byte)
+	if !ok || len(b) == 0 {
+		return nil
+	}
+	return append([]byte(nil), b...)
+}
+
+// ResetMockTiCIGetImportStoragePrefixRequest clears the captured request for tests.
+func ResetMockTiCIGetImportStoragePrefixRequest() {
+	mockTiCIGetImportStoragePrefixRequest.Store([]byte{})
+}
+
+// GetMockTiCIFinishIndexUploadRequest returns the marshaled FinishImportIndexUploadRequest bytes captured by the
+// `MockFinishIndexUpload` failpoint. It returns nil if nothing was captured.
+func GetMockTiCIFinishIndexUploadRequest() []byte {
+	v := mockTiCIFinishIndexUploadRequest.Load()
+	if v == nil {
+		return nil
+	}
+	b, ok := v.([]byte)
+	if !ok || len(b) == 0 {
+		return nil
+	}
+	return append([]byte(nil), b...)
+}
+
+// ResetMockTiCIFinishIndexUploadRequest clears the captured request for tests.
+func ResetMockTiCIFinishIndexUploadRequest() {
+	mockTiCIFinishIndexUploadRequest.Store([]byte{})
 }
 
 // GetMockTiCIPreSplitImportShardsRequest returns the marshaled PreSplitImportShardsRequest bytes captured by the
@@ -473,6 +513,14 @@ func (t *ManagerCtx) GetCloudStoragePrefix(
 	indexIDs []int64,
 ) (string, uint64, error) {
 	failpoint.Inject("MockGetCloudStoragePrefix", func(val failpoint.Value) {
+		reqData, marshalErr := json.Marshal(&GetImportStoragePrefixRequest{
+			TidbTaskId: tidbTaskID,
+			TableId:    tableID,
+			IndexIds:   append([]int64(nil), indexIDs...),
+		})
+		if marshalErr == nil {
+			mockTiCIGetImportStoragePrefixRequest.Store(reqData)
+		}
 		mockStorageURI := "s3://mock-tici/t_{table_id}/i_{index_id}/import/mock_job"
 		mockJobID := uint64(1)
 		mockErrorMessage := ""
@@ -824,6 +872,13 @@ func maybeMockFinishIndexUpload(tidbTaskID string) (bool, error) {
 	)
 	failpoint.Inject("MockFinishIndexUpload", func(val failpoint.Value) {
 		handled = true
+		reqData, marshalErr := json.Marshal(&FinishImportIndexUploadRequest{
+			TidbTaskId: tidbTaskID,
+			Status:     ErrorCode_SUCCESS,
+		})
+		if marshalErr == nil {
+			mockTiCIFinishIndexUploadRequest.Store(reqData)
+		}
 		mockSuccess := false
 		if v, ok := val.(bool); ok {
 			mockSuccess = v

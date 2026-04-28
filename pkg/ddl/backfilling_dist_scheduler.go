@@ -23,7 +23,6 @@ import (
 	"math"
 	"slices"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/docker/go-units"
@@ -632,7 +631,7 @@ func buildTiCIPreSplitImportShardsRequest(
 	}
 	dataFileCount, statFileCount := countUniqueFilesForTiCIPreSplitRequest(kvMetaGroups)
 	req := &tici.PreSplitImportShardsRequest{
-		TidbTaskId:     strconv.FormatInt(backfillMeta.Job.ID, 10),
+		TidbTaskId:     ticiTaskIDForDDL(backfillMeta.Job.ID),
 		TableId:        backfillMeta.Job.TableID,
 		ScanSnapshotTs: backfillMeta.ScanSnapshotTS,
 		IndexIds:       append([]int64(nil), backfillMeta.EleIDs...),

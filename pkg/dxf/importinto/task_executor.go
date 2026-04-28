@@ -85,6 +85,10 @@ type importStepExecutor struct {
 	summary execute.SubtaskSummary
 }
 
+func ticiTaskIDForImportInto(jobID int64) string {
+	return TaskKey(jobID)
+}
+
 func getTableImporter(
 	ctx context.Context,
 	taskID int64,
@@ -108,6 +112,7 @@ func getTableImporter(
 	if err = controller.InitDataStore(ctx); err != nil {
 		return nil, err
 	}
+	controller.TiDBTaskIDForTiCI = ticiTaskIDForImportInto(taskMeta.JobID)
 
 	failpoint.Inject("createTableImporterForTest", func() {
 		failpoint.Return(importer.NewTableImporterForTest(ctx, controller, strconv.FormatInt(taskID, 10), store))
