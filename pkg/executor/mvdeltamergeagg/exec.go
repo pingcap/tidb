@@ -181,8 +181,6 @@ type Exec struct {
 	TargetInfo  *model.TableInfo
 	// TargetHandleCols builds row handles for update/delete from child input rows.
 	TargetHandleCols plannerutil.HandleCols
-	// TargetWritableColIDs maps writable target column index to input column index.
-	TargetWritableColIDs []int
 
 	compiledMergers      []aggMerger
 	compiledOutputColCnt int

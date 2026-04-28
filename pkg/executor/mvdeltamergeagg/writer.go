@@ -69,15 +69,9 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 		return nil, errors.New("Exec stage1 does not support target table with non-public writable columns")
 	}
 
-	colIDs := e.TargetWritableColIDs
-	if len(colIDs) == 0 {
-		colIDs = make([]int, len(writableCols))
-		for i := range writableCols {
-			colIDs[i] = e.DeltaAggColCount + writableCols[i].Offset
-		}
-	}
-	if len(colIDs) != len(writableCols) {
-		return nil, errors.Errorf("TargetWritableColIDs size %d does not match target writable columns %d", len(colIDs), len(writableCols))
+	colIDs := make([]int, len(writableCols))
+	for i := range writableCols {
+		colIDs[i] = e.DeltaAggColCount + writableCols[i].Offset
 	}
 	for i := 0; i < e.TargetHandleCols.NumCols(); i++ {
 		handleInputIdx := e.TargetHandleCols.GetCol(i).Index
@@ -92,16 +86,16 @@ func (e *Exec) buildTableResultWriter() (ResultWriter, error) {
 	}
 	for writableIdx, colID := range colIDs {
 		if colID < 0 || colID >= len(childTypes) {
-			return nil, errors.Errorf("TargetWritableColIDs[%d]=%d out of range [0,%d)", writableIdx, colID, len(childTypes))
+			return nil, errors.Errorf("target writable mapping[%d]=%d out of range [0,%d)", writableIdx, colID, len(childTypes))
 		}
 		inputTp := childTypes[colID]
 		if inputTp == nil {
-			return nil, errors.Errorf("TargetWritableColIDs[%d]=%d type is unavailable", writableIdx, colID)
+			return nil, errors.Errorf("target writable mapping[%d]=%d type is unavailable", writableIdx, colID)
 		}
 		targetTp := &writableCols[writableIdx].FieldType
 		if !targetTp.Equal(inputTp) {
 			return nil, errors.Errorf(
-				"TargetWritableColIDs[%d]=%d type mismatch, target col `%s` expects %s but input is %s",
+				"target writable mapping[%d]=%d type mismatch, target col `%s` expects %s but input is %s",
 				writableIdx, colID, writableCols[writableIdx].Name.O, targetTp.String(), inputTp.String(),
 			)
 		}
