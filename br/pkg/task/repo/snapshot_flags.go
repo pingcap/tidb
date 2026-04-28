@@ -26,45 +26,9 @@ import (
 
 const flagBackupID = "backup-id"
 
-// SnapshotBackupOptions groups repo snapshot backup policy while keeping
-// the existing flat flag/config surface.
-type SnapshotBackupOptions struct {
-	Layout    repo.Layout     `json:"storage-layout" toml:"storage-layout"`
-	OnPending OnPendingAction `json:"on-pending" toml:"on-pending"`
-}
-
-func (o SnapshotBackupOptions) IsRepo() bool {
-	return o.Layout.IsRepo()
-}
-
-func (o SnapshotBackupOptions) HashLayoutTag() string {
-	if !o.IsRepo() {
-		return ""
-	}
-	return o.Layout.String()
-}
-
-// ParseSnapshotBackupOptionsFromFlags parses the snapshot repo backup-specific flags.
-func ParseSnapshotBackupOptionsFromFlags(flags *pflag.FlagSet) (SnapshotBackupOptions, error) {
-	layout, err := ParseSnapshotStorageLayoutFlag(flags)
-	if err != nil {
-		return SnapshotBackupOptions{}, errors.Trace(err)
-	}
-	onPending, err := parseSnapshotOnPendingFlag(flags)
-	if err != nil {
-		return SnapshotBackupOptions{}, errors.Trace(err)
-	}
-	return SnapshotBackupOptions{
-		Layout:    layout,
-		OnPending: onPending,
-	}, nil
-}
-
 // DefineSnapshotRepoWriterFlags defines the snapshot repo flags used by snapshot writers.
 func DefineSnapshotRepoWriterFlags(flags *pflag.FlagSet) {
 	defineSnapshotRepoLayoutFlag(flags)
-	flags.String(flagOnPending, string(OnPendingError),
-		"how repo snapshot backup handles matching pending backups, one of error, resume, or new")
 }
 
 // DefineSnapshotRepoReaderFlags defines the snapshot repo flags used by snapshot readers.
@@ -138,25 +102,4 @@ func SnapshotRegistrationFilterHashInput(filterStrings []string, backupID repo.B
 	builder.WriteByte(0)
 	builder.WriteString(backupIDString)
 	return builder.String()
-}
-
-func parseSnapshotOnPendingFlag(flags *pflag.FlagSet) (OnPendingAction, error) {
-	if flags.Lookup(flagOnPending) == nil {
-		return OnPendingError, nil
-	}
-	raw, err := flags.GetString(flagOnPending)
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	action := OnPendingAction(strings.ToLower(strings.TrimSpace(raw)))
-	switch action {
-	case "", OnPendingError:
-		return OnPendingError, nil
-	case OnPendingResume:
-		return OnPendingResume, nil
-	case OnPendingNew:
-		return OnPendingNew, nil
-	default:
-		return "", errors.Errorf("unknown on-pending action %q", raw)
-	}
 }

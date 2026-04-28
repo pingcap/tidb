@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -300,11 +299,8 @@ func expectedDefaultBackupConfig() BackupConfig {
 		IgnoreStats:      true,
 		UseBackupMetaV2:  true,
 		UseCheckpoint:    true,
+		Layout:           repo.LayoutLegacy,
 		TableConcurrency: 64,
-		SnapshotBackupOptions: taskrepo.SnapshotBackupOptions{
-			Layout:    repo.LayoutLegacy,
-			OnPending: taskrepo.OnPendingError,
-		},
 	}
 }
 

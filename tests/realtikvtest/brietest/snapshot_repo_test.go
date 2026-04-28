@@ -415,7 +415,7 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 
 	resumeCfg := suite.backupConfig()
 	resumeCfg.RateLimit = 1 << 20
-	resumeCfg.SnapshotBackupOptions.OnPending = taskrepo.OnPendingResume
+	resumeCfg.UseCheckpoint = true
 	_, err := suite.runBackup(resumeCfg)
 	require.ErrorContains(t, err, "another BR")
 	assertSingleBackupPath(failedBackupID)

@@ -33,19 +33,7 @@ import (
 	gozap "go.uber.org/zap"
 )
 
-const (
-	flagStorageLayout = "storage-layout"
-	flagUseCheckpoint = "use-checkpoint"
-	flagOnPending     = "on-pending"
-)
-
-type OnPendingAction string
-
-const (
-	OnPendingError  OnPendingAction = "error"
-	OnPendingResume OnPendingAction = "resume"
-	OnPendingNew    OnPendingAction = "new"
-)
+const flagStorageLayout = "storage-layout"
 
 type Config struct {
 	objstore.BackendOptions
@@ -92,26 +80,10 @@ func (prepared *PreparedRepoSnapshotBackup) RewriteStoreResponseFiles(storeID ui
 }
 
 type SnapshotBackupStorageParams struct {
-	OnPending        OnPendingAction
+	UseCheckpoint    bool
 	ConfigHash       []byte
 	CreatedBy        string
 	AllocateBackupID func(context.Context) (repo.BackupID, error)
-}
-
-func ValidateSnapshotBackupRepoConfig(layout repo.Layout, useCheckpoint bool) error {
-	if !layout.IsRepo() {
-		return nil
-	}
-	if !useCheckpoint {
-		return errors.Annotatef(
-			berrors.ErrInvalidArgument,
-			"--%s=%s requires --%s",
-			flagStorageLayout,
-			repo.LayoutRepo,
-			flagUseCheckpoint,
-		)
-	}
-	return nil
 }
 
 type repoBackupAttempt struct {
@@ -137,7 +109,7 @@ func PrepareRepoSnapshotBackup(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	attempt, err := chooseRepoBackupAttempt(params.OnPending, resumableBackups, cfgHashDirName)
+	attempt, err := chooseRepoBackupAttempt(params.UseCheckpoint, resumableBackups, cfgHashDirName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -193,51 +165,26 @@ func ActivateSnapshotBackupResume(
 }
 
 func chooseRepoBackupAttempt(
-	onPending OnPendingAction,
+	useCheckpoint bool,
 	resumableBackups []repo.BackupID,
 	cfgHashDirName string,
 ) (repoBackupAttempt, error) {
-	switch onPending {
-	case "", OnPendingError:
-		switch len(resumableBackups) {
-		case 0:
-			return repoBackupAttempt{}, nil
-		case 1:
-			return repoBackupAttempt{}, errors.Annotatef(
-				berrors.ErrInvalidArgument,
-				"found unfinished repo backup %s for config hash %s; use --%s=%s to resume it or --%s=%s to start a fresh attempt",
-				resumableBackups[0], cfgHashDirName, flagOnPending, OnPendingResume, flagOnPending, OnPendingNew,
-			)
-		default:
-			return repoBackupAttempt{}, errors.Annotatef(
-				berrors.ErrInvalidArgument,
-				"found multiple unfinished repo backups for config hash %s: %s",
-				cfgHashDirName, formatRepoBackupIDs(resumableBackups),
-			)
-		}
-	case OnPendingResume:
-		switch len(resumableBackups) {
-		case 0:
-			return repoBackupAttempt{}, nil
-		case 1:
-			return repoBackupAttempt{
-				backupID:             resumableBackups[0],
-				resumeFromCheckpoint: true,
-			}, nil
-		default:
-			return repoBackupAttempt{}, errors.Annotatef(
-				berrors.ErrInvalidArgument,
-				"found multiple unfinished repo backups for config hash %s: %s; cannot resume an ambiguous backup",
-				cfgHashDirName, formatRepoBackupIDs(resumableBackups),
-			)
-		}
-	case OnPendingNew:
+	if !useCheckpoint {
 		return repoBackupAttempt{}, nil
+	}
+	switch len(resumableBackups) {
+	case 0:
+		return repoBackupAttempt{}, nil
+	case 1:
+		return repoBackupAttempt{
+			backupID:             resumableBackups[0],
+			resumeFromCheckpoint: true,
+		}, nil
 	default:
 		return repoBackupAttempt{}, errors.Annotatef(
 			berrors.ErrInvalidArgument,
-			"unknown repo on-pending action %q",
-			onPending,
+			"found multiple unfinished repo backups for config hash %s: %s; cannot resume an ambiguous backup; use --use-checkpoint=false to start a fresh attempt",
+			cfgHashDirName, formatRepoBackupIDs(resumableBackups),
 		)
 	}
 }

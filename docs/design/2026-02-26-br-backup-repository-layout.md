@@ -114,7 +114,7 @@ BR prints the user-facing `<backup-id>` (`uint64`) on success.
 Repo models each snapshot backup as one per-backup namespace rooted at `_meta/snapshot/<backup-id>/...`.
 
 Lifecycle:
-- A new repo backup begins by either allocating a fresh `<backup-id>` or resuming exactly one unfinished backup selected through `--on-pending`, then establishing or reusing its per-backup namespace: metadata under `_meta/snapshot/<backup-id>/...` and data under `_data/snapshot/<store-id>/<backup-id>/...`.
+- A new repo backup begins by selecting one per-backup namespace: with `--use-checkpoint=true`, BR resumes exactly one matching unfinished backup when present and allocates a fresh `<backup-id>` when none exists; with `--use-checkpoint=false`, BR always allocates a fresh `<backup-id>`. The selected namespace stores metadata under `_meta/snapshot/<backup-id>/...` and data under `_data/snapshot/<store-id>/<backup-id>/...`.
 - While the backup is running, checkpoint artifacts and temporary metadata accumulate under that per-backup metadata namespace. This namespace is the canonical record of the backup's in-progress state.
 - The backup remains unfinished until its final `backupmeta` is durable. Checkpoint cleanup is part of the success path, not a separate logical backup.
 - Once the final `backupmeta` is durable and checkpoint cleanup has finished, the backup is complete and becomes a normal historical snapshot in the repo.
@@ -165,36 +165,33 @@ SST format remains RocksDB SST (per CF), with existing compression/encryption be
 #### Backup
 
 Command:
-- `br backup full|db|table -s <repo> --storage-layout=repo [--on-pending=error|resume|new] ...`
+- `br backup full|db|table -s <repo> --storage-layout=repo ...`
 
 Semantics:
 - `repo` treats `--storage` as a repository root instead of a legacy single-backup directory.
 - On first use, creates `_meta/repo.json` and `backup.lock`.
-- Current implementation requires checkpoint mode for repo snapshot backup; `--use-checkpoint=false` is rejected.
-- Creates a new snapshot backup in the repo and allocates a fresh PD TSO `<backup-id>` for this run.
-- Computes `<config-hash-hex>` for the current logical backup configuration and creates `_meta/pending/<config-hash-hex>/<backup-id>.json` before issuing TiKV backup requests.
+- Creates a snapshot backup in the repo and selects a PD TSO `<backup-id>` for this run or resumed run.
+- With checkpoint mode enabled, computes `<config-hash-hex>` for the current logical backup configuration and creates `_meta/pending/<config-hash-hex>/<backup-id>.json` before issuing TiKV backup requests.
 - Writes metadata under `_meta/snapshot/<backup-id>/` and SSTs under `_data/snapshot/<store-id>/<backup-id>/`.
-- Removes `_meta/pending/<config-hash-hex>/<backup-id>.json` on the success path after final `backupmeta` is durable and checkpoint artifacts are cleaned up.
+- With checkpoint mode enabled, removes `_meta/pending/<config-hash-hex>/<backup-id>.json` on the success path after final `backupmeta` is durable and checkpoint artifacts are cleaned up.
 - Prints `<backup-id>` on success.
 
 Pending backup behavior:
-- Before applying `--on-pending`, current implementation cleans stale pending markers for the same config hash.
-- `--on-pending=error` is the default. If no unfinished backup exists, the command starts a new backup. If one matching unfinished backup exists, the command fails and asks the user to choose `resume` or `new`. If multiple matching unfinished backups exist, the command fails with an ambiguity error.
-- `--on-pending=resume` resumes the matching unfinished backup when exactly one pending backup with checkpoint metadata exists for the same logical backup configuration. If none exists, the command starts a new backup. If multiple matching unfinished backups exist, the command fails with an ambiguity error.
-- `--on-pending=new` always allocates a fresh `<backup-id>` and starts a new backup instead of reusing a matching unfinished backup. Existing unfinished backups are left in place for later inspection or explicit discard.
+- Current implementation cleans stale pending markers for the same config hash before selecting the backup attempt.
+- `--use-checkpoint=true` is the default and acts as the resume policy. If no matching unfinished backup exists, the command starts a new backup. If exactly one matching unfinished backup with checkpoint metadata exists, the command resumes it. If multiple matching unfinished backups exist, the command fails with an ambiguity error.
+- `--use-checkpoint=false` acts as the fresh-attempt policy. It always allocates a fresh `<backup-id>` and starts a new backup instead of reusing a matching unfinished backup. Existing unfinished backups are left in place for later inspection or explicit discard. Because checkpoint mode is disabled, this fresh attempt does not create checkpoint or pending-marker state for itself.
 
 #### Controller-Friendly Retry Semantics
 
-The interactive CLI semantics above are not sufficient for Kubernetes-style controllers, which need declarative, idempotent, non-interactive behavior. With `--on-pending`, the controller-facing story can stay close to TiDB Operator's existing retry model without adding a second BR-specific retry API surface.
+Kubernetes-style controllers need declarative, idempotent, non-interactive retry behavior. Repo backup uses the existing checkpoint switch as that retry intent instead of adding a second BR-specific retry API surface.
 
 Suggested controller mapping:
-- Automatic retry of the same backup CR should invoke BR with `--on-pending=resume`, so one matching unfinished repo backup is continued in place.
-- A fresh controller-visible attempt should invoke BR with `--on-pending=new`, so BR allocates a new `<backup-id>` instead of reusing the previous unfinished backup.
-- `--on-pending=error` remains useful as a conservative mode for ad hoc jobs or for controllers that want ambiguity surfaced immediately.
-- Multiple pending backups under the current config-hash directory still produce an explicit ambiguity error for `error` and `resume`.
+- Automatic retry of the same backup CR should invoke BR with `--use-checkpoint=true` (the default), so one matching unfinished repo backup is continued in place.
+- A fresh controller-visible attempt should invoke BR with `--use-checkpoint=false`, so BR allocates a new `<backup-id>` instead of reusing the previous unfinished backup. If that non-checkpointed fresh attempt is retried, the controller should keep using `--use-checkpoint=false` for the same fresh-attempt intent.
+- Multiple pending backups under the current config-hash directory still produce an explicit ambiguity error when checkpoint mode is enabled.
 - Pending backups under other config-hash directories are unrelated attempts and should not block this one.
 
-This keeps the repo state machine explicit while letting Operator express retry intent with one BR flag rather than a separate resume/discard protocol.
+This keeps the repo state machine explicit while letting Operator express retry intent with BR's existing checkpoint flag rather than a separate resume/discard protocol.
 
 #### Restore
 
@@ -262,7 +259,7 @@ Semantics:
 
 ### Compatibility
 
-- BR: new `--storage-layout=repo`, `--on-pending`, `br repo` subcommands, and layout helper.
+- BR: new `--storage-layout=repo`, `br repo` subcommands, and layout helper.
 - TiKV: repo does not require a new TiKV-side path hook. The baseline deployment path relies on BR rewriting the per-request `StorageBackend` prefix per store.
 - PD: backup ID allocation via TSO.
 - Current implementation rejects repo snapshot backup on HDFS and noop storage.
@@ -307,19 +304,19 @@ Scope:
 
 Repo behavior:
 - Verify repo marker and `backup.lock` creation.
-- Verify pending pointer creation at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
+- Verify checkpointed backup creates a pending pointer at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
 - Verify backup-id is PD-assigned as a user-facing `uint64`.
 - Verify the on-storage `<backup-id>` path segment is fixed-width upper-case hex.
 - Verify the baseline implementation path can produce `_data/snapshot/<store-id>/<backup-id>/...` by rewriting the per-store `StorageBackend` prefix.
 - Verify the rewritten backend prefix preserves `<store-id>` as the leading path component.
 - Verify SST objects are written under `_data/snapshot/<store-id>/<backup-id>/` while keeping legacy TiKV naming within that subprefix.
 - Verify `<store-id>` remains the leading data prefix and `<backup-id>` is not moved ahead of it.
-- Verify repo rejects `--use-checkpoint=false`.
+- Verify `--use-checkpoint=true` resumes exactly one matching unfinished backup and rejects multiple matching unfinished backups as ambiguous.
+- Verify `--use-checkpoint=false` starts a fresh backup and leaves existing unfinished backups for later inspection or explicit discard.
 - Verify `br repo snapshot list` returns completed backups only.
 - Verify unfinished-backup lookup only enumerates `_meta/pending/<config-hash-hex>/` in the normal path.
 - Verify a stale pending file for a completed backup is removed instead of forcing a resume.
 - Verify marker-only pending leftovers are treated as stale cleanup leftovers rather than as resumable backups.
-- Verify `--on-pending=error|resume|new` follows the documented single-unfinished and multiple-unfinished behaviors.
 - Verify `pending discard` distinguishes stale vs unfinished targets and deletes the correct scope for each.
 - Verify `snapshot get --view basic|tables|files` returns the documented metadata views.
 - Verify `snapshot delete` deletes matching data, metadata, and pending markers, and still works by data-prefix scan when metadata is missing.
@@ -334,10 +331,10 @@ Repo scenarios:
 - Multiple backups under one repo; restore older/newer backups.
 - Delete one backup while keeping others; verify remaining backups restore.
 - One failed backup is discarded, then a new checkpointed backup can start in the same repo.
-- Multiple pending entries under the same config-hash directory exist due to manual corruption or partial cleanup; backup start fails with an explicit ambiguity error.
+- Multiple pending entries under the same config-hash directory exist due to manual corruption or partial cleanup; checkpointed backup start fails with an explicit ambiguity error.
 - Multiple unfinished backups with different config-hash directories coexist in the same repo; each new backup only matches or resumes the entries under its own config-hash directory.
-- A controller retries the same failed backup CR through its existing retry mechanism and invokes BR with `--on-pending=resume`; the unfinished backup continues instead of being replaced.
-- A controller observes a fresh-attempt signal, such as CR recreation or changed retry annotation/token, and invokes BR with `--on-pending=new`; a new backup starts without resuming the old unfinished backup.
+- A controller retries the same failed backup CR through its existing retry mechanism and invokes BR with `--use-checkpoint=true`; the unfinished backup continues instead of being replaced.
+- A controller observes a fresh-attempt signal, such as CR recreation or changed retry annotation/token, and invokes BR with `--use-checkpoint=false`; a new backup starts without resuming the old unfinished backup.
 - Metadata loss for a backup: `snapshot delete` still deletes by prefix.
 - Orphan scan detects unexpected per-backup subprefixes under store shards, including unfinished backups that have data files but no final `backupmeta`.
 
@@ -369,7 +366,7 @@ Risks:
 - Incorrect handling of pending markers could either block future backups unnecessarily or discard data from the wrong unfinished backup.
 - The baseline backend-prefix-rewrite path relies on backend-specific prefix semantics and correct per-store request construction; mistakes there could place SSTs under the wrong prefix.
 - The backend-prefix-rewrite compatibility path may not be supportable on every BR backend; claiming universal support would overstate what current HDFS/noop implementations can do.
-- If controllers choose the wrong `--on-pending` policy for a retry, operators may see unexpected fresh attempts, unintended resumes, or repeated ambiguity failures after abandoned attempts accumulate.
+- If controllers choose the wrong `--use-checkpoint` value for a retry, operators may see unexpected fresh attempts, unintended resumes, or ambiguity failures after abandoned attempts accumulate.
 
 ## Investigation & Alternatives
 

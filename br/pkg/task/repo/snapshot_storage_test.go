@@ -54,12 +54,6 @@ func TestRewriteDataBackendForStore(t *testing.T) {
 	require.Equal(t, "root/../base/_data/snapshot/7/000000000000BEEF", s3.GetS3().Prefix)
 }
 
-func TestValidateSnapshotBackupRepoConfigRejectsNoCheckpoint(t *testing.T) {
-	err := ValidateSnapshotBackupRepoConfig(repo.LayoutRepo, false)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "--use-checkpoint")
-}
-
 func TestPreparedRepoSnapshotBackupRewritesStoreRequestAndResponse(t *testing.T) {
 	baseDir := t.TempDir()
 	prepared := &PreparedRepoSnapshotBackup{
@@ -208,7 +202,7 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 	})
 }
 
-func TestPrepareRepoSnapshotBackupOnPendingNoneStartsNew(t *testing.T) {
+func TestPrepareRepoSnapshotBackupStartsNewWithoutPending(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
 	_, err := repo.EnsureRepo(ctx, storage, "test")
@@ -220,9 +214,9 @@ func TestPrepareRepoSnapshotBackupOnPendingNoneStartsNew(t *testing.T) {
 	cfgHash := []byte("hash")
 
 	resolved, err := PrepareRepoSnapshotBackup(ctx, rootBackend, storage, SnapshotBackupStorageParams{
-		OnPending:  OnPendingError,
-		ConfigHash: cfgHash,
-		CreatedBy:  "test",
+		UseCheckpoint: true,
+		ConfigHash:    cfgHash,
+		CreatedBy:     "test",
 		AllocateBackupID: func(context.Context) (repo.BackupID, error) {
 			return repo.BackupID(0x1111), nil
 		},
@@ -253,9 +247,9 @@ func TestPrepareRepoSnapshotBackupResumePendingBackup(t *testing.T) {
 
 	allocateCalled := false
 	resolved, err := PrepareRepoSnapshotBackup(ctx, rootBackend, storage, SnapshotBackupStorageParams{
-		OnPending:  OnPendingResume,
-		ConfigHash: cfgHash,
-		CreatedBy:  "test",
+		UseCheckpoint: true,
+		ConfigHash:    cfgHash,
+		CreatedBy:     "test",
 		AllocateBackupID: func(context.Context) (repo.BackupID, error) {
 			allocateCalled = true
 			return repo.BackupID(0x1111), nil
@@ -316,38 +310,6 @@ func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *test
 	}
 }
 
-func TestPrepareRepoSnapshotBackupRejectsPendingWhenErrorMode(t *testing.T) {
-	ctx := context.Background()
-	storage := objstore.NewMemStorage()
-	_, err := repo.EnsureRepo(ctx, storage, "test")
-	require.NoError(t, err)
-
-	rootBackend := &backuppb.StorageBackend{
-		Backend: &backuppb.StorageBackend_Local{Local: &backuppb.Local{Path: "/tmp/repo"}},
-	}
-	cfgHash := []byte("hash")
-	backupID := repo.BackupID(0x1234)
-	metaStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
-	require.NoError(t, storage.WriteFile(ctx, repo.PendingFile(cfgHash, backupID), []byte("{}")))
-	require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, metaStorage, &checkpoint.CheckpointMetadataForBackup{
-		GCServiceId: "checkpoint-gc",
-		ConfigHash:  cfgHash,
-		BackupTS:    0x2222,
-	}))
-
-	_, prepErr := PrepareRepoSnapshotBackup(ctx, rootBackend, storage, SnapshotBackupStorageParams{
-		OnPending:  OnPendingError,
-		ConfigHash: cfgHash,
-		CreatedBy:  "test",
-		AllocateBackupID: func(context.Context) (repo.BackupID, error) {
-			return repo.BackupID(0x1111), nil
-		},
-	})
-	require.Error(t, prepErr)
-	require.Contains(t, prepErr.Error(), backupID.String())
-	require.Contains(t, prepErr.Error(), "--on-pending=resume")
-}
-
 func TestPrepareRepoSnapshotBackupRejectsAmbiguousResume(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
@@ -369,9 +331,9 @@ func TestPrepareRepoSnapshotBackupRejectsAmbiguousResume(t *testing.T) {
 	}
 
 	_, prepErr := PrepareRepoSnapshotBackup(ctx, rootBackend, storage, SnapshotBackupStorageParams{
-		OnPending:  OnPendingResume,
-		ConfigHash: cfgHash,
-		CreatedBy:  "test",
+		UseCheckpoint: true,
+		ConfigHash:    cfgHash,
+		CreatedBy:     "test",
 		AllocateBackupID: func(context.Context) (repo.BackupID, error) {
 			return repo.BackupID(0x1111), nil
 		},
@@ -380,7 +342,7 @@ func TestPrepareRepoSnapshotBackupRejectsAmbiguousResume(t *testing.T) {
 	require.Contains(t, prepErr.Error(), "cannot resume an ambiguous backup")
 }
 
-func TestPrepareRepoSnapshotBackupNewStartsFreshDespitePending(t *testing.T) {
+func TestPrepareRepoSnapshotBackupWithoutCheckpointStartsFreshDespitePending(t *testing.T) {
 	ctx := context.Background()
 	storage := objstore.NewMemStorage()
 	_, err := repo.EnsureRepo(ctx, storage, "test")
@@ -400,9 +362,9 @@ func TestPrepareRepoSnapshotBackupNewStartsFreshDespitePending(t *testing.T) {
 	}))
 
 	resolved, err := PrepareRepoSnapshotBackup(ctx, rootBackend, storage, SnapshotBackupStorageParams{
-		OnPending:  OnPendingNew,
-		ConfigHash: cfgHash,
-		CreatedBy:  "test",
+		UseCheckpoint: false,
+		ConfigHash:    cfgHash,
+		CreatedBy:     "test",
 		AllocateBackupID: func(context.Context) (repo.BackupID, error) {
 			return repo.BackupID(0x1111), nil
 		},

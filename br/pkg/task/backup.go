@@ -87,16 +87,16 @@ type CompressionConfig struct {
 type BackupConfig struct {
 	Config
 
-	TimeAgo          time.Duration `json:"time-ago" toml:"time-ago"`
-	BackupTS         uint64        `json:"backup-ts" toml:"backup-ts"`
-	LastBackupTS     uint64        `json:"last-backup-ts" toml:"last-backup-ts"`
-	GCTTL            int64         `json:"gc-ttl" toml:"gc-ttl"`
-	RemoveSchedulers bool          `json:"remove-schedulers" toml:"remove-schedulers"`
-	RangeLimit       int           `json:"range-limit" toml:"range-limit"`
-	IgnoreStats      bool          `json:"ignore-stats" toml:"ignore-stats"`
-	UseBackupMetaV2  bool          `json:"use-backupmeta-v2"`
-	UseCheckpoint    bool          `json:"use-checkpoint" toml:"use-checkpoint"`
-	taskrepo.SnapshotBackupOptions
+	TimeAgo          time.Duration     `json:"time-ago" toml:"time-ago"`
+	BackupTS         uint64            `json:"backup-ts" toml:"backup-ts"`
+	LastBackupTS     uint64            `json:"last-backup-ts" toml:"last-backup-ts"`
+	GCTTL            int64             `json:"gc-ttl" toml:"gc-ttl"`
+	RemoveSchedulers bool              `json:"remove-schedulers" toml:"remove-schedulers"`
+	RangeLimit       int               `json:"range-limit" toml:"range-limit"`
+	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
+	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
+	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
+	Layout           repo.Layout       `json:"storage-layout" toml:"storage-layout"`
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
 	CompressionConfig
@@ -196,7 +196,7 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.SnapshotBackupOptions, err = taskrepo.ParseSnapshotBackupOptionsFromFlags(flags)
+	cfg.Layout, err = taskrepo.ParseSnapshotStorageLayoutFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -288,10 +288,6 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 		return errors.Trace(err)
 	}
 
-	if err := taskrepo.ValidateSnapshotBackupRepoConfig(cfg.SnapshotBackupOptions.Layout, cfg.UseCheckpoint); err != nil {
-		return errors.Trace(err)
-	}
-
 	return nil
 }
 
@@ -377,7 +373,7 @@ func (cfg *BackupConfig) Hash() ([]byte, error) {
 		LastBackupTS:  cfg.LastBackupTS,
 		IgnoreStats:   cfg.IgnoreStats,
 		UseCheckpoint: cfg.UseCheckpoint,
-		Layout:        cfg.SnapshotBackupOptions.HashLayoutTag(),
+		Layout:        snapshotBackupLayoutHashTag(cfg.Layout),
 
 		BackendOptions: cfg.BackendOptions,
 		Storage:        cfg.Storage,
@@ -395,6 +391,13 @@ func (cfg *BackupConfig) Hash() ([]byte, error) {
 	hash := sha256.Sum256(data)
 
 	return hash[:], nil
+}
+
+func snapshotBackupLayoutHashTag(layout repo.Layout) string {
+	if !layout.IsRepo() {
+		return ""
+	}
+	return layout.String()
 }
 
 func isFullBackup(cmdName string) bool {
@@ -443,7 +446,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if cfg.UseCheckpoint {
 		err = version.CheckCheckpointSupport()
 		if err != nil {
-			if cfg.SnapshotBackupOptions.IsRepo() {
+			if cfg.Layout.IsRepo() {
 				return errors.Annotate(err, "repo snapshot backup requires checkpoint support")
 			}
 			log.Warn("unable to use checkpoint mode, fall back to normal mode", zap.Error(err))
@@ -490,14 +493,14 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		perStoreBackupAdapters    []backup.PerStoreBackupAdapter
 		removePendingMarkerOnExit bool
 	)
-	if cfg.SnapshotBackupOptions.IsRepo() {
+	if cfg.Layout.IsRepo() {
 		if err = client.SetStorage(ctx, u, &opts); err != nil {
 			return errors.Trace(err)
 		}
 		preparedStorage, err = taskrepo.PrepareRepoSnapshotBackup(ctx, u, client.GetBaseStorage(), taskrepo.SnapshotBackupStorageParams{
-			OnPending:  cfg.SnapshotBackupOptions.OnPending,
-			ConfigHash: cfgHash,
-			CreatedBy:  taskrepo.RepoCreatedBy(g.GetVersion()),
+			UseCheckpoint: cfg.UseCheckpoint,
+			ConfigHash:    cfgHash,
+			CreatedBy:     taskrepo.RepoCreatedBy(g.GetVersion()),
 			AllocateBackupID: func(ctx context.Context) (repo.BackupID, error) {
 				backupTS, err := client.GetCurrentTS(ctx)
 				if err != nil {

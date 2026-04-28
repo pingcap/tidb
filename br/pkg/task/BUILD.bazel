@@ -143,7 +143,6 @@ go_test(
         "//br/pkg/restore/split",
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/stream",
-        "//br/pkg/task/repo",
         "//br/pkg/utils",
         "//br/pkg/utiltest",
         "//pkg/config",
