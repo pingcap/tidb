@@ -18,8 +18,14 @@ import (
 	"context"
 	"testing"
 
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+=======
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+>>>>>>> 62b913c9814 (planner, statistics: skip internal column IDs in async stats load queue (#67767))
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -100,3 +106,149 @@ func TestLoadStats(t *testing.T) {
 	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
 }
+<<<<<<< HEAD
+=======
+
+func TestLoadNonExistentIndexStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Create table with an index. The index histogram doesn't exist in the system tables
+	// because we didn't handle the create table DDL event (simulating a lost DDL event).
+	tk.MustExec("create table if not exists t(a int, b int, index ia(a));")
+	tk.MustExec("insert into t value(1,1), (2,2);")
+	h := dom.StatsHandle()
+	tk.MustExec("flush stats_delta *.*")
+	ctx := context.Background()
+	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
+	// Trigger async load of index histogram by using the index in a query.
+	// Setting this variable to determinate marks the pseudo table stats as able to trigger loading (CanNotTriggerLoad=false), which enables statistics loading.
+	// See more at IndexStatsIsInvalid and GetStatsTable functions.
+	tk.MustExec("set tidb_opt_objective='determinate';")
+	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
+	table, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	addedIndexID := tableInfo.Indices[0].ID
+	// Wait for the async load to add the index to AsyncLoadHistogramNeededItems.
+	// We should have 3 items: columns a, b, and index ia.
+	require.Eventually(t, func() bool {
+		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+		for _, item := range items {
+			if item.IsIndex && item.TableID == tableInfo.ID && item.ID == addedIndexID {
+				// NOTE: Because the unit test environment doesn't enable sync load by default,
+				// columns a and b should also be in the AsyncLoadHistogramNeededItems.
+				// Use >= 3 to make the test more robust. But it should be exactly 3.
+				return len(items) >= 3
+			}
+		}
+		return false
+	}, time.Second*5, time.Millisecond*100, "Index ia should be in AsyncLoadHistogramNeededItems")
+
+	// Verify that LoadNeededHistograms doesn't panic when the pseudo index stats exists in the cache
+	// but doesn't have histogram data in mysql.stats_histograms yet.
+	err = util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+		require.NotPanics(t, func() {
+			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h)
+			require.NoError(t, err)
+		})
+		return nil
+	}, util.FlagWrapTxn)
+	require.NoError(t, err)
+
+	// Verify all items were removed from AsyncLoadHistogramNeededItems after loading.
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+	require.Equal(t, len(items), 0, "AsyncLoadHistogramNeededItems should be empty after loading")
+}
+
+func TestColumnStatsIsInvalidSkipsInternalColumnID(t *testing.T) {
+	clearAsyncLoadHistogramNeededItems()
+	t.Cleanup(clearAsyncLoadHistogramNeededItems)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	histColl := &statistics.HistColl{
+		PhysicalID: 1,
+	}
+	statistics.ColumnStatsIsInvalid(nil, tk.Session().GetPlanCtx(), histColl, -1)
+
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+	require.Len(t, items, 0)
+}
+
+func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
+	clearAsyncLoadHistogramNeededItems()
+	t.Cleanup(clearAsyncLoadHistogramNeededItems)
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t value(1,1), (2,2);")
+	h := dom.StatsHandle()
+	tk.MustExec("flush stats_delta *.*")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select * from t where a = 2 and b = 2 and _tidb_rowid > 0;").Check(testkit.Rows("2 2"))
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	colAID := tableInfo.Columns[0].ID
+	colBID := tableInfo.Columns[1].ID
+	// 1. query-triggered async loading should enqueue only real columns (a, b) and should never enqueue the internal pseudo column _tidb_rowid (ID=-1).
+	require.Eventually(t, func() bool {
+		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+		hasA, hasB := false, false
+		for _, item := range items {
+			if item.TableID != tableInfo.ID || item.IsIndex {
+				continue
+			}
+			// if column _tidb_rowid (ID=-1) should never enqueue,
+			if item.ID <= 0 {
+				return false
+			}
+			if item.ID == colAID {
+				hasA = true
+			}
+			if item.ID == colBID {
+				hasB = true
+			}
+		}
+		return hasA && hasB
+	}, 5*time.Second, 100*time.Millisecond)
+
+	// Clear query-triggered items so this test can isolate the nil-sctx internal-column path.
+	clearAsyncLoadHistogramNeededItems()
+
+	// 2. even if an internal pseudo column item (ID=-1) is inserted into the queue by mistake,
+	// LoadNeededHistograms should skip it safely and remove it without panic.
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.NotNil(t, statsTbl)
+	require.Equal(t, tableInfo.ID, statsTbl.PhysicalID)
+
+	internalColumnItem := model.TableItemID{
+		TableID: tableInfo.ID,
+		ID:      -1,
+	}
+	asyncload.AsyncLoadHistogramNeededItems.Insert(internalColumnItem, true)
+
+	require.NotPanics(t, func() {
+		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h)
+		require.NoError(t, err)
+	})
+	require.NotContains(t, asyncload.AsyncLoadHistogramNeededItems.AllItems(), model.StatsLoadItem{
+		TableItemID: internalColumnItem,
+		FullLoad:    true,
+	})
+}
+
+func clearAsyncLoadHistogramNeededItems() {
+	for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+	}
+}
+>>>>>>> 62b913c9814 (planner, statistics: skip internal column IDs in async stats load queue (#67767))
