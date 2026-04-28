@@ -75,7 +75,7 @@ func newRepoSnapshotCommand() *cobra.Command {
 func newRepoSnapshotListCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "list completed snapshot backups",
+		Short: "list snapshot backups",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := parseRepoSnapshotConfig(cmd)
@@ -289,7 +289,7 @@ func parseRequiredRepoSnapshotBackupID(cmd *cobra.Command) (repo.BackupID, error
 
 func printRepoSnapshotList(cmd *cobra.Command, backupIDs []repo.BackupID) error {
 	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "BACKUP ID\tBACKUP TIME"); err != nil {
+	if _, err := fmt.Fprintln(tw, "BACKUP ID\tBACKUP TIME (EST.)"); err != nil {
 		return errors.Trace(err)
 	}
 	for _, backupID := range backupIDs {

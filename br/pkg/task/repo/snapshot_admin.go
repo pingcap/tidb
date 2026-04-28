@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -120,7 +121,7 @@ func RunRepoSnapshotList(
 ) ([]repo.BackupID, error) {
 	return runRepoSnapshotSpinnerTask(ctx, console, "Listing snapshot backups...", nil, func(taskCtx context.Context) ([]repo.BackupID, error) {
 		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storeapi.Storage) ([]repo.BackupID, error) {
-			return repo.ListCompletedSnapshotIDs(taskCtx, storage)
+			return listRepoSnapshotBackupIDs(taskCtx, storage)
 		})
 	})
 }
@@ -247,6 +248,35 @@ func RunRepoSnapshotPendingDiscard(
 	})
 }
 
+func listRepoSnapshotBackupIDs(ctx context.Context, storage storeapi.Storage) ([]repo.BackupID, error) {
+	completedIDs, err := repo.ListCompletedSnapshotIDs(ctx, storage)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	pendingBackups, err := repo.SnapshotOpsExtension(storage).ListPendingBackups(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ids := make([]repo.BackupID, 0, len(completedIDs)+len(pendingBackups))
+	seen := make(map[repo.BackupID]struct{}, len(completedIDs)+len(pendingBackups))
+	for _, backupID := range completedIDs {
+		if _, ok := seen[backupID]; ok {
+			continue
+		}
+		seen[backupID] = struct{}{}
+		ids = append(ids, backupID)
+	}
+	for _, pending := range pendingBackups {
+		if _, ok := seen[pending.BackupID]; ok {
+			continue
+		}
+		seen[pending.BackupID] = struct{}{}
+		ids = append(ids, pending.BackupID)
+	}
+	slices.Sort(ids)
+	return ids, nil
+}
+
 func withDeletedObjectsExtraField(key string, count func() int) glue.ExtraField {
 	return glue.WithCallbackExtraField(key, func() string {
 		return strconv.Itoa(count())
@@ -296,22 +326,23 @@ func confirmRepoSnapshotDelete(
 	}
 	console.Printf("About to delete snapshot backup %s (%s).\n", cfg.BackupID, formatRepoSnapshotBackupTime(cfg.BackupID))
 	console.Println("This permanently removes snapshot metadata, data files, and pending markers for this backup.")
+	info := console.CreateTable()
 	if preview.HasBasic {
-		printRepoSnapshotConfirmField(console, "backup-size", formatRepoSnapshotBytes(preview.Basic.BackupSize))
+		info.Add("backup-size", formatRepoSnapshotBytes(preview.Basic.BackupSize))
 		switch {
 		case preview.Basic.IsRawKV:
-			printRepoSnapshotConfirmField(console, "backup-type", "raw-kv")
+			info.Add("backup-type", "raw-kv")
 		case preview.Basic.IsTxnKV:
-			printRepoSnapshotConfirmField(console, "backup-type", "txn-kv")
+			info.Add("backup-type", "txn-kv")
 		}
 	}
 	if preview.HasPending {
-		printRepoSnapshotConfirmField(
-			console,
+		info.Add(
 			"pending-markers",
 			fmt.Sprintf("%d (%s)", len(preview.Pending.MarkerPaths), preview.Pending.State),
 		)
 	}
+	info.Print()
 	if !console.PromptBool("Continue? ") {
 		return errors.Trace(berrors.ErrOperationAborted)
 	}
@@ -355,8 +386,10 @@ func confirmRepoSnapshotPendingDiscard(
 		return nil
 	}
 	console.Printf("About to discard pending snapshot backup %s (%s).\n", target.BackupID, formatRepoSnapshotBackupTime(target.BackupID))
-	printRepoSnapshotConfirmField(console, "state", string(target.State))
-	printRepoSnapshotConfirmField(console, "pending-markers", fmt.Sprintf("%d", len(target.MarkerPaths)))
+	info := console.CreateTable()
+	info.Add("state", string(target.State))
+	info.Add("pending-markers", fmt.Sprintf("%d", len(target.MarkerPaths)))
+	info.Print()
 	switch target.State {
 	case repo.PendingBackupStateStale:
 		console.Println("This removes pending markers and leftover checkpoint files; completed snapshot metadata and data files, if present, are kept.")
@@ -369,10 +402,6 @@ func confirmRepoSnapshotPendingDiscard(
 		return errors.Trace(berrors.ErrOperationAborted)
 	}
 	return nil
-}
-
-func printRepoSnapshotConfirmField(console glue.ConsoleOperations, key string, value string) {
-	console.Printf("  %s: %s\n", key, value)
 }
 
 func formatRepoSnapshotBytes(size uint64) string {

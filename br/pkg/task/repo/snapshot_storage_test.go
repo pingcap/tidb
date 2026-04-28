@@ -246,7 +246,7 @@ func TestPrepareRepoSnapshotBackupResumePendingBackup(t *testing.T) {
 		BackupTS:    0x2222,
 	}))
 
-	console := newRepoSnapshotTestConsole("y\n")
+	console := newRepoSnapshotTestConsole("\n")
 	allocateCalled := false
 	resolved, err := PrepareRepoSnapshotBackup(ctx, console.Operations(), rootBackend, storage, SnapshotBackupStorageParams{
 		UseCheckpoint: true,
@@ -269,7 +269,26 @@ func TestPrepareRepoSnapshotBackupResumePendingBackup(t *testing.T) {
 	require.Contains(t, output, backupID.String())
 	require.Contains(t, output, repo.PendingConfigHashStorageName(cfgHash))
 	require.Contains(t, output, repo.PendingFile(cfgHash, backupID))
-	require.Contains(t, output, "Resume this backup?")
+	require.Contains(t, output, "Resume this backup? (Y/n)")
+
+	declineConsole := newRepoSnapshotTestConsole("n\n")
+	allocateCalled = false
+	resolved, err = PrepareRepoSnapshotBackup(ctx, declineConsole.Operations(), rootBackend, storage, SnapshotBackupStorageParams{
+		UseCheckpoint: true,
+		ConfigHash:    cfgHash,
+		CreatedBy:     "test",
+		AllocateBackupID: func(context.Context) (repo.BackupID, error) {
+			allocateCalled = true
+			return repo.BackupID(0x1111), nil
+		},
+	})
+	require.Nil(t, resolved)
+	require.Error(t, err)
+	require.True(t, berrors.Is(err, berrors.ErrOperationAborted))
+	require.False(t, allocateCalled)
+	require.Contains(t, err.Error(), "no new backup was created")
+	require.Contains(t, err.Error(), "--use-checkpoint=false")
+	require.Contains(t, err.Error(), "br repo snapshot pending discard --storage <repo-storage> --backup-id "+backupID.String())
 }
 
 func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *testing.T) {

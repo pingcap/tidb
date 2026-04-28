@@ -192,10 +192,15 @@ func chooseRepoBackupAttempt(
 	case 1:
 		backupID := resumableBackups[0]
 		if !confirmRepoSnapshotResume(console, skipPrompt, rootStorage, cfgHash, backupID) {
-			log.Info("starting a fresh repo snapshot backup after resume prompt was declined",
+			log.Info("repo snapshot backup resume prompt was declined",
 				gozap.String("backup-id", backupID.String()),
 				gozap.String("config-hash", cfgHashDirName))
-			return repoBackupAttempt{}, nil
+			return repoBackupAttempt{}, errors.Annotatef(
+				berrors.ErrOperationAborted,
+				"declined to resume unfinished repo snapshot backup %s; no new backup was created; to start a new backup, rerun this backup command with `--use-checkpoint=false`; to clean up pending backups, run `br repo snapshot pending discard --storage <repo-storage> --backup-id %s`",
+				backupID,
+				backupID,
+			)
 		}
 		return repoBackupAttempt{
 			backupID:             backupID,
@@ -221,13 +226,31 @@ func confirmRepoSnapshotResume(
 		return true
 	}
 	console.Println("Found an unfinished repo snapshot backup that matches this backup command.")
-	printRepoSnapshotConfirmField(console, "backup-id", backupID.String())
-	printRepoSnapshotConfirmField(console, "backup-time", formatRepoSnapshotBackupTime(backupID))
-	printRepoSnapshotConfirmField(console, "config-hash", repo.PendingConfigHashStorageName(cfgHash))
-	printRepoSnapshotConfirmField(console, "metadata-uri", repo.NewPrefixedStorage(rootStorage, repo.SnapshotMetadataDir(backupID)).URI())
-	printRepoSnapshotConfirmField(console, "pending-marker", repo.PendingFile(cfgHash, backupID))
-	console.Println("Choosing yes resumes from its checkpoint. Choosing no starts a fresh backup and leaves the unfinished backup unchanged.")
-	return console.PromptBool("Resume this backup? ")
+	info := console.CreateTable()
+	info.Add("backup-id", backupID.String())
+	info.Add("backup-time", formatRepoSnapshotBackupTime(backupID))
+	info.Add("config-hash", repo.PendingConfigHashStorageName(cfgHash))
+	info.Add("metadata-uri", repo.NewPrefixedStorage(rootStorage, repo.SnapshotMetadataDir(backupID)).URI())
+	info.Add("pending-marker", repo.PendingFile(cfgHash, backupID))
+	info.Print()
+	console.Println("Choosing yes resumes from its checkpoint. Choosing no aborts this backup command and leaves the unfinished backup unchanged.")
+	return promptRepoSnapshotResume(console, "Resume this backup? ")
+}
+
+func promptRepoSnapshotResume(console glue.ConsoleOperations, prompt string) bool {
+	for {
+		ans := ""
+		console.Print(prompt + "(Y/n) ")
+		if n, err := console.Scanln(&ans); err != nil || n == 0 {
+			return true
+		}
+		switch strings.ToLower(strings.TrimSpace(ans)) {
+		case "", "y":
+			return true
+		case "n":
+			return false
+		}
+	}
 }
 
 func formatRepoBackupIDs(ids []repo.BackupID) string {
