@@ -61,6 +61,19 @@ func (m *tableByNameErrorInfoSchema) TableByName(
 	return nil, m.err
 }
 
+type tableByIDCountInfoSchema struct {
+	infoschema.InfoSchema
+	calls map[int64]int
+}
+
+func (m *tableByIDCountInfoSchema) TableByID(ctx context.Context, id int64) (table.Table, bool) {
+	if m.calls == nil {
+		m.calls = make(map[int64]int)
+	}
+	m.calls[id]++
+	return m.InfoSchema.TableByID(ctx, id)
+}
+
 type stubPrivilegeManager struct {
 	privilege.Manager
 	allow func(db, table string) bool
@@ -492,13 +505,16 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 		ex.ColPredicates = map[string]set.StringSet{
 			plannercore.BaseTableName: set.NewStringSet("base_keep"),
 		}
-		mt := memtableRetriever{
-			is: infoschema.MockInfoSchema([]*model.TableInfo{
+		countIS := &tableByIDCountInfoSchema{
+			InfoSchema: infoschema.MockInfoSchema([]*model.TableInfo{
 				newBaseTableInfo(1, "base_drop", 3),
 				newBaseTableInfo(2, "base_keep", 4),
 				newMLogTableInfo(3, "$mlog$drop", 1),
 				newMLogTableInfo(4, "$mlog$keep", 2),
 			}),
+		}
+		mt := memtableRetriever{
+			is:        countIS,
 			extractor: ex,
 			columns: []*model.ColumnInfo{
 				newColumnInfo("mlog_name"),
@@ -509,6 +525,7 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, mt.rows, 1)
 		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][3])
+		require.Zero(t, countIS.calls[2])
 	})
 
 	t.Run("uses mlog predicates only", func(t *testing.T) {
@@ -542,13 +559,16 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 			plannercore.MLogID:        set.NewStringSet("3", "4"),
 			plannercore.BaseTableName: set.NewStringSet("base_keep"),
 		}
-		mt := memtableRetriever{
-			is: infoschema.MockInfoSchema([]*model.TableInfo{
+		countIS := &tableByIDCountInfoSchema{
+			InfoSchema: infoschema.MockInfoSchema([]*model.TableInfo{
 				{ID: 1, Name: pmodel.NewCIStr("base_drop"), State: model.StatePublic},
 				{ID: 2, Name: pmodel.NewCIStr("base_keep"), State: model.StatePublic},
 				newMLogTableInfo(3, "$mlog$keep1", 1),
 				newMLogTableInfo(4, "$mlog$keep2", 2),
 			}),
+		}
+		mt := memtableRetriever{
+			is:        countIS,
 			extractor: ex,
 			columns: []*model.ColumnInfo{
 				newColumnInfo("mlog_name"),
@@ -560,6 +580,7 @@ func TestSetDataFromTiDBMLogs(t *testing.T) {
 		require.Len(t, mt.rows, 1)
 		require.Equal(t, types.NewStringDatum("$mlog$keep2"), mt.rows[0][3])
 		require.Equal(t, types.NewStringDatum("base_keep"), mt.rows[0][8])
+		require.Equal(t, 1, countIS.calls[2])
 	})
 
 	t.Run("predicates are not eligible", func(t *testing.T) {

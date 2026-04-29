@@ -1598,6 +1598,34 @@ type mlogBaseTableInfo struct {
 	name    string
 }
 
+func newMLogBaseTableInfoFromBaseTable(
+	baseSchema pmodel.CIStr,
+	baseTbl *model.TableInfo,
+) mlogBaseTableInfo {
+	baseInfo := mlogBaseTableInfo{
+		catalog: infoschema.CatalogVal,
+	}
+
+	baseInfo.id = baseTbl.ID
+	baseInfo.idStr = strconv.FormatInt(baseInfo.id, 10)
+	baseInfo.name = baseTbl.Name.O
+	if baseSchema.O != "" {
+		baseInfo.schema = baseSchema.O
+	}
+	return baseInfo
+}
+
+func newMLogBaseTableInfos(
+	baseSchemas []pmodel.CIStr,
+	baseTables []*model.TableInfo,
+) []mlogBaseTableInfo {
+	baseInfos := make([]mlogBaseTableInfo, 0, len(baseTables))
+	for i, baseTbl := range baseTables {
+		baseInfos = append(baseInfos, newMLogBaseTableInfoFromBaseTable(baseSchemas[i], baseTbl))
+	}
+	return baseInfos
+}
+
 func (e *memtableRetriever) getMLogBaseTableInfo(
 	ctx context.Context,
 	mlogSchema pmodel.CIStr,
@@ -1633,9 +1661,10 @@ func (e *memtableRetriever) filterMLogCandidatesByBasePredicates(
 	ex *plannercore.InfoSchemaTiDBMLogsExtractor,
 	schemas []pmodel.CIStr,
 	tables []*model.TableInfo,
-) ([]pmodel.CIStr, []*model.TableInfo) {
+) ([]pmodel.CIStr, []*model.TableInfo, []mlogBaseTableInfo) {
 	filteredSchemas := schemas[:0]
 	filteredTables := tables[:0]
+	baseInfos := make([]mlogBaseTableInfo, 0, len(tables))
 	for i, tbl := range tables {
 		if tbl.MaterializedViewLog == nil {
 			continue
@@ -1648,8 +1677,9 @@ func (e *memtableRetriever) filterMLogCandidatesByBasePredicates(
 		}
 		filteredSchemas = append(filteredSchemas, schemas[i])
 		filteredTables = append(filteredTables, tbl)
+		baseInfos = append(baseInfos, baseInfo)
 	}
-	return filteredSchemas, filteredTables
+	return filteredSchemas, filteredTables, baseInfos
 }
 
 func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessionctx.Context) error {
@@ -1667,19 +1697,27 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 	hasBasePredicates := ex.HasBaseTablePredicates()
 
 	var (
-		schemas []pmodel.CIStr
-		tables  []*model.TableInfo
-		err     error
+		schemas   []pmodel.CIStr
+		tables    []*model.TableInfo
+		baseInfos []mlogBaseTableInfo
+		err       error
 	)
 	switch {
 	case (!hasMLogPredicates && !hasBasePredicates) || (hasMLogPredicates && !hasBasePredicates):
 		schemas, tables, err = ex.ListSchemasAndTables(ctx, e.is)
 	case !hasMLogPredicates && hasBasePredicates:
-		schemas, tables, err = ex.ListSchemasAndTablesByBase(ctx, e.is)
+		var (
+			baseSchemas []pmodel.CIStr
+			baseTables  []*model.TableInfo
+		)
+		schemas, tables, baseSchemas, baseTables, err = ex.ListSchemasAndTablesByBase(ctx, e.is)
+		if err == nil {
+			baseInfos = newMLogBaseTableInfos(baseSchemas, baseTables)
+		}
 	default:
 		schemas, tables, err = ex.ListSchemasAndTables(ctx, e.is)
 		if err == nil {
-			schemas, tables = e.filterMLogCandidatesByBasePredicates(ctx, ex, schemas, tables)
+			schemas, tables, baseInfos = e.filterMLogCandidatesByBasePredicates(ctx, ex, schemas, tables)
 		}
 	}
 	if err != nil {
@@ -1697,7 +1735,12 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 			continue
 		}
 
-		baseInfo := e.getMLogBaseTableInfo(ctx, schema, tbl)
+		var baseInfo mlogBaseTableInfo
+		if i < len(baseInfos) {
+			baseInfo = baseInfos[i]
+		} else {
+			baseInfo = e.getMLogBaseTableInfo(ctx, schema, tbl)
+		}
 
 		columnNames := make([]string, 0, len(mlogInfo.Columns))
 		for _, col := range mlogInfo.Columns {

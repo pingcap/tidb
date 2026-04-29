@@ -1074,10 +1074,11 @@ func (e *InfoSchemaTiDBMLogsExtractor) hasPredicates(colNames ...string) bool {
 }
 
 // ListSchemasAndTablesByBase lists candidate mlog tables by base-table predicates.
+// The returned base schema/table slices are aligned with the returned mlog schema/table slices.
 func (e *InfoSchemaTiDBMLogsExtractor) ListSchemasAndTablesByBase(
 	ctx context.Context,
 	is infoschema.InfoSchema,
-) ([]pmodel.CIStr, []*model.TableInfo, error) {
+) ([]pmodel.CIStr, []*model.TableInfo, []pmodel.CIStr, []*model.TableInfo, error) {
 	baseExtractor := &InfoSchemaBaseExtractor{
 		extractHelper: e.extractHelper,
 		SkipRequest:   e.SkipRequest,
@@ -1091,22 +1092,24 @@ func (e *InfoSchemaTiDBMLogsExtractor) ListSchemasAndTablesByBase(
 			tableID: BaseTableID,
 		},
 	}
-	_, baseTables, err := baseExtractor.ListSchemasAndTables(ctx, is)
+	candidateBaseSchemas, candidateBaseTables, err := baseExtractor.ListSchemasAndTables(ctx, is)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, nil, errors.Trace(err)
 	}
-	if len(baseTables) == 0 {
-		return nil, nil, nil
+	if len(candidateBaseTables) == 0 {
+		return nil, nil, nil, nil, nil
 	}
 
 	type schemaAndTable struct {
-		schema pmodel.CIStr
-		table  *model.TableInfo
+		schema     pmodel.CIStr
+		table      *model.TableInfo
+		baseSchema pmodel.CIStr
+		baseTable  *model.TableInfo
 	}
 
-	schemaAndTbls := make([]schemaAndTable, 0, len(baseTables))
-	seenMLogIDs := make(map[int64]struct{}, len(baseTables))
-	for _, baseTable := range baseTables {
+	schemaAndTbls := make([]schemaAndTable, 0, len(candidateBaseTables))
+	seenMLogIDs := make(map[int64]struct{}, len(candidateBaseTables))
+	for i, baseTable := range candidateBaseTables {
 		baseInfo := baseTable.MaterializedViewBase
 		if baseInfo == nil || baseInfo.MLogID == 0 {
 			continue
@@ -1127,7 +1130,12 @@ func (e *InfoSchemaTiDBMLogsExtractor) ListSchemasAndTablesByBase(
 			continue
 		}
 		seenMLogIDs[baseInfo.MLogID] = struct{}{}
-		schemaAndTbls = append(schemaAndTbls, schemaAndTable{schema: mlogSchema.Name, table: mlogMeta})
+		schemaAndTbls = append(schemaAndTbls, schemaAndTable{
+			schema:     mlogSchema.Name,
+			table:      mlogMeta,
+			baseSchema: candidateBaseSchemas[i],
+			baseTable:  baseTable,
+		})
 	}
 
 	slices.SortFunc(schemaAndTbls, func(a, b schemaAndTable) int {
@@ -1139,11 +1147,15 @@ func (e *InfoSchemaTiDBMLogsExtractor) ListSchemasAndTablesByBase(
 
 	schemas := make([]pmodel.CIStr, 0, len(schemaAndTbls))
 	tables := make([]*model.TableInfo, 0, len(schemaAndTbls))
+	baseSchemas := make([]pmodel.CIStr, 0, len(schemaAndTbls))
+	baseTables := make([]*model.TableInfo, 0, len(schemaAndTbls))
 	for _, st := range schemaAndTbls {
 		schemas = append(schemas, st.schema)
 		tables = append(tables, st.table)
+		baseSchemas = append(baseSchemas, st.baseSchema)
+		baseTables = append(baseTables, st.baseTable)
 	}
-	return schemas, tables, nil
+	return schemas, tables, baseSchemas, baseTables, nil
 }
 
 // Filter reports whether the given row value should be filtered out by the extractor predicates.
