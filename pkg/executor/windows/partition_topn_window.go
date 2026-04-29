@@ -31,13 +31,16 @@ type PartitionTopNWindowExec struct {
 	groupChecker *vecgroupchecker.VecGroupChecker
 	childResult  *chunk.Chunk
 
+	// limitCount is the per-partition upper bound from row_number() <= K.
 	limitCount   uint64
 	resultColIdx int
 
 	groupStart int
 	groupEnd   int
-	groupRank  uint64
-	exhausted  bool
+	// groupRank is the current row_number value within the partition. It keeps
+	// increasing across child chunks when one partition spans multiple chunks.
+	groupRank uint64
+	exhausted bool
 
 	resumeLastPartition bool
 }
