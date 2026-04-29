@@ -4,9 +4,11 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -547,7 +549,11 @@ func init() {
 			securityType:        securityType,
 			isFunction:          true,
 		}
-		return e.callProcedure(context.Background(), s)
+		traceCtx := sctx.GetTraceCtx()
+		if traceCtx == nil {
+			traceCtx = context.Background()
+		}
+		return e.callProcedure(traceCtx, s)
 	}
 }
 
@@ -815,6 +821,12 @@ func (e *ProcedureExec) callProcedure(ctx context.Context, s *ast.CallStmt) (fun
 	if !variable.TiDBEnableProcedureValue.Load() {
 		return nil, exeerrors.ErrProcedureDisabled
 	}
+	span, ctx := startRoutineTraceSpan(ctx, s)
+	defer span.Finish()
+	origTraceCtx := e.Ctx().GetTraceCtx()
+	e.Ctx().SetTraceCtx(ctx)
+	defer e.Ctx().SetTraceCtx(origTraceCtx)
+
 	e.Ctx().GetSessionVars().SetInCallProcedure()
 	defer func() {
 		if e.isFunction && e.parentContext != nil {
@@ -1047,6 +1059,13 @@ func (e *ProcedureExec) executeCall(ctx context.Context) error {
 }
 
 func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast.StmtNode) ([]chunk.Row, []*types.FieldType, error) {
+	callStmt, _ := e.Statement.(*ast.CallStmt)
+	span, ctx := startRoutineStatementTraceSpan(ctx, callStmt, stmtNode)
+	defer span.Finish()
+	origTraceCtx := e.Ctx().GetTraceCtx()
+	e.Ctx().SetTraceCtx(ctx)
+	defer e.Ctx().SetTraceCtx(origTraceCtx)
+
 	defer resetStmtCtx(e.Ctx(), stmtNode)()
 	nodeW := resolve.NewNodeW(stmtNode)
 	err := plannercore.Preprocess(ctx, e.Ctx(), nodeW)
@@ -1114,6 +1133,96 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	}
 	e.Ctx().StmtCommit(ctx)
 	return rows, fieldTypes, nil
+}
+
+type routineTraceSQLRestorer interface {
+	Restore(ctx *format.RestoreCtx) error
+}
+
+func startRoutineStatementTraceSpan(ctx context.Context, stmt *ast.CallStmt, stmtNode routineTraceSQLRestorer) (opentracing.Span, context.Context) {
+	if parent := opentracing.SpanFromContext(ctx); parent != nil && parent.Tracer() != nil {
+		stmtSQL := restoreRoutineTraceSQL(stmtNode)
+		spanName := "routine.statement"
+		if stmtSQL != "" {
+			spanName = fmt.Sprintf("%s %s", spanName, truncateRoutineTraceSQL(stmtSQL))
+		}
+		child := parent.Tracer().StartSpan(spanName, opentracing.ChildOf(parent.Context()))
+		annotateRoutineTraceSpan(child, stmt, stmtSQL)
+		return child, opentracing.ContextWithSpan(ctx, child)
+	}
+	return (opentracing.NoopTracer{}).StartSpan("routine.statement"), ctx
+}
+
+func restoreRoutineTraceSQL(stmtNode routineTraceSQLRestorer) string {
+	const restoreFlag = format.RestoreStringSingleQuotes | format.RestoreSpacesAroundBinaryOperation |
+		format.RestoreStringWithoutCharset | format.RestoreNameBackQuotes | format.RestoreWithoutSchemaName
+	var sb strings.Builder
+	ctx := format.NewRestoreCtx(restoreFlag, &sb)
+	if err := stmtNode.Restore(ctx); err != nil {
+		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
+		return ""
+	}
+	return sb.String()
+}
+
+func startRoutineTraceSpan(ctx context.Context, stmt *ast.CallStmt) (span opentracing.Span, newCtx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	spanName := buildRoutineTraceName(stmt)
+	span, newCtx = startRoutineTraceChildSpan(ctx, spanName)
+	annotateRoutineTraceSpan(span, stmt, "")
+	return span, newCtx
+}
+
+func startRoutineTraceChildSpan(ctx context.Context, name string) (opentracing.Span, context.Context) {
+	if parent := opentracing.SpanFromContext(ctx); parent != nil && parent.Tracer() != nil {
+		child := parent.Tracer().StartSpan(name, opentracing.ChildOf(parent.Context()))
+		return child, opentracing.ContextWithSpan(ctx, child)
+	}
+	span := (opentracing.NoopTracer{}).StartSpan(name)
+	return span, ctx
+}
+
+func annotateRoutineTraceSpan(span opentracing.Span, stmt *ast.CallStmt, sqlText string) {
+	if stmt != nil && stmt.Procedure != nil {
+		if stmt.Procedure.Schema.O != "" {
+			span.SetTag("routine.schema", stmt.Procedure.Schema.O)
+		}
+		if stmt.Procedure.FnName.O != "" {
+			span.SetTag("routine.name", stmt.Procedure.FnName.O)
+		}
+		if stmt.IsFunction {
+			span.SetTag("routine.type", "FUNCTION")
+		} else {
+			span.SetTag("routine.type", "PROCEDURE")
+		}
+	}
+	if sqlText != "" {
+		span.SetTag("sql", sqlText)
+	}
+}
+
+func buildRoutineTraceName(stmt *ast.CallStmt) string {
+	routineType := "procedure"
+	if stmt != nil && stmt.IsFunction {
+		routineType = "function"
+	}
+	if stmt == nil || stmt.Procedure == nil || stmt.Procedure.FnName.O == "" {
+		return "routine." + routineType
+	}
+	if stmt.Procedure.Schema.O == "" {
+		return fmt.Sprintf("routine.%s %s", routineType, stmt.Procedure.FnName.O)
+	}
+	return fmt.Sprintf("routine.%s %s.%s", routineType, stmt.Procedure.Schema.O, stmt.Procedure.FnName.O)
+}
+
+func truncateRoutineTraceSQL(sqlText string) string {
+	const maxLen = 256
+	if len(sqlText) <= maxLen {
+		return sqlText
+	}
+	return sqlText[:maxLen-3] + "..."
 }
 
 func resetStmtCtx(sctx sessionctx.Context, s ast.StmtNode) func() {

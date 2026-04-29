@@ -246,6 +246,16 @@ type session struct {
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 
+// GetTraceCtx returns the trace context of the session.
+func (s *session) GetTraceCtx() context.Context {
+	return s.currentCtx
+}
+
+// SetTraceCtx updates the trace context of the session.
+func (s *session) SetTraceCtx(ctx context.Context) {
+	s.currentCtx = ctx
+}
+
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {

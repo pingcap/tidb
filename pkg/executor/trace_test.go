@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -59,6 +60,62 @@ func TestTraceExec(t *testing.T) {
 	require.GreaterOrEqual(t, len(rows), 1)
 }
 
+func TestTraceExecStoredFunctionIncludesRoutineSpans(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec("create table trace_inner (id int primary key, v int)")
+	tk.MustExec("insert into trace_inner values (1, 42)")
+	tk.MustExec(`create function fn_trace_reads_sql() returns int reads sql data
+begin
+	declare outv int default 0;
+	select v into outv from trace_inner where id = 1;
+	return outv;
+end`)
+
+	rows := tk.MustQuery("trace format='row' select fn_trace_reads_sql();").Rows()
+	require.True(t, traceRowsContainOperation(rows, func(op string) bool {
+		return op == "routine.function test.fn_trace_reads_sql"
+	}), "rows=%v", rows)
+	require.True(t, traceRowsContainOperation(rows, func(op string) bool {
+		return strings.HasPrefix(op, "routine.statement SELECT") && strings.Contains(op, "`trace_inner`")
+	}), "rows=%v", rows)
+}
+
+func TestTraceExecNestedStoredFunctionTracksRoutineHierarchy(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+	tk.MustExec(`create function fn_trace_inner_nested() returns int
+begin
+	return 7;
+end`)
+	tk.MustExec(`create function fn_trace_outer_nested() returns int
+begin
+	declare outv int default 0;
+	select fn_trace_inner_nested() into outv;
+	return outv;
+end`)
+
+	rows := tk.MustQuery("trace format='row' select fn_trace_outer_nested();").Rows()
+	outerDepth, ok := traceRowFindOperationDepth(rows, func(op string) bool {
+		return op == "routine.function test.fn_trace_outer_nested"
+	})
+	require.True(t, ok, "rows=%v", rows)
+	outerStmtDepth, ok := traceRowFindOperationDepth(rows, func(op string) bool {
+		return strings.HasPrefix(op, "routine.statement SELECT") && strings.Contains(op, "fn_trace_inner_nested")
+	})
+	require.True(t, ok, "rows=%v", rows)
+	innerDepth, ok := traceRowFindOperationDepth(rows, func(op string) bool {
+		return op == "routine.function test.fn_trace_inner_nested"
+	})
+	require.True(t, ok, "rows=%v", rows)
+	require.Greater(t, outerStmtDepth, outerDepth, "rows=%v", rows)
+	require.Greater(t, innerDepth, outerStmtDepth, "rows=%v", rows)
+}
+
 func rowsOrdered(rows [][]any) bool {
 	for idx := range rows {
 		if _, ok := rows[idx][1].(string); !ok {
@@ -72,6 +129,62 @@ func rowsOrdered(rows [][]any) bool {
 		}
 	}
 	return true
+}
+
+func traceRowsContainOperation(rows [][]any, pred func(string) bool) bool {
+	for _, row := range rows {
+		_, op, ok := traceRowDepthAndOperation(row)
+		if ok && pred(op) {
+			return true
+		}
+	}
+	return false
+}
+
+func traceRowFindOperationDepth(rows [][]any, pred func(string) bool) (int, bool) {
+	for _, row := range rows {
+		depth, op, ok := traceRowDepthAndOperation(row)
+		if ok && pred(op) {
+			return depth, true
+		}
+	}
+	return 0, false
+}
+
+func traceRowDepthAndOperation(row []any) (int, string, bool) {
+	if len(row) == 0 {
+		return 0, "", false
+	}
+	op, ok := row[0].(string)
+	if !ok {
+		return 0, "", false
+	}
+	return traceOperationDepth(op), strings.TrimLeft(op, " │├└─"), true
+}
+
+func traceOperationDepth(op string) int {
+	if op == "" {
+		return 0
+	}
+	runes := []rune(op)
+	decorations := 0
+	for len(runes) >= 2 {
+		token := string(runes[:2])
+		switch token {
+		case "  ", "│ ", "├─", "└─":
+			decorations++
+			runes = runes[2:]
+		default:
+			if decorations == 0 {
+				return 0
+			}
+			return decorations - 1
+		}
+	}
+	if decorations == 0 {
+		return 0
+	}
+	return decorations - 1
 }
 
 func TestTracePlanStmt(t *testing.T) {
