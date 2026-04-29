@@ -307,3 +307,60 @@ func TestMergePartTopNAndHistToGlobalNoHistograms(t *testing.T) {
 	)
 	require.Error(t, err)
 }
+
+// TestMergePartTopNAndHistToGlobalSortedByEncoded verifies that the
+// returned global TopN keeps the invariant that entries are sorted by
+// encoded bytes — required by *TopN.findTopN / LowerBound / BetweenCount,
+// which use binary search and assume that ordering. The bounded min-heap
+// inside the merge orders by count, so we must re-sort before returning.
+func TestMergePartTopNAndHistToGlobalSortedByEncoded(t *testing.T) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	killer := sqlkiller.SQLKiller{}
+
+	encodeInt := func(v int64) []byte {
+		key, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(v))
+		require.NoError(t, err)
+		return key
+	}
+	tp := types.NewFieldType(mysql.TypeLong)
+
+	// Pick three values whose count-descending order does NOT match
+	// their encoded order. Encoded order for positive ints is numeric
+	// (5 < 10 < 15). Counts 10, 20, 5 give count-desc order
+	// 10(20), 5(10), 15(5) — which differs from encoded order.
+	topN := statistics.NewTopN(3)
+	topN.AppendTopN(encodeInt(5), 10)
+	topN.AppendTopN(encodeInt(10), 20)
+	topN.AppendTopN(encodeInt(15), 5)
+
+	// Minimal histogram so the merge has metadata; values outside the
+	// TopN range so they don't perturb the result.
+	h := statistics.NewHistogram(1, 3, 0, 0, tp, chunk.InitialCapacity, 0)
+	d100, d200 := types.NewIntDatum(100), types.NewIntDatum(200)
+	h.AppendBucket(&d100, &d200, 1, 0)
+
+	globalTopN, _, err := statistics.MergePartTopNAndHistToGlobal(
+		[]*statistics.TopN{topN},
+		[]*statistics.Histogram{h},
+		3, 100, false, &killer, sc,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, globalTopN)
+	require.Len(t, globalTopN.TopN, 3)
+
+	// 1. Direct invariant: encoded order monotonic non-decreasing.
+	for i := 1; i < len(globalTopN.TopN); i++ {
+		require.LessOrEqualf(t,
+			bytes.Compare(globalTopN.TopN[i-1].Encoded, globalTopN.TopN[i].Encoded), 0,
+			"TopN must be sorted by encoded bytes; got entry %d before %d in wrong order",
+			i-1, i)
+	}
+
+	// 2. Indirect proof via BetweenCount, which requires the encoded-
+	// sorted invariant (it does two LowerBound binary searches).
+	// Range [5, 15) covers 5 and 10 → 10 + 20 = 30. Without Sort the
+	// binary search lands on the wrong index and returns 0 or 10.
+	require.Equal(t, uint64(30),
+		globalTopN.BetweenCount(nil, encodeInt(5), encodeInt(15)),
+		"BetweenCount[5,15) expected 10+20=30 (relies on TopN being encoded-sorted)")
+}

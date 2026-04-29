@@ -1711,7 +1711,14 @@ func MergePartTopNAndHistToGlobal(
 	statslogutil.StatsLogger().Info("MergePartTopNAndHistToGlobal step 1c: merge-walked TopN + buckets",
 		zap.Int("sortedRefs", len(sortedRefs)))
 
-	// 1d. Extract global TopN from the heap.
+	// 1d. Extract global TopN from the heap. The heap orders by count
+	// (descending) but TopN's downstream consumers — findTopN /
+	// LowerBound / BetweenCount — assume entries are sorted by encoded
+	// bytes. Restore that invariant here so in-memory callers between
+	// merge and persistence (e.g. selectivity estimation in the same
+	// session) see a well-formed TopN. Persisted reads already re-sort
+	// in DecodeTopN but we shouldn't rely on the round-trip.
+	// See TestMergePartTopNAndHistToGlobalSortedByEncoded.
 	topNSlice := topNHeap.ToSortedSlice()
 	var globalTopN *TopN
 	if len(topNSlice) > 0 {
@@ -1719,6 +1726,7 @@ func MergePartTopNAndHistToGlobal(
 		for _, e := range topNSlice {
 			globalTopN.AppendTopN(e.encoded, e.totalCount)
 		}
+		globalTopN.Sort()
 	}
 
 	// Build globalTopN membership set for Pass 2. Only presence is needed;
