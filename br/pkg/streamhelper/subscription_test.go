@@ -44,6 +44,22 @@ func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
 	}, 3*time.Second, 100*time.Millisecond)
 }
 
+func collectCheckpointSpans(t *testing.T, sub *streamhelper.FlushSubscriber, checkpoint uint64) *spans.ValueSortedFull {
+	t.Helper()
+	observed := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	require.Eventually(t, func() bool {
+		for {
+			select {
+			case event := <-sub.Events():
+				observed.Merge(event)
+			default:
+				return observed.MinValue() == checkpoint
+			}
+		}
+	}, 3*time.Second, 100*time.Millisecond)
+	return observed
+}
+
 func TestSubBasic(t *testing.T) {
 	req := require.New(t)
 	ctx := context.Background()
@@ -169,12 +185,8 @@ func TestStoreRemoved(t *testing.T) {
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 
-	waitPendingEvents(t, sub)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 
 	defer func() {
 		if t.Failed() {
