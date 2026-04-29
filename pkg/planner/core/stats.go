@@ -271,11 +271,7 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 		return 0, false
 	}
 	tzName, tzOffset := timeutil.Zone(sctx.GetSessionVars().Location())
-	ctx := sctx.GetTraceCtx()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	count, err := provider.EstimateTiCICount(ctx, &kv.TiCIEstimateCountRequest{
+	count, err := provider.EstimateTiCICount(context.Background(), &kv.TiCIEstimateCountRequest{
 		TableID:        tableID,
 		IndexID:        path.Index.ID,
 		StartTS:        readTS,
