@@ -265,6 +265,10 @@ func (e *BaseKVEncoder) addTiCIIndexKVs(tbl table.Table, record []types.Datum, h
 		if !tables.IsIndexWritable(idx) {
 			continue
 		}
+		// IMPORT INTO currently generates TiCI KVs only for fulltext indexes.
+		// Hybrid TiCI indexes are not supported yet and are rejected in precheck.
+		// Other TiCI checks may keep using IsTiCIIndex() so the generic TiCI path
+		// can be reused when hybrid TiCI import is supported later.
 		if idx.Meta().FullTextInfo == nil {
 			continue
 		}
