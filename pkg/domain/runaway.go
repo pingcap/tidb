@@ -17,8 +17,12 @@ package domain
 import (
 	"context"
 	"net"
+	"os"
 	"strconv"
+	"strings"
+	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -27,6 +31,40 @@ import (
 	"github.com/tikv/pd/client/constants"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
+
+const (
+	defaultDegradedRUFillRate      = 2_000_000
+	defaultDegradedRUBurstLimit    = 50_000_000_000
+	defaultDegradedModeWaitTimeout = 3 * time.Second / 2
+	vipWaitRetryInterval           = 100 * time.Millisecond
+	vipWaitRetryTimes              = 20
+)
+
+func newDefaultDegradedRUSettings() *rmpb.GroupRequestUnitSettings {
+	return &rmpb.GroupRequestUnitSettings{
+		RU: &rmpb.TokenBucket{
+			Settings: &rmpb.TokenLimitSettings{
+				FillRate:   defaultDegradedRUFillRate,
+				BurstLimit: defaultDegradedRUBurstLimit,
+			},
+		},
+	}
+}
+
+func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption {
+	opts := []rmclient.ResourceControlCreateOption{
+		rmclient.WithMaxWaitDuration(runaway.MaxWaitDuration),
+		rmclient.WithDegradedModeWaitDuration(defaultDegradedModeWaitTimeout),
+		rmclient.WithDegradedRUSettings(newDefaultDegradedRUSettings()),
+	}
+	if strings.Contains(os.Getenv("NAMESPACE"), "vip") {
+		opts = append(opts,
+			rmclient.WithWaitRetryInterval(vipWaitRetryInterval),
+			rmclient.WithWaitRetryTimes(vipWaitRetryTimes),
+		)
+	}
+	return opts
+}
 
 func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client, uniqueID uint64) error {
 	if pdClient == nil {
@@ -39,7 +77,7 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 	if codec := do.Store().GetCodec(); codec != nil {
 		keyspaceID = uint32(codec.GetKeyspaceID())
 	}
-	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil, keyspaceID, rmclient.WithMaxWaitDuration(runaway.MaxWaitDuration))
+	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil, keyspaceID, newResourceGroupsControllerOptions()...)
 	if err != nil {
 		return err
 	}
