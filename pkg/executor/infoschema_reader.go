@@ -1557,8 +1557,6 @@ func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sess
 		return errors.Trace(err)
 	}
 
-	e.updateStatsCacheIfNeed(sctx, tables)
-
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
@@ -1687,8 +1685,6 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	e.updateStatsCacheIfNeed(sctx, tables)
 
 	rows := make([][]types.Datum, 0)
 	for i, tbl := range tables {
