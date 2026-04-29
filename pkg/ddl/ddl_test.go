@@ -102,6 +102,11 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 	require.False(t, changed)
 }
 
+func TestTiCITaskIDForDDLUsesTaskKey(t *testing.T) {
+	jobID := int64(12345)
+	require.Equal(t, TaskKey(jobID, false), ticiTaskIDForDDL(jobID))
+}
+
 func colDefStrToColInfo(t *testing.T, str string, ctx *metabuild.Context) *model.ColumnInfo {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")

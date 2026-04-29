@@ -17,9 +17,12 @@ package importinto
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strconv"
 	"testing"
 
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	frameworkmock "github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
@@ -30,8 +33,11 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -78,6 +84,63 @@ func TestImportTaskExecutor(t *testing.T) {
 	require.Error(t, err)
 	_, err = executor.GetStepExecutor(&proto.Task{TaskBase: proto.TaskBase{Step: proto.ImportStepImport}, Meta: []byte("")})
 	require.Error(t, err)
+}
+
+func TestTiCITaskIDForImportIntoUsesTaskKey(t *testing.T) {
+	jobID := int64(12345)
+	require.Equal(t, TaskKey(jobID), ticiTaskIDForImportInto(jobID))
+}
+
+func TestGetTableImporterSetsTiCITaskID(t *testing.T) {
+	ctx := context.Background()
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	cfg := tidbconfig.GetGlobalConfig()
+	originalTempDir := cfg.TempDir
+	cfg.TempDir = t.TempDir()
+	t.Cleanup(func() {
+		cfg.TempDir = originalTempDir
+	})
+
+	tableInfo := &model.TableInfo{
+		ID:    2,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{{
+			ID:        1,
+			Name:      ast.NewCIStr("a"),
+			Offset:    0,
+			State:     model.StatePublic,
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		}},
+	}
+
+	path := filepath.Join(t.TempDir(), "input.csv")
+	taskMeta := &TaskMeta{
+		JobID: 12345,
+		Plan: importer.Plan{
+			DBID:             1,
+			DBName:           "test",
+			TableInfo:        tableInfo,
+			DesiredTableInfo: tableInfo,
+			Path:             path,
+			Format:           importer.DataFormatCSV,
+			InImportInto:     true,
+			DataSourceType:   importer.DataSourceTypeFile,
+		},
+		Stmt: fmt.Sprintf("IMPORT INTO test.t FROM '%s'", path),
+	}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/createTableImporterForTest", `return(true)`)
+	tableImporter, err := getTableImporter(ctx, 99, taskMeta, store, zap.NewNop())
+	require.NoError(t, err)
+	require.Equal(t, TaskKey(taskMeta.JobID), tableImporter.LoadDataController.TiDBTaskIDForTiCI)
+	tableImporter.LoadDataController.Close()
+	tableImporter.Backend().CloseEngineMgr()
 }
 
 func TestGetOnDupForKVGroup(t *testing.T) {
@@ -200,6 +263,7 @@ func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 	}
 
 	finishErr := errors.New("finish failed")
+	jobID := int64(456)
 	tests := []struct {
 		name        string
 		plan        *importer.Plan
@@ -222,14 +286,14 @@ func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 		{
 			name:        "tici index finishes upload",
 			plan:        makePlan(true),
-			wantTaskIDs: []string{"123"},
+			wantTaskIDs: []string{TaskKey(jobID)},
 			wantInfo:    true,
 		},
 		{
 			name:        "finish failure only warns",
 			plan:        makePlan(true),
 			finishErr:   finishErr,
-			wantTaskIDs: []string{"123"},
+			wantTaskIDs: []string{TaskKey(jobID)},
 			wantWarn:    true,
 		},
 	}
@@ -244,7 +308,7 @@ func TestFinishTiCIIndexUploadForPostProcess(t *testing.T) {
 			core, recorded := observer.New(zap.DebugLevel)
 			logger := zap.New(core)
 
-			finishTiCIIndexUploadForPostProcess(context.Background(), nil, 123, tt.plan, logger)
+			finishTiCIIndexUploadForPostProcess(context.Background(), nil, 123, jobID, tt.plan, logger)
 
 			require.Equal(t, tt.wantTaskIDs, gotTaskIDs)
 			warns := recorded.FilterMessage("failed to finish TiCI index upload for post process").All()
@@ -296,6 +360,7 @@ func TestPostProcessTiCIFinishFailureDoesNotAbort(t *testing.T) {
 	executor := &postProcessStepExecutor{
 		taskID: 123,
 		taskMeta: &TaskMeta{
+			JobID: 456,
 			Plan: importer.Plan{
 				DBName:           "test",
 				TableInfo:        tableInfo,

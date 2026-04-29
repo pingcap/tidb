@@ -16,7 +16,6 @@ package importinto
 
 import (
 	"context"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -129,7 +128,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		return err
 	}
 
-	finishTiCIIndexUploadForPostProcess(ctx, p.store, p.taskID, plan, logger)
+	finishTiCIIndexUploadForPostProcess(ctx, p.store, p.taskID, p.taskMeta.JobID, plan, logger)
 
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	for id, cksum := range subtaskMeta.Checksum {
@@ -198,6 +197,7 @@ func finishTiCIIndexUploadForPostProcess(
 	ctx context.Context,
 	store kv.Storage,
 	taskID int64,
+	jobID int64,
 	plan *importer.Plan,
 	logger *zap.Logger,
 ) {
@@ -210,8 +210,8 @@ func finishTiCIIndexUploadForPostProcess(
 		return
 	}
 
-	taskIDStr := strconv.FormatInt(taskID, 10)
-	if err := finishTiCIIndexUpload(ctx, store, taskIDStr); err != nil {
+	tidbTaskID := ticiTaskIDForImportInto(jobID)
+	if err := finishTiCIIndexUpload(ctx, store, tidbTaskID); err != nil {
 		logger.Warn(
 			"failed to finish TiCI index upload for post process",
 			zap.Int64("task-id", taskID),
