@@ -19,6 +19,8 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 
 * Read the description (problem summary, what changed and how does it work) to understand the goal of the PR. If it's not easy to understand, ask the author to improve it.
 
+  * In particular, AI-generated PR descriptions can be extremely long and unnecessarily verbose. In these cases, gently ask the author to read the description themselves and try to make it more concise.
+
 * Make sure you are familiar with the packages the PR modifies. If you are not, read the surrounding code to understand the context of the change, or ask the author clarifying questions.
 
 * Make sure you have enough continuous time to review the PR, use 300 LOC per hour to estimate.
@@ -83,6 +85,8 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 
 * Do tests exist and are they comprehensive?
 
+  * If the PR is fixing a bug, ensure that test cases actually address the issue. Would the test still pass if the bug wasn't fixed? If so, it's not a valid test.
+
 * Am I able to understand the purpose of each unit test?
 
 * Do unit tests actually test that the code is performing the intended functionality?
@@ -90,6 +94,10 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 * Do unit tests cover all the important code blocks and specially handled errors?
 
 * Could procedural tests be rewritten to table-driven tests?
+
+  * A common pattern is to define an array of structs that define the input and expected output, and then loop over every struct in the array. The [DDL AST tests](pkg/parser/ast/ddl_test.go) contain many examples of this pattern.
+
+  * Many larger tests use "test suites": json files of cases and expected output that decouple the test code from the test data. For example, the [planner indexmerge tests](pkg/planner/core/casetest/indexmerge/main_test.go) loads json files from a [testdata subdirectory](pkg/planner/core/casetest/indexmerge/testdata).
 
 
 ## Guidance for reviewers
