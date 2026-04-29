@@ -1019,7 +1019,11 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 	}
 	// Columns with a configured constant satisfy the "has a value" requirement
 	// just as well as columns with a DDL DEFAULT.
-	for col := range igCol.ColumnConstants {
+	colConstants, err := ci.cfg.Mydumper.ColumnConstants.GetColumnConstants(tableInfo.DB, tableInfo.Name, ci.cfg.Mydumper.CaseSensitive)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for col := range colConstants {
 		defaultCols[col] = struct{}{}
 	}
 	if len(fullExtendColsSet) > 0 {

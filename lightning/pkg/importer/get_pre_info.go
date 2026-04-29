@@ -672,6 +672,10 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}
+	colConstants, err := p.cfg.Mydumper.ColumnConstants.GetColumnConstants(dbName, tableMeta.Name, p.cfg.Mydumper.CaseSensitive)
+	if err != nil {
+		return 0.0, false, errors.Trace(err)
+	}
 	kvEncoder, err := p.encBuilder.NewEncoder(ctx, &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        p.cfg.TiDB.SQLMode,
@@ -681,7 +685,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		},
 		Table:           tbl,
 		Logger:          logger,
-		ColumnConstants: igCols.ColumnConstants,
+		ColumnConstants: colConstants,
 	})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
