@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
@@ -68,8 +68,8 @@ func (e *importMinimalTaskExecutor) Run(
 	failpoint.InjectCall("syncBeforeSortChunk")
 	sharedVars := e.mTtask.SharedVars
 
-	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
-	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
+	chunk := e.mTtask.Chunk
+	chunk.ParquetMeta = mydump.ParquetFileMeta{
 		Loc: sharedVars.TableImporter.Location,
 	}
 
@@ -77,7 +77,7 @@ func (e *importMinimalTaskExecutor) Run(
 	if sharedVars.TableImporter.IsLocalSort() {
 		if err := importer.ProcessChunk(
 			ctx,
-			&chunkCheckpoint,
+			&chunk,
 			sharedVars.TableImporter,
 			sharedVars.DataEngine,
 			sharedVars.IndexEngine,
@@ -90,7 +90,7 @@ func (e *importMinimalTaskExecutor) Run(
 	} else {
 		if err := importer.ProcessChunkWithWriter(
 			ctx,
-			&chunkCheckpoint,
+			&chunk,
 			sharedVars.TableImporter,
 			dataWriter,
 			indexWriter,
@@ -154,7 +154,7 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 		return importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
 			func() (*local.RemoteChecksum, error) {
 				ctxWithLogger := logutil.WithLogger(ctx, logger)
-				return mgr.Checksum(ctxWithLogger, &checkpoints.TidbTableInfo{
+				return mgr.Checksum(ctxWithLogger, &importdef.TableInfo{
 					DB:   plan.DBName,
 					Name: plan.TableInfo.Name.L,
 					Core: plan.TableInfo,

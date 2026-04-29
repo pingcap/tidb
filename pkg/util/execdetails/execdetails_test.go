@@ -18,9 +18,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -253,6 +255,36 @@ func TestString(t *testing.T) {
 	require.Equal(t, expected, detail.String())
 	detail = &ExecDetails{}
 	require.Equal(t, "", detail.String())
+
+	t.Run("load tikv exec details snapshot", func(t *testing.T) {
+		tikvExecDetail := &util.ExecDetails{}
+		atomic.StoreInt64(&tikvExecDetail.BackoffCount, 2)
+		atomic.StoreInt64(&tikvExecDetail.BackoffDuration, int64(3*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.WaitKVRespDuration, int64(4*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.WaitPDRespDuration, int64(5*time.Second))
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentKVTotal, 11)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedKVTotal, 12)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentKVCrossZone, 13)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedKVCrossZone, 14)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentMPPTotal, 15)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedMPPTotal, 16)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesSentMPPCrossZone, 17)
+		atomic.StoreInt64(&tikvExecDetail.UnpackedBytesReceivedMPPCrossZone, 18)
+
+		snapshot := LoadTiKVExecDetails(tikvExecDetail)
+		require.Equal(t, int64(2), snapshot.BackoffCount)
+		require.Equal(t, int64(3*time.Second), snapshot.BackoffDuration)
+		require.Equal(t, int64(4*time.Second), snapshot.WaitKVRespDuration)
+		require.Equal(t, int64(5*time.Second), snapshot.WaitPDRespDuration)
+		require.Equal(t, int64(11), snapshot.UnpackedBytesSentKVTotal)
+		require.Equal(t, int64(12), snapshot.UnpackedBytesReceivedKVTotal)
+		require.Equal(t, int64(13), snapshot.UnpackedBytesSentKVCrossZone)
+		require.Equal(t, int64(14), snapshot.UnpackedBytesReceivedKVCrossZone)
+		require.Equal(t, int64(15), snapshot.UnpackedBytesSentMPPTotal)
+		require.Equal(t, int64(16), snapshot.UnpackedBytesReceivedMPPTotal)
+		require.Equal(t, int64(17), snapshot.UnpackedBytesSentMPPCrossZone)
+		require.Equal(t, int64(18), snapshot.UnpackedBytesReceivedMPPCrossZone)
+	})
 }
 
 func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {
@@ -365,10 +397,10 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	tikvRU := float64(157258)
 	tiflashRU := float64(24680)
 	totalRU := metrics.TotalRU(weights, tikvRU, tiflashRU)
-	require.InEpsilon(t, 26.8604602238, tidbRU, 0.01)
+	require.InEpsilon(t, 40.2906903357, tidbRU, 0.01)
 	require.InEpsilon(t, 157258.0, tikvRU, 0.01)
 	require.InEpsilon(t, 24680.0, tiflashRU, 0.01)
-	require.InEpsilon(t, 181964.8604602238, totalRU, 0.01)
+	require.InEpsilon(t, 181978.2906903357, totalRU, 0.01)
 
 	t.Run("zero scale stays zero", func(t *testing.T) {
 		zeroScaleWeights := weights
@@ -411,6 +443,119 @@ func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {
 	require.NotEqual(t, baseline, metrics.CalculateRUValues(updated))
 }
 
+func TestUpdateRUV2MetricsFromRUV2(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	UpdateRUV2MetricsFromRUV2(metrics, &kvrpcpb.RUV2{
+		ReadRpcCount:                      2,
+		WriteRpcCount:                     3,
+		KvEngineCacheMiss:                 5,
+		CoprocessorExecutorIterations:     7,
+		CoprocessorResponseBytes:          11,
+		RaftstoreStoreWriteTriggerWbBytes: 13,
+		StorageProcessedKeysBatchGet:      17,
+		StorageProcessedKeysGet:           19,
+		ExecutorInputs: &kvrpcpb.ExecutorInputs{
+			TikvCoprocessorExecutorWorkTotalBatchIndexScan:    23,
+			TikvCoprocessorExecutorWorkTotalBatchTableScan:    29,
+			TikvCoprocessorExecutorWorkTotalBatchSelection:    31,
+			TikvCoprocessorExecutorWorkTotalBatchTopN:         37,
+			TikvCoprocessorExecutorWorkTotalBatchLimit:        41,
+			TikvCoprocessorExecutorWorkTotalBatchSimpleAggr:   43,
+			TikvCoprocessorExecutorWorkTotalBatchFastHashAggr: 47,
+		},
+	})
+	require.Equal(t, int64(2), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
+	require.Equal(t, int64(5), metrics.TiKVKVEngineCacheMiss())
+	require.Equal(t, int64(7), metrics.TiKVCoprocessorExecutorIterations())
+	require.Equal(t, int64(11), metrics.TiKVCoprocessorResponseBytes())
+	require.Equal(t, int64(13), metrics.TiKVRaftstoreStoreWriteTriggerWB())
+	require.Equal(t, int64(17), metrics.TiKVStorageProcessedKeysBatchGet())
+	require.Equal(t, int64(19), metrics.TiKVStorageProcessedKeysGet())
+
+	detail := FormatRUV2Metrics(metrics, defaultRUV2WeightsForTest(), 0, 0)
+	require.Contains(t, detail, "resource_manager_read_cnt:2")
+	require.Contains(t, detail, "resource_manager_write_cnt:3")
+	require.Contains(t, detail, "tikv_storage_processed_keys_batch_get:17")
+	require.Contains(t, detail, "tikv_storage_processed_keys_get:19")
+	require.Contains(t, detail, "BatchFastHashAggr:47")
+}
+
+func TestSyncRUV2MetricsFromRUDetailsIncremental(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	ruDetails := util.NewRUDetails()
+	ruDetails.AddRUV2(&kvrpcpb.RUV2{
+		ReadRpcCount:                      2,
+		WriteRpcCount:                     3,
+		KvEngineCacheMiss:                 5,
+		RaftstoreStoreWriteTriggerWbBytes: 17,
+		StorageProcessedKeysBatchGet:      7,
+		StorageProcessedKeysGet:           19,
+		ExecutorInputs: &kvrpcpb.ExecutorInputs{
+			TikvCoprocessorExecutorWorkTotalBatchIndexScan:    11,
+			TikvCoprocessorExecutorWorkTotalBatchFastHashAggr: 23,
+		},
+	})
+
+	// First drain picks up all counters.
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Equal(t, int64(2), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
+	require.Equal(t, int64(5), metrics.TiKVKVEngineCacheMiss())
+	require.Equal(t, int64(17), metrics.TiKVRaftstoreStoreWriteTriggerWB())
+	require.Equal(t, int64(7), metrics.TiKVStorageProcessedKeysBatchGet())
+	require.Equal(t, int64(19), metrics.TiKVStorageProcessedKeysGet())
+
+	// Second drain without new data is a no-op.
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Equal(t, int64(2), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(3), metrics.ResourceManagerWriteCnt())
+
+	// New counters accumulate after the first drain.
+	ruDetails.AddRUV2(&kvrpcpb.RUV2{
+		ReadRpcCount:                 10,
+		StorageProcessedKeysBatchGet: 100,
+	})
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Equal(t, int64(12), metrics.ResourceManagerReadCnt())
+	require.Equal(t, int64(107), metrics.TiKVStorageProcessedKeysBatchGet())
+
+	detail := FormatRUV2Metrics(metrics, defaultRUV2WeightsForTest(), 0, 0)
+	require.Contains(t, detail, "resource_manager_read_cnt:12")
+	require.Contains(t, detail, "resource_manager_write_cnt:3")
+	require.Contains(t, detail, "tikv_storage_processed_keys_batch_get:107")
+	require.Contains(t, detail, "tikv_storage_processed_keys_get:19")
+	require.Contains(t, detail, "BatchIndexScan:11")
+	require.Contains(t, detail, "BatchFastHashAggr:23")
+}
+
+func TestSyncRUV2MetricsFromRUDetailsBypass(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	metrics.SetBypass(true)
+	ruDetails := util.NewRUDetails()
+	ruDetails.AddRUV2(&kvrpcpb.RUV2{
+		StorageProcessedKeysBatchGet: 7,
+	})
+
+	SyncRUV2MetricsFromRUDetails(metrics, ruDetails)
+	require.Zero(t, metrics.ResourceManagerReadCnt())
+	require.Zero(t, metrics.ResourceManagerWriteCnt())
+	require.Zero(t, metrics.TiKVStorageProcessedKeysBatchGet())
+}
+
+func TestUpdateRUV2MetricsFromRUV2Bypass(t *testing.T) {
+	metrics := NewRUV2Metrics()
+	metrics.SetBypass(true)
+	UpdateRUV2MetricsFromRUV2(metrics, &kvrpcpb.RUV2{
+		ReadRpcCount:                 1,
+		WriteRpcCount:                1,
+		StorageProcessedKeysBatchGet: 1,
+	})
+	require.Zero(t, metrics.ResourceManagerReadCnt())
+	require.Zero(t, metrics.ResourceManagerWriteCnt())
+	require.Zero(t, metrics.TiKVStorageProcessedKeysBatchGet())
+}
+
 func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 	weights := defaultRUV2WeightsForTest()
 	metrics := NewRUV2Metrics()
@@ -419,7 +564,7 @@ func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 	metrics.AddTiKVCoprocessorWorkTotal("BatchTopN", 10)
 	total, formatted := FormatRUV2Summary(metrics, weights, 10987, 246)
 
-	require.Equal(t, "11235.06", total)
+	require.Equal(t, "11236.09", total)
 	require.Equal(t, total, FormatRUV2Total(metrics, weights, 10987, 246))
 	require.Equal(t, formatted, FormatRUV2Metrics(metrics, weights, 10987, 246))
 	require.Contains(t, formatted, "tidb_ru:")
@@ -430,8 +575,8 @@ func TestFormatRUV2MetricsIncludesRUValuesFirst(t *testing.T) {
 
 	parts := strings.Split(formatted, ", ")
 	require.Len(t, parts, 7)
-	require.Equal(t, "total_ru:11235.06", parts[0])
-	require.Equal(t, "tidb_ru:2.06", parts[1])
+	require.Equal(t, "total_ru:11236.09", parts[0])
+	require.Equal(t, "tidb_ru:3.09", parts[1])
 	require.Equal(t, "tikv_ru:10987.00", parts[2])
 	require.Equal(t, "tiflash_ru:246.00", parts[3])
 }

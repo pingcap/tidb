@@ -23,9 +23,9 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -125,7 +125,7 @@ func generateLocalEngineConfig(ts uint64) *backend.EngineConfig {
 			CompactConcurrency: compactConcurrency,
 			BlockSize:          16 * 1024, // using default for DDL
 		},
-		TableInfo:   &checkpoints.TidbTableInfo{},
+		TableInfo:   &importdef.TableInfo{},
 		KeepSortDir: true,
 		TS:          ts,
 	}

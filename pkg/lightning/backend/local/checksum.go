@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -91,7 +91,7 @@ type ChecksumManager interface {
 	// Checksum computes the remote checksum for tableInfo.
 	// When partitionName is non-empty, the checksum is scoped to that partition only.
 	// TiKV-backed implementations must reject non-empty partitionName with an error.
-	Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, partitionName string) (*RemoteChecksum, error)
+	Checksum(ctx context.Context, tableInfo *importdef.TableInfo, partitionName string) (*RemoteChecksum, error)
 	Close()
 }
 
@@ -115,7 +115,7 @@ func NewTiDBChecksumExecutor(db *sql.DB) ChecksumManager {
 // Checksum implements ChecksumManager by running ADMIN CHECKSUM TABLE via TiDB SQL.
 // When partitionName is non-empty, the statement is scoped to that partition:
 // ADMIN CHECKSUM TABLE t PARTITION (partitionName).
-func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, partitionName string) (*RemoteChecksum, error) {
+func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *importdef.TableInfo, partitionName string) (*RemoteChecksum, error) {
 	var err error
 	if err = e.manager.addOneJob(ctx, e.db); err != nil {
 		return nil, err
@@ -332,7 +332,7 @@ func NewTiKVChecksumManagerForImportInto(store kv.Storage, taskID int64, distSQL
 	}
 }
 
-func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, ts uint64) (*RemoteChecksum, error) {
+func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *importdef.TableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
 		SetBackoffWeight(e.backoffWeight).
@@ -386,7 +386,7 @@ var retryGetTSInterval = time.Second
 // Checksum implements the ChecksumManager interface using the TiKV coprocessor.
 // Partition-scoped checksums (non-empty partitionName) are not supported by this
 // implementation; callers must use tidbChecksumExecutor (checksum-via-sql = true) instead.
-func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *checkpoints.TidbTableInfo, partitionName string) (*RemoteChecksum, error) {
+func (e *TiKVChecksumManager) Checksum(ctx context.Context, tableInfo *importdef.TableInfo, partitionName string) (*RemoteChecksum, error) {
 	if partitionName != "" {
 		return nil, errors.Errorf("partition-scoped checksum is not supported by TiKV checksum manager; use tidb checksum manager instead (set checksum-via-sql = true): partition %s", partitionName)
 	}

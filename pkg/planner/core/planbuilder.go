@@ -4020,12 +4020,19 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
-		originalVal := b.allowBuildCastArray
-		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
-		b.allowBuildCastArray = originalVal
-		if err != nil {
-			return igc, err
+		var expr expression.Expression
+		// Fast path: pure value literals (e.g. GENERATED ALWAYS AS (NULL) VIRTUAL) contain no
+		// column references and need no rewriting. Skip the expensive Clone()+rewrite() for them.
+		if valExpr, ok := column.GeneratedExpr.Internal().(*driver.ValueExpr); ok {
+			expr = &expression.Constant{Value: valExpr.Datum, RetType: column.FieldType.Clone()}
+		} else {
+			originalVal := b.allowBuildCastArray
+			b.allowBuildCastArray = true
+			expr, _, err = b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
+			b.allowBuildCastArray = originalVal
+			if err != nil {
+				return igc, err
+			}
 		}
 
 		igc.Exprs = append(igc.Exprs, expr)

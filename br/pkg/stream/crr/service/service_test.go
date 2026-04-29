@@ -607,12 +607,12 @@ func TestGetStatusFileName(t *testing.T) {
 		{
 			name:      "parent directory",
 			subDir:    "../state",
-			errSubstr: "must stay within upstream storage",
+			errSubstr: "must stay within selected storage",
 		},
 		{
 			name:      "clean to parent directory",
 			subDir:    "state/../../escape",
-			errSubstr: "must stay within upstream storage",
+			errSubstr: "must stay within selected storage",
 		},
 	}
 

@@ -48,8 +48,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 )
 
 const nonPreparedPlanCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
@@ -584,16 +586,51 @@ func shouldTryOrderAwareReorderRound(sessVars *variable.SessionVars) bool {
 		sessVars.StmtCtx.AlternativeLogicalPlanOrderAwareJoinReorder
 }
 
-type flagAdjustFunc func(uint64) uint64
-
-var roundList = [...]flagAdjustFunc{
-	func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
-	func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
 }
 
-var roundEnabled = [...]func(*variable.SessionVars) bool{
-	shouldTryNonDecorrelationRound,
-	shouldTryOrderAwareReorderRound,
+// alternativeRound describes one alternative logical-plan round.
+// adjustFlag adjusts the optimization flags for the round.
+// enabled returns true when the round should be attempted.
+// setup/cleanup optionally modify session state before/after plan building.
+type alternativeRound struct {
+	name       string
+	adjustFlag func(uint64) uint64
+	enabled    func(*variable.SessionVars) bool
+	setup      func(*variable.SessionVars)
+	cleanup    func(*variable.SessionVars)
+}
+
+// savedEnableCorrelateSubquery holds the pre-round value of
+// EnableCorrelateSubquery so setup/cleanup can share it without a closure
+// wrapper. Safe because optimize is single-threaded per session.
+var savedEnableCorrelateSubquery bool
+
+var alternativeRounds = [...]alternativeRound{
+	{
+		name:       "non-decorrelate",
+		adjustFlag: func(flag uint64) uint64 { return flag &^ rule.FlagDecorrelate },
+		enabled:    shouldTryNonDecorrelationRound,
+	},
+	{
+		name:       "order-aware-reorder",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagOrderAwareJoinReorder },
+		enabled:    shouldTryOrderAwareReorderRound,
+	},
+	{
+		name:       "correlate",
+		adjustFlag: func(flag uint64) uint64 { return flag | rule.FlagCorrelate },
+		enabled:    shouldTryCorrelateRound,
+		setup: func(sv *variable.SessionVars) {
+			savedEnableCorrelateSubquery = sv.EnableCorrelateSubquery
+			sv.EnableCorrelateSubquery = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+		},
+	},
 }
 
 func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
@@ -665,10 +702,19 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		return p, names, 0, nil
 	}
 
-	for i, adjust := range roundList {
-		if !roundEnabled[i](sessVars) {
-			continue
+	// Pre-compute which rounds are enabled based on the signals from the first
+	// (default) build. This prevents signal leakage: alternative rounds rebuild
+	// the plan and may set AlternativeLogicalPlan* signals as a side effect,
+	// which are not reset by restoreLogicalPlanBuildCtx. Evaluating enabled()
+	// upfront ensures each round's eligibility is determined solely by the
+	// original build's signals.
+	enabledRounds := make([]alternativeRound, 0, len(alternativeRounds))
+	for _, round := range alternativeRounds {
+		if round.enabled(sessVars) {
+			enabledRounds = append(enabledRounds, round)
 		}
+	}
+	for _, round := range enabledRounds {
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
 			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
@@ -676,24 +722,38 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			}
 		})
 
-		p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
-			ctx,
-			sctx,
-			node,
-			is,
-			hintProcessor,
-			&checked,
-			&optimizeStarted,
-			&beginOpt,
-			needRestoreLogicalPlanCtx,
-			&bestPlan,
-			&bestNames,
-			&bestCost,
-			&bestLogicalPlanCtx,
-			adjust,
-		)
+		// Use a closure so that defer-based cleanup runs at the end of each
+		// iteration, not at function exit. This ensures session state (e.g.
+		// EnableCorrelateSubquery) is restored even if the round panics.
+		func() {
+			if round.setup != nil {
+				round.setup(sessVars)
+				defer round.cleanup(sessVars)
+			}
+			p, names, nonLogical, err = buildAndOptimizeLogicalPlanRound(
+				ctx,
+				sctx,
+				node,
+				is,
+				hintProcessor,
+				&checked,
+				&optimizeStarted,
+				&beginOpt,
+				needRestoreLogicalPlanCtx,
+				&bestPlan,
+				&bestNames,
+				&bestCost,
+				&bestLogicalPlanCtx,
+				round.adjustFlag,
+			)
+		}()
 		if err != nil {
-			return nil, nil, 0, err
+			// Alternative rounds are optional optimizations. If one fails,
+			// log and continue — the first round's plan is still valid.
+			logutil.BgLogger().Warn("alternative logical plan round failed",
+				zap.String("round", round.name),
+				zap.Error(err))
+			continue
 		}
 		if nonLogical {
 			return p, names, 0, nil
