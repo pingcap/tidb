@@ -360,6 +360,22 @@ func TestStrictNotNullCheckForInsert(t *testing.T) {
 		expectNoDefaultLevel     errctx.Level
 	}{
 		{
+			name:                     "non-strict,single-row,disable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,single-row,disable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
 			name:                     "non-strict,single-row,enable",
 			sqlMode:                  mysql.ModeErrorForDivisionByZero,
 			enableStrictNotNullCheck: true,
@@ -368,36 +384,12 @@ func TestStrictNotNullCheckForInsert(t *testing.T) {
 			expectNoDefaultLevel:     errctx.LevelWarn,
 		},
 		{
-			name:                     "non-strict,single-row,disable",
-			sqlMode:                  mysql.ModeErrorForDivisionByZero,
-			enableStrictNotNullCheck: false,
-			isSingleInsert:           true,
-			expectBadNullLevel:       errctx.LevelError,
-			expectNoDefaultLevel:     errctx.LevelWarn,
-		},
-		{
-			name:                     "strict,single-row,disable",
-			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
-			enableStrictNotNullCheck: false,
-			isSingleInsert:           true,
-			expectBadNullLevel:       errctx.LevelError,
-			expectNoDefaultLevel:     errctx.LevelError,
-		},
-		{
 			name:                     "strict,single-row,enable",
 			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
 			enableStrictNotNullCheck: true,
 			isSingleInsert:           true,
 			expectBadNullLevel:       errctx.LevelError,
 			expectNoDefaultLevel:     errctx.LevelError,
-		},
-		{
-			name:                     "non-strict,multi-row,enable",
-			sqlMode:                  mysql.ModeErrorForDivisionByZero,
-			enableStrictNotNullCheck: true,
-			isSingleInsert:           false,
-			expectBadNullLevel:       errctx.LevelWarn,
-			expectNoDefaultLevel:     errctx.LevelWarn,
 		},
 		{
 			name:                     "non-strict,multi-row,disable",
@@ -416,7 +408,15 @@ func TestStrictNotNullCheckForInsert(t *testing.T) {
 			expectNoDefaultLevel:     errctx.LevelError,
 		},
 		{
-			name:                     "strict,single-row,enable",
+			name:                     "non-strict,multi-row,enable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,multi-row,enable",
 			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
 			enableStrictNotNullCheck: true,
 			isSingleInsert:           false,
