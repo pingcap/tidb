@@ -106,10 +106,12 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 	s.dom.SetStatsUpdating(true)
 
 	tearDown := func() {
-		s.tiflash.Lock()
-		s.tiflash.StatusServer.Close()
-		s.tiflash.Unlock()
 		s.dom.Close()
+		s.tiflash.Lock()
+		if s.tiflash.StatusServer != nil {
+			s.tiflash.StatusServer.Close()
+		}
+		s.tiflash.Unlock()
 		require.NoError(t, s.store.Close())
 		ddl.PollTiFlashInterval = 2 * time.Second
 	}
@@ -1144,12 +1146,13 @@ func TestTiFlashFailureProgressAfterAvailable(t *testing.T) {
 func TestTiFlashProgressAfterAvailable(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	se := session.CreateSessionAndSetID(t, s.store)
+	defer se.Close()
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "drop table if exists ddltiflash")
+	session.MustExec(t, se, "create table ddltiflash(z int)")
+	session.MustExec(t, se, "alter table ddltiflash set tiflash replica 1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	CheckTableAvailable(s.dom, t, 1, []string{})
 
