@@ -79,3 +79,4 @@ var
 # Personal config files
 /*config.toml
 .cache
+.worktrees/
