@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "inference",
+    srcs = [
+        "manager.go",
+        "mock.go",
+        "openai.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/inference",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sessionctx/vardef",
+        "//pkg/util/intest",
+        "@com_github_openai_openai_go//:openai-go",
+        "@com_github_openai_openai_go//option",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "inference_test",
+    srcs = ["manager_test.go"],
+    embed = [":inference"],
+    deps = [
+        "//pkg/sessionctx/vardef",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -1206,6 +1206,8 @@ const (
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// TiDBExpEmbedOpenAIAPIBase is the base URL used by EMBED_TEXT() for the OpenAI provider.
+	TiDBExpEmbedOpenAIAPIBase = "tidb_exp_embed_openai_api_base"
 	// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
 	// It is very similar to the `tidb_build_stats_concurrency` variable, but it is used for the auto analyze feature.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
@@ -1801,6 +1803,8 @@ const (
 	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
 	DefConnectAttrsSize int64 = 4096
+	// DefTiDBExpEmbedOpenAIAPIBase is the default base URL used by EMBED_TEXT() for the OpenAI provider.
+	DefTiDBExpEmbedOpenAIAPIBase = "https://api.openai.com/v1"
 )
 
 // Process global variables.
@@ -1925,6 +1929,7 @@ var (
 	ServiceScope                    = atomic.NewString("")
 	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI                 = atomic.NewString("")
+	EmbedOpenAIAPIBase              = atomic.NewString("")
 	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 

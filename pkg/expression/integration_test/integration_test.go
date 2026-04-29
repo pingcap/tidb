@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -258,6 +259,37 @@ func TestFTSIndexSyntax(t *testing.T) {
 	tk.MustExec("alter table t1 add FULLTEXT INDEX (body)")
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `title` text DEFAULT NULL,\n  `body` text DEFAULT NULL,\n  FULLTEXT INDEX `body`(`body`) WITH PARSER STANDARD\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("alter table t1 drop index body")
+}
+
+func TestEmbedText(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	if _, ok := inference.DefaultRegistry().GetEmbedder("mock"); !ok {
+		inference.DefaultRegistry().MustRegisterEmbedder("mock", inference.NewMockEmbedder())
+	}
+
+	tk.MustQuery(`select vec_as_text(embed_text('mock/json', '[1,2,3]'))`).
+		Check(testkit.Rows("[1,2,3]"))
+	tk.MustQuery(`select vec_as_text(embed_text('mock/json', '[1,2,3]', '{"plus":2}'))`).
+		Check(testkit.Rows("[3,4,5]"))
+
+	err := tk.QueryToErr(`select vec_as_text(embed_text('json', '[1,2,3]'))`)
+	require.ErrorContains(t, err, "EMBED_TEXT expects model name in '<provider>/<model>' format")
+
+	err = tk.QueryToErr(`select vec_as_text(embed_text('mock/json', '[1,2,3]', 'not-json'))`)
+	require.ErrorContains(t, err, "EMBED_TEXT expects options to be a JSON object")
+
+	err = tk.QueryToErr(`select vec_as_text(embed_text('mock/json', '[1,2,3]', '[]'))`)
+	require.ErrorContains(t, err, "EMBED_TEXT expects options to be a JSON object, got array")
+
+	t.Run("openai provider requires api key", func(t *testing.T) {
+		t.Setenv("OPENAI_API_KEY", "")
+		t.Setenv("OPENAI_BASE_URL", "")
+
+		err := tk.QueryToErr(`select vec_as_text(embed_text('openai/text-embedding-3-small', 'hello'))`)
+		require.ErrorContains(t, err, "OPENAI_API_KEY")
+	})
 }
 
 func TestVectorLong(t *testing.T) {

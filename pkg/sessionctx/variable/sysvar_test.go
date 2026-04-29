@@ -1306,6 +1306,72 @@ func TestSetJobScheduleWindow(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(vardef.TiDBTTLJobScheduleWindowStartTime)
 	require.NoError(t, err)
 	require.Equal(t, "16:11 +0800", val)
+
+	t.Run("embed openai api base", func(t *testing.T) {
+		originalBase := vardef.EmbedOpenAIAPIBase.Load()
+		vardef.EmbedOpenAIAPIBase.Store("")
+		t.Cleanup(func() {
+			vardef.EmbedOpenAIAPIBase.Store(originalBase)
+		})
+
+		sv := GetSysVar(vardef.TiDBExpEmbedOpenAIAPIBase)
+		require.NotNil(t, sv)
+
+		base, err := sv.GetGlobal(context.Background(), vars)
+		require.NoError(t, err)
+		require.Equal(t, vardef.DefTiDBExpEmbedOpenAIAPIBase, base)
+
+		normalized, err := sv.Validate(vars, "https://my-resource.openai.azure.com/openai/v1/embeddings", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, "https://my-resource.openai.azure.com/openai/v1", normalized)
+		require.NoError(t, sv.SetGlobal(context.Background(), vars, normalized))
+
+		base, err = sv.GetGlobal(context.Background(), vars)
+		require.NoError(t, err)
+		require.Equal(t, normalized, base)
+
+		normalized, err = sv.Validate(vars, "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, "https://dashscope.aliyuncs.com/compatible-mode/v1", normalized)
+
+		normalized, err = sv.Validate(vars, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", normalized)
+
+		normalized, err = sv.Validate(vars, "  https://dashscope-us.aliyuncs.com/compatible-mode/v1/embeddings  ", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, "https://dashscope-us.aliyuncs.com/compatible-mode/v1", normalized)
+
+		normalized, err = sv.Validate(vars, "https://API.OPENAI.COM:443/v1/embeddings/", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.Equal(t, "https://API.OPENAI.COM:443/v1", normalized)
+
+		_, err = sv.Validate(vars, "http://api.openai.com/v1", vardef.ScopeGlobal)
+		require.ErrorContains(t, err, "only https scheme is supported")
+
+		_, err = sv.Validate(vars, "api.openai.com/v1", vardef.ScopeGlobal)
+		require.ErrorContains(t, err, "absolute https URL is required")
+
+		_, err = sv.Validate(vars, "https://api.openai.com/v1?x=1", vardef.ScopeGlobal)
+		require.ErrorContains(t, err, "query parameters and fragments are not allowed")
+
+		_, err = sv.Validate(vars, "https://api.openai.com/v1#fragment", vardef.ScopeGlobal)
+		require.ErrorContains(t, err, "query parameters and fragments are not allowed")
+
+		_, err = sv.Validate(vars, "https://example.com/v1", vardef.ScopeGlobal)
+		require.ErrorContains(t, err, openAIEmbeddingAPIBaseWhitelistErrMsg)
+
+		_, err = sv.Validate(vars, "https://example.azure.com/openai/v1", vardef.ScopeGlobal)
+		require.ErrorContains(t, err, openAIEmbeddingAPIBaseWhitelistErrMsg)
+
+		normalized, err = sv.Validate(vars, "", vardef.ScopeGlobal)
+		require.NoError(t, err)
+		require.NoError(t, sv.SetGlobal(context.Background(), vars, normalized))
+
+		base, err = sv.GetGlobal(context.Background(), vars)
+		require.NoError(t, err)
+		require.Equal(t, vardef.DefTiDBExpEmbedOpenAIAPIBase, base)
+	})
 }
 
 func TestTiDBIgnoreInlistPlanDigest(t *testing.T) {

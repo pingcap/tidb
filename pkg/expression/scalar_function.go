@@ -117,6 +117,10 @@ func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, resul
 
 // VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	intest.Assert(ctx != nil)
+	if intest.EnableAssert {
+		ctx = wrapEvalAssert(ctx, sf.Function)
+	}
 	return sf.Function.vecEvalVectorFloat32(ctx, input, result)
 }
 
@@ -573,6 +577,10 @@ func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.Binary
 
 // EvalVectorFloat32 implements Expression interface.
 func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	intest.Assert(ctx != nil)
+	if intest.EnableAssert {
+		ctx = wrapEvalAssert(ctx, sf.Function)
+	}
 	return sf.Function.evalVectorFloat32(ctx, row)
 }
 

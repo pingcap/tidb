@@ -65,6 +65,7 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.LastVal:   {},
 	ast.SetVal:    {},
 	ast.AnyValue:  {},
+	ast.EmbedText: {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
@@ -141,6 +142,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.UUIDShort:            {},
 	ast.Values:               {},
 	ast.Version:              {},
+	ast.EmbedText:            {},
 }
 
 // IsDeferredFunctions checks whether the function is in DeferredFunctions.
@@ -261,6 +263,7 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.SetVar:      {},
 	ast.GetVar:      {},
 	ast.AnyValue:    {},
+	ast.EmbedText:   {},
 }
 
 // some functions do NOT have right implementations, but may have noop ones(like with any inputs, always return 1)

@@ -20,6 +20,7 @@ import (
 	goerr "errors"
 	"fmt"
 	"math"
+	"net/url"
 	"runtime"
 	"strconv"
 	"strings"
@@ -71,6 +72,8 @@ import (
 
 type concurrencySetter func(s *SessionVars, v int)
 type execConcurrencySysVarOption func(sv *SysVar)
+
+const openAIEmbeddingAPIBaseWhitelistErrMsg = "For security reasons currently only OpenAI, Azure OpenAI, or Alibaba Cloud DashScope endpoints are allowed"
 
 func withAllowAutoValue(allow bool) execConcurrencySysVarOption {
 	return func(sv *SysVar) { sv.AllowAutoValue = allow }
@@ -3042,6 +3045,17 @@ var defaultSysVars = []*SysVar{
 		vardef.CloudStorageURI.Store(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExpEmbedOpenAIAPIBase, Value: vardef.DefTiDBExpEmbedOpenAIAPIBase, Type: vardef.TypeStr, Validation: func(vars *SessionVars, normalizedValue, originalValue string, scope vardef.ScopeFlag) (string, error) {
+		return normalizeOpenAIEmbeddingAPIBase(normalizedValue)
+	}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		vardef.EmbedOpenAIAPIBase.Store(s)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		if base := vardef.EmbedOpenAIAPIBase.Load(); base != "" {
+			return base, nil
+		}
+		return vardef.DefTiDBExpEmbedOpenAIAPIBase, nil
+	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: vardef.TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
@@ -3935,6 +3949,46 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+}
+
+func normalizeOpenAIEmbeddingAPIBase(base string) (string, error) {
+	trimmed := strings.TrimSpace(base)
+	if trimmed == "" {
+		return "", nil
+	}
+
+	parsedURL, err := url.Parse(trimmed)
+	if err != nil {
+		return "", errors.Annotatef(err, "invalid value for %s", vardef.TiDBExpEmbedOpenAIAPIBase)
+	}
+	if !parsedURL.IsAbs() || parsedURL.Host == "" {
+		return "", errors.Errorf("invalid value for %s: absolute https URL is required", vardef.TiDBExpEmbedOpenAIAPIBase)
+	}
+	if !strings.EqualFold(parsedURL.Scheme, "https") {
+		return "", errors.Errorf("invalid value for %s: only https scheme is supported", vardef.TiDBExpEmbedOpenAIAPIBase)
+	}
+	if parsedURL.RawQuery != "" || parsedURL.Fragment != "" {
+		return "", errors.Errorf("invalid value for %s: query parameters and fragments are not allowed", vardef.TiDBExpEmbedOpenAIAPIBase)
+	}
+
+	host := strings.ToLower(parsedURL.Hostname())
+	if host != "api.openai.com" &&
+		host != "dashscope.aliyuncs.com" &&
+		host != "dashscope-intl.aliyuncs.com" &&
+		host != "dashscope-us.aliyuncs.com" &&
+		!strings.HasSuffix(host, ".openai.azure.com") {
+		return "", errors.New(openAIEmbeddingAPIBaseWhitelistErrMsg)
+	}
+
+	normalized := "https://" + parsedURL.Host
+	path := strings.TrimSuffix(parsedURL.Path, "/")
+	if path != "" {
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		normalized += path
+	}
+	return strings.TrimSuffix(normalized, "/embeddings"), nil
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
