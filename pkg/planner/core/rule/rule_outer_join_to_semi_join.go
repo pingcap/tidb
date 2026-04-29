@@ -385,7 +385,9 @@ func generateProjectForConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *in
 	projExprs := make([]expression.Expression, 0, len(parentNodeSchema.Columns))
 	for _, c := range parentNodeSchema.Columns {
 		if innerSchSet.Has(int(c.UniqueID)) {
-			projExprs = append(projExprs, expression.NewNull())
+			retType := c.RetType.Clone()
+			retType.DelFlag(mysql.NotNullFlag)
+			projExprs = append(projExprs, expression.NewNullWithFieldType(retType))
 		} else {
 			projExprs = append(projExprs, c.Clone())
 		}
