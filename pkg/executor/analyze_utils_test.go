@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -51,4 +52,11 @@ func TestCollectStatsDeltaFlushObjectsForAnalyzeDottedNames(t *testing.T) {
 		{"a.b", "c"},
 		{"a", "b.c"},
 	}, targets)
+}
+
+func TestCanBroadcastToTiDBRPCForTestRejectsInvalidEndpoints(t *testing.T) {
+	// Regression for next-gen realcluster tests: in-process domains can register
+	// multiple server infos with an empty IP/default :10080 but no TiDB RPC
+	// listener. Such targets must not take the broadcast path.
+	require.False(t, canBroadcastToTiDBRPCForTest(context.Background(), []string{"", ""}))
 }

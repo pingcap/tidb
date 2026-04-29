@@ -98,16 +98,17 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 		return nil
 	}
 
-	// HACK: Mock-store tests do not start TiDB RPC by default. In single-node tests,
-	// dumping local deltas is equivalent to broadcasting FLUSH STATS_DELTA CLUSTER.
-	// Otherwise, each test would need to start an RPC server, which would have
-	// a significant impact on overall test performance.
+	// HACK: Some tests register in-process TiDB domains but do not start TiDB RPC
+	// endpoints. Broadcasting FLUSH STATS_DELTA CLUSTER to those mock endpoints can
+	// spend the TiKV RPC backoff budget before analyze really starts. When the test
+	// topology cannot receive TiDB broadcast requests, dumping local deltas is the
+	// only viable approximation.
 	if intest.InTest {
-		flushedOnSingleNode, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
+		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
 		if err != nil {
 			return err
 		}
-		if flushedOnSingleNode {
+		if flushedLocally {
 			return nil
 		}
 	}
@@ -159,19 +160,13 @@ func collectStatsDeltaFlushObjectsForAnalyze(plan *core.Analyze) []*ast.StatsObj
 }
 
 func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) (bool, error) {
-	singleTiDBRPCAddr, singleNode, err := detectSingleTiDBServerForTest(ctx)
+	canBroadcast, err := canBroadcastAnalyzeStatsDeltaForTest(ctx)
 	if err != nil {
 		return false, err
 	}
-	// Only a single-node mock-store topology can safely bypass broadcast by
-	// dumping local stats deltas directly. Multi-node or unknown topologies must
-	// keep the normal cluster broadcast path.
-	if !singleNode {
-		return false, nil
-	}
-	// If the single TiDB server has a reachable RPC endpoint, use the normal
+	// If every registered TiDB server has a reachable RPC endpoint, use the normal
 	// broadcast path so RPC-backed tests still exercise the production behavior.
-	if isTiDBRPCReachableForTest(ctx, singleTiDBRPCAddr) {
+	if canBroadcast {
 		return false, nil
 	}
 	targetIDs := collectAnalyzeStatsDeltaTargetIDsForTest(plan)
@@ -181,30 +176,40 @@ func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context,
 	return true, domain.GetDomain(sctx).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
 }
 
-// detectSingleTiDBServerForTest checks whether the test topology has exactly
-// one real TiDB server and returns its RPC address. Some mock-store tests
-// register placeholder nodes with config.UnavailableIP; they cannot receive
-// broadcast requests and are ignored. If there are zero or multiple real TiDB
-// servers, the caller must keep the normal cluster broadcast path.
-func detectSingleTiDBServerForTest(ctx context.Context) (rpcAddr string, singleNode bool, err error) {
+func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
 	servers, err := infosync.GetAllServerInfo(ctx)
 	if err != nil {
-		return "", false, err
+		return false, err
 	}
-	serverCount := 0
+	rpcAddrs := make([]string, 0, len(servers))
 	for _, server := range servers {
+		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
+		// nodes that should not receive TiDB-type coprocessor requests.
 		if server.IP == config.UnavailableIP {
 			continue
 		}
-		serverCount++
-		if serverCount > 1 {
-			return "", false, nil
+		// In-process test domains can register server info without starting a
+		// TiDB RPC listener. In that case AdvertiseAddress stays empty, so a
+		// normal broadcast would target ":10080" and wait for RPC backoff.
+		if server.IP == "" {
+			rpcAddrs = append(rpcAddrs, "")
+			continue
 		}
-		if server.IP != "" && server.StatusPort != 0 {
-			rpcAddr = net.JoinHostPort(server.IP, strconv.Itoa(int(server.StatusPort)))
+		rpcAddrs = append(rpcAddrs, net.JoinHostPort(server.IP, strconv.Itoa(int(server.StatusPort))))
+	}
+	return canBroadcastToTiDBRPCForTest(ctx, rpcAddrs), nil
+}
+
+func canBroadcastToTiDBRPCForTest(ctx context.Context, rpcAddrs []string) bool {
+	if len(rpcAddrs) == 0 {
+		return false
+	}
+	for _, addr := range rpcAddrs {
+		if !isTiDBRPCReachableForTest(ctx, addr) {
+			return false
 		}
 	}
-	return rpcAddr, serverCount == 1, nil
+	return true
 }
 
 func isTiDBRPCReachableForTest(ctx context.Context, addr string) bool {
