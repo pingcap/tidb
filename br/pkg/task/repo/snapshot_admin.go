@@ -51,6 +51,8 @@ const (
 	RepoSnapshotBackupStatusDone RepoSnapshotBackupStatus = "DONE"
 	// RepoSnapshotBackupStatusPending means the snapshot only has pending backup markers.
 	RepoSnapshotBackupStatusPending RepoSnapshotBackupStatus = "PENDING"
+	// RepoSnapshotBackupStatusPartialRemoved means a previous delete reached this backup.
+	RepoSnapshotBackupStatusPartialRemoved RepoSnapshotBackupStatus = "PARTIAL_REMOVED"
 )
 
 // RepoSnapshotListItem is one row returned by the snapshot list operation.
@@ -214,6 +216,10 @@ func RunRepoSnapshotDelete(
 }
 
 func listRepoSnapshotBackups(ctx context.Context, storage storeapi.Storage) ([]RepoSnapshotListItem, error) {
+	deletingIDs, err := repo.ListDeletingSnapshotIDs(ctx, storage)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	completedIDs, err := repo.ListCompletedSnapshotIDs(ctx, storage)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -223,14 +229,17 @@ func listRepoSnapshotBackups(ctx context.Context, storage storeapi.Storage) ([]R
 		return nil, errors.Trace(err)
 	}
 
-	backups := make([]RepoSnapshotListItem, 0, len(completedIDs)+len(pendingBackups))
-	seen := make(map[repo.BackupID]struct{}, len(completedIDs)+len(pendingBackups))
+	backups := make([]RepoSnapshotListItem, 0, len(deletingIDs)+len(completedIDs)+len(pendingBackups))
+	seen := make(map[repo.BackupID]struct{}, len(deletingIDs)+len(completedIDs)+len(pendingBackups))
 	appendBackup := func(backupID repo.BackupID, status RepoSnapshotBackupStatus) {
 		if _, ok := seen[backupID]; ok {
 			return
 		}
 		seen[backupID] = struct{}{}
 		backups = append(backups, RepoSnapshotListItem{BackupID: backupID, Status: status})
+	}
+	for _, backupID := range deletingIDs {
+		appendBackup(backupID, RepoSnapshotBackupStatusPartialRemoved)
 	}
 	for _, backupID := range completedIDs {
 		appendBackup(backupID, RepoSnapshotBackupStatusDone)

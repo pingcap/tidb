@@ -201,6 +201,23 @@ func filePathStream(paths []string) TrySeq[string] {
 	}
 }
 
+func filterFilePathStream(stream TrySeq[string], include func(string) bool) TrySeq[string] {
+	return func(yield func(error, string) bool) {
+		for err, filePath := range stream {
+			if err != nil {
+				yield(err, "")
+				return
+			}
+			if include != nil && !include(filePath) {
+				continue
+			}
+			if !yield(nil, filePath) {
+				return
+			}
+		}
+	}
+}
+
 func (ops SnapshotOps) deleteFilesFromStream(
 	ctx context.Context,
 	stream TrySeq[string],
@@ -249,7 +266,9 @@ func (ops SnapshotOps) deleteFilesFromStream(
 }
 
 // DeleteSnapshot removes one snapshot backup or unfinished backup attempt's
-// metadata, data files, and pending markers. For example, BackupID(0xF00D)
+// metadata, data files, and pending markers. For a completed snapshot, it writes
+// a DELETING marker before removing the rest of the metadata so interrupted
+// deletions are visible to list operations. For example, BackupID(0xF00D)
 // deletes `_meta/snapshot/000000000000F00D` and matching data prefixes.
 func (ops SnapshotOps) DeleteSnapshot(
 	ctx context.Context,
@@ -262,8 +281,11 @@ func (ops SnapshotOps) DeleteSnapshot(
 		return result, errors.Annotatef(err, "delete snapshot %s", backupID)
 	}
 
-	var err error
-	result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, SnapshotMetadataDir(backupID), opts)
+	removeDeletingMarker, err := ops.prepareSnapshotDeletingMarker(ctx, backupID)
+	if err != nil {
+		return result, errors.Annotatef(err, "prepare snapshot deleting marker for %s", backupID)
+	}
+	result.MetadataDeleted, err = ops.deleteSnapshotMetadataFiles(ctx, backupID, opts)
 	if err != nil {
 		return result, errors.Annotatef(err, "delete snapshot metadata for %s", backupID)
 	}
@@ -274,6 +296,11 @@ func (ops SnapshotOps) DeleteSnapshot(
 	result.PendingDeleted, err = ops.deletePendingMarkersForBackup(ctx, backupID, opts)
 	if err != nil {
 		return result, errors.Annotatef(err, "delete pending markers for snapshot %s", backupID)
+	}
+	if removeDeletingMarker {
+		if err := ops.deleteSnapshotDeletingMarker(ctx, backupID); err != nil {
+			return result, errors.Trace(err)
+		}
 	}
 	return result, nil
 }
@@ -330,12 +357,45 @@ func (ops SnapshotOps) deletePendingMarkersForBackup(
 	return 0, nil
 }
 
-func (ops SnapshotOps) deletePrefixFiles(
+func (ops SnapshotOps) prepareSnapshotDeletingMarker(ctx context.Context, backupID BackupID) (bool, error) {
+	metadataStorage := NewPrefixedStorage(ops.Storage, SnapshotMetadataDir(backupID))
+	hasBackupMeta, err := metadataStorage.FileExists(ctx, metautil.MetaFile)
+	if err != nil {
+		return false, errors.Annotatef(err, "check snapshot metadata for %s", backupID)
+	}
+	if hasBackupMeta {
+		if err := metadataStorage.WriteFile(ctx, snapshotDeletingMarkerFile, []byte("deleting\n")); err != nil {
+			return false, errors.Annotatef(err, "write snapshot deleting marker for %s", backupID)
+		}
+		return true, nil
+	}
+	hasDeletingMarker, err := metadataStorage.FileExists(ctx, snapshotDeletingMarkerFile)
+	if err != nil {
+		return false, errors.Annotatef(err, "check snapshot deleting marker for %s", backupID)
+	}
+	return hasDeletingMarker, nil
+}
+
+func (ops SnapshotOps) deleteSnapshotMetadataFiles(
 	ctx context.Context,
-	prefix string,
+	backupID BackupID,
 	opts snapshotMutationOptions,
 ) (int, error) {
-	return ops.deleteFilesFromStream(ctx, ops.walkFilesWithPrefix(ctx, prefix), opts)
+	deletingMarkerPath := SnapshotDeletingMarkerFile(backupID)
+	metadataFiles := filterFilePathStream(
+		ops.walkFilesWithPrefix(ctx, SnapshotMetadataDir(backupID)),
+		func(filePath string) bool {
+			return filePath != deletingMarkerPath
+		},
+	)
+	return ops.deleteFilesFromStream(ctx, metadataFiles, opts)
+}
+
+func (ops SnapshotOps) deleteSnapshotDeletingMarker(ctx context.Context, backupID BackupID) error {
+	if err := ops.Storage.DeleteFile(ctx, SnapshotDeletingMarkerFile(backupID)); err != nil {
+		return errors.Annotatef(err, "delete snapshot deleting marker for %s", backupID)
+	}
+	return nil
 }
 
 func (ops SnapshotOps) deleteSnapshotDataFilesForBackup(

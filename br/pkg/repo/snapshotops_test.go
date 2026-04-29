@@ -62,10 +62,10 @@ func TestListPendingBackupsClassifiesStates(t *testing.T) {
 
 func TestDeleteSnapshotRemovesCompletedSnapshotAndPendingMarker(t *testing.T) {
 	ctx := context.Background()
-	storage := newWalkAssertingLocalStorage(t, true)
+	backupID := repo.BackupID(0x1234)
+	storage := newDeletingMarkerAssertingLocalStorage(t, backupID, true)
 	snapshotOps := repo.SnapshotOpsExtension(storage)
 
-	backupID := repo.BackupID(0x1234)
 	createPendingMarker(ctx, t, storage, backupID)
 	createBackupMeta(ctx, t, storage, backupID)
 	createDataFile(ctx, t, storage, 1, backupID, "stale.sst")
@@ -76,9 +76,11 @@ func TestDeleteSnapshotRemovesCompletedSnapshotAndPendingMarker(t *testing.T) {
 	require.Equal(t, 1, result.MetadataDeleted)
 	require.Equal(t, 1, result.DataDeleted)
 	require.Equal(t, 1, result.PendingDeleted)
+	require.True(t, storage.markerWritten.Load())
 
 	requireFileMissing(ctx, t, storage, repo.PendingFile([]byte("hash"), backupID))
 	requireFileMissing(ctx, t, storage, repo.SnapshotMetadataFile(backupID))
+	requireFileMissing(ctx, t, storage, repo.SnapshotDeletingMarkerFile(backupID))
 	requireFileMissing(ctx, t, storage, repo.SnapshotStoreDataPrefix(1, backupID)+"/stale.sst")
 }
 
@@ -168,6 +170,10 @@ func TestDeleteSnapshotWaitsForStartedDeletesAfterWalkError(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorContains(t, err, "injected walk error")
 	require.Equal(t, 1, result.MetadataDeleted)
+	requireFileExists(ctx, t, storage, repo.SnapshotDeletingMarkerFile(backupID))
+	deletingIDs, listErr := repo.ListDeletingSnapshotIDs(ctx, storage)
+	require.NoError(t, listErr)
+	require.Equal(t, []repo.BackupID{backupID}, deletingIDs)
 }
 
 func TestDeleteSnapshotStopsWalkingAfterDeleteError(t *testing.T) {
@@ -255,6 +261,12 @@ type walkAssertingLocalStorage struct {
 	rejectEmptySnapshotWalkAfterFirst bool
 }
 
+type deletingMarkerAssertingStorage struct {
+	*walkAssertingLocalStorage
+	backupID      repo.BackupID
+	markerWritten atomic.Bool
+}
+
 func newWalkAssertingLocalStorage(t *testing.T, rejectEmptySnapshotWalkAfterFirst bool) *walkAssertingLocalStorage {
 	t.Helper()
 	storage, err := objstore.NewLocalStorage(t.TempDir())
@@ -263,6 +275,32 @@ func newWalkAssertingLocalStorage(t *testing.T, rejectEmptySnapshotWalkAfterFirs
 		Storage:                           storage,
 		rejectEmptySnapshotWalkAfterFirst: rejectEmptySnapshotWalkAfterFirst,
 	}
+}
+
+func newDeletingMarkerAssertingLocalStorage(
+	t *testing.T,
+	backupID repo.BackupID,
+	rejectEmptySnapshotWalkAfterFirst bool,
+) *deletingMarkerAssertingStorage {
+	t.Helper()
+	return &deletingMarkerAssertingStorage{
+		walkAssertingLocalStorage: newWalkAssertingLocalStorage(t, rejectEmptySnapshotWalkAfterFirst),
+		backupID:                  backupID,
+	}
+}
+
+func (s *deletingMarkerAssertingStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	if name == repo.SnapshotDeletingMarkerFile(s.backupID) {
+		s.markerWritten.Store(true)
+	}
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+func (s *deletingMarkerAssertingStorage) DeleteFile(ctx context.Context, name string) error {
+	if name == repo.SnapshotMetadataFile(s.backupID) && !s.markerWritten.Load() {
+		return fmt.Errorf("deleting marker was not written before deleting %s", name)
+	}
+	return s.Storage.DeleteFile(ctx, name)
 }
 
 func (s *walkAssertingLocalStorage) WalkDir(

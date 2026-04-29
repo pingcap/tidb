@@ -108,6 +108,35 @@ func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]
 	return out, nil
 }
 
+// ListDeletingSnapshotIDs returns sorted backup IDs that have a DELETING marker.
+func ListDeletingSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]BackupID, error) {
+	ids := make(map[BackupID]struct{})
+	for err, backupID := range WalkSnapshotDeletingMarkers(ctx, storage) {
+		if err != nil {
+			return nil, errors.Annotate(err, "walk snapshot deleting markers")
+		}
+		ids[backupID] = struct{}{}
+	}
+	out := make([]BackupID, 0, len(ids))
+	for id := range ids {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// WalkSnapshotDeletingMarkers streams valid DELETING marker objects under
+// `_meta/snapshot/`. For example,
+// `_meta/snapshot/000000000000F00D/DELETING` yields BackupID(0xF00D).
+func WalkSnapshotDeletingMarkers(ctx context.Context, storage storeapi.Storage) TrySeq[BackupID] {
+	return walkParsedSeq(
+		ctx,
+		storage,
+		&storeapi.WalkOption{SubDir: snapshotMetadataRootDir},
+		ParseSnapshotDeletingMarkerPath,
+	)
+}
+
 // WalkPendingMarkers streams valid pending marker objects under `_meta/pending/`.
 // For example, `_meta/pending/<hash>/000000000000F00D.json` yields
 // BackupID(0xF00D).
@@ -179,6 +208,9 @@ func ParseCompletedSnapshotMetaPath(filePath string) (id BackupID, parsed bool, 
 	if len(parts) < 2 || parts[0] != "_meta" || parts[1] != "snapshot" {
 		return 0, false, nil
 	}
+	if len(parts) == 4 && parts[3] == snapshotDeletingMarkerFile {
+		return 0, false, nil
+	}
 	defer func() {
 		logSkippedRepoPath(
 			parsed,
@@ -197,6 +229,24 @@ func ParseCompletedSnapshotMetaPath(filePath string) (id BackupID, parsed bool, 
 	backupID, err := ParseBackupIDStorageName(parts[2])
 	if err != nil {
 		return 0, false, errors.Annotatef(err, "parse snapshot metadata path %s", filePath)
+	}
+	return backupID, true, nil
+}
+
+// ParseSnapshotDeletingMarkerPath parses one repo deleting marker path.
+// For example, `_meta/snapshot/000000000000F00D/DELETING` returns
+// BackupID(0xF00D), true, nil.
+func ParseSnapshotDeletingMarkerPath(filePath string) (id BackupID, parsed bool, err error) {
+	parts := splitRepoPath(filePath)
+	if len(parts) != 4 ||
+		parts[0] != "_meta" ||
+		parts[1] != "snapshot" ||
+		parts[3] != snapshotDeletingMarkerFile {
+		return 0, false, nil
+	}
+	backupID, err := ParseBackupIDStorageName(parts[2])
+	if err != nil {
+		return 0, false, errors.Annotatef(err, "parse snapshot deleting marker path %s", filePath)
 	}
 	return backupID, true, nil
 }

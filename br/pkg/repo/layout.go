@@ -120,9 +120,10 @@ const (
 	RepoMetaPath = "_meta/repo.json"
 	RootLockPath = metautil.LockFile
 
-	snapshotMetadataRootDir = "_meta/snapshot"
-	pendingRootDir          = "_meta/pending"
-	snapshotDataRootDir     = "_data/snapshot"
+	snapshotMetadataRootDir    = "_meta/snapshot"
+	snapshotDeletingMarkerFile = "DELETING"
+	pendingRootDir             = "_meta/pending"
+	snapshotDataRootDir        = "_data/snapshot"
 )
 
 func SnapshotMetadataDir(backupID BackupID) string {
@@ -131,6 +132,11 @@ func SnapshotMetadataDir(backupID BackupID) string {
 
 func SnapshotMetadataFile(backupID BackupID) string {
 	return path.Join(SnapshotMetadataDir(backupID), metautil.MetaFile)
+}
+
+// SnapshotDeletingMarkerFile returns the marker path for an in-progress snapshot deletion.
+func SnapshotDeletingMarkerFile(backupID BackupID) string {
+	return path.Join(SnapshotMetadataDir(backupID), snapshotDeletingMarkerFile)
 }
 
 func PendingConfigHashStorageName(configHash []byte) string {

@@ -76,12 +76,29 @@ func TestRunRepoSnapshotGetBasicViewDefault(t *testing.T) {
 		}
 	})
 
-	t.Run("list_includes_pending", func(t *testing.T) {
+	t.Run("partial_removed_disappears_after_retry_delete", func(t *testing.T) {
 		pendingID := repo.BackupID(0x1200)
+		partialRemovedID := repo.BackupID(0x1201)
 		createPendingMarker(ctx, t, storage, backupID)
 		createPendingCheckpoint(ctx, t, storage, pendingID)
+		createBackupMeta(ctx, t, storage, partialRemovedID)
+		createDeletingMarker(ctx, t, storage, partialRemovedID)
 
 		backups, err := RunRepoSnapshotListItems(ctx, console, RepoSnapshotListConfig{Config: cfg})
+		require.NoError(t, err)
+		require.Equal(t, []RepoSnapshotListItem{
+			{BackupID: pendingID, Status: RepoSnapshotBackupStatusPending},
+			{BackupID: partialRemovedID, Status: RepoSnapshotBackupStatusPartialRemoved},
+			{BackupID: backupID, Status: RepoSnapshotBackupStatusDone},
+		}, backups)
+
+		_, err = RunRepoSnapshotDelete(ctx, console, RepoSnapshotDeleteConfig{
+			Config:     cfg,
+			BackupID:   partialRemovedID,
+			SkipPrompt: true,
+		})
+		require.NoError(t, err)
+		backups, err = RunRepoSnapshotListItems(ctx, console, RepoSnapshotListConfig{Config: cfg})
 		require.NoError(t, err)
 		require.Equal(t, []RepoSnapshotListItem{
 			{BackupID: pendingID, Status: RepoSnapshotBackupStatusPending},
@@ -276,6 +293,11 @@ func createPendingCheckpoint(ctx context.Context, t *testing.T, storage storeapi
 func createPendingMarker(ctx context.Context, t *testing.T, storage storeapi.Storage, backupID repo.BackupID) {
 	t.Helper()
 	require.NoError(t, storage.WriteFile(ctx, repo.PendingFile([]byte("hash"), backupID), []byte("{}")))
+}
+
+func createDeletingMarker(ctx context.Context, t *testing.T, storage storeapi.Storage, backupID repo.BackupID) {
+	t.Helper()
+	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotDeletingMarkerFile(backupID), []byte("deleting\n")))
 }
 
 func createBackupMeta(
