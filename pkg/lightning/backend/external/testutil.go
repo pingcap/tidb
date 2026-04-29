@@ -72,10 +72,6 @@ func testReadAndCompare(
 			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
 		}
 
-		readRanges, err := getReadRangeFromProps(
-			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
-		require.NoError(t, err)
-
 		err = readAllData(
 			ctx,
 			store,
@@ -83,8 +79,6 @@ func testReadAndCompare(
 			statFilesOfGroup,
 			curStart,
 			curEnd,
-			readRanges[0],
-			readRanges[1],
 			bufPool,
 			bufPool,
 			loaded,

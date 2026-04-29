@@ -31,10 +31,6 @@ type rangeProperty struct {
 	keys     uint64
 }
 
-func (r *rangeProperty) totalSize() uint64 {
-	return r.size + r.keys*2*lengthBytes
-}
-
 // decodeMultiProps is only used for test.
 func decodeMultiProps(data []byte) []*rangeProperty {
 	var ret []*rangeProperty
