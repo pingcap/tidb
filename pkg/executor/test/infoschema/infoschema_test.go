@@ -495,6 +495,9 @@ func TestTablesTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, selectTables)
 	require.Equal(t, totalTables, remainTables+selectTables)
+
+	tk.MustExec("create table test.`$a$a` (a int)")
+	tk.MustQuery("select count(*) from information_schema.tables where table_name like '$a$%'").Check(testkit.Rows("1"))
 }
 
 func TestColumnTable(t *testing.T) {
