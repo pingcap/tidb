@@ -109,6 +109,32 @@ var StmtExecDetailKey = stmtExecDetailKeyType{}
 // StmtExecDetails contains stmt level execution detail info.
 type StmtExecDetails struct {
 	WriteSQLRespDuration time.Duration
+
+	ruv2Metrics        *RUV2Metrics
+	ruv2MetricsStorage RUV2Metrics
+}
+
+func (d *StmtExecDetails) ensureRUV2Metrics() *RUV2Metrics {
+	if d == nil {
+		return nil
+	}
+	if d.ruv2Metrics == nil {
+		d.ruv2Metrics = &d.ruv2MetricsStorage
+	}
+	return d.ruv2Metrics
+}
+
+func (d *StmtExecDetails) getRUV2Metrics() *RUV2Metrics {
+	if d == nil {
+		return nil
+	}
+	return d.ruv2Metrics
+}
+
+func (d *StmtExecDetails) setRUV2Metrics(metrics *RUV2Metrics) {
+	if d != nil {
+		d.ruv2Metrics = metrics
+	}
 }
 
 const (

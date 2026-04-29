@@ -28,27 +28,38 @@ import (
 
 // ContextWithInitializedExecDetails returns a context with initialized stmt execution, execution and resource usage details.
 func ContextWithInitializedExecDetails(ctx context.Context) context.Context {
-	ctx = context.WithValue(ctx, StmtExecDetailKey, &StmtExecDetails{})
+	stmtDetails := &StmtExecDetails{}
+	stmtDetails.ensureRUV2Metrics()
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
-	ctx = context.WithValue(ctx, RUV2MetricsCtxKey, NewRUV2Metrics())
+	ctx = context.WithValue(ctx, StmtExecDetailKey, stmtDetails)
 	return ctx
 }
 
 // ContextWithMissingExecDetailsInitialized initializes any missing statement execution, execution,
 // and resource usage details in the context while preserving existing objects.
 func ContextWithMissingExecDetailsInitialized(ctx context.Context) context.Context {
-	if ctx.Value(StmtExecDetailKey) == nil {
-		ctx = context.WithValue(ctx, StmtExecDetailKey, &StmtExecDetails{})
-	}
+	stmtDetails, _ := ctx.Value(StmtExecDetailKey).(*StmtExecDetails)
+	inheritedRUV2Metrics, _ := ctx.Value(RUV2MetricsCtxKey).(*RUV2Metrics)
 	if ctx.Value(util.ExecDetailsKey) == nil {
 		ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	}
 	if ctx.Value(util.RUDetailsCtxKey) == nil {
 		ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	}
-	if ctx.Value(RUV2MetricsCtxKey) == nil {
-		ctx = context.WithValue(ctx, RUV2MetricsCtxKey, NewRUV2Metrics())
+	if stmtDetails == nil {
+		stmtDetails = &StmtExecDetails{}
+		if inheritedRUV2Metrics != nil {
+			stmtDetails.setRUV2Metrics(inheritedRUV2Metrics)
+		}
+		ctx = context.WithValue(ctx, StmtExecDetailKey, stmtDetails)
+	}
+	if stmtDetails.getRUV2Metrics() == nil {
+		if inheritedRUV2Metrics != nil {
+			stmtDetails.setRUV2Metrics(inheritedRUV2Metrics)
+		} else {
+			stmtDetails.ensureRUV2Metrics()
+		}
 	}
 	return ctx
 }
@@ -64,12 +75,28 @@ func ContextWithInheritedRUV2Details(ctx, source context.Context) context.Contex
 			ctx = context.WithValue(ctx, util.RUDetailsCtxKey, ruDetails)
 		}
 	}
-	if ctx.Value(RUV2MetricsCtxKey) == nil {
+	if RUV2MetricsFromContext(ctx) == nil {
 		if metrics := RUV2MetricsFromContext(source); metrics != nil {
-			ctx = context.WithValue(ctx, RUV2MetricsCtxKey, metrics)
+			ctx = contextWithRUV2Metrics(ctx, metrics)
 		}
 	}
 	return ctx
+}
+
+// ContextWithRUV2Metrics returns a context with metrics as the active statement-level RUv2 metrics.
+func ContextWithRUV2Metrics(ctx context.Context, metrics *RUV2Metrics) context.Context {
+	return contextWithRUV2Metrics(ctx, metrics)
+}
+
+func contextWithRUV2Metrics(ctx context.Context, metrics *RUV2Metrics) context.Context {
+	if metrics == nil {
+		return ctx
+	}
+	if stmtDetails, _ := ctx.Value(StmtExecDetailKey).(*StmtExecDetails); stmtDetails != nil {
+		stmtDetails.setRUV2Metrics(metrics)
+		return ctx
+	}
+	return context.WithValue(ctx, RUV2MetricsCtxKey, metrics)
 }
 
 // SyncRUV2MetricsFromContext drains any raw RUv2 counters in ctx's RUDetails into
@@ -88,7 +115,7 @@ func SyncRUV2MetricsFromContext(ctx context.Context) *RUV2Metrics {
 func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails, tikvExecDetail util.ExecDetails, ruDetails *util.RUDetails) {
 	stmtDetailRaw := ctx.Value(StmtExecDetailKey)
 	if stmtDetailRaw != nil {
-		stmtDetail = *(stmtDetailRaw.(*StmtExecDetails))
+		stmtDetail.WriteSQLRespDuration = stmtDetailRaw.(*StmtExecDetails).WriteSQLRespDuration
 	}
 	tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw != nil {
