@@ -79,7 +79,7 @@ type GCWorker struct {
 	cancel               context.CancelFunc
 	done                 chan error
 	regionLockResolver   tikv.RegionLockResolver
-	isFirstTickFinished bool
+	isFirstTickFinished  bool
 }
 
 // NewGCWorker creates a GCWorker instance.
