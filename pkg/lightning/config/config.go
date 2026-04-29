@@ -907,7 +907,7 @@ type MydumperRuntime struct {
 	// TargetPartition specifies the name of the partition to ingest data into.
 	// When set, Lightning scopes the empty pre-check, checksum, and ANALYZE to the named partition only.
 	// Leave empty (default) for standard full-table behavior.
-	TargetPartition  string           `toml:"target-partition" json:"target-partition"`
+	TargetPartition string `toml:"target-partition" json:"target-partition"`
 	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
 	//   - utf8mb4
 	//   - GB18030
