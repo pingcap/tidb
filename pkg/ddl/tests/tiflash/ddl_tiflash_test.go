@@ -434,17 +434,29 @@ func TestTiFlashFailTruncatePartition(t *testing.T) {
 
 // Drop partition shall not block.
 func TestTiFlashDropPartition(t *testing.T) {
-	s, teardown := createTiFlashContext(t)
-	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	s, _ := createTiFlashContext(t)
+	defer func() {
+		// Drop-partition keeps TiFlash progress polling active briefly after the DDL returns.
+		s.dom.Close()
+		s.tiflash.Lock()
+		if s.tiflash.StatusServer != nil {
+			s.tiflash.StatusServer.CloseClientConnections()
+			s.tiflash.StatusServer.Close()
+		}
+		s.tiflash.Unlock()
+		require.NoError(t, s.store.Close())
+		ddl.PollTiFlashInterval = 2 * time.Second
+	}()
+	se := session.CreateSessionAndSetID(t, s.store)
+	defer se.Close()
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "drop table if exists ddltiflash")
+	session.MustExec(t, se, "create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
+	session.MustExec(t, se, "alter table ddltiflash set tiflash replica 1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
-	tk.MustExec("alter table ddltiflash drop partition p1")
+	session.MustExec(t, se, "alter table ddltiflash drop partition p1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable * 5)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 }
