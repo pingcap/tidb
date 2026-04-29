@@ -156,6 +156,35 @@ func TestIntValidation(t *testing.T) {
 	require.Equal(t, "-1", val)
 }
 
+func TestPerformanceSchemaSessionConnectAttrsSizeValidation(t *testing.T) {
+	sv := GetSysVar(PerformanceSchemaSessionConnectAttrsSize)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasSessionScope())
+
+	vars := NewSessionVars(nil)
+
+	val, err := sv.Validate(vars, "-1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+
+	val, err = sv.Validate(vars, "0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "65536", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	val, err = sv.Validate(vars, "65537", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	val, err = sv.Validate(vars, "-2", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+}
+
 func TestUintValidation(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: "123", Type: TypeUnsigned, MinValue: 10, MaxValue: 300, AllowAutoValue: true}
 	vars := NewSessionVars(nil)
