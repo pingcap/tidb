@@ -51,10 +51,6 @@ type extractableCols struct {
 	columnName    string
 	constrName    string
 	constrSchema  string
-
-	baseTableSchema string
-	baseTableName   string
-	baseTableID     string
 }
 
 //revive:disable:exported
@@ -1043,12 +1039,9 @@ type InfoSchemaTiDBMLogsExtractor struct {
 func NewInfoSchemaTiDBMLogsExtractor() *InfoSchemaTiDBMLogsExtractor {
 	e := &InfoSchemaTiDBMLogsExtractor{}
 	e.extractableColumns = extractableCols{
-		schema:          TableSchema,
-		table:           MLogName,
-		tableID:         MLogID,
-		baseTableSchema: BaseTableSchema,
-		baseTableName:   BaseTableName,
-		baseTableID:     BaseTableID,
+		schema:  TableSchema,
+		table:   MLogName,
+		tableID: MLogID,
 	}
 	e.colNames = []string{TableSchema, MLogName, MLogID, BaseTableSchema, BaseTableName, BaseTableID}
 	return e
