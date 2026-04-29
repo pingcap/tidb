@@ -427,7 +427,7 @@ func TestStrictNotNullCheckForInsert(t *testing.T) {
 
 	for _, c := range cases {
 		ctx.GetSessionVars().EnableStrictNotNullCheck = true
-			ctx.GetSessionVars().SQLMode = c.sqlMode
+		ctx.GetSessionVars().SQLMode = c.sqlMode
 		ctx.GetSessionVars().EnableStrictNotNullCheck = c.enableStrictNotNullCheck
 		stmt := &ast.InsertStmt{Lists: [][]ast.ExprNode{{}}}
 		if c.isSingleInsert {
