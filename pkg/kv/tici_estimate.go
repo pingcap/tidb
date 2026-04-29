@@ -25,7 +25,6 @@ import (
 type TiCIEstimateCountRequest struct {
 	TableID        int64
 	IndexID        int64
-	StartTS        uint64
 	FTSQueryInfo   *tipb.FTSQueryInfo
 	KeyRanges      *KeyRanges
 	TimeZoneName   string

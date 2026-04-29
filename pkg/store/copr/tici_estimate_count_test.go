@@ -80,13 +80,11 @@ func TestTiCIEstimateCountHelpers(t *testing.T) {
 		req, err := buildTiCIEstimatePBRequest(&kv.TiCIEstimateCountRequest{
 			TableID:        42,
 			IndexID:        7,
-			StartTS:        99,
 			FTSQueryInfo:   &tipb.FTSQueryInfo{QueryType: tipb.FTSQueryType_FTSQueryTypeWithScore},
 			TimeZoneName:   "Asia/Shanghai",
 			TimeZoneOffset: 28800,
 		}, nil)
 		require.NoError(t, err)
-		require.Equal(t, uint64(99), req.GetStartTs())
 		require.Equal(t, int64(42), req.GetTableId())
 		require.Equal(t, int64(7), req.GetIndexId())
 		require.Equal(t, "Asia/Shanghai", req.GetTimeZoneName())

@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -258,10 +257,6 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 	if !ok {
 		return 0, false
 	}
-	readTS, err := sessiontxn.GetTxnManager(sctx).GetStmtReadTS()
-	if err != nil {
-		return 0, false
-	}
 	tableID := ds.PhysicalTableID
 	if tableID == 0 {
 		tableID = ds.TableInfo.ID
@@ -274,7 +269,6 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 	count, err := provider.EstimateTiCICount(context.Background(), &kv.TiCIEstimateCountRequest{
 		TableID:        tableID,
 		IndexID:        path.Index.ID,
-		StartTS:        readTS,
 		FTSQueryInfo:   path.FtsQueryInfo,
 		KeyRanges:      keyRanges,
 		TimeZoneName:   tzName,
@@ -288,7 +282,6 @@ func deriveTiCISearchPathStats(ds *logicalop.DataSource, path *util.AccessPath) 
 		zap.Int64("tableID", tableID),
 		zap.String("indexName", path.Index.Name.O),
 		zap.Int64("indexID", path.Index.ID),
-		zap.Uint64("readTS", readTS),
 		zap.Uint64("estimatedCount", count),
 		zap.Float64("plannerCountAfterAccess", plannerCount),
 		zap.Int64("realtimeCount", ds.StatisticTable.RealtimeCount),

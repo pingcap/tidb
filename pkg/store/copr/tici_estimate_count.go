@@ -96,7 +96,6 @@ func buildTiCIEstimatePBRequest(req *kv.TiCIEstimateCountRequest, shardInfos []*
 	}
 	return &coprocessor.TiCIEstimateCountRequest{
 		Context:        &kvrpcpb.Context{},
-		StartTs:        req.StartTS,
 		TableId:        req.TableID,
 		FtsQueryInfo:   ftsQueryInfo,
 		IndexId:        req.IndexID,
