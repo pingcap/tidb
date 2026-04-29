@@ -620,7 +620,6 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	}
 	testKit.MustExec("analyze table t")
 	h := dom.StatsHandle()
-	testKit.MustExec("flush stats_delta *.*")
 
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -647,12 +646,14 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	statsTblNew := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 
-	// Search for a not found value based upon statistics - count should be > 20 and < 40
+	// Search for a not found value based upon post-analyze modifications. It
+	// should be higher than the no-modification fallback, but lower than a value
+	// already present in the analyzed histogram.
 	countEst, err = getColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
 	count = countEst.Est
 	require.NoError(t, err)
-	require.Truef(t, count < 40, "expected: between 10 to 40, got: %v", count)
-	require.Truef(t, count > 10, "expected: between 10 to 40, got: %v", count)
+	require.Greater(t, count, 1.0)
+	require.Less(t, count, 10.0)
 }
 
 func TestNewIndexWithoutStats(t *testing.T) {

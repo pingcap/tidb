@@ -24,9 +24,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -86,6 +88,167 @@ const (
 	colTask taskType = iota
 	idxTask
 )
+
+// flushStatsDeltaForAnalyze flushes pending stats deltas for the tables whose column-analyze
+// tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
+// pre-analyze delta can be applied later and double count rows or modifications.
+func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) error {
+	flushObjects := collectStatsDeltaFlushObjectsForAnalyze(plan)
+	if len(flushObjects) == 0 {
+		return nil
+	}
+
+	// HACK: Some tests register in-process TiDB domains but do not start TiDB RPC
+	// endpoints. Broadcasting FLUSH STATS_DELTA CLUSTER to those mock endpoints can
+	// spend the TiKV RPC backoff budget before analyze really starts. When the test
+	// topology cannot receive TiDB broadcast requests, dumping local deltas is the
+	// only viable approximation.
+	if intest.InTest {
+		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
+		if err != nil {
+			return err
+		}
+		if flushedLocally {
+			return nil
+		}
+	}
+
+	stmt := &ast.FlushStmt{
+		Tp:           ast.FlushStatsDelta,
+		IsCluster:    true,
+		FlushObjects: flushObjects,
+	}
+	sql, err := restoreFlushStatsDeltaSQL(stmt)
+	if err != nil {
+		return err
+	}
+	return broadcast(ctx, sctx, sql)
+}
+
+// collectStatsDeltaFlushObjectsForAnalyze returns the database-qualified table
+// objects whose stats deltas must be flushed before building column analyze
+// tasks. Column analyze captures base count / modify_count from mysql.stats_meta,
+// so each target table is included once even if it has multiple column tasks.
+func collectStatsDeltaFlushObjectsForAnalyze(plan *core.Analyze) []*ast.StatsObject {
+	flushObjects := make([]*ast.StatsObject, 0, len(plan.ColTasks))
+	type statsObjectKey struct {
+		dbName    string
+		tableName string
+	}
+	seenObjects := make(map[statsObjectKey]struct{}, len(plan.ColTasks))
+	appendFlushObject := func(task core.AnalyzeColumnsTask) {
+		dbName, tableName := task.DBName, task.TableName
+		if dbName == "" || tableName == "" {
+			intest.Assert(false, "analyze column task must have database-qualified table name")
+			return
+		}
+		key := statsObjectKey{dbName: dbName, tableName: tableName}
+		if _, ok := seenObjects[key]; ok {
+			return
+		}
+		seenObjects[key] = struct{}{}
+		flushObjects = append(flushObjects, &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
+			DBName:           ast.NewCIStr(dbName),
+			TableName:        ast.NewCIStr(tableName),
+		})
+	}
+	for _, task := range plan.ColTasks {
+		appendFlushObject(task)
+	}
+	return flushObjects
+}
+
+func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) (bool, error) {
+	canBroadcast, err := canBroadcastAnalyzeStatsDeltaForTest(ctx)
+	if err != nil {
+		return false, err
+	}
+	// If every registered TiDB server has a reachable RPC endpoint, use the normal
+	// broadcast path so RPC-backed tests still exercise the production behavior.
+	if canBroadcast {
+		return false, nil
+	}
+	targetIDs := collectAnalyzeStatsDeltaTargetIDsForTest(plan)
+	if len(targetIDs) == 0 {
+		return false, nil
+	}
+	return true, domain.GetDomain(sctx).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+}
+
+func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return false, err
+	}
+	rpcAddrs := make([]string, 0, len(servers))
+	for _, server := range servers {
+		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
+		// nodes that should not receive TiDB-type coprocessor requests.
+		if server.IP == config.UnavailableIP {
+			continue
+		}
+		// In-process test domains can register server info without starting a
+		// TiDB RPC listener. In that case AdvertiseAddress stays empty, so a
+		// normal broadcast would target ":10080" and wait for RPC backoff.
+		if server.IP == "" {
+			rpcAddrs = append(rpcAddrs, "")
+			continue
+		}
+		rpcAddrs = append(rpcAddrs, net.JoinHostPort(server.IP, strconv.Itoa(int(server.StatusPort))))
+	}
+	return canBroadcastToTiDBRPCForTest(ctx, rpcAddrs), nil
+}
+
+func canBroadcastToTiDBRPCForTest(ctx context.Context, rpcAddrs []string) bool {
+	if len(rpcAddrs) == 0 {
+		return false
+	}
+	for _, addr := range rpcAddrs {
+		if !isTiDBRPCReachableForTest(ctx, addr) {
+			return false
+		}
+	}
+	return true
+}
+
+func isTiDBRPCReachableForTest(ctx context.Context, addr string) bool {
+	if addr == "" {
+		return false
+	}
+	dialer := net.Dialer{Timeout: 50 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func collectAnalyzeStatsDeltaTargetIDsForTest(plan *core.Analyze) []int64 {
+	targetIDs := make([]int64, 0, len(plan.ColTasks))
+	seenTargetIDs := make(map[int64]struct{}, len(plan.ColTasks))
+	appendTargetID := func(id int64) {
+		if _, ok := seenTargetIDs[id]; ok {
+			return
+		}
+		seenTargetIDs[id] = struct{}{}
+		targetIDs = append(targetIDs, id)
+	}
+	for _, task := range plan.ColTasks {
+		if task.TblInfo == nil {
+			intest.Assert(false, "analyze column task must have table info")
+			continue
+		}
+		appendTargetID(task.TblInfo.ID)
+		if partitionInfo := task.TblInfo.GetPartitionInfo(); partitionInfo != nil {
+			for _, def := range partitionInfo.Definitions {
+				appendTargetID(def.ID)
+			}
+		}
+	}
+	return targetIDs
+}
 
 // Next implements the Executor Next interface.
 // It will collect all the sample task and run them concurrently.
