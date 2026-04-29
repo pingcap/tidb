@@ -903,7 +903,8 @@ type MydumperRuntime struct {
 	CaseSensitive    bool             `toml:"case-sensitive" json:"case-sensitive"`
 	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
 	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
-	IgnoreColumns    AllIgnoreColumns `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	IgnoreColumns    AllIgnoreColumns   `toml:"ignore-data-columns" json:"ignore-data-columns"`
+	ColumnConstants  AllColumnConstants `toml:"column-constants" json:"column-constants"`
 	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
 	//   - utf8mb4
 	//   - GB18030
@@ -970,28 +971,64 @@ func (m *MydumperRuntime) adjust() error {
 		m.CharacterSet = "auto"
 	}
 
-	if len(m.IgnoreColumns) != 0 {
-		// Tolower columns cause we use Name.L to compare column in tidb.
-		for _, ig := range m.IgnoreColumns {
-			cols := make([]string, len(ig.Columns))
-			for i, col := range ig.Columns {
-				cols[i] = strings.ToLower(col)
-			}
-			ig.Columns = cols
-			if len(ig.ColumnConstants) > 0 {
-				normalized := make(map[string]string, len(ig.ColumnConstants))
-				for col, val := range ig.ColumnConstants {
-					lowerCol := strings.ToLower(col)
-					if _, dup := normalized[lowerCol]; dup {
-						return common.ErrInvalidConfig.GenWithStack("duplicate column-constants entry for column %s", lowerCol)
-					}
-					normalized[lowerCol] = val
-				}
-				ig.ColumnConstants = normalized
-			}
-		}
+	if err := m.adjustIgnoreColumns(); err != nil {
+		return err
 	}
 	return m.adjustFilePath()
+}
+
+// adjustIgnoreColumns normalizes column names to lowercase and auto-populates
+// IgnoreColumns from ColumnConstants keys so users don't need to list column names in both sections.
+func (m *MydumperRuntime) adjustIgnoreColumns() error {
+	// Normalize explicit ignore-data-columns entries.
+	for _, ig := range m.IgnoreColumns {
+		cols := make([]string, len(ig.Columns))
+		for i, col := range ig.Columns {
+			cols[i] = strings.ToLower(col)
+		}
+		ig.Columns = cols
+	}
+
+	// Normalize column-constants entries and auto-populate the ignore set.
+	for _, cc := range m.ColumnConstants {
+		if len(cc.Values) == 0 {
+			continue
+		}
+		normalized := make(map[string]string, len(cc.Values))
+		for col, val := range cc.Values {
+			lowerCol := strings.ToLower(col)
+			if _, dup := normalized[lowerCol]; dup {
+				return common.ErrInvalidConfig.GenWithStack("duplicate column-constants entry for column %s", lowerCol)
+			}
+			normalized[lowerCol] = val
+		}
+		cc.Values = normalized
+
+		// Find or create the matching IgnoreColumns entry and add constant keys.
+		ig, err := m.IgnoreColumns.GetIgnoreColumns(cc.DB, cc.Table, false)
+		if err != nil {
+			return err
+		}
+		existing := make(map[string]struct{}, len(ig.Columns))
+		for _, c := range ig.Columns {
+			existing[c] = struct{}{}
+		}
+		for col := range normalized {
+			if _, ok := existing[col]; !ok {
+				ig.Columns = append(ig.Columns, col)
+				existing[col] = struct{}{}
+			}
+		}
+		// If this is the default empty entry returned by GetIgnoreColumns (no real match),
+		// register it so filterColumns picks it up.
+		if ig.DB == "" && ig.Table == "" && len(ig.TableFilter) == 0 {
+			ig.DB = strings.ToLower(cc.DB)
+			ig.Table = strings.ToLower(cc.Table)
+			ig.TableFilter = cc.TableFilter
+			m.IgnoreColumns = append(m.IgnoreColumns, ig)
+		}
+	}
+	return nil
 }
 
 // adjustFilePath checks and adjusts the file path.
@@ -1047,11 +1084,10 @@ type AllIgnoreColumns []*IgnoreColumns
 
 // IgnoreColumns is the config for ignoring columns.
 type IgnoreColumns struct {
-	DB              string            `toml:"db" json:"db"`
-	Table           string            `toml:"table" json:"table"`
-	TableFilter     []string          `toml:"table-filter" json:"table-filter"`
-	Columns         []string          `toml:"columns" json:"columns"`
-	ColumnConstants map[string]string `toml:"column-constants" json:"column-constants"`
+	DB          string   `toml:"db" json:"db"`
+	Table       string   `toml:"table" json:"table"`
+	TableFilter []string `toml:"table-filter" json:"table-filter"`
+	Columns     []string `toml:"columns" json:"columns"`
 }
 
 // ColumnsMap returns a map of columns.
@@ -1082,6 +1118,38 @@ func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSen
 		}
 	}
 	return &IgnoreColumns{Columns: make([]string, 0)}, nil
+}
+
+// AllColumnConstants is a slice of ColumnConstantsEntry.
+type AllColumnConstants []*ColumnConstantsEntry
+
+// ColumnConstantsEntry holds literal values to inject for columns absent from source data.
+type ColumnConstantsEntry struct {
+	DB          string            `toml:"db" json:"db"`
+	Table       string            `toml:"table" json:"table"`
+	TableFilter []string          `toml:"table-filter" json:"table-filter"`
+	Values      map[string]string `toml:"values" json:"values"`
+}
+
+// GetColumnConstants returns the Values map for the given db/table, or nil if no entry matches.
+func (all AllColumnConstants) GetColumnConstants(db string, table string, caseSensitive bool) (map[string]string, error) {
+	if !caseSensitive {
+		db = strings.ToLower(db)
+		table = strings.ToLower(table)
+	}
+	for _, cc := range all {
+		if cc.DB == db && cc.Table == table {
+			return cc.Values, nil
+		}
+		f, err := filter.Parse(cc.TableFilter)
+		if err != nil {
+			return nil, common.ErrInvalidConfig.GenWithStack("invalid table filter %s in column-constants", strings.Join(cc.TableFilter, ","))
+		}
+		if f.MatchTable(db, table) {
+			return cc.Values, nil
+		}
+	}
+	return nil, nil
 }
 
 // FileRouteRule is the rule for routing files.
