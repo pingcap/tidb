@@ -406,7 +406,7 @@ func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
 		if oldCol.FieldType.Equal(&newCol.FieldType) || !isIndexed {
 			return nil
 		}
-		return dbterror.ErrUnsupportedModifyIndexedGeneratedColumn.GenWithStackByArgs()
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("Unsupported modification for generated columns covered by an index")
 	}
 
 	if newCol.GeneratedStored {
@@ -414,7 +414,7 @@ func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
 	}
 
 	if isIndexed {
-		return dbterror.ErrUnsupportedModifyIndexedGeneratedColumn.GenWithStackByArgs()
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("Unsupported modification for generated columns covered by an index")
 	}
 	return nil
 }
