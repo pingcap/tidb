@@ -236,7 +236,7 @@ func (g *TargetInfoGetterImpl) IsPartitionEmpty(ctx context.Context, schemaName 
 	var result bool
 	exec := common.SQLWithRetry{
 		DB:     g.db,
-		Logger: log.Wrap(logutil.Logger(ctx)),
+		Logger: log.FromContext(ctx),
 	}
 	var dump int
 	err := exec.QueryRow(ctx, "check partition empty",

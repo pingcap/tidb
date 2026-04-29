@@ -125,7 +125,7 @@ type ChecksumTable struct {
 	Tables []*resolve.TableNameW
 	// PartitionNames restricts the checksum to the named partitions only.
 	// When empty, the full table is checksummed.
-	PartitionNames []ast.CIStr
+	PartitionNames []pmodel.CIStr
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.
