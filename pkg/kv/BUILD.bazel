@@ -13,6 +13,7 @@ go_library(
         "kv.go",
         "mpp.go",
         "option.go",
+        "tici_estimate.go",
         "txn.go",
         "txn_scope_var.go",
         "utils.go",

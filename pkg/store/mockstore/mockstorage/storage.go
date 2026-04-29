@@ -17,6 +17,7 @@ package mockstorage
 import (
 	"context"
 	"crypto/tls"
+	"time"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -79,6 +80,10 @@ func (s *mockStorage) Name() string {
 
 func (s *mockStorage) Describe() string {
 	return ""
+}
+
+func (s *mockStorage) EstimateTiCICount(ctx context.Context, req *kv.TiCIEstimateCountRequest, timeout time.Duration) (uint64, error) {
+	return 1000, nil
 }
 
 // Begin a global transaction.
