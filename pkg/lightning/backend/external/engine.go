@@ -135,6 +135,8 @@ type Engine struct {
 	memKVsAndBuffers memKVsAndBuffers
 	// totalLoadedKVsCount accumulates the total number of KVs loaded in LoadIngestData
 	totalLoadedKVsCount atomic.Int64
+	inFlightDataCount   atomic.Int64
+	dataReleaseCh       chan struct{}
 
 	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
 	// if hotspot file is detected, we will use multiple readers to read data.
@@ -221,6 +223,7 @@ func NewExternalEngine(
 		memLimit:          memLimit,
 		onDup:             onDup,
 		filePrefix:        filePrefix,
+		dataReleaseCh:     make(chan struct{}, 1),
 	}
 }
 
@@ -301,20 +304,29 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
-	// read all data in range [startKey, endKey)
-	err := readAllData(
-		ctx,
-		e.storage,
-		e.dataFiles,
-		e.statsFiles,
-		startKey,
-		endKey,
-		e.smallBlockBufPool,
-		e.largeBlockBufPool,
-		&e.memKVsAndBuffers,
-	)
-	if err != nil {
-		return err
+	var err error
+	for {
+		// read all data in range [startKey, endKey)
+		err = readAllData(
+			ctx,
+			e.storage,
+			e.dataFiles,
+			e.statsFiles,
+			startKey,
+			endKey,
+			e.smallBlockBufPool,
+			e.largeBlockBufPool,
+			&e.memKVsAndBuffers,
+		)
+		if err == nil {
+			break
+		}
+		if errors.Cause(err) != membuf.ErrCannotAcquireMemory {
+			return err
+		}
+		if err = e.waitIngestDataReleased(ctx); err != nil {
+			return err
+		}
 	}
 	e.memKVsAndBuffers.build(ctx)
 
@@ -439,6 +451,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 
 	select {
 	case <-ctx.Done():
+		data.release()
 		return ctx.Err()
 	case outCh <- engineapi.DataAndRanges{
 		Data:         data,
@@ -446,6 +459,20 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	}:
 	}
 	return nil
+}
+
+func (e *Engine) waitIngestDataReleased(ctx context.Context) error {
+	if e.inFlightDataCount.Load() == 0 {
+		return membuf.ErrCannotAcquireMemory
+	}
+
+	logutil.Logger(ctx).Info("wait for downstream to release loaded data before retrying read")
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.dataReleaseCh:
+		return nil
+	}
 }
 
 // LoadIngestData loads the data from the external storage to memory in [start,
@@ -520,6 +547,7 @@ func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
 }
 
 func (e *Engine) buildIngestData(kvs []kvPair, buf []*membuf.Buffer) *MemoryIngestData {
+	e.inFlightDataCount.Inc()
 	return &MemoryIngestData{
 		kvs:             kvs,
 		ts:              e.ts,
@@ -527,6 +555,15 @@ func (e *Engine) buildIngestData(kvs []kvPair, buf []*membuf.Buffer) *MemoryInge
 		refCnt:          atomic.NewInt64(0),
 		importedKVSize:  e.importedKVSize,
 		importedKVCount: e.importedKVCount,
+		onRelease:       e.onIngestDataReleased,
+	}
+}
+
+func (e *Engine) onIngestDataReleased() {
+	e.inFlightDataCount.Dec()
+	select {
+	case e.dataReleaseCh <- struct{}{}:
+	default:
 	}
 }
 
@@ -624,6 +661,8 @@ type MemoryIngestData struct {
 	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
+	released        atomic.Bool
+	onRelease       func()
 }
 
 var _ engineapi.IngestData = (*MemoryIngestData)(nil)
@@ -740,16 +779,27 @@ func (m *MemoryIngestData) GetTS() uint64 {
 func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
 	// Make sure data is not released.
-	intest.Assert(len(m.kvs) > 0)
+	intest.Assert(!m.released.Load())
 }
 
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
 	if m.refCnt.Dec() == 0 {
-		m.kvs = nil
-		for _, b := range m.memBuf {
-			b.Destroy()
-		}
+		m.release()
+	}
+}
+
+func (m *MemoryIngestData) release() {
+	if !m.released.CAS(false, true) {
+		return
+	}
+	m.kvs = nil
+	for _, b := range m.memBuf {
+		b.Destroy()
+	}
+	m.memBuf = nil
+	if m.onRelease != nil {
+		m.onRelease()
 	}
 }
 

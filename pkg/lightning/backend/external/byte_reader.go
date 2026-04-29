@@ -61,11 +61,12 @@ type byteReader struct {
 		concurrency     int
 		bufSizePerConc  int
 
-		now       bool
-		expected  bool
-		largeBuf  [][]byte
-		reader    *concurrentFileReader
-		reloadCnt int
+		now        bool
+		expected   bool
+		tryAcquire bool
+		largeBuf   [][]byte
+		reader     *concurrentFileReader
+		reloadCnt  int
 	}
 
 	logger               *zap.Logger
@@ -126,6 +127,18 @@ func (r *byteReader) enableConcurrentRead(
 	r.concurrentReader.concurrency = concurrency
 	r.concurrentReader.bufSizePerConc = bufSizePerConc
 	r.concurrentReader.largeBufferPool = bufferPool
+	r.concurrentReader.tryAcquire = false
+}
+
+func (r *byteReader) enableConcurrentReadNonBlocking(
+	store storage.ExternalStorage,
+	filename string,
+	concurrency int,
+	bufSizePerConc int,
+	bufferPool *membuf.Buffer,
+) {
+	r.enableConcurrentRead(store, filename, concurrency, bufSizePerConc, bufferPool)
+	r.concurrentReader.tryAcquire = true
 }
 
 // switchConcurrentMode is used to help implement sortedReader.switchConcurrentMode.
@@ -197,7 +210,14 @@ func (r *byteReader) switchToConcurrentReader() error {
 
 	readerFields.largeBuf = make([][]byte, readerFields.concurrency)
 	for i := range readerFields.largeBuf {
-		readerFields.largeBuf[i] = readerFields.largeBufferPool.AllocBytes(readerFields.bufSizePerConc)
+		if readerFields.tryAcquire {
+			readerFields.largeBuf[i], err = readerFields.largeBufferPool.TryAllocBytes(readerFields.bufSizePerConc)
+			if err != nil {
+				return err
+			}
+		} else {
+			readerFields.largeBuf[i] = readerFields.largeBufferPool.AllocBytes(readerFields.bufSizePerConc)
+		}
 		if readerFields.largeBuf[i] == nil {
 			return errors.Errorf("alloc large buffer failed, size %d", readerFields.bufSizePerConc)
 		}
