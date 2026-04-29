@@ -209,6 +209,7 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 	if !e.skipTiCIIndexKVs && e.hasFullTextTiCIIndexKVs {
 		ticiTable, err := e.tableForTiCIIndexKVs(record)
 		if err != nil {
+			e.discardKvPairs()
 			e.logger.Error("kv encode failed",
 				zap.Array("originalRow", RowArrayMarshaller(originalRow)),
 				zap.Array("convertedRow", RowArrayMarshaller(record)),
@@ -217,6 +218,7 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 			return nil, errors.Trace(err)
 		}
 		if err = e.addTiCIIndexKVs(ticiTable, record, handle); err != nil {
+			e.discardKvPairs()
 			e.logger.Error("kv encode failed",
 				zap.Array("originalRow", RowArrayMarshaller(originalRow)),
 				zap.Array("convertedRow", RowArrayMarshaller(record)),
@@ -232,6 +234,10 @@ func (e *BaseKVEncoder) Record2KV(record, originalRow []types.Datum, rowID int64
 	}
 	e.recordCache = record[:0]
 	return kvPairs, nil
+}
+
+func (e *BaseKVEncoder) discardKvPairs() {
+	e.SessionCtx.TakeKvPairs().Clear()
 }
 
 func hasFullTextTiCIIndex(tblInfo *model.TableInfo) bool {

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
@@ -186,6 +187,46 @@ func TestTableKVEncoderFullTextTiCIIndexKVsForPartitionedTable(t *testing.T) {
 	require.Equal(t, []int64{expectedPartitionID}, indexTableIDs[ticiIndexID])
 }
 
+func TestTableKVEncoderClearsKVsAfterTiCIIndexError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_tici(a bigint primary key clustered, b int, c text, index idx_b(b))")
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	origTbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_tici"))
+	require.NoError(t, err)
+
+	const ticiIndexID int64 = 1003
+	tblMeta := origTbl.Meta().Clone()
+	ticiIdx := &model.IndexInfo{
+		ID:    ticiIndexID,
+		Name:  ast.NewCIStr("idx_tici"),
+		State: model.StatePublic,
+		Columns: []*model.IndexColumn{
+			{Name: ast.NewCIStr("missing_column"), Offset: 99, Length: types.UnspecifiedLength},
+		},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	tblMeta.Indices = append(tblMeta.Indices, ticiIdx)
+	tbl := table.MockTableFromMeta(tblMeta)
+	require.NotNil(t, tbl)
+
+	normalIndexID := findIndexIDByName(t, tblMeta, "idx_b")
+	encoder := newTableKVEncoderForTest(t, tbl, nil, false)
+	_, err = encoder.Encode([]types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewStringDatum("bad")}, 1)
+	require.Error(t, err)
+
+	// Reuse the same encoder to make stale KVs from the failed encode observable.
+	ticiIdx.Columns[0] = &model.IndexColumn{Name: ast.NewCIStr("c"), Offset: 2, Length: types.UnspecifiedLength}
+	pairs, err := encoder.Encode([]types.Datum{types.NewDatum(2), types.NewDatum(3), types.NewStringDatum("good")}, 2)
+	require.NoError(t, err)
+	require.Equal(t, 1, countRecordKeys(pairs))
+	require.ElementsMatch(t, []int64{normalIndexID, ticiIndexID}, collectIndexIDs(t, pairs))
+}
+
 func newTableKVEncoderForTest(t *testing.T, tbl table.Table, cfg *encode.EncodingConfig, dupResolve bool) *importer.TableKVEncoder {
 	t.Helper()
 	fieldMappings := make([]*importer.FieldMapping, 0, len(tbl.VisibleCols()))
@@ -197,6 +238,9 @@ func newTableKVEncoderForTest(t *testing.T, tbl table.Table, cfg *encode.Encodin
 			Table:                tbl,
 			UseIdentityAutoRowID: true,
 		}
+	}
+	if cfg.Logger.Logger == nil {
+		cfg.Logger = log.L()
 	}
 	controller := &importer.LoadDataController{
 		ASTArgs:       &importer.ASTArgs{},
