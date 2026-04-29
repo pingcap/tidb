@@ -35,6 +35,8 @@ type PartitionTopNWindowExec struct {
 	limitCount   uint64
 	resultColIdx int
 
+	// groupStart and groupEnd delimit the current group inside childResult as a
+	// half-open row range [groupStart, groupEnd).
 	groupStart int
 	groupEnd   int
 	// groupRank is the current row_number value within the partition. It keeps
