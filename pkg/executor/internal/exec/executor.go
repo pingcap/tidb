@@ -105,30 +105,54 @@ type ruv2ExecutorMetric struct {
 // L3: Sort, StreamAgg.
 // L4: intentionally unused today.
 // L5: reserved for insert-row accounting outside this executor map.
-var ruv2ExecutorMetricByType = map[string]ruv2ExecutorMetric{
-	"*executor.BatchPointGetExec":   {level: 1, label: "BatchPointGetExec", useCells: true},
-	"*executor.PointGetExecutor":    {level: 1, label: "PointGetExecutor", useCells: true},
-	"*executor.LimitExec":           {level: 1, label: "LimitExec", useCells: true},
-	"*aggregate.HashAggExec":        {level: 2, label: "HashAggExec", useCells: false},
-	"*executor.HashJoinExec":        {level: 2, label: "HashJoinExec", useCells: false},
-	"*executor.IndexLookUpJoin":     {level: 2, label: "IndexLookUpJoin", useCells: true},
-	"*executor.IndexLookUpExecutor": {level: 2, label: "IndexLookUpExecutor", useCells: false},
-	"*executor.IndexReaderExecutor": {level: 2, label: "IndexReaderExecutor", useCells: false},
-	"*executor.MemTableReaderExec":  {level: 2, label: "MemTableReaderExec", useCells: false},
-	"*executor.SelectionExec":       {level: 2, label: "SelectionExec", useCells: false},
-	"*executor.TableDualExec":       {level: 2, label: "TableDualExec", useCells: false},
-	"*executor.TableReaderExecutor": {level: 2, label: "TableReaderExecutor", useCells: false},
-	"*executor.UnionScanExec":       {level: 2, label: "UnionScanExec", useCells: false},
-	"*executor.SelectLockExec":      {level: 2, label: "SelectLockExec", useCells: true},
-	"*executor.SortExec":            {level: 3, label: "SortExec", useCells: true},
-	"*aggregate.StreamAggExec":      {level: 3, label: "StreamAggExec", useCells: false},
+func ruv2ExecutorMetricByType(execType string) (ruv2ExecutorMetric, bool) {
+	switch execType {
+	case "*executor.BatchPointGetExec":
+		return ruv2ExecutorMetric{level: 1, label: "BatchPointGetExec", useCells: true}, true
+	case "*executor.PointGetExecutor":
+		return ruv2ExecutorMetric{level: 1, label: "PointGetExecutor", useCells: true}, true
+	case "*executor.LimitExec":
+		return ruv2ExecutorMetric{level: 1, label: "LimitExec", useCells: true}, true
+	case "*aggregate.HashAggExec":
+		return ruv2ExecutorMetric{level: 2, label: "HashAggExec", useCells: false}, true
+	case "*executor.HashJoinExec":
+		return ruv2ExecutorMetric{level: 2, label: "HashJoinExec", useCells: false}, true
+	case "*executor.IndexLookUpJoin":
+		return ruv2ExecutorMetric{level: 2, label: "IndexLookUpJoin", useCells: true}, true
+	case "*executor.IndexLookUpExecutor":
+		return ruv2ExecutorMetric{level: 2, label: "IndexLookUpExecutor", useCells: false}, true
+	case "*executor.IndexReaderExecutor":
+		return ruv2ExecutorMetric{level: 2, label: "IndexReaderExecutor", useCells: false}, true
+	case "*executor.MemTableReaderExec":
+		return ruv2ExecutorMetric{level: 2, label: "MemTableReaderExec", useCells: false}, true
+	case "*executor.SelectionExec":
+		return ruv2ExecutorMetric{level: 2, label: "SelectionExec", useCells: false}, true
+	case "*executor.TableDualExec":
+		return ruv2ExecutorMetric{level: 2, label: "TableDualExec", useCells: false}, true
+	case "*executor.TableReaderExecutor":
+		return ruv2ExecutorMetric{level: 2, label: "TableReaderExecutor", useCells: false}, true
+	case "*executor.UnionScanExec":
+		return ruv2ExecutorMetric{level: 2, label: "UnionScanExec", useCells: false}, true
+	case "*executor.SelectLockExec":
+		return ruv2ExecutorMetric{level: 2, label: "SelectLockExec", useCells: true}, true
+	case "*executor.SortExec":
+		return ruv2ExecutorMetric{level: 3, label: "SortExec", useCells: true}, true
+	case "*aggregate.StreamAggExec":
+		return ruv2ExecutorMetric{level: 3, label: "StreamAggExec", useCells: false}, true
+	default:
+		return ruv2ExecutorMetric{}, false
+	}
 }
 
-func addRUV2ExecutorMetricWithInfo(ctx context.Context, info ruv2ExecutorMetric, useCells bool, delta int64) {
-	if delta == 0 || info.useCells != useCells {
+func addRUV2ExecutorMetricWithInfo(ruv2Metrics *execdetails.RUV2Metrics, info ruv2ExecutorMetric, inRows, outRows, inCells, outCells int64) {
+	if ruv2Metrics == nil {
 		return
 	}
-	if ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx); ruv2Metrics != nil {
+	delta := inRows + outRows
+	if info.useCells {
+		delta = inCells + outCells
+	}
+	if delta != 0 {
 		ruv2Metrics.AddExecutorMetric(info.level, info.label, delta)
 	}
 }
@@ -559,8 +583,18 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	defer r.End()
 
 	parentAcc, _ := ctx.Value(nextIOAccKey).(*nextIOAcc)
-	info, trackRUV2 := ruv2ExecutorMetricByType[execType]
-	childCount := len(e.AllChildren())
+	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
+	if ruv2Metrics != nil && ruv2Metrics.Bypass() {
+		ruv2Metrics = nil
+	}
+	info, trackRUV2 := ruv2ExecutorMetric{}, false
+	if ruv2Metrics != nil {
+		info, trackRUV2 = ruv2ExecutorMetricByType(execType)
+	}
+	childCount := 0
+	if trackRUV2 || parentAcc != nil {
+		childCount = len(e.AllChildren())
+	}
 	needLocalAcc := needNextIOAcc(trackRUV2, parentAcc, childCount)
 	var myAcc *nextIOAcc
 	if needLocalAcc {
@@ -596,19 +630,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		inCells = stdatomic.LoadInt64(&myAcc.inCells)
 	}
 	outCells := calcCellCount(outRows, outCols)
-	// Dispatch both row-based and cell-based deltas; info.useCells filters each executor to its configured unit.
-	if inRows != 0 {
-		addRUV2ExecutorMetricWithInfo(ctx, info, false, inRows)
-	}
-	if outRows != 0 {
-		addRUV2ExecutorMetricWithInfo(ctx, info, false, int64(outRows))
-	}
-	if inCells != 0 {
-		addRUV2ExecutorMetricWithInfo(ctx, info, true, inCells)
-	}
-	if outCells != 0 {
-		addRUV2ExecutorMetricWithInfo(ctx, info, true, outCells)
-	}
+	addRUV2ExecutorMetricWithInfo(ruv2Metrics, info, inRows, int64(outRows), inCells, outCells)
 	// recheck whether the session/query is killed during the Next()
 	return e.HandleSQLKillerSignal()
 }

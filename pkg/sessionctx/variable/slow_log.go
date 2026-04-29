@@ -836,8 +836,7 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 		Setter: func(ctx context.Context, _ *SessionVars, items *SlowQueryLogItems) {
 			stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
 			if stmtDetailRaw != nil {
-				stmtDetail := *(stmtDetailRaw.(*execdetails.StmtExecDetails))
-				items.WriteSQLRespTotal = stmtDetail.WriteSQLRespDuration
+				items.WriteSQLRespTotal = stmtDetailRaw.(*execdetails.StmtExecDetails).WriteSQLRespDuration
 			}
 		},
 		Match: func(_ *SessionVars, items *SlowQueryLogItems, threshold any) bool {
