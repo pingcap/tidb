@@ -223,6 +223,8 @@ const (
 	TableTiDBMViews = "TIDB_MVIEWS"
 	// TableTiDBMLogs is a table to show the metadata of materialized view logs in the current instance.
 	TableTiDBMLogs = "TIDB_MLOGS"
+	// TableTiDBTableMViewDependencies is a table to show dependencies between materialized view logs and materialized views.
+	TableTiDBTableMViewDependencies = "TIDB_TABLE_MVIEW_DEPENDENCIES"
 )
 
 const (
@@ -347,6 +349,7 @@ var tableIDMap = map[string]int64{
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
 	TableTiDBMViews:                      autoid.InformationSchemaDBID + 96,
 	TableTiDBMLogs:                       autoid.InformationSchemaDBID + 97,
+	TableTiDBTableMViewDependencies:      autoid.InformationSchemaDBID + 98,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -759,6 +762,17 @@ var tableTiDBMLogsCols = []columnInfo{
 	{name: "PURGE_METHOD", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
 	{name: "PURGE_START", tp: mysql.TypeVarchar, size: 128, flag: mysql.NotNullFlag},
 	{name: "PURGE_NEXT", tp: mysql.TypeVarchar, size: 128, flag: mysql.NotNullFlag},
+}
+
+var tableTiDBTableMViewDependenciesCols = []columnInfo{
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "MVIEW_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
 
 var tableRoutinesCols = []columnInfo{
@@ -2423,6 +2437,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 	TableTiDBMViews:                         tableTiDBMViewsCols,
 	TableTiDBMLogs:                          tableTiDBMLogsCols,
+	TableTiDBTableMViewDependencies:         tableTiDBTableMViewDependenciesCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

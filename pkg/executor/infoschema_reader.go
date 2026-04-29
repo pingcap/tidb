@@ -163,6 +163,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTiDBMViews(ctx, sctx)
 		case infoschema.TableTiDBMLogs:
 			err = e.setDataFromTiDBMLogs(ctx, sctx)
+		case infoschema.TableTiDBTableMViewDependencies:
+			err = e.setDataFromTiDBTableMViewDependencies(ctx, sctx)
 		case infoschema.TableEngines:
 			e.setDataFromEngines()
 		case infoschema.TableCharacterSets:
@@ -1762,6 +1764,149 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 			mlogInfo.PurgeNext,             // PURGE_NEXT
 		)
 		rows = append(rows, record)
+	}
+	e.rows = rows
+	return nil
+}
+
+type mviewDependencyInfo struct {
+	catalog string
+	schema  pmodel.CIStr
+	id      int64
+	idStr   string
+	name    string
+}
+
+func (e *memtableRetriever) getMLogMViewDependencies(
+	ctx context.Context,
+	tbl *model.TableInfo,
+) []mviewDependencyInfo {
+	mlogInfo := tbl.MaterializedViewLog
+	if mlogInfo == nil || mlogInfo.BaseTableID == 0 {
+		return nil
+	}
+
+	baseTbl, ok := e.is.TableByID(ctx, mlogInfo.BaseTableID)
+	if !ok {
+		return nil
+	}
+	baseInfo := baseTbl.Meta().MaterializedViewBase
+	if baseInfo == nil || len(baseInfo.MViewIDs) == 0 {
+		return nil
+	}
+
+	deps := make([]mviewDependencyInfo, 0, len(baseInfo.MViewIDs))
+	seenMViewIDs := make(map[int64]struct{}, len(baseInfo.MViewIDs))
+	for _, mviewID := range baseInfo.MViewIDs {
+		if _, ok := seenMViewIDs[mviewID]; ok {
+			continue
+		}
+		mviewTbl, ok := e.is.TableByID(ctx, mviewID)
+		if !ok {
+			continue
+		}
+		mviewMeta := mviewTbl.Meta()
+		if mviewMeta.MaterializedView == nil {
+			continue
+		}
+		mviewSchema, ok := infoschema.SchemaByTable(e.is, mviewMeta)
+		if !ok {
+			continue
+		}
+		seenMViewIDs[mviewID] = struct{}{}
+		deps = append(deps, mviewDependencyInfo{
+			catalog: infoschema.CatalogVal,
+			schema:  mviewSchema.Name,
+			id:      mviewMeta.ID,
+			idStr:   strconv.FormatInt(mviewMeta.ID, 10),
+			name:    mviewMeta.Name.O,
+		})
+	}
+
+	slices.SortFunc(deps, func(a, b mviewDependencyInfo) int {
+		if a.schema.L == b.schema.L {
+			nameCmp := strings.Compare(strings.ToLower(a.name), strings.ToLower(b.name))
+			if nameCmp != 0 {
+				return nameCmp
+			}
+			if a.id < b.id {
+				return -1
+			}
+			if a.id > b.id {
+				return 1
+			}
+			return 0
+		}
+		return strings.Compare(a.schema.L, b.schema.L)
+	})
+	return deps
+}
+
+func filterMViewDependencyByMViewPredicates(
+	ex *plannercore.InfoSchemaTiDBTableMViewDependenciesExtractor,
+	dep mviewDependencyInfo,
+) bool {
+	return ex.Filter(plannercore.MViewSchema, dep.schema.O) ||
+		ex.Filter(plannercore.MViewName, dep.name) ||
+		ex.Filter(plannercore.MViewID, dep.idStr)
+}
+
+func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBTableMViewDependenciesExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaTiDBTableMViewDependenciesExtractor", e.extractor)
+	}
+
+	if ex.SkipRequest {
+		return nil
+	}
+
+	hasMLogPredicates := ex.HasMLogPredicates()
+	hasMViewPredicates := ex.HasMViewPredicates()
+
+	var (
+		schemas []pmodel.CIStr
+		tables  []*model.TableInfo
+		err     error
+	)
+	switch {
+	case !hasMLogPredicates && hasMViewPredicates:
+		schemas, tables, err = ex.ListSchemasAndTablesByMView(ctx, e.is)
+	default:
+		schemas, tables, err = ex.ListSchemasAndTables(ctx, e.is)
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rows := make([][]types.Datum, 0)
+	for i, tbl := range tables {
+		schema := schemas[i]
+		if tbl.MaterializedViewLog == nil {
+			continue
+		}
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
+			continue
+		}
+
+		deps := e.getMLogMViewDependencies(ctx, tbl)
+		for _, dep := range deps {
+			if hasMViewPredicates && filterMViewDependencyByMViewPredicates(ex, dep) {
+				continue
+			}
+			record := types.MakeDatums(
+				infoschema.CatalogVal, // TABLE_CATALOG
+				schema.O,              // TABLE_SCHEMA
+				tbl.ID,                // TABLE_ID
+				tbl.Name.O,            // TABLE_NAME
+				dep.catalog,           // MVIEW_CATALOG
+				dep.schema.O,          // MVIEW_SCHEMA
+				dep.idStr,             // MVIEW_ID
+				dep.name,              // MVIEW_NAME
+			)
+			rows = append(rows, record)
+		}
 	}
 	e.rows = rows
 	return nil

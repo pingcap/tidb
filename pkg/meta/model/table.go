@@ -703,7 +703,6 @@ type ViewInfo struct {
 	Cols        []model.CIStr         `json:"view_cols"`
 }
 
-
 // MaterializedViewBaseInfo is stored in TableInfo for a base table that has materialized view(s) and/or
 // a materialized view log.
 type MaterializedViewBaseInfo struct {

@@ -1853,6 +1853,112 @@ func TestTiDBMLogs(t *testing.T) {
 	}
 }
 
+func TestTiDBTableMViewDependencies(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql              string
+		tableSchema      set.StringSet
+		tableName        set.StringSet
+		tableID          set.StringSet
+		mviewSchema      set.StringSet
+		mviewName        set.StringSet
+		mviewID          set.StringSet
+		tableNamePattern []string
+		mviewNamePattern []string
+		skipRequest      bool
+	}{
+		{
+			sql:         `select * from information_schema.tidb_table_mview_dependencies where table_schema='TEST';`,
+			tableSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:       `select * from information_schema.tidb_table_mview_dependencies where table_name='$MLOG$T';`,
+			tableName: set.NewStringSet("$mlog$t"),
+		},
+		{
+			sql:     `select * from information_schema.tidb_table_mview_dependencies where table_id in (1, 2, 3);`,
+			tableID: set.NewStringSet("1", "2", "3"),
+		},
+		{
+			sql:         `select * from information_schema.tidb_table_mview_dependencies where mview_schema='TEST';`,
+			mviewSchema: set.NewStringSet("test"),
+		},
+		{
+			sql:       `select * from information_schema.tidb_table_mview_dependencies where mview_name='MV';`,
+			mviewName: set.NewStringSet("mv"),
+		},
+		{
+			sql:     `select * from information_schema.tidb_table_mview_dependencies where mview_id in ('10', '11');`,
+			mviewID: set.NewStringSet("10", "11"),
+		},
+		{
+			sql:              `select * from information_schema.tidb_table_mview_dependencies where table_name like '$MLOG$%';`,
+			tableNamePattern: []string{"$mlog$%"},
+		},
+		{
+			sql:              `select * from information_schema.tidb_table_mview_dependencies where mview_name like 'MV%';`,
+			mviewNamePattern: []string{"mv%"},
+		},
+		{
+			sql:         `select * from information_schema.tidb_table_mview_dependencies where mview_id='1' and mview_id='2';`,
+			skipRequest: true,
+		},
+	}
+
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+
+		depExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaTiDBTableMViewDependenciesExtractor)
+		require.Equal(t, ca.skipRequest, depExtractor.SkipRequest, "SQL: %v", ca.sql)
+
+		require.Equal(t, ca.tableSchema.Count(), depExtractor.ColPredicates["table_schema"].Count())
+		if ca.tableSchema.Count() > 0 && depExtractor.ColPredicates["table_schema"].Count() > 0 {
+			require.EqualValues(t, ca.tableSchema, depExtractor.ColPredicates["table_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.tableName.Count(), depExtractor.ColPredicates["table_name"].Count())
+		if ca.tableName.Count() > 0 && depExtractor.ColPredicates["table_name"].Count() > 0 {
+			require.EqualValues(t, ca.tableName, depExtractor.ColPredicates["table_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.tableID.Count(), depExtractor.ColPredicates["table_id"].Count())
+		if ca.tableID.Count() > 0 && depExtractor.ColPredicates["table_id"].Count() > 0 {
+			require.EqualValues(t, ca.tableID, depExtractor.ColPredicates["table_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewSchema.Count(), depExtractor.ColPredicates["mview_schema"].Count())
+		if ca.mviewSchema.Count() > 0 && depExtractor.ColPredicates["mview_schema"].Count() > 0 {
+			require.EqualValues(t, ca.mviewSchema, depExtractor.ColPredicates["mview_schema"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewName.Count(), depExtractor.ColPredicates["mview_name"].Count())
+		if ca.mviewName.Count() > 0 && depExtractor.ColPredicates["mview_name"].Count() > 0 {
+			require.EqualValues(t, ca.mviewName, depExtractor.ColPredicates["mview_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mviewID.Count(), depExtractor.ColPredicates["mview_id"].Count())
+		if ca.mviewID.Count() > 0 && depExtractor.ColPredicates["mview_id"].Count() > 0 {
+			require.EqualValues(t, ca.mviewID, depExtractor.ColPredicates["mview_id"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.tableNamePattern), len(depExtractor.LikePatterns["table_name"]))
+		if len(ca.tableNamePattern) > 0 && len(depExtractor.LikePatterns["table_name"]) > 0 {
+			require.EqualValues(t, ca.tableNamePattern, depExtractor.LikePatterns["table_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.mviewNamePattern), len(depExtractor.LikePatterns["mview_name"]))
+		if len(ca.mviewNamePattern) > 0 && len(depExtractor.LikePatterns["mview_name"]) > 0 {
+			require.EqualValues(t, ca.mviewNamePattern, depExtractor.LikePatterns["mview_name"], "SQL: %v", ca.sql)
+		}
+	}
+}
+
 func TestTikvRegionStatusExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

@@ -3352,6 +3352,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
 			strings.ToLower(infoschema.TableTiDBMViews),
 			strings.ToLower(infoschema.TableTiDBMLogs),
+			strings.ToLower(infoschema.TableTiDBTableMViewDependencies),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
