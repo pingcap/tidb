@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "parquetfile",
+    srcs = [
+        "column_buffer.go",
+        "column_type.go",
+        "column_value.go",
+        "schema_builder.go",
+        "writer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/dumpformat/parquetfile",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_apache_arrow_go_v18//parquet",
+        "@com_github_apache_arrow_go_v18//parquet/compress",
+        "@com_github_apache_arrow_go_v18//parquet/file",
+        "@com_github_apache_arrow_go_v18//parquet/schema",
+        "@com_github_docker_go_units//:go-units",
+    ],
+)
+
+go_test(
+    name = "parquetfile_test",
+    timeout = "short",
+    srcs = [
+        "column_type_mapping_test.go",
+        "column_value_conversion_test.go",
+        "writer_behavior_test.go",
+        "writer_core_test.go",
+        "writer_test_helpers_test.go",
+    ],
+    embed = [":parquetfile"],
+    flaky = True,
+    shard_count = 12,
+    deps = [
+        "@com_github_apache_arrow_go_v18//parquet",
+        "@com_github_apache_arrow_go_v18//parquet/compress",
+        "@com_github_apache_arrow_go_v18//parquet/file",
+        "@com_github_apache_arrow_go_v18//parquet/schema",
+        "@com_github_stretchr_testify//require",
+    ],
+)
