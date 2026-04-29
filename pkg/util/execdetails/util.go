@@ -110,11 +110,11 @@ func SyncRUV2MetricsFromContext(ctx context.Context) *RUV2Metrics {
 	return metrics
 }
 
-// GetExecDetailsFromContext gets stmt execution, execution and resource usage details from context.
-func GetExecDetailsFromContext(ctx context.Context) (stmtDetail StmtExecDetails, tikvExecDetail util.ExecDetails, ruDetails *util.RUDetails) {
+// GetExecDetailsFromContext gets stmt response duration, execution and resource usage details from context.
+func GetExecDetailsFromContext(ctx context.Context) (writeSQLRespDuration time.Duration, tikvExecDetail util.ExecDetails, ruDetails *util.RUDetails) {
 	stmtDetailRaw := ctx.Value(StmtExecDetailKey)
 	if stmtDetailRaw != nil {
-		stmtDetail.WriteSQLRespDuration = stmtDetailRaw.(*StmtExecDetails).WriteSQLRespDuration
+		writeSQLRespDuration = stmtDetailRaw.(*StmtExecDetails).WriteSQLRespDuration
 	}
 	tikvExecDetailRaw := ctx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw != nil {
