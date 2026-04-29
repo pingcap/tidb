@@ -2708,7 +2708,7 @@ type AdminStmt struct {
 	AlterJobOptions []*AlterJobOption
 	// PartitionNames holds the partition names for ADMIN CHECKSUM TABLE ... PARTITION (p1, p2).
 	// When non-empty, the checksum is scoped to the specified partitions only.
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 }
 
 // Restore implements Node interface.

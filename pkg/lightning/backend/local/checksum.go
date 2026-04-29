@@ -585,6 +585,3 @@ func (m *gcTTLManager) close() {
 		m.wg.Wait()
 	}
 }
-
-// close is a no-op in v8.5.6 where gcTTLManager lifecycle is context-driven.
-func (m *gcTTLManager) close() {}
