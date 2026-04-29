@@ -126,6 +126,8 @@ var (
 	ErrWrongFKOptionForGeneratedColumn = ClassDDL.NewStd(mysql.ErrWrongFKOptionForGeneratedColumn)
 	// ErrUnsupportedOnGeneratedColumn is for unsupported actions on generated columns.
 	ErrUnsupportedOnGeneratedColumn = ClassDDL.NewStd(mysql.ErrUnsupportedOnGeneratedColumn)
+	// ErrUnsupportedModifyIndexedGeneratedColumn is for unsupported modifications on generated columns covered by an index.
+	ErrUnsupportedModifyIndexedGeneratedColumn = ClassDDL.NewStdErr(mysql.ErrUnsupportedOnGeneratedColumn, parser_mysql.Message("Unsupported modification for generated columns covered by an index", nil))
 	// ErrGeneratedColumnNonPrior forbids to refer generated column non prior to it.
 	ErrGeneratedColumnNonPrior = ClassDDL.NewStd(mysql.ErrGeneratedColumnNonPrior)
 	// ErrDependentByGeneratedColumn forbids to delete columns which are dependent by generated columns.
