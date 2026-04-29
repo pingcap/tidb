@@ -2276,9 +2276,17 @@ type jsonDatum struct {
 
 // MarshalJSON implements Marshaler.MarshalJSON interface.
 func (d *Datum) MarshalJSON() ([]byte, error) {
+	// Decimal is uint8 internally but uint16 on the wire for back-compat.
+	// Map the UnspecifiedFsp sentinel (^uint8(0) == 255) back to the legacy
+	// ^uint16(0) == 65535 so older readers — which still treat the field as
+	// signed -1 — don't decode 255 as a real positive frac.
+	jdDecimal := uint16(d.decimal)
+	if d.decimal == ^uint8(0) {
+		jdDecimal = ^uint16(0)
+	}
 	jd := &jsonDatum{
 		K:         d.k,
-		Decimal:   uint16(d.decimal),
+		Decimal:   jdDecimal,
 		Length:    d.length,
 		I:         d.i,
 		Collation: d.Collation(),

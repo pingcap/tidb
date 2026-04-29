@@ -637,6 +637,28 @@ func TestMarshalDatum(t *testing.T) {
 	}
 }
 
+// TestMarshalDatumUnspecifiedFsp pins the wire-format guarantee that a
+// Datum with UnspecifiedFsp (-1, stored as uint8 255) emits the legacy
+// uint16 sentinel 65535 in JSON. A pre-shrink reader still reads the field
+// as signed -1; emitting the bare 255 would surface as a real positive
+// frac on the other side.
+func TestMarshalDatumUnspecifiedFsp(t *testing.T) {
+	var d Datum
+	d.SetMysqlDuration(Duration{Duration: time.Hour, Fsp: UnspecifiedFsp})
+	require.Equal(t, uint8(0xff), d.decimal)
+
+	bytes, err := gjson.Marshal(&d)
+	require.NoError(t, err)
+	require.Contains(t, string(bytes), `"decimal":65535`,
+		"UnspecifiedFsp must marshal as legacy uint16 sentinel for back-compat")
+
+	var got Datum
+	require.NoError(t, gjson.Unmarshal(bytes, &got))
+	require.Equal(t, uint8(0xff), got.decimal, "sentinel must survive round-trip")
+	require.Equal(t, UnspecifiedFsp, got.GetMysqlDuration().Fsp,
+		"GetMysqlDuration must recover Fsp = -1")
+}
+
 func BenchmarkCompareDatum(b *testing.B) {
 	vals, vals1 := prepareCompareDatums()
 	b.ReportAllocs()
