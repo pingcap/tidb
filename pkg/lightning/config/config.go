@@ -1002,6 +1002,8 @@ func (m *MydumperRuntime) adjustIgnoreColumns() error {
 			}
 			normalized[lowerCol] = val
 		}
+		cc.DB = strings.ToLower(cc.DB)
+		cc.Table = strings.ToLower(cc.Table)
 		cc.Values = normalized
 
 		// Find or create the matching IgnoreColumns entry and add constant keys.
@@ -1024,7 +1026,7 @@ func (m *MydumperRuntime) adjustIgnoreColumns() error {
 		if ig.DB == "" && ig.Table == "" && len(ig.TableFilter) == 0 {
 			ig.DB = strings.ToLower(cc.DB)
 			ig.Table = strings.ToLower(cc.Table)
-			ig.TableFilter = cc.TableFilter
+			ig.TableFilter = append([]string(nil), cc.TableFilter...)
 			m.IgnoreColumns = append(m.IgnoreColumns, ig)
 		}
 	}
@@ -1120,7 +1122,7 @@ func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSen
 	return &IgnoreColumns{Columns: make([]string, 0)}, nil
 }
 
-// AllColumnConstants is a slice of ColumnConstantsEntry.
+// AllColumnConstants is a slice of per-table column-value injection rules.
 type AllColumnConstants []*ColumnConstantsEntry
 
 // ColumnConstantsEntry holds literal values to inject for columns absent from source data.
