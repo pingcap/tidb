@@ -4,6 +4,7 @@ go_library(
     name = "windows",
     srcs = [
         "builder.go",
+        "partition_topn_window.go",
         "pipelined_window.go",
         "window.go",
     ],
@@ -28,13 +29,21 @@ go_test(
     name = "windows_test",
     timeout = "short",
     srcs = [
+        "partition_topn_window_test.go",
         "window_executor_test.go",
         "window_sql_test.go",
     ],
+    embed = [":windows"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
+        "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/testutil",
+        "//pkg/expression",
         "//pkg/parser/mysql",
         "//pkg/testkit",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
     ],
 )
