@@ -31,11 +31,11 @@ for BACKEND in tidb local; do
   run_sql 'SELECT count(1) FROM col_constants.t;'
   check_contains 'count(1): 3'
 
-  # customer_name and etl_ts must match the column-constants values, not any DDL DEFAULT.
+  # customer_name and ts must match the column-constants values, not any DDL DEFAULT.
   run_sql "SELECT count(1) FROM col_constants.t WHERE customer_name = 'acme';"
   check_contains 'count(1): 3'
 
-  run_sql "SELECT count(1) FROM col_constants.t WHERE etl_ts = '2026-04-17 21:00:00';"
+  run_sql "SELECT count(1) FROM col_constants.t WHERE ts = '2026-04-17 21:00:00';"
   check_contains 'count(1): 3'
 
   # The columns present in the CSV must be imported correctly.
