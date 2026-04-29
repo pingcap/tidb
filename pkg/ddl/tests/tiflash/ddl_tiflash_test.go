@@ -106,10 +106,12 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 	s.dom.SetStatsUpdating(true)
 
 	tearDown := func() {
-		s.tiflash.Lock()
-		s.tiflash.StatusServer.Close()
-		s.tiflash.Unlock()
 		s.dom.Close()
+		s.tiflash.Lock()
+		if s.tiflash.StatusServer != nil {
+			s.tiflash.StatusServer.Close()
+		}
+		s.tiflash.Unlock()
 		require.NoError(t, s.store.Close())
 		ddl.PollTiFlashInterval = 2 * time.Second
 	}
