@@ -160,7 +160,11 @@ func TestDumpGlobalStats(t *testing.T) {
 	stats := getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
+<<<<<<< HEAD
 	globalStats := stats.Partitions[handleutil.TiDBGlobalStats]
+=======
+	globalStats := stats.Partitions[statsutil.TiDBGlobalStats]
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 	if globalStats != nil {
 		require.Empty(t, globalStats.Columns)
 		require.Empty(t, globalStats.Indices)
@@ -172,7 +176,11 @@ func TestDumpGlobalStats(t *testing.T) {
 	stats = getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
+<<<<<<< HEAD
 	globalStats = stats.Partitions[handleutil.TiDBGlobalStats]
+=======
+	globalStats = stats.Partitions[statsutil.TiDBGlobalStats]
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 	require.NotNil(t, globalStats)
 	require.NotEmpty(t, globalStats.Columns)
 	require.NotEmpty(t, globalStats.Indices)

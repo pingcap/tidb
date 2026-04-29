@@ -1240,7 +1240,11 @@ func TestFlushPendingStatsDeltaBeforeAnalyze(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 
+<<<<<<< HEAD
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+=======
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
 

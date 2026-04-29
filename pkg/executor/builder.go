@@ -3262,12 +3262,21 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	// buildAnalyzeSamplingPushdown reads base count / modify_count from mysql.stats_meta
 	// while constructing column analyze tasks. Flush pending deltas first so the base
 	// values include pre-analyze changes and later delta dumps cannot double count them.
+<<<<<<< HEAD
 	intest.Assert(b.ctx != nil, "missing statement context for analyze")
 	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStats), b.sctx, v); err != nil {
 		b.err = err
 		return nil
 	}
 	exprCtx := b.sctx.GetExprCtx()
+=======
+	// TODO: Determine whether context.Background is appropriate here; if not, use the proper statement context.
+	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats), b.ctx, v); err != nil {
+		b.err = err
+		return nil
+	}
+	exprCtx := b.ctx.GetExprCtx()
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 	for _, task := range v.ColTasks {
 		// ColumnInfos2ColumnsAndNames will use the `colInfos` to find the unique id for the column,
 		// so we need to make sure all the columns pass into it.

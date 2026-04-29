@@ -450,11 +450,19 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 
+<<<<<<< HEAD
 	statsTblNew := h.GetPhysicalTableStats(table.Meta().ID, table.Meta())
 	// Search for a not found value based upon post-analyze modifications. It
 	// should be higher than the no-modification fallback, but lower than a value
 	// already present in the analyzed histogram.
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
+=======
+	// Search for a not found value based upon post-analyze modifications. It
+	// should be higher than the no-modification fallback, but lower than a value
+	// already present in the analyzed histogram.
+	countEst, err = getColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
+	count = countEst.Est
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 	require.NoError(t, err)
 	require.Greater(t, count, 1.0)
 	require.Less(t, count, 10.0)

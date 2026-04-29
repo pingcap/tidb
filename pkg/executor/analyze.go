@@ -24,11 +24,15 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+<<<<<<< HEAD
 	"testing"
+=======
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -89,6 +93,7 @@ const (
 	idxTask
 )
 
+<<<<<<< HEAD
 // runningUnderGoTest reports whether the current process is a Go test binary
 // (`go test`, including `make bench-daily`) rather than a real tidb-server
 // produced by `go build` of cmd/tidb-server. Test binaries register in-process
@@ -100,6 +105,8 @@ func runningUnderGoTest() bool {
 	return testing.Testing()
 }
 
+=======
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 // flushStatsDeltaForAnalyze flushes pending stats deltas for the tables whose column-analyze
 // tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
 // pre-analyze delta can be applied later and double count rows or modifications.
@@ -108,12 +115,22 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 	if len(flushObjects) == 0 {
 		return nil
 	}
+<<<<<<< HEAD
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
 	// HACK: test binaries have no real RPC peer to broadcast to; dump locally instead.
 	if runningUnderGoTest() {
+=======
+
+	// HACK: Some tests register in-process TiDB domains but do not start TiDB RPC
+	// endpoints. Broadcasting FLUSH STATS_DELTA CLUSTER to those mock endpoints can
+	// spend the TiKV RPC backoff budget before analyze really starts. When the test
+	// topology cannot receive TiDB broadcast requests, dumping local deltas is the
+	// only viable approximation.
+	if intest.InTest {
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
 		if err != nil {
 			return err
@@ -159,8 +176,13 @@ func collectStatsDeltaFlushObjectsForAnalyze(plan *core.Analyze) []*ast.StatsObj
 		seenObjects[key] = struct{}{}
 		flushObjects = append(flushObjects, &ast.StatsObject{
 			StatsObjectScope: ast.StatsObjectScopeTable,
+<<<<<<< HEAD
 			DBName:           pmodel.NewCIStr(dbName),
 			TableName:        pmodel.NewCIStr(tableName),
+=======
+			DBName:           ast.NewCIStr(dbName),
+			TableName:        ast.NewCIStr(tableName),
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 		})
 	}
 	for _, task := range plan.ColTasks {
@@ -195,7 +217,11 @@ func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
 	for _, server := range servers {
 		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
 		// nodes that should not receive TiDB-type coprocessor requests.
+<<<<<<< HEAD
 		if server.IP == "<nil>" {
+=======
+		if server.IP == config.UnavailableIP {
+>>>>>>> 42118f37f7a (executor, statistics: flush pending stats delta before analyze (#67939))
 			continue
 		}
 		// In-process test domains can register server info without starting a
