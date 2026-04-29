@@ -16,6 +16,7 @@ package keyspace
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -56,6 +57,16 @@ func MakeKeyspaceEtcdNamespaceSlash(c tikv.Codec) string {
 // GetKeyspaceNameBySettings is used to get Keyspace name setting.
 func GetKeyspaceNameBySettings() (keyspaceName string) {
 	keyspaceName = config.GetGlobalKeyspaceName()
+
+	if !IsKeyspaceNameEmpty(keyspaceName) {
+		return keyspaceName
+	}
+
+	keyspaceName = os.Getenv(config.EnvVarKeyspaceName)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = keyspaceName
+	})
+
 	return keyspaceName
 }
 

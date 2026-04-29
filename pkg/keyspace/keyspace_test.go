@@ -52,23 +52,51 @@ func TestSetKeyspaceNameInConf(t *testing.T) {
 }
 
 func TestNoKeyspaceNameSet(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = ""
+	resetKeyspaceNameCache := func() {
+		keyspaceNameBytes = nil
+		genKeyspaceNameOnce = sync.Once{}
+	}
+
+	t.Run("empty config and env", func(t *testing.T) {
+		t.Setenv(config.EnvVarKeyspaceName, "")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = ""
+		})
+
+		getKeyspaceName := GetKeyspaceNameBySettings()
+		require.Equal(t, "", getKeyspaceName)
+		require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
+
+		resetKeyspaceNameCache()
+		getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
+		if kerneltype.IsNextGen() {
+			require.Equal(t, []byte(""), getKeyspaceNameByte)
+		} else {
+			require.Nil(t, getKeyspaceNameByte)
+		}
 	})
 
-	getKeyspaceName := GetKeyspaceNameBySettings()
-	require.Equal(t, "", getKeyspaceName)
-	require.Equal(t, true, IsKeyspaceNameEmpty(getKeyspaceName))
+	t.Run("fallback to env", func(t *testing.T) {
+		const keyspaceNameInEnv = "test_keyspace_env"
 
-	// Make sure genKeyspaceNameOnce is called only once in this test.
-	keyspaceNameBytes = nil
-	genKeyspaceNameOnce = sync.Once{}
-	getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
-	if kerneltype.IsNextGen() {
-		require.Equal(t, []byte(""), getKeyspaceNameByte)
-	} else {
-		require.Nil(t, getKeyspaceNameByte)
-	}
+		t.Setenv(config.EnvVarKeyspaceName, keyspaceNameInEnv)
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = ""
+		})
+
+		getKeyspaceName := GetKeyspaceNameBySettings()
+		require.Equal(t, keyspaceNameInEnv, getKeyspaceName)
+		require.Equal(t, false, IsKeyspaceNameEmpty(getKeyspaceName))
+		require.Equal(t, keyspaceNameInEnv, config.GetGlobalKeyspaceName())
+
+		resetKeyspaceNameCache()
+		getKeyspaceNameByte := GetKeyspaceNameBytesBySettings()
+		if kerneltype.IsNextGen() {
+			require.Equal(t, []byte(keyspaceNameInEnv), getKeyspaceNameByte)
+		} else {
+			require.Nil(t, getKeyspaceNameByte)
+		}
+	})
 }
 
 func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {
