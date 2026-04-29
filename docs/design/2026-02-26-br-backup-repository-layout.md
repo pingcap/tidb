@@ -130,7 +130,7 @@ Config hash:
 
 Pending index:
 - For checkpointed backup attempts, BR also keeps a small marker file at `_meta/pending/<config-hash-hex>/<backup-id>.json`.
-- The marker lifetime is deliberately longer than the backup attempt. BR creates the marker before issuing TiKV backup requests, keeps it after final `backupmeta` becomes durable, and retires it only through later stale-marker cleanup, `pending discard`, or `snapshot delete`.
+- The marker lifetime is deliberately longer than the backup attempt. BR creates the marker before issuing TiKV backup requests, keeps it after final `backupmeta` becomes durable, and retires it only through later stale-marker cleanup or `snapshot delete`.
 - This lets routine startup find relevant unfinished attempts by enumerating `_meta/pending/<config-hash-hex>/` instead of scanning all historical backups or all data shards.
 - Current implementation stores checkpoint state under `_meta/snapshot/<backup-id>/checkpoints/backup/...` and classifies each pending marker by checking `backupmeta` first, then `checkpoints/backup/checkpoint.meta`.
 - Stale pending markers for completed backups are expected after successful backups and are removed automatically when BR scans that config-hash directory.
@@ -179,7 +179,7 @@ Semantics:
 Pending backup behavior:
 - Current implementation cleans stale pending markers for the same config hash before selecting the backup attempt.
 - `--use-checkpoint=true` is the default and acts as the resume policy. If no matching unfinished backup exists, the command starts a new backup. If exactly one matching unfinished backup with checkpoint metadata exists, the command resumes it. If multiple matching unfinished backups exist, the command fails with an ambiguity error.
-- `--use-checkpoint=false` acts as the fresh-attempt policy. It always allocates a fresh `<backup-id>` and starts a new backup instead of reusing a matching unfinished backup. Existing unfinished backups are left in place for later inspection or explicit discard. Because checkpoint mode is disabled, this fresh attempt does not create checkpoint or pending-marker state for itself.
+- `--use-checkpoint=false` acts as the fresh-attempt policy. It always allocates a fresh `<backup-id>` and starts a new backup instead of reusing a matching unfinished backup. Existing unfinished backups are left in place for later inspection or explicit deletion. Because checkpoint mode is disabled, this fresh attempt does not create checkpoint or pending-marker state for itself.
 
 #### Controller-Friendly Retry Semantics
 
@@ -205,19 +205,18 @@ Semantics:
 - Current implementation validates WalkDir `StartAfter` support for repo snapshot references, so repo restore only works on storage backends that satisfy that capability gate.
 - Other snapshot readers such as `br operator checksum-as -s <repo> --storage-layout=repo --backup-id <backup-id>` resolve metadata from the same per-backup namespace.
 
-#### Discard Pending Backup
+#### Delete Snapshot or Pending Backup
 
 Command:
-- `br repo snapshot pending discard -s <repo> [--backup-id <backup-id>]`
+- `br repo snapshot delete -s <repo> --backup-id <backup-id>`
 
 Semantics:
-- Discards one repo pending snapshot entry and, for unfinished backups, frees the repo to start a new checkpointed backup.
-- If there is exactly one pending backup, `--backup-id` may be omitted.
-- If multiple pending backups exist, `--backup-id` is required.
-- Current implementation first classifies the target as `stale` or `unfinished`.
-- For `stale`, it removes pending markers and leftover checkpoint files only; completed snapshot metadata and data files, if present, are kept.
-- For `unfinished`, it removes `_meta/pending/<config-hash-hex>/<backup-id>.json`, per-backup metadata under `_meta/snapshot/<backup-id>/...`, and partial SST data under `_data/snapshot/<store-id>/<backup-id>/...`.
-- Discarding unfinished data currently relies on WalkDir `StartAfter` support on the underlying storage.
+- Deletes one completed snapshot backup or unfinished repo pending snapshot attempt.
+- `--backup-id` is required so deletion always targets one concrete backup ID.
+- For a completed snapshot, it removes per-backup metadata under `_meta/snapshot/<backup-id>/...`, matching SST data under `_data/snapshot/<store-id>/<backup-id>/...`, and any pending markers for the same backup ID.
+- For an unfinished pending backup without final `backupmeta`, it removes `_meta/pending/<config-hash-hex>/<backup-id>.json`, checkpoint/metadata files under `_meta/snapshot/<backup-id>/...`, and partial SST data under `_data/snapshot/<store-id>/<backup-id>/...`.
+- It still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the upper-case hex `<backup-id>` subprefix in each shard.
+- Deleting snapshot data currently relies on WalkDir `StartAfter` support on the underlying storage.
 
 #### List
 
@@ -233,15 +232,12 @@ Semantics:
 
 Command:
 - `br repo snapshot get -s <repo> --backup-id <backup-id> --view <...>`
-- `br repo snapshot delete -s <repo> --backup-id <backup-id>`
 
 Semantics:
 - `get` supports `--view basic|tables|files`.
 - `get --view basic` prints a summary JSON object derived from `backupmeta`.
 - `get --view tables` streams one JSON object per backed-up table and is unavailable for raw backups.
 - `get --view files` streams one JSON object per SST/file entry recorded in `backupmeta`.
-- `delete` removes the specified backup's snapshot metadata, snapshot data, and any pending markers for that `<backup-id>`.
-- `delete` still works if per-backup metadata is missing, by enumerating store shards under `_data/snapshot/` and matching the upper-case hex `<backup-id>` subprefix in each shard. This data scan currently requires WalkDir `StartAfter` support.
 
 ### Compatibility
 
@@ -249,10 +245,10 @@ Semantics:
 - TiKV: repo does not require a new TiKV-side path hook. The baseline deployment path relies on BR rewriting the per-request `StorageBackend` prefix per store.
 - PD: backup ID allocation via TSO.
 - Current implementation rejects repo snapshot backup on HDFS and noop storage.
-- Current implementation recognizes WalkDir `StartAfter` support only for `s3://`, `ks3://`, `gcs://`, and `file://` storages. Repo restore and the data-scanning repo admin paths (`snapshot delete`, unfinished `pending discard`) are therefore limited to those storages today.
+- Current implementation recognizes WalkDir `StartAfter` support only for `s3://`, `ks3://`, `gcs://`, and `file://` storages. Repo restore and the data-scanning repo admin paths (`snapshot delete`, including unfinished pending backup deletion) are therefore limited to those storages today.
 - Upgrade: legacy layout remains supported; repo is opt-in.
 - Downgrade: avoid writing repo from older BR; repo marker signals layout.
-- External tools: restore/list/delete/pending-discard must use repo-aware logic. Full data-prefix orphan scanning, if an external maintenance tool chooses to do it, is optional repair/audit work rather than a required BR repo command.
+- External tools: restore/list/delete must use repo-aware logic. Full data-prefix orphan scanning, if an external maintenance tool chooses to do it, is optional repair/audit work rather than a required BR repo command.
 
 ### Misc
 
@@ -298,13 +294,13 @@ Repo behavior:
 - Verify SST objects are written under `_data/snapshot/<store-id>/<backup-id>/` while keeping legacy TiKV naming within that subprefix.
 - Verify `<store-id>` remains the leading data prefix and `<backup-id>` is not moved ahead of it.
 - Verify `--use-checkpoint=true` resumes exactly one matching unfinished backup and rejects multiple matching unfinished backups as ambiguous.
-- Verify `--use-checkpoint=false` starts a fresh backup and leaves existing unfinished backups for later inspection or explicit discard.
+- Verify `--use-checkpoint=false` starts a fresh backup and leaves existing unfinished backups for later inspection or explicit deletion.
 - Verify `br repo snapshot list` returns completed backups only.
 - Verify unfinished-backup lookup only enumerates `_meta/pending/<config-hash-hex>/` in the normal path.
 - Verify a checkpointed successful backup leaves its pending file in place after the backup finishes.
 - Verify a stale pending file for a completed backup is removed by a later stale-marker cleanup instead of forcing a resume.
 - Verify marker-only pending leftovers are treated as stale cleanup leftovers rather than as resumable backups.
-- Verify `pending discard` distinguishes stale vs unfinished targets and deletes the correct scope for each.
+- Verify `snapshot delete` removes completed backups and unfinished pending backups with the correct scope for each.
 - Verify `snapshot get --view basic|tables|files` returns the documented metadata views.
 - Verify `snapshot delete` deletes matching data, metadata, and pending markers, and still works by data-prefix scan when metadata is missing.
 - Verify checkpoint artifacts are stored under `_meta/snapshot/<backup-id>/checkpoints/backup/...`.
@@ -315,7 +311,7 @@ Repo behavior:
 Repo scenarios:
 - Multiple backups under one repo; restore older/newer backups.
 - Delete one backup while keeping others; verify remaining backups restore.
-- One failed backup is discarded, then a new checkpointed backup can start in the same repo.
+- One failed backup is deleted, then a new checkpointed backup can start in the same repo.
 - Multiple pending entries under the same config-hash directory exist due to manual corruption or partial cleanup; checkpointed backup start fails with an explicit ambiguity error.
 - Multiple unfinished backups with different config-hash directories coexist in the same repo; each new backup only matches or resumes the entries under its own config-hash directory.
 - A controller retries the same failed backup CR through its existing retry mechanism and invokes BR with `--use-checkpoint=true`; the unfinished backup continues instead of being replaced.

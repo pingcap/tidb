@@ -73,14 +73,6 @@ type RepoSnapshotDeleteConfig struct {
 
 type RepoSnapshotDeleteResult = repo.SnapshotDeleteResult
 
-type RepoSnapshotPendingDiscardConfig struct {
-	Config
-	BackupID   repo.BackupID
-	SkipPrompt bool
-}
-
-type RepoSnapshotPendingDiscardResult = repo.PendingDiscardResult
-
 type repoSnapshotMetaView string
 
 const (
@@ -221,51 +213,6 @@ func RunRepoSnapshotDelete(
 	})
 }
 
-func RunRepoSnapshotPendingDiscard(
-	ctx context.Context,
-	console glue.ConsoleOperations,
-	cfg RepoSnapshotPendingDiscardConfig,
-) (RepoSnapshotPendingDiscardResult, error) {
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (RepoSnapshotPendingDiscardResult, error) {
-		snapshotOps := repo.SnapshotOpsExtension(storage)
-		pendingBackups, err := snapshotOps.ListPendingBackups(ctx)
-		if err != nil {
-			return RepoSnapshotPendingDiscardResult{}, errors.Trace(err)
-		}
-		target, err := selectPendingBackupForDiscard(cfg.BackupID, pendingBackups)
-		if err != nil {
-			return RepoSnapshotPendingDiscardResult{}, errors.Trace(err)
-		}
-		if err := confirmRepoSnapshotPendingDiscard(console, &cfg, target); err != nil {
-			return RepoSnapshotPendingDiscardResult{}, errors.Trace(err)
-		}
-		var discardResult RepoSnapshotPendingDiscardResult
-		extraFields := append(
-			[]glue.ExtraField{
-				glue.WithConstExtraField("backup-id", target.BackupID.String()),
-				glue.WithConstExtraField("state", target.State),
-			},
-			withPendingDiscardDeletedExtraFields(func() RepoSnapshotPendingDiscardResult { return discardResult })...,
-		)
-		return runRepoSnapshotDynamicProgressTask(
-			ctx,
-			console,
-			"Discarding pending snapshot backup...",
-			extraFields,
-			func(progress repoSnapshotDynamicProgressTaskContext) (RepoSnapshotPendingDiscardResult, error) {
-				result, err := snapshotOps.DiscardPendingSnapshot(
-					progress.Context,
-					*target,
-					repo.WithMutationDiscoveredProgress(func(count int) { progress.AddTotal(int64(count)) }),
-					repo.WithMutationDeletedProgress(func(count int) { progress.Advance(int64(count)) }),
-				)
-				discardResult = result
-				return result, err
-			},
-		)
-	})
-}
-
 func listRepoSnapshotBackups(ctx context.Context, storage storeapi.Storage) ([]RepoSnapshotListItem, error) {
 	completedIDs, err := repo.ListCompletedSnapshotIDs(ctx, storage)
 	if err != nil {
@@ -319,14 +266,6 @@ func withSnapshotMutationDeletedExtraFields(result func() RepoSnapshotDeleteResu
 	)
 }
 
-func withPendingDiscardDeletedExtraFields(result func() RepoSnapshotPendingDiscardResult) []glue.ExtraField {
-	return withDeletedCountExtraFields(
-		func() int { return result().MetadataDeleted },
-		func() int { return result().DataDeleted },
-		func() int { return result().PendingDeleted },
-	)
-}
-
 func shouldConfirmRepoSnapshotMutation(console glue.ConsoleOperations, skipPrompt bool) bool {
 	return !skipPrompt && console.IsInteractive()
 }
@@ -357,10 +296,8 @@ func confirmRepoSnapshotDelete(
 		}
 	}
 	if preview.HasPending {
-		info.Add(
-			"pending-markers",
-			fmt.Sprintf("%d (%s)", len(preview.Pending.MarkerPaths), preview.Pending.State),
-		)
+		info.Add("state", string(preview.Pending.State))
+		info.Add("pending-markers", fmt.Sprintf("%d", len(preview.Pending.MarkerPaths)))
 	}
 	info.Print()
 	if !console.PromptBool("Continue? ") {
@@ -377,12 +314,18 @@ func collectRepoSnapshotDeletePreview(
 ) (repoSnapshotDeletePreview, error) {
 	preview := repoSnapshotDeletePreview{}
 	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
-	backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo)
+	hasBackupMeta, err := metadataStorage.FileExists(ctx, metautil.MetaFile)
 	if err != nil {
-		return preview, errors.Annotatef(err, "collect delete preview for snapshot %s: read metadata", backupID)
+		return preview, errors.Annotatef(err, "collect delete preview for snapshot %s: check metadata", backupID)
 	}
-	preview.HasBasic = true
-	preview.Basic = convertRepoSnapshotBasicView(*backupMeta)
+	if hasBackupMeta {
+		backupMeta, err := taskcommon.ReadBackupMetaFromStorage(ctx, metautil.MetaFile, metadataStorage, &cfg.CipherInfo)
+		if err != nil {
+			return preview, errors.Annotatef(err, "collect delete preview for snapshot %s: read metadata", backupID)
+		}
+		preview.HasBasic = true
+		preview.Basic = convertRepoSnapshotBasicView(*backupMeta)
+	}
 	pendingBackups, err := repo.SnapshotOpsExtension(storage).ListPendingBackups(ctx)
 	if err != nil {
 		return preview, errors.Annotatef(err, "collect delete preview for snapshot %s: list pending backups", backupID)
@@ -395,33 +338,6 @@ func collectRepoSnapshotDeletePreview(
 		}
 	}
 	return preview, nil
-}
-
-func confirmRepoSnapshotPendingDiscard(
-	console glue.ConsoleOperations,
-	cfg *RepoSnapshotPendingDiscardConfig,
-	target *repo.PendingBackup,
-) error {
-	if !shouldConfirmRepoSnapshotMutation(console, cfg.SkipPrompt) {
-		return nil
-	}
-	console.Printf("About to discard pending snapshot backup %s (%s).\n", target.BackupID, formatRepoSnapshotBackupTime(target.BackupID))
-	info := console.CreateTable()
-	info.Add("state", string(target.State))
-	info.Add("pending-markers", fmt.Sprintf("%d", len(target.MarkerPaths)))
-	info.Print()
-	switch target.State {
-	case repo.PendingBackupStateStale:
-		console.Println("This removes pending markers and leftover checkpoint files; completed snapshot metadata and data files, if present, are kept.")
-	case repo.PendingBackupStateUnfinished:
-		console.Println("This permanently removes checkpoint/metadata files, data files, and pending markers for the unfinished backup.")
-	default:
-		console.Printf("Unknown pending state %q.\n", target.State)
-	}
-	if !console.PromptBool("Continue? ") {
-		return errors.Trace(berrors.ErrOperationAborted)
-	}
-	return nil
 }
 
 func formatRepoSnapshotBytes(size uint64) string {
@@ -519,39 +435,6 @@ func withSnapshotRepoStorage[T any](
 	}
 	defer storage.Close()
 	return fn(storage)
-}
-
-func selectPendingBackupForDiscard(
-	backupID repo.BackupID,
-	backups []repo.PendingBackup,
-) (*repo.PendingBackup, error) {
-	if len(backups) == 0 {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "no pending repo snapshot backups were found")
-	}
-	if backupID.IsZero() {
-		if len(backups) != 1 {
-			return nil, errors.Annotatef(
-				berrors.ErrInvalidArgument,
-				"found multiple pending repo snapshot backups: %s; backup id is required",
-				formatRepoBackupIDs(extractPendingBackupIDs(backups)),
-			)
-		}
-		return &backups[0], nil
-	}
-	for i := range backups {
-		if backups[i].BackupID == backupID {
-			return &backups[i], nil
-		}
-	}
-	return nil, errors.Annotatef(berrors.ErrInvalidArgument, "pending repo snapshot backup %s was not found", backupID)
-}
-
-func extractPendingBackupIDs(backups []repo.PendingBackup) []repo.BackupID {
-	ids := make([]repo.BackupID, 0, len(backups))
-	for _, backup := range backups {
-		ids = append(ids, backup.BackupID)
-	}
-	return ids
 }
 
 func normalizeRepoSnapshotMetaView(raw string) (repoSnapshotMetaView, error) {

@@ -197,7 +197,7 @@ func chooseRepoBackupAttempt(
 				gozap.String("config-hash", cfgHashDirName))
 			return repoBackupAttempt{}, errors.Annotatef(
 				berrors.ErrOperationAborted,
-				"declined to resume unfinished repo snapshot backup %s; no new backup was created; to start a new backup, rerun this backup command with `--use-checkpoint=false`; to clean up pending backups, run `br repo snapshot pending discard --storage <repo-storage> --backup-id %s`",
+				"declined to resume unfinished repo snapshot backup %s; no new backup was created; to start a new backup, rerun this backup command with `--use-checkpoint=false`; to clean up the unfinished backup, run `br repo snapshot delete --storage <repo-storage> --backup-id %s`",
 				backupID,
 				backupID,
 			)

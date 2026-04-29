@@ -60,9 +60,9 @@ func TestListPendingBackupsClassifiesStates(t *testing.T) {
 	require.Equal(t, markerOnlyID, backups[2].BackupID)
 }
 
-func TestDiscardPendingSnapshotStalePendingRemovesOnlyMarker(t *testing.T) {
+func TestDeleteSnapshotRemovesCompletedSnapshotAndPendingMarker(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := newWalkAssertingLocalStorage(t, true)
 	snapshotOps := repo.SnapshotOpsExtension(storage)
 
 	backupID := repo.BackupID(0x1234)
@@ -70,88 +70,19 @@ func TestDiscardPendingSnapshotStalePendingRemovesOnlyMarker(t *testing.T) {
 	createBackupMeta(ctx, t, storage, backupID)
 	createDataFile(ctx, t, storage, 1, backupID, "stale.sst")
 
-	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(ctx, t, storage, backupID))
+	result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
 	require.NoError(t, err)
-	require.True(t, result.StalePending)
-	require.Equal(t, 1, result.PendingDeleted)
-	require.Zero(t, result.MetadataDeleted)
-	require.Zero(t, result.DataDeleted)
-
-	requireFileMissing(ctx, t, storage, repo.PendingFile([]byte("hash"), backupID))
-	requireFileExists(ctx, t, storage, repo.SnapshotMetadataFile(backupID))
-	requireFileExists(ctx, t, storage, repo.SnapshotStoreDataPrefix(1, backupID)+"/stale.sst")
-}
-
-func TestDiscardPendingSnapshotUnfinishedRemovesMetadataAndData(t *testing.T) {
-	ctx := context.Background()
-	storage := newWalkAssertingLocalStorage(t, true)
-	snapshotOps := repo.SnapshotOpsExtension(storage)
-
-	backupID := repo.BackupID(0x2345)
-	createPendingCheckpoint(ctx, t, storage, backupID)
-	createDataFile(ctx, t, storage, 1, backupID, "a.sst")
-	createDataFile(ctx, t, storage, 2, backupID, "b.sst")
-	createDataFile(ctx, t, storage, 9, repo.BackupID(0x9999), "keep.sst")
-
-	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(ctx, t, storage, backupID))
-	require.NoError(t, err)
-	require.False(t, result.StalePending)
-	require.Equal(t, 1, result.MetadataDeleted)
-	require.Equal(t, 2, result.DataDeleted)
-	require.Equal(t, 1, result.PendingDeleted)
-
-	requireFileMissing(ctx, t, storage, repo.PendingFile([]byte("hash"), backupID))
-	requireFileMissing(ctx, t, storage, pathJoin(repo.SnapshotMetadataDir(backupID), checkpoint.CheckpointMetaPathForBackup))
-	requireFileMissing(ctx, t, storage, repo.SnapshotStoreDataPrefix(1, backupID)+"/a.sst")
-	requireFileMissing(ctx, t, storage, repo.SnapshotStoreDataPrefix(2, backupID)+"/b.sst")
-	requireFileExists(ctx, t, storage, repo.SnapshotStoreDataPrefix(9, repo.BackupID(0x9999))+"/keep.sst")
-}
-
-func TestDiscardPendingSnapshotUnfinishedRejectsUnsupportedStorage(t *testing.T) {
-	ctx := context.Background()
-	storage := objstore.NewMemStorage()
-	snapshotOps := repo.SnapshotOpsExtension(storage)
-
-	backupID := repo.BackupID(0x2456)
-	createPendingCheckpoint(ctx, t, storage, backupID)
-	createDataFile(ctx, t, storage, 1, backupID, "a.sst")
-
-	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(ctx, t, storage, backupID))
-	require.Error(t, err)
-	require.ErrorContains(t, err, "repo snapshot operations")
-	require.True(t, errors.ErrorEqual(err, berrors.ErrUnsupportedOperation))
 	require.Equal(t, backupID, result.BackupID)
-	require.Zero(t, result.MetadataDeleted)
-	require.Zero(t, result.DataDeleted)
-	require.Zero(t, result.PendingDeleted)
-	requireFileExists(ctx, t, storage, repo.PendingFile([]byte("hash"), backupID))
-	requireFileExists(ctx, t, storage, pathJoin(repo.SnapshotMetadataDir(backupID), checkpoint.CheckpointMetaPathForBackup))
-	requireFileExists(ctx, t, storage, repo.SnapshotStoreDataPrefix(1, backupID)+"/a.sst")
-}
-
-func TestDiscardPendingSnapshotRejectsTransient(t *testing.T) {
-	ctx := context.Background()
-	storage := objstore.NewMemStorage()
-	snapshotOps := repo.SnapshotOpsExtension(storage)
-
-	backupID := repo.BackupID(0x3456)
-	createPendingMarker(ctx, t, storage, backupID)
-	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
-	require.NoError(t, metadataStorage.WriteFile(ctx, checkpoint.CheckpointLockPathForBackup, []byte("lock")))
-	require.NoError(t, metadataStorage.WriteFile(ctx, checkpoint.CheckpointDataDirForBackup+"/partial.cpt", []byte("data")))
-
-	result, err := snapshotOps.DiscardPendingSnapshot(ctx, mustFindPendingBackup(ctx, t, storage, backupID))
-	require.NoError(t, err)
-	require.True(t, result.StalePending)
+	require.Equal(t, 1, result.MetadataDeleted)
+	require.Equal(t, 1, result.DataDeleted)
 	require.Equal(t, 1, result.PendingDeleted)
-	require.Zero(t, result.MetadataDeleted)
-	require.Zero(t, result.DataDeleted)
+
 	requireFileMissing(ctx, t, storage, repo.PendingFile([]byte("hash"), backupID))
-	requireFileMissing(ctx, t, storage, pathJoin(repo.SnapshotMetadataDir(backupID), checkpoint.CheckpointLockPathForBackup))
-	requireFileMissing(ctx, t, storage, pathJoin(repo.SnapshotMetadataDir(backupID), checkpoint.CheckpointDataDirForBackup+"/partial.cpt"))
+	requireFileMissing(ctx, t, storage, repo.SnapshotMetadataFile(backupID))
+	requireFileMissing(ctx, t, storage, repo.SnapshotStoreDataPrefix(1, backupID)+"/stale.sst")
 }
 
-func TestDeleteSnapshotWithoutMetadataUsesStartAfter(t *testing.T) {
+func TestDeleteSnapshotWithoutBackupMetaUsesStartAfter(t *testing.T) {
 	ctx := context.Background()
 	storage := newWalkAssertingLocalStorage(t, true)
 	snapshotOps := repo.SnapshotOpsExtension(storage)
@@ -162,16 +93,17 @@ func TestDeleteSnapshotWithoutMetadataUsesStartAfter(t *testing.T) {
 	}
 	createDataFile(ctx, t, storage, 9, repo.BackupID(0x9999), "keep.sst")
 	createDataFile(ctx, t, storage, 1, repo.BackupID(0xFFFF), "keep-other.sst")
-	createPendingMarker(ctx, t, storage, backupID)
+	createPendingCheckpoint(ctx, t, storage, backupID)
 
 	result, err := snapshotOps.DeleteSnapshot(ctx, backupID)
 	require.NoError(t, err)
-	require.Zero(t, result.MetadataDeleted)
+	require.Equal(t, 1, result.MetadataDeleted)
 	require.Equal(t, 1025, result.DataDeleted)
 	require.Equal(t, 1, result.PendingDeleted)
 
 	requireFileExists(ctx, t, storage, repo.SnapshotStoreDataPrefix(9, repo.BackupID(0x9999))+"/keep.sst")
 	requireFileExists(ctx, t, storage, repo.SnapshotStoreDataPrefix(1, repo.BackupID(0xFFFF))+"/keep-other.sst")
+	requireFileMissing(ctx, t, storage, pathJoin(repo.SnapshotMetadataDir(backupID), checkpoint.CheckpointMetaPathForBackup))
 	requireFileMissing(ctx, t, storage, repo.PendingFile([]byte("hash"), backupID))
 }
 
@@ -258,40 +190,6 @@ func TestDeleteSnapshotStopsWalkingAfterDeleteError(t *testing.T) {
 	require.Equal(t, int32(2), storage.walked.Load())
 }
 
-func TestDiscardPendingSnapshotReportsPartialMarkerDeletion(t *testing.T) {
-	ctx := context.Background()
-	storage := newMarkerDeletePartialFailureStorage()
-	snapshotOps := repo.SnapshotOpsExtension(storage)
-
-	backupID := repo.BackupID(0x7ABD)
-	firstMarker := repo.PendingFile([]byte("hash-a"), backupID)
-	secondMarker := repo.PendingFile([]byte("hash-b"), backupID)
-	require.NoError(t, storage.WriteFile(ctx, firstMarker, []byte("{}")))
-	require.NoError(t, storage.WriteFile(ctx, secondMarker, []byte("{}")))
-	storage.firstPath = firstMarker
-	storage.secondPath = secondMarker
-
-	var deletedCallbacks atomic.Int64
-	result, err := snapshotOps.DiscardPendingSnapshot(
-		ctx,
-		repo.PendingBackup{
-			BackupID:    backupID,
-			MarkerPaths: []string{firstMarker, secondMarker},
-			State:       repo.PendingBackupStateStale,
-		},
-		repo.WithMutationDeletedProgress(func(count int) {
-			deletedCallbacks.Add(int64(count))
-		}),
-	)
-	require.Error(t, err)
-	require.ErrorContains(t, err, secondMarker)
-	require.Equal(t, 1, result.PendingDeleted)
-	require.Equal(t, int64(1), deletedCallbacks.Load())
-	require.True(t, result.StalePending)
-	requireFileMissing(ctx, t, storage, firstMarker)
-	requireFileExists(ctx, t, storage, secondMarker)
-}
-
 func createPendingCheckpoint(ctx context.Context, t *testing.T, storage storeapi.Storage, backupID repo.BackupID) {
 	t.Helper()
 	createPendingMarker(ctx, t, storage, backupID)
@@ -332,24 +230,6 @@ func createBackupMeta(
 func createDataFile(ctx context.Context, t *testing.T, storage storeapi.Storage, storeID uint64, backupID repo.BackupID, name string) {
 	t.Helper()
 	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotStoreDataPrefix(storeID, backupID)+"/"+name, []byte(name)))
-}
-
-func mustFindPendingBackup(
-	ctx context.Context,
-	t *testing.T,
-	storage storeapi.Storage,
-	backupID repo.BackupID,
-) repo.PendingBackup {
-	t.Helper()
-	backups, err := repo.SnapshotOpsExtension(storage).ListPendingBackups(ctx)
-	require.NoError(t, err)
-	for _, backup := range backups {
-		if backup.BackupID == backupID {
-			return backup
-		}
-	}
-	t.Fatalf("pending backup %s not found", backupID)
-	return repo.PendingBackup{}
 }
 
 func requireFileExists(ctx context.Context, t *testing.T, storage storeapi.Storage, name string) {
@@ -497,39 +377,6 @@ func (s *stopAfterDeleteErrorStorage) DeleteFile(_ context.Context, name string)
 		return fmt.Errorf("failed to delete file %s", name)
 	}
 	return nil
-}
-
-type markerDeletePartialFailureStorage struct {
-	storeapi.Storage
-	firstPath   string
-	secondPath  string
-	firstDelete chan struct{}
-}
-
-func newMarkerDeletePartialFailureStorage() *markerDeletePartialFailureStorage {
-	return &markerDeletePartialFailureStorage{
-		Storage:     objstore.NewMemStorage(),
-		firstDelete: make(chan struct{}, 1),
-	}
-}
-
-func (s *markerDeletePartialFailureStorage) DeleteFile(ctx context.Context, name string) error {
-	switch name {
-	case s.firstPath:
-		err := s.Storage.DeleteFile(ctx, name)
-		if err == nil {
-			select {
-			case s.firstDelete <- struct{}{}:
-			default:
-			}
-		}
-		return err
-	case s.secondPath:
-		<-s.firstDelete
-		return fmt.Errorf("failed to delete file %s", name)
-	default:
-		return s.Storage.DeleteFile(ctx, name)
-	}
 }
 
 func snapshotDataRoot() string {

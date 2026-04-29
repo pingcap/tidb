@@ -67,7 +67,6 @@ func newRepoSnapshotCommand() *cobra.Command {
 		newRepoSnapshotListCommand(),
 		newRepoSnapshotGetCommand(),
 		newRepoSnapshotDeleteCommand(),
-		newRepoSnapshotPendingCommand(),
 	)
 	return cmd
 }
@@ -141,7 +140,7 @@ func newRepoSnapshotGetCommand() *cobra.Command {
 func newRepoSnapshotDeleteCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "delete",
-		Short: "delete one snapshot backup from the repository",
+		Short: "delete one snapshot backup or pending attempt from the repository",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := parseRepoSnapshotConfig(cmd)
@@ -191,74 +190,6 @@ func newRepoSnapshotDeleteCommand() *cobra.Command {
 		"skip the confirmation prompt and execute the command directly",
 	)
 	_ = cmd.MarkFlagRequired(repoSnapshotFlagBackupID)
-	return cmd
-}
-
-func newRepoSnapshotPendingCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "pending",
-		Short: "manage unfinished snapshot backups",
-	}
-	cmd.AddCommand(newRepoSnapshotPendingDiscardCommand())
-	return cmd
-}
-
-func newRepoSnapshotPendingDiscardCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "discard",
-		Short: "discard one unfinished snapshot backup",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := parseRepoSnapshotConfig(cmd)
-			if err != nil {
-				cmd.SilenceUsage = false
-				return errors.Trace(err)
-			}
-			backupID, err := taskrepo.ParseSnapshotBackupIDFlag(cmd.Flags())
-			if err != nil {
-				cmd.SilenceUsage = false
-				return errors.Trace(err)
-			}
-			skipPrompt, err := cmd.Flags().GetBool(repoSnapshotFlagYes)
-			if err != nil {
-				cmd.SilenceUsage = false
-				return errors.Trace(err)
-			}
-			ctx := GetDefaultContext()
-			result, err := taskrepo.RunRepoSnapshotPendingDiscard(
-				ctx,
-				glue.GetConsole(tidbGlue),
-				taskrepo.RepoSnapshotPendingDiscardConfig{
-					Config:     cfg,
-					BackupID:   backupID,
-					SkipPrompt: skipPrompt,
-				},
-			)
-			if err != nil {
-				if berrors.Is(err, berrors.ErrOperationAborted) {
-					_, err = fmt.Fprintln(cmd.OutOrStdout(), "operation canceled")
-					return errors.Trace(err)
-				}
-				return errors.Trace(err)
-			}
-			return printRepoSnapshotMutationResult(
-				cmd,
-				"discarded",
-				backupID,
-				result.BackupID,
-				result.MetadataDeleted,
-				result.DataDeleted,
-				result.PendingDeleted,
-			)
-		},
-	}
-	cmd.Flags().String(repoSnapshotFlagBackupID, "", "snapshot backup id")
-	cmd.Flags().BoolP(
-		repoSnapshotFlagYes,
-		repoSnapshotFlagYesShort,
-		false,
-		"skip the confirmation prompt and execute the command directly",
-	)
 	return cmd
 }
 

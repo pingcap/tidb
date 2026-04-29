@@ -288,7 +288,7 @@ func TestPrepareRepoSnapshotBackupResumePendingBackup(t *testing.T) {
 	require.False(t, allocateCalled)
 	require.Contains(t, err.Error(), "no new backup was created")
 	require.Contains(t, err.Error(), "--use-checkpoint=false")
-	require.Contains(t, err.Error(), "br repo snapshot pending discard --storage <repo-storage> --backup-id "+backupID.String())
+	require.Contains(t, err.Error(), "br repo snapshot delete --storage <repo-storage> --backup-id "+backupID.String())
 }
 
 func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *testing.T) {

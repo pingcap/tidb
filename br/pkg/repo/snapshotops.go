@@ -54,14 +54,6 @@ type SnapshotDeleteResult struct {
 	PendingDeleted  int
 }
 
-type PendingDiscardResult struct {
-	BackupID        BackupID
-	MetadataDeleted int
-	DataDeleted     int
-	PendingDeleted  int
-	StalePending    bool
-}
-
 type SnapshotOps struct {
 	storeapi.Storage
 }
@@ -256,9 +248,9 @@ func (ops SnapshotOps) deleteFilesFromStream(
 	return deletedCount, nil
 }
 
-// DeleteSnapshot removes one backup's metadata, data files, and pending markers.
-// For example, BackupID(0xF00D) deletes `_meta/snapshot/000000000000F00D` and
-// matching data prefixes.
+// DeleteSnapshot removes one snapshot backup or unfinished backup attempt's
+// metadata, data files, and pending markers. For example, BackupID(0xF00D)
+// deletes `_meta/snapshot/000000000000F00D` and matching data prefixes.
 func (ops SnapshotOps) DeleteSnapshot(
 	ctx context.Context,
 	backupID BackupID,
@@ -318,50 +310,6 @@ func ValidateRepoStartAfterSupport(storage storeapi.Storage) error {
 
 func (ops SnapshotOps) requireRepoStartAfter() error {
 	return ValidateRepoStartAfterSupport(ops.Storage)
-}
-
-// DiscardPendingSnapshot cleans up one pending backup according to its state.
-// For example, stale pending deletes markers only; unfinished pending also
-// deletes metadata and data.
-func (ops SnapshotOps) DiscardPendingSnapshot(
-	ctx context.Context,
-	target PendingBackup,
-	options ...SnapshotMutationOption,
-) (PendingDiscardResult, error) {
-	opts := collectSnapshotMutationOptions(options)
-	var err error
-	result := PendingDiscardResult{BackupID: target.BackupID}
-	switch target.State {
-	case PendingBackupStateStale:
-		result.StalePending = true
-		metadataStorage := NewPrefixedStorage(ops.Storage, SnapshotMetadataDir(target.BackupID))
-		if err := checkpoint.RemoveCheckpointDataForBackup(ctx, metadataStorage); err != nil {
-			return result, errors.Annotatef(err, "delete checkpoint files for stale backup %s", target.BackupID)
-		}
-		result.PendingDeleted, err = ops.deleteFilesFromStream(ctx, filePathStream(target.MarkerPaths), opts)
-		if err != nil {
-			return result, errors.Annotatef(err, "delete pending markers for stale backup %s", target.BackupID)
-		}
-	case PendingBackupStateUnfinished:
-		if err := ops.requireRepoStartAfter(); err != nil {
-			return result, errors.Annotatef(err, "discard unfinished pending snapshot %s", target.BackupID)
-		}
-		result.MetadataDeleted, err = ops.deletePrefixFiles(ctx, SnapshotMetadataDir(target.BackupID), opts)
-		if err != nil {
-			return result, errors.Annotatef(err, "delete snapshot metadata for unfinished backup %s", target.BackupID)
-		}
-		result.DataDeleted, err = ops.deleteSnapshotDataFilesForBackup(ctx, target.BackupID, opts)
-		if err != nil {
-			return result, errors.Annotatef(err, "delete snapshot data files for unfinished backup %s", target.BackupID)
-		}
-		result.PendingDeleted, err = ops.deleteFilesFromStream(ctx, filePathStream(target.MarkerPaths), opts)
-		if err != nil {
-			return result, errors.Annotatef(err, "delete pending markers for unfinished backup %s", target.BackupID)
-		}
-	default:
-		return result, errors.Annotatef(berrors.ErrInvalidArgument, "unknown pending backup state %q", target.State)
-	}
-	return result, nil
 }
 
 func (ops SnapshotOps) deletePendingMarkersForBackup(
