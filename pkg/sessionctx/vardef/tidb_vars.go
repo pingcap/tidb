@@ -1709,7 +1709,7 @@ const (
 	DefTiDBForeignKeyCheckInSharedLock           = false
 	DefTiDBOptAdvancedJoinHint                   = true
 	DefTiDBAnalyzePartitionConcurrency           = 2
-	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
+	DefTiDBOptRangeMaxSize                       = 8 * int64(size.MB)
 	DefTiDBCostModelVer                          = 2
 	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20
 	DefTiDBMergePartitionStatsConcurrency        = 1
