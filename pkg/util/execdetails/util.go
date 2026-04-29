@@ -40,7 +40,6 @@ func ContextWithInitializedExecDetails(ctx context.Context) context.Context {
 // and resource usage details in the context while preserving existing objects.
 func ContextWithMissingExecDetailsInitialized(ctx context.Context) context.Context {
 	stmtDetails, _ := ctx.Value(StmtExecDetailKey).(*StmtExecDetails)
-	inheritedRUV2Metrics, _ := ctx.Value(RUV2MetricsCtxKey).(*RUV2Metrics)
 	if ctx.Value(util.ExecDetailsKey) == nil {
 		ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	}
@@ -49,13 +48,13 @@ func ContextWithMissingExecDetailsInitialized(ctx context.Context) context.Conte
 	}
 	if stmtDetails == nil {
 		stmtDetails = &StmtExecDetails{}
-		if inheritedRUV2Metrics != nil {
+		if inheritedRUV2Metrics, _ := ctx.Value(RUV2MetricsCtxKey).(*RUV2Metrics); inheritedRUV2Metrics != nil {
 			stmtDetails.setRUV2Metrics(inheritedRUV2Metrics)
 		}
 		ctx = context.WithValue(ctx, StmtExecDetailKey, stmtDetails)
 	}
 	if stmtDetails.getRUV2Metrics() == nil {
-		if inheritedRUV2Metrics != nil {
+		if inheritedRUV2Metrics, _ := ctx.Value(RUV2MetricsCtxKey).(*RUV2Metrics); inheritedRUV2Metrics != nil {
 			stmtDetails.setRUV2Metrics(inheritedRUV2Metrics)
 		} else {
 			stmtDetails.ensureRUV2Metrics()
