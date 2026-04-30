@@ -3671,6 +3671,14 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 
 	switch raw := node.(type) {
 	case *ast.FlushStmt:
+		if raw.Tp == ast.FlushStatsDelta {
+			if err := fillDefaultDBForStatsObjects(b.ctx, raw.FlushObjects); err != nil {
+				return nil, err
+			}
+			raw.DedupFlushObjects()
+			b.requireSelectPrivForStatsObjects(raw.FlushObjects)
+			break
+		}
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RELOAD")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReloadPriv, "", "", "", err)
 	case *ast.AlterInstanceStmt:
@@ -4012,12 +4020,19 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
-		originalVal := b.allowBuildCastArray
-		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
-		b.allowBuildCastArray = originalVal
-		if err != nil {
-			return igc, err
+		var expr expression.Expression
+		// Fast path: pure value literals (e.g. GENERATED ALWAYS AS (NULL) VIRTUAL) contain no
+		// column references and need no rewriting. Skip the expensive Clone()+rewrite() for them.
+		if valExpr, ok := column.GeneratedExpr.Internal().(*driver.ValueExpr); ok {
+			expr = &expression.Constant{Value: valExpr.Datum, RetType: column.FieldType.Clone()}
+		} else {
+			originalVal := b.allowBuildCastArray
+			b.allowBuildCastArray = true
+			expr, _, err = b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
+			b.allowBuildCastArray = originalVal
+			if err != nil {
+				return igc, err
+			}
 		}
 
 		igc.Exprs = append(igc.Exprs, expr)
@@ -4818,11 +4833,11 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 }
 
 func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, error) {
-	if err := fillDefaultDBForRefreshStats(b.ctx, rs); err != nil {
+	if err := fillDefaultDBForStatsObjects(b.ctx, rs.RefreshObjects); err != nil {
 		return nil, err
 	}
 	rs.Dedup()
-	b.requireSelectOrRestoreAdminPrivForRefreshStats(rs)
+	b.requireSelectOrRestoreAdminPrivForStatsObjects(rs.RefreshObjects)
 	p := &Simple{
 		Statement:    rs,
 		IsFromRemote: false,
@@ -4831,13 +4846,13 @@ func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, er
 	return p, nil
 }
 
-func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt) error {
-	if len(rs.RefreshObjects) == 0 {
+func fillDefaultDBForStatsObjects(ctx base.PlanContext, objects []*ast.StatsObject) error {
+	if len(objects) == 0 {
 		return nil
 	}
 
 	currentDB := ctx.GetSessionVars().CurrentDB
-	for _, obj := range rs.RefreshObjects {
+	for _, obj := range objects {
 		if obj.StatsObjectScope != ast.StatsObjectScopeTable {
 			continue
 		}
@@ -4852,9 +4867,9 @@ func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt
 	return nil
 }
 
-func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.RefreshStatsStmt) {
-	if len(rs.RefreshObjects) == 0 {
-		intest.Assert(len(rs.RefreshObjects) > 0, "RefreshObjects should not be empty")
+func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForStatsObjects(objects []*ast.StatsObject) {
+	if len(objects) == 0 {
+		intest.Assert(len(objects) > 0, "stats objects should not be empty")
 		return
 	}
 
@@ -4866,8 +4881,17 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 		}
 	}
 
+	b.requireSelectPrivForStatsObjects(objects)
+}
+
+func (b *PlanBuilder) requireSelectPrivForStatsObjects(objects []*ast.StatsObject) {
+	if len(objects) == 0 {
+		intest.Assert(len(objects) > 0, "stats objects should not be empty")
+		return
+	}
+
 	user := b.ctx.GetSessionVars().User
-	for _, obj := range rs.RefreshObjects {
+	for _, obj := range objects {
 		switch obj.StatsObjectScope {
 		case ast.StatsObjectScopeGlobal:
 			var err error
@@ -4885,12 +4909,11 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, "", "", err)
 		case ast.StatsObjectScopeTable:
-			dbName := obj.DBName.L
 			var err error
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, obj.TableName.O)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, obj.TableName.L, "", err)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, obj.TableName.L, "", err)
 		}
 	}
 }
