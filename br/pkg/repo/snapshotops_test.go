@@ -303,6 +303,10 @@ func (s *deletingMarkerAssertingStorage) DeleteFile(ctx context.Context, name st
 	return s.Storage.DeleteFile(ctx, name)
 }
 
+func (s *walkAssertingLocalStorage) Features() storeapi.Features {
+	return storeapi.FeatureOf(s.Storage)
+}
+
 func (s *walkAssertingLocalStorage) WalkDir(
 	ctx context.Context,
 	opt *storeapi.WalkOption,

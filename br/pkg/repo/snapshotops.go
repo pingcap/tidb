@@ -20,7 +20,6 @@ import (
 	"path"
 	"slices"
 	"strconv"
-	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -305,27 +304,10 @@ func (ops SnapshotOps) DeleteSnapshot(
 	return result, nil
 }
 
-var repoStartAfterSchemes = [...]string{
-	"s3://",
-	"ks3://",
-	"gcs://",
-	"file://",
-}
-
-func supportsRepoStartAfter(storage storeapi.Storage) bool {
-	uri := strings.ToLower(storage.URI())
-	for _, scheme := range repoStartAfterSchemes {
-		if strings.HasPrefix(uri, scheme) {
-			return true
-		}
-	}
-	return false
-}
-
 // ValidateRepoStartAfterSupport checks whether storage can use WalkDir StartAfter.
-// For example, `file://...` and `s3://...` storage URIs pass this check.
+// It inspects the Features bitset returned by FeatureOf.
 func ValidateRepoStartAfterSupport(storage storeapi.Storage) error {
-	if supportsRepoStartAfter(storage) {
+	if storeapi.FeatureOf(storage)&storeapi.FeatureSupportsStartAfter != 0 {
 		return nil
 	}
 	return errors.Annotatef(

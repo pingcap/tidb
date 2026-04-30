@@ -135,6 +135,10 @@ func (s *prefixedStorage) PresignFile(
 	return s.base.PresignFile(ctx, s.fullPath(fileName), expire)
 }
 
+func (s *prefixedStorage) Features() storeapi.Features {
+	return storeapi.FeatureOf(s.base)
+}
+
 func (s *prefixedStorage) Close() {
 	s.base.Close()
 }

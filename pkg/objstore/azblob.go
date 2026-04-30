@@ -486,9 +486,9 @@ func progress(s string) (finished, total int, err error) {
 	return
 }
 
-// MarkStrongConsistency implements Storage.
-func (*AzureBlobStorage) MarkStrongConsistency() {
-	// See https://github.com/MicrosoftDocs/azure-docs/issues/105331#issuecomment-1450252384
+// Features implements FeatureProvider.
+func (*AzureBlobStorage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency
 }
 
 func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *storeapi.Options) (*AzureBlobStorage, error) {

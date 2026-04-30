@@ -95,9 +95,9 @@ func NewStorage(
 	}
 }
 
-// MarkStrongConsistency implements the Storage interface.
-func (*Storage) MarkStrongConsistency() {
-	// See https://aws.amazon.com/cn/s3/consistency/
+// Features implements FeatureProvider.
+func (*Storage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency | storeapi.FeatureSupportsStartAfter
 }
 
 // GetOptions gets the external storage operations for the S3.
