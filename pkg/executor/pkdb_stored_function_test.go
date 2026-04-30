@@ -257,6 +257,30 @@ end`)
 	tk.MustQuery("select sf_ctx_outer_subquery(1)").Check(testkit.Rows("2"))
 }
 
+func TestStoredFunctionProjectionDoesNotRunInParallel(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.InProcedure()
+	tk.MustExec("use test")
+
+	// Before the fix, this shape could drive stored-function evaluation from parallel
+	// projection workers and race on shared session-scoped routine / transaction state.
+	tk.Session().GetSessionVars().MaxChunkSize = 1
+	tk.MustExec("set @@tidb_executor_concurrency = 20")
+
+	tk.MustExec("drop function if exists sf_projection_serial")
+	tk.MustExec("drop table if exists t_sf_projection_serial")
+	tk.MustExec("create table t_sf_projection_serial(id int primary key)")
+	tk.MustExec("insert into t_sf_projection_serial values (1), (2), (3), (4), (5), (6), (7), (8)")
+	tk.MustExec(`create function sf_projection_serial(p int) returns int
+begin
+	return p + coalesce((select 0 from dual where sleep(0.01)=0), 0);
+end`)
+
+	tk.MustQuery("select /*+ HASH_JOIN(a,b) */ sf_projection_serial(a.id) as v from t_sf_projection_serial a join t_sf_projection_serial b on a.id = b.id order by v").
+		Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8"))
+}
+
 func TestViewQueryWithStoredFunction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
