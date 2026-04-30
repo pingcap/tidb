@@ -85,6 +85,13 @@ func TestParseHint(t *testing.T) {
 			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
 		{
+			input: "QB_NAME(1.5)",
+			errs: []string{
+				`Cannot use decimal number`,
+				`Optimizer hint syntax error at line 1 `,
+			},
+		},
+		{
 			input: "QB_NAME('string literal')",
 			errs:  []string{`Optimizer hint syntax error at line 1 `},
 		},
@@ -197,7 +204,7 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
-			input: `SET_VAR(sbs = 16M) SET_VAR(fkc=OFF) SET_VAR(os="mcb=off") set_var(abc=1) set_var(os2='mcb2=off')`,
+			input: `SET_VAR(sbs = 16M) SET_VAR(fkc=OFF) SET_VAR(os="mcb=off") set_var(abc=1) set_var(os2='mcb2=off') set_var(sel=0.3)`,
 			output: []*ast.TableOptimizerHint{
 				{
 					HintName: ast.NewCIStr("SET_VAR"),
@@ -232,6 +239,13 @@ func TestParseHint(t *testing.T) {
 					HintData: ast.HintSetVar{
 						VarName: "os2",
 						Value:   "mcb2=off",
+					},
+				},
+				{
+					HintName: ast.NewCIStr("set_var"),
+					HintData: ast.HintSetVar{
+						VarName: "sel",
+						Value:   "0.3",
 					},
 				},
 			},
@@ -325,9 +339,14 @@ func TestParseHint(t *testing.T) {
 		},
 		{
 			input: "set_var(timestamp = 1.5)",
-			errs: []string{
-				`Cannot use decimal number`,
-				`Optimizer hint syntax error at line 1 `,
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("set_var"),
+					HintData: ast.HintSetVar{
+						VarName: "timestamp",
+						Value:   "1.5",
+					},
+				},
 			},
 		},
 		{

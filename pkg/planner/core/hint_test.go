@@ -71,6 +71,13 @@ func TestHintSuite(t *testing.T) {
 			testKit.MustQuery("select @@max_execution_time;").Check(testkit.Rows("2000"))
 		})
 
+		t.Run("TestSetVarDecimalValueHintsWork", func(t *testing.T) {
+			testKit.MustExec(`set @@tidb_default_string_match_selectivity = 0.8`)
+			testKit.MustQuery(`select /*+ set_var(tidb_default_string_match_selectivity=0.3) */ @@tidb_default_string_match_selectivity`).Check(testkit.Rows("0.3"))
+			testKit.MustQuery(`show warnings`).Check(testkit.Rows())
+			testKit.MustQuery(`select @@tidb_default_string_match_selectivity`).Check(testkit.Rows("0.8"))
+		})
+
 		t.Run("TestSetVarHintsWithExplain", func(t *testing.T) {
 			testKit.MustExec(`set @@max_execution_time=2000;`)
 			testKit.MustExec(`explain select /*+ set_var(max_execution_time=100) */ @@max_execution_time;`)

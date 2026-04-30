@@ -51,6 +51,7 @@ import (
 
 	/*yy:token "'%c'" */
 	hintStringLit
+	hintNumericLit
 
 	/* MySQL 8.0 hint names */
 	hintJoinFixedOrder      "JOIN_FIXED_ORDER"
@@ -630,9 +631,18 @@ SubqueryStrategies:
 Value:
 	hintStringLit
 |	Identifier
+|	hintNumericLit
 |	hintIntLit
 	{
 		$$ = strconv.FormatUint($1, 10)
+	}
+|	'+' hintNumericLit
+	{
+		$$ = $2
+	}
+|	'-' hintNumericLit
+	{
+		$$ = "-" + $2
 	}
 |	'+' hintIntLit
 	{
