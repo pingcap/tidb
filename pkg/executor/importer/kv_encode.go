@@ -59,7 +59,9 @@ func NewTableKVEncoderForDupResolve(
 	ctrl *LoadDataController,
 ) (*TableKVEncoder, error) {
 	mappings, _ := ctrl.tableVisCols2FieldMappings()
-	return newTableKVEncoderInner(config, ctrl, mappings, ctrl.Table.VisibleCols())
+	dupResolveConfig := *config
+	dupResolveConfig.SkipTiCIIndexKVs = true
+	return newTableKVEncoderInner(&dupResolveConfig, ctrl, mappings, ctrl.Table.VisibleCols())
 }
 
 func newTableKVEncoderInner(

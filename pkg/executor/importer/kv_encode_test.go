@@ -20,8 +20,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -84,4 +88,103 @@ func TestKVEncoderForDupResolve(t *testing.T) {
 		})
 		require.Greater(t, handleLargerThanOneCount, 1)
 	})
+}
+
+func TestTableKVEncoderEmitsFullTextIndexKVs(t *testing.T) {
+	colID := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("id"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeLonglong)}
+	colBody := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("body"), State: model.StatePublic, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeVarchar)}
+	normalIdx := &model.IndexInfo{
+		ID:      2,
+		Name:    ast.NewCIStr("idx_body"),
+		State:   model.StatePublic,
+		Columns: []*model.IndexColumn{{Name: ast.NewCIStr("body"), Offset: 1, Length: types.UnspecifiedLength}},
+	}
+	fullTextIdx := &model.IndexInfo{
+		ID:      3,
+		Name:    ast.NewCIStr("idx_fulltext"),
+		State:   model.StatePublic,
+		Columns: []*model.IndexColumn{{Name: ast.NewCIStr("body"), Offset: 1, Length: types.UnspecifiedLength}},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}
+	hybridIdx := &model.IndexInfo{
+		ID:      4,
+		Name:    ast.NewCIStr("idx_hybrid"),
+		State:   model.StatePublic,
+		Columns: []*model.IndexColumn{{Name: ast.NewCIStr("body"), Offset: 1, Length: types.UnspecifiedLength}},
+		HybridInfo: &model.HybridIndexInfo{
+			Sharding: &model.HybridShardingSpec{
+				Columns: []*model.IndexColumn{{Name: ast.NewCIStr("body"), Offset: 1, Length: types.UnspecifiedLength}},
+			},
+		},
+	}
+	tblInfo := &model.TableInfo{
+		ID:      11,
+		Name:    ast.NewCIStr("t"),
+		State:   model.StatePublic,
+		Columns: []*model.ColumnInfo{colID, colBody},
+		Indices: []*model.IndexInfo{normalIdx, fullTextIdx, hybridIdx},
+	}
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+
+	fieldMappings := make([]*importer.FieldMapping, 0, len(tbl.VisibleCols()))
+	for _, col := range tbl.VisibleCols() {
+		fieldMappings = append(fieldMappings, &importer.FieldMapping{Column: col})
+	}
+	collectPairInfo := func(t *testing.T, pairs *lkv.Pairs) (map[int64]struct{}, bool) {
+		t.Helper()
+		seenIndexIDs := make(map[int64]struct{})
+		var seenRecord bool
+		for _, pair := range pairs.Pairs {
+			_, indexID, isRecordKey, err := tablecodec.DecodeKeyHead(pair.Key)
+			require.NoError(t, err)
+			if isRecordKey {
+				seenRecord = true
+				continue
+			}
+			seenIndexIDs[indexID] = struct{}{}
+		}
+		return seenIndexIDs, seenRecord
+	}
+	newController := func() *importer.LoadDataController {
+		return &importer.LoadDataController{
+			ASTArgs:       &importer.ASTArgs{},
+			Plan:          &importer.Plan{},
+			Table:         tbl,
+			InsertColumns: tbl.VisibleCols(),
+			FieldMappings: fieldMappings,
+		}
+	}
+
+	encoder, err := importer.NewTableKVEncoder(
+		&encode.EncodingConfig{Table: tbl},
+		newController(),
+	)
+	require.NoError(t, err)
+
+	pairs, err := encoder.Encode([]types.Datum{types.NewIntDatum(1), types.NewStringDatum("doc")}, 100)
+	require.NoError(t, err)
+
+	seenIndexIDs, seenRecord := collectPairInfo(t, pairs)
+	require.True(t, seenRecord)
+	require.Contains(t, seenIndexIDs, normalIdx.ID)
+	require.Contains(t, seenIndexIDs, fullTextIdx.ID)
+	require.NotContains(t, seenIndexIDs, hybridIdx.ID)
+
+	dupResolveEncoder, err := importer.NewTableKVEncoderForDupResolve(
+		&encode.EncodingConfig{Table: tbl},
+		newController(),
+	)
+	require.NoError(t, err)
+
+	dupResolvePairs, err := dupResolveEncoder.Encode([]types.Datum{types.NewIntDatum(2), types.NewStringDatum("doc")}, 200)
+	require.NoError(t, err)
+
+	seenIndexIDs, seenRecord = collectPairInfo(t, dupResolvePairs)
+	require.True(t, seenRecord)
+	require.Contains(t, seenIndexIDs, normalIdx.ID)
+	require.NotContains(t, seenIndexIDs, fullTextIdx.ID)
+	require.NotContains(t, seenIndexIDs, hybridIdx.ID)
 }
