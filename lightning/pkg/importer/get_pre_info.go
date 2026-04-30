@@ -260,7 +260,6 @@ func (g *TargetInfoGetterImpl) IsPartitionEmpty(ctx context.Context, schemaName 
 	return &result, nil
 }
 
-
 // GetTargetSysVariablesForImport gets some important system variables for importing on the target.
 // It implements the TargetInfoGetter interface.
 // It uses the SQL to fetch sys variables from the target.

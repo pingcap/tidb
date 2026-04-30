@@ -899,10 +899,10 @@ type MydumperRuntime struct {
 	Filter           []string         `toml:"filter" json:"filter"`
 	FileRouters      []*FileRouteRule `toml:"files" json:"files"`
 	// Deprecated: only used to keep the compatibility.
-	NoSchema         bool             `toml:"no-schema" json:"no-schema"`
-	CaseSensitive    bool             `toml:"case-sensitive" json:"case-sensitive"`
-	StrictFormat     bool             `toml:"strict-format" json:"strict-format"`
-	DefaultFileRules bool             `toml:"default-file-rules" json:"default-file-rules"`
+	NoSchema         bool               `toml:"no-schema" json:"no-schema"`
+	CaseSensitive    bool               `toml:"case-sensitive" json:"case-sensitive"`
+	StrictFormat     bool               `toml:"strict-format" json:"strict-format"`
+	DefaultFileRules bool               `toml:"default-file-rules" json:"default-file-rules"`
 	IgnoreColumns    AllIgnoreColumns   `toml:"ignore-data-columns" json:"ignore-data-columns"`
 	ColumnConstants  AllColumnConstants `toml:"column-constants" json:"column-constants"`
 	// DataCharacterSet is the character set of the source file. Only CSV files are supported now. The following options are supported.
