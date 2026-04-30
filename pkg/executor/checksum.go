@@ -204,10 +204,10 @@ type checksumResult struct {
 }
 
 type checksumContext struct {
-	dbInfo         *model.DBInfo
-	tableInfo      *model.TableInfo
-	startTs        uint64
-	response       *tipb.ChecksumResponse
+	dbInfo    *model.DBInfo
+	tableInfo *model.TableInfo
+	startTs   uint64
+	response  *tipb.ChecksumResponse
 	// partitionNames restricts the checksum to the named partitions; all partitions are checksummed when empty.
 	partitionNames []ast.CIStr
 }
