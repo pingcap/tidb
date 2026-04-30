@@ -947,7 +947,7 @@ ab
 
 ab			ab		
 ab  	ab
-ab	ab
+ab	ab
 select length(v), length(c) from vctt;
 length(v)	length(c)
 4	4
@@ -2178,6 +2178,98 @@ id	col1
 4	
 5	
 6	
+drop table if exists t1;
+create table t1 (id binary(20) unique);
+INSERT IGNORE INTO t1 VALUES (X'0e6b4234fd0b08d4c4ec656529d94df02b37c472');
+INSERT IGNORE INTO t1 VALUES (X'0e6b4234fd0b08d4c4ec656529d94df02b37c472');
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x0ekB4\xfd\v\b\xd4\xc4\xecee)\xd9M\xf0+7\xc4r' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (X'');
+INSERT IGNORE INTO t1 VALUES (X'');
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x00' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (X'7f000000');
+INSERT IGNORE INTO t1 VALUES (X'7f000000');
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x7f' for key 't1.id'
+drop table if exists t1;
+create table t1 (id bit(20) unique);
+INSERT IGNORE INTO t1 VALUES (10);
+INSERT IGNORE INTO t1 VALUES (10);
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x00\x00\n' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (65536);
+INSERT IGNORE INTO t1 VALUES (65536);
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x01\x00\x00' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (35);
+INSERT IGNORE INTO t1 VALUES (35);
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x00\x00#' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (127);
+INSERT IGNORE INTO t1 VALUES (127);
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x00\x00\x7f' for key 't1.id'
+drop table if exists t1;
+create table t1 (id int primary key, col1 varchar(10) not null default '');
+set session sql_mode = '';
+set session tidb_enable_strict_not_null_check = off;
+insert into t1 values (1,null),(2,null);
+insert into t1 values (3, null);
+select * from t1;
+id	col1
+1	
+2	
+3	
+set session tidb_enable_strict_not_null_check = on;
+insert into t1 values (4,null),(5,null);
+insert into t1 values (6, null);
+Error 1048 (23000): Column 'col1' cannot be null
+select * from t1;
+id	col1
+1	
+2	
+3	
+4	
+5	
+set session sql_mode = 'STRICT_TRANS_TABLES';
+set session tidb_enable_strict_not_null_check = off;
+insert into t1 values (6,null),(7,null);
+insert into t1 values (8, null);
+select * from t1;
+id	col1
+1	
+2	
+3	
+4	
+5	
+6	
+7	
+8	
+set session tidb_enable_strict_not_null_check = on;
+insert into t1 values (9, null),(10,null);
+Error 1048 (23000): Column 'col1' cannot be null
+insert into t1 values (9, null);
+Error 1048 (23000): Column 'col1' cannot be null
+select * from t1;
+id	col1
+1	
+2	
+3	
+4	
+5	
+6	
+7	
+8	
+set session tidb_enable_strict_not_null_check = default;
+set session sql_mode = default;
 SET @old_time_zone = @@time_zone;
 SET @@time_zone = 'Europe/Amsterdam';
 SET @old_sql_mode = @@sql_mode;
