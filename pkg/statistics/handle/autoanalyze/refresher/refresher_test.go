@@ -530,7 +530,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_concurrency=2")
 	tk.MustExec("create table t1 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	testutil.HandleNextDDLEventWithTxn(handle)
-	tk.MustExec("create table t2 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
+	tk.MustExec("create table t2 (a int, b int, index idx(a))")
 	testutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("analyze table t2")
 	tk.MustExec("flush stats_delta *.*")
@@ -564,8 +564,7 @@ func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	// t2 is analyzed.
 	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
-	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats2 := handle.GetPhysicalTableStats(pid2, tbl2.Meta())
+	tblStats2 := handle.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 	require.False(t, tblStats2.Pseudo)
 	require.Equal(t, int64(0), tblStats2.ModifyCount)
 }
