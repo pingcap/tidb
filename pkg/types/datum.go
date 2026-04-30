@@ -144,11 +144,6 @@ func (d *Datum) SetCollation(collation string) {
 	d.collationID = collationNameToID(collation)
 }
 
-// SetCollationID sets the collation of the datum by MySQL collation id.
-func (d *Datum) SetCollationID(id uint16) {
-	d.collationID = id
-}
-
 // collationNameToID translates a collation name to a MySQL collation id.
 // Returns 0 for the empty string or an unknown name, matching the legacy
 // behavior of storing the raw string and letting the collator lookup fall
