@@ -23,7 +23,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -31,16 +30,94 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/registry"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/task"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/printer"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
+
+type TestKitGlue struct {
+	tk *testkit.TestKit
+}
+
+func (tk TestKitGlue) GetDomain(_ kv.Storage) (*domain.Domain, error) {
+	return domain.GetDomain(tk.tk.Session()), nil
+}
+
+func (tk TestKitGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
+	return gluetidb.New().CreateSession(tk.tk.Session().GetStore())
+}
+
+func (tk TestKitGlue) Open(string, pd.SecurityOption) (kv.Storage, error) {
+	return tk.tk.Session().GetStore(), nil
+}
+
+func (tk TestKitGlue) OwnsStorage() bool {
+	return false
+}
+
+func (tk TestKitGlue) StartProgress(context.Context, string, int64, bool) glue.Progress {
+	return &CounterProgress{}
+}
+
+func (tk TestKitGlue) Record(string, uint64) {}
+
+func (tk TestKitGlue) GetVersion() string {
+	return "In Test\n" + printer.GetTiDBInfo()
+}
+
+func (tk TestKitGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Session) error) error {
+	se, err := tk.CreateSession(tk.tk.Session().GetStore())
+	if err != nil {
+		return err
+	}
+	defer se.Close()
+	return fn(se)
+}
+
+func (tk TestKitGlue) GetClient() glue.GlueClient {
+	return glue.ClientSql
+}
+
+type CounterProgress struct {
+	Counter atomic.Int64
+}
+
+func (c *CounterProgress) Inc() {
+	c.Counter.Add(1)
+}
+
+func (c *CounterProgress) IncBy(cnt int64) {
+	c.Counter.Add(cnt)
+}
+
+func (c *CounterProgress) GetCurrent() int64 {
+	return c.Counter.Load()
+}
+
+func (c *CounterProgress) Close() {}
+
+// getTestTempDir returns a temporary directory for tests. If BRIETEST_TMPDIR is
+// set, it creates a subdirectory there so TiKV and tests can share the path.
+func getTestTempDir(t *testing.T) string {
+	if baseDir := os.Getenv("BRIETEST_TMPDIR"); baseDir != "" {
+		dir := filepath.Join(baseDir, t.Name())
+		require.NoError(t, os.MkdirAll(dir, 0755))
+		t.Cleanup(func() {
+			_ = os.RemoveAll(dir)
+		})
+		return dir
+	}
+	return t.TempDir()
+}
 
 type snapshotRepoGlue struct {
 	TestKitGlue
@@ -71,10 +148,6 @@ func newSnapshotRepoSuite(t *testing.T, dbName string) *snapshotRepoSuite {
 	t.Helper()
 	baseDir := getTestTempDir(t)
 	tk := initTestKit(t)
-	cleanupRestoreRegistry(tk)
-	t.Cleanup(func() {
-		cleanupRestoreRegistry(tk)
-	})
 	return &snapshotRepoSuite{
 		t:       t,
 		tk:      tk,
@@ -84,14 +157,10 @@ func newSnapshotRepoSuite(t *testing.T, dbName string) *snapshotRepoSuite {
 	}
 }
 
-func cleanupRestoreRegistry(tk *testkit.TestKit) {
-	tk.MustExec("DELETE FROM " + registry.RestoreRegistryDBName + "." + registry.RestoreRegistryTableName)
-}
-
 func (s *snapshotRepoSuite) backupConfig() task.BackupConfig {
 	s.t.Helper()
 	cfg := task.DefaultBackupConfig(task.DefaultConfig())
-	task.ApplyTiDBRuntimeConfig(&cfg.Config)
+	cfg.PD = []string{"127.0.0.1:2379"}
 	cfg.Storage = s.repoURI
 	cfg.Layout = repo.LayoutRepo
 	cfg.UseCheckpoint = true
@@ -107,7 +176,7 @@ func (s *snapshotRepoSuite) backupConfig() task.BackupConfig {
 func (s *snapshotRepoSuite) restoreConfig(backupID repo.BackupID) task.RestoreConfig {
 	s.t.Helper()
 	cfg := task.DefaultRestoreConfig(task.DefaultConfig())
-	task.ApplyTiDBRuntimeConfig(&cfg.Config)
+	cfg.PD = []string{"127.0.0.1:2379"}
 	cfg.Storage = s.repoURI
 	cfg.Layout = repo.LayoutRepo
 	cfg.BackupID = backupID
@@ -423,17 +492,9 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 	resumeCfg := suite.backupConfig()
 	resumeCfg.RateLimit = 1 << 20
 	resumeCfg.UseCheckpoint = true
-	_, err := suite.runBackup(resumeCfg)
-	require.ErrorContains(t, err, "another BR")
-	assertSingleBackupPath(failedBackupID)
-
-	for range 3 {
-		require.NoError(t, os.Remove(suite.repoPath(checkpointLockPath)))
-		killBackupAfterCheckpoint(resumeCfg)
-		assertSingleBackupPath(failedBackupID)
+	if err := os.Remove(suite.repoPath(checkpointLockPath)); err != nil && !os.IsNotExist(err) {
+		require.NoError(t, err)
 	}
-
-	require.NoError(t, os.Remove(suite.repoPath(checkpointLockPath)))
 	resumedBackupID, err := suite.runBackup(resumeCfg)
 	require.NoError(t, err)
 
@@ -446,53 +507,7 @@ func TestSnapshotRepoSuiteResumeKeepsBackupIDAndReusesCheckpointData(t *testing.
 
 	suite.tk.MustExec("drop database " + suite.dbName)
 
-	originSplitTableRegion := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, originSplitTableRegion)
-
-	restoreCheckpointFP := "github.com/pingcap/tidb/br/pkg/restore/snap_client/corrupt-files"
-	restoreCfg := suite.restoreConfig(resumedBackupID)
-	restoreCfg.UseCheckpoint = true
-	require.NoError(t, failpoint.Enable(restoreCheckpointFP, `return("corrupt-last-table-files")`))
-	err = suite.runRestore(restoreCfg)
-	require.ErrorContains(t, err, "skip the last table files")
-	require.NoError(t, failpoint.Disable(restoreCheckpointFP))
-
-	registryRows := suite.tk.MustQuery(fmt.Sprintf(
-		"select id, status from %s.%s order by id",
-		registry.RestoreRegistryDBName,
-		registry.RestoreRegistryTableName,
-	)).Rows()
-	require.Len(t, registryRows, 1)
-	require.Equal(t, "paused", registryRows[0][1])
-	restoreID, err := strconv.ParseUint(fmt.Sprint(registryRows[0][0]), 10, 64)
-	require.NoError(t, err)
-	checkpointDB := fmt.Sprintf("%s_%d", checkpoint.SnapshotRestoreCheckpointDatabaseName, restoreID)
-	t.Cleanup(func() {
-		suite.tk.MustExec("drop database if exists `" + checkpointDB + "`")
-	})
-	suite.tk.MustQuery(
-		fmt.Sprintf("select schema_name from information_schema.schemata where schema_name = '%s'", checkpointDB),
-	).Check(testkit.Rows(checkpointDB))
-	checkpointRows := suite.tk.MustQuery(fmt.Sprintf("select count(*) from `%s`.cpt_data", checkpointDB)).Rows()
-	checkpointRangeCount, err := strconv.Atoi(fmt.Sprint(checkpointRows[0][0]))
-	require.NoError(t, err)
-	require.Greater(t, checkpointRangeCount, 0)
-
-	resumeRestoreCfg := suite.restoreConfig(resumedBackupID)
-	resumeRestoreCfg.UseCheckpoint = true
-	require.NoError(t, failpoint.Enable(restoreCheckpointFP, `return("only-last-table-files")`))
-	require.NoError(t, suite.runRestore(resumeRestoreCfg))
-	require.NoError(t, failpoint.Disable(restoreCheckpointFP))
-
-	suite.tk.MustQuery(fmt.Sprintf(
-		"select count(*) from %s.%s",
-		registry.RestoreRegistryDBName,
-		registry.RestoreRegistryTableName,
-	)).Check(testkit.Rows("0"))
-	suite.tk.MustQuery(
-		fmt.Sprintf("select schema_name from information_schema.schemata where schema_name = '%s'", checkpointDB),
-	).Check(testkit.Rows())
+	suite.restore(resumedBackupID)
 	suite.tk.MustQuery(fmt.Sprintf("select count(*) from %s.t", suite.dbName)).Check(testkit.Rows("4096"))
 	suite.tk.MustQuery(fmt.Sprintf("select count(*) from %s.t_tail", suite.dbName)).Check(testkit.Rows("3"))
 }

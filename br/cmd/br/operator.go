@@ -3,24 +3,13 @@
 package main
 
 import (
-	"context"
-
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
-	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
 )
-
-type crrCheckpointServiceStateKey struct{}
-
-type crrCheckpointServiceState struct {
-	service *service.Service
-	cleanup func()
-}
 
 func newOperatorCommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -43,15 +32,6 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newPrepareForSnapshotBackupCommand(
 		"prepare-for-snapshot-backup",
 		"pause gc, schedulers and importing until the program exits, for snapshot backup."))
-	cmd.AddCommand(newBase64ifyCommand())
-	cmd.AddCommand(newListMigrationsCommand())
-	cmd.AddCommand(newMigrateToCommand())
-	cmd.AddCommand(newForceFlushCommand())
-	cmd.AddCommand(newCRRCheckpointCommand())
-	cmd.AddCommand(newChecksumCommand())
-	cmd.AddCommand(newTestStorageCommand())
-	cmd.AddCommand(newPitrChecksumCommand())
-	cmd.AddCommand(newUpstreamChecksumCommand())
 	return cmd
 }
 
@@ -70,217 +50,5 @@ func newPrepareForSnapshotBackupCommand(use string, short string) *cobra.Command
 		},
 	}
 	operator.DefineFlagsForPrepareSnapBackup(cmd.Flags())
-	return cmd
-}
-
-func newBase64ifyCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "base64ify [-r] -s <storage>",
-		Short: "generate base64 for a storage. this may be passed to `tikv-ctl compact-log-backup`.",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.Base64ifyConfig{}
-			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-				return err
-			}
-			ctx := GetDefaultContext()
-			return operator.Base64ify(ctx, cfg)
-		},
-	}
-	operator.DefineFlagsForBase64ifyConfig(cmd.Flags())
-	return cmd
-}
-
-func newListMigrationsCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "list-migrations",
-		Short: "list all migrations",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.ListMigrationConfig{}
-			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-				return err
-			}
-			ctx := GetDefaultContext()
-			return operator.RunListMigrations(ctx, cfg)
-		},
-	}
-	operator.DefineFlagsForListMigrationConfig(cmd.Flags())
-	return cmd
-}
-
-func newMigrateToCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use: "unsafe-migrate-to",
-		Short: "migrate to a specific version, use truncate will auto migrate to correct version, " +
-			"you should never use this command unless you know what you are doing",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.MigrateToConfig{}
-			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-				return err
-			}
-			ctx := GetDefaultContext()
-			return operator.RunMigrateTo(ctx, cfg)
-		},
-	}
-	operator.DefineFlagsForMigrateToConfig(cmd.Flags())
-	cmd.Hidden = true
-	return cmd
-}
-
-func newChecksumCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "checksum-as",
-		Short: "calculate the checksum with rewrite rules",
-		Long: "Calculate the checksum of the current cluster (specified by `-u`) " +
-			"with applying the rewrite rules generated from a backup (specified by `-s`). " +
-			"This can be used when you have the checksum of upstream elsewhere.",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.ChecksumWithRewriteRulesConfig{}
-			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-				return err
-			}
-			ctx := GetDefaultContext()
-			return operator.RunChecksumTable(ctx, tidbGlue, cfg)
-		},
-	}
-	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
-	operator.DefineFlagsForChecksumTableConfig(cmd.Flags())
-	taskrepo.DefineSnapshotRepoReaderFlags(cmd.Flags())
-	return cmd
-}
-
-func newPitrChecksumCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "checksum-pitr",
-		Short: "calculate the checksum with pitr id map",
-		Long: "Calculate the checksum of the current cluster (specified by `-u`) " +
-			"with applying the rewrite rules generated from pitr id map (specified by `-s` if saved in external storage). " +
-			"This can be used when you have the checksum of upstream elsewhere.",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.ChecksumWithPitrIdMapConfig{}
-			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-				return err
-			}
-			ctx := GetDefaultContext()
-			return operator.RunPitrChecksumTable(ctx, tidbGlue, cfg)
-		},
-	}
-	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
-	operator.DefineFlagsForChecksumPitrTableConfig(cmd.Flags())
-	return cmd
-}
-
-func newUpstreamChecksumCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "checksum-upstream",
-		Short: "calculate the checksum",
-		Long: "Calculate the checksum of the current cluster (specified by `-u`). " +
-			"This can be used when you have the checksum of upstream elsewhere",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.ChecksumUpstreamConfig{}
-			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-				return err
-			}
-			ctx := GetDefaultContext()
-			return operator.RunUpstreamChecksumTable(ctx, tidbGlue, cfg)
-		},
-	}
-	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
-	operator.DefineFlagsForChecksumUpstreamTableConfig(cmd.Flags())
-	return cmd
-}
-
-func newForceFlushCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "force-flush",
-		Short: "force a log backup task to flush",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.ForceFlushConfig{}
-			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-				return err
-			}
-			ctx := GetDefaultContext()
-			return operator.RunForceFlush(ctx, &cfg)
-		},
-	}
-	operator.DefineFlagsForForceFlushConfig(cmd.Flags())
-	return cmd
-}
-
-func newCRRCheckpointCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "crr-checkpoint",
-		Short: "run the CRR checkpoint service",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			state, err := getCRRCheckpointServiceState(cmd)
-			if err != nil {
-				return err
-			}
-			defer state.cleanup()
-			return state.service.Run(GetDefaultContext())
-		},
-	}
-	operator.DefineFlagsForCRRCheckpointConfig(cmd.Flags())
-	registerStatusServerPreparer(cmd, prepareCRRCheckpointStatusServer)
-	return cmd
-}
-
-func prepareCRRCheckpointStatusServer(cmd *cobra.Command) (statusServerRegistrar, error) {
-	cfg := operator.CRRCheckpointConfig{}
-	if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-		return nil, err
-	}
-	svc, cleanup, err := operator.NewCRRCheckpointService(GetDefaultContext(), tidbGlue, cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	baseCtx := cmd.Context()
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
-	cmd.SetContext(context.WithValue(baseCtx, crrCheckpointServiceStateKey{}, &crrCheckpointServiceState{
-		service: svc,
-		cleanup: cleanup,
-	}))
-	return svc.Register, nil
-}
-
-func getCRRCheckpointServiceState(cmd *cobra.Command) (*crrCheckpointServiceState, error) {
-	if cmd.Context() == nil {
-		return nil, errors.New("crr checkpoint service context is missing")
-	}
-	state, ok := cmd.Context().Value(crrCheckpointServiceStateKey{}).(*crrCheckpointServiceState)
-	if !ok || state == nil {
-		return nil, errors.New("crr checkpoint service is not prepared")
-	}
-	return state, nil
-}
-
-func newTestStorageCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "test-storage",
-		Short: "test all operations of an external storage",
-		Long: "Test all ExternalStorage operations including read, write, delete, " +
-			"rename, walk, and streaming operations. This helps verify storage " +
-			"configuration and permissions before using it for backup/restore.",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.TestStorageConfig{}
-			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
-				return err
-			}
-			ctx := GetDefaultContext()
-			return operator.RunTestStorage(ctx, cfg)
-		},
-	}
-	operator.DefineFlagsForTestStorageConfig(cmd.Flags())
 	return cmd
 }

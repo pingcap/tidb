@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/spf13/pflag"
 )
@@ -89,27 +88,4 @@ func ValidateSnapshotRestoreStorage(layout repo.Layout, backupID repo.BackupID) 
 		return errors.Annotatef(berrors.ErrInvalidArgument, "--%s requires --%s=repo", flagBackupID, flagStorageLayout)
 	}
 	return nil
-}
-
-// SnapshotRegistrationFilterHashInput builds the restore-registration hash input for snapshot restores.
-//
-// BackupID is enough to scope repo restores because it is the stable identifier of one snapshot backup:
-// it names the metadata directory "_meta/snapshot/<backup-id>/" and the per-store data directory
-// "_data/snapshot/<store-id>/<backup-id>/". A zero backup id means the restore is not bound to a specific
-// repo snapshot, so the plain filter list is sufficient. A non-zero backup id must participate in the hash
-// so two repo snapshots restored with the same table filters do not share one restore registration.
-func SnapshotRegistrationFilterHashInput(filterStrings []string, backupID repo.BackupID) string {
-	joined := strings.Join(filterStrings, registry.FilterSeparator)
-	if backupID.IsZero() {
-		return joined
-	}
-	backupIDString := backupID.String()
-	var builder strings.Builder
-	builder.Grow(len(joined) + len(backupIDString) + 32)
-	builder.WriteString("repo")
-	builder.WriteByte(0)
-	builder.WriteString(joined)
-	builder.WriteByte(0)
-	builder.WriteString(backupIDString)
-	return builder.String()
 }

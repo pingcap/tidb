@@ -49,6 +49,11 @@ type KS3Storage struct {
 	options *backuppb.S3
 }
 
+// Features implements FeatureProvider.
+func (*KS3Storage) Features() Features {
+	return FeatureSupportsStartAfter
+}
+
 // NewKS3Storage initialize a new s3 storage for metadata.
 func NewKS3Storage(
 	ctx context.Context,

@@ -15,7 +15,6 @@
 package task
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -29,8 +28,8 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -119,7 +118,7 @@ func fakeCheckpointFiles(
 	infos []fakeGlobalCheckPoint,
 ) error {
 	cpDir := filepath.Join(tmpDir, stream.GetStreamBackupGlobalCheckpointPrefix())
-	s, err := objstore.NewLocalStorage(cpDir)
+	s, err := storage.NewLocalStorage(cpDir)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -151,7 +150,7 @@ type fakeGlobalCheckPoint struct {
 func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	s, err := objstore.NewLocalStorage(tmpdir)
+	s, err := storage.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
 
 	infos := []fakeGlobalCheckPoint{
@@ -180,7 +179,7 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	var fullBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := objstore.NewLocalStorage(testDir)
+	storage, err := storage.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -195,49 +194,15 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	cfg := Config{
 		Storage: testDir,
 	}
-	_, err = getLogInfo(context.TODO(), &cfg)
-	require.ErrorIs(t, err, berrors.ErrStorageUnknown)
-	require.ErrorContains(t, err, "the storage has been used for full backup")
-
-	t.Run("full backup ts checks backupmeta compatibility", func(t *testing.T) {
-		testDir := t.TempDir()
-		storage, err := objstore.NewLocalStorage(testDir)
-		require.NoError(t, err)
-
-		const fullBackupTS uint64 = 223344
-		const fullClusterID uint64 = 556677
-		m := backuppb.BackupMeta{
-			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
-			ClusterVersion:      "8.5.6",
-			BrVersion:           "v8.5.6",
-			EndVersion:          fullBackupTS,
-			ClusterId:           fullClusterID,
-		}
-		data, err := proto.Marshal(&m)
-		require.NoError(t, err)
-		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
-
-		restoreCfg := &RestoreConfig{
-			Config: Config{
-				CheckRequirements: true,
-			},
-			FullBackupStorage: testDir,
-		}
-		_, _, err = getFullBackupTS(context.TODO(), restoreCfg)
-		require.ErrorContains(t, err, "requires schema version")
-
-		restoreCfg.CheckRequirements = false
-		startTS, clusterID, err := getFullBackupTS(context.TODO(), restoreCfg)
-		require.NoError(t, err)
-		require.Equal(t, fullBackupTS, startTS)
-		require.Equal(t, fullClusterID, clusterID)
-	})
+	_, err = getLogRange(context.TODO(), &cfg)
+	require.Error(t, err, errors.Annotate(berrors.ErrStorageUnknown,
+		"the storage has been used for full backup"))
 }
 
 func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	var startLogBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := objstore.NewLocalStorage(testDir)
+	storage, err := storage.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -252,51 +217,23 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	cfg := Config{
 		Storage: testDir,
 	}
-	logInfo, err := getLogInfo(context.TODO(), &cfg)
+	logInfo, err := getLogRange(context.TODO(), &cfg)
 	require.Nil(t, err)
 	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
-
-	t.Run("log info checks backupmeta compatibility", func(t *testing.T) {
-		testDir := t.TempDir()
-		storage, err := objstore.NewLocalStorage(testDir)
-		require.NoError(t, err)
-
-		m := backuppb.BackupMeta{
-			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
-			ClusterVersion:      "8.5.6",
-			BrVersion:           "v8.5.6",
-			StartVersion:        startLogBackupTS,
-		}
-		data, err := proto.Marshal(&m)
-		require.NoError(t, err)
-		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
-
-		cfg := Config{
-			Storage:           testDir,
-			CheckRequirements: true,
-		}
-		_, err = getLogInfo(context.TODO(), &cfg)
-		require.ErrorContains(t, err, "requires schema version")
-
-		cfg.CheckRequirements = false
-		logInfo, err := getLogInfo(context.TODO(), &cfg)
-		require.NoError(t, err)
-		require.Equal(t, startLogBackupTS, logInfo.logMinTS)
-	})
 }
 
 func TestGetFullBackupTSReadsRepoMetadataStorage(t *testing.T) {
 	ctx := context.Background()
 	testDir := t.TempDir()
-	storage, err := objstore.NewLocalStorage(testDir)
+	st, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
 	backupID := repo.BackupID(0x1234)
-	_, err = repo.EnsureRepo(ctx, storage, "test")
+	_, err = repo.EnsureRepo(ctx, st, "test")
 	require.NoError(t, err)
-	require.NoError(t, storage.WriteFile(ctx, metautil.MetaFile, []byte("not-backupmeta")))
+	require.NoError(t, st.WriteFile(ctx, metautil.MetaFile, []byte("not-backupmeta")))
 
-	metaStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
+	metaStorage := repo.NewPrefixedStorage(st, repo.SnapshotMetadataDir(backupID))
 	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
 	metaWriter := metautil.NewMetaWriter(metaStorage, metautil.MetaFileSize, false, "", cipher)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
@@ -320,109 +257,13 @@ func TestGetFullBackupTSReadsRepoMetadataStorage(t *testing.T) {
 
 func TestGetExternalStorageOptions(t *testing.T) {
 	cfg := Config{}
-	u, err := objstore.ParseBackend("s3://bucket/path", nil)
+	u, err := storage.ParseBackend("s3://bucket/path", nil)
 	require.NoError(t, err)
 	options := getExternalStorageOptions(&cfg, u)
 	require.NotNil(t, options.HTTPClient)
-}
 
-func TestBuildKeyRangesFromSchemasReplace(t *testing.T) {
-	testCases := []struct {
-		name                  string
-		schemasReplace        *stream.SchemasReplace
-		snapshotRange         [2]int64
-		expectedRangeCount    int
-		expectedLogMessage    string
-		hasValidSnapshotRange bool
-	}{
-		{
-			name: "with valid snapshot range and log restore tables",
-			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
-					1: {
-						Name:        "test_db",
-						FilteredOut: false,
-						TableMap: map[int64]*stream.TableReplace{
-							// snapshot tables (within range [100, 200))
-							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							// log restore tables (outside range)
-							300: {TableID: 300, Name: "table3", FilteredOut: false, PartitionMap: map[int64]int64{301: 301, 302: 302}},
-						},
-					},
-				},
-			},
-			snapshotRange:         [2]int64{100, 200},
-			expectedRangeCount:    2, // snapshot range + log restore range
-			hasValidSnapshotRange: true,
-		},
-		{
-			name: "with valid snapshot range, no log restore tables",
-			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
-					2: {
-						Name:        "test_db",
-						FilteredOut: false,
-						TableMap: map[int64]*stream.TableReplace{
-							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
-						},
-					},
-				},
-			},
-			snapshotRange:         [2]int64{100, 200},
-			expectedRangeCount:    1, // only snapshot range
-			hasValidSnapshotRange: true,
-		},
-		{
-			name: "without valid snapshot range",
-			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
-					3: {
-						Name:        "test_db",
-						FilteredOut: false,
-						TableMap: map[int64]*stream.TableReplace{
-							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							300: {TableID: 300, Name: "table3", FilteredOut: false, PartitionMap: map[int64]int64{}},
-						},
-					},
-				},
-			},
-			snapshotRange:         [2]int64{},
-			expectedRangeCount:    1, // fallback range covering all tables
-			hasValidSnapshotRange: false,
-		},
-		{
-			name: "empty schemas replace",
-			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{},
-			},
-			snapshotRange:         [2]int64{100, 200},
-			expectedRangeCount:    1, // only snapshot range
-			hasValidSnapshotRange: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Create a mock LogRestoreConfig
-			cfg := &LogRestoreConfig{
-				RestoreConfig: &RestoreConfig{}, // Initialize the embedded RestoreConfig
-				tableMappingManager: &stream.TableMappingManager{
-					PreallocatedRange: tc.snapshotRange,
-				},
-			}
-
-			keyRanges := buildKeyRangesFromSchemasReplace(tc.schemasReplace, cfg)
-			require.Equal(t, tc.expectedRangeCount, len(keyRanges))
-
-			// Verify that all ranges are properly formed (start < end)
-			for i, keyRange := range keyRanges {
-				require.True(t, len(keyRange[0]) > 0, "start key should not be empty for range %d", i)
-				require.True(t, len(keyRange[1]) > 0, "end key should not be empty for range %d", i)
-				require.True(t, bytes.Compare(keyRange[0], keyRange[1]) < 0, "start key should be less than end key for range %d", i)
-			}
-		})
-	}
+	u, err = storage.ParseBackend("gs://bucket/path", nil)
+	require.NoError(t, err)
+	options = getExternalStorageOptions(&cfg, u)
+	require.Nil(t, options.HTTPClient)
 }

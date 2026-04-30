@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	brstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"go.uber.org/zap"
 )
 
@@ -74,18 +74,18 @@ type SnapshotDataFile struct {
 // terminal `(err, zero)` pair when scanning fails. Consumers typically range as
 // `for err, item := range seq`, check `err` first, and stop once it becomes
 // non-nil.
-type TrySeq[T any] = iter.Seq2[error, T]
+type TrySeq[T any] iter.Seq2[error, T]
 
 var errStopWalkSeq = errors.New("stop walk seq")
 
 // ListCompletedSnapshotIDs returns sorted backup IDs that have completed metadata.
 // For example, `_meta/snapshot/000000000000F00D/backupmeta` yields
 // BackupID(0xF00D).
-func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]BackupID, error) {
+func ListCompletedSnapshotIDs(ctx context.Context, storage brstorage.Storage) ([]BackupID, error) {
 	ids := make(map[BackupID]struct{})
 	err := storage.WalkDir(
 		ctx,
-		&storeapi.WalkOption{SubDir: snapshotMetadataRootDir},
+		&brstorage.WalkOption{SubDir: snapshotMetadataRootDir},
 		func(filePath string, _ int64) error {
 			backupID, ok, err := ParseCompletedSnapshotMetaPath(filePath)
 			if err != nil {
@@ -109,7 +109,7 @@ func ListCompletedSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]
 }
 
 // ListDeletingSnapshotIDs returns sorted backup IDs that have a DELETING marker.
-func ListDeletingSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]BackupID, error) {
+func ListDeletingSnapshotIDs(ctx context.Context, storage brstorage.Storage) ([]BackupID, error) {
 	ids := make(map[BackupID]struct{})
 	for err, backupID := range WalkSnapshotDeletingMarkers(ctx, storage) {
 		if err != nil {
@@ -128,11 +128,11 @@ func ListDeletingSnapshotIDs(ctx context.Context, storage storeapi.Storage) ([]B
 // WalkSnapshotDeletingMarkers streams valid DELETING marker objects under
 // `_meta/snapshot/`. For example,
 // `_meta/snapshot/000000000000F00D/DELETING` yields BackupID(0xF00D).
-func WalkSnapshotDeletingMarkers(ctx context.Context, storage storeapi.Storage) TrySeq[BackupID] {
+func WalkSnapshotDeletingMarkers(ctx context.Context, storage brstorage.Storage) TrySeq[BackupID] {
 	return walkParsedSeq(
 		ctx,
 		storage,
-		&storeapi.WalkOption{SubDir: snapshotMetadataRootDir},
+		&brstorage.WalkOption{SubDir: snapshotMetadataRootDir},
 		ParseSnapshotDeletingMarkerPath,
 	)
 }
@@ -140,14 +140,14 @@ func WalkSnapshotDeletingMarkers(ctx context.Context, storage storeapi.Storage) 
 // WalkPendingMarkers streams valid pending marker objects under `_meta/pending/`.
 // For example, `_meta/pending/<hash>/000000000000F00D.json` yields
 // BackupID(0xF00D).
-func WalkPendingMarkers(ctx context.Context, storage storeapi.Storage) TrySeq[PendingMarker] {
-	return walkPendingMarkers(ctx, storage, &storeapi.WalkOption{SubDir: pendingRootDir})
+func WalkPendingMarkers(ctx context.Context, storage brstorage.Storage) TrySeq[PendingMarker] {
+	return walkPendingMarkers(ctx, storage, &brstorage.WalkOption{SubDir: pendingRootDir})
 }
 
 func walkPendingMarkers(
 	ctx context.Context,
-	storage storeapi.Storage,
-	opt *storeapi.WalkOption,
+	storage brstorage.Storage,
+	opt *brstorage.WalkOption,
 ) TrySeq[PendingMarker] {
 	return walkParsedSeq(
 		ctx,
@@ -162,20 +162,20 @@ func walkPendingMarkers(
 // BackupID(0xF00D).
 func WalkSnapshotDataFiles(
 	ctx context.Context,
-	storage storeapi.Storage,
+	storage brstorage.Storage,
 ) TrySeq[SnapshotDataFile] {
 	return walkParsedSeq(
 		ctx,
 		storage,
-		&storeapi.WalkOption{SubDir: snapshotDataRootDir},
+		&brstorage.WalkOption{SubDir: snapshotDataRootDir},
 		ParseSnapshotDataFilePath,
 	)
 }
 
 func walkParsedSeq[T any](
 	ctx context.Context,
-	storage storeapi.Storage,
-	opt *storeapi.WalkOption,
+	storage brstorage.Storage,
+	opt *brstorage.WalkOption,
 	parse func(string) (T, bool, error),
 ) TrySeq[T] {
 	return func(yield func(error, T) bool) {

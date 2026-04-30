@@ -9,12 +9,9 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
-	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/gc"
-	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
@@ -268,13 +265,13 @@ func must[T any](t T, err error) T {
 
 func expectedDefaultConfig() Config {
 	return Config{
-		BackendOptions:            objstore.BackendOptions{S3: s3like.S3BackendOptions{ForcePathStyle: true}},
+		BackendOptions:            storage.BackendOptions{S3: storage.S3BackendOptions{ForcePathStyle: true}},
 		PD:                        []string{"127.0.0.1:2379"},
 		ChecksumConcurrency:       4,
-		Checksum:                  false,
+		Checksum:                  true,
 		SendCreds:                 true,
 		CheckRequirements:         true,
-		FilterStr:                 []string{"*.*"},
+		FilterStr:                 []string(nil),
 		TableFilter:               filter.CaseInsensitive(must(filter.Parse([]string{"*.*"}))),
 		Schemas:                   map[string]struct{}{},
 		Tables:                    map[string]struct{}{},
@@ -289,46 +286,38 @@ func expectedDefaultConfig() Config {
 
 func expectedDefaultBackupConfig() BackupConfig {
 	defaultConfig := expectedDefaultConfig()
+	defaultConfig.Checksum = false
 	return BackupConfig{
 		Config: defaultConfig,
-		GCTTL:  gc.DefaultBRGCSafePointTTL,
+		GCTTL:  utils.DefaultBRGCSafePointTTL,
 		CompressionConfig: CompressionConfig{
 			CompressionType: backup.CompressionType_ZSTD,
 		},
-		RangeLimit:       30000000,
-		IgnoreStats:      true,
-		UseBackupMetaV2:  true,
-		UseCheckpoint:    true,
-		Layout:           repo.LayoutLegacy,
-		TableConcurrency: 64,
+		IgnoreStats:     true,
+		UseBackupMetaV2: true,
+		UseCheckpoint:   true,
 	}
 }
 
 func expectedDefaultRestoreConfig() RestoreConfig {
 	defaultConfig := expectedDefaultConfig()
+	defaultConfig.Concurrency = defaultRestoreConcurrency
 	return RestoreConfig{
 		Config: defaultConfig,
-		RestoreCommonConfig: RestoreCommonConfig{
-			Online:                    false,
-			Granularity:               "coarse-grained",
-			ConcurrencyPerStore:       kvconfig.ConfigTerm[uint]{Value: conn.DefaultImportNumGoroutines},
+		RestoreCommonConfig: RestoreCommonConfig{Online: false,
+			Granularity:               "fine-grained",
 			MergeSmallRegionSizeBytes: kvconfig.ConfigTerm[uint64]{Value: 0x6000000},
 			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
 			WithSysTable:              true,
-			ResetSysUsers:             []string{"cloud_admin", "root"},
-		},
-		NoSchema:                 false,
-		LoadStats:                true,
-		FastLoadSysTables:        true,
-		PDConcurrency:            0x1,
-		StatsConcurrency:         0xc,
-		BatchFlushInterval:       16000000000,
-		DdlBatchSize:             0x80,
-		RegionScanConcurrency:    256,
-		WithPlacementPolicy:      "STRICT",
-		Layout:                   repo.LayoutLegacy,
-		UseCheckpoint:            true,
-		AllowPITRFromIncremental: true,
+			ResetSysUsers:             []string{"cloud_admin", "root"}},
+		NoSchema:            false,
+		LoadStats:           true,
+		PDConcurrency:       0x1,
+		StatsConcurrency:    0xc,
+		BatchFlushInterval:  16000000000,
+		DdlBatchSize:        0x80,
+		WithPlacementPolicy: "STRICT",
+		UseCheckpoint:       true,
 	}
 }
 
@@ -388,10 +377,6 @@ func TestParseAndValidateMasterKeyInfo(t *testing.T) {
 							Vendor: "aws",
 							KeyId:  "key-id",
 							Region: "us-west-2",
-							AwsKms: &encryptionpb.AwsKms{
-								AccessKey:       "AKIAIOSFODNN7EXAMPLE",
-								SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-							},
 						},
 					},
 				},
@@ -453,10 +438,6 @@ func TestParseAndValidateMasterKeyInfo(t *testing.T) {
 							Vendor: "aws",
 							KeyId:  "key-id",
 							Region: "us-west-2",
-							AwsKms: &encryptionpb.AwsKms{
-								AccessKey:       "AKIAIOSFODNN7EXAMPLE",
-								SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-							},
 						},
 					},
 				},

@@ -8,16 +8,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/trace"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -34,7 +31,7 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
-	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.TLS, cfg.KeyspaceName); err != nil {
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -69,27 +66,13 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Need to be skipped when the cluster has TiDB type coprocessor tasks
-		conf.AdvertiseAddress = config.UnavailableIP
-
-		// No need to cache the coproceesor result
-		conf.TiKVClient.CoprCache.CapacityMB = 0
-	})
+	// No need to cache the coproceesor result
+	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
 
 	// Disable the memory limit tuner. That's because the server memory is get from TiDB node instead of BR node.
 	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
 	defer gctuner.GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 
-	if len(cfg.Schemas) > 0 {
-		extraDBNames := make([]string, 0, len(cfg.Schemas))
-		for schema := range cfg.Schemas {
-			extraDBNames = append(extraDBNames, utils.UnquoteName(schema))
-		}
-		filter := gluetidb.FilterLoadSpecifiedDBAndSysDBs(extraDBNames)
-		restore := setTiDBGlueDBFilter(filter)
-		defer restore()
-	}
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(err)
@@ -172,7 +155,6 @@ func NewRestoreCommand() *cobra.Command {
 			logutil.LogEnvVariables()
 			task.LogArguments(c)
 			session.DisableStats4Test()
-			kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
 
 			summary.SetUnit(summary.RestoreUnit)
 			return nil
@@ -200,7 +182,7 @@ func newFullRestoreCommand() *cobra.Command {
 			return runRestoreCommand(cmd, task.FullRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
 	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	task.DefineRestoreSnapshotFlags(command)
 	return command
@@ -271,7 +253,7 @@ func newStreamRestoreCommand() *cobra.Command {
 			return runRestoreCommand(command, task.PointRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, true)
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
 	task.DefineStreamRestoreFlags(command)
 	taskrepo.DefineSnapshotRepoReaderFlags(command.Flags())
 	return command

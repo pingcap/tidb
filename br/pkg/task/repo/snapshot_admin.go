@@ -33,9 +33,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -132,7 +131,7 @@ func RunRepoSnapshotListItems(
 	cfg RepoSnapshotListConfig,
 ) ([]RepoSnapshotListItem, error) {
 	return runRepoSnapshotSpinnerTask(ctx, console, "Listing snapshot backups...", nil, func(taskCtx context.Context) ([]RepoSnapshotListItem, error) {
-		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storeapi.Storage) ([]RepoSnapshotListItem, error) {
+		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storage.Storage) ([]RepoSnapshotListItem, error) {
 			return listRepoSnapshotBackups(taskCtx, storage)
 		})
 	})
@@ -161,7 +160,7 @@ func RunRepoSnapshotGetTo(
 	}
 	extraFields := []glue.ExtraField{glue.WithConstExtraField("backup-id", cfg.BackupID.String())}
 	_, err := runRepoSnapshotSpinnerTask(ctx, console, "Loading snapshot metadata...", extraFields, func(taskCtx context.Context) (struct{}, error) {
-		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storeapi.Storage) (struct{}, error) {
+		return withSnapshotRepoStorage(taskCtx, &cfg.Config, func(storage storage.Storage) (struct{}, error) {
 			view, err := normalizeRepoSnapshotMetaView(cfg.View)
 			if err != nil {
 				return struct{}{}, errors.Trace(err)
@@ -187,7 +186,7 @@ func RunRepoSnapshotDelete(
 	cfg RepoSnapshotDeleteConfig,
 ) (RepoSnapshotDeleteResult, error) {
 	var deleteResult RepoSnapshotDeleteResult
-	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storeapi.Storage) (RepoSnapshotDeleteResult, error) {
+	return withSnapshotRepoStorage(ctx, &cfg.Config, func(storage storage.Storage) (RepoSnapshotDeleteResult, error) {
 		if err := confirmRepoSnapshotDelete(ctx, console, storage, &cfg); err != nil {
 			return RepoSnapshotDeleteResult{}, errors.Trace(err)
 		}
@@ -215,7 +214,7 @@ func RunRepoSnapshotDelete(
 	})
 }
 
-func listRepoSnapshotBackups(ctx context.Context, storage storeapi.Storage) ([]RepoSnapshotListItem, error) {
+func listRepoSnapshotBackups(ctx context.Context, storage storage.Storage) ([]RepoSnapshotListItem, error) {
 	deletingIDs, err := repo.ListDeletingSnapshotIDs(ctx, storage)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -282,7 +281,7 @@ func shouldConfirmRepoSnapshotMutation(console glue.ConsoleOperations, skipPromp
 func confirmRepoSnapshotDelete(
 	ctx context.Context,
 	console glue.ConsoleOperations,
-	storage storeapi.Storage,
+	storage storage.Storage,
 	cfg *RepoSnapshotDeleteConfig,
 ) error {
 	if !shouldConfirmRepoSnapshotMutation(console, cfg.SkipPrompt) {
@@ -317,7 +316,7 @@ func confirmRepoSnapshotDelete(
 
 func collectRepoSnapshotDeletePreview(
 	ctx context.Context,
-	storage storeapi.Storage,
+	storage storage.Storage,
 	cfg *Config,
 	backupID repo.BackupID,
 ) (repoSnapshotDeletePreview, error) {
@@ -354,7 +353,7 @@ func formatRepoSnapshotBytes(size uint64) string {
 }
 
 func formatRepoSnapshotBackupTime(backupID repo.BackupID) string {
-	return utils.FormatDate(oracle.GetTimeFromTS(uint64(backupID)))
+	return oracle.GetTimeFromTS(uint64(backupID)).Format("2006-01-02 15:04:05.999999999 -0700")
 }
 
 func waitRepoSnapshotProgressDone(progress glue.ProgressWaiter) {
@@ -420,7 +419,7 @@ func runRepoSnapshotDynamicProgressTask[T any](
 	return result, nil
 }
 
-func openSnapshotRepoStorage(ctx context.Context, cfg *Config) (storeapi.Storage, error) {
+func openSnapshotRepoStorage(ctx context.Context, cfg *Config) (storage.Storage, error) {
 	_, storage, err := taskcommon.GetStorage(ctx, cfg.Storage, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -435,7 +434,7 @@ func openSnapshotRepoStorage(ctx context.Context, cfg *Config) (storeapi.Storage
 func withSnapshotRepoStorage[T any](
 	ctx context.Context,
 	cfg *Config,
-	fn func(storeapi.Storage) (T, error),
+	fn func(storage.Storage) (T, error),
 ) (T, error) {
 	var zero T
 	storage, err := openSnapshotRepoStorage(ctx, cfg)

@@ -29,15 +29,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	gozap "go.uber.org/zap"
 )
 
 const flagStorageLayout = "storage-layout"
 
 type Config struct {
-	objstore.BackendOptions
+	storage.BackendOptions
 
 	Storage    string
 	CipherInfo backuppb.CipherInfo
@@ -48,7 +47,7 @@ type Config struct {
 type SnapshotStorageRef struct {
 	BackupID    repo.BackupID
 	RootBackend *backuppb.StorageBackend
-	RootStorage storeapi.Storage
+	RootStorage storage.Storage
 }
 
 type PreparedRepoSnapshotBackup struct {
@@ -98,7 +97,7 @@ func PrepareRepoSnapshotBackup(
 	ctx context.Context,
 	console glue.ConsoleOperations,
 	rootBackend *backuppb.StorageBackend,
-	rootStorage storeapi.Storage,
+	rootStorage storage.Storage,
 	params SnapshotBackupStorageParams,
 ) (*PreparedRepoSnapshotBackup, error) {
 	if err := validateRepoBackend(rootBackend); err != nil {
@@ -178,7 +177,7 @@ func chooseRepoBackupAttempt(
 	console glue.ConsoleOperations,
 	useCheckpoint bool,
 	skipPrompt bool,
-	rootStorage storeapi.Storage,
+	rootStorage storage.Storage,
 	cfgHash []byte,
 	resumableBackups []repo.BackupID,
 ) (repoBackupAttempt, error) {
@@ -218,7 +217,7 @@ func chooseRepoBackupAttempt(
 func confirmRepoSnapshotResume(
 	console glue.ConsoleOperations,
 	skipPrompt bool,
-	rootStorage storeapi.Storage,
+	rootStorage storage.Storage,
 	cfgHash []byte,
 	backupID repo.BackupID,
 ) bool {
@@ -262,7 +261,7 @@ func formatRepoBackupIDs(ids []repo.BackupID) string {
 }
 
 // MetadataStorage returns the metadata storage derived from the snapshot reference.
-func (ref *SnapshotStorageRef) MetadataStorage() storeapi.Storage {
+func (ref *SnapshotStorageRef) MetadataStorage() storage.Storage {
 	if ref.BackupID.IsZero() {
 		return ref.RootStorage
 	}
@@ -328,7 +327,7 @@ func (ref *SnapshotStorageRef) LoadBackupMeta(
 //   - checkpoint metadata exists: the backup is resumable.
 //   - otherwise the backup is not resumable and should be cleaned up together
 //     with any leftover checkpoint files.
-func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.Storage, cfgHash []byte) ([]repo.BackupID, error) {
+func collectResumablePendingBackups(ctx context.Context, rootStorage storage.Storage, cfgHash []byte) ([]repo.BackupID, error) {
 	pendingBackups, err := repo.SnapshotOpsExtension(rootStorage).ListPendingBackupsForConfigHash(ctx, cfgHash)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -352,8 +351,8 @@ func collectResumablePendingBackups(ctx context.Context, rootStorage storeapi.St
 
 func cleanupNonResumablePendingBackup(
 	ctx context.Context,
-	rootStorage storeapi.Storage,
-	metadataStorage storeapi.Storage,
+	rootStorage storage.Storage,
+	metadataStorage storage.Storage,
 	pending repo.PendingBackup,
 ) error {
 	if removeErr := checkpoint.RemoveCheckpointDataForBackup(ctx, metadataStorage); removeErr != nil {
@@ -367,7 +366,7 @@ func cleanupNonResumablePendingBackup(
 	return nil
 }
 
-func writePendingSnapshot(ctx context.Context, rootStorage storeapi.Storage, pendingFile string) error {
+func writePendingSnapshot(ctx context.Context, rootStorage storage.Storage, pendingFile string) error {
 	return rootStorage.WriteFile(ctx, pendingFile, []byte("{}"))
 }
 
@@ -422,7 +421,7 @@ func joinObjectStorageKey(base, suffix string) string {
 
 // validateRepoBackend validates repo backend kinds before storage is
 // opened. It intentionally does not validate WalkDir StartAfter support,
-// because that depends on the resolved storeapi.Storage implementation and is
+// because that depends on the resolved storage.Storage implementation and is
 // checked later by SnapshotStorageRef.Validate.
 func validateRepoBackend(backend *backuppb.StorageBackend) error {
 	switch {

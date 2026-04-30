@@ -16,16 +16,16 @@ package backup
 
 import (
 	"context"
+	"encoding/base64"
 	"testing"
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,30 +37,28 @@ func (fixedCheckpointTimer) GetTS(context.Context) (int64, int64, error) {
 
 func TestBuildProgressRangeTreeLoadsCheckpointDataFromMetadataStorage(t *testing.T) {
 	ctx := context.Background()
-	rootStorage := objstore.NewMemStorage()
+	rootStorage, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
 	metadataStorage := repo.NewPrefixedStorage(rootStorage, repo.SnapshotMetadataDir(repo.BackupID(0x1234)))
 	cipher := &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+	groupKey := base64.URLEncoding.EncodeToString([]byte("a"))
 
 	runner, err := checkpoint.StartCheckpointBackupRunnerForTest(ctx, metadataStorage, cipher, time.Hour, fixedCheckpointTimer{})
 	require.NoError(t, err)
-	require.NoError(t, checkpoint.AppendForBackup(ctx, runner, []byte("a"), []byte("b"), []*backuppb.File{{Name: "1.sst"}}))
+	require.NoError(t, checkpoint.AppendForBackup(ctx, runner, groupKey, []byte("a"), []byte("b"), []*backuppb.File{{Name: "1.sst"}}))
 	runner.WaitForFinish(ctx, true)
 
 	client := &Client{
 		storage:     rootStorage,
 		metaStorage: metadataStorage,
 		cipher:      cipher,
-		checkpointMeta: &checkpoint.CheckpointMetadataForBackup{
-			LoadCheckpointDataMap: true,
-		},
 	}
-	metaWriter := metautil.NewMetaWriter(objstore.NewMemStorage(), metautil.MetaFileSize, false, "", cipher)
-	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	progressTree, err := client.BuildProgressRangeTree(ctx, []rtree.KeyRange{{StartKey: []byte("a"), EndKey: []byte("b")}}, metaWriter, func(ProgressUnit) {})
+	rangeDataMap, err := client.loadCheckpointRanges(ctx, func() {})
 	require.NoError(t, err)
+	client.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{CheckpointDataMap: rangeDataMap}
 
-	incomplete, err := progressTree.GetIncompleteRanges()
+	progressTree, err := client.BuildProgressRangeTree([]rtree.Range{{StartKey: []byte("a"), EndKey: []byte("b")}})
 	require.NoError(t, err)
+	incomplete := progressTree.Iter().GetIncompleteRanges()
 	require.Len(t, incomplete, 0)
-	require.NoError(t, metaWriter.FinishWriteMetas(ctx, metautil.AppendDataFile))
 }

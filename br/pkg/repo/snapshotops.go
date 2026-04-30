@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -54,7 +54,7 @@ type SnapshotDeleteResult struct {
 }
 
 type SnapshotOps struct {
-	storeapi.Storage
+	storage.Storage
 }
 
 // SnapshotMutationOption customizes repo snapshot mutation progress observation.
@@ -108,7 +108,7 @@ func (opts snapshotMutationOptions) deleted(count int) {
 // SnapshotOpsExtension wraps repo-root storage with snapshot management helpers.
 // For example, `SnapshotOpsExtension(root).DeleteSnapshot(ctx, id)` deletes one
 // snapshot.
-func SnapshotOpsExtension(storage storeapi.Storage) SnapshotOps {
+func SnapshotOpsExtension(storage storage.Storage) SnapshotOps {
 	return SnapshotOps{Storage: storage}
 }
 
@@ -128,13 +128,13 @@ func (ops SnapshotOps) ListPendingBackupsForConfigHash(
 	return listPendingBackups(
 		ctx,
 		ops.Storage,
-		walkPendingMarkers(ctx, ops.Storage, &storeapi.WalkOption{SubDir: PendingDir(configHash)}),
+		walkPendingMarkers(ctx, ops.Storage, &storage.WalkOption{SubDir: PendingDir(configHash)}),
 	)
 }
 
 func listPendingBackups(
 	ctx context.Context,
-	storage storeapi.Storage,
+	storage storage.Storage,
 	markers TrySeq[PendingMarker],
 ) ([]PendingBackup, error) {
 	grouped := make(map[BackupID]*PendingBackup)
@@ -306,14 +306,14 @@ func (ops SnapshotOps) DeleteSnapshot(
 
 // ValidateRepoStartAfterSupport checks whether storage can use WalkDir StartAfter.
 // It inspects the Features bitset returned by FeatureOf.
-func ValidateRepoStartAfterSupport(storage storeapi.Storage) error {
-	if storeapi.FeatureOf(storage)&storeapi.FeatureSupportsStartAfter != 0 {
+func ValidateRepoStartAfterSupport(st storage.Storage) error {
+	if storage.FeatureOf(st)&storage.FeatureSupportsStartAfter != 0 {
 		return nil
 	}
 	return errors.Annotatef(
 		berrors.ErrUnsupportedOperation,
 		"storage %s does not support WalkDir StartAfter required by repo snapshot operations",
-		storage.URI(),
+		st.URI(),
 	)
 }
 
@@ -405,7 +405,7 @@ func (ops SnapshotOps) deleteSnapshotDataFilesForBackup(
 
 func (ops SnapshotOps) walkFilesWithPrefix(ctx context.Context, prefix string) TrySeq[string] {
 	return func(yield func(error, string) bool) {
-		err := ops.Storage.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(filePath string, _ int64) error {
+		err := ops.Storage.WalkDir(ctx, &storage.WalkOption{SubDir: prefix}, func(filePath string, _ int64) error {
 			if yield(nil, filePath) {
 				return nil
 			}
@@ -487,7 +487,7 @@ func (ops SnapshotOps) walkSnapshotDataFilesAfter(ctx context.Context, startAfte
 	return walkParsedSeq(
 		ctx,
 		ops.Storage,
-		&storeapi.WalkOption{SubDir: snapshotDataRootDir, StartAfter: startAfter},
+		&storage.WalkOption{SubDir: snapshotDataRootDir, StartAfter: startAfter},
 		ParseSnapshotDataFilePath,
 	)
 }

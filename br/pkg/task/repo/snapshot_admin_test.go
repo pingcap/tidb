@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	parsermodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -266,7 +266,7 @@ func TestRunRepoSnapshotDeletePendingConfirmationAbortKeepsFiles(t *testing.T) {
 	requireRepoSnapshotFileExists(ctx, t, storage, dataPath)
 }
 
-func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storeapi.Storage) {
+func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storage.Storage) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -283,19 +283,19 @@ func newRepoSnapshotTestEnv(t *testing.T) (context.Context, Config, storeapi.Sto
 	return ctx, cfg, storage
 }
 
-func createPendingCheckpoint(ctx context.Context, t *testing.T, storage storeapi.Storage, backupID repo.BackupID) {
+func createPendingCheckpoint(ctx context.Context, t *testing.T, storage storage.Storage, backupID repo.BackupID) {
 	t.Helper()
 	createPendingMarker(ctx, t, storage, backupID)
 	metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
 	require.NoError(t, metadataStorage.WriteFile(ctx, checkpoint.CheckpointMetaPathForBackup, []byte("checkpoint")))
 }
 
-func createPendingMarker(ctx context.Context, t *testing.T, storage storeapi.Storage, backupID repo.BackupID) {
+func createPendingMarker(ctx context.Context, t *testing.T, storage storage.Storage, backupID repo.BackupID) {
 	t.Helper()
 	require.NoError(t, storage.WriteFile(ctx, repo.PendingFile([]byte("hash"), backupID), []byte("{}")))
 }
 
-func createDeletingMarker(ctx context.Context, t *testing.T, storage storeapi.Storage, backupID repo.BackupID) {
+func createDeletingMarker(ctx context.Context, t *testing.T, storage storage.Storage, backupID repo.BackupID) {
 	t.Helper()
 	require.NoError(t, storage.WriteFile(ctx, repo.SnapshotDeletingMarkerFile(backupID), []byte("deleting\n")))
 }
@@ -303,7 +303,7 @@ func createDeletingMarker(ctx context.Context, t *testing.T, storage storeapi.St
 func createBackupMeta(
 	ctx context.Context,
 	t *testing.T,
-	storage storeapi.Storage,
+	storage storage.Storage,
 	backupID repo.BackupID,
 	options ...func(*backuppb.BackupMeta),
 ) {
@@ -328,7 +328,7 @@ func createBackupMeta(
 func createBackupMetaWithFiles(
 	ctx context.Context,
 	t *testing.T,
-	storage storeapi.Storage,
+	storage storage.Storage,
 	backupID repo.BackupID,
 	useV2 bool,
 	files []*backuppb.File,
@@ -377,12 +377,12 @@ func newSchemaForView(
 
 	dbInfoBytes, err := json.Marshal(&model.DBInfo{
 		ID:   dbID,
-		Name: ast.NewCIStr(dbName),
+		Name: parsermodel.NewCIStr(dbName),
 	})
 	require.NoError(t, err)
 	tableInfoBytes, err := json.Marshal(&model.TableInfo{
 		ID:   tableID,
-		Name: ast.NewCIStr(tableName),
+		Name: parsermodel.NewCIStr(tableName),
 	})
 	require.NoError(t, err)
 	return &backuppb.Schema{
@@ -552,7 +552,7 @@ func requireRepoSnapshotProgress(
 	require.True(t, progress.closed.Load())
 }
 
-func requireRepoSnapshotFileExists(ctx context.Context, t *testing.T, storage storeapi.Storage, path string) {
+func requireRepoSnapshotFileExists(ctx context.Context, t *testing.T, storage storage.Storage, path string) {
 	t.Helper()
 	exists, err := storage.FileExists(ctx, path)
 	require.NoError(t, err)

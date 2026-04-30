@@ -21,8 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,7 +56,7 @@ func TestLayoutAndBackupID(t *testing.T) {
 
 func TestPrefixedStorage(t *testing.T) {
 	ctx := context.Background()
-	base := objstore.NewMemStorage()
+	base := newRepoTestStorage(t)
 	view := repo.NewPrefixedStorage(base, "root/meta")
 
 	require.NoError(t, view.WriteFile(ctx, "backupmeta", []byte("meta")))
@@ -72,7 +71,7 @@ func TestPrefixedStorage(t *testing.T) {
 	require.Equal(t, []byte("meta"), got)
 
 	var walked []string
-	err = view.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, _ int64) error {
+	err = view.WalkDir(ctx, &storage.WalkOption{}, func(path string, _ int64) error {
 		walked = append(walked, path)
 		return nil
 	})
@@ -82,7 +81,7 @@ func TestPrefixedStorage(t *testing.T) {
 
 func TestEnsureRepo(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := newRepoTestStorage(t)
 
 	meta, err := repo.EnsureRepo(ctx, storage, "br test")
 	require.NoError(t, err)
@@ -104,7 +103,7 @@ func TestEnsureRepoRejectsLegacyArtifacts(t *testing.T) {
 		metautil.LockFile,
 		checkpoint.CheckpointMetaPathForBackup,
 	} {
-		storage := objstore.NewMemStorage()
+		storage := newRepoTestStorage(t)
 		require.NoError(t, storage.WriteFile(ctx, artifact, []byte("x")))
 
 		_, err := repo.EnsureRepo(ctx, storage, "br test")
@@ -120,11 +119,18 @@ func TestEnsureRepoRejectsExistingRepoArtifactsWithoutMeta(t *testing.T) {
 		repo.PendingFile([]byte("hash"), repo.BackupID(2)),
 		repo.SnapshotStoreDataPrefix(3, repo.BackupID(4)) + "/sst",
 	} {
-		storage := objstore.NewMemStorage()
+		storage := newRepoTestStorage(t)
 		require.NoError(t, storage.WriteFile(ctx, artifact, []byte("x")))
 
 		_, err := repo.EnsureRepo(ctx, storage, "br test")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "repo snapshot artifact")
 	}
+}
+
+func newRepoTestStorage(t *testing.T) storage.Storage {
+	t.Helper()
+	storage, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	return storage
 }

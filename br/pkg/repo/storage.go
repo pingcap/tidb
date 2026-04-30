@@ -19,23 +19,21 @@ import (
 	"context"
 	"path"
 	"strings"
-	"time"
 
-	"github.com/pingcap/tidb/pkg/objstore/objectio"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 const pathSeparator = "/"
 
 type prefixedStorage struct {
-	base   storeapi.Storage
-	prefix storeapi.Prefix
+	base   storage.Storage
+	prefix storage.Prefix
 }
 
-func NewPrefixedStorage(base storeapi.Storage, prefix string) storeapi.Storage {
+func NewPrefixedStorage(base storage.Storage, prefix string) storage.Storage {
 	return &prefixedStorage{
 		base:   base,
-		prefix: storeapi.NewPrefix(prefix),
+		prefix: storage.NewPrefix(prefix),
 	}
 }
 
@@ -68,8 +66,8 @@ func (s *prefixedStorage) DeleteFile(ctx context.Context, name string) error {
 func (s *prefixedStorage) Open(
 	ctx context.Context,
 	name string,
-	option *storeapi.ReaderOption,
-) (objectio.Reader, error) {
+	option *storage.ReaderOption,
+) (storage.ExternalFileReader, error) {
 	return s.base.Open(ctx, s.fullPath(name), option)
 }
 
@@ -86,10 +84,10 @@ func (s *prefixedStorage) DeleteFiles(
 
 func (s *prefixedStorage) WalkDir(
 	ctx context.Context,
-	opt *storeapi.WalkOption,
+	opt *storage.WalkOption,
 	fn func(filePath string, size int64) error,
 ) error {
-	walkOpt := &storeapi.WalkOption{}
+	walkOpt := &storage.WalkOption{}
 	if opt != nil {
 		*walkOpt = *opt
 	}
@@ -115,8 +113,8 @@ func (s *prefixedStorage) URI() string {
 func (s *prefixedStorage) Create(
 	ctx context.Context,
 	name string,
-	option *storeapi.WriterOption,
-) (objectio.Writer, error) {
+	option *storage.WriterOption,
+) (storage.ExternalFileWriter, error) {
 	return s.base.Create(ctx, s.fullPath(name), option)
 }
 
@@ -127,16 +125,8 @@ func (s *prefixedStorage) Rename(
 	return s.base.Rename(ctx, s.fullPath(oldFileName), s.fullPath(newFileName))
 }
 
-func (s *prefixedStorage) PresignFile(
-	ctx context.Context,
-	fileName string,
-	expire time.Duration,
-) (string, error) {
-	return s.base.PresignFile(ctx, s.fullPath(fileName), expire)
-}
-
-func (s *prefixedStorage) Features() storeapi.Features {
-	return storeapi.FeatureOf(s.base)
+func (s *prefixedStorage) Features() storage.Features {
+	return storage.FeatureOf(s.base)
 }
 
 func (s *prefixedStorage) Close() {

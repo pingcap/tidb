@@ -114,6 +114,11 @@ type GCSStorage struct {
 	clientCancel context.CancelFunc
 }
 
+// Features implements FeatureProvider.
+func (*GCSStorage) Features() Features {
+	return FeatureSupportsStartAfter
+}
+
 // GetBucketHandle gets the handle to the GCS API on the bucket.
 func (s *GCSStorage) GetBucketHandle() *storage.BucketHandle {
 	i := s.idx.Inc() % int64(len(s.handles))

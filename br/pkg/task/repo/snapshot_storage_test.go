@@ -29,8 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/repo"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,7 +82,7 @@ func TestPreparedRepoSnapshotBackupRewritesStoreRequestAndResponse(t *testing.T)
 func TestCollectResumablePendingBackups(t *testing.T) {
 	t.Run("stale_markers_removed_and_unfinished_retained", func(t *testing.T) {
 		ctx := context.Background()
-		storage := objstore.NewMemStorage()
+		storage := newSnapshotRepoTestStorage(t)
 		cfgHash := []byte("hash")
 		staleID := repo.BackupID(1)
 		unfinishedID := repo.BackupID(2)
@@ -108,7 +107,7 @@ func TestCollectResumablePendingBackups(t *testing.T) {
 
 	t.Run("non_resumable_pending_cleans_checkpoint_debris", func(t *testing.T) {
 		ctx := context.Background()
-		storage := objstore.NewMemStorage()
+		storage := newSnapshotRepoTestStorage(t)
 		cfgHash := []byte("hash")
 		backupID := repo.BackupID(3)
 		metadataStorage := repo.NewPrefixedStorage(storage, repo.SnapshotMetadataDir(backupID))
@@ -137,7 +136,7 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 	t.Run("load_backup_meta_from_repo_snapshot_storage", func(t *testing.T) {
 		ctx := context.Background()
 		baseDir := t.TempDir()
-		storage, err := objstore.NewLocalStorage(baseDir)
+		storage, err := storage.NewLocalStorage(baseDir)
 		require.NoError(t, err)
 		backupID := repo.BackupID(0x1234)
 		cipherInfo := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
@@ -179,7 +178,7 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 	t.Run("validate_rejects_repo_without_startafter_support", func(t *testing.T) {
 		ctx := context.Background()
 		storage := &uriOverrideStorage{
-			Storage: objstore.NewMemStorage(),
+			Storage: newSnapshotRepoTestStorage(t),
 			uri:     "azure://bucket/prefix",
 		}
 		rootBackend := &backuppb.StorageBackend{
@@ -205,7 +204,7 @@ func TestLoadSnapshotBackupMetaReadsRepoMetadataStorage(t *testing.T) {
 
 func TestPrepareRepoSnapshotBackupStartsNewWithoutPending(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := newSnapshotRepoTestStorage(t)
 	_, err := repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 
@@ -229,7 +228,7 @@ func TestPrepareRepoSnapshotBackupStartsNewWithoutPending(t *testing.T) {
 
 func TestPrepareRepoSnapshotBackupResumePendingBackup(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := newSnapshotRepoTestStorage(t)
 	_, err := repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 
@@ -316,7 +315,7 @@ func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *test
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			storage := objstore.NewMemStorage()
+			storage := newSnapshotRepoTestStorage(t)
 			prepared := &PreparedRepoSnapshotBackup{
 				SnapshotStorageRef: SnapshotStorageRef{
 					BackupID:    repo.BackupID(0x1234),
@@ -340,7 +339,7 @@ func TestActivateSnapshotBackupResumeRejectsMismatchedCheckpointBackupID(t *test
 
 func TestPrepareRepoSnapshotBackupRejectsAmbiguousResume(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := newSnapshotRepoTestStorage(t)
 	_, err := repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 
@@ -372,7 +371,7 @@ func TestPrepareRepoSnapshotBackupRejectsAmbiguousResume(t *testing.T) {
 
 func TestPrepareRepoSnapshotBackupWithoutCheckpointStartsFreshDespitePending(t *testing.T) {
 	ctx := context.Background()
-	storage := objstore.NewMemStorage()
+	storage := newSnapshotRepoTestStorage(t)
 	_, err := repo.EnsureRepo(ctx, storage, "test")
 	require.NoError(t, err)
 
@@ -402,8 +401,15 @@ func TestPrepareRepoSnapshotBackupWithoutCheckpointStartsFreshDespitePending(t *
 	require.Equal(t, repo.PendingFile(cfgHash, repo.BackupID(0x1111)), resolved.PendingMarkerPath)
 }
 
+func newSnapshotRepoTestStorage(t *testing.T) storage.Storage {
+	t.Helper()
+	storage, err := storage.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	return storage
+}
+
 type uriOverrideStorage struct {
-	storeapi.Storage
+	storage.Storage
 	uri string
 }
 

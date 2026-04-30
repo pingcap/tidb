@@ -27,19 +27,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getBackupTempDir() string {
-	if envDir := os.Getenv("BRIETEST_TMPDIR"); envDir != "" {
-		return envDir
-	}
-	return os.TempDir()
-}
-
 func initTestKit(t *testing.T) *testkit.TestKit {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("only run BR SQL integration test with tikv store")
+	}
+
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	cfg := config.GetGlobalConfig()
-	cfg.Store = config.StoreTypeTiKV
-	cfg.Path = realtikvtest.CurrentPDAddr()
+	cfg.Store = "tikv"
+	cfg.Path = "127.0.0.1:2379"
 	config.StoreGlobalConfig(cfg)
 
 	tk := testkit.NewTestKit(t, store)
@@ -60,7 +57,7 @@ func TestBackupAndRestore(t *testing.T) {
 	tk.MustExec("use br02")
 	tk.MustExec("create table t1(v int)")
 
-	tmpDir := path.Join(getBackupTempDir(), "bk1")
+	tmpDir := path.Join(os.TempDir(), "bk1")
 	require.NoError(t, os.RemoveAll(tmpDir))
 	// backup database to tmp dir
 	tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
@@ -90,7 +87,7 @@ func TestRestoreMultiTables(t *testing.T) {
 		tablesNameSet[fmt.Sprintf("table_%d", i)] = struct{}{}
 	}
 
-	tmpDir := path.Join(getBackupTempDir(), "bk1")
+	tmpDir := path.Join(os.TempDir(), "bk1")
 	require.NoError(t, os.RemoveAll(tmpDir))
 	// backup database to tmp dir
 	tk.MustQuery("backup database br to 'local://" + tmpDir + "'")

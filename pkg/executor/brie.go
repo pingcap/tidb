@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/show"
 	"github.com/pingcap/tidb/pkg/config"
@@ -37,9 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -49,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/printer"
-	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -275,12 +277,25 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
+	tlsCfg := task.TLSConfig{
+		CA:   tidbCfg.Security.ClusterSSLCA,
+		Cert: tidbCfg.Security.ClusterSSLCert,
+		Key:  tidbCfg.Security.ClusterSSLKey,
+	}
+	pds := strings.Split(tidbCfg.Path, ",")
 
-	// build common config
+	// build common config and override for specific task if needed
 	cfg := task.DefaultConfig()
-	task.ApplyTiDBRuntimeConfig(&cfg)
+	switch s.Kind {
+	case ast.BRIEKindBackup:
+		cfg.OverrideDefaultForBackup()
+	default:
+	}
 
-	storageURL, err := objstore.ParseRawURL(s.Storage)
+	cfg.PD = pds
+	cfg.TLS = tlsCfg
+
+	storageURL, err := storage.ParseRawURL(s.Storage)
 	if err != nil {
 		b.err = errors.Annotate(err, "invalid destination URL")
 		return nil
@@ -288,20 +303,17 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch storageURL.Scheme {
 	case "s3":
-		objstore.ExtractQueryParameters(storageURL, &cfg.S3)
+		storage.ExtractQueryParameters(storageURL, &cfg.S3)
 	case "gs", "gcs":
-		objstore.ExtractQueryParameters(storageURL, &cfg.GCS)
-
-	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
-	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
+		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
 	case "hdfs":
-		if semv1.IsEnabled() {
+		if sem.IsEnabled() {
 			// Storage is not permitted to be hdfs when SEM is enabled.
 			b.err = plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("hdfs storage")
 			return nil
 		}
 	case "local", "file", "":
-		if semv1.IsEnabled() {
+		if sem.IsEnabled() {
 			// Storage is not permitted to be local when SEM is enabled.
 			b.err = plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("local storage")
 			return nil
@@ -311,9 +323,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	store := tidbCfg.Store
 	failpoint.Inject("modifyStore", func(v failpoint.Value) {
-		store = config.StoreType(v.(string))
+		store = v.(string)
 	})
-	if store != config.StoreTypeTiKV {
+	if store != "tikv" {
 		b.err = errors.Errorf("%s requires tikv store, not %s", s.Kind, store)
 		return nil
 	}
@@ -360,16 +372,11 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	case len(s.Tables) != 0:
 		tables := make([]filter.Table, 0, len(s.Tables))
 		for _, tbl := range s.Tables {
-			table := filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O}
-			tables = append(tables, table)
-			cfg.FilterStr = append(cfg.FilterStr, table.String())
+			tables = append(tables, filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O})
 		}
 		cfg.TableFilter = filter.NewTablesFilter(tables...)
 	case len(s.Schemas) != 0:
 		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
-		for _, schema := range s.Schemas {
-			cfg.FilterStr = append(cfg.FilterStr, fmt.Sprintf("`%s`.*", schema))
-		}
 	default:
 		cfg.TableFilter = filter.All()
 	}
@@ -779,20 +786,20 @@ func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args
 	return err
 }
 
-// CreateDatabaseOnExistError implements glue.Session
-func (gs *tidbGlueSession) CreateDatabaseOnExistError(_ context.Context, schema *model.DBInfo) error {
+// CreateDatabase implements glue.Session
+func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInfo) error {
 	return BRIECreateDatabase(gs.se, schema, "")
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName ast.CIStr, clonedTable *model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return BRIECreateTable(gs.se, dbName, clonedTable, "", cs...)
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName pmodel.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return BRIECreateTable(gs.se, dbName, table, "", cs...)
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbGlueSession) CreateTables(_ context.Context,
-	clonedTables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return BRIECreateTables(gs.se, clonedTables, "", cs...)
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return BRIECreateTables(gs.se, tables, "", cs...)
 }
 
 // CreatePlacementPolicy implements glue.Session
@@ -810,51 +817,14 @@ func (gs *tidbGlueSession) Close() {
 	CloseSession(gs.se)
 }
 
-// GetGlobalVariable implements glue.Session.
+// GetGlobalVariables implements glue.Session.
 func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
-}
-
-// GetGlobalSysVar gets the global system variable value for name.
-func (gs *tidbGlueSession) GetGlobalSysVar(name string) (string, error) {
-	return gs.se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
 }
 
 // GetSessionCtx implements glue.Glue
 func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
-}
-
-// AlterTableMode implements glue.Session.
-func (gs *tidbGlueSession) AlterTableMode(
-	_ context.Context,
-	schemaID int64,
-	tableID int64,
-	tableMode model.TableMode) error {
-	originQueryString := gs.se.Value(sessionctx.QueryString)
-	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
-	d := domain.GetDomain(gs.se).DDLExecutor()
-	gs.se.SetValue(sessionctx.QueryString,
-		fmt.Sprintf("ALTER TABLE MODE SCHEMA_ID=%d TABLE_ID=%d TO %s", schemaID, tableID, tableMode.String()))
-	args := &model.AlterTableModeArgs{
-		SchemaID:  schemaID,
-		TableID:   tableID,
-		TableMode: tableMode,
-	}
-	return d.AlterTableMode(gs.se, args)
-}
-
-// RefreshMeta implements glue.Session.
-func (gs *tidbGlueSession) RefreshMeta(
-	_ context.Context,
-	args *model.RefreshMetaArgs) error {
-	originQueryString := gs.se.Value(sessionctx.QueryString)
-	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
-	d := domain.GetDomain(gs.se).DDLExecutor()
-	gs.se.SetValue(sessionctx.QueryString,
-		fmt.Sprintf("REFRESH META SCHEMA_ID=%d TABLE_ID=%d INVOLVED_DB=%s INVOLVED_TABLE=%s",
-			args.SchemaID, args.TableID, args.InvolvedDB, args.InvolvedTable))
-	return d.RefreshMeta(gs.se, args)
 }
 
 func restoreQuery(stmt *ast.BRIEStmt) string {

@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/task"
 	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
@@ -254,5 +253,5 @@ func printRepoSnapshotMutationResult(
 }
 
 func formatRepoSnapshotTime(backupID repo.BackupID) string {
-	return utils.FormatDate(oracle.GetTimeFromTS(uint64(backupID)).Local())
+	return oracle.GetTimeFromTS(uint64(backupID)).Local().Format("2006-01-02 15:04:05.999999999 -0700")
 }

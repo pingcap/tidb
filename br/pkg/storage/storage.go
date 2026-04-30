@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/pingcap/errors"
@@ -17,6 +18,21 @@ import (
 
 // Permission represents the permission we need to check in create storage.
 type Permission string
+
+// Features is a bitset of optional capabilities an ExternalStorage implementation may expose.
+type Features uint64
+
+const (
+	// FeatureStrongConsistency means the storage is strongly consistent over its Read, Write, and WalkDir APIs.
+	FeatureStrongConsistency Features = 1 << iota
+	// FeatureSupportsStartAfter means the storage supports WalkDir StartAfter.
+	FeatureSupportsStartAfter
+)
+
+// FeatureProvider is an optional interface storages may implement to expose capabilities via a Features bitset.
+type FeatureProvider interface {
+	Features() Features
+}
 
 const (
 	// AccessBuckets represents bucket access permission
@@ -62,6 +78,8 @@ type WalkOption struct {
 	// to reduce the possibility of timeout on an extremely slow connection, or
 	// perform testing.
 	ListCount int64
+	// StartAfter is the key to start after. If not empty, the walk will start after the key.
+	StartAfter string
 }
 
 // ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
@@ -91,6 +109,9 @@ type WriterOption struct {
 	Concurrency int
 	PartSize    int64
 }
+
+// Storage is an alias kept for code shared with newer branches.
+type Storage = ExternalStorage
 
 type ReaderOption struct {
 	// StartOffset is inclusive. And it's incompatible with Seek.
@@ -180,6 +201,39 @@ type ExternalStorageOptions struct {
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.
 	CheckS3ObjectLockOptions bool
+}
+
+// Options is an alias kept for code shared with newer branches.
+type Options = ExternalStorageOptions
+
+// FeatureOf returns the Features bitset of s. If s does not implement FeatureProvider, it returns 0.
+func FeatureOf(s ExternalStorage) Features {
+	if p, ok := s.(FeatureProvider); ok {
+		return p.Features()
+	}
+	return 0
+}
+
+// Prefix is like a folder if not empty.
+type Prefix string
+
+// NewPrefix returns a normalized storage prefix.
+func NewPrefix(prefix string) Prefix {
+	p := strings.Trim(prefix, "/")
+	if p != "" {
+		p += "/"
+	}
+	return Prefix(p)
+}
+
+// ObjectKey returns the object key by joining the name to the Prefix.
+func (p Prefix) ObjectKey(name string) string {
+	return string(p) + name
+}
+
+// String implements fmt.Stringer.
+func (p Prefix) String() string {
+	return string(p)
 }
 
 // Create creates ExternalStorage.

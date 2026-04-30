@@ -24,8 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 const RepoVersion = 1
@@ -50,9 +49,9 @@ type Meta struct {
 // revive:disable-next-line:cyclomatic
 func LoadRepoMeta(
 	ctx context.Context,
-	storage storeapi.Storage,
+	st storage.Storage,
 ) (*Meta, error) {
-	data, err := storage.ReadFile(ctx, RepoMetaPath)
+	data, err := st.ReadFile(ctx, RepoMetaPath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -72,37 +71,32 @@ func LoadRepoMeta(
 // revive:disable-next-line:cognitive-complexity
 func EnsureRepo(
 	ctx context.Context,
-	storage storeapi.Storage,
+	st storage.Storage,
 	createdBy string,
 ) (*Meta, error) {
-	lock, err := objstore.LockWithRetry(
-		ctx,
-		objstore.TryLockRemote,
-		storage,
-		repoInitLockPath,
-		"initialize BR snapshot repository metadata",
-	)
-	if err != nil {
+	if err := storage.TryLockRemote(ctx, st, repoInitLockPath, "initialize BR snapshot repository metadata"); err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer lock.UnlockOnCleanUp(ctx)
+	defer func() {
+		_ = storage.UnlockRemote(ctx, st, repoInitLockPath)
+	}()
 
-	exists, err := storage.FileExists(ctx, RepoMetaPath)
+	exists, err := st.FileExists(ctx, RepoMetaPath)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if exists {
-		meta, err := LoadRepoMeta(ctx, storage)
+		meta, err := LoadRepoMeta(ctx, st)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if err := ensureRepoGuard(ctx, storage); err != nil {
+		if err := ensureRepoGuard(ctx, st); err != nil {
 			return nil, errors.Trace(err)
 		}
 		return meta, nil
 	}
 
-	if err := ensureRepoRootIsCleanForInit(ctx, storage); err != nil {
+	if err := ensureRepoRootIsCleanForInit(ctx, st); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -116,30 +110,30 @@ func EnsureRepo(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := storage.WriteFile(ctx, RepoMetaPath, payload); err != nil {
+	if err := st.WriteFile(ctx, RepoMetaPath, payload); err != nil {
 		return nil, errors.Annotate(err, "write repo metadata")
 	}
-	if err := ensureRepoGuard(ctx, storage); err != nil {
+	if err := ensureRepoGuard(ctx, st); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return meta, nil
 }
 
 // revive:disable-next-line:cognitive-complexity
-func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage) error {
+func ensureRepoRootIsCleanForInit(ctx context.Context, st storage.Storage) error {
 	for _, path := range []string{
 		metautil.MetaFile,
 		metautil.LockFile,
 		checkpoint.CheckpointMetaPathForBackup,
 	} {
-		exists, err := storage.FileExists(ctx, path)
+		exists, err := st.FileExists(ctx, path)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if exists {
 			return errors.Errorf(
 				"storage %s already contains legacy snapshot artifact %q",
-				storage.URI(),
+				st.URI(),
 				path,
 			)
 		}
@@ -150,9 +144,9 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 		snapshotDataRootDir,
 	} {
 		found := false
-		err := storage.WalkDir(
+		err := st.WalkDir(
 			ctx,
-			&storeapi.WalkOption{SubDir: prefix},
+			&storage.WalkOption{SubDir: prefix},
 			func(string, int64) error {
 				found = true
 				return errRepoRootContainsArtifacts
@@ -165,7 +159,7 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 			return errors.Errorf(
 				"storage %s already contains repo snapshot artifact "+
 					"under %q",
-				storage.URI(),
+				st.URI(),
 				prefix,
 			)
 		}
@@ -173,13 +167,13 @@ func ensureRepoRootIsCleanForInit(ctx context.Context, storage storeapi.Storage)
 	return nil
 }
 
-func ensureRepoGuard(ctx context.Context, storage storeapi.Storage) error {
-	exists, err := storage.FileExists(ctx, RootLockPath)
+func ensureRepoGuard(ctx context.Context, st storage.Storage) error {
+	exists, err := st.FileExists(ctx, RootLockPath)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if exists {
 		return nil
 	}
-	return storage.WriteFile(ctx, RootLockPath, []byte(repoGuardFile))
+	return st.WriteFile(ctx, RootLockPath, []byte(repoGuardFile))
 }

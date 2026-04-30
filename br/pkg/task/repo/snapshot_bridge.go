@@ -17,10 +17,10 @@ package taskrepo
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
 // WritePendingSnapshot creates the pending marker object for a repo snapshot backup.
-func WritePendingSnapshot(ctx context.Context, rootStorage storeapi.Storage, pendingFile string) error {
+func WritePendingSnapshot(ctx context.Context, rootStorage storage.Storage, pendingFile string) error {
 	return writePendingSnapshot(ctx, rootStorage, pendingFile)
 }
