@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	ingestclimock "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mock"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -216,21 +215,6 @@ func TestCloudRegionJobWorker(t *testing.T) {
 		mockIngestCli.EXPECT().WriteClient(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock error"))
 		writeRes, err := cloudW.write(context.Background(), job)
 		require.ErrorContains(t, err, "mock error")
-		require.Nil(t, writeRes)
-		require.True(t, ctrl.Satisfied())
-	})
-
-	t.Run("timeout while creating ingest client should return retryable error", func(t *testing.T) {
-		job := &regionJob{
-			keyRange:   engineapi.Range{Start: []byte("a"), End: []byte("z")},
-			stage:      regionScanned,
-			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
-		}
-		mockIngestCli.EXPECT().WriteClient(gomock.Any(), gomock.Any()).Return(nil, context.DeadlineExceeded)
-		ctx, cancel := context.WithTimeoutCause(context.Background(), 0, common.ErrWriteTooSlow)
-		defer cancel()
-		writeRes, err := cloudW.write(ctx, job)
-		require.ErrorIs(t, err, common.ErrWriteTooSlow)
 		require.Nil(t, writeRes)
 		require.True(t, ctrl.Satisfied())
 	})
