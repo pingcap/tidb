@@ -17,10 +17,13 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/big"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,6 +31,8 @@ import (
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/compress"
+	"github.com/apache/arrow-go/v18/parquet/file"
+	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -59,6 +64,17 @@ func newParquetParserForTest(
 		require.NoError(t, parser.Close())
 	})
 	return parser
+}
+
+func newInt96FromUnixNanos(nanoseconds int64) parquet.Int96 {
+	nanosPerDay := int64(24 * time.Hour)
+	dayOffset := floorDivInt64(nanoseconds, nanosPerDay)
+	nanosOfDay := floorModInt64(nanoseconds, nanosPerDay)
+	day := uint32(dayOffset + julianDayOfUnixEpoch)
+	var b [12]byte
+	binary.LittleEndian.PutUint64(b[:8], uint64(nanosOfDay))
+	binary.LittleEndian.PutUint32(b[8:], day)
+	return parquet.Int96(b)
 }
 
 func TestParquetParser(t *testing.T) {
@@ -126,6 +142,16 @@ func TestParquetParser(t *testing.T) {
 	}
 
 	require.ErrorIs(t, reader.ReadRow(), io.EOF)
+
+	t.Run("unsupported_writer_option_is_rejected_before_create", func(t *testing.T) {
+		dir := t.TempDir()
+		fileName := "unsupported-option.parquet"
+		err := WriteParquetFile(dir, fileName, pc, 1, struct{}{})
+		require.ErrorContains(t, err, "unsupported parquet writer option type")
+
+		_, statErr := os.Stat(filepath.Join(dir, fileName))
+		require.True(t, os.IsNotExist(statErr), "unexpected file state: %v", statErr)
+	})
 }
 
 func TestParquetParserMultipleRowGroup(t *testing.T) {
@@ -307,6 +333,438 @@ func TestParquetVariousTypes(t *testing.T) {
 		}
 	})
 
+	t.Run("int96_rounds_sub_microsecond_precision", func(t *testing.T) {
+		input := time.Date(2020, 10, 29, 9, 27, 52, 999999500, time.UTC)
+		pc := []ParquetColumn{
+			{
+				Name:      "timestampint96",
+				Type:      parquet.Types.Int96,
+				Converted: schema.ConvertedTypes.None,
+				Gen: func(_ int) (any, []int16) {
+					return []parquet.Int96{newInt96FromUnixNanos(input.UnixNano())}, []int16{1}
+				},
+			},
+		}
+
+		dir := t.TempDir()
+		name := "int96-rounds-sub-microsecond.parquet"
+		require.NoError(t, WriteParquetFile(dir, name, pc, 1))
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+		require.Equal(t, "", reader.colTypes[0].sparkRebaseMicros.timeZoneID)
+		require.NoError(t, reader.ReadRow())
+
+		gotTime, err := reader.lastRow.Row[0].GetMysqlTime().GoTime(time.UTC)
+		require.NoError(t, err)
+		require.Equal(t, time.Date(2020, 10, 29, 9, 27, 53, 0, time.UTC), gotTime)
+	})
+
+	t.Run("spark_legacy_datetime_rebase", func(t *testing.T) {
+		legacyMeta := metadata.NewKeyValueMetadata()
+		require.NoError(t, legacyMeta.Append("org.apache.spark.version", "2.4.8-amzn-1"))
+		require.NoError(t, legacyMeta.Append("org.apache.spark.timeZone", "UTC"))
+
+		modernMeta := metadata.NewKeyValueMetadata()
+		require.NoError(t, modernMeta.Append("org.apache.spark.version", "3.5.0-amzn-1"))
+		require.NoError(t, modernMeta.Append("org.apache.spark.timeZone", "UTC"))
+
+		spark30Meta := metadata.NewKeyValueMetadata()
+		require.NoError(t, spark30Meta.Append("org.apache.spark.version", "3.0.3"))
+		require.NoError(t, spark30Meta.Append("org.apache.spark.timeZone", "UTC"))
+
+		testCases := []struct {
+			name                      string
+			meta                      metadata.KeyValueMetadata
+			date                      string
+			expected                  []time.Time
+			expectedRebaseTimeZoneIDs []string
+		}{
+			{
+				name: "legacy",
+				meta: legacyMeta,
+				date: "1582-10-04",
+				expected: []time.Time{
+					time.Date(1582, 10, 4, 12, 34, 56, 789000000, time.UTC),
+					time.Date(1582, 10, 4, 12, 34, 56, 789123000, time.UTC),
+					time.Date(1582, 10, 4, 12, 34, 56, 789123000, time.UTC),
+				},
+				expectedRebaseTimeZoneIDs: []string{"UTC", "UTC", "UTC", "UTC"},
+			},
+			{
+				name: "spark_3_0_int96_legacy_datetime_proleptic",
+				meta: spark30Meta,
+				date: "1582-10-14",
+				expected: []time.Time{
+					time.Date(1582, 10, 14, 12, 34, 56, 789000000, time.UTC),
+					time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC),
+					time.Date(1582, 10, 4, 12, 34, 56, 789123000, time.UTC),
+				},
+				expectedRebaseTimeZoneIDs: []string{"", "", "", "UTC"},
+			},
+			{
+				name: "modern",
+				meta: modernMeta,
+				date: "1582-10-14",
+				expected: []time.Time{
+					time.Date(1582, 10, 14, 12, 34, 56, 789000000, time.UTC),
+					time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC),
+					time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC),
+				},
+				expectedRebaseTimeZoneIDs: []string{"", "", "", ""},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				pc := []ParquetColumn{
+					{
+						Name:      "date",
+						Type:      parquet.Types.Int32,
+						Converted: schema.ConvertedTypes.Date,
+						Gen: func(_ int) (any, []int16) {
+							return []int32{int32(time.Date(1582, 10, 14, 0, 0, 0, 0, time.UTC).Unix() / 86400)}, []int16{1}
+						},
+					},
+					{
+						Name:      "timestampmillis",
+						Type:      parquet.Types.Int64,
+						Converted: schema.ConvertedTypes.TimestampMillis,
+						Gen: func(_ int) (any, []int16) {
+							return []int64{time.Date(1582, 10, 14, 12, 34, 56, 789000000, time.UTC).UnixMilli()}, []int16{1}
+						},
+					},
+					{
+						Name:      "timestampmicros",
+						Type:      parquet.Types.Int64,
+						Converted: schema.ConvertedTypes.TimestampMicros,
+						Gen: func(_ int) (any, []int16) {
+							return []int64{time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC).UnixMicro()}, []int16{1}
+						},
+					},
+					{
+						Name:      "timestampint96",
+						Type:      parquet.Types.Int96,
+						Converted: schema.ConvertedTypes.None,
+						Gen: func(_ int) (any, []int16) {
+							return []parquet.Int96{newInt96(time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC).UnixMicro())}, []int16{1}
+						},
+					},
+				}
+
+				dir := t.TempDir()
+				name := "legacy-timestamp.parquet"
+				require.NoError(t,
+					WriteParquetFile(
+						dir, name, pc, 1,
+						parquet.WithCreatedBy("parquet-mr version 1.10.1"),
+						file.WithWriteMetadata(tc.meta),
+					),
+				)
+
+				reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+				require.NotNil(t, reader.fileMeta.KeyValueMetadata().FindValue("org.apache.spark.version"))
+				if tc.name == "legacy" {
+					version := sparkVersionFromMetadata(reader.fileMeta)
+					require.NotNil(t, version)
+					require.Equal(t, "spark", version.App)
+					require.True(t, version.LessThan(sparkDatetimeRebaseCutoff))
+				}
+				for i, expectedID := range tc.expectedRebaseTimeZoneIDs {
+					require.Equal(t, expectedID, reader.colTypes[i].sparkRebaseMicros.timeZoneID)
+				}
+				require.NoError(t, reader.ReadRow())
+				row := reader.lastRow.Row
+				require.Len(t, row, 4)
+
+				require.Equal(t, tc.date, row[0].GetMysqlTime().String())
+
+				for i, expected := range tc.expected {
+					gotTime, err := row[i+1].GetMysqlTime().GoTime(time.UTC)
+					require.NoError(t, err)
+					require.Equal(t, expected, gotTime)
+				}
+			})
+		}
+	})
+
+	t.Run("spark_legacy_date_switches", func(t *testing.T) {
+		testCases := []struct {
+			name     string
+			days     int
+			expected int
+		}{
+			{
+				// Spark's first positive-year legacy DATE switch: hybrid 0100-03-01
+				// rebases from -682945 to -682944.
+				name:     "first_positive_year_switch",
+				days:     -682945,
+				expected: -682944,
+			},
+			{
+				name:     "zero_delta_range",
+				days:     -646420,
+				expected: -646420,
+			},
+			{
+				name:     "cutover_day",
+				days:     int(time.Date(1582, 10, 15, 0, 0, 0, 0, time.UTC).Unix() / 86400),
+				expected: int(time.Date(1582, 10, 15, 0, 0, 0, 0, time.UTC).Unix() / 86400),
+			},
+			{
+				name:     "post_cutover_date",
+				days:     int(time.Date(1700, 3, 1, 0, 0, 0, 0, time.UTC).Unix() / 86400),
+				expected: int(time.Date(1700, 3, 1, 0, 0, 0, 0, time.UTC).Unix() / 86400),
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				require.Equal(t, tc.expected, rebaseJulianToGregorianDays(tc.days))
+			})
+		}
+	})
+
+	t.Run("legacy_timestamp_rebase_utc", func(t *testing.T) {
+		loadedUTC, err := time.LoadLocation(sparkRebaseDefaultTimeZoneID)
+		require.NoError(t, err)
+
+		legacyMicros := time.Date(1582, 10, 14, 12, 34, 56, 789123000, time.UTC).UnixMicro()
+		expected := time.Date(1582, 10, 4, 12, 34, 56, 789123000, time.UTC).UnixMicro()
+
+		for _, tc := range []struct {
+			name       string
+			timeZoneID string
+		}{
+			{name: "utc", timeZoneID: sparkRebaseDefaultTimeZoneID},
+			{name: "loaded_utc", timeZoneID: loadedUTC.String()},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				rebased, err := rebaseSparkJulianToGregorianMicros(tc.timeZoneID, legacyMicros)
+				require.NoError(t, err)
+				require.Equal(t, expected, rebased)
+			})
+		}
+
+		modernMicros := time.Date(1900, 1, 1, 0, 0, 0, 0, time.UTC).UnixMicro()
+		rebased, err := rebaseSparkJulianToGregorianMicros(sparkRebaseDefaultTimeZoneID, modernMicros)
+		require.NoError(t, err)
+		require.Equal(t, modernMicros, rebased)
+	})
+
+	t.Run("legacy_timestamp_rebase_non_utc", func(t *testing.T) {
+		testCases := []struct {
+			timeZoneID string
+			micros     int64
+			expected   int64
+		}{
+			{
+				timeZoneID: "Africa/Abidjan",
+				micros:     time.Date(1400, 3, 10, 0, 0, 0, 0, time.UTC).UnixMicro(),
+				expected:   time.Date(1400, 3, 1, 0, 16, 8, 0, time.UTC).UnixMicro(),
+			},
+			{
+				timeZoneID: "SystemV/AST4",
+				micros:     time.Date(1400, 3, 10, 0, 0, 0, 0, time.UTC).UnixMicro(),
+				expected:   time.Date(1400, 3, 2, 0, 0, 0, 0, time.UTC).UnixMicro(),
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.timeZoneID, func(t *testing.T) {
+				rebased, err := rebaseSparkJulianToGregorianMicros(tc.timeZoneID, tc.micros)
+				require.NoError(t, err)
+				require.Equal(t, tc.expected, rebased)
+			})
+		}
+	})
+
+	t.Run("spark_legacy_timestamp_rebase_uses_spark_zone_tables", func(t *testing.T) {
+		testCases := []struct {
+			timeZoneID string
+			expected   time.Time
+		}{
+			{
+				timeZoneID: "Africa/Abidjan",
+				expected:   time.Date(1400, 3, 1, 0, 16, 8, 0, time.UTC),
+			},
+			{
+				timeZoneID: "SystemV/AST4",
+				expected:   time.Date(1400, 3, 2, 0, 0, 0, 0, time.UTC),
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.timeZoneID, func(t *testing.T) {
+				legacyMeta := metadata.NewKeyValueMetadata()
+				require.NoError(t, legacyMeta.Append("org.apache.spark.version", "2.4.8"))
+				require.NoError(t, legacyMeta.Append("org.apache.spark.timeZone", tc.timeZoneID))
+
+				legacyMicros := time.Date(1400, 3, 10, 0, 0, 0, 0, time.UTC).UnixMicro()
+				pc := []ParquetColumn{
+					{
+						Name:      "timestampmillis",
+						Type:      parquet.Types.Int64,
+						Converted: schema.ConvertedTypes.TimestampMillis,
+						Gen: func(_ int) (any, []int16) {
+							return []int64{legacyMicros / 1000}, []int16{1}
+						},
+					},
+					{
+						Name:      "timestampmicros",
+						Type:      parquet.Types.Int64,
+						Converted: schema.ConvertedTypes.TimestampMicros,
+						Gen: func(_ int) (any, []int16) {
+							return []int64{legacyMicros}, []int16{1}
+						},
+					},
+					{
+						Name:      "timestampint96",
+						Type:      parquet.Types.Int96,
+						Converted: schema.ConvertedTypes.None,
+						Gen: func(_ int) (any, []int16) {
+							return []parquet.Int96{newInt96(legacyMicros)}, []int16{1}
+						},
+					},
+				}
+
+				dir := t.TempDir()
+				name := "legacy-timestamp-zone-table.parquet"
+				require.NoError(t,
+					WriteParquetFile(
+						dir, name, pc, 1,
+						parquet.WithCreatedBy("parquet-mr version 1.10.1"),
+						file.WithWriteMetadata(legacyMeta),
+					),
+				)
+
+				reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+				for _, colType := range reader.colTypes {
+					require.Equal(t, tc.timeZoneID, colType.sparkRebaseMicros.timeZoneID)
+				}
+				require.NoError(t, reader.ReadRow())
+				row := reader.lastRow.Row
+				require.Len(t, row, 3)
+
+				for _, datum := range row {
+					gotTime, err := datum.GetMysqlTime().GoTime(time.UTC)
+					require.NoError(t, err)
+					require.Equal(t, tc.expected, gotTime)
+				}
+			})
+		}
+	})
+
+	t.Run("spark_legacy_timestamp_default_zone_exists_in_table", func(t *testing.T) {
+		_, ok := sparkJulianGregorianRebaseMicrosIndex(sparkRebaseDefaultTimeZoneID)
+		require.True(t, ok)
+	})
+
+	t.Run("spark_legacy_timestamp_rebase_uses_utc_when_zone_table_is_missing", func(t *testing.T) {
+		legacyMeta := metadata.NewKeyValueMetadata()
+		require.NoError(t, legacyMeta.Append("org.apache.spark.version", "2.4.8"))
+		require.NoError(t, legacyMeta.Append("org.apache.spark.timeZone", "Unknown/Zone"))
+
+		legacyMicros := time.Date(1400, 3, 10, 0, 0, 0, 0, time.UTC).UnixMicro()
+		pc := []ParquetColumn{
+			{
+				Name:      "timestampmicros",
+				Type:      parquet.Types.Int64,
+				Converted: schema.ConvertedTypes.TimestampMicros,
+				Gen: func(_ int) (any, []int16) {
+					return []int64{legacyMicros}, []int16{1}
+				},
+			},
+		}
+
+		dir := t.TempDir()
+		name := "legacy-timestamp-unknown-zone.parquet"
+		require.NoError(t,
+			WriteParquetFile(
+				dir, name, pc, 1,
+				parquet.WithCreatedBy("parquet-mr version 1.10.1"),
+				file.WithWriteMetadata(legacyMeta),
+			),
+		)
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{Loc: time.UTC})
+		require.Equal(t, sparkRebaseDefaultTimeZoneID, reader.colTypes[0].sparkRebaseMicros.timeZoneID)
+		require.NoError(t, reader.ReadRow())
+
+		gotTime, err := reader.lastRow.Row[0].GetMysqlTime().GoTime(time.UTC)
+		require.NoError(t, err)
+		require.Equal(t, time.Date(1400, 3, 1, 0, 0, 0, 0, time.UTC), gotTime)
+	})
+
+	t.Run("spark_legacy_timestamp_rebase_uses_effective_parser_location_when_footer_zone_missing", func(t *testing.T) {
+		asiaShanghai, err := time.LoadLocation("Asia/Shanghai")
+		require.NoError(t, err)
+		origLocal := time.Local
+		time.Local = asiaShanghai
+		t.Cleanup(func() {
+			time.Local = origLocal
+		})
+
+		legacyMeta := metadata.NewKeyValueMetadata()
+		require.NoError(t, legacyMeta.Append("org.apache.spark.version", "2.4.8"))
+
+		pc := []ParquetColumn{
+			{
+				Name:      "timestampmicros",
+				Type:      parquet.Types.Int64,
+				Converted: schema.ConvertedTypes.TimestampMicros,
+				Gen: func(_ int) (any, []int16) {
+					return []int64{time.Date(1400, 3, 10, 0, 0, 0, 0, time.UTC).UnixMicro()}, []int16{1}
+				},
+			},
+		}
+
+		dir := t.TempDir()
+		name := "legacy-timestamp-system-zone.parquet"
+		require.NoError(t,
+			WriteParquetFile(
+				dir, name, pc, 1,
+				parquet.WithCreatedBy("parquet-mr version 1.10.1"),
+				file.WithWriteMetadata(legacyMeta),
+			),
+		)
+
+		reader := newParquetParserForTest(context.Background(), t, dir, name, ParquetFileMeta{})
+		require.Equal(t, "Asia/Shanghai", reader.loc.String())
+		require.Equal(t, "Asia/Shanghai", reader.colTypes[0].sparkRebaseMicros.timeZoneID)
+	})
+
+	t.Run("spark_legacy_timestamp_before_table_range_uses_hybrid_calendar_fallback", func(t *testing.T) {
+		index, ok := sparkJulianGregorianRebaseMicrosIndex(sparkRebaseDefaultTimeZoneID)
+		require.True(t, ok)
+		switches, _ := sparkJulianGregorianRebaseMicrosSlices(index)
+		require.NotEmpty(t, switches)
+
+		testCases := []struct {
+			name     string
+			micros   int64
+			expected int64
+		}{
+			{
+				name:     "common_era_boundary",
+				micros:   switches[0] - 1,
+				expected: time.Date(0, 12, 31, 23, 59, 59, 999999000, time.UTC).UnixMicro(),
+			},
+			{
+				name:     "julian_only_leap_day",
+				micros:   -65317968000000001,
+				expected: time.Date(-100, 3, 1, 23, 59, 59, 999999000, time.UTC).UnixMicro(),
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				rebased, err := rebaseSparkJulianToGregorianMicros(sparkRebaseDefaultTimeZoneID, tc.micros)
+				require.NoError(t, err)
+				require.Equal(t, tc.expected, rebased)
+			})
+		}
+	})
+
 	t.Run("decimal_with_nulls", func(t *testing.T) {
 		pc := []ParquetColumn{
 			{
@@ -386,6 +844,44 @@ func TestParquetVariousTypes(t *testing.T) {
 		assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
 		assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
 	})
+}
+
+// benchmarkRebasedSparkMicros keeps the rebased value observable so the
+// compiler cannot discard the calculation while optimizing the benchmark.
+var benchmarkRebasedSparkMicros int64
+
+func BenchmarkRebaseSparkJulianToGregorianMicros(b *testing.B) {
+	index, ok := sparkJulianGregorianRebaseMicrosIndex(sparkRebaseDefaultTimeZoneID)
+	require.True(b, ok)
+	switches, _ := sparkJulianGregorianRebaseMicrosSlices(index)
+	require.NotEmpty(b, switches)
+	lookup, err := newSparkRebaseMicrosLookup(sparkRebaseDefaultTimeZoneID)
+	require.NoError(b, err)
+
+	tableMicros := time.Date(1400, 3, 10, 0, 0, 0, 0, time.UTC).UnixMicro()
+	require.GreaterOrEqual(b, tableMicros, switches[0])
+	require.Less(b, tableMicros, legacyTimestampRebaseCutoffMicros)
+
+	for _, tc := range []struct {
+		name   string
+		micros int64
+	}{
+		{name: "Table", micros: tableMicros},
+		{name: "BeforeSwitch", micros: switches[0] - 1},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			var rebased int64
+			for b.Loop() {
+				var err error
+				rebased, err = lookup.rebase(tc.micros)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			benchmarkRebasedSparkMicros = rebased
+		})
+	}
 }
 
 func TestParquetAurora(t *testing.T) {

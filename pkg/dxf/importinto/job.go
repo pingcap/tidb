@@ -49,7 +49,7 @@ import (
 )
 
 // SubmitStandaloneTask submits a task to the distribute framework that only runs on the current node.
-// when import from server-disk, pass engine checkpoints too, as scheduler might run on another
+// when import from server-disk, pass engine chunks too, as scheduler might run on another
 // node where we can't access the data files.
 func SubmitStandaloneTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	serverInfo, err := infosync.GetServerInfo()
