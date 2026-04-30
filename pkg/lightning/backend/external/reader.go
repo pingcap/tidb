@@ -155,7 +155,7 @@ func readOneFile(
 		rd.Close()
 	}()
 	if concurrency > 1 {
-		rd.byteReader.enableConcurrentReadNonBlocking(
+		rd.byteReader.enableConcurrentRead(
 			storage,
 			dataFile,
 			int(concurrency),
