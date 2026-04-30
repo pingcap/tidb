@@ -462,16 +462,11 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 }
 
 func (e *Engine) waitIngestDataReleased(ctx context.Context) error {
-	select {
-	case <-e.dataReleaseCh:
-		return nil
-	default:
-	}
 	failpoint.InjectCall("waitIngestDataReleasedBeforeCountCheck")
 	if e.inFlightDataCount.Load() == 0 {
-		// A release can race between the non-blocking receive above and this
-		// count check. Observe the release signal once more before deciding that
-		// there is no downstream data whose release can make retrying useful.
+		// onIngestDataReleased sends the signal before decrementing the count.
+		// If the count is already zero, any useful release signal should be
+		// observable before we decide retrying cannot make progress.
 		select {
 		case <-e.dataReleaseCh:
 			return nil
