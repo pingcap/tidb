@@ -128,14 +128,14 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
   
     * A nit pick might be, for example, fixing a typo or awkwardly-phrased comment, removing extraneous parentheses around a Boolean condition, or simplifying nested if conditionals with a Boolean `&&` operator.
 
-    * That said, be careful to not use their personal preferences as a reason to excessively nit pick.
+    * That said, remember that personal preference is not a valid reason to excessively nit pick.
 
 
 ## Guidance for authors
 
 * Respond to all feedback raised by the reviewer, and address all blocking issues.
 
-  * In general, prefer to incorporate non-blocking suggestions from the reviewer. If you disagree and choose not to, clearly articulate your reasoning for why.
+  * In general, prefer to incorporate non-blocking suggestions from the reviewer unless you can clearly articulate a good reason not to.
 
 * If the reviewer points out an issue in one part of the PR, proactively look for and address similar issues in the rest of the PR before re-requesting a review. The reviewer should not have to raise the same kind of issue repeatedly.
 
