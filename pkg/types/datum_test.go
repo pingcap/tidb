@@ -562,9 +562,13 @@ func TestDatumEqualsCollation(t *testing.T) {
 		return d
 	}
 
-	// Same canonical collation, different name casing → equal.
+	// Same canonical collation, different name casing → equal. The
+	// non-zero ID assertion guards against the test passing vacuously
+	// if name resolution ever breaks (both names would silently fall
+	// back to id 0, satisfying the equality below for the wrong reason).
 	a := mk("UTF8MB4_BIN")
 	b := mk("utf8mb4_bin")
+	require.NotEqual(t, uint16(0), a.CollationID())
 	require.Equal(t, a.CollationID(), b.CollationID())
 	require.True(t, a.Equals(&b))
 
@@ -673,10 +677,12 @@ func BenchmarkCompareDatum(b *testing.B) {
 	}
 }
 
-// BenchmarkCompareDatumCollation compares collated string datums. Unlike
-// BenchmarkCompareDatum, the datums carry a non-empty collation and the
-// compare path dispatches through the named collator instead of the binary
-// shortcut, so it exercises Datum.Collation() on the hot path.
+// BenchmarkCompareDatumCollation compares collated string datums through
+// an explicit non-binary collator. Unlike BenchmarkCompareDatum, the
+// collator is sourced from charset.CollationUTF8MB4 rather than the
+// binary shortcut, so the cost of the collated comparator dominates the
+// measurement. Note that Compare uses the supplied `coll` directly and
+// never reads d1.Collation() / d1.CollationID() on the hot path.
 func BenchmarkCompareDatumCollation(b *testing.B) {
 	d1 := NewCollationStringDatum("abcdefghij", charset.CollationUTF8MB4)
 	d2 := NewCollationStringDatum("abcdefghik", charset.CollationUTF8MB4)
