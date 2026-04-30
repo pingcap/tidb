@@ -79,13 +79,17 @@ func TestUpgradeToVer259BackfillsIgnoreInlistPlanDigest(t *testing.T) {
 	chk = res.NewChunk(nil)
 	require.NoError(t, res.Next(ctx, chk))
 	require.Equal(t, 1, chk.NumRows())
-	require.Equal(t, "OFF", chk.GetRow(0).GetString(1))
+	require.Equal(t, variable.BoolToOnOff(vardef.DefTiDBIgnoreInlistPlanDigest), chk.GetRow(0).GetString(1))
 	require.NoError(t, res.Close())
 
 	res = MustExecToRecodeSet(t, seCurVer, "select @@global.tidb_ignore_inlist_plan_digest")
 	chk = res.NewChunk(nil)
 	require.NoError(t, res.Next(ctx, chk))
 	require.Equal(t, 1, chk.NumRows())
-	require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
+	if vardef.DefTiDBIgnoreInlistPlanDigest {
+		require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
+	} else {
+		require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
+	}
 	require.NoError(t, res.Close())
 }

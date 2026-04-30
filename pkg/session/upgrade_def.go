@@ -497,7 +497,7 @@ const (
 	// version259
 	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
 	// mysql.global_variables was never materialized when the variable was introduced.
-	// Preserve the pre-v8.5.6 behavior by persisting OFF when the row is missing.
+	// Use the current sysvar default when the row is missing.
 	version259 = 259
 )
 
@@ -2118,5 +2118,5 @@ func upgradeToVer258(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer259(s sessionapi.Session, _ int64) {
-	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, vardef.Off)
+	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, variable.BoolToOnOff(vardef.DefTiDBIgnoreInlistPlanDigest))
 }
