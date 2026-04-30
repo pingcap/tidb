@@ -56,6 +56,21 @@ error = '''
 invalid restore range
 '''
 
+["BR:Common:ErrMigrationNotFound"]
+error = '''
+no migration found
+'''
+
+["BR:Common:ErrMigrationVersionNotSupported"]
+error = '''
+the migration version isn't supported
+'''
+
+["BR:Common:ErrOperationAborted"]
+error = '''
+operation aborted by user
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -186,14 +201,29 @@ error = '''
 PD leader not found
 '''
 
+["BR:PD:ErrPDNotFullyScatter"]
+error = '''
+pd not fully scattered
+'''
+
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
-failed to wait region splitted
+failed to wait region split
 '''
 
 ["BR:PD:ErrPDUpdateFailed"]
 error = '''
 failed to update PD
+'''
+
+["BR:PiTR:ErrCheckpointWatchRestart"]
+error = '''
+checkpoint watch needs restart
 '''
 
 ["BR:PiTR:ErrInvalidTaskInfo"]
@@ -219,6 +249,11 @@ task not found
 ["BR:Restore:ErrDatabasesAlreadyExisted"]
 error = '''
 databases already existed in restored cluster
+'''
+
+["BR:Restore:ErrRestoreCheckpointMismatch"]
+error = '''
+restore checkpoint mismatch
 '''
 
 ["BR:Restore:ErrRestoreChecksumMismatch"]
@@ -304,6 +339,61 @@ the system table isn't supported for restoring yet
 ["BR:Stream:ErrStreamLogTaskExist"]
 error = '''
 stream task already exists
+'''
+
+["BR:Stream:ErrStreamLogTaskHasNoStorage"]
+error = '''
+stream task has no storage
+'''
+
+["Import:ErrCastValue"]
+error = '''
+Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
+'''
+
+["Ingest:EpochNotMatch"]
+error = '''
+epoch not match
+'''
+
+["Ingest:ErrKVIngestFailed"]
+error = '''
+ingest tikv failed
+'''
+
+["Ingest:ErrKVRaftProposalDropped"]
+error = '''
+raft proposal dropped
+'''
+
+["Ingest:NotLeader"]
+error = '''
+not leader
+'''
+
+["Ingest:ReadIndexNotReady"]
+error = '''
+read index not ready
+'''
+
+["Ingest:RegionNotFound"]
+error = '''
+region not found
+'''
+
+["Ingest:ServerIsBusy"]
+error = '''
+server is busy
+'''
+
+["Ingest:StoreDiskFull"]
+error = '''
+store disk full
+'''
+
+["KV:ErrNoLeader"]
+error = '''
+region has no leader, region '%d'
 '''
 
 ["Lighting:Restore:ErrChecksumMismatch"]
@@ -406,11 +496,6 @@ error = '''
 init meta manager error
 '''
 
-["Lightning:KV:EpochNotMatch"]
-error = '''
-epoch not match
-'''
-
 ["Lightning:KV:ErrCheckKVVersion"]
 error = '''
 check tikv version error
@@ -424,41 +509,6 @@ check multi-ingest support error
 ["Lightning:KV:ErrCreateKVClient"]
 error = '''
 create kv client error
-'''
-
-["Lightning:KV:ErrKVIngestFailed"]
-error = '''
-ingest tikv failed
-'''
-
-["Lightning:KV:ErrKVRaftProposalDropped"]
-error = '''
-raft proposal dropped
-'''
-
-["Lightning:KV:ErrNoLeader"]
-error = '''
-write to tikv with no leader returned, region '%d', leader: %d
-'''
-
-["Lightning:KV:NotLeader"]
-error = '''
-not leader
-'''
-
-["Lightning:KV:ReadIndexNotReady"]
-error = '''
-read index not ready
-'''
-
-["Lightning:KV:RegionNotFound"]
-error = '''
-region not found
-'''
-
-["Lightning:KV:ServerIsBusy"]
-error = '''
-server is busy
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
@@ -519,6 +569,11 @@ check data source error
 ["Lightning:PreCheck:ErrCheckLocalResource"]
 error = '''
 check local storage resource error
+'''
+
+["Lightning:PreCheck:ErrCheckPDTiDBSameCluster"]
+error = '''
+check PD and TiDB in the same cluster error
 '''
 
 ["Lightning:PreCheck:ErrCheckTableEmpty"]
@@ -1326,6 +1381,11 @@ error = '''
 Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.
 '''
 
+["ddl:3981"]
+error = '''
+Storage engine does not support ENGINE_ATTRIBUTE.
+'''
+
 ["ddl:4135"]
 error = '''
 Sequence '%-.64s.%-.64s' has run out
@@ -1569,6 +1629,31 @@ Global Index is needed for index '%-.192s', since the unique index is not includ
 ["ddl:8265"]
 error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
+'''
+
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
+["ddl:8267"]
+error = '''
+%s is forbidden
+'''
+
+["ddl:8270"]
+error = '''
+Invalid engine attribute format: %s
+'''
+
+["ddl:8271"]
+error = '''
+Invalid storage class: %s
+'''
+
+["ddl:8272"]
+error = '''
+Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
 '''
 
 ["ddl:9014"]
@@ -1916,6 +2001,11 @@ error = '''
 Unsupported option %s for %s
 '''
 
+["executor:8167"]
+error = '''
+Duplicate key conflict found. Please resolve conflicts in the input dataset, or set on_duplicate_key to a strategy that can handle conflicts, for example 'capture'
+'''
+
 ["executor:8170"]
 error = '''
 Job ID %d doesn't exist
@@ -1954,6 +2044,16 @@ Your query has been cancelled due to exceeding the allowed memory limit for the 
 ["executor:8177"]
 error = '''
 Delete can not find column %s for table %s
+'''
+
+["executor:8179"]
+error = '''
+Timestamp is not valid, since it is in Daylight Saving Time transition '%s' for time zone '%s'
+'''
+
+["executor:8180"]
+error = '''
+Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
 '''
 
 ["executor:8212"]
@@ -2231,6 +2331,16 @@ error = '''
 Unknown resource group '%-.192s'
 '''
 
+["meta:8268"]
+error = '''
+masking policy already exists
+'''
+
+["meta:8269"]
+error = '''
+masking policy doesn't exist
+'''
+
 ["planner:1044"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'
@@ -2374,6 +2484,11 @@ Table '%s' from one of the %ss cannot be used in %s
 ["planner:1288"]
 error = '''
 The target table %-.100s of the %s is not updatable
+'''
+
+["planner:1305"]
+error = '''
+%s %s does not exist
 '''
 
 ["planner:1345"]
@@ -2599,6 +2714,11 @@ Argument %s of GROUPING function is not in GROUP BY
 ["planner:3637"]
 error = '''
 Variable '%s' might not be affected by SET_VAR hint.
+'''
+
+["planner:3809"]
+error = '''
+Invalid use of LATERAL: %s
 '''
 
 ["planner:8006"]
@@ -2916,6 +3036,16 @@ error = '''
 Cannot set resource group for a role
 '''
 
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
+'''
+
 ["server:1040"]
 error = '''
 Too many connections
@@ -2924,6 +3054,11 @@ Too many connections
 ["server:1045"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
+["server:1053"]
+error = '''
+Server shutdown in progress
 '''
 
 ["server:1148"]
@@ -2939,6 +3074,11 @@ Got a packet bigger than 'max_allowed_packet' bytes
 ["server:1184"]
 error = '''
 Aborted connection %d to db: '%-.192s' user: '%-.48s' host: '%-.255s' (%-.64s)
+'''
+
+["server:1203"]
+error = '''
+User %-.64s has exceeded the 'max_user_connections' resource
 '''
 
 ["server:1251"]
@@ -3203,7 +3343,7 @@ Region is unavailable
 
 ["tikv:9006"]
 error = '''
-GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v
+GC life time is shorter than transaction duration, transaction start ts is %v (%v), txn safe point is %v (%v)
 '''
 
 ["tikv:9008"]

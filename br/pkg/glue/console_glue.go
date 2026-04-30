@@ -19,6 +19,15 @@ const defaultTerminalWidth = 80
 // ConsoleOperations are some operations based on ConsoleGlue.
 type ConsoleOperations struct {
 	ConsoleGlue
+	Overrides ConsoleOperationsOverrides
+}
+
+// ConsoleOperationsOverrides overrides the small set of ConsoleOperations methods
+// that tests need to make deterministic.
+type ConsoleOperationsOverrides struct {
+	StartProgressBar        func(title string, total int, extraFields ...ExtraField) ProgressWaiter
+	StartDynamicProgressBar func(title string, extraFields ...ExtraField) DynamicProgressWaiter
+	IsInteractive           func() bool
 }
 
 // An extra field appending to the task.
@@ -107,6 +116,9 @@ func (ops ConsoleOperations) PromptBool(p string) bool {
 }
 
 func (ops ConsoleOperations) IsInteractive() bool {
+	if ops.Overrides.IsInteractive != nil {
+		return ops.Overrides.IsInteractive()
+	}
 	f, ok := ops.In().(*os.File)
 	if !ok {
 		return false

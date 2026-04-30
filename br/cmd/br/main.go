@@ -24,6 +24,7 @@ func main() {
 	SetDefaultContext(ctx)
 	rootCmd.AddCommand(
 		NewDebugCommand(),
+		NewRepoCommand(),
 		NewBackupCommand(),
 		NewRestoreCommand(),
 		NewStreamCommand(),

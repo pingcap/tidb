@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path"
@@ -16,7 +17,6 @@ import (
 
 	gcs "cloud.google.com/go/storage"
 	"github.com/docker/go-units"
-	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -26,13 +26,16 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	taskcommon "github.com/pingcap/tidb/br/pkg/task/common"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/tikv/client-go/v2/config"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -64,7 +67,7 @@ const (
 	flagRateLimit           = "ratelimit"
 	flagRateLimitUnit       = "ratelimit-unit"
 	flagConcurrency         = "concurrency"
-	FlagChecksum            = "checksum"
+	flagChecksum            = "checksum"
 	flagFilter              = "filter"
 	flagCaseSensitive       = "case-sensitive"
 	flagRemoveTiFlash       = "remove-tiflash"
@@ -165,9 +168,9 @@ func (tls *TLSConfig) ToPDSecurityOption() pd.SecurityOption {
 	return securityOption
 }
 
-// Convert the TLS config to the PD security option.
-func (tls *TLSConfig) ToKVSecurity() config.Security {
-	return config.Security{
+// Convert the TLS config to the KV security option.
+func (tls *TLSConfig) ToKVSecurity() tikvcfg.Security {
+	return tikvcfg.Security{
 		ClusterSSLCA:   tls.CA,
 		ClusterSSLCert: tls.Cert,
 		ClusterSSLKey:  tls.Key,
@@ -217,7 +220,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) 
 
 // Config is the common configuration for all BRIE tasks.
 type Config struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 
 	Storage             string    `json:"storage" toml:"storage"`
 	PD                  []string  `json:"pd" toml:"pd"`
@@ -252,9 +255,12 @@ type Config struct {
 	// should be removed after TiDB upgrades the BR dependency.
 	Filter filter.MySQLReplicationRules
 
-	FilterStr          []string      `json:"filter-strings" toml:"filter-strings"`
-	TableFilter        filter.Filter `json:"-" toml:"-"`
-	SwitchModeInterval time.Duration `json:"switch-mode-interval" toml:"switch-mode-interval"`
+	FilterStr   []string      `json:"filter-strings" toml:"filter-strings"`
+	TableFilter filter.Filter `json:"-" toml:"-"`
+	// PiTRTableTracker generated from TableFilter during snapshot restore, it has all the db id and table id that needs
+	// to be restored
+	PiTRTableTracker   *utils.PiTRIdTracker `json:"-" toml:"-"`
+	SwitchModeInterval time.Duration        `json:"switch-mode-interval" toml:"switch-mode-interval"`
 	// Schemas is a database name set, to check whether the restore database has been backup
 	Schemas map[string]struct{}
 	// Tables is a table name set, to check whether the restore table has been backup
@@ -294,10 +300,11 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagCA, "", "CA certificate path for TLS connection")
 	flags.String(flagCert, "", "Certificate path for TLS connection")
 	flags.String(flagKey, "", "Private key path for TLS connection")
-	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
+	flags.Uint(flagChecksumConcurrency, vardef.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
-	flags.Bool(FlagChecksum, true, "Run checksum at end of task")
+	// default to false as we think it's unnecessary to run in production as it's resource intensive
+	flags.Bool(flagChecksum, false, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
 
@@ -354,12 +361,12 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 		"gcp-kms:///projects/{project-id}/locations/{location}/keyRings/{keyring}/cryptoKeys/{key-name}?AUTH=specified&CREDENTIALS={credentials}\"")
 	_ = flags.MarkHidden(flagMetadataDownloadBatchSize)
 
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 }
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
 func HiddenFlagsForStream(flags *pflag.FlagSet) {
-	_ = flags.MarkHidden(FlagChecksum)
+	_ = flags.MarkHidden(flagChecksum)
 	_ = flags.MarkHidden(flagLoadStats)
 	_ = flags.MarkHidden(flagChecksumConcurrency)
 	_ = flags.MarkHidden(flagRateLimit)
@@ -375,7 +382,7 @@ func HiddenFlagsForStream(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagMasterKeyConfig)
 	_ = flags.MarkHidden(flagMasterKeyCipherType)
 
-	storage.HiddenFlagsForStream(flags)
+	objstore.HiddenFlagsForStream(flags)
 }
 
 func DefaultConfig() Config {
@@ -386,6 +393,31 @@ func DefaultConfig() Config {
 		log.Panic("infallible operation failed.", zap.Error(err))
 	}
 	return cfg
+}
+
+// ApplyTiDBRuntimeConfig applies runtime PD/TLS settings from TiDB global config
+// to an in-process BR config without changing CLI flag defaults.
+func ApplyTiDBRuntimeConfig(cfg *Config) {
+	tidbCfg := tidbconfig.GetGlobalConfig()
+	if tidbCfg.Path != "" {
+		pds := make([]string, 0, 1)
+		for _, pdAddr := range strings.Split(tidbCfg.Path, ",") {
+			pdAddr = strings.TrimSpace(pdAddr)
+			if pdAddr != "" {
+				pds = append(pds, pdAddr)
+			}
+		}
+		if len(pds) > 0 {
+			cfg.PD = pds
+		}
+	}
+	if tidbCfg.Security.ClusterSSLCA != "" || tidbCfg.Security.ClusterSSLCert != "" || tidbCfg.Security.ClusterSSLKey != "" {
+		cfg.TLS = TLSConfig{
+			CA:   tidbCfg.Security.ClusterSSLCA,
+			Cert: tidbCfg.Security.ClusterSSLCert,
+			Key:  tidbCfg.Security.ClusterSSLKey,
+		}
+	}
 }
 
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.
@@ -401,7 +433,7 @@ func DefineTableFlags(command *cobra.Command) {
 	_ = command.MarkFlagRequired(flagTable)
 }
 
-// DefineFilterFlags defines the --filter and --case-sensitive flags for `full` subcommand.
+// DefineFilterFlags defines the --filter and --case-sensitive flags.
 func DefineFilterFlags(command *cobra.Command, defaultFilter []string, setHidden bool) {
 	flags := command.Flags()
 	flags.StringArrayP(flagFilter, "f", defaultFilter, "select tables to process")
@@ -596,6 +628,10 @@ func (cfg *Config) normalizePDURLs() error {
 	return nil
 }
 
+func (cfg *Config) UserFiltered() bool {
+	return len(cfg.Schemas) != 0 || len(cfg.Tables) != 0 || len(cfg.FilterStr) != 0
+}
+
 // ParseFromFlags parses the config from the flag set.
 func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
@@ -609,7 +645,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.Checksum, err = flags.GetBool(FlagChecksum); err != nil {
+	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.ChecksumConcurrency, err = flags.GetUint(flagChecksumConcurrency); err != nil {
@@ -622,6 +658,13 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	if rateLimitUnit, err = flags.GetUint64(flagRateLimitUnit); err != nil {
 		return errors.Trace(err)
+	}
+	// Check for multiplication overflow when both values are non-zero
+	// This prevents silent wraparound that would cause incorrect rate limiting
+	if rateLimit > 0 && rateLimitUnit > 0 && rateLimit > math.MaxUint64/rateLimitUnit {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"rate limit calculation overflow: %d * %d exceeds uint64 max (consider max ~17PB/s)",
+			rateLimit, rateLimitUnit)
 	}
 	cfg.RateLimit = rateLimit * rateLimitUnit
 
@@ -655,11 +698,14 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 				Schema: db,
 				Name:   tbl,
 			})
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.`%s`", db, tbl)}
 		} else {
 			cfg.TableFilter = filter.NewSchemasFilter(db)
+			cfg.FilterStr = []string{fmt.Sprintf("`%s`.*", db)}
 		}
 	} else {
 		cfg.TableFilter, _ = filter.Parse([]string{"*.*"})
+		cfg.FilterStr = []string{"*.*"}
 	}
 	if !caseSensitive {
 		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
@@ -817,28 +863,16 @@ func NewMgr(ctx context.Context,
 	)
 }
 
-// GetStorage gets the storage backend from the config.
-func GetStorage(
-	ctx context.Context,
-	storageName string,
-	cfg *Config,
-) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
-	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	s, err := storage.New(ctx, u, storageOpts(cfg))
-	if err != nil {
-		return nil, nil, errors.Annotate(err, "create storage failed")
-	}
-	return u, s, nil
-}
-
-func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
-	return &storage.ExternalStorageOptions{
+func storageOpts(cfg *Config) *storeapi.Options {
+	return &storeapi.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
+}
+
+// GetStorage is a thin wrapper around task/common.GetStorage for task.Config callers.
+func GetStorage(ctx context.Context, storageName string, cfg *Config) (*backuppb.StorageBackend, storeapi.Storage, error) {
+	return taskcommon.GetStorage(ctx, storageName, cfg.BackendOptions, cfg.NoCreds, cfg.SendCreds)
 }
 
 // ReadBackupMeta reads the backupmeta file from the storage.
@@ -846,7 +880,7 @@ func ReadBackupMeta(
 	ctx context.Context,
 	fileName string,
 	cfg *Config,
-) (*backuppb.StorageBackend, storage.ExternalStorage, *backuppb.BackupMeta, error) {
+) (*backuppb.StorageBackend, storeapi.Storage, *backuppb.BackupMeta, error) {
 	u, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -861,7 +895,7 @@ func ReadBackupMeta(
 		newPrefix, file := path.Split(oldPrefix)
 		newFileName := file + fileName
 		u.GetGcs().Prefix = newPrefix
-		s, err = storage.New(ctx, u, storageOpts(cfg))
+		s, err = objstore.New(ctx, u, storageOpts(cfg))
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
@@ -874,20 +908,19 @@ func ReadBackupMeta(
 		u.GetGcs().Prefix = oldPrefix
 	}
 
-	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
-	var iv []byte
-	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
-		iv = metaData[:metautil.CrypterIvLen]
-	}
-	decryptBackupMeta, err := utils.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
+	decryptBackupMeta, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, &cfg.CipherInfo)
 	if err != nil {
-		return nil, nil, nil, errors.Annotate(err, "decrypt failed with wrong key")
+		return nil, nil, nil, errors.Trace(err)
 	}
-
-	backupMeta := &backuppb.BackupMeta{}
-	if err = proto.Unmarshal(decryptBackupMeta, backupMeta); err != nil {
-		return nil, nil, nil, errors.Annotate(err,
-			"parse backupmeta failed because of wrong aes cipher")
+	backupMeta, err := taskcommon.DecodeBackupMeta(decryptBackupMeta, nil)
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptBackupMeta, backupMeta); err != nil {
+		if cfg.CheckRequirements {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", zap.Error(err))
 	}
 	return u, s, backupMeta, nil
 }
@@ -943,7 +976,7 @@ func (cfg *Config) adjust() {
 		cfg.GRPCKeepaliveTimeout = defaultGRPCKeepaliveTimeout
 	}
 	if cfg.ChecksumConcurrency == 0 {
-		cfg.ChecksumConcurrency = variable.DefChecksumTableConcurrency
+		cfg.ChecksumConcurrency = vardef.DefChecksumTableConcurrency
 	}
 	if cfg.MetadataDownloadBatchSize == 0 {
 		cfg.MetadataDownloadBatchSize = defaultMetadataDownloadBatchSize
@@ -994,9 +1027,15 @@ func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, tota
 		cur := progress.GetCurrent()
 		p := float64(cur) / float64(total)
 		p *= 100
-		err := os.WriteFile(progressFile, []byte(fmt.Sprintf("%.2f", p)), 0600)
+		err := os.WriteFile(progressFile, fmt.Appendf(nil, "%.2f", p), 0600)
 		if err != nil {
 			log.Warn("failed to update tmp progress file", zap.Error(err))
 		}
 	}
+}
+
+func WriteStringToConsole(g glue.Glue, msg string) error {
+	b := []byte(msg)
+	_, err := glue.GetConsole(g).Out().Write(b)
+	return err
 }

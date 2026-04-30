@@ -7,18 +7,29 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/vbauerster/mpb/v7"
 	"github.com/vbauerster/mpb/v7/decor"
+	"go.uber.org/zap"
 	"golang.org/x/term"
 )
 
 const OnlyOneTask int = -1
 
-var spinnerText []string = []string{".", "..", "..."}
+func coloredSpinner(s []string) []string {
+	c := color.New(color.Bold, color.FgGreen)
+	for i := range s {
+		s[i] = c.Sprint(s[i])
+	}
+	return s
+}
+
+var spinnerText []string = coloredSpinner([]string{"/", "-", "\\", "|"})
 
 type pbProgress struct {
 	bar      *mpb.Bar
@@ -28,22 +39,29 @@ type pbProgress struct {
 
 // Inc increases the progress. This method must be goroutine-safe, and can
 // be called from any goroutine.
-func (p pbProgress) Inc() {
+func (p *pbProgress) Inc() {
 	p.bar.Increment()
 }
 
 // IncBy increases the progress by n.
-func (p pbProgress) IncBy(n int64) {
+func (p *pbProgress) IncBy(n int64) {
 	p.bar.IncrBy(int(n))
 }
 
-func (p pbProgress) GetCurrent() int64 {
+func (p *pbProgress) GetCurrent() int64 {
 	return p.bar.Current()
 }
 
 // Close marks the progress as 100% complete and that Inc() can no longer be
 // called.
-func (p pbProgress) Close() {
+func (p *pbProgress) Close() {
+	// This wait shouldn't block.
+	// We are just waiting the progress bar refresh to the finished state.
+	defer func() {
+		p.bar.Wait()
+		p.progress.Wait()
+	}()
+
 	if p.bar.Completed() || p.bar.Aborted() {
 		return
 	}
@@ -51,7 +69,7 @@ func (p pbProgress) Close() {
 }
 
 // Wait implements the ProgressWaiter interface.
-func (p pbProgress) Wait(ctx context.Context) error {
+func (p *pbProgress) Wait(ctx context.Context) error {
 	ch := make(chan struct{})
 	go func() {
 		p.progress.Wait()
@@ -72,12 +90,80 @@ type ProgressWaiter interface {
 	Wait(context.Context) error
 }
 
+// DynamicProgressWaiter extends ProgressWaiter with dynamic total updates.
+// It is useful for workloads that discover more units while they are running.
+type DynamicProgressWaiter interface {
+	ProgressWaiter
+	SetTotal(int64)
+	AddTotal(int64)
+	Complete()
+}
+
 type noOPWaiter struct {
 	Progress
 }
 
 func (nw noOPWaiter) Wait(context.Context) error {
 	return nil
+}
+
+type noOPDynamicWaiter struct {
+	current atomic.Int64
+	total   atomic.Int64
+}
+
+func (nw *noOPDynamicWaiter) Inc() {
+	nw.current.Add(1)
+}
+
+func (nw *noOPDynamicWaiter) IncBy(cnt int64) {
+	nw.current.Add(cnt)
+}
+
+func (nw *noOPDynamicWaiter) GetCurrent() int64 {
+	return nw.current.Load()
+}
+
+func (nw *noOPDynamicWaiter) Close() {}
+
+func (nw *noOPDynamicWaiter) Wait(context.Context) error {
+	return nil
+}
+
+func (nw *noOPDynamicWaiter) SetTotal(total int64) {
+	nw.total.Store(total)
+}
+
+func (nw *noOPDynamicWaiter) AddTotal(delta int64) {
+	if delta <= 0 {
+		return
+	}
+	nw.total.Add(delta)
+}
+
+func (nw *noOPDynamicWaiter) Complete() {
+	nw.total.Store(nw.current.Load())
+}
+
+type dynamicPbProgress struct {
+	*pbProgress
+	total atomic.Int64
+}
+
+func (p *dynamicPbProgress) SetTotal(total int64) {
+	p.total.Store(total)
+	p.bar.SetTotal(total, false)
+}
+
+func (p *dynamicPbProgress) AddTotal(delta int64) {
+	if delta <= 0 {
+		return
+	}
+	p.SetTotal(p.total.Add(delta))
+}
+
+func (p *dynamicPbProgress) Complete() {
+	p.bar.SetTotal(-1, true)
 }
 
 // cbOnComplete like `decor.OnComplete`, however allow the message provided by a function.
@@ -105,15 +191,35 @@ func (ops ConsoleOperations) OutputIsTTY() bool {
 //
 // Note': Maybe replace the old `StartProgress` with `mpb` too.
 func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFields ...ExtraField) ProgressWaiter {
+	if ops.Overrides.StartProgressBar != nil {
+		return ops.Overrides.StartProgressBar(title, total, extraFields...)
+	}
 	if !ops.OutputIsTTY() {
 		return ops.startProgressBarOverDummy(title, total, extraFields...)
 	}
 	return ops.startProgressBarOverTTY(title, total, extraFields...)
 }
 
+// StartDynamicProgressBar starts a progress bar whose total can grow while the
+// task is running.
+func (ops ConsoleOperations) StartDynamicProgressBar(title string, extraFields ...ExtraField) DynamicProgressWaiter {
+	if ops.Overrides.StartDynamicProgressBar != nil {
+		return ops.Overrides.StartDynamicProgressBar(title, extraFields...)
+	}
+	if !ops.OutputIsTTY() {
+		return ops.startDynamicProgressBarOverDummy(title, extraFields...)
+	}
+	return ops.startDynamicProgressBarOverTTY(title, extraFields...)
+}
+
 func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int,
 	extraFields ...ExtraField) ProgressWaiter {
 	return noOPWaiter{utils.StartProgress(context.TODO(), title, int64(total), true, nil)}
+}
+
+func (ops ConsoleOperations) startDynamicProgressBarOverDummy(title string,
+	extraFields ...ExtraField) DynamicProgressWaiter {
+	return &noOPDynamicWaiter{}
 }
 
 func (ops ConsoleOperations) startProgressBarOverTTY(title string, total int,
@@ -126,10 +232,23 @@ func (ops ConsoleOperations) startProgressBarOverTTY(title string, total int,
 		bar.SetTotal(0, true)
 	}
 
-	return pbProgress{
+	return &pbProgress{
 		bar:      bar,
 		ops:      ops,
 		progress: pb,
+	}
+}
+
+func (ops ConsoleOperations) startDynamicProgressBarOverTTY(title string,
+	extraFields ...ExtraField) DynamicProgressWaiter {
+	pb := mpb.New(mpb.WithOutput(ops.Out()), mpb.WithRefreshRate(400*time.Millisecond))
+	bar := buildDynamicProgressBar(pb, title, 0, extraFields...)
+	return &dynamicPbProgress{
+		pbProgress: &pbProgress{
+			bar:      bar,
+			ops:      ops,
+			progress: pb,
+		},
 	}
 }
 
@@ -141,6 +260,20 @@ func adjustTotal(pb *mpb.Progress, title string, total int, extraFields ...Extra
 }
 
 func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...ExtraField) *mpb.Bar {
+	return buildProgressBarWithDecorator(pb, title, total, decor.NewPercentage("%02.2f"), extraFields...)
+}
+
+func buildDynamicProgressBar(pb *mpb.Progress, title string, total int, extraFields ...ExtraField) *mpb.Bar {
+	return buildProgressBarWithDecorator(pb, title, total, decor.CountersNoUnit("%d/%d"), extraFields...)
+}
+
+func buildProgressBarWithDecorator(
+	pb *mpb.Progress,
+	title string,
+	total int,
+	progressDecorator decor.Decorator,
+	extraFields ...ExtraField,
+) *mpb.Bar {
 	greenTitle := color.GreenString(title)
 	return pb.New(int64(total),
 		// Play as if the old BR style.
@@ -156,13 +289,13 @@ func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...
 		}),
 		mpb.PrependDecorators(decor.OnAbort(decor.OnComplete(decor.Name(greenTitle),
 			fmt.Sprintf("%s  ::", title)), fmt.Sprintf("%s  ::", title))),
-		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"),
+		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(progressDecorator,
 			printFinalMessage(extraFields))), color.RedString("ABORTED"))),
 	)
 }
 
 var (
-	spinnerDoneText = fmt.Sprintf("... %s", color.GreenString("DONE"))
+	spinnerDoneText = fmt.Sprintf(":: %s", color.GreenString("DONE"))
 )
 
 func buildOneTaskBar(pb *mpb.Progress, title string, total int) *mpb.Bar {
@@ -172,4 +305,81 @@ func buildOneTaskBar(pb *mpb.Progress, title string, total int) *mpb.Bar {
 		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText),
 			color.RedString("ABORTED"))),
 	)
+}
+
+type ProgressBar interface {
+	Increment()
+	Done()
+}
+
+type MultiProgress interface {
+	AddTextBar(string, int64) ProgressBar
+	Wait()
+}
+
+func (ops ConsoleOperations) StartMultiProgress() MultiProgress {
+	if !ops.OutputIsTTY() {
+		return &NopMultiProgress{}
+	}
+	pb := mpb.New(mpb.WithOutput(ops.Out()), mpb.WithRefreshRate(400*time.Millisecond))
+	return &TerminalMultiProgress{
+		progress: pb,
+	}
+}
+
+type NopMultiProgress struct{}
+
+type LogBar struct {
+	name  string
+	total int64
+}
+
+func (nmp *NopMultiProgress) AddTextBar(name string, total int64) ProgressBar {
+	log.Info("progress start", zap.String("name", name))
+	return &LogBar{
+		name:  name,
+		total: total,
+	}
+}
+
+func (nmp *NopMultiProgress) Wait() {}
+
+func (lb *LogBar) Increment() {
+	if atomic.AddInt64(&lb.total, -1) <= 0 {
+		log.Info("progress done", zap.String("name", lb.name))
+	}
+}
+
+func (lb *LogBar) Done() {}
+
+type TerminalBar struct {
+	bar *mpb.Bar
+}
+
+func (tb *TerminalBar) Increment() {
+	tb.bar.Increment()
+}
+
+func (tb *TerminalBar) Done() {
+	tb.bar.Abort(false)
+	tb.bar.Wait()
+}
+
+type TerminalMultiProgress struct {
+	progress *mpb.Progress
+}
+
+func (tmp *TerminalMultiProgress) AddTextBar(name string, total int64) ProgressBar {
+	bar := tmp.progress.New(total,
+		mpb.NopStyle(),
+		mpb.PrependDecorators(decor.Name(name)),
+		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText),
+			color.RedString("ABORTED"),
+		)),
+	)
+	return &TerminalBar{bar: bar}
+}
+
+func (tmp *TerminalMultiProgress) Wait() {
+	tmp.progress.Wait()
 }

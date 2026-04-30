@@ -133,10 +133,18 @@ func (s *externalCheckpointStorage) checkLockFile(ctx context.Context, now int64
 				zap.Int64("expire-at(ms)", lock.ExpireAt), zap.Int64("now(ms)", now))
 		}
 	} else if lock.LockId != s.lockId {
-		return errors.Errorf("The existing lock will expire in %d seconds. "+
-			"There may be another BR(%d) running. If not, you can wait for the lock to expire, "+
-			"or delete the file `%s%s` manually.",
-			(lock.ExpireAt-now)/1000, lock.LockId, strings.TrimRight(s.storage.URI(), "/"), s.CheckpointLockPath)
+		storageURI := strings.TrimRight(s.storage.URI(), "/")
+		lockPath := strings.TrimLeft(s.CheckpointLockPath, "/")
+		return errors.Errorf(
+			"The existing lock will expire in %d seconds. "+
+				"There may be another BR(%d) running. "+
+				"If not, you can wait for the lock to expire, "+
+				"or delete the file `%s/%s` manually.",
+			(lock.ExpireAt-now)/1000,
+			lock.LockId,
+			storageURI,
+			lockPath,
+		)
 	}
 
 	return nil
