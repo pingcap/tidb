@@ -104,6 +104,9 @@ import (
 // executorBuilder builds an Executor from a Plan.
 // The InfoSchema must not change during execution.
 type executorBuilder struct {
+	// ctx is the statement-scoped context.Context for executor build steps that
+	// can block before Executor.Open/Next receives the execution context.
+	ctx     context.Context
 	sctx    sessionctx.Context
 	is      infoschema.InfoSchema
 	err     error // err is set when there is error happened during Executor building process.
@@ -146,9 +149,10 @@ type CTEStorages struct {
 	initErr error
 }
 
-func newExecutorBuilder(sctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
+func newExecutorBuilder(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *executorBuilder {
 	txnManager := sessiontxn.GetTxnManager(sctx)
 	return &executorBuilder{
+		ctx:              ctx,
 		sctx:             sctx,
 		is:               is,
 		Ti:               ti,
@@ -177,7 +181,7 @@ type MockExecutorBuilder struct {
 // NewMockExecutorBuilderForTest is ONLY used in test.
 func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(ctx, is, ti),
+		executorBuilder: newExecutorBuilder(context.Background(), ctx, is, ti),
 	}
 }
 
@@ -3315,8 +3319,8 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	// buildAnalyzeSamplingPushdown reads base count / modify_count from mysql.stats_meta
 	// while constructing column analyze tasks. Flush pending deltas first so the base
 	// values include pre-analyze changes and later delta dumps cannot double count them.
-	// TODO: Determine whether context.Background is appropriate here; if not, use the proper statement context.
-	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats), b.sctx, v); err != nil {
+	intest.Assert(b.ctx != nil, "missing statement context for analyze")
+	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStats), b.sctx, v); err != nil {
 		b.err = err
 		return nil
 	}

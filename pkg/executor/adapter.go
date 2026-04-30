@@ -419,7 +419,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	if executor == nil {
-		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
+		b := newExecutorBuilder(ctx, a.Ctx, a.InfoSchema, a.Ti)
 		executor = b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -678,7 +678,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		execStartTime = time.Now()
 	}
 
-	e, err := a.buildExecutor()
+	e, err := a.buildExecutor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1371,7 +1371,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.resetPhaseDurations()
 
 	a.inheritContextFromExecuteStmt()
-	e, err := a.buildExecutor()
+	e, err := a.buildExecutor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1397,20 +1397,20 @@ type pessimisticTxn interface {
 }
 
 // buildExecutor build an executor from plan, prepared statement may need additional procedure.
-func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
+func (a *ExecStmt) buildExecutor(ctx context.Context) (exec.Executor, error) {
 	defer func(start time.Time) { a.phaseBuildDurations[0] += time.Since(start) }(time.Now())
-	ctx := a.Ctx
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	sctx := a.Ctx
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		if stmtCtx.Priority == mysql.NoPriority && a.LowerPriority {
 			stmtCtx.Priority = kv.PriorityLow
 		}
 	}
-	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
+		sctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
+	b := newExecutorBuilder(ctx, sctx, a.InfoSchema, a.Ti)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -1428,7 +1428,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 			return nil, err
 		}
 		if executorExec.lowerPriority {
-			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+			sctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 		}
 		e = executorExec.stmtExec
 	}
