@@ -271,11 +271,7 @@ func (b *Buffer) TryAllocBytes(n int) ([]byte, error) {
 		return make([]byte, n), nil
 	}
 
-	bs, _, err := b.tryAllocBytesWithSliceLocation(n, sizeOfSlice)
-	if err != nil {
-		return nil, err
-	}
-	return bs, nil
+	return b.tryAllocBytes(n)
 }
 
 // SliceLocation is like a reflect.SliceHeader, but it's associated with a
@@ -309,54 +305,41 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	return b.curBlock[idx:b.curIdx:b.curIdx], loc
 }
 
-func (b *Buffer) tryAllocBytesWithSliceLocation(n int, smallObjOverhead int) ([]byte, SliceLocation, error) {
-	if n > b.pool.blockSize {
-		return nil, SliceLocation{}, nil
-	}
-
+func (b *Buffer) tryAllocBytes(n int) ([]byte, error) {
 	needBlock := b.curIdx+n > len(b.curBlock)
 	if needBlock {
 		if b.blockCntLimit >= 0 && b.curBlockIdx+1 >= b.blockCntLimit {
-			return nil, SliceLocation{}, nil
+			return nil, nil
 		}
 	}
 
-	recordOverhead := smallObjOverhead > 0 && (n > 0 || b.curBlock != nil)
 	if b.pool.limiter != nil {
 		needBytes := 0
 		if needBlock && b.curBlockIdx >= len(b.blocks)-1 {
 			needBytes += b.pool.blockSize
 		}
-		if recordOverhead && smallObjOverhead > b.smallObjOverheadCache {
+		if sizeOfSlice > b.smallObjOverheadCache {
 			needBytes += smallObjOverheadBatch
 		}
 		if needBytes > 0 && !b.pool.limiter.TryAcquire(needBytes) {
-			return nil, SliceLocation{}, ErrCannotAcquireMemory
+			return nil, ErrCannotAcquireMemory
 		}
-	}
 
-	if needBlock {
-		if b.pool.limiter != nil {
+		if needBlock {
 			b.addBlockWithReservedLimiterQuota()
-		} else {
-			b.addBlock()
 		}
-	}
-	if recordOverhead && b.pool.limiter != nil {
-		if smallObjOverhead > b.smallObjOverheadCache {
+		if sizeOfSlice > b.smallObjOverheadCache {
 			b.smallObjOverheadCache += smallObjOverheadBatch
 			b.smallObjOverhead += smallObjOverheadBatch
 		}
-		b.smallObjOverheadCache -= smallObjOverhead
+		b.smallObjOverheadCache -= sizeOfSlice
+	} else if needBlock {
+		b.addBlock()
 	}
-
-	blockIdx := int32(b.curBlockIdx)
-	offset := int32(b.curIdx)
-	loc := SliceLocation{bufIdx: blockIdx, offset: offset, Length: int32(n)}
 
 	idx := b.curIdx
 	b.curIdx += n
-	return b.curBlock[idx:b.curIdx:b.curIdx], loc, nil
+	return b.curBlock[idx:b.curIdx:b.curIdx], nil
 }
 
 // AllocBytesWithSliceLocation is like AllocBytes, but it must allocate the
