@@ -1,3 +1,9 @@
+# Built binaries
+/tidb-server
+/tidb-server-linux-arm64
+/tidb-lightning-linux-arm64
+/tidb-lightning-linux-amd64
+
 # OS / filesystem
 __MACOSX
 .DS_Store
