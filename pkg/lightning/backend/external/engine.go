@@ -324,6 +324,14 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		if errors.Cause(err) != membuf.ErrCannotAcquireMemory {
 			return err
 		}
+		// readAllData closes readers and releases partial buffers before
+		// returning ErrCannotAcquireMemory. Do not keep those readers open while
+		// waiting for more working memory: their object-store connections keep
+		// taking TCP memory, and if OS TCP memory is nearly full, the downstream
+		// region job workers may write more slowly while consuming DataAndRanges.
+		// That can deadlock the pipeline: readAllData waits for working memory
+		// held by DataAndRanges, while region job workers wait for TCP memory held
+		// by readAllData readers.
 		if err = e.waitIngestDataReleased(ctx); err != nil {
 			return err
 		}

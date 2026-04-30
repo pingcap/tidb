@@ -53,9 +53,7 @@ func readAllData(
 			output.kvs = nil
 			output.kvsPerFile = nil
 			for _, b := range output.memKVBuffers {
-				if b != nil {
-					b.Destroy()
-				}
+				b.Destroy()
 			}
 			output.memKVBuffers = nil
 			output.size = 0
