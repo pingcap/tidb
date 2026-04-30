@@ -97,15 +97,17 @@ func TestChecksumTablePartitionGlobalIndex(t *testing.T) {
 		)`)
 	tk.MustExec("INSERT INTO tgidx VALUES (1, 100), (11, 200)")
 
-	// Partition-scoped checksum on a table with a global index must succeed
-	// and return a non-zero result (global index keyed under tableInfo.ID).
+	// Partition-scoped checksum covers only the named partition's row data.
+	// Global indexes are excluded because they span all partitions and cannot
+	// be meaningfully scoped to a subset.
 	p0 := tk.MustQuery("ADMIN CHECKSUM TABLE tgidx PARTITION (p0)").Rows()
 	require.Len(t, p0, 1)
-	require.NotEqual(t, "0", p0[0][2], "partition p0 checksum must be non-zero with global index")
+	// p0 has one row (c1=1) so TotalKvs must be non-zero.
+	require.NotEqual(t, "0", p0[0][3], "partition p0 must have non-zero KVs")
 
 	// Requesting the same partition twice must not double-count.
 	p0dup := tk.MustQuery("ADMIN CHECKSUM TABLE tgidx PARTITION (p0, p0)").Rows()
 	require.Len(t, p0dup, 1)
-	require.Equal(t, p0[0][2], p0dup[0][2], "duplicate partition must not double checksum with global index")
-	require.Equal(t, p0[0][3], p0dup[0][3], "duplicate partition must not double KVs with global index")
+	require.Equal(t, p0[0][2], p0dup[0][2], "duplicate partition must not double checksum")
+	require.Equal(t, p0[0][3], p0dup[0][3], "duplicate partition must not double KVs")
 }

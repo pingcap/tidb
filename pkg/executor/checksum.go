@@ -254,13 +254,20 @@ func (c *checksumContext) buildTasks(ctx sessionctx.Context) ([]*checksumTask, e
 
 	reqs := make([]*checksumTask, 0, (len(c.tableInfo.Indices)+1)*(len(partDefs)+1))
 	if len(c.partitionNames) == 0 {
-		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, c.tableInfo.ID, &reqs); err != nil {
+		// Full-table checksum: scan the logical table ID first to cover global
+		// indexes (and the non-partitioned table's data when there are no partitions).
+		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, c.tableInfo.ID, false, &reqs); err != nil {
 			return nil, err
 		}
 	}
 
 	for _, partDef := range partDefs {
-		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, partDef.ID, &reqs); err != nil {
+		// skipGlobal is true in two cases:
+		// - Full-table scan (partitionNames empty): global indexes were already
+		//   covered by the logical-table-ID call above; don't double-count.
+		// - Partition-scoped scan: global indexes span all partitions and cannot
+		//   be scoped to a subset, so exclude them entirely.
+		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, partDef.ID, true, &reqs); err != nil {
 			return nil, err
 		}
 	}
@@ -272,6 +279,7 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 	ctx sessionctx.Context,
 	tableID int64,
 	physicalTableID int64,
+	skipGlobal bool,
 	reqs *[]*checksumTask,
 ) error {
 	req, err := c.buildTableRequest(ctx, physicalTableID)
@@ -291,8 +299,13 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 		}
 		// Global indexes are stored under the logical table ID, not the
 		// partition's physical ID. Use tableID (== tableInfo.ID) for them.
+		// When skipGlobal is true (full-table scan iterating partitions), skip
+		// global indexes here — they were already covered by the logical-ID call.
 		indexPhysicalID := physicalTableID
 		if indexInfo.Global {
+			if skipGlobal {
+				continue
+			}
 			indexPhysicalID = tableID
 		}
 		req, err = c.buildIndexRequest(ctx, indexPhysicalID, indexInfo)
