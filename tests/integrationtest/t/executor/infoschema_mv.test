@@ -1,3 +1,5 @@
+# Start to test tidb_mviews
+
 use test;
 drop table if exists t;
 create table t (
@@ -9,7 +11,7 @@ create table t (
 );
 
 select count(*) from information_schema.tidb_mviews;
-select * from information_schema.tidb_mviews;
+select TABLE_SCHEMA, MVIEW_NAME from information_schema.tidb_mviews;
 
 create materialized view log on t (c0, c1, c2, c3, kcol);
 
@@ -35,20 +37,20 @@ FROM t
 GROUP BY kcol;
 
 select count(*) from information_schema.tidb_mviews;
-select * from information_schema.tidb_mviews;
-select * from information_schema.tidb_mviews where TABLE_SCHEMA = "test";
-select * from information_schema.tidb_mviews where TABLE_SCHEMA != "test";
-select * from information_schema.tidb_mviews where MVIEW_NAME = "mv_t";
-select * from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME = "mv_t1";
-select TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME like "%mvv%";
-select * from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1");
-select * from information_schema.tidb_mviews where MVIEW_NAME not in ("mv", "mv_t1");
-select * from information_schema.tidb_mviews where TABLE_SCHEMA = "test" and MVIEW_NAME like "%mvv%";
-select * from information_schema.tidb_mviews where REFRESH_METHOD = "FAST";
-select * from information_schema.tidb_mviews where REFRESH_METHOD != "FAST";
-select TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") and REFRESH_METHOD = "FAST";
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where TABLE_SCHEMA = "test" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where TABLE_SCHEMA != "test" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME = "mv_t1" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME = "mv_t" or MVIEW_NAME like "%mvv%" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME not in ("mv", "mv_t1") order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where TABLE_SCHEMA = "test" and MVIEW_NAME like "%mvv%" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where REFRESH_METHOD = "FAST" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, REFRESH_METHOD from information_schema.tidb_mviews where REFRESH_METHOD != "FAST" order by 1, 2, 3;
+select TABLE_SCHEMA, MVIEW_NAME, MVIEW_MODIFY_TIME, REFRESH_METHOD from information_schema.tidb_mviews where MVIEW_NAME in ("mv_t", "mv", "mv_t1") and REFRESH_METHOD = "FAST" order by 1, 2, 3;
 
-use test;
+# Start to test tidb_mlogs
 
 drop table if exists tmlogbra, tmlogbrb, tmlog_like_a, tmlog_like_b, tmlog_misc_c;
 create table tmlogbra (id int primary key, a int, b int);
@@ -70,136 +72,158 @@ select count(*) >= 2 from information_schema.tidb_mlogs;
 
 select table_schema, mlog_name
 from information_schema.tidb_mlogs
-where table_schema = 'test' and mlog_name = '$mlog$tmlogbra';
+where table_schema = 'test' and mlog_name = '$mlog$tmlogbra'
+order by 1, 2;
 
 select mlog_name, base_table_name
 from information_schema.tidb_mlogs
-where base_table_name = 'tmlogbra';
+where base_table_name = 'tmlogbra'
+order by 1, 2;
 
 select mlog_name, base_table_name
 from information_schema.tidb_mlogs
-where mlog_name like '%tmlogbr%' and base_table_name = 'tmlogbrb';
+where mlog_name like '%tmlogbr%' and base_table_name = 'tmlogbrb'
+order by 1, 2;
 
 select mlog_name, purge_method
 from information_schema.tidb_mlogs
 where table_catalog like 'de%'
   and base_table_catalog like 'de%'
   and mlog_columns like '%id%'
-  and purge_next like 'DATE_ADD%';
+  and purge_next like 'DATE_ADD%'
+order by 1, 2;
 
 select mlog_name, purge_start, purge_next
 from information_schema.tidb_mlogs
 where mlog_columns like '%a%'
   and purge_method = 'DEFERRED'
-  and purge_start like 'NOW%';
+  and purge_start like 'NOW%'
+order by 1, 2, 3;
 
 select table_schema, mlog_name, base_table_name
 from information_schema.tidb_mlogs
 where table_schema like 'te%'
   and mlog_name like '%tmlog_like_%'
-  and purge_method = 'DEFERRED';
+  and purge_method = 'DEFERRED'
+order by 1, 2, 3;
 
 select mlog_name, mlog_columns, purge_start
 from information_schema.tidb_mlogs
 where mlog_name like '%tmlog_misc_%'
   and table_catalog = 'def'
   and mlog_columns like '%id%'
-  and purge_start like 'NOW%';
+  and purge_start like 'NOW%'
+order by 1, 2, 3;
 
 
 select mlog_name, purge_next
 from information_schema.tidb_mlogs
 where table_schema like 'te%'
   and mlog_name like '%tmlog_%'
-  and purge_next like 'DATE_ADD(NOW(), INTERVAL 2 HOUR)%';
+  and purge_next like 'DATE_ADD(NOW(), INTERVAL 2 HOUR)%'
+order by 1, 2;
 
 select mlog_name, base_table_schema, base_table_name
 from information_schema.tidb_mlogs
 where base_table_schema like 'te%'
   and base_table_name like 'tmlog_like_%'
-  and purge_next like 'DATE_ADD%';
+  and purge_next like 'DATE_ADD%'
+order by 1, 2, 3;
 
 select mlog_name, base_table_name, purge_start
 from information_schema.tidb_mlogs
 where base_table_name like 'tmlog_misc_%'
   and base_table_catalog like 'de%'
-  and purge_start like 'NOW%';
+  and purge_start like 'NOW%'
+order by 1, 2, 3;
 
 select mlog_name, base_table_name, purge_method
 from information_schema.tidb_mlogs
 where base_table_schema like 'te%'
   and base_table_name like 'tmlog_like_b%'
   and mlog_columns like '%a%'
-  and purge_method = 'DEFERRED';
+  and purge_method = 'DEFERRED'
+order by 1, 2, 3;
 
 select mlog_name, base_table_name
 from information_schema.tidb_mlogs
 where mlog_name like '%tmlog_like_%'
   and base_table_name like 'tmlog_like_b%'
-  and mlog_columns like '%a%';
+  and mlog_columns like '%a%'
+order by 1, 2;
 
 select table_schema, mlog_name, base_table_schema, base_table_name
 from information_schema.tidb_mlogs
 where table_schema like 'te%'
   and base_table_schema like 'te%'
   and mlog_name like '%tmlog_misc_%'
-  and purge_next like 'DATE_ADD(NOW(), INTERVAL 3 HOUR)%';
+  and purge_next like 'DATE_ADD(NOW(), INTERVAL 3 HOUR)%'
+order by 1, 2, 3, 4;
 
 select mlog_name, base_table_name, purge_method, purge_start
 from information_schema.tidb_mlogs
 where table_schema = 'test'
   and base_table_name like 'tmlog_like_a%'
   and purge_method = 'DEFERRED'
-  and purge_start like 'NOW%';
+  and purge_start like 'NOW%'
+order by 1, 2, 3, 4;
 
 select mlog_name, base_table_name, table_catalog, base_table_catalog
 from information_schema.tidb_mlogs
 where mlog_name like '%tmlog_%'
   and base_table_schema like 'te%'
   and table_catalog like 'de%'
-  and base_table_catalog like 'de%';
+  and base_table_catalog like 'de%'
+order by 1, 2, 3, 4;
 
 select mlog_name, base_table_name
 from information_schema.tidb_mlogs
 where table_schema in ('test')
   and mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_like_b')
-  and purge_method in ('DEFERRED');
+  and purge_method in ('DEFERRED')
+order by 1, 2;
 
 select mlog_name, purge_next
 from information_schema.tidb_mlogs
 where mlog_name in ('$mlog$tmlog_misc_c')
   and table_catalog in ('def')
-  and purge_method in ('DEFERRED');
+  and purge_method in ('DEFERRED')
+order by 1, 2;
 
 select mlog_name, mlog_columns
 from information_schema.tidb_mlogs
 where table_schema in ('test', 'mysql')
   and mlog_name in ('$mlog$tmlog_like_a', '$mlog$not_exist')
-  and mlog_columns in ('id,a');
+  and mlog_columns in ('id,a')
+order by 1, 2;
 
 select mlog_name, base_table_name
 from information_schema.tidb_mlogs
 where base_table_schema in ('test')
   and base_table_name in ('tmlog_like_a', 'tmlog_like_b')
-  and purge_method in ('DEFERRED');
+  and purge_method in ('DEFERRED')
+order by 1, 2;
 
 select mlog_name, base_table_name, purge_next
 from information_schema.tidb_mlogs
 where base_table_name in ('tmlog_misc_c')
   and base_table_catalog in ('def')
-  and purge_method in ('DEFERRED');
+  and purge_method in ('DEFERRED')
+order by 1, 2, 3;
 
 select mlog_name, base_table_name
 from information_schema.tidb_mlogs
 where base_table_schema in ('test', 'mysql')
   and base_table_name in ('tmlog_like_b', 'not_exist')
-  and mlog_columns in ('id,a');
+  and mlog_columns in ('id,a')
+order by 1, 2;
 
 select mlog_name, base_table_name
 from information_schema.tidb_mlogs
 where mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_like_b')
   and base_table_name in ('tmlog_like_b')
-  and purge_method in ('DEFERRED');
+  and purge_method in ('DEFERRED')
+order by 1, 2;
 
 select table_schema, mlog_name, base_table_schema, base_table_name
 from information_schema.tidb_mlogs
@@ -207,31 +231,36 @@ where table_schema in ('test')
   and mlog_name in ('$mlog$tmlog_misc_c')
   and base_table_schema in ('test')
   and base_table_name in ('tmlog_misc_c')
-  and table_catalog in ('def');
+  and table_catalog in ('def')
+order by 1, 2, 3, 4;
 
 select mlog_name, base_table_name, purge_next
 from information_schema.tidb_mlogs
 where mlog_name in ('$mlog$tmlog_like_a', '$mlog$tmlog_misc_c')
   and base_table_name in ('tmlog_like_a', 'tmlog_misc_c')
-  and purge_method in ('DEFERRED');
+  and purge_method in ('DEFERRED')
+order by 1, 2, 3;
 
 select mlog_name, purge_method
 from information_schema.tidb_mlogs
 where table_catalog in ('def')
   and base_table_catalog in ('def')
   and purge_method in ('DEFERRED')
-  and mlog_columns in ('id,a');
+  and mlog_columns in ('id,a')
+order by 1, 2;
 
 select mlog_name, purge_start, purge_next
 from information_schema.tidb_mlogs
 where purge_method in ('DEFERRED')
   and mlog_columns in ('id,a')
-  and table_catalog in ('def');
+  and table_catalog in ('def')
+order by 1, 2, 3;
 
 select mlog_name
 from information_schema.tidb_mlogs
 where mlog_name in ('$mlog$tmlog_like_a')
-  and mlog_name in ('$mlog$tmlog_like_b');
+  and mlog_name in ('$mlog$tmlog_like_b')
+order by 1;
 
 drop materialized view log on tmlogbra;
 drop materialized view log on tmlogbrb;
