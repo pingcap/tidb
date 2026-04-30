@@ -2,8 +2,6 @@ package executor
 
 import (
 	"context"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -190,61 +188,96 @@ func (e *memtableRetriever) setDataForLogReplStatusLocal(ctx context.Context, sc
 	if err != nil {
 		return err
 	}
-	status := localStatus.GetStatus()
 
-	kvs := make(map[string]string)
-	kvs["cluster_id"] = strconv.FormatUint(status.GetReplicaClusterId(), 10)
-
-	role := "PRIMARY"
-	if status.GetSourceClusterId() != 0 {
-		role = "STANDBY"
-		kvs["source_cluster_id"] = strconv.FormatUint(status.GetSourceClusterId(), 10)
-		kvs["source_pd_addrs"] = strings.Join(status.GetSourcePdAddrs(), ",")
-		kvs["log_replication_name"] = status.GetName()
-		kvs["log_replication_state"] = status.GetState()
-		kvs["switchover_ready"] = status.GetSwitchoverReady()
-		kvs["failover_ready"] = status.GetFailoverReady()
-		if status.GetCheckpointTs() > 0 {
-			kvs["checkpoint_ts"] = strconv.FormatUint(status.GetCheckpointTs(), 10)
-			kvs["checkpoint_lag"] = (time.Second * time.Duration(status.GetCheckpointLagSec())).String()
-		} else {
-			kvs["checkpoint_ts"] = "NULL"
-			kvs["checkpoint_lag"] = "NULL"
-		}
-		kvs["initializing_progress"] = strconv.FormatFloat(float64(status.GetInitializingProgress()), 'f', -1, 32)
-
-		kvs["degrade_timeout"] = "NULL"
-		switch status.GetProtectionMode() {
-		case pdpb.ProtectionMode_MaximumPerformance:
-			kvs["protection_mode"] = "MAXIMUM_PERFORMANCE"
-		case pdpb.ProtectionMode_MaximumProtection:
-			kvs["protection_mode"] = "MAXIMUM_PROTECTION"
-		case pdpb.ProtectionMode_MaximumAvailability:
-			kvs["protection_mode"] = "MAXIMUM_AVAILABILITY"
-			kvs["degrade_timeout"] = (time.Duration(status.GetDegradeTimeoutSec()) * time.Second).String()
-		default:
-			kvs["protection_mode"] = "UNKNOWN"
-		}
+	row, err := buildLogReplStatusLocalRow(localStatus)
+	if err != nil {
+		return err
 	}
-	kvs["role"] = role
-	kvs["has_replica"] = strconv.FormatBool(localStatus.GetHasReplica())
-	kvs["last_global_update"] = time.Unix(int64(localStatus.GetLastGlobalUpdateTs()), 0).Format(time.DateTime)
-
-	// Sort by keys to have a deterministic order
-	var keys []string
-	for k := range kvs {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	rows := make([][]types.Datum, 0, len(kvs))
-	for _, k := range keys {
-		row := make([]types.Datum, len(infoschema.TableLogReplStatusLocalCols))
-		row[0].SetString(k, mysql.DefaultCollationName)      // CONFIG_KEY
-		row[1].SetString(kvs[k], mysql.DefaultCollationName) // CONFIG_VALUE
-		rows = append(rows, row)
-	}
-
-	e.rows = rows
+	e.rows = [][]types.Datum{row}
 	return nil
+}
+
+func buildLogReplStatusLocalRow(localStatus *pdpb.LogReplicationLocalStatus) ([]types.Datum, error) {
+	status := localStatus.GetStatus()
+	row := make([]types.Datum, len(infoschema.TableLogReplStatusLocalCols))
+
+	row[0].SetUint64(status.GetReplicaClusterId()) // CLUSTER_ID
+
+	isPrimary := status.GetSourceClusterId() == 0
+	role := "PRIMARY"
+	if !isPrimary {
+		role = "STANDBY"
+	}
+	roleEnum, err := types.ParseEnumName(infoschema.ClusterRoleStrs, role, mysql.DefaultCollationName)
+	if err != nil {
+		return nil, err
+	}
+	row[1].SetMysqlEnum(roleEnum, mysql.DefaultCollationName) // ROLE
+
+	if localStatus.GetHasReplica() {
+		row[2].SetInt64(1) // HAS_REPLICA
+	} else {
+		row[2].SetInt64(0) // HAS_REPLICA
+	}
+
+	lastGlobalUpdateTime := time.Unix(int64(localStatus.GetLastGlobalUpdateTs()), 0)
+	row[3].SetMysqlTime(types.NewTime(types.FromGoTime(lastGlobalUpdateTime), mysql.TypeTimestamp, types.DefaultFsp)) // LAST_GLOBAL_UPDATE
+
+	if isPrimary {
+		return row, nil
+	}
+
+	row[4].SetString(status.GetName(), mysql.DefaultCollationName)                             // LOG_REPLICATION_NAME
+	row[5].SetUint64(status.GetSourceClusterId())                                              // SOURCE_CLUSTER_ID
+	row[6].SetString(strings.Join(status.GetSourcePdAddrs(), ","), mysql.DefaultCollationName) // SOURCE_PD_ADDRS
+
+	var protectionModeStr string
+	switch status.GetProtectionMode() {
+	case pdpb.ProtectionMode_MaximumPerformance:
+		protectionModeStr = "MAXIMUM_PERFORMANCE"
+	case pdpb.ProtectionMode_MaximumProtection:
+		protectionModeStr = "MAXIMUM_PROTECTION"
+	case pdpb.ProtectionMode_MaximumAvailability:
+		protectionModeStr = "MAXIMUM_AVAILABILITY"
+		row[8].SetUint64(status.GetDegradeTimeoutSec()) // DEGRADE_TIMEOUT
+	default:
+		protectionModeStr = "UNKNOWN"
+	}
+	protectionModeEnum, err := types.ParseEnumName(infoschema.ProtectionModeStrs, protectionModeStr, mysql.DefaultCollationName)
+	if err != nil {
+		return nil, err
+	}
+	row[7].SetMysqlEnum(protectionModeEnum, mysql.DefaultCollationName) // PROTECTION_MODE
+
+	row[9].SetString(status.GetState(), mysql.DefaultCollationName) // LOG_REPLICATION_STATE
+
+	if status.GetCheckpointTs() > 0 {
+		row[10].SetUint64(status.GetCheckpointTs()) // CHECKPOINT_TS
+		checkpointTime := types.NewTime(types.FromGoTime(oracle.GetTimeFromTS(status.GetCheckpointTs())), mysql.TypeTimestamp, types.DefaultFsp)
+		row[11].SetMysqlTime(checkpointTime)                 // CHECKPOINT_TIME
+		row[12].SetUint64(uint64(status.GetCheckpointLagSec())) // CHECKPOINT_LAG
+	}
+
+	switchoverReady := "UNKNOWN"
+	if status.GetSwitchoverReady() != "" {
+		switchoverReady = status.GetSwitchoverReady()
+	}
+	switchoverEnum, err := types.ParseEnumName(infoschema.ReadyStatusStrs, switchoverReady, mysql.DefaultCollationName)
+	if err != nil {
+		return nil, err
+	}
+	row[13].SetMysqlEnum(switchoverEnum, mysql.DefaultCollationName) // SWITCHOVER_READY
+
+	failoverReady := "UNKNOWN"
+	if status.GetFailoverReady() != "" {
+		failoverReady = status.GetFailoverReady()
+	}
+	failoverEnum, err := types.ParseEnumName(infoschema.ReadyStatusStrs, failoverReady, mysql.DefaultCollationName)
+	if err != nil {
+		return nil, err
+	}
+	row[14].SetMysqlEnum(failoverEnum, mysql.DefaultCollationName) // FAILOVER_READY
+	row[15].SetFloat32(status.GetInitializingProgress())           // INITIALIZING_PROGRESS
+
+	return row, nil
 }

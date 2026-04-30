@@ -14,32 +14,12 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
-<<<<<<< HEAD:pkg/disttask/framework/taskexecutor/BUILD.bazel
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor/execute",
-||||||| parent of aba8cebcd5 (Implement log replication (!579)):pkg/dxf/framework/taskexecutor/BUILD.bazel
-        "//pkg/dxf/framework/dxfmetric",
-        "//pkg/dxf/framework/handle",
-        "//pkg/dxf/framework/metering",
-        "//pkg/dxf/framework/proto",
-        "//pkg/dxf/framework/scheduler",
-        "//pkg/dxf/framework/storage",
-        "//pkg/dxf/framework/taskexecutor/execute",
-        "//pkg/kv",
-=======
         "//pkg/domain/pkdb_repl",
-        "//pkg/dxf/framework/dxfmetric",
-        "//pkg/dxf/framework/handle",
-        "//pkg/dxf/framework/metering",
-        "//pkg/dxf/framework/proto",
-        "//pkg/dxf/framework/scheduler",
-        "//pkg/dxf/framework/storage",
-        "//pkg/dxf/framework/taskexecutor/execute",
-        "//pkg/kv",
->>>>>>> aba8cebcd5 (Implement log replication (!579)):pkg/dxf/framework/taskexecutor/BUILD.bazel
         "//pkg/lightning/log",
         "//pkg/metrics",
         "//pkg/sessionctx/variable",

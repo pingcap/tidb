@@ -19,25 +19,7 @@ go_library(
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/domain/infosync",
-<<<<<<< HEAD:pkg/disttask/framework/scheduler/BUILD.bazel
-||||||| parent of aba8cebcd5 (Implement log replication (!579)):pkg/dxf/framework/scheduler/BUILD.bazel
-        "//pkg/domain/serverinfo",
-        "//pkg/dxf/framework/dxfmetric",
-        "//pkg/dxf/framework/handle",
-        "//pkg/dxf/framework/proto",
-        "//pkg/dxf/framework/schstatus",
-        "//pkg/dxf/framework/storage",
-        "//pkg/dxf/framework/taskexecutor/execute",
-=======
         "//pkg/domain/pkdb_repl",
-        "//pkg/domain/serverinfo",
-        "//pkg/dxf/framework/dxfmetric",
-        "//pkg/dxf/framework/handle",
-        "//pkg/dxf/framework/proto",
-        "//pkg/dxf/framework/schstatus",
-        "//pkg/dxf/framework/storage",
-        "//pkg/dxf/framework/taskexecutor/execute",
->>>>>>> aba8cebcd5 (Implement log replication (!579)):pkg/dxf/framework/scheduler/BUILD.bazel
         "//pkg/kv",
         "//pkg/lightning/log",
         "//pkg/sessionctx",
