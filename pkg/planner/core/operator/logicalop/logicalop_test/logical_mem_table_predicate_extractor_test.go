@@ -1864,10 +1864,13 @@ func TestTiDBTableMViewDependencies(t *testing.T) {
 		tableSchema      set.StringSet
 		tableName        set.StringSet
 		tableID          set.StringSet
+		mlogName         set.StringSet
+		mlogID           set.StringSet
 		mviewSchema      set.StringSet
 		mviewName        set.StringSet
 		mviewID          set.StringSet
 		tableNamePattern []string
+		mlogNamePattern  []string
 		mviewNamePattern []string
 		skipRequest      bool
 	}{
@@ -1876,12 +1879,20 @@ func TestTiDBTableMViewDependencies(t *testing.T) {
 			tableSchema: set.NewStringSet("test"),
 		},
 		{
-			sql:       `select * from information_schema.tidb_table_mview_dependencies where table_name='$MLOG$T';`,
-			tableName: set.NewStringSet("$mlog$t"),
+			sql:       `select * from information_schema.tidb_table_mview_dependencies where table_name='BASE_T';`,
+			tableName: set.NewStringSet("base_t"),
 		},
 		{
 			sql:     `select * from information_schema.tidb_table_mview_dependencies where table_id in (1, 2, 3);`,
 			tableID: set.NewStringSet("1", "2", "3"),
+		},
+		{
+			sql:      `select * from information_schema.tidb_table_mview_dependencies where mlog_name='$MLOG$T';`,
+			mlogName: set.NewStringSet("$mlog$t"),
+		},
+		{
+			sql:    `select * from information_schema.tidb_table_mview_dependencies where mlog_id in (10, 11);`,
+			mlogID: set.NewStringSet("10", "11"),
 		},
 		{
 			sql:         `select * from information_schema.tidb_table_mview_dependencies where mview_schema='TEST';`,
@@ -1896,8 +1907,12 @@ func TestTiDBTableMViewDependencies(t *testing.T) {
 			mviewID: set.NewStringSet("10", "11"),
 		},
 		{
-			sql:              `select * from information_schema.tidb_table_mview_dependencies where table_name like '$MLOG$%';`,
-			tableNamePattern: []string{"$mlog$%"},
+			sql:              `select * from information_schema.tidb_table_mview_dependencies where table_name like 'BASE%';`,
+			tableNamePattern: []string{"base%"},
+		},
+		{
+			sql:             `select * from information_schema.tidb_table_mview_dependencies where mlog_name like '$MLOG$%';`,
+			mlogNamePattern: []string{"$mlog$%"},
 		},
 		{
 			sql:              `select * from information_schema.tidb_table_mview_dependencies where mview_name like 'MV%';`,
@@ -1932,6 +1947,16 @@ func TestTiDBTableMViewDependencies(t *testing.T) {
 			require.EqualValues(t, ca.tableID, depExtractor.ColPredicates["table_id"], "SQL: %v", ca.sql)
 		}
 
+		require.Equal(t, ca.mlogName.Count(), depExtractor.ColPredicates["mlog_name"].Count())
+		if ca.mlogName.Count() > 0 && depExtractor.ColPredicates["mlog_name"].Count() > 0 {
+			require.EqualValues(t, ca.mlogName, depExtractor.ColPredicates["mlog_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, ca.mlogID.Count(), depExtractor.ColPredicates["mlog_id"].Count())
+		if ca.mlogID.Count() > 0 && depExtractor.ColPredicates["mlog_id"].Count() > 0 {
+			require.EqualValues(t, ca.mlogID, depExtractor.ColPredicates["mlog_id"], "SQL: %v", ca.sql)
+		}
+
 		require.Equal(t, ca.mviewSchema.Count(), depExtractor.ColPredicates["mview_schema"].Count())
 		if ca.mviewSchema.Count() > 0 && depExtractor.ColPredicates["mview_schema"].Count() > 0 {
 			require.EqualValues(t, ca.mviewSchema, depExtractor.ColPredicates["mview_schema"], "SQL: %v", ca.sql)
@@ -1950,6 +1975,11 @@ func TestTiDBTableMViewDependencies(t *testing.T) {
 		require.Equal(t, len(ca.tableNamePattern), len(depExtractor.LikePatterns["table_name"]))
 		if len(ca.tableNamePattern) > 0 && len(depExtractor.LikePatterns["table_name"]) > 0 {
 			require.EqualValues(t, ca.tableNamePattern, depExtractor.LikePatterns["table_name"], "SQL: %v", ca.sql)
+		}
+
+		require.Equal(t, len(ca.mlogNamePattern), len(depExtractor.LikePatterns["mlog_name"]))
+		if len(ca.mlogNamePattern) > 0 && len(depExtractor.LikePatterns["mlog_name"]) > 0 {
+			require.EqualValues(t, ca.mlogNamePattern, depExtractor.LikePatterns["mlog_name"], "SQL: %v", ca.sql)
 		}
 
 		require.Equal(t, len(ca.mviewNamePattern), len(depExtractor.LikePatterns["mview_name"]))

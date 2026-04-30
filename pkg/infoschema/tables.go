@@ -223,7 +223,7 @@ const (
 	TableTiDBMViews = "TIDB_MVIEWS"
 	// TableTiDBMLogs is a table to show the metadata of materialized view logs in the current instance.
 	TableTiDBMLogs = "TIDB_MLOGS"
-	// TableTiDBTableMViewDependencies is a table to show dependencies between materialized view logs and materialized views.
+	// TableTiDBTableMViewDependencies is a table to show dependencies between base tables, mlog and materialized views.
 	TableTiDBTableMViewDependencies = "TIDB_TABLE_MVIEW_DEPENDENCIES"
 )
 
@@ -769,6 +769,8 @@ var tableTiDBTableMViewDependenciesCols = []columnInfo{
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "MVIEW_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
 	{name: "MVIEW_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "MVIEW_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},

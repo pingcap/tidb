@@ -1172,13 +1172,18 @@ func NewInfoSchemaTiDBTableMViewDependenciesExtractor() *InfoSchemaTiDBTableMVie
 		table:   TableName,
 		tableID: TableID,
 	}
-	e.colNames = []string{TableSchema, TableName, TableID, MViewSchema, MViewName, MViewID}
+	e.colNames = []string{TableSchema, TableName, TableID, MLogName, MLogID, MViewSchema, MViewName, MViewID}
 	return e
+}
+
+// HasTablePredicates returns true if predicates are extracted for the base-table column set.
+func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) HasTablePredicates() bool {
+	return e.hasPredicates(TableSchema, TableName, TableID)
 }
 
 // HasMLogPredicates returns true if predicates are extracted for the mlog column set.
 func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) HasMLogPredicates() bool {
-	return e.hasPredicates(TableSchema, TableName, TableID)
+	return e.hasPredicates(MLogName, MLogID)
 }
 
 // HasMViewPredicates returns true if predicates are extracted for the mview column set.
@@ -1195,7 +1200,80 @@ func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) hasPredicates(colNames .
 	return false
 }
 
-// ListSchemasAndTablesByMView lists candidate mlog tables by mview predicates.
+// ListSchemasAndTablesByMLog lists candidate base tables by mlog predicates.
+func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) ListSchemasAndTablesByMLog(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+) ([]pmodel.CIStr, []*model.TableInfo, error) {
+	mlogExtractor := &InfoSchemaBaseExtractor{
+		extractHelper: e.extractHelper,
+		SkipRequest:   e.SkipRequest,
+		ColPredicates: e.ColPredicates,
+		colsRegexp:    e.colsRegexp,
+		LikePatterns:  e.LikePatterns,
+		colNames:      []string{MLogName, MLogID},
+		extractableColumns: extractableCols{
+			table:   MLogName,
+			tableID: MLogID,
+		},
+	}
+	_, mlogTables, err := mlogExtractor.ListSchemasAndTables(ctx, is)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	if len(mlogTables) == 0 {
+		return nil, nil, nil
+	}
+
+	type schemaAndTable struct {
+		schema pmodel.CIStr
+		table  *model.TableInfo
+	}
+
+	schemaAndTbls := make([]schemaAndTable, 0, len(mlogTables))
+	seenBaseTableIDs := make(map[int64]struct{}, len(mlogTables))
+	for _, mlogTable := range mlogTables {
+		mlogInfo := mlogTable.MaterializedViewLog
+		if mlogInfo == nil || mlogInfo.BaseTableID == 0 {
+			continue
+		}
+		if _, ok := seenBaseTableIDs[mlogInfo.BaseTableID]; ok {
+			continue
+		}
+		baseTbl, ok := is.TableByID(ctx, mlogInfo.BaseTableID)
+		if !ok {
+			continue
+		}
+		baseMeta := baseTbl.Meta()
+		baseInfo := baseMeta.MaterializedViewBase
+		if baseInfo == nil || len(baseInfo.MViewIDs) == 0 {
+			continue
+		}
+		baseSchema, ok := infoschema.SchemaByTable(is, baseMeta)
+		if !ok {
+			continue
+		}
+		seenBaseTableIDs[mlogInfo.BaseTableID] = struct{}{}
+		schemaAndTbls = append(schemaAndTbls, schemaAndTable{schema: baseSchema.Name, table: baseMeta})
+	}
+
+	slices.SortFunc(schemaAndTbls, func(a, b schemaAndTable) int {
+		if a.schema.L == b.schema.L {
+			return strings.Compare(a.table.Name.L, b.table.Name.L)
+		}
+		return strings.Compare(a.schema.L, b.schema.L)
+	})
+
+	schemas := make([]pmodel.CIStr, 0, len(schemaAndTbls))
+	tables := make([]*model.TableInfo, 0, len(schemaAndTbls))
+	for _, st := range schemaAndTbls {
+		schemas = append(schemas, st.schema)
+		tables = append(tables, st.table)
+	}
+	return schemas, tables, nil
+}
+
+// ListSchemasAndTablesByMView lists candidate base tables by mview predicates.
 func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) ListSchemasAndTablesByMView(
 	ctx context.Context,
 	is infoschema.InfoSchema,
@@ -1227,7 +1305,7 @@ func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) ListSchemasAndTablesByMV
 	}
 
 	schemaAndTbls := make([]schemaAndTable, 0, len(mviewTables))
-	seenMLogIDs := make(map[int64]struct{}, len(mviewTables))
+	seenBaseTableIDs := make(map[int64]struct{}, len(mviewTables))
 	for _, mviewTable := range mviewTables {
 		mviewInfo := mviewTable.MaterializedView
 		if mviewInfo == nil {
@@ -1238,27 +1316,20 @@ func (e *InfoSchemaTiDBTableMViewDependenciesExtractor) ListSchemasAndTablesByMV
 			if !ok {
 				continue
 			}
-			baseInfo := baseTbl.Meta().MaterializedViewBase
-			if baseInfo == nil || baseInfo.MLogID == 0 {
+			baseMeta := baseTbl.Meta()
+			baseInfo := baseMeta.MaterializedViewBase
+			if baseInfo == nil || len(baseInfo.MViewIDs) == 0 {
 				continue
 			}
-			if _, ok := seenMLogIDs[baseInfo.MLogID]; ok {
+			if _, ok := seenBaseTableIDs[baseMeta.ID]; ok {
 				continue
 			}
-			mlogTbl, ok := is.TableByID(ctx, baseInfo.MLogID)
+			baseSchema, ok := infoschema.SchemaByTable(is, baseMeta)
 			if !ok {
 				continue
 			}
-			mlogMeta := mlogTbl.Meta()
-			if mlogMeta.MaterializedViewLog == nil {
-				continue
-			}
-			mlogSchema, ok := infoschema.SchemaByTable(is, mlogMeta)
-			if !ok {
-				continue
-			}
-			seenMLogIDs[baseInfo.MLogID] = struct{}{}
-			schemaAndTbls = append(schemaAndTbls, schemaAndTable{schema: mlogSchema.Name, table: mlogMeta})
+			seenBaseTableIDs[baseMeta.ID] = struct{}{}
+			schemaAndTbls = append(schemaAndTbls, schemaAndTable{schema: baseSchema.Name, table: baseMeta})
 		}
 	}
 

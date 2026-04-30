@@ -1777,20 +1777,42 @@ type mviewDependencyInfo struct {
 	name    string
 }
 
-func (e *memtableRetriever) getMLogMViewDependencies(
+type mviewDependencyMLogInfo struct {
+	id    int64
+	idStr string
+	name  string
+}
+
+func (e *memtableRetriever) getBaseTableMLogInfo(
+	ctx context.Context,
+	tbl *model.TableInfo,
+) mviewDependencyMLogInfo {
+	baseInfo := tbl.MaterializedViewBase
+	if baseInfo == nil || baseInfo.MLogID == 0 {
+		return mviewDependencyMLogInfo{}
+	}
+
+	mlogInfo := mviewDependencyMLogInfo{
+		id:    baseInfo.MLogID,
+		idStr: strconv.FormatInt(baseInfo.MLogID, 10),
+	}
+	mlogTbl, ok := e.is.TableByID(ctx, baseInfo.MLogID)
+	if !ok {
+		return mlogInfo
+	}
+	mlogMeta := mlogTbl.Meta()
+	if mlogMeta.MaterializedViewLog == nil {
+		return mlogInfo
+	}
+	mlogInfo.name = mlogMeta.Name.O
+	return mlogInfo
+}
+
+func (e *memtableRetriever) getBaseTableMViewDependencies(
 	ctx context.Context,
 	tbl *model.TableInfo,
 ) []mviewDependencyInfo {
-	mlogInfo := tbl.MaterializedViewLog
-	if mlogInfo == nil || mlogInfo.BaseTableID == 0 {
-		return nil
-	}
-
-	baseTbl, ok := e.is.TableByID(ctx, mlogInfo.BaseTableID)
-	if !ok {
-		return nil
-	}
-	baseInfo := baseTbl.Meta().MaterializedViewBase
+	baseInfo := tbl.MaterializedViewBase
 	if baseInfo == nil || len(baseInfo.MViewIDs) == 0 {
 		return nil
 	}
@@ -1851,6 +1873,14 @@ func filterMViewDependencyByMViewPredicates(
 		ex.Filter(plannercore.MViewID, dep.idStr)
 }
 
+func filterMViewDependencyByMLogPredicates(
+	ex *plannercore.InfoSchemaTiDBTableMViewDependenciesExtractor,
+	mlogInfo mviewDependencyMLogInfo,
+) bool {
+	return ex.Filter(plannercore.MLogName, mlogInfo.name) ||
+		ex.Filter(plannercore.MLogID, mlogInfo.idStr)
+}
+
 func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Context, sctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	ex, ok := e.extractor.(*plannercore.InfoSchemaTiDBTableMViewDependenciesExtractor)
@@ -1862,6 +1892,7 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 		return nil
 	}
 
+	hasTablePredicates := ex.HasTablePredicates()
 	hasMLogPredicates := ex.HasMLogPredicates()
 	hasMViewPredicates := ex.HasMViewPredicates()
 
@@ -1871,7 +1902,9 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 		err     error
 	)
 	switch {
-	case !hasMLogPredicates && hasMViewPredicates:
+	case !hasTablePredicates && hasMLogPredicates:
+		schemas, tables, err = ex.ListSchemasAndTablesByMLog(ctx, e.is)
+	case !hasTablePredicates && !hasMLogPredicates && hasMViewPredicates:
 		schemas, tables, err = ex.ListSchemasAndTablesByMView(ctx, e.is)
 	default:
 		schemas, tables, err = ex.ListSchemasAndTables(ctx, e.is)
@@ -1883,14 +1916,22 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 	rows := make([][]types.Datum, 0)
 	for i, tbl := range tables {
 		schema := schemas[i]
-		if tbl.MaterializedViewLog == nil {
+		if tbl.MaterializedViewBase == nil {
 			continue
 		}
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tbl.Name.L, "", mysql.AllPrivMask) {
 			continue
 		}
 
-		deps := e.getMLogMViewDependencies(ctx, tbl)
+		mlogInfo := e.getBaseTableMLogInfo(ctx, tbl)
+		if mlogInfo.id == 0 || mlogInfo.name == "" {
+			continue
+		}
+		if hasMLogPredicates && filterMViewDependencyByMLogPredicates(ex, mlogInfo) {
+			continue
+		}
+
+		deps := e.getBaseTableMViewDependencies(ctx, tbl)
 		for _, dep := range deps {
 			if hasMViewPredicates && filterMViewDependencyByMViewPredicates(ex, dep) {
 				continue
@@ -1900,6 +1941,8 @@ func (e *memtableRetriever) setDataFromTiDBTableMViewDependencies(ctx context.Co
 				schema.O,              // TABLE_SCHEMA
 				tbl.ID,                // TABLE_ID
 				tbl.Name.O,            // TABLE_NAME
+				mlogInfo.id,           // MLOG_ID
+				mlogInfo.name,         // MLOG_NAME
 				dep.catalog,           // MVIEW_CATALOG
 				dep.schema.O,          // MVIEW_SCHEMA
 				dep.idStr,             // MVIEW_ID

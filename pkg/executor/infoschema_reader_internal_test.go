@@ -644,7 +644,7 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 	t.Run("returns list schemas error", func(t *testing.T) {
 		ex := plannercore.NewInfoSchemaTiDBTableMViewDependenciesExtractor()
 		ex.ColPredicates = map[string]set.StringSet{
-			plannercore.TableName: set.NewStringSet("$mlog$err"),
+			plannercore.TableName: set.NewStringSet("base_err"),
 		}
 		mt := memtableRetriever{
 			is: &tableByNameErrorInfoSchema{
@@ -674,31 +674,33 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		sctx := defaultCtx()
 		pm := &stubPrivilegeManager{
 			allow: func(db, table string) bool {
-				return table != "$mlog$deny"
+				return table != "base_deny"
 			},
 		}
 		privilege.BindPrivilegeManager(sctx, pm)
 
 		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), sctx)
 		require.NoError(t, err)
-		require.ElementsMatch(t, []string{"test.$mlog$deny", "test.$mlog$keep"}, pm.calls)
+		require.ElementsMatch(t, []string{"test.base_deny", "test.base_keep"}, pm.calls)
 		require.Len(t, mt.rows, 1)
 
 		row := mt.rows[0]
 		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[0])
 		require.Equal(t, types.NewStringDatum("test"), row[1])
-		require.Equal(t, types.NewIntDatum(4), row[2])
-		require.Equal(t, types.NewStringDatum("$mlog$keep"), row[3])
-		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[4])
-		require.Equal(t, types.NewStringDatum("test"), row[5])
-		require.Equal(t, types.NewStringDatum("6"), row[6])
-		require.Equal(t, types.NewStringDatum("mv_keep"), row[7])
+		require.Equal(t, types.NewIntDatum(2), row[2])
+		require.Equal(t, types.NewStringDatum("base_keep"), row[3])
+		require.Equal(t, types.NewIntDatum(4), row[4])
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), row[5])
+		require.Equal(t, types.NewStringDatum(infoschema.CatalogVal), row[6])
+		require.Equal(t, types.NewStringDatum("test"), row[7])
+		require.Equal(t, types.NewStringDatum("6"), row[8])
+		require.Equal(t, types.NewStringDatum("mv_keep"), row[9])
 	})
 
-	t.Run("uses mlog predicates only", func(t *testing.T) {
+	t.Run("uses table predicates only", func(t *testing.T) {
 		ex := plannercore.NewInfoSchemaTiDBTableMViewDependenciesExtractor()
 		ex.ColPredicates = map[string]set.StringSet{
-			plannercore.TableName: set.NewStringSet("$mlog$keep"),
+			plannercore.TableName: set.NewStringSet("base_keep"),
 		}
 		mt := memtableRetriever{
 			is: infoschema.MockInfoSchema([]*model.TableInfo{
@@ -715,8 +717,34 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), defaultCtx())
 		require.NoError(t, err)
 		require.Len(t, mt.rows, 1)
-		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][3])
-		require.Equal(t, types.NewStringDatum("mv_keep"), mt.rows[0][7])
+		require.Equal(t, types.NewStringDatum("base_keep"), mt.rows[0][3])
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][5])
+		require.Equal(t, types.NewStringDatum("mv_keep"), mt.rows[0][9])
+	})
+
+	t.Run("uses mlog predicates only", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBTableMViewDependenciesExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			plannercore.MLogName: set.NewStringSet("$mlog$keep"),
+		}
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				newBaseTableInfoWithMViews(1, "base_drop", 3, 5),
+				newBaseTableInfoWithMViews(2, "base_keep", 4, 6),
+				newMLogTableInfo(3, "$mlog$drop", 1),
+				newMLogTableInfo(4, "$mlog$keep", 2),
+				newMViewTableInfoWithBase(5, "mv_drop", 1),
+				newMViewTableInfoWithBase(6, "mv_keep", 2),
+			}),
+			extractor: ex,
+		}
+
+		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum("base_keep"), mt.rows[0][3])
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][5])
+		require.Equal(t, types.NewStringDatum("mv_keep"), mt.rows[0][9])
 	})
 
 	t.Run("uses mview predicates only", func(t *testing.T) {
@@ -739,14 +767,15 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), defaultCtx())
 		require.NoError(t, err)
 		require.Len(t, mt.rows, 1)
-		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][3])
-		require.Equal(t, types.NewStringDatum("mv_keep"), mt.rows[0][7])
+		require.Equal(t, types.NewStringDatum("base_keep"), mt.rows[0][3])
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][5])
+		require.Equal(t, types.NewStringDatum("mv_keep"), mt.rows[0][9])
 	})
 
-	t.Run("uses mlog and mview predicates together", func(t *testing.T) {
+	t.Run("uses table and mview predicates together", func(t *testing.T) {
 		ex := plannercore.NewInfoSchemaTiDBTableMViewDependenciesExtractor()
 		ex.ColPredicates = map[string]set.StringSet{
-			plannercore.TableID:   set.NewStringSet("3", "4"),
+			plannercore.TableID:   set.NewStringSet("1", "2"),
 			plannercore.MViewName: set.NewStringSet("mv_keep"),
 		}
 		mt := memtableRetriever{
@@ -765,8 +794,36 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), defaultCtx())
 		require.NoError(t, err)
 		require.Len(t, mt.rows, 1)
-		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][3])
-		require.Equal(t, types.NewStringDatum("mv_keep"), mt.rows[0][7])
+		require.Equal(t, types.NewStringDatum("base_keep"), mt.rows[0][3])
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][5])
+		require.Equal(t, types.NewStringDatum("mv_keep"), mt.rows[0][9])
+	})
+
+	t.Run("uses mlog and mview predicates together", func(t *testing.T) {
+		ex := plannercore.NewInfoSchemaTiDBTableMViewDependenciesExtractor()
+		ex.ColPredicates = map[string]set.StringSet{
+			plannercore.MLogID:    set.NewStringSet("3", "4"),
+			plannercore.MViewName: set.NewStringSet("mv_keep"),
+		}
+		mt := memtableRetriever{
+			is: infoschema.MockInfoSchema([]*model.TableInfo{
+				newBaseTableInfoWithMViews(1, "base_drop", 3, 5),
+				newBaseTableInfoWithMViews(2, "base_keep", 4, 6, 7),
+				newMLogTableInfo(3, "$mlog$drop", 1),
+				newMLogTableInfo(4, "$mlog$keep", 2),
+				newMViewTableInfoWithBase(5, "mv_drop", 1),
+				newMViewTableInfoWithBase(6, "mv_keep", 2),
+				newMViewTableInfoWithBase(7, "mv_other", 2),
+			}),
+			extractor: ex,
+		}
+
+		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), defaultCtx())
+		require.NoError(t, err)
+		require.Len(t, mt.rows, 1)
+		require.Equal(t, types.NewStringDatum("base_keep"), mt.rows[0][3])
+		require.Equal(t, types.NewStringDatum("$mlog$keep"), mt.rows[0][5])
+		require.Equal(t, types.NewStringDatum("mv_keep"), mt.rows[0][9])
 	})
 
 	t.Run("uses no predicates", func(t *testing.T) {
@@ -774,10 +831,12 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 			is: infoschema.MockInfoSchema([]*model.TableInfo{
 				newBaseTableInfoWithMViews(1, "base1", 3, 5),
 				newBaseTableInfoWithMViews(2, "base2", 4, 6),
+				newBaseTableInfoWithMViews(7, "base_no_mlog", 0, 8),
 				newMLogTableInfo(3, "$mlog$base1", 1),
 				newMLogTableInfo(4, "$mlog$base2", 2),
 				newMViewTableInfoWithBase(5, "mv1", 1),
 				newMViewTableInfoWithBase(6, "mv2", 2),
+				newMViewTableInfoWithBase(8, "mv_no_mlog", 7),
 			}),
 			extractor: plannercore.NewInfoSchemaTiDBTableMViewDependenciesExtractor(),
 		}
@@ -785,6 +844,8 @@ func TestSetDataFromTiDBTableMViewDependencies(t *testing.T) {
 		err := mt.setDataFromTiDBTableMViewDependencies(context.Background(), defaultCtx())
 		require.NoError(t, err)
 		require.Len(t, mt.rows, 2)
-		require.ElementsMatch(t, []string{"mv1", "mv2"}, []string{mt.rows[0][7].GetString(), mt.rows[1][7].GetString()})
+		require.ElementsMatch(t, []string{"base1", "base2"}, []string{mt.rows[0][3].GetString(), mt.rows[1][3].GetString()})
+		require.ElementsMatch(t, []string{"$mlog$base1", "$mlog$base2"}, []string{mt.rows[0][5].GetString(), mt.rows[1][5].GetString()})
+		require.ElementsMatch(t, []string{"mv1", "mv2"}, []string{mt.rows[0][9].GetString(), mt.rows[1][9].GetString()})
 	})
 }
