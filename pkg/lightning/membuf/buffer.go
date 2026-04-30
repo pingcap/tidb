@@ -99,23 +99,15 @@ func (p *Pool) acquire() []byte {
 	if p.limiter != nil {
 		p.limiter.Acquire(p.blockSize)
 	}
+	return p.takeBlock()
+}
+
+func (p *Pool) takeBlock() []byte {
 	select {
 	case b := <-p.blockCache:
 		return b
 	default:
 		return p.allocator.Alloc(p.blockSize)
-	}
-}
-
-func (p *Pool) tryAcquire() ([]byte, error) {
-	if p.limiter != nil && !p.limiter.TryAcquire(p.blockSize) {
-		return nil, ErrCannotAcquireMemory
-	}
-	select {
-	case b := <-p.blockCache:
-		return b, nil
-	default:
-		return p.allocator.Alloc(p.blockSize), nil
 	}
 }
 
@@ -213,18 +205,6 @@ func (b *Buffer) recordSmallObjOverhead(n int) {
 	b.smallObjOverheadCache -= n
 }
 
-func (b *Buffer) tryRecordSmallObjOverhead(n int) error {
-	if n > b.smallObjOverheadCache {
-		if !b.pool.limiter.TryAcquire(smallObjOverheadBatch) {
-			return ErrCannotAcquireMemory
-		}
-		b.smallObjOverheadCache += smallObjOverheadBatch
-		b.smallObjOverhead += smallObjOverheadBatch
-	}
-	b.smallObjOverheadCache -= n
-	return nil
-}
-
 // releaseSmallObjOverhead releases the memory cost of []byte or SliceLocation
 // that are acquired from this Buffer before to the pool's limiter. The caller
 // will ensure the pool's limiter is not nil.
@@ -285,20 +265,15 @@ func (b *Buffer) AllocBytes(n int) []byte {
 
 // TryAllocBytes is like AllocBytes, but returns ErrCannotAcquireMemory instead
 // of blocking when the pool memory limiter has no immediately available quota.
-// If it returns an error, the caller should destroy the buffer before retrying.
+// If it returns an error, the buffer state is unchanged.
 func (b *Buffer) TryAllocBytes(n int) ([]byte, error) {
 	if n > b.pool.blockSize {
 		return make([]byte, n), nil
 	}
 
-	bs, _, err := b.tryAllocBytesWithSliceLocation(n)
+	bs, _, err := b.tryAllocBytesWithSliceLocation(n, sizeOfSlice)
 	if err != nil {
 		return nil, err
-	}
-	if bs != nil && b.pool.limiter != nil {
-		if err := b.tryRecordSmallObjOverhead(sizeOfSlice); err != nil {
-			return nil, err
-		}
 	}
 	return bs, nil
 }
@@ -334,19 +309,47 @@ func (b *Buffer) allocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 	return b.curBlock[idx:b.curIdx:b.curIdx], loc
 }
 
-func (b *Buffer) tryAllocBytesWithSliceLocation(n int) ([]byte, SliceLocation, error) {
+func (b *Buffer) tryAllocBytesWithSliceLocation(n int, smallObjOverhead int) ([]byte, SliceLocation, error) {
 	if n > b.pool.blockSize {
 		return nil, SliceLocation{}, nil
 	}
 
-	if b.curIdx+n > len(b.curBlock) {
+	needBlock := b.curIdx+n > len(b.curBlock)
+	if needBlock {
 		if b.blockCntLimit >= 0 && b.curBlockIdx+1 >= b.blockCntLimit {
 			return nil, SliceLocation{}, nil
 		}
-		if err := b.tryAddBlock(); err != nil {
-			return nil, SliceLocation{}, err
+	}
+
+	recordOverhead := smallObjOverhead > 0 && (n > 0 || b.curBlock != nil)
+	if b.pool.limiter != nil {
+		needBytes := 0
+		if needBlock && b.curBlockIdx >= len(b.blocks)-1 {
+			needBytes += b.pool.blockSize
+		}
+		if recordOverhead && smallObjOverhead > b.smallObjOverheadCache {
+			needBytes += smallObjOverheadBatch
+		}
+		if needBytes > 0 && !b.pool.limiter.TryAcquire(needBytes) {
+			return nil, SliceLocation{}, ErrCannotAcquireMemory
 		}
 	}
+
+	if needBlock {
+		if b.pool.limiter != nil {
+			b.addBlockWithReservedLimiterQuota()
+		} else {
+			b.addBlock()
+		}
+	}
+	if recordOverhead && b.pool.limiter != nil {
+		if smallObjOverhead > b.smallObjOverheadCache {
+			b.smallObjOverheadCache += smallObjOverheadBatch
+			b.smallObjOverhead += smallObjOverheadBatch
+		}
+		b.smallObjOverheadCache -= smallObjOverhead
+	}
+
 	blockIdx := int32(b.curBlockIdx)
 	offset := int32(b.curIdx)
 	loc := SliceLocation{bufIdx: blockIdx, offset: offset, Length: int32(n)}
@@ -371,35 +374,34 @@ func (b *Buffer) AllocBytesWithSliceLocation(n int) ([]byte, SliceLocation) {
 }
 
 func (b *Buffer) addBlock() {
-	if b.curBlockIdx < len(b.blocks)-1 {
-		b.curBlockIdx++
-		b.curBlock = b.blocks[b.curBlockIdx]
-	} else {
-		block := b.pool.acquire()
-		b.blocks = append(b.blocks, block)
-		b.curBlock = block
-		b.curBlockIdx = len(b.blocks) - 1
+	if b.switchToNextBlock() {
+		return
 	}
-
-	b.curIdx = 0
+	b.appendBlock(b.pool.acquire())
 }
 
-func (b *Buffer) tryAddBlock() error {
+func (b *Buffer) addBlockWithReservedLimiterQuota() {
+	if b.switchToNextBlock() {
+		return
+	}
+	b.appendBlock(b.pool.takeBlock())
+}
+
+func (b *Buffer) switchToNextBlock() bool {
 	if b.curBlockIdx < len(b.blocks)-1 {
 		b.curBlockIdx++
 		b.curBlock = b.blocks[b.curBlockIdx]
-	} else {
-		block, err := b.pool.tryAcquire()
-		if err != nil {
-			return err
-		}
-		b.blocks = append(b.blocks, block)
-		b.curBlock = block
-		b.curBlockIdx = len(b.blocks) - 1
+		b.curIdx = 0
+		return true
 	}
+	return false
+}
 
+func (b *Buffer) appendBlock(block []byte) {
+	b.blocks = append(b.blocks, block)
+	b.curBlock = block
+	b.curBlockIdx = len(b.blocks) - 1
 	b.curIdx = 0
-	return nil
 }
 
 // GetSlice returns the byte slice for the slice location.

@@ -137,6 +137,29 @@ func TestPoolMemLimit(t *testing.T) {
 		require.NoError(t, err)
 		buf2.Destroy()
 	})
+
+	t.Run("failed try allocation keeps buffer unchanged", func(t *testing.T) {
+		const blockSize = 1024
+		limiter := NewLimiter(blockSize)
+		pool := NewPool(
+			WithBlockNum(0),
+			WithBlockSize(blockSize),
+			WithPoolMemoryLimiter(limiter),
+		)
+		defer pool.Destroy()
+
+		buf := pool.NewBuffer()
+		_, err := buf.TryAllocBytes(1)
+		require.ErrorIs(t, err, ErrCannotAcquireMemory)
+
+		require.Equal(t, blockSize, limiter.limit)
+		require.Empty(t, buf.blocks)
+		require.Nil(t, buf.curBlock)
+		require.Equal(t, -1, buf.curBlockIdx)
+		require.Zero(t, buf.curIdx)
+		require.Zero(t, buf.smallObjOverhead)
+		require.Zero(t, buf.smallObjOverheadCache)
+	})
 }
 
 func TestBufferIsolation(t *testing.T) {
