@@ -130,12 +130,11 @@ const (
 	mvDurationResultFailed  = "failed"
 
 	mvRunEventInitFailed         = "init_failed"
-	mvRunEventRecoveredPanic     = "mv_service_panic"
 	mvRunEventServerChanged      = "server_changed"
 	mvRunEventServerRefreshError = "server_refresh_error"
 	mvRunEventFetchByDDL         = "fetch_meta_by_ddl"
 	mvRunEventFetchByInterval    = "fetch_meta_by_interval"
-	mvRunEventHistoryGCGetTSOErr = "get_tso_error"
+	mvRunEventGetTSOErr          = "get_tso_error"
 
 	mvHistoryGCOwnerKey = "gc-mv-op-hist"
 	// A single hash-ring owner performs stale refresh-alert cleanup to avoid
@@ -1031,7 +1030,6 @@ func (t *MVService) runGCOperationHistory(now time.Time, historyGCInterval time.
 		if r := recover(); r != nil {
 			result = mvDurationResultFailed
 			t.scheduleHistoryGCFailure(now, historyGCInterval)
-			t.mh.observeRunEvent(mvRunEventRecoveredPanic)
 			fields := append(t.runtimeLogFields(), zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
 			logutil.BgLogger().Error("MVService history GC panicked", fields...)
 		}
@@ -1041,7 +1039,7 @@ func (t *MVService) runGCOperationHistory(now time.Time, historyGCInterval time.
 	if err != nil {
 		result = mvDurationResultFailed
 		t.scheduleHistoryGCFailure(now, historyGCInterval)
-		t.mh.observeRunEvent(mvRunEventHistoryGCGetTSOErr)
+		t.mh.observeRunEvent(mvRunEventGetTSOErr)
 		fields := append(t.runtimeLogFields(), zap.Error(err))
 		logutil.BgLogger().Warn("get current tso failed when GC MV/MVLOG operation history", fields...)
 		return
@@ -1132,13 +1130,6 @@ func (t *MVService) NotifyDDLChange() {
 // Run is the main scheduler loop for MVService.
 // It refreshes server topology, fetches metadata, dispatches due tasks, and reports metrics.
 func (t *MVService) Run() {
-	defer func() {
-		if r := recover(); r != nil {
-			t.mh.observeRunEvent(mvRunEventRecoveredPanic)
-			fields := append(t.runtimeLogFields(), zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
-			logutil.BgLogger().Error("MVService panicked", fields...)
-		}
-	}()
 	if !t.sch.init() {
 		t.mh.observeRunEvent(mvRunEventInitFailed)
 		return

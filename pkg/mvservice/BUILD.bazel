@@ -40,6 +40,7 @@ go_library(
         "//pkg/util/sqlexec",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_twmb_murmur3//:murmur3",
         "@org_uber_go_zap//:zap",
     ],
 )
