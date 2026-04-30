@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -51,6 +52,8 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 		mTtask: t,
 	}
 }
+
+var finishTiCIIndexUpload = tici.FinishIndexUpload
 
 func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
@@ -120,27 +123,7 @@ func postProcess(ctx context.Context, taskID int64, store kv.Storage, taskMeta *
 	// 	err = multierr.Append(err, err2)
 	// }()
 
-	// Call Backend.PostProcess to finish TiCI index upload if needed.
-	// This should be called after all engines are imported.
-	// Recreate TableImporter because the post-process and import steps use different executors.
-	// NewTableImporter initializes the TiCI writer group with the same task ID and therefore
-	// reconnects to the same TiCI job.
-	tableImporter, err := getTableImporter(ctx, taskID, taskMeta, store)
-	if err != nil {
-		logger.Warn("failed to get table importer for post process", zap.Error(err))
-		// Continue with other post process steps even if we can't get table importer
-	} else {
-		defer func() {
-			if closeErr := tableImporter.Close(); closeErr != nil {
-				logger.Warn("failed to close table importer", zap.Error(closeErr))
-			}
-		}()
-		if backend := tableImporter.Backend(); backend != nil {
-			if err := backend.PostProcess(ctx); err != nil {
-				return errors.Annotate(err, "backend post process failed")
-			}
-		}
-	}
+	finishTiCIIndexUploadForPostProcess(ctx, store, taskID, taskMeta.JobID, &taskMeta.Plan, logger)
 
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	for id, cksum := range subtaskMeta.Checksum {
@@ -173,4 +156,39 @@ func postProcess(ctx context.Context, taskID int64, store kv.Storage, taskMeta *
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
 		return importer.VerifyChecksum(ctx, &taskMeta.Plan, finalChecksum, se, logger)
 	})
+}
+
+func finishTiCIIndexUploadForPostProcess(
+	ctx context.Context,
+	store kv.Storage,
+	taskID int64,
+	jobID int64,
+	plan *importer.Plan,
+	logger *zap.Logger,
+) {
+	if plan == nil || plan.TableInfo == nil {
+		return
+	}
+
+	ticiIndexIDs := tici.GetTiCIIndexIDs(plan.TableInfo)
+	if len(ticiIndexIDs) == 0 {
+		return
+	}
+
+	tidbTaskID := ticiTaskIDForImportInto(jobID)
+	if err := finishTiCIIndexUpload(ctx, store, tidbTaskID); err != nil {
+		logger.Warn(
+			"failed to finish TiCI index upload for post process",
+			zap.Int64("task-id", taskID),
+			zap.Int64s("tici-index-ids", ticiIndexIDs),
+			zap.Error(err),
+		)
+		return
+	}
+
+	logger.Info(
+		"finished TiCI index upload for post process",
+		zap.Int64("task-id", taskID),
+		zap.Int64s("tici-index-ids", ticiIndexIDs),
+	)
 }
