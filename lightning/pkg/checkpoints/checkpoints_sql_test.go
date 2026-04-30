@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
@@ -563,6 +564,33 @@ func TestIgnoreOneErrorCheckpoint(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIgnoreOneErrorCheckpointNotFound(t *testing.T) {
+	s := newCPSQLSuite(t)
+
+	s.mock.ExpectBegin()
+	s.mock.
+		ExpectExec("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = \\? WHERE table_name = \\? AND status <= \\?").
+		WithArgs(checkpoints.CheckpointStatusLoaded, "db1.t2", 25).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.
+		ExpectExec("UPDATE `mock-schema`\\.`table_v\\d+` SET status = \\? WHERE table_name = \\? AND status <= \\?").
+		WithArgs(checkpoints.CheckpointStatusLoaded, "db1.t2", 25).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.
+		ExpectQuery("SELECT 1 FROM `mock-schema`\\.`table_v\\d+` WHERE table_name = \\? LIMIT 1").
+		WithArgs("db1.t2").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}))
+	s.mock.ExpectRollback()
+
+	err := s.cpdb.IgnoreErrorCheckpoint(context.Background(), "db1.t2")
+	require.Error(t, err)
+	require.True(t, errors.IsNotFound(err))
+	require.True(t, common.ErrCheckpointTableNotFound.Equal(err))
+	require.Contains(t, err.Error(), "checkpoint for table db1.t2 not found")
+	require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+	require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
+}
+
 func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 	s := newCPSQLSuite(t)
 
@@ -629,6 +657,30 @@ func TestDestroyOneErrorCheckpoints(t *testing.T) {
 		MinEngineID: -1,
 		MaxEngineID: 0,
 	}}, dtc)
+}
+
+func TestDestroyOneErrorCheckpointsNotFound(t *testing.T) {
+	s := newCPSQLSuite(t)
+
+	s.mock.ExpectBegin()
+	s.mock.
+		ExpectQuery("SELECT (?s:.+)table_name = \\?").
+		WithArgs("db1.t2", sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"table_name", "__min__", "__max__"}))
+	s.mock.
+		ExpectQuery("SELECT 1 FROM `mock-schema`\\.`table_v\\d+` WHERE table_name = \\? LIMIT 1").
+		WithArgs("db1.t2").
+		WillReturnRows(sqlmock.NewRows([]string{"1"}))
+	s.mock.ExpectRollback()
+
+	dtc, err := s.cpdb.DestroyErrorCheckpoint(context.Background(), "db1.t2")
+	require.Error(t, err)
+	require.True(t, errors.IsNotFound(err))
+	require.True(t, common.ErrCheckpointTableNotFound.Equal(err))
+	require.Nil(t, dtc)
+	require.Contains(t, err.Error(), "checkpoint for table db1.t2 not found")
+	require.NotContains(t, err.Error(), "--checkpoint-error-ignore")
+	require.NotContains(t, err.Error(), "--checkpoint-error-destroy")
 }
 
 func TestDump(t *testing.T) {

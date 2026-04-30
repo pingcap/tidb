@@ -344,6 +344,7 @@ go_test(
         "analyze_test.go",
         "analyze_utils_test.go",
         "batch_point_get_test.go",
+        "bench_gencol_test.go",
         "benchmark_test.go",
         "brie_test.go",
         "brie_utils_test.go",

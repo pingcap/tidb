@@ -401,6 +401,11 @@ error = '''
 checkpoint not found
 '''
 
+["Lightning:Checkpoint:ErrCheckpointTableNotFound"]
+error = '''
+checkpoint for table %s not found
+'''
+
 ["Lightning:Checkpoint:ErrCleanCheckpoint"]
 error = '''
 clean checkpoint error

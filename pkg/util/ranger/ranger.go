@@ -141,17 +141,35 @@ func points2Ranges(sctx *rangerctx.RangerContext, rangePoints []*point, newTp *t
 		}
 		return fullRange, true, nil
 	}
-	ranges := make(Ranges, 0, len(convertedPoints)/2)
-	for i := 0; i < len(convertedPoints); i += 2 {
-		startPoint, endPoint := convertedPoints[i], convertedPoints[i+1]
-		ran := &Range{
-			LowVal:      []types.Datum{startPoint.value},
+	rangeCount := len(convertedPoints) / 2
+	// Keep emitted ranges and their single-column backing slices in batch
+	// storage to avoid per-range heap allocations on long-IN workloads.
+	ranges := make(Ranges, rangeCount)
+	rangeObjs := make([]Range, rangeCount)
+	lowValBuf := make([]types.Datum, rangeCount)
+	highValBuf := make([]types.Datum, rangeCount)
+	collatorBuf := make([]collate.Collator, rangeCount)
+	rangeCollator := collate.GetCollator(newTp.GetCollate())
+	for i := range rangeCount {
+		startPoint, endPoint := convertedPoints[i*2], convertedPoints[i*2+1]
+		// Batch-allocate the backing arrays, but clamp each slice to len==cap.
+		// Some callers append tail datums to an emitted range later, and that append
+		// must not overwrite the neighboring ranges that share the same buffer.
+		lowVal := lowValBuf[i : i+1 : i+1]
+		lowVal[0] = startPoint.value
+		highVal := highValBuf[i : i+1 : i+1]
+		highVal[0] = endPoint.value
+		collators := collatorBuf[i : i+1 : i+1]
+		collators[0] = rangeCollator
+
+		rangeObjs[i] = Range{
+			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
-			HighVal:     []types.Datum{endPoint.value},
+			HighVal:     highVal,
 			HighExclude: endPoint.excl,
-			Collators:   []collate.Collator{collate.GetCollator(newTp.GetCollate())},
+			Collators:   collators,
 		}
-		ranges = append(ranges, ran)
+		ranges[i] = &rangeObjs[i]
 	}
 	return ranges, false, nil
 }
@@ -299,30 +317,49 @@ func appendPoints2Ranges(sctx *rangerctx.RangerContext, origin Ranges, rangePoin
 }
 
 func appendPoints2IndexRange(origin *Range, rangePoints []*point, ft *types.FieldType) (Ranges, error) {
-	newRanges := make(Ranges, 0, len(rangePoints)/2)
+	rangeCount := len(rangePoints) / 2
+	// Keep emitted ranges in batch storage; each range will take one widened
+	// low/high/collator segment from the backing buffers below.
+	newRanges := make(Ranges, rangeCount)
+	rangeObjs := make([]Range, rangeCount)
+	lowWidth := len(origin.LowVal) + 1
+	highWidth := len(origin.HighVal) + 1
+	collatorWidth := len(origin.Collators) + 1
+	extraCollator := collate.GetCollator(ft.GetCollate())
+
+	lowValBuf := make([]types.Datum, rangeCount*lowWidth)
+	highValBuf := make([]types.Datum, rangeCount*highWidth)
+	collatorBuf := make([]collate.Collator, rangeCount*collatorWidth)
 	for i := 0; i < len(rangePoints); i += 2 {
+		rangeIdx := i / 2
 		startPoint, endPoint := rangePoints[i], rangePoints[i+1]
 
-		lowVal := make([]types.Datum, len(origin.LowVal)+1)
+		// Batch-allocate the backing arrays, but clamp each slice to len==cap.
+		// Some callers append tail datums to an emitted range later, and that append
+		// must not overwrite the neighboring ranges that share the same buffer.
+		lowOffset := rangeIdx * lowWidth
+		lowVal := lowValBuf[lowOffset : lowOffset+lowWidth : lowOffset+lowWidth]
 		copy(lowVal, origin.LowVal)
 		lowVal[len(origin.LowVal)] = startPoint.value
 
-		highVal := make([]types.Datum, len(origin.HighVal)+1)
+		highOffset := rangeIdx * highWidth
+		highVal := highValBuf[highOffset : highOffset+highWidth : highOffset+highWidth]
 		copy(highVal, origin.HighVal)
 		highVal[len(origin.HighVal)] = endPoint.value
 
-		collators := make([]collate.Collator, len(origin.Collators)+1)
+		collatorOffset := rangeIdx * collatorWidth
+		collators := collatorBuf[collatorOffset : collatorOffset+collatorWidth : collatorOffset+collatorWidth]
 		copy(collators, origin.Collators)
-		collators[len(origin.Collators)] = collate.GetCollator(ft.GetCollate())
+		collators[len(origin.Collators)] = extraCollator
 
-		ir := &Range{
+		rangeObjs[rangeIdx] = Range{
 			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
 			HighVal:     highVal,
 			HighExclude: endPoint.excl,
 			Collators:   collators,
 		}
-		newRanges = append(newRanges, ir)
+		newRanges[rangeIdx] = &rangeObjs[rangeIdx]
 	}
 	return newRanges, nil
 }
@@ -337,29 +374,6 @@ func estimateMemUsageForAppendRanges2PointRanges(pointRanges Ranges, ranges Rang
 	return (EmptyRangeSize+collatorSize)*len1*len2 + getRangesTotalDatumSize(pointRanges)*len2 + getRangesTotalDatumSize(ranges)*len1
 }
 
-// appendRange2PointRange appends suffixRange to pointRange.
-func appendRange2PointRange(pointRange, suffixRange *Range) *Range {
-	lowVal := make([]types.Datum, 0, len(pointRange.LowVal)+len(suffixRange.LowVal))
-	lowVal = append(lowVal, pointRange.LowVal...)
-	lowVal = append(lowVal, suffixRange.LowVal...)
-
-	highVal := make([]types.Datum, 0, len(pointRange.HighVal)+len(suffixRange.HighVal))
-	highVal = append(highVal, pointRange.HighVal...)
-	highVal = append(highVal, suffixRange.HighVal...)
-
-	collators := make([]collate.Collator, 0, len(pointRange.Collators)+len(suffixRange.Collators))
-	collators = append(collators, pointRange.Collators...)
-	collators = append(collators, suffixRange.Collators...)
-
-	return &Range{
-		LowVal:      lowVal,
-		LowExclude:  suffixRange.LowExclude,
-		HighVal:     highVal,
-		HighExclude: suffixRange.HighExclude,
-		Collators:   collators,
-	}
-}
-
 // AppendRanges2PointRanges appends additional ranges to point ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory after appending additional ranges to point ranges
@@ -372,10 +386,73 @@ func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 	if rangeMaxSize > 0 && estimateMemUsageForAppendRanges2PointRanges(pointRanges, ranges) > rangeMaxSize {
 		return pointRanges, true
 	}
-	newRanges := make(Ranges, 0, len(pointRanges)*len(ranges))
+	rangeCount := len(pointRanges) * len(ranges)
+	sumPointLow := 0
+	sumPointHigh := 0
+	sumPointCollator := 0
 	for _, pointRange := range pointRanges {
+		sumPointLow += len(pointRange.LowVal)
+		sumPointHigh += len(pointRange.HighVal)
+		sumPointCollator += len(pointRange.Collators)
+	}
+	sumRangeLow := 0
+	sumRangeHigh := 0
+	sumRangeCollator := 0
+	for _, r := range ranges {
+		sumRangeLow += len(r.LowVal)
+		sumRangeHigh += len(r.HighVal)
+		sumRangeCollator += len(r.Collators)
+	}
+	totalLowDatumCount := sumPointLow*len(ranges) + sumRangeLow*len(pointRanges)
+	totalHighDatumCount := sumPointHigh*len(ranges) + sumRangeHigh*len(pointRanges)
+	totalCollatorCount := sumPointCollator*len(ranges) + sumRangeCollator*len(pointRanges)
+
+	// Allocate storage for the full fanout once. Individual result ranges take
+	// capped subslices below, which avoids per-result slice allocation.
+	newRanges := make(Ranges, rangeCount)
+	rangeObjs := make([]Range, rangeCount)
+	lowValBuf := make([]types.Datum, totalLowDatumCount)
+	highValBuf := make([]types.Datum, totalHighDatumCount)
+	collatorBuf := make([]collate.Collator, totalCollatorCount)
+	rangeIdx := 0
+	lowDatumOffset := 0
+	highDatumOffset := 0
+	collatorOffset := 0
+	for _, pointRange := range pointRanges {
+		pointLowWidth := len(pointRange.LowVal)
+		pointHighWidth := len(pointRange.HighVal)
+		pointCollatorWidth := len(pointRange.Collators)
 		for _, r := range ranges {
-			newRanges = append(newRanges, appendRange2PointRange(pointRange, r))
+			lowWidth := pointLowWidth + len(r.LowVal)
+			highWidth := pointHighWidth + len(r.HighVal)
+			// Batch-allocate the backing arrays, but clamp each slice to len==cap.
+			// Some callers append tail datums to an emitted range later, and that append
+			// must not overwrite the neighboring ranges that share the same buffer.
+			lowVal := lowValBuf[lowDatumOffset : lowDatumOffset+lowWidth : lowDatumOffset+lowWidth]
+			copy(lowVal, pointRange.LowVal)
+			copy(lowVal[pointLowWidth:], r.LowVal)
+
+			highVal := highValBuf[highDatumOffset : highDatumOffset+highWidth : highDatumOffset+highWidth]
+			copy(highVal, pointRange.HighVal)
+			copy(highVal[pointHighWidth:], r.HighVal)
+
+			collatorWidth := pointCollatorWidth + len(r.Collators)
+			collators := collatorBuf[collatorOffset : collatorOffset+collatorWidth : collatorOffset+collatorWidth]
+			copy(collators, pointRange.Collators)
+			copy(collators[pointCollatorWidth:], r.Collators)
+
+			rangeObjs[rangeIdx] = Range{
+				LowVal:      lowVal,
+				LowExclude:  r.LowExclude,
+				HighVal:     highVal,
+				HighExclude: r.HighExclude,
+				Collators:   collators,
+			}
+			newRanges[rangeIdx] = &rangeObjs[rangeIdx]
+			rangeIdx++
+			lowDatumOffset += lowWidth
+			highDatumOffset += highWidth
+			collatorOffset += collatorWidth
 		}
 	}
 	return newRanges, false
