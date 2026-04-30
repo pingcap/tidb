@@ -83,13 +83,15 @@ const (
 //
 // Field layout is chosen to minimize padding and the per-Datum footprint.
 // The first 8-byte word packs: kind (1B), frac (1B), collationID (2B),
-// flen (4B). The collation is stored as a MySQL collation id (0 = unset);
-// the string-valued Collation() accessor is kept as a facade that resolves
-// the id via the charset package. After removing KindInterfaceDeprecated
-// and packing Time into d.i, the heterogeneous `x any` slot now only
-// needs to hold a *MyDecimal pointer, so it is typed directly — saving
-// the interface header (16 B) and an allocation for the Time boxing that
-// the old `x any` required.
+// flen (4B), where "frac" / "flen" are the MySQL terms for the struct
+// fields named `decimal` and `length` respectively. The collation is
+// stored as a MySQL collation ID (0 = unset); the string-valued
+// Collation() accessor is kept as a facade that resolves the ID via the
+// charset package. After removing KindInterfaceDeprecated and packing
+// Time into d.i, the heterogeneous `x any` slot now only needs to hold
+// a *MyDecimal pointer, so it is typed directly — saving the interface
+// header (16 B) and an allocation for the Time boxing that the old
+// `x any` required.
 type Datum struct {
 	k           byte       // datum kind.
 	decimal     uint8      // holds the frac (fractional digits). MySQL fsp <= 6 and DECIMAL frac <= 30.
@@ -133,7 +135,9 @@ func (d *Datum) Kind() byte {
 
 // Collation gets the collation name of the datum. It is kept as a string
 // facade for API compatibility; the underlying storage is a uint16 MySQL
-// collation id. Hot-path callers should prefer CollationID().
+// collation id. Each call resolves the id back to a name via the charset
+// map, so hot-path callers should prefer CollationID() — see the note
+// there for why.
 func (d *Datum) Collation() string {
 	if d.collationID == 0 {
 		return ""
@@ -146,6 +150,14 @@ func (d *Datum) Collation() string {
 
 // CollationID returns the MySQL collation id; 0 means the datum has no
 // collation set (previously represented by an empty string).
+//
+// Hot paths use this instead of Collation() because comparing two
+// uint16 ids is cheaper than allocating two strings (via name lookup)
+// and comparing them. Current consumers: ranger/detacher,
+// util/codec.encodeString, planner/cardinality column row counts, and
+// table/tables.mutationChecker on the index probe path. They feed the
+// id straight into collate.GetCollatorByID without round-tripping
+// through the name.
 func (d *Datum) CollationID() uint16 {
 	return d.collationID
 }
@@ -154,11 +166,6 @@ func (d *Datum) CollationID() uint16 {
 // names are stored as id 0 to preserve prior "use default" behavior.
 func (d *Datum) SetCollation(collation string) {
 	d.collationID = collationNameToID(collation)
-}
-
-// SetCollationID sets the collation of the datum by MySQL collation id.
-func (d *Datum) SetCollationID(id uint16) {
-	d.collationID = id
 }
 
 // collationNameToID translates a collation name to a MySQL collation id.
@@ -2298,9 +2305,17 @@ type jsonDatum struct {
 
 // MarshalJSON implements Marshaler.MarshalJSON interface.
 func (d *Datum) MarshalJSON() ([]byte, error) {
+	// Decimal is uint8 internally but uint16 on the wire for back-compat.
+	// Map the UnspecifiedFsp sentinel (^uint8(0) == 255) back to the legacy
+	// ^uint16(0) == 65535 so older readers — which still treat the field as
+	// signed -1 — don't decode 255 as a real positive frac.
+	jdDecimal := uint16(d.decimal)
+	if d.decimal == ^uint8(0) {
+		jdDecimal = ^uint16(0)
+	}
 	jd := &jsonDatum{
 		K:         d.k,
-		Decimal:   uint16(d.decimal),
+		Decimal:   jdDecimal,
 		Length:    d.length,
 		I:         d.i,
 		Collation: d.Collation(),

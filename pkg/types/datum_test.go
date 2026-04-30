@@ -567,9 +567,13 @@ func TestDatumEqualsCollation(t *testing.T) {
 		return d
 	}
 
-	// Same canonical collation, different name casing → equal.
+	// Same canonical collation, different name casing → equal. The
+	// non-zero ID assertion guards against the test passing vacuously
+	// if name resolution ever breaks (both names would silently fall
+	// back to id 0, satisfying the equality below for the wrong reason).
 	a := mk("UTF8MB4_BIN")
 	b := mk("utf8mb4_bin")
+	require.NotEqual(t, uint16(0), a.CollationID())
 	require.Equal(t, a.CollationID(), b.CollationID())
 	require.True(t, a.Equals(&b))
 
@@ -640,6 +644,28 @@ func TestMarshalDatum(t *testing.T) {
 	}
 }
 
+// TestMarshalDatumUnspecifiedFsp pins the wire-format guarantee that a
+// Datum with UnspecifiedFsp (-1, stored as uint8 255) emits the legacy
+// uint16 sentinel 65535 in JSON. A pre-shrink reader still reads the field
+// as signed -1; emitting the bare 255 would surface as a real positive
+// frac on the other side.
+func TestMarshalDatumUnspecifiedFsp(t *testing.T) {
+	var d Datum
+	d.SetMysqlDuration(Duration{Duration: time.Hour, Fsp: UnspecifiedFsp})
+	require.Equal(t, uint8(0xff), d.decimal)
+
+	bytes, err := gjson.Marshal(&d)
+	require.NoError(t, err)
+	require.Contains(t, string(bytes), `"decimal":65535`,
+		"UnspecifiedFsp must marshal as legacy uint16 sentinel for back-compat")
+
+	var got Datum
+	require.NoError(t, gjson.Unmarshal(bytes, &got))
+	require.Equal(t, uint8(0xff), got.decimal, "sentinel must survive round-trip")
+	require.Equal(t, UnspecifiedFsp, got.GetMysqlDuration().Fsp,
+		"GetMysqlDuration must recover Fsp = -1")
+}
+
 func BenchmarkCompareDatum(b *testing.B) {
 	vals, vals1 := prepareCompareDatums()
 	b.ReportAllocs()
@@ -654,10 +680,12 @@ func BenchmarkCompareDatum(b *testing.B) {
 	}
 }
 
-// BenchmarkCompareDatumCollation compares collated string datums. Unlike
-// BenchmarkCompareDatum, the datums carry a non-empty collation and the
-// compare path dispatches through the named collator instead of the binary
-// shortcut, so it exercises Datum.Collation() on the hot path.
+// BenchmarkCompareDatumCollation compares collated string datums through
+// an explicit non-binary collator. Unlike BenchmarkCompareDatum, the
+// collator is sourced from charset.CollationUTF8MB4 rather than the
+// binary shortcut, so the cost of the collated comparator dominates the
+// measurement. Note that Compare uses the supplied `coll` directly and
+// never reads d1.Collation() / d1.CollationID() on the hot path.
 func BenchmarkCompareDatumCollation(b *testing.B) {
 	d1 := NewCollationStringDatum("abcdefghij", charset.CollationUTF8MB4)
 	d2 := NewCollationStringDatum("abcdefghik", charset.CollationUTF8MB4)
