@@ -1,9 +1,28 @@
 [mydumper]
 no-schema = false
 
+# Exact db/table match: covers all data types.
 [[mydumper.column-constants]]
 db    = "col_constants"
 table = "t"
 [mydumper.column-constants.values]
-customer_name = "acme"
-ts            = "2026-04-17 21:00:00"
+c_varchar   = "acme"
+c_text      = "hello world"
+c_tinyint   = "42"
+c_bigint    = "9999999999"
+c_bool      = "1"
+c_decimal   = "3.14"
+c_float     = "1.5"
+c_date      = "2026-04-17"
+c_datetime  = "2026-04-17 21:00:00"
+c_timestamp = "2026-04-17 21:00:00"
+c_json      = "{\"k\":\"v\"}"
+c_enum      = "b"
+
+# table-filter glob match: covers t2.
+# Also tests that the constant is applied only when the source value is absent/NULL
+# (rows with explicit non-NULL tenant keep their source value).
+[[mydumper.column-constants]]
+table-filter = ["col_constants.t2"]
+[mydumper.column-constants.values]
+tenant = "default-tenant"
