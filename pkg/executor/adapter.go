@@ -1418,7 +1418,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 
 	failpoint.Inject("assertTxnManagerAfterBuildExecutor", func() {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterBuildExecutor", true)
-		sessiontxn.AssertTxnManagerInfoSchema(b.ctx, b.is)
+		sessiontxn.AssertTxnManagerInfoSchema(b.sctx, b.is)
 	})
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
