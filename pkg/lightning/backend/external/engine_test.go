@@ -26,7 +26,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func testGetFirstAndLastKey(
@@ -224,6 +227,28 @@ func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T
 			require.NoError(t, failpoint.Disable(failpointName))
 		})
 		require.NoError(t, extEngine.waitIngestDataReleased(context.Background()))
+	})
+
+	t.Run("wait log includes in-flight data count", func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		ctx := logutil.WithLogger(context.Background(), zap.New(core))
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.inFlightDataCount.Store(7)
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- extEngine.waitIngestDataReleased(ctx)
+		}()
+		require.Eventually(t, func() bool {
+			return logs.FilterMessage("wait for downstream to release loaded data before retrying read").Len() == 1
+		}, time.Second, 10*time.Millisecond)
+		extEngine.dataReleaseCh <- struct{}{}
+		require.NoError(t, <-errCh)
+
+		fields := logs.All()[0].ContextMap()
+		require.EqualValues(t, 7, fields["inFlightDataCount"])
 	})
 
 	ctx := context.Background()

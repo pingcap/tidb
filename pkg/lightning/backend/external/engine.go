@@ -475,7 +475,8 @@ func (e *Engine) waitIngestDataReleased(ctx context.Context) error {
 		return membuf.ErrCannotAcquireMemory
 	}
 
-	logutil.Logger(ctx).Info("wait for downstream to release loaded data before retrying read")
+	logutil.Logger(ctx).Info("wait for downstream to release loaded data before retrying read",
+		zap.Int64("inFlightDataCount", e.inFlightDataCount.Load()))
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
