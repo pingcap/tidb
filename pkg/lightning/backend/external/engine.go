@@ -467,7 +467,16 @@ func (e *Engine) waitIngestDataReleased(ctx context.Context) error {
 		return nil
 	default:
 	}
+	failpoint.InjectCall("waitIngestDataReleasedBeforeCountCheck")
 	if e.inFlightDataCount.Load() == 0 {
+		// A release can race between the non-blocking receive above and this
+		// count check. Observe the release signal once more before deciding that
+		// there is no downstream data whose release can make retrying useful.
+		select {
+		case <-e.dataReleaseCh:
+			return nil
+		default:
+		}
 		return membuf.ErrCannotAcquireMemory
 	}
 
