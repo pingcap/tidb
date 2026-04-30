@@ -97,7 +97,7 @@ The goal of code review is for the author and reviewer(s) to collaboratively pro
 
   * A common pattern is to define an array of structs that define the input and expected output, and then loop over every struct in the array. The [DDL AST tests](pkg/parser/ast/ddl_test.go) contain many examples of this pattern.
 
-  * Many larger tests use "test suites": json files of cases and expected output that decouple the test code from the test data. For example, the [planner indexmerge tests](pkg/planner/core/casetest/indexmerge/main_test.go) loads json files from a [testdata subdirectory](pkg/planner/core/casetest/indexmerge/testdata).
+  * Many larger tests use "test suites": JSON files of cases and expected output that decouple the test code from the test data. For example, the [planner indexmerge tests](pkg/planner/core/casetest/indexmerge/main_test.go) load JSON files from a [testdata subdirectory](pkg/planner/core/casetest/indexmerge/testdata).
 
 
 ## Guidance for reviewers
