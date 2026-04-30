@@ -111,8 +111,8 @@ func adjustMemCost(totalMemCost int64) (result int64, err error) {
 //     cache.
 //
 // For phase-by-phase or chunk-by-chunk cache construction, callers that read after writes should
-// drain buffered Ristretto updates before the next dependent read. InitStats does this between load
-// phases and chunks so a temporary LFU cache cannot carry an older table snapshot into later loading.
+// call WaitForAsyncUpdates before the next dependent read. InitStats does this between load phases
+// and chunks so a temporary LFU cache cannot carry an older table snapshot into later loading.
 func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
 	if !ok {
@@ -249,9 +249,9 @@ func (s *LFU) SetCapacity(maxCost int64) {
 	metrics.CostGauge.Set(float64(s.Cost()))
 }
 
-// wait blocks until all buffered writes have been applied. This ensures a call to Set()
-// will be visible to future calls to Get(). it is only used for test.
-func (s *LFU) wait() {
+// WaitForAsyncUpdates blocks until all buffered writes have been applied. This ensures a call to
+// Put is visible to future calls to Get.
+func (s *LFU) WaitForAsyncUpdates() {
 	s.cache.Wait()
 }
 
