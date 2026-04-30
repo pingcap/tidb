@@ -462,6 +462,11 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 }
 
 func (e *Engine) waitIngestDataReleased(ctx context.Context) error {
+	select {
+	case <-e.dataReleaseCh:
+		return nil
+	default:
+	}
 	if e.inFlightDataCount.Load() == 0 {
 		return membuf.ErrCannotAcquireMemory
 	}
@@ -560,11 +565,13 @@ func (e *Engine) buildIngestData(kvs []kvPair, buf []*membuf.Buffer) *MemoryInge
 }
 
 func (e *Engine) onIngestDataReleased() {
-	e.inFlightDataCount.Dec()
+	// Notify before decrementing inFlightDataCount. Then a waiter that observes
+	// zero in-flight data can also observe the release signal before returning.
 	select {
 	case e.dataReleaseCh <- struct{}{}:
 	default:
 	}
+	e.inFlightDataCount.Dec()
 }
 
 // KVStatistics returns the total kv size and total kv count.

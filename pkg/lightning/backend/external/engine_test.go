@@ -202,6 +202,14 @@ func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *engineapi.DataAndR
 }
 
 func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T) {
+	t.Run("already released data still allows retry", func(t *testing.T) {
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.dataReleaseCh <- struct{}{}
+		require.NoError(t, extEngine.waitIngestDataReleased(context.Background()))
+	})
+
 	ctx := context.Background()
 	store := &trackOpenMemStorage{MemStorage: storage.NewMemStorage()}
 	dataFiles, statFiles := prepareKVFiles(t, store, [][]kvPair{{
