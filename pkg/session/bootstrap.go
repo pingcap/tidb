@@ -1271,6 +1271,12 @@ const (
 	// repairs the table schema.
 	version227 = 227
 
+	// version 228
+	// Backfill tidb_ignore_inlist_plan_digest for upgraded clusters where the row in
+	// mysql.global_variables was never materialized when the variable was introduced.
+	// Use the current sysvar default when the row is missing.
+	version228 = 228
+
 	// ...
 	// [version228, version238] is the version range reserved for patches of 8.5.x
 	// ...
@@ -1280,7 +1286,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version227
+var currentBootstrapVersion int64 = version228
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1463,6 +1469,7 @@ var (
 		upgradeToVer225,
 		upgradeToVer226,
 		upgradeToVer227,
+		upgradeToVer228,
 	}
 )
 
@@ -3404,6 +3411,13 @@ func upgradeToVer227(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD COLUMN restore_id BIGINT NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map DROP PRIMARY KEY", dbterror.ErrCantDropFieldOrKey)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_pitr_id_map ADD PRIMARY KEY(restore_id, restored_ts, upstream_cluster_id, segment_id)")
+}
+
+func upgradeToVer228(s sessiontypes.Session, ver int64) {
+	if ver >= version228 {
+		return
+	}
+	initGlobalVariableIfNotExists(s, variable.TiDBIgnoreInlistPlanDigest, variable.BoolToOnOff(variable.DefTiDBIgnoreInlistPlanDigest))
 }
 
 func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) []string {
