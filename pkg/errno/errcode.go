@@ -1166,7 +1166,7 @@ const (
 	ErrStorageClassInvalidSpec                  = 8271
 	ErrModifyColumnReferencedByPartialCondition = 8272
 	ErrCheckPartialIndexWithoutFastCheck        = 8273
-	ErrSQLDeniedByBlacklist                     = 8274
+	ErrSQLDeniedByBlocklist                     = 8274
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

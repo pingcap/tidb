@@ -289,8 +289,8 @@ const (
 	AdminReloadExprPushdownBlacklistCommand = "ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST"
 	// AdminReloadOptRuleBlacklistCommand represents ADMIN RELOAD OPT_RULE_BLACKLIST statement
 	AdminReloadOptRuleBlacklistCommand = "ADMIN RELOAD OPT_RULE_BLACKLIST"
-	// AdminReloadSQLBlacklistCommand represents ADMIN RELOAD SQL_BLACKLIST statement
-	AdminReloadSQLBlacklistCommand = "ADMIN RELOAD SQL_BLACKLIST"
+	// AdminReloadSQLBlocklistCommand represents ADMIN RELOAD SQL_BLOCKLIST statement
+	AdminReloadSQLBlocklistCommand = "ADMIN RELOAD SQL_BLOCKLIST"
 	// AdminPluginsDisableCommand represents ADMIN PLUGINS DISABLE statement
 	AdminPluginsDisableCommand = "ADMIN PLUGINS DISABLE"
 	// AdminPluginsEnableCommand represents ADMIN PLUGINS ENABLE statement
@@ -888,8 +888,8 @@ func (n *AdminStmt) SEMCommand() string {
 		return AdminShowNextRowIDCommand
 	case AdminReloadExprPushdownBlacklist:
 		return AdminReloadExprPushdownBlacklistCommand
-	case AdminReloadSQLBlacklist:
-		return AdminReloadSQLBlacklistCommand
+	case AdminReloadSQLBlocklist:
+		return AdminReloadSQLBlocklistCommand
 	case AdminReloadOptRuleBlacklist:
 		return AdminReloadOptRuleBlacklistCommand
 	case AdminPluginDisable:

@@ -188,8 +188,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildChecksumTable(v)
 	case *plannercore.ReloadExprPushdownBlacklist:
 		return b.buildReloadExprPushdownBlacklist(v)
-	case *plannercore.ReloadSQLBlacklist:
-		return b.buildReloadSQLBlacklist(v)
+	case *plannercore.ReloadSQLBlocklist:
+		return b.buildReloadSQLBlocklist(v)
 	case *plannercore.ReloadOptRuleBlacklist:
 		return b.buildReloadOptRuleBlacklist(v)
 	case *plannercore.AdminPlugins:
@@ -760,9 +760,9 @@ func (b *executorBuilder) buildReloadExprPushdownBlacklist(_ *plannercore.Reload
 	return &ReloadExprPushdownBlacklistExec{base}
 }
 
-func (b *executorBuilder) buildReloadSQLBlacklist(_ *plannercore.ReloadSQLBlacklist) exec.Executor {
+func (b *executorBuilder) buildReloadSQLBlocklist(_ *plannercore.ReloadSQLBlocklist) exec.Executor {
 	base := exec.NewBaseExecutor(b.ctx, nil, 0)
-	return &ReloadSQLBlacklistExec{BaseExecutor: base}
+	return &ReloadSQLBlocklistExec{BaseExecutor: base}
 }
 
 func (b *executorBuilder) buildReloadOptRuleBlacklist(_ *plannercore.ReloadOptRuleBlacklist) exec.Executor {

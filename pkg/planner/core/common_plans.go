@@ -185,8 +185,8 @@ type ReloadExprPushdownBlacklist struct {
 	physicalop.SimpleSchemaProducer
 }
 
-// ReloadSQLBlacklist reloads the data from sql_blacklist table.
-type ReloadSQLBlacklist struct {
+// ReloadSQLBlocklist reloads the data from sql_blocklist table.
+type ReloadSQLBlocklist struct {
 	physicalop.SimpleSchemaProducer
 }
 

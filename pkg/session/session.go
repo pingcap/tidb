@@ -102,7 +102,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/sqlblacklist"
+	"github.com/pingcap/tidb/pkg/sqlblocklist"
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
@@ -1005,15 +1005,15 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	}
 
 	if err == nil {
-		needNotify := s.sessionVars.TxnCtx.SQLBlacklistUpdated
+		needNotify := s.sessionVars.TxnCtx.SQLBlocklistUpdated
 		if !needNotify {
 			if deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap; deltaMap != nil {
-				_, needNotify = deltaMap[metadef.SQLBlacklistTableID]
+				_, needNotify = deltaMap[metadef.SQLBlocklistTableID]
 			}
 		}
 		if needNotify {
-			if notifyErr := domain.GetDomain(s).NotifyUpdateSQLBlacklist(s); notifyErr != nil {
-				logutil.BgLogger().Warn("notify update sql blacklist failed", zap.Error(notifyErr))
+			if notifyErr := domain.GetDomain(s).NotifyUpdateSQLBlocklist(s); notifyErr != nil {
+				logutil.BgLogger().Warn("notify update sql blocklist failed", zap.Error(notifyErr))
 			}
 		}
 	}
@@ -2440,7 +2440,11 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if !sessVars.InRestrictedSQL {
-		if err := sqlblacklist.CheckSQLDenied(normalizedSQL, sessVars.StmtCtx.OriginalSQL); err != nil {
+		user := ""
+		if sessVars.User != nil {
+			user = sessVars.User.Username
+		}
+		if err := sqlblocklist.CheckSQLDenied(user, normalizedSQL, sessVars.StmtCtx.OriginalSQL); err != nil {
 			return nil, err
 		}
 	}
@@ -4165,7 +4169,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	// Mark all bootstrap sessions as restricted since they are used for internal operations
 	// ses[0]: main bootstrap session
-	// ses[1]: SQL blacklist
+	// ses[1]: SQL blocklist
 	// ses[2]: reserved
 	// ses[3]: privilege loading
 	// ses[4]: sysvar cache
@@ -4215,8 +4219,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 
-	// Reload SQL blacklist in a loop
-	err = dom.LoadSQLBlacklistLoop(ses[1])
+	// Reload SQL blocklist in a loop
+	err = dom.LoadSQLBlocklistLoop(ses[1])
 	if err != nil {
 		return nil, err
 	}

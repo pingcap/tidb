@@ -258,7 +258,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 		return meetsErr
 	}
 
-	markSQLBlacklistUpdated(se, sql)
+	markSQLBlocklistUpdated(se, sql)
 
 	if !sessVars.InTxn() {
 		if err := se.CommitTxn(ctx); err != nil {
@@ -272,7 +272,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 	return nil
 }
 
-func markSQLBlacklistUpdated(se *session, sql sqlexec.Statement) {
+func markSQLBlocklistUpdated(se *session, sql sqlexec.Statement) {
 	execStmt, ok := sql.(*executor.ExecStmt)
 	if !ok {
 		return
@@ -280,19 +280,22 @@ func markSQLBlacklistUpdated(se *session, sql sqlexec.Statement) {
 	if execStmt.IsReadOnly(se.sessionVars) {
 		return
 	}
-	if !stmtTouchesSQLBlacklist(se.sessionVars) {
+	if !stmtTouchesSQLBlocklist(se.sessionVars) {
 		return
 	}
-	se.sessionVars.TxnCtx.SQLBlacklistUpdated = true
+	se.sessionVars.TxnCtx.SQLBlocklistUpdated = true
 }
 
-func stmtTouchesSQLBlacklist(sessVars *variable.SessionVars) bool {
+func stmtTouchesSQLBlocklist(sessVars *variable.SessionVars) bool {
 	for _, table := range sessVars.StmtCtx.Tables {
 		dbName := table.DB
 		if dbName == "" {
 			dbName = sessVars.CurrentDB
 		}
-		if strings.EqualFold(dbName, mysql.SystemDB) && strings.EqualFold(table.Table, "sql_blacklist") {
+		if !strings.EqualFold(dbName, mysql.SystemDB) {
+			continue
+		}
+		if strings.EqualFold(table.Table, "sql_blocklist") {
 			return true
 		}
 	}

@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "sqlblocklist",
+    srcs = ["blocklist.go"],
+    importpath = "github.com/pingcap/tidb/pkg/sqlblocklist",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser",
+        "//pkg/sessionctx",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/sqlexec",
+    ],
+)

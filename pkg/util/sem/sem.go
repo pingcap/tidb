@@ -32,7 +32,7 @@ const (
 	gcDeleteRange         = "gc_delete_range"
 	gcDeleteRangeDone     = "gc_delete_range_done"
 	optRuleBlacklist      = "opt_rule_blacklist"
-	sqlBlacklist          = "sql_blacklist"
+	sqlBlocklist          = "sql_blocklist"
 	tidb                  = "tidb"
 	globalVariables       = "global_variables"
 	clusterConfig         = "cluster_config"
@@ -106,7 +106,7 @@ func IsInvisibleTable(dbLowerName, tblLowerName string) bool {
 	switch dbLowerName {
 	case mysql.SystemDB:
 		switch tblLowerName {
-		case exprPushdownBlacklist, gcDeleteRange, gcDeleteRangeDone, optRuleBlacklist, sqlBlacklist, tidb, globalVariables:
+		case exprPushdownBlacklist, gcDeleteRange, gcDeleteRangeDone, optRuleBlacklist, sqlBlocklist, tidb, globalVariables:
 			return true
 		}
 	case metadef.InformationSchemaName.L:

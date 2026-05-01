@@ -325,7 +325,7 @@ var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
 	{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
-	{ID: metadef.SQLBlacklistTableID, Name: "sql_blacklist", SQL: metadef.CreateSQLBlacklistTable},
+	{ID: metadef.SQLBlocklistTableID, Name: "sql_blocklist", SQL: metadef.CreateSQLBlocklistTable},
 	// NOTE: if you need to add more tables to 'mysql' database, please also add
 	// an entry to versionedBootstrapSchemas, to make sure the table is created
 	// correctly in nextgen kennel.

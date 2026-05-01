@@ -770,7 +770,7 @@ import (
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
-	sqlBlacklist          "SQL_BLACKLIST"
+	sqlBlacklist          "SQL_BLOCKLIST"
 	placement             "PLACEMENT"
 	planCache             "PLAN_CACHE"
 	plan                  "PLAN"
@@ -7554,7 +7554,7 @@ NotKeywordToken:
 |	"NEXT_ROW_ID"
 |	"EXPR_PUSHDOWN_BLACKLIST"
 |	"OPT_RULE_BLACKLIST"
-|	"SQL_BLACKLIST"
+|	"SQL_BLOCKLIST"
 |	"BOUND"
 |	"EXACT" %prec lowerThanStringLitToken
 |	"STALENESS"
@@ -11652,10 +11652,10 @@ AdminStmt:
 			Tp: ast.AdminReloadExprPushdownBlacklist,
 		}
 	}
-|	"ADMIN" "RELOAD" "SQL_BLACKLIST"
+|	"ADMIN" "RELOAD" "SQL_BLOCKLIST"
 	{
 		$$ = &ast.AdminStmt{
-			Tp: ast.AdminReloadSQLBlacklist,
+			Tp: ast.AdminReloadSQLBlocklist,
 		}
 	}
 |	"ADMIN" "RELOAD" "OPT_RULE_BLACKLIST"
