@@ -334,6 +334,9 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.S
 			break
 		}
 		h.initStatsHistograms4ChunkLite(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -356,7 +359,14 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.
 		if req.NumRows() == 0 {
 			break
 		}
+<<<<<<< HEAD
 		h.initStatsHistograms4Chunk(is, cache, iter, false)
+=======
+		h.initStatsHistograms4Chunk(is, cache, iter, isFullCache(cache, totalMemory))
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
+>>>>>>> 933e59fbe58 (statistics: stabilize TestNonLiteInitStatsWithTableIDs case (#67971))
 	}
 	return nil
 }
@@ -485,7 +495,14 @@ func (h *Handle) initStatsTopN(cache statstypes.StatsCache, totalMemory uint64) 
 		if req.NumRows() == 0 {
 			break
 		}
+<<<<<<< HEAD
 		h.initStatsTopN4Chunk(cache, iter, totalMemory)
+=======
+		h.initStatsTopN4Chunk(cache, iter, totalMemory, tablesWithBuckets)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
+>>>>>>> 933e59fbe58 (statistics: stabilize TestNonLiteInitStatsWithTableIDs case (#67971))
 	}
 	return nil
 }
@@ -726,6 +743,9 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 			break
 		}
 		h.initStatsBuckets4Chunk(cache, iter)
+		// The same table may continue in the next chunk. Drain LFU async admission/rejection
+		// before the next chunk reads or mutates it again.
+		cache.WaitForAsyncUpdates()
 	}
 	return nil
 }
@@ -780,6 +800,9 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Required: initStatsMeta adds new tables without an internal wait; histogram loading
+	// reads them immediately.
+	cache.WaitForAsyncUpdates()
 	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
 	start = time.Now()
 	err = h.initStatsHistogramsLite(ctx, cache)
@@ -788,7 +811,25 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the histogram in the lite mode", zap.Duration("duration", time.Since(start)))
+<<<<<<< HEAD
 	h.Replace(cache)
+=======
+	// If tableIDs is empty, it means we load all the tables' stats meta and histograms.
+	// So we can replace the global cache with the new cache.
+	if len(tableIDs) == 0 {
+		h.Replace(cache)
+	} else {
+		tables := cache.Values()
+		for _, table := range tables {
+			intest.Assert(table != nil, "table should not be nil")
+			h.Put(table.PhysicalID, table)
+		}
+		// Targeted refresh publishes refreshed tables to global LFU; make async admissions visible before returning.
+		h.StatsCache.WaitForAsyncUpdates()
+		// Do not forget to close the new cache. Otherwise it would cause the goroutine leak issue.
+		cache.Close()
+	}
+>>>>>>> 933e59fbe58 (statistics: stabilize TestNonLiteInitStatsWithTableIDs case (#67971))
 	return nil
 }
 
@@ -820,6 +861,9 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Required: initStatsMeta adds new tables without an internal wait; histogram loading
+	// reads them immediately.
+	cache.WaitForAsyncUpdates()
 	statslogutil.StatsLogger().Info("Complete loading the stats meta", zap.Duration("duration", time.Since(start)))
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 	start = time.Now()
@@ -857,7 +901,29 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	h.Replace(cache)
+=======
+	// CalcPreScalar writes tables back; drain before replacing/publishing the cache.
+	cache.WaitForAsyncUpdates()
+	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
+
+	// If tableIDs is empty, it means we load all the tables' stats.
+	// So we can replace the global cache with the new cache.
+	if len(tableIDs) == 0 {
+		h.Replace(cache)
+	} else {
+		tables := cache.Values()
+		for _, table := range tables {
+			intest.Assert(table != nil, "table should not be nil")
+			h.Put(table.PhysicalID, table)
+		}
+		// Targeted refresh publishes refreshed tables to global LFU; make async admissions visible before returning.
+		h.StatsCache.WaitForAsyncUpdates()
+		// Do not forget to close the new cache. Otherwise it would cause the goroutine leak issue.
+		cache.Close()
+	}
+>>>>>>> 933e59fbe58 (statistics: stabilize TestNonLiteInitStatsWithTableIDs case (#67971))
 	return nil
 }
 
