@@ -199,6 +199,66 @@ func (ctx *innerOverrideBuildContext) GetEvalCtx() EvalContext {
 	return ctx.evalCtx
 }
 
+// evalCtxOverrideExprContext is the lowest-level truncate-override wrapper: it
+// keeps the original ExprContext behavior but swaps out only the EvalContext
+// returned by GetEvalCtx. The higher-level sessionctx/planctx wrappers then
+// expose such an ExprContext through their own scoped GetExprCtx methods.
+type evalCtxOverrideExprContext struct {
+	ExprContext
+	evalCtx EvalContext
+}
+
+// GetEvalCtx implements BuildContext.GetEvalCtx.
+func (ctx *evalCtxOverrideExprContext) GetEvalCtx() EvalContext {
+	return ctx.evalCtx
+}
+
+type staticEvalCtxOverrideEvalContext struct {
+	EvalContext
+	staticConvertibleEvalCtx StaticConvertibleEvalContext
+	typeCtx                  types.Context
+	errCtx                   errctx.Context
+}
+
+// TypeCtx implements EvalContext.TypeCtx.
+func (ctx *staticEvalCtxOverrideEvalContext) TypeCtx() types.Context {
+	return ctx.typeCtx
+}
+
+// ErrCtx implements EvalContext.ErrCtx.
+func (ctx *staticEvalCtxOverrideEvalContext) ErrCtx() errctx.Context {
+	return ctx.errCtx
+}
+
+// AllParamValues implements StaticConvertibleEvalContext.
+func (ctx *staticEvalCtxOverrideEvalContext) AllParamValues() []types.Datum {
+	return ctx.staticConvertibleEvalCtx.AllParamValues()
+}
+
+// GetWarnHandler implements StaticConvertibleEvalContext.
+func (ctx *staticEvalCtxOverrideEvalContext) GetWarnHandler() contextutil.WarnHandler {
+	return ctx.staticConvertibleEvalCtx.GetWarnHandler()
+}
+
+// staticEvalCtxOverrideExprContext is the static-convertible sibling of
+// evalCtxOverrideExprContext: it overrides GetEvalCtx while preserving the
+// StaticConvertibleExprContext contract.
+type staticEvalCtxOverrideExprContext struct {
+	StaticConvertibleExprContext
+	evalCtx       EvalContext
+	staticEvalCtx StaticConvertibleEvalContext
+}
+
+// GetEvalCtx implements BuildContext.GetEvalCtx.
+func (ctx *staticEvalCtxOverrideExprContext) GetEvalCtx() EvalContext {
+	return ctx.evalCtx
+}
+
+// GetStaticConvertibleEvalContext implements StaticConvertibleExprContext.
+func (ctx *staticEvalCtxOverrideExprContext) GetStaticConvertibleEvalContext() StaticConvertibleEvalContext {
+	return ctx.staticEvalCtx
+}
+
 // CtxWithHandleTruncateErrLevel returns a new BuildContext with the specified level for handling truncate error.
 func CtxWithHandleTruncateErrLevel(ctx BuildContext, level errctx.Level) BuildContext {
 	truncateAsWarnings, ignoreTruncate := false, false
@@ -229,6 +289,46 @@ func CtxWithHandleTruncateErrLevel(ctx BuildContext, level errctx.Level) BuildCo
 			typeCtx:     tc.WithFlags(flags),
 			errCtx:      ec.WithErrGroupLevel(errctx.ErrGroupTruncate, level),
 		},
+	}
+}
+
+// WithHandleTruncateErrLevel returns a new ExprContext with the specified
+// truncate handling level while keeping all unrelated expression/session
+// behavior delegated to the original ExprContext.
+func WithHandleTruncateErrLevel(ctx ExprContext, level errctx.Level) ExprContext {
+	overrideBuildCtx := CtxWithHandleTruncateErrLevel(ctx, level)
+	if overrideBuildCtx == ctx {
+		return ctx
+	}
+
+	overrideEvalCtx := overrideBuildCtx.GetEvalCtx()
+	if staticCtx, ok := ctx.(StaticConvertibleExprContext); ok {
+		// Preserve the static-convertible contract on both access paths:
+		// GetEvalCtx() should keep the live override semantics, while detach/static
+		// callers must still be able to freeze either EvalCtx or ExprCtx.
+		staticConvertibleEvalCtx := staticCtx.GetStaticConvertibleEvalContext()
+		liveEvalCtx := &staticEvalCtxOverrideEvalContext{
+			EvalContext:              overrideEvalCtx,
+			staticConvertibleEvalCtx: staticConvertibleEvalCtx,
+			typeCtx:                  overrideEvalCtx.TypeCtx(),
+			errCtx:                   overrideEvalCtx.ErrCtx(),
+		}
+		staticEvalCtx := &staticEvalCtxOverrideEvalContext{
+			EvalContext:              staticConvertibleEvalCtx,
+			staticConvertibleEvalCtx: staticConvertibleEvalCtx,
+			typeCtx:                  overrideEvalCtx.TypeCtx(),
+			errCtx:                   overrideEvalCtx.ErrCtx(),
+		}
+		return &staticEvalCtxOverrideExprContext{
+			StaticConvertibleExprContext: staticCtx,
+			evalCtx:                      liveEvalCtx,
+			staticEvalCtx:                staticEvalCtx,
+		}
+	}
+
+	return &evalCtxOverrideExprContext{
+		ExprContext: ctx,
+		evalCtx:     overrideEvalCtx,
 	}
 }
 

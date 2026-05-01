@@ -16,6 +16,7 @@ package planctx
 
 import (
 	"iter"
+	"sync"
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -147,4 +148,91 @@ func (b *BuildPBContext) Detach(staticExprCtx exprctx.BuildContext) *BuildPBCont
 	newCtx := *b
 	newCtx.ExprCtx = staticExprCtx
 	return &newCtx
+}
+
+// exprCtxScopedPlanContext is the planner-layer scoped view. It does not
+// change session behavior by itself; instead it re-exposes a caller-provided
+// ExprCtx and re-derives planner-owned helper contexts from that ExprCtx.
+type exprCtxScopedPlanContext struct {
+	PlanContext
+	exprCtx                exprctx.ExprContext
+	nullRejectCheckExprCtx exprctx.ExprContext
+	internalSctx           any
+	buildPBCtxOnce         sync.Once
+	buildPBCtx             *BuildPBContext
+	rangerCtxOnce          sync.Once
+	rangerCtx              *rangerctx.RangerContext
+}
+
+// UnwrapAsInternalSctx returns the underlying session-backed context when the
+// wrapped plan context supports it, otherwise it returns the wrapped plan
+// context itself for later type assertion in plannercore.AsSctx.
+func (c *exprCtxScopedPlanContext) UnwrapAsInternalSctx() any {
+	if c.internalSctx != nil {
+		return c.internalSctx
+	}
+	if unwrapper, ok := c.PlanContext.(interface{ UnwrapAsInternalSctx() any }); ok {
+		return unwrapper.UnwrapAsInternalSctx()
+	}
+	// Fall back to the wrapped PlanContext itself so AsSctx can still succeed
+	// for implementations that directly satisfy sessionctx.Context.
+	return c.PlanContext
+}
+
+// GetExprCtx returns the scoped expression context.
+func (c *exprCtxScopedPlanContext) GetExprCtx() exprctx.ExprContext {
+	return c.exprCtx
+}
+
+// GetNullRejectCheckExprCtx returns the null-reject-check context derived from the scoped expression context.
+func (c *exprCtxScopedPlanContext) GetNullRejectCheckExprCtx() exprctx.ExprContext {
+	return c.nullRejectCheckExprCtx
+}
+
+// GetBuildPBCtx returns a detached BuildPBContext bound to the scoped expression context.
+func (c *exprCtxScopedPlanContext) GetBuildPBCtx() *BuildPBContext {
+	c.buildPBCtxOnce.Do(func() {
+		if bctx := c.PlanContext.GetBuildPBCtx(); bctx != nil {
+			// Detach from the original cache so the scoped ExprCtx can change PB
+			// casting/error semantics without mutating the session-wide BuildPBContext.
+			c.buildPBCtx = bctx.Detach(c.exprCtx)
+		}
+	})
+	return c.buildPBCtx
+}
+
+// GetRangerCtx returns a detached RangerContext bound to the scoped evaluation context.
+func (c *exprCtxScopedPlanContext) GetRangerCtx() *rangerctx.RangerContext {
+	c.rangerCtxOnce.Do(func() {
+		if rctx := c.PlanContext.GetRangerCtx(); rctx != nil {
+			evalCtx := c.exprCtx.GetEvalCtx()
+			detached := rctx.Detach(c.exprCtx)
+			// Ranger consults TypeCtx/ErrCtx directly for coercion and truncate
+			// behavior, so those fields must be replaced together with ExprCtx.
+			detached.TypeCtx = evalCtx.TypeCtx()
+			detached.ErrCtx = evalCtx.ErrCtx()
+			c.rangerCtx = detached
+		}
+	})
+	return c.rangerCtx
+}
+
+// WithExprCtx returns a scoped PlanContext view with an overridden ExprCtx and
+// detached derived contexts that must observe the same expression semantics.
+func WithExprCtx(pctx PlanContext, exprCtx exprctx.ExprContext) PlanContext {
+	return WithExprCtxAndInternalSctx(pctx, exprCtx, nil)
+}
+
+// WithExprCtxAndInternalSctx is like WithExprCtx, but it also lets callers
+// preserve the session object that should be recovered by plannercore.AsSctx.
+func WithExprCtxAndInternalSctx(pctx PlanContext, exprCtx exprctx.ExprContext, internalSctx any) PlanContext {
+	if exprCtx == nil || exprCtx == pctx.GetExprCtx() {
+		return pctx
+	}
+	return &exprCtxScopedPlanContext{
+		PlanContext:            pctx,
+		exprCtx:                exprCtx,
+		nullRejectCheckExprCtx: exprctx.WithNullRejectCheck(exprCtx),
+		internalSctx:           internalSctx,
+	}
 }

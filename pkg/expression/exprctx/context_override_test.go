@@ -22,8 +22,26 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
+
+type splitStaticExprContext struct {
+	*exprstatic.ExprContext
+	staticEvalCtx exprctx.StaticConvertibleEvalContext
+}
+
+func (ctx *splitStaticExprContext) GetStaticConvertibleEvalContext() exprctx.StaticConvertibleEvalContext {
+	return ctx.staticEvalCtx
+}
+
+func (ctx *splitStaticExprContext) GetPlanCacheTracker() *contextutil.PlanCacheTracker {
+	return ctx.ExprContext.GetPlanCacheTracker()
+}
+
+func (ctx *splitStaticExprContext) GetLastPlanColumnID() int64 {
+	return ctx.ExprContext.GetLastPlanColumnID()
+}
 
 func TestCtxWithHandleTruncateErrLevel(t *testing.T) {
 	for _, level := range []errctx.Level{errctx.LevelWarn, errctx.LevelIgnore, errctx.LevelError} {
@@ -66,6 +84,15 @@ func TestCtxWithHandleTruncateErrLevel(t *testing.T) {
 		require.Equal(t, expectedFlags, newTypeCtx.Flags())
 		require.Equal(t, expectedLevelMap, newErrCtx.LevelMap())
 
+		newExprCtx := exprctx.WithHandleTruncateErrLevel(ctx, level)
+		newExprEvalCtx := newExprCtx.GetEvalCtx()
+		newExprTypeCtx, newExprErrCtx := newExprEvalCtx.TypeCtx(), newExprEvalCtx.ErrCtx()
+		require.Equal(t, expectedFlags, newExprTypeCtx.Flags())
+		require.Equal(t, expectedLevelMap, newExprErrCtx.LevelMap())
+		require.Equal(t, uint64(1234), newExprCtx.ConnectionID())
+		_, ok := newExprCtx.(exprctx.StaticConvertibleExprContext)
+		require.True(t, ok)
+
 		// other fields should not change
 		require.Equal(t, originalLoc, newTypeCtx.Location())
 		require.Equal(t, originalLoc, newEvalCtx.Location())
@@ -82,4 +109,37 @@ func TestCtxWithHandleTruncateErrLevel(t *testing.T) {
 		newCtx2 := exprctx.CtxWithHandleTruncateErrLevel(newCtx, level)
 		require.Same(t, newCtx, newCtx2)
 	}
+}
+
+func TestWithHandleTruncateErrLevelKeepsLiveEvalCtxForStaticConvertibleExprCtx(t *testing.T) {
+	liveTime := time.Date(2026, 4, 20, 10, 0, 0, 0, time.FixedZone("live", 8*3600))
+	staticTime := time.Date(2026, 4, 20, 11, 0, 0, 0, time.FixedZone("static", 9*3600))
+
+	liveEvalCtx := exprstatic.NewEvalContext(exprstatic.WithCurrentTime(func() (time.Time, error) {
+		return liveTime, nil
+	}), exprstatic.WithTypeFlags(types.DefaultStmtFlags.WithTruncateAsWarning(true)),
+		exprstatic.WithErrLevelMap(errctx.LevelMap{errctx.ErrGroupTruncate: errctx.LevelWarn}))
+	staticEvalCtx := exprstatic.NewEvalContext(exprstatic.WithCurrentTime(func() (time.Time, error) {
+		return staticTime, nil
+	}), exprstatic.WithTypeFlags(types.DefaultStmtFlags.WithTruncateAsWarning(true)),
+		exprstatic.WithErrLevelMap(errctx.LevelMap{errctx.ErrGroupTruncate: errctx.LevelWarn}))
+	ctx := &splitStaticExprContext{
+		ExprContext:   exprstatic.NewExprContext(exprstatic.WithEvalCtx(liveEvalCtx)),
+		staticEvalCtx: staticEvalCtx,
+	}
+
+	overrideCtx := exprctx.WithHandleTruncateErrLevel(ctx, errctx.LevelError)
+
+	require.Equal(t, liveEvalCtx.CtxID(), overrideCtx.GetEvalCtx().CtxID())
+	_, ok := overrideCtx.GetEvalCtx().(exprctx.StaticConvertibleEvalContext)
+	require.True(t, ok)
+
+	staticConvertibleCtx, ok := overrideCtx.(exprctx.StaticConvertibleExprContext)
+	require.True(t, ok)
+	require.Equal(t, staticEvalCtx.CtxID(), staticConvertibleCtx.GetStaticConvertibleEvalContext().CtxID())
+
+	liveErrCtx := overrideCtx.GetEvalCtx().ErrCtx()
+	staticErrCtx := staticConvertibleCtx.GetStaticConvertibleEvalContext().ErrCtx()
+	require.Equal(t, errctx.LevelError, liveErrCtx.LevelForGroup(errctx.ErrGroupTruncate))
+	require.Equal(t, errctx.LevelError, staticErrCtx.LevelForGroup(errctx.ErrGroupTruncate))
 }
