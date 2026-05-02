@@ -129,7 +129,7 @@ var defaultStatus = map[string]*StatusVal{
 	"Ssl_version":     {vardef.ScopeGlobal | vardef.ScopeSession, ""},
 	"Performance_schema_session_connect_attrs_longest_seen": {vardef.ScopeGlobal, int64(0)},
 	"Performance_schema_session_connect_attrs_lost":         {vardef.ScopeGlobal, int64(0)},
-	"tidb_keys_examined":                                    {vardef.ScopeSession, uint64(0)},
+	"tidb_keys_examined": {vardef.ScopeSession, uint64(0)},
 }
 
 type defaultStatusStat struct {
