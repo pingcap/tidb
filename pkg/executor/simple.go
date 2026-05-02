@@ -1785,7 +1785,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				alterPassword = true
 			}
 		}
-		if alterCurrentUser && alterPassword {
+		if alterCurrentUser && (alterPassword || dualPwdRequested) {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		} else {
@@ -1829,9 +1829,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// MySQL-compatible dual password: RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD validation.
 		// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-management-dual-password
 		if plOptions.retainCurrentPassword || plOptions.discardOldPassword {
-			// Cross-user use of either clause requires APPLICATION_PASSWORD_ADMIN.
-			if !alterCurrentUser && !hasApplicationPasswordAdminPriv {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("APPLICATION_PASSWORD_ADMIN")
+			// MySQL requires APPLICATION_PASSWORD_ADMIN or CREATE USER for a
+			// user manipulating their own secondary password. Manipulating
+			// other accounts' secondary passwords is covered by CREATE USER.
+			if alterCurrentUser {
+				if !(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
+					return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER or APPLICATION_PASSWORD_ADMIN")
+				}
+			} else if !hasCreateUserPriv {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
 			// Only password-based auth plugins can hold a secondary password.
 			if !isDualPasswordCapablePlugin(currentAuthPlugin) {
@@ -2667,10 +2673,16 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	var u, h string
 	disableSandboxMode := false
 	sessUser := e.Ctx().GetSessionVars().User
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	hasCreateUserPriv := false
+	hasApplicationPasswordAdminPriv := false
+	if checker != nil && s.RetainCurrentPassword {
+		hasCreateUserPriv = checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
+		hasApplicationPasswordAdminPriv = checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
+	}
 	// setPwdForSelf matches executeAlterUser's alterCurrentUser idiom: treat an
-	// explicit `FOR 'self'@'host'` that names the caller as self-service, not
-	// cross-user. MySQL 8.0 documents this — APPLICATION_PASSWORD_ADMIN is only
-	// required when the statement names a *different* account.
+	// explicit `FOR 'self'@'host'` that names the caller as self-service.
 	setPwdForSelf := s.User == nil || s.User.CurrentUser ||
 		(sessUser != nil && sessUser.Username == s.User.Username && sessUser.AuthHostname == s.User.Hostname)
 	if setPwdForSelf {
@@ -2683,17 +2695,18 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		u = s.User.Username
 		h = s.User.Hostname
 
-		checker := privilege.GetPrivilegeManager(e.Ctx())
-		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+		if checker != nil && s.RetainCurrentPassword {
+			if !hasCreateUserPriv {
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+			}
+		} else if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			currUser := sessUser
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
 		}
-		// MySQL: RETAIN CURRENT PASSWORD on another user requires APPLICATION_PASSWORD_ADMIN.
-		if s.RetainCurrentPassword && checker != nil &&
-			!checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false) {
-			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("APPLICATION_PASSWORD_ADMIN")
-		}
+	}
+	if s.RetainCurrentPassword && setPwdForSelf && checker != nil &&
+		!(hasCreateUserPriv || hasApplicationPasswordAdminPriv) {
+		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER or APPLICATION_PASSWORD_ADMIN")
 	}
 	exists, authplugin, err := userExistsInternal(ctx, sqlExecutor, u, h)
 	if err != nil {
