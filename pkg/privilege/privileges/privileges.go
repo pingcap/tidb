@@ -78,7 +78,7 @@ var dynamicPrivs = []string{
 	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
 	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
 	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
-	"APPLICATION_PASSWORD_ADMIN",      // Can use RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD on another user's account.
+	"APPLICATION_PASSWORD_ADMIN",      // Self-service RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD; cross-user retain/discard requires CREATE USER.
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute

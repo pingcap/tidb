@@ -1429,6 +1429,9 @@ func (n *SetPwdStmt) Restore(ctx *format.RestoreCtx) error {
 
 // SecureText implements SensitiveStatement interface.
 func (n *SetPwdStmt) SecureText() string {
+	if n.RetainCurrentPassword {
+		return fmt.Sprintf("set password for user %s RETAIN CURRENT PASSWORD", n.User)
+	}
 	return fmt.Sprintf("set password for user %s", n.User)
 }
 
@@ -1575,7 +1578,10 @@ func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// SecurityString formats the UserSpec without password information.
+// SecurityString formats the UserSpec without password information. The
+// dual-password clause (RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) is
+// non-secret and is surfaced verbatim so the redacted output preserves the
+// fact that the statement targets the secondary-password slot.
 func (n *UserSpec) SecurityString() string {
 	withPassword := false
 	if opt := n.AuthOpt; opt != nil {
@@ -1583,8 +1589,20 @@ func (n *UserSpec) SecurityString() string {
 			withPassword = true
 		}
 	}
+	dualClause := ""
+	if n.DualPasswordOption != nil {
+		switch n.DualPasswordOption.Type {
+		case RetainCurrentPassword:
+			dualClause = " RETAIN CURRENT PASSWORD"
+		case DiscardOldPassword:
+			dualClause = " DISCARD OLD PASSWORD"
+		}
+	}
 	if withPassword {
-		return fmt.Sprintf("{%s password = ***}", n.User)
+		return fmt.Sprintf("{%s password = ***%s}", n.User, dualClause)
+	}
+	if dualClause != "" {
+		return fmt.Sprintf("{%s%s}", n.User, dualClause)
 	}
 	return n.User.String()
 }
