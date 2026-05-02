@@ -326,35 +326,44 @@ func TestDualPasswordDropUserRemovesSecondary(t *testing.T) {
 	tk.MustQuery("SELECT count(*) FROM mysql.user WHERE User='dpdropme'").Check(testkit.Rows("0"))
 }
 
-// TestDualPasswordMultiUserAlter approximates MySQL's DDL Test 6: a single
-// ALTER USER with multiple specs and a trailing RETAIN CURRENT PASSWORD must
-// apply RETAIN to every spec in the list. (Note: TiDB currently attaches
-// RETAIN / DISCARD at the statement level — not per-spec like MySQL — so
-// "mix-n-match" where one spec RETAINs and another does not in the same
-// statement is not supported by TiDB's grammar. Reviewers can decide whether
-// to tighten this as a follow-up.)
+// TestDualPasswordMultiUserAlter mirrors MySQL's per-user auth option
+// semantics: RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD applies only to
+// the user spec it follows, not to every spec in the ALTER USER statement.
 func TestDualPasswordMultiUserAlter(t *testing.T) {
 	tk := rootTK(t)
 
 	tk.MustExec("DROP USER IF EXISTS dpm1, dpm2, dpm3")
 	tk.MustExec("CREATE USER dpm1 IDENTIFIED BY 'p1', dpm2 IDENTIFIED BY 'q1', dpm3 IDENTIFIED BY 'r1'")
 
-	// Single-statement, multi-spec RETAIN: both specs should carry over their
-	// old password into $.additional_password.
+	// RETAIN follows only dpm3 here. dpm1 changes primary password without
+	// retaining p1 as a secondary.
 	tk.MustExec("ALTER USER dpm1 IDENTIFIED BY 'p2', dpm3 IDENTIFIED BY 'r2' RETAIN CURRENT PASSWORD")
-
-	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User IN ('dpm1', 'dpm3') ORDER BY User").Check(testkit.Rows("1", "1"))
-	// dpm2 was untouched by the statement, so no secondary.
+	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User IN ('dpm1', 'dpm3') ORDER BY User").Check(testkit.Rows("0", "1"))
 	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') FROM mysql.user WHERE User='dpm2'").Check(testkit.Rows("<nil>"))
-
-	require.NoError(t, authAs(t, tk, "dpm1", "%", "p1"))
+	require.Error(t, authAs(t, tk, "dpm1", "%", "p1"))
 	require.NoError(t, authAs(t, tk, "dpm1", "%", "p2"))
 	require.NoError(t, authAs(t, tk, "dpm3", "%", "r1"))
 	require.NoError(t, authAs(t, tk, "dpm3", "%", "r2"))
 
-	// Trailing DISCARD with multiple specs: both secondaries should be removed.
-	tk.MustExec("ALTER USER dpm1, dpm3 DISCARD OLD PASSWORD")
-	tk.MustQuery("SELECT count(*) FROM mysql.user WHERE User IN ('dpm1', 'dpm3') AND JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL").Check(testkit.Rows("0"))
+	// RETAIN follows only dpm1 here. dpm3 changes primary without RETAIN, so its
+	// existing secondary r1 is preserved and old primary r2 is not retained.
+	tk.MustExec("ALTER USER dpm1 IDENTIFIED BY 'p3' RETAIN CURRENT PASSWORD, dpm3 IDENTIFIED BY 'r3'")
+	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User IN ('dpm1', 'dpm3') ORDER BY User").Check(testkit.Rows("1", "1"))
+	require.NoError(t, authAs(t, tk, "dpm1", "%", "p2"))
+	require.NoError(t, authAs(t, tk, "dpm1", "%", "p3"))
 	require.Error(t, authAs(t, tk, "dpm1", "%", "p1"))
+	require.NoError(t, authAs(t, tk, "dpm3", "%", "r1"))
+	require.NoError(t, authAs(t, tk, "dpm3", "%", "r3"))
+	require.Error(t, authAs(t, tk, "dpm3", "%", "r2"))
+
+	// DISCARD follows only dpm3 here. dpm1 keeps its secondary.
+	tk.MustExec("ALTER USER dpm1, dpm3 DISCARD OLD PASSWORD")
+	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User IN ('dpm1', 'dpm3') ORDER BY User").Check(testkit.Rows("1", "0"))
+	require.NoError(t, authAs(t, tk, "dpm1", "%", "p2"))
 	require.Error(t, authAs(t, tk, "dpm3", "%", "r1"))
+
+	// DISCARD can also appear before the comma and applies only to dpm1.
+	tk.MustExec("ALTER USER dpm1 DISCARD OLD PASSWORD, dpm3")
+	tk.MustQuery("SELECT count(*) FROM mysql.user WHERE User IN ('dpm1', 'dpm3') AND JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL").Check(testkit.Rows("0"))
+	require.Error(t, authAs(t, tk, "dpm1", "%", "p2"))
 }

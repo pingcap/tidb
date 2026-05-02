@@ -1336,6 +1336,10 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	PasswordOrLockOption                   "Single password or lock option for create user statement"
 	PasswordOrLockOptionList               "Password or lock options for create user statement"
 	PasswordOrLockOptions                  "Optional password or lock options for create user statement"
+	AlterPasswordOrLockOption              "Single password or lock option for alter user statement"
+	AlterPasswordOrLockOptionList          "Password or lock options for alter user statement"
+	AlterPasswordOrLockOptions             "Optional password or lock options for alter user statement"
+	UserSpecDualPasswordOption             "Optional dual password option for user spec"
 	PlanReplayerDumpOpt                    "Plan Replayer Dump option"
 	CommentOrAttributeOption               "Optional comment or attribute option for CREATE/ALTER USER statements"
 	ColumnPosition                         "Column position [First|After ColumnName]"
@@ -1460,6 +1464,10 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	UsernameList                           "UsernameList"
 	UserSpec                               "Username and auth option"
 	UserSpecList                           "Username and auth option list"
+	CreateUserSpec                         "CREATE USER username, auth option, and unsupported dual password option"
+	CreateUserSpecList                     "CREATE USER spec list"
+	AlterUserSpec                          "ALTER USER username, auth option, and dual password option"
+	AlterUserSpecList                      "ALTER USER spec list"
 	UserVariableList                       "User defined variable name list"
 	UserToUser                             "rename user to user"
 	UserToUserList                         "rename user to user by list"
@@ -14365,7 +14373,7 @@ WhereClauseOptional:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
+	"CREATE" "USER" IfNotExists CreateUserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
@@ -14398,7 +14406,7 @@ CreateRoleStmt:
 
 /* See http://dev.mysql.com/doc/refman/8.0/en/alter-user.html */
 AlterUserStmt:
-	"ALTER" "USER" IfExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
+	"ALTER" "USER" IfExists AlterUserSpecList RequireClauseOpt ConnectionOptions AlterPasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		ret := &ast.AlterUserStmt{
 			IfExists:              $3.(bool),
@@ -14476,6 +14484,73 @@ UserSpecList:
 |	UserSpecList ',' UserSpec
 	{
 		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
+	}
+
+CreateUserSpec:
+	Username AuthOption UserSpecDualPasswordOption
+	{
+		userSpec := &ast.UserSpec{
+			User: $1.(*auth.UserIdentity),
+		}
+		if $2 != nil {
+			userSpec.AuthOpt = $2.(*ast.AuthOption)
+		}
+		if $3 != nil {
+			userSpec.DualPasswordOption = $3.(*ast.PasswordOrLockOption)
+		}
+		$$ = userSpec
+	}
+
+CreateUserSpecList:
+	CreateUserSpec
+	{
+		$$ = []*ast.UserSpec{$1.(*ast.UserSpec)}
+	}
+|	CreateUserSpecList ',' CreateUserSpec
+	{
+		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
+	}
+
+AlterUserSpec:
+	Username AuthOption UserSpecDualPasswordOption
+	{
+		userSpec := &ast.UserSpec{
+			User: $1.(*auth.UserIdentity),
+		}
+		if $2 != nil {
+			userSpec.AuthOpt = $2.(*ast.AuthOption)
+		}
+		if $3 != nil {
+			userSpec.DualPasswordOption = $3.(*ast.PasswordOrLockOption)
+		}
+		$$ = userSpec
+	}
+
+AlterUserSpecList:
+	AlterUserSpec
+	{
+		$$ = []*ast.UserSpec{$1.(*ast.UserSpec)}
+	}
+|	AlterUserSpecList ',' AlterUserSpec
+	{
+		$$ = append($1.([]*ast.UserSpec), $3.(*ast.UserSpec))
+	}
+
+UserSpecDualPasswordOption:
+	{
+		$$ = nil
+	}
+|	"RETAIN" "CURRENT" "PASSWORD"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.RetainCurrentPassword,
+		}
+	}
+|	"DISCARD" "OLD" "PASSWORD"
+	{
+		$$ = &ast.PasswordOrLockOption{
+			Type: ast.DiscardOldPassword,
+		}
 	}
 
 ConnectionOptions:
@@ -14653,28 +14728,28 @@ ResourceGroupNameOption:
 		$$ = &ast.ResourceGroupNameOption{Value: $3}
 	}
 
-PasswordOrLockOptions:
+AlterPasswordOrLockOptions:
 	{
 		$$ = []*ast.PasswordOrLockOption{}
 	}
-|	PasswordOrLockOptionList
+|	AlterPasswordOrLockOptionList
 	{
 		$$ = $1
 	}
 
-PasswordOrLockOptionList:
-	PasswordOrLockOption
+AlterPasswordOrLockOptionList:
+	AlterPasswordOrLockOption
 	{
 		$$ = []*ast.PasswordOrLockOption{$1.(*ast.PasswordOrLockOption)}
 	}
-|	PasswordOrLockOptionList PasswordOrLockOption
+|	AlterPasswordOrLockOptionList AlterPasswordOrLockOption
 	{
 		l := $1.([]*ast.PasswordOrLockOption)
 		l = append(l, $2.(*ast.PasswordOrLockOption))
 		$$ = l
 	}
 
-PasswordOrLockOption:
+AlterPasswordOrLockOption:
 	"ACCOUNT" "UNLOCK"
 	{
 		$$ = &ast.PasswordOrLockOption{
@@ -14764,17 +14839,32 @@ PasswordOrLockOption:
 			Type: ast.PasswordRequireCurrentDefault,
 		}
 	}
-|	"RETAIN" "CURRENT" "PASSWORD"
+
+PasswordOrLockOptions:
 	{
-		$$ = &ast.PasswordOrLockOption{
-			Type: ast.RetainCurrentPassword,
-		}
+		$$ = []*ast.PasswordOrLockOption{}
 	}
-|	"DISCARD" "OLD" "PASSWORD"
+|	PasswordOrLockOptionList
 	{
-		$$ = &ast.PasswordOrLockOption{
-			Type: ast.DiscardOldPassword,
-		}
+		$$ = $1
+	}
+
+PasswordOrLockOptionList:
+	PasswordOrLockOption
+	{
+		$$ = []*ast.PasswordOrLockOption{$1.(*ast.PasswordOrLockOption)}
+	}
+|	PasswordOrLockOptionList PasswordOrLockOption
+	{
+		l := $1.([]*ast.PasswordOrLockOption)
+		l = append(l, $2.(*ast.PasswordOrLockOption))
+		$$ = l
+	}
+
+PasswordOrLockOption:
+	AlterPasswordOrLockOption
+	{
+		$$ = $1
 	}
 
 AuthOption:

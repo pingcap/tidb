@@ -1549,9 +1549,10 @@ func (n *SetDefaultRoleStmt) Accept(v Visitor) (Node, bool) {
 
 // UserSpec is used for parsing create user statement.
 type UserSpec struct {
-	User    *auth.UserIdentity
-	AuthOpt *AuthOption
-	IsRole  bool
+	User               *auth.UserIdentity
+	AuthOpt            *AuthOption
+	DualPasswordOption *PasswordOrLockOption
+	IsRole             bool
 }
 
 // Restore implements Node interface.
@@ -1563,6 +1564,12 @@ func (n *UserSpec) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		if err := n.AuthOpt.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore UserSpec.AuthOpt")
+		}
+	}
+	if n.DualPasswordOption != nil {
+		ctx.WritePlain(" ")
+		if err := n.DualPasswordOption.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UserSpec.DualPasswordOption")
 		}
 	}
 	return nil
