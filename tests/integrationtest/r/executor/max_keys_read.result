@@ -59,8 +59,9 @@ set @@session.tidb_max_keys_read = 100;
 select /*+ SET_VAR(tidb_max_keys_read=5) */ * from t_mrs;
 Error 8274 (HY000): tidb_max_keys_read limit exceeded
 set @@session.tidb_max_keys_read = 1;
+update t_mrs set val = val + 1;
+update t_mrs set val = val - 1;
 insert into t_mrs (val) values (21);
-update t_mrs set val = val + 100 where id = 1;
 delete from t_mrs where id = 21;
 set @@session.tidb_max_keys_read = 0;
 select /*+ SET_VAR(tidb_max_keys_read=5) */ count(*) from t_mrs;

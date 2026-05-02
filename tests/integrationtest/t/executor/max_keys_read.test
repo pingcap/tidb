@@ -55,10 +55,13 @@ set @@session.tidb_max_keys_read = 100;
 -- error 8274
 select /*+ SET_VAR(tidb_max_keys_read=5) */ * from t_mrs;
 
-# DML statements are not limited.
+# DML statements are exempt from tidb_max_keys_read.
+# Use a full-table UPDATE under limit=1 to prove exemption: if DML were
+# subject to the cap it would fail after the first row read.
 set @@session.tidb_max_keys_read = 1;
+update t_mrs set val = val + 1;
+update t_mrs set val = val - 1;
 insert into t_mrs (val) values (21);
-update t_mrs set val = val + 100 where id = 1;
 delete from t_mrs where id = 21;
 set @@session.tidb_max_keys_read = 0;
 
