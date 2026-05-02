@@ -2,7 +2,7 @@
 
 - Author(s):     [@tailinlyu](https://github.com/tailinlyu)
 - Last updated:  2026-05-01
-- Discussion at: https://github.com/pingcap/tidb/issues/TBD
+- Discussion at: https://github.com/pingcap/tidb/issues/68151, https://github.com/pingcap/tidb/pull/68150
 
 ## Abstract
 
