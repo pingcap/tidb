@@ -124,5 +124,8 @@ func (dctx *DistSQLContext) Detach() *DistSQLContext {
 	newCtx.KVVars = new(tikvstore.Variables)
 	*newCtx.KVVars = *dctx.KVVars
 	newCtx.KVVars.Killed = &newCtx.SQLKiller.Signal
+	if dctx.MaxKeysReadCounter != nil {
+		newCtx.MaxKeysReadCounter = new(atomic.Uint64)
+	}
 	return &newCtx
 }

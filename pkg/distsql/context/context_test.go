@@ -90,6 +90,7 @@ func TestContextDetach(t *testing.T) {
 		TiKVClientReadTimeout:         1,
 		MaxExecutionTime:              1,
 		MaxKeysRead:                   1,
+		MaxKeysReadCounter:            new(atomic.Uint64),
 
 		ReplicaClosestReadThreshold: 1,
 		ConnectionID:                1,
