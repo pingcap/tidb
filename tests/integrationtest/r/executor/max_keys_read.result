@@ -42,9 +42,9 @@ select @@session.tidb_max_keys_read;
 50
 set @@session.tidb_max_keys_read = 0;
 drop table if exists t_mrs;
-create table t_mrs (id int primary key auto_increment, val int);
-insert into t_mrs (val) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
-insert into t_mrs (val) values (11),(12),(13),(14),(15),(16),(17),(18),(19),(20);
+create table t_mrs (id int primary key auto_increment, val int, extra int);
+insert into t_mrs (val, extra) values (1, 100),(2, 100),(3, 100),(4, 100),(5, 100),(6, 100),(7, 100),(8, 100),(9, 100),(10, 100);
+insert into t_mrs (val, extra) values (11, 100),(12, 100),(13, 100),(14, 100),(15, 100),(16, 100),(17, 100),(18, 100),(19, 100),(20, 100);
 set @@session.tidb_max_keys_read = 100;
 select count(*) from t_mrs;
 count(*)
@@ -58,6 +58,12 @@ count(*)
 set @@session.tidb_max_keys_read = 100;
 select /*+ SET_VAR(tidb_max_keys_read=5) */ * from t_mrs;
 Error 8274 (HY000): tidb_max_keys_read limit exceeded
+create index idx_val on t_mrs (val);
+select /*+ SET_VAR(tidb_max_keys_read=25), USE_INDEX(t_mrs, idx_val) */ extra from t_mrs where val >= 1;
+Error 8274 (HY000): tidb_max_keys_read limit exceeded
+select /*+ SET_VAR(tidb_max_keys_read=50), USE_INDEX(t_mrs, idx_val) */ sum(extra) from t_mrs where val >= 1;
+sum(extra)
+2000
 set @@session.tidb_max_keys_read = 1;
 update t_mrs set val = val + 1;
 update t_mrs set val = val - 1;

@@ -34,9 +34,9 @@ select @@session.tidb_max_keys_read;
 set @@session.tidb_max_keys_read = 0;
 
 drop table if exists t_mrs;
-create table t_mrs (id int primary key auto_increment, val int);
-insert into t_mrs (val) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);
-insert into t_mrs (val) values (11),(12),(13),(14),(15),(16),(17),(18),(19),(20);
+create table t_mrs (id int primary key auto_increment, val int, extra int);
+insert into t_mrs (val, extra) values (1, 100),(2, 100),(3, 100),(4, 100),(5, 100),(6, 100),(7, 100),(8, 100),(9, 100),(10, 100);
+insert into t_mrs (val, extra) values (11, 100),(12, 100),(13, 100),(14, 100),(15, 100),(16, 100),(17, 100),(18, 100),(19, 100),(20, 100);
 
 # Under limit: 20 rows, limit=100 — succeeds.
 set @@session.tidb_max_keys_read = 100;
@@ -54,6 +54,23 @@ select /*+ SET_VAR(tidb_max_keys_read=0) */ count(*) from t_mrs;
 set @@session.tidb_max_keys_read = 100;
 -- error 8274
 select /*+ SET_VAR(tidb_max_keys_read=5) */ * from t_mrs;
+
+# IndexLookUp splits into two cop iterators (index side + table side).
+# tidb_max_keys_read must be a statement-wide budget, not per-iterator —
+# otherwise a regression in the shared-counter plumbing would let
+# IndexLookUp consume up to 2x the configured limit silently.
+create index idx_val on t_mrs (val);
+
+# Project `extra` (not covered by idx_val) so the plan must do a table lookup.
+# 20 rows total: index scan reads 20, table lookup reads 20 (= 40 total).
+# Shared-counter (correct): 40 > 25 → errors at 8274.
+# Per-iterator (regression): each side 20 < 25 → would pass silently.
+-- error 8274
+select /*+ SET_VAR(tidb_max_keys_read=25), USE_INDEX(t_mrs, idx_val) */ extra from t_mrs where val >= 1;
+
+# Sanity: limit comfortably above combined total — IndexLookUp succeeds.
+# sum(extra) forces a table lookup (count(*) / count(id) would be index-only).
+select /*+ SET_VAR(tidb_max_keys_read=50), USE_INDEX(t_mrs, idx_val) */ sum(extra) from t_mrs where val >= 1;
 
 # DML statements are exempt from tidb_max_keys_read.
 # Use a full-table UPDATE under limit=1 to prove exemption: if DML were

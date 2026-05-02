@@ -212,6 +212,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
 		maxKeysRead:      req.MaxKeysRead,
+		keysRead:         pickKeysReadCounter(req),
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -1003,8 +1004,21 @@ type copIterator struct {
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
 
-	maxKeysRead uint64        // global limit from kv.Request (0 = unlimited)
-	keysRead    atomic.Uint64 // cumulative storage engine keys read across all completed tasks
+	maxKeysRead uint64          // global limit from kv.Request (0 = unlimited)
+	keysRead    *atomic2.Uint64 // cumulative storage engine keys read across all completed tasks; may be shared across copIterators in the same statement
+}
+
+// pickKeysReadCounter returns the counter used by a copIterator for cumulative
+// tracking of scanned keys. When the request carries a shared counter (set via
+// DistSQLContext.MaxKeysReadCounter), all coprocessor iterators in the same
+// statement accumulate into it so that max_keys_read is enforced as a
+// statement-wide budget rather than per-iterator. Falls back to a fresh
+// per-iterator counter for internal callers that don't plumb the shared one.
+func pickKeysReadCounter(req *kv.Request) *atomic2.Uint64 {
+	if req.MaxKeysReadCounter != nil {
+		return req.MaxKeysReadCounter
+	}
+	return new(atomic2.Uint64)
 }
 
 type liteCopIteratorWorker struct {
@@ -1036,8 +1050,8 @@ type copIteratorWorker struct {
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
 
-	maxKeysRead uint64         // global limit (0 = unlimited)
-	keysRead    *atomic.Uint64 // shared with copIterator for cumulative tracking
+	maxKeysRead uint64          // global limit (0 = unlimited)
+	keysRead    *atomic2.Uint64 // shared with copIterator for cumulative tracking
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -1233,7 +1247,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
 		stats:                   it.stats,
 		maxKeysRead:             it.maxKeysRead,
-		keysRead:                &it.keysRead,
+		keysRead:                it.keysRead,
 	}
 }
 

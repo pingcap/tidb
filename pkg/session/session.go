@@ -147,6 +147,7 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	gouberatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -3515,6 +3516,12 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
 			MaxExecutionTime:              vars.GetMaxExecutionTime(),
 			MaxKeysRead:                   vars.GetMaxKeysRead(),
+			MaxKeysReadCounter: func() *gouberatomic.Uint64 {
+				if vars.GetMaxKeysRead() > 0 {
+					return new(gouberatomic.Uint64)
+				}
+				return nil
+			}(),
 
 			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
 			ConnectionID:                vars.ConnectionID,

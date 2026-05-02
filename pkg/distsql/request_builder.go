@@ -374,6 +374,7 @@ func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContex
 	builder.Request.TiKVClientReadTimeout = dctx.TiKVClientReadTimeout
 	builder.Request.MaxExecutionTime = dctx.MaxExecutionTime
 	builder.Request.MaxKeysRead = dctx.MaxKeysRead
+	builder.Request.MaxKeysReadCounter = dctx.MaxKeysReadCounter
 	return builder
 }
 
