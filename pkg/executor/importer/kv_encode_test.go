@@ -100,7 +100,10 @@ func TestTableKVEncoderFullTextTiCIIndexKVs(t *testing.T) {
 	origTbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_tici"))
 	require.NoError(t, err)
 
-	const ticiIndexID int64 = 1001
+	const (
+		ticiIndexID   int64 = 1001
+		hybridIndexID int64 = 1004
+	)
 	tblMeta := origTbl.Meta().Clone()
 	tblMeta.Indices = append(tblMeta.Indices, &model.IndexInfo{
 		ID:    ticiIndexID,
@@ -111,6 +114,20 @@ func TestTableKVEncoderFullTextTiCIIndexKVs(t *testing.T) {
 		},
 		FullTextInfo: &model.FullTextIndexInfo{
 			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}, &model.IndexInfo{
+		ID:    hybridIndexID,
+		Name:  ast.NewCIStr("idx_hybrid"),
+		State: model.StatePublic,
+		Columns: []*model.IndexColumn{
+			{Name: ast.NewCIStr("c"), Offset: 2, Length: types.UnspecifiedLength},
+		},
+		HybridInfo: &model.HybridIndexInfo{
+			Sharding: &model.HybridShardingSpec{
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("c"), Offset: 2, Length: types.UnspecifiedLength},
+				},
+			},
 		},
 	})
 	tbl := table.MockTableFromMeta(tblMeta)
@@ -130,6 +147,7 @@ func TestTableKVEncoderFullTextTiCIIndexKVs(t *testing.T) {
 	require.Equal(t, 1, countRecordKeys(dupResolvePairs))
 	require.Equal(t, []int64{normalIndexID}, dupResolveIndexIDs)
 	require.NotContains(t, dupResolveIndexIDs, ticiIndexID)
+	require.NotContains(t, dupResolveIndexIDs, hybridIndexID)
 	require.False(t, cfg.SkipTiCIIndexKVs)
 
 	normalEncoder := newTableKVEncoderForTest(t, tbl, cfg, false)
@@ -138,6 +156,7 @@ func TestTableKVEncoderFullTextTiCIIndexKVs(t *testing.T) {
 	normalIndexIDs := collectIndexIDs(t, normalPairs)
 	require.Equal(t, 1, countRecordKeys(normalPairs))
 	require.ElementsMatch(t, []int64{normalIndexID, ticiIndexID}, normalIndexIDs)
+	require.NotContains(t, normalIndexIDs, hybridIndexID)
 }
 
 func TestTableKVEncoderFullTextTiCIIndexKVsForPartitionedTable(t *testing.T) {

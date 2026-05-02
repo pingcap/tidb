@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -108,6 +109,31 @@ func getEtcdClient() (cli *clientv3.Client, err error) {
 	})
 }
 
+func newTiCIDataWriterGroupManagerCtx(ctx context.Context, keyspaceID uint32) (*ManagerCtx, *clientv3.Client, error) {
+	failpoint.Inject("MockNewTiCIDataWriterGroupManagerCtx", func(val failpoint.Value) {
+		if enabled, ok := val.(bool); ok && enabled {
+			mockCtx, cancel := context.WithCancel(ctx)
+			mgrCtx := &ManagerCtx{
+				ctx:    mockCtx,
+				cancel: cancel,
+			}
+			mgrCtx.SetKeyspaceID(keyspaceID)
+			failpoint.Return(mgrCtx, (*clientv3.Client)(nil), nil)
+		}
+	})
+	etcdClient, err := getEtcdClientFunc()
+	if err != nil {
+		return nil, nil, err
+	}
+	mgrCtx, err := newManagerCtxFunc(ctx, etcdClient)
+	if err != nil {
+		closeEtcdClient(etcdClient)
+		return nil, nil, err
+	}
+	mgrCtx.SetKeyspaceID(keyspaceID)
+	return mgrCtx, etcdClient, nil
+}
+
 // NewTiCIDataWriterGroup constructs a DataWriterGroup covering the given indexIDs of the given table.
 func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string, tidbTaskID string, keyspaceID uint32, newIndexIDs []int64) (*DataWriterGroup, error) {
 	if len(newIndexIDs) == 0 {
@@ -120,18 +146,15 @@ func NewTiCIDataWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schem
 		zap.Int64s("newIndexIDs", newIndexIDs),
 	)
 
-	etcdClient, err := getEtcdClient()
+	mgrCtx, etcdClient, err := newTiCIDataWriterGroupManagerCtx(ctx, keyspaceID)
 	if err != nil {
 		return nil, err
 	}
-	mgrCtx, err := NewManagerCtx(ctx, etcdClient)
-	if err != nil {
-		return nil, err
-	}
-	mgrCtx.SetKeyspaceID(keyspaceID)
 
 	indexMeta, err := NewTiCIIndexMeta(ctx, tblInfo, newIndexIDs, schema, tidbTaskID, mgrCtx)
 	if err != nil {
+		mgrCtx.Close()
+		closeEtcdClient(etcdClient)
 		return nil, err
 	}
 
