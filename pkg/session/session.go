@@ -2337,38 +2337,17 @@ type execStmtResult struct {
 	sqlexec.RecordSet
 	se     *session
 	sql    sqlexec.Statement
-	once   sync.Once
 	closed bool
-}
-
-func (rs *execStmtResult) Finish() error {
-	var err error
-	rs.once.Do(func() {
-		var err1 error
-		if f, ok := rs.RecordSet.(interface{ Finish() error }); ok {
-			err1 = f.Finish()
-		}
-		err2 := finishStmt(context.Background(), rs.se, err, rs.sql)
-		if err1 != nil {
-			err = err1
-		} else {
-			err = err2
-		}
-	})
-	return err
 }
 
 func (rs *execStmtResult) Close() error {
 	if rs.closed {
 		return nil
 	}
-	err1 := rs.Finish()
-	err2 := rs.RecordSet.Close()
+	err := rs.RecordSet.Close()
+	err = finishStmt(context.Background(), rs.se, err, rs.sql)
 	rs.closed = true
-	if err1 != nil {
-		return err1
-	}
-	return err2
+	return err
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.

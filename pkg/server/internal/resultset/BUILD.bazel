@@ -9,7 +9,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/server/internal/resultset",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
-        "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/server/internal/column",
         "//pkg/types",
