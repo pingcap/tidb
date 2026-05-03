@@ -3173,7 +3173,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
-			*sampleRate, sampleRateReason = b.getAdjustedSampleRate(task)
+			*sampleRate, sampleRateReason = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.NewNoStackErrorf(
 					`Analyze use auto adjusted sample rate %f for table %s.%s's partition %s, reason to use this rate is "%s"`,
@@ -3255,7 +3255,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 // If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
 // So if we don't consider the top-n values, we can keep the sample size at 300*256.
 // But we may take some top-n before building the histogram, so we increase the sample a little.
-func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsTask) (sampleRate float64, reason string) {
+func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task plannercore.AnalyzeColumnsTask) (sampleRate float64, reason string) {
 	statsHandle := domain.GetDomain(b.sctx).StatsHandle()
 	defaultRate := 0.001
 	if statsHandle == nil {
@@ -3268,7 +3268,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 	} else {
 		statsTbl = statsHandle.GetPhysicalTableStats(tid, task.TblInfo)
 	}
-	approxiCount, hasPD := b.getApproximateTableCountFromStorage(tid, task)
+	approxiCount, hasPD := b.getApproximateTableCountFromStorage(ctx, tid, task)
 	// If there's no stats meta and no pd, return the default rate.
 	if statsTbl == nil && !hasPD {
 		return defaultRate, fmt.Sprintf("TiDB cannot get the row count of the table, use the default-rate=%v", defaultRate)
@@ -3297,8 +3297,8 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 	return sampleRate, fmt.Sprintf("use min(1, %v/%v) as the sample-rate=%v", config.DefRowsForSampleRate, statsTbl.RealtimeCount, sampleRate)
 }
 
-func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
-	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(context.Background(), b.sctx, tid, task.DBName, task.TableName, task.PartitionName)
+func (b *executorBuilder) getApproximateTableCountFromStorage(ctx context.Context, tid int64, task plannercore.AnalyzeColumnsTask) (float64, bool) {
+	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(ctx, b.sctx, tid, task.DBName, task.TableName, task.PartitionName)
 }
 
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
