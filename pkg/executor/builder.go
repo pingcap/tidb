@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
@@ -6051,9 +6052,31 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 		return errors.New("cte.seedPlan cannot be nil")
 	}
 
+	origCtx := b.ctx
+	buildSubPlan := b.build
+	if v.RecurPlan != nil && b.ctx.GetSessionVars().SQLMode.HasStrictMode() {
+		// Match MySQL's recursive-materialization path: once a recursive CTE is
+		// producing rows for its worktable, MySQL enables SELECT strict-error
+		// handling for that whole seed/recursive producer, not only for the final
+		// table write. So nested predicates/subqueries under the recursive member
+		// also see strict truncate semantics while this producer is built. Scope
+		// the override to seed/recur subplan construction only: the built child
+		// executors already capture the scoped ExprCtx / DistSQL / pushdown state.
+		// producer.ctx intentionally stays on the original session for runtime
+		// bookkeeping such as trackers, recursion limits, and DISTINCT row
+		// deduplication, which continue to read the statement-owned StmtCtx.
+		strictCtx := sessionctx.WithTruncateErrLevel(b.ctx, errctx.LevelError)
+		buildSubPlan = func(plan base.Plan) exec.Executor {
+			prevCtx := b.ctx
+			b.ctx = strictCtx
+			defer func() { b.ctx = prevCtx }()
+			return b.build(plan)
+		}
+	}
+
 	// Build seed part.
 	corCols := plannercore.ExtractOuterApplyCorrelatedCols(v.SeedPlan)
-	seedExec := b.build(v.SeedPlan)
+	seedExec := buildSubPlan(v.SeedPlan)
 	if b.err != nil {
 		return b.err
 	}
@@ -6089,7 +6112,7 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 	// Build recursive part.
 	var recursiveExec exec.Executor
 	if v.RecurPlan != nil {
-		recursiveExec = b.build(v.RecurPlan)
+		recursiveExec = buildSubPlan(v.RecurPlan)
 		if b.err != nil {
 			return b.err
 		}
@@ -6110,7 +6133,7 @@ func (b *executorBuilder) buildCTEStorageProducer(v *physicalop.PhysicalCTE, sto
 	}
 
 	producer := &cteProducer{
-		ctx:             b.ctx,
+		ctx:             origCtx,
 		seedExec:        seedExec,
 		recursiveExec:   recursiveExec,
 		resTbl:          resTbl,

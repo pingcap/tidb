@@ -20,16 +20,21 @@ import (
 
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
+	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/tikv/client-go/v2/oracle"
@@ -203,4 +208,128 @@ const (
 // statements that don't make reading operation immediately).
 func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64, isStaleRead bool) error {
 	return store.GetOracle().ValidateReadTS(ctx, readTS, isStaleRead, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+}
+
+// exprCtxScopedSessionContext is the outermost scoped view used by executor
+// and planner callers. It overrides the session's ExprCtx and makes every
+// directly derived helper context (PlanCtx / DistSQLCtx / Ranger / BuildPB)
+// observe the same expression semantics.
+type exprCtxScopedSessionContext struct {
+	Context
+	exprCtx exprctx.ExprContext
+
+	planCtxOnce    sync.Once
+	planCtx        planctx.PlanContext
+	distSQLCtxOnce sync.Once
+	distSQLCtxMu   sync.Mutex
+	distSQLCtx     *distsqlctx.DistSQLContext
+}
+
+// GetExprCtx returns the scoped expression context.
+func (c *exprCtxScopedSessionContext) GetExprCtx() exprctx.ExprContext {
+	return c.exprCtx
+}
+
+// GetPlanCtx returns a scoped plan context derived from the scoped expression context.
+func (c *exprCtxScopedSessionContext) GetPlanCtx() planctx.PlanContext {
+	c.planCtxOnce.Do(func() {
+		// Preserve the scoped session wrapper for plannercore.AsSctx so callers
+		// that recover a session from this derived PlanContext still observe the
+		// scoped ExprCtx / DistSQL / pushdown semantics.
+		c.planCtx = planctx.WithExprCtxAndInternalSctx(c.Context.GetPlanCtx(), c.exprCtx, c)
+	})
+	return c.planCtx
+}
+
+// GetDistSQLCtx returns a scoped detached DistSQL context whose ErrCtx matches
+// the scoped expression context.
+//
+// Keep one shared detached object per scoped session so statement-level
+// coordination state (for example TryCopLiteWorker) is still shared across
+// readers built from the same statement. At the same time, mirror the scoped
+// EvalCtx fields DistSQL consumes directly (timezone and ErrCtx) together with
+// the late-bound base-session fields refreshed on every access, such as
+// RunawayChecker and RUV2 metrics, so this scoped view stays consistent without
+// freezing an earlier snapshot.
+func (c *exprCtxScopedSessionContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	latest := c.Context.GetDistSQLCtx()
+	if latest == nil {
+		return nil
+	}
+	scopedEvalCtx := c.exprCtx.GetEvalCtx()
+	c.distSQLCtxOnce.Do(func() {
+		c.distSQLCtx = latest.Detach()
+	})
+	c.distSQLCtxMu.Lock()
+	defer c.distSQLCtxMu.Unlock()
+	// DistSQL keeps detached copies of both timezone and ErrCtx, so mirror the
+	// scoped EvalCtx here instead of mutating the session-owned DistSQLContext.
+	c.distSQLCtx.ErrCtx = scopedEvalCtx.ErrCtx()
+	c.distSQLCtx.Location = scopedEvalCtx.Location()
+	c.distSQLCtx.RunawayChecker = latest.RunawayChecker
+	c.distSQLCtx.RUV2Metrics = latest.RUV2Metrics
+	c.distSQLCtx.RUV2RPCInterceptor = latest.RUV2RPCInterceptor
+	return c.distSQLCtx
+}
+
+// GetRangerCtx returns the ranger context derived from the scoped plan context.
+func (c *exprCtxScopedSessionContext) GetRangerCtx() *rangerctx.RangerContext {
+	return c.GetPlanCtx().GetRangerCtx()
+}
+
+// GetBuildPBCtx returns the BuildPB context derived from the scoped plan context.
+func (c *exprCtxScopedSessionContext) GetBuildPBCtx() *planctx.BuildPBContext {
+	return c.GetPlanCtx().GetBuildPBCtx()
+}
+
+// GetPushDownFlags derives pushed-down truncate/error flags from the active
+// expression context while preserving the statement-kind bits that
+// StmtCtx.PushDownFlags() has always carried.
+func GetPushDownFlags(ctx planctx.Common) uint64 {
+	sc := ctx.GetSessionVars().StmtCtx
+	evalCtx := ctx.GetExprCtx().GetEvalCtx()
+	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
+	// StmtCtx.PushDownFlags() reflects the session-owned StatementContext.
+	// Scoped recursive-CTE builds intentionally override truncate behavior only
+	// through ExprCtx, so the pushdown flags must be recomputed from that view.
+	// The InSelect/Insert/Update/Delete/LoadData/RestrictedSQL bits still come
+	// from StmtCtx exactly as before; only the type/err-handling bits are taken
+	// from the active scoped ExprCtx.
+	flags := stmtctx.PushDownFlagsWithTypeFlagsAndErrLevels(tc.Flags(), ec.LevelMap())
+	if sc.InInsertStmt {
+		flags |= model.FlagInInsertStmt
+	} else if sc.InUpdateStmt || sc.InDeleteStmt {
+		flags |= model.FlagInUpdateOrDeleteStmt
+	} else if sc.InSelectStmt {
+		flags |= model.FlagInSelectStmt
+	}
+	if sc.InLoadDataStmt {
+		flags |= model.FlagInLoadDataStmt
+	}
+	if sc.InRestrictedSQL {
+		flags |= model.FlagInRestrictedSQL
+	}
+	return flags
+}
+
+// WithExprCtx returns a scoped session context that overrides only expression
+// semantics and the contexts derived directly from them.
+func WithExprCtx(sctx Context, overrideExprCtx exprctx.ExprContext) Context {
+	if overrideExprCtx == nil || overrideExprCtx == sctx.GetExprCtx() {
+		return sctx
+	}
+	return &exprCtxScopedSessionContext{
+		Context: sctx,
+		exprCtx: overrideExprCtx,
+	}
+}
+
+// WithTruncateErrLevel returns a scoped session context with a different
+// truncate handling level in its expression context.
+func WithTruncateErrLevel(sctx Context, level errctx.Level) Context {
+	overrideExprCtx := exprctx.WithHandleTruncateErrLevel(sctx.GetExprCtx(), level)
+	if overrideExprCtx == sctx.GetExprCtx() {
+		return sctx
+	}
+	return WithExprCtx(sctx, overrideExprCtx)
 }

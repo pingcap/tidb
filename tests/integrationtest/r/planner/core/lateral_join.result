@@ -59,10 +59,7 @@ from tr, lateral (select b as result_col from t2 where a = level order by b limi
 where level < 3
 )
 select * from tr where level > 0 order by level;
-level	b_col
-1	
-2	
-3	
+Error 1406 (22001): Data Too Long, field len 0, data len 1
 with recursive tr (level, b_col) as (
 select 1, cast(null as char(10))
 union all

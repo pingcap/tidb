@@ -28,13 +28,26 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
+type internalSctxUnwrapper interface {
+	UnwrapAsInternalSctx() any
+}
+
 // AsSctx converts PlanContext to sessionctx.Context.
 func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
-	sctx, ok := pctx.(sessionctx.Context)
-	if !ok {
-		return nil, errors.New("the current PlanContext cannot be converted to sessionctx.Context")
+	if sctx, ok := pctx.(sessionctx.Context); ok {
+		return sctx, nil
 	}
-	return sctx, nil
+	if unwrapper, ok := pctx.(internalSctxUnwrapper); ok {
+		// Keep unwrap as a local escape hatch instead of turning it into a
+		// global PlanContext contract. Most plan contexts never need to expose
+		// a session; only a small number of planner/executor paths do.
+		unwrapped := unwrapper.UnwrapAsInternalSctx()
+		if sctx, ok := unwrapped.(sessionctx.Context); ok {
+			return sctx, nil
+		}
+		return nil, errors.Errorf("the current PlanContext (%T) unwrapped to %T, not sessionctx.Context", pctx, unwrapped)
+	}
+	return nil, errors.Errorf("the current PlanContext (%T) cannot be converted to sessionctx.Context", pctx)
 }
 
 // optimizeByShuffle insert `PhysicalShuffle` to optimize performance by running in a parallel manner.

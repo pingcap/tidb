@@ -43,6 +43,7 @@ create table t2 (a int, b varchar(10));
 insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd');
 
 ## Recursive CTE with LATERAL join - empty string seed
+--error 1406
 with recursive tr (level, b_col) as (
     select 1, ''
     union all
