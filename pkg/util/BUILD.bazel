@@ -16,6 +16,12 @@ go_library(
         "rlimit_other.go",
         "rlimit_windows.go",
         "security.go",
+<<<<<<< HEAD
+=======
+        "session_pool.go",
+        "split.go",
+        "tokenlimiter.go",
+>>>>>>> 177a03c8e51 (ddl: support pre-split index regions before creating index (#57553))
         "urls.go",
         "util.go",
         "wait_group_wrapper.go",
@@ -62,6 +68,11 @@ go_test(
         "misc_test.go",
         "prefix_helper_test.go",
         "security_test.go",
+<<<<<<< HEAD
+=======
+        "session_pool_test.go",
+        "split_test.go",
+>>>>>>> 177a03c8e51 (ddl: support pre-split index regions before creating index (#57553))
         "urls_test.go",
         "util_test.go",
         "wait_group_wrapper_test.go",

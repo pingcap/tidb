@@ -17,7 +17,6 @@ package executor
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"math"
 	"time"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	cutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -245,6 +245,7 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64
 			e.indexInfo.Name, lowerStr, upperStr)
 		return nil, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 	}
+<<<<<<< HEAD
 	return getValuesList(lowerIdxKey, upperIdxKey, e.num, keys), nil
 }
 
@@ -302,6 +303,9 @@ func getUint64FromBytes(bs []byte, pad byte) uint64 {
 		}
 	}
 	return binary.BigEndian.Uint64(buf)
+=======
+	return cutil.GetValuesList(lowerIdxKey, upperIdxKey, e.num, keys), nil
+>>>>>>> 177a03c8e51 (ddl: support pre-split index regions before creating index (#57553))
 }
 
 func datumSliceToString(ds []types.Datum) string {
@@ -608,7 +612,7 @@ func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int
 	}
 	low := tablecodec.EncodeRecordKey(recordPrefix, lowerHandle)
 	up := tablecodec.EncodeRecordKey(recordPrefix, upperHandle)
-	return getValuesList(low, up, e.num, keys), nil
+	return cutil.GetValuesList(low, up, e.num, keys), nil
 }
 
 // RegionMeta contains a region's peer detail
