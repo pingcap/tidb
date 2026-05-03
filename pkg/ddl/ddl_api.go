@@ -4669,18 +4669,27 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 				return err
 			}
 			if !ck {
-				if ctx.GetSessionVars().EnableGlobalIndex {
-					return dbterror.ErrCancelledDDLJob.GenWithStack("global index is not supported yet for alter table partitioning")
+				indexTp := ""
+				if !ctx.GetSessionVars().EnableGlobalIndex {
+					if index.Primary {
+						indexTp = "PRIMARY KEY"
+					} else {
+						indexTp = "UNIQUE INDEX"
+					}
+				} else if t.Meta().IsCommonHandle {
+					indexTp = "CLUSTERED INDEX"
 				}
-				indexTp := "UNIQUE INDEX"
-				if index.Primary {
-					indexTp = "PRIMARY"
+				if indexTp != "" {
+					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
 				}
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(indexTp)
+				// Also mark the unique index as global index
+				index.Global = true
 			}
 		}
 	}
 	if newMeta.PKIsHandle {
+		// This case is covers when the Handle is the PK (only ints), since it would not
+		// have an entry in the tblInfo.Indices
 		indexCols := []*model.IndexColumn{{
 			Name:   newMeta.GetPkName(),
 			Length: types.UnspecifiedLength,
@@ -4690,7 +4699,10 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 			return err
 		}
 		if !ck {
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+			if !ctx.GetSessionVars().EnableGlobalIndex {
+				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+			}
+			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 		}
 	}
 
