@@ -630,6 +630,13 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
+	// The copr cache stores serialized SelectResponse bytes from the original execution.
+	// Its embedded execution summaries can therefore carry stale tikv_task timing details
+	// from the previous run. When current response is served from copr cache, skip
+	// recording those per-operator summaries to avoid stale EXPLAIN ANALYZE output.
+	if copStats.CoprCacheHit {
+		return nil
+	}
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
 	hasExecutor := false
@@ -660,7 +667,9 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		if len(r.copPlanIDs) > 0 {
 			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, nil)
 		}
-		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
+		if !copStats.CoprCacheHit {
+			recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
+		}
 		// report MPP cross AZ network traffic bytes to resource control manager.
 		interZoneBytes := r.ctx.RuntimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats.GetInterZoneTrafficBytes()
 		if interZoneBytes > 0 {
@@ -686,7 +695,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
 			var summary *tipb.ExecutorExecutionSummary
-			if detail != nil && detail.TimeProcessedNs != nil &&
+			if !copStats.CoprCacheHit && detail != nil && detail.TimeProcessedNs != nil &&
 				detail.NumProducedRows != nil && detail.NumIterations != nil {
 				summary = detail
 			}
