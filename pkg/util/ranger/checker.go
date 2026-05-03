@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	planctx "github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 )
@@ -219,4 +220,72 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) (isAccessCond
 		return true, !c.isFullLengthColumn()
 	}
 	return false, true
+}
+
+type noNullIndexChecker struct {
+	sctx planctx.PlanContext
+
+	column *expression.Column
+}
+
+// checkColumn checks whether the given expression "expr" can ensure that the column is not NULL.
+func (c *noNullIndexChecker) check(expr expression.Expression) bool {
+	if sf, ok := expr.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
+		// For CNF, one of the children can ensure that the column is not NULL.
+		if c.check(sf.GetArgs()[0]) || c.check(sf.GetArgs()[1]) {
+			return true
+		}
+
+		return false
+	} else if sf, ok := expr.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+		// For DNF, all children can ensure that the column is not NULL.
+		for _, arg := range sf.GetArgs() {
+			if !c.check(arg) {
+				return false
+			}
+		}
+
+		return true
+	}
+
+	flen := types.UnspecifiedLength
+	columnChecker := &conditionChecker{
+		checkerCol: c.column,
+		length:     flen,
+		ctx:        c.sctx.GetExprCtx().GetEvalCtx(),
+	}
+	isAccessCond, _ := columnChecker.check(expr)
+	if !isAccessCond {
+		return false
+	}
+
+	// Check if this expression can ensure that the column is not NULL.
+	rb := builder{sctx: c.sctx}
+	points := rb.build(expr, newFieldType(c.column.RetType), flen, false)
+
+	// assert whether any points contain NULL
+	for _, point := range points {
+		// the point is NULL and not excluded
+		if point.value.IsNull() && !point.excl {
+			return false
+		}
+	}
+	return true
+}
+
+// CheckColumnIsNotNullWithCNFConditions checks whether the given column is not NULL
+// based on the CNF conditions.
+func CheckColumnIsNotNullWithCNFConditions(sctx planctx.PlanContext, column *expression.Column, exprs []expression.Expression) bool {
+	c := &noNullIndexChecker{
+		sctx:   sctx,
+		column: column,
+	}
+
+	for _, expr := range exprs {
+		if c.check(expr) {
+			return true
+		}
+	}
+
+	return false
 }

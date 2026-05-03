@@ -552,6 +552,7 @@ var tokenMap = map[string]int{
 	"NEXT":                     next,
 	"NEXTVAL":                  nextval,
 	"NO_WRITE_TO_BINLOG":       noWriteToBinLog,
+	"NO_NULL_INDEX":            noNullIndex,
 	"NO":                       no,
 	"NOCACHE":                  nocache,
 	"NOCYCLE":                  nocycle,

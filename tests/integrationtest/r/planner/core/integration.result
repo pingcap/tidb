@@ -4312,3 +4312,167 @@ case when (
 t.c0 in (t.c0, cast((cast(1 as unsigned) - cast(t.c1 as signed)) as char))
 ) then 1 else 2 end;
 1
+drop table if exists t;
+create table t (id int primary key, col1 int no_null_index, col2 int, col3 int no_null_index);
+alter table t add index idx1(col1);
+alter table t add index idx2(col1, col2);
+alter table t add index idx3(col1, col2, col3);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int(11) NOT NULL,
+  `col1` int(11) DEFAULT NULL NO_NULL_INDEX,
+  `col2` int(11) DEFAULT NULL,
+  `col3` int(11) DEFAULT NULL NO_NULL_INDEX,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `idx1` (`col1`),
+  KEY `idx2` (`col1`,`col2`),
+  KEY `idx3` (`col1`,`col2`,`col3`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert into t values (1, 1, 1, null);
+insert into t values (2, null, 1, 1);
+insert into t values (3, 1, null, 1);
+select * from t use index (idx1);
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+select * from t use index (idx2);
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+select * from t use index (idx3);
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+select * from t use index (idx1) where col1 is not null;
+id	col1	col2	col3
+1	1	1	NULL
+3	1	NULL	1
+explain format='brief' select * from t use index (idx1) where col1 is not null;
+id	estRows	task	access object	operator info
+IndexLookUp	9990.00	root		
+├─IndexFullScan(Build)	9990.00	cop[tikv]	table:t, index:idx1(col1)	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	9990.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (idx1) where col1 > 0;
+id	col1	col2	col3
+1	1	1	NULL
+3	1	NULL	1
+explain format='brief' select * from t use index (idx1) where col1 > 0;
+id	estRows	task	access object	operator info
+IndexLookUp	3333.33	root		
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx1(col1)	range:(0,+inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (idx2) where col1 is not null;
+id	col1	col2	col3
+1	1	1	NULL
+3	1	NULL	1
+explain format='brief' select * from t use index (idx2) where col1 is not null;
+id	estRows	task	access object	operator info
+IndexLookUp	9990.00	root		
+├─IndexFullScan(Build)	9990.00	cop[tikv]	table:t, index:idx2(col1, col2)	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	9990.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (idx2) where col1 > 0;
+id	col1	col2	col3
+1	1	1	NULL
+3	1	NULL	1
+explain format='brief' select * from t use index (idx2) where col1 > 0;
+id	estRows	task	access object	operator info
+IndexLookUp	3333.33	root		
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx2(col1, col2)	range:(0,+inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (idx3) where col1 is not null;
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+select * from t use index (idx1) where col1 is not null and col3 is not null;
+id	col1	col2	col3
+3	1	NULL	1
+explain format='brief' select * from t use index (idx1) where col1 is not null and col3 is not null;
+id	estRows	task	access object	operator info
+IndexLookUp	9980.01	root		
+├─IndexFullScan(Build)	9990.00	cop[tikv]	table:t, index:idx1(col1)	keep order:false, stats:pseudo
+└─Selection(Probe)	9980.01	cop[tikv]		not(isnull(planner__core__integration.t.col3))
+  └─TableRowIDScan	9990.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (idx1) where col1 > 0 and col3 is not null;
+id	col1	col2	col3
+3	1	NULL	1
+explain format='brief' select * from t use index (idx1) where col1 > 0 and col3 is not null;
+id	estRows	task	access object	operator info
+IndexLookUp	3330.00	root		
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx1(col1)	range:(0,+inf], keep order:false, stats:pseudo
+└─Selection(Probe)	3330.00	cop[tikv]		not(isnull(planner__core__integration.t.col3))
+  └─TableRowIDScan	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (idx2) where col1 is not null and col3 is not null;
+id	col1	col2	col3
+3	1	NULL	1
+explain format='brief' select * from t use index (idx2) where col1 is not null and col3 is not null;
+id	estRows	task	access object	operator info
+IndexLookUp	9980.01	root		
+├─IndexFullScan(Build)	9990.00	cop[tikv]	table:t, index:idx2(col1, col2)	keep order:false, stats:pseudo
+└─Selection(Probe)	9980.01	cop[tikv]		not(isnull(planner__core__integration.t.col3))
+  └─TableRowIDScan	9990.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t use index (idx3) where col1 is not null and col3 is not null;
+id	col1	col2	col3
+3	1	NULL	1
+drop table if exists t;
+create table t (id int primary key, col1 int no_null_index, col2 int, col3 int);
+alter table t add index idx2(col1, col2);
+alter table t add index idx3(col1, col3);
+insert into t values (2, null, 1, 1);
+select * FROM t WHERE col1 is null and col2 < 100 and col3 < 100;
+id	col1	col2	col3
+2	NULL	1	1
+select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and col2 < 100 and col3 < 100;
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+explain format='brief' select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and col2 < 100 and col3 < 100;
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+drop table if exists t;
+create table t (id int primary key, col1 int no_null_index, col2 int no_null_index);
+alter table t add index idx1(col1);
+alter table t add index idx2(col2);
+insert into t values (1, 1, NULL);
+insert into t values (2, NULL, 1);
+select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * FROM t WHERE col1 > 5 or col2 > 5;
+id	col1	col2
+explain format='brief' select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * FROM t WHERE col1 > 5 or col2 > 5;
+id	estRows	task	access object	operator info
+IndexMerge	5555.56	root		type: union
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx1(col1)	range:(5,+inf], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx2(col2)	range:(5,+inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	5555.56	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (id int primary key, col1 int no_null_index, col2 json, col3 json);
+alter table t add index idx2(col1, (CAST(col2->'$.path' AS SIGNED ARRAY)) );
+alter table t add index idx3(col1, (CAST(col3->'$.path' AS SIGNED ARRAY)) );
+insert into t values (2, null, '{"path":[1]}', '{"path":[1]}');
+select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and json_contains(col2->'$.path', '1') and json_contains(col3->'$.path', '1');
+id	col1	col2	col3
+2	NULL	{"path": [1]}	{"path": [1]}
+explain format='brief' select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and json_contains(col2->'$.path', '1') and json_contains(col3->'$.path', '1');
+id	estRows	task	access object	operator info
+TableReader	8.00	root		data:Selection
+└─Selection	8.00	cop[tikv]		isnull(planner__core__integration.t.col1), json_contains(json_extract(planner__core__integration.t.col2, "$.path"), cast("1", json BINARY)), json_contains(json_extract(planner__core__integration.t.col3, "$.path"), cast("1", json BINARY))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int, b int, c int no_null_index, key a(a), key b(b), key ac(a, c), key bc(b, c));
+insert into t values (NULL, 1, 1);
+insert into t values (1, NULL, 1);
+insert into t values (1, 1, NULL);
+select * from t where a is null or b is null order by c;
+a	b	c
+NULL	1	1
+1	NULL	1
+explain format='verbose' select * from t where a is null or b is null order by c;
+id	estRows	estCost	task	access object	operator info
+Sort_5	19.99	5431.39	root		planner__core__integration.t.c
+└─IndexMerge_14	19.99	1019.04	root		type: union
+  ├─IndexRangeScan_11(Build)	10.00	2035.00	cop[tikv]	table:t, index:a(a)	range:[NULL,NULL], keep order:false, stats:pseudo
+  ├─IndexRangeScan_12(Build)	10.00	2035.00	cop[tikv]	table:t, index:b(b)	range:[NULL,NULL], keep order:false, stats:pseudo
+  └─TableRowIDScan_13(Probe)	19.99	4881.56	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int no_null_index, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c));
+insert into t values (NULL, 1, 1);
+insert into t values (1, NULL, 1);
+insert into t values (1, 1, NULL);
+select * from t where a is null or b is null order by c;
+a	b	c
+NULL	1	1
+1	NULL	1
+explain format='verbose' select * from t where a is null or b is null order by c;
+id	estRows	estCost	task	access object	operator info
+Sort_5	19.99	200732.32	root		planner__core__integration.t.c
+└─TableReader_10	19.99	196319.98	root		data:Selection_9
+  └─Selection_9	19.99	2941000.00	cop[tikv]		or(isnull(planner__core__integration.t.a), isnull(planner__core__integration.t.b))
+    └─TableFullScan_8	10000.00	2442000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
