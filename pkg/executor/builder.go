@@ -3083,7 +3083,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.sctx)
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
 		tableID:     task.TableID,
@@ -3200,7 +3200,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		PartitionName:    task.PartitionName,
 		SampleRateReason: sampleRateReason,
 	}
-	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.sctx)
+	concurrency := adaptiveAnlayzeDistSQLConcurrency(b.ctx, b.sctx)
 	base := baseAnalyzeExec{
 		ctx:         b.sctx,
 		tableID:     task.TableID,
