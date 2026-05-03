@@ -980,6 +980,7 @@ func RunStreamStatus(
 	if err != nil {
 		return err
 	}
+
 	defer func() {
 		if closeErr := ctl.Close(); closeErr != nil {
 			log.Warn("failed to close etcd client", zap.Error(closeErr))
