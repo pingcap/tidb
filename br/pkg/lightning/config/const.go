@@ -33,8 +33,8 @@ const (
 	SplitRegionSize         ByteSize = 96 * units.MiB
 	SplitRegionKeys         int      = 1_280_000
 	MaxSplitRegionSizeRatio int      = 10
-
-	defaultMaxAllowedPacket = 64 * units.MiB
+	MinRegionNum            int      = 0 // disable minRegionNum by default
+	defaultMaxAllowedPacket          = 64 * units.MiB
 )
 
 // static vars
