@@ -233,6 +233,15 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 			s.Address, tikvVersion)
 	}
 
+	// 8.2 br(store based backup) does not support tikv <= 8.1
+	// due to the performance issue https://github.com/tikv/tikv/issues/17168
+	// TODO: we can remove this check if the performance issue is fixed and cherry-pick
+	if (BRVersion.Major > 8 || (BRVersion.Major == 8 && BRVersion.Minor >= 2)) &&
+		(tikvVersion.Major < 8 || (tikvVersion.Major == 8 && tikvVersion.Minor < 2)) {
+		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s version mismatch, please use the same version of BR",
+			s.Address, tikvVersion, build.ReleaseVersion)
+	}
+
 	// don't warn if we are the master build, which always have the version v4.0.0-beta.2-*
 	if build.GitBranch != "master" && tikvVersion.Compare(*BRVersion) > 0 {
 		log.Warn(fmt.Sprintf("BR version is outdated, please consider use version %s of BR", tikvVersion))
