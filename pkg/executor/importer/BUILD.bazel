@@ -136,6 +136,7 @@ go_test(
         "//pkg/planner/util",
         "//pkg/session",
         "//pkg/sessionctx/variable",
+        "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/testkit",

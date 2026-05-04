@@ -99,7 +99,7 @@ go_test(
     embed = [":importinto"],
     flaky = True,
     race = "on",
-    shard_count = 25,
+    shard_count = 31,
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
@@ -136,6 +136,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/tici",
         "//pkg/types",
         "//pkg/util/mock",
         "@com_github_docker_go_units//:go-units",

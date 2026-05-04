@@ -74,6 +74,9 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
 	}
+	if hasHybridTiCIIndexForImport(e.Plan.TableInfo, e.Table) {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(ticiHybridUnsupportedErrMsg)
+	}
 	if e.IsLocalSort() && hasTiCIIndexForImport(e.Plan.TableInfo, e.Table) {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(ticiLocalSortUnsupportedErrMsg)
 	}
@@ -88,7 +91,10 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 	return nil
 }
 
-const ticiLocalSortUnsupportedErrMsg = "local sort import does not support TiCI indexes"
+const (
+	ticiLocalSortUnsupportedErrMsg = "local sort import does not support TiCI indexes"
+	ticiHybridUnsupportedErrMsg    = "IMPORT INTO does not support hybrid TiCI indexes"
+)
 
 func hasTiCIIndexForImport(tblInfo *model.TableInfo, tbl table.Table) bool {
 	if tblInfo == nil && tbl != nil {
@@ -99,6 +105,21 @@ func hasTiCIIndexForImport(tblInfo *model.TableInfo, tbl table.Table) bool {
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.IsTiCIIndex() {
+			return true
+		}
+	}
+	return false
+}
+
+func hasHybridTiCIIndexForImport(tblInfo *model.TableInfo, tbl table.Table) bool {
+	if tblInfo == nil && tbl != nil {
+		tblInfo = tbl.Meta()
+	}
+	if tblInfo == nil {
+		return false
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.HybridInfo != nil {
 			return true
 		}
 	}
