@@ -213,6 +213,11 @@ func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 	sketch := &FMSketch{
 		hashset: make(map[uint64]struct{}, len(protoSketch.Hashset)),
 		mask:    protoSketch.Mask,
+		// maxSize is not carried in the proto; restore the standard cap so a later
+		// MergeFMSketch raises the mask level by level as designed. With maxSize 0,
+		// insertHashValue doubles the mask and prunes on every merged key, which
+		// corrupts the NDV estimate.
+		maxSize: MaxSketchSize,
 	}
 	for _, val := range protoSketch.Hashset {
 		sketch.hashset[val] = struct{}{}
@@ -241,7 +246,6 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 		return nil, errors.Trace(err)
 	}
 	fm := FMSketchFromProto(p)
-	fm.maxSize = MaxSketchSize
 	return fm, nil
 }
 

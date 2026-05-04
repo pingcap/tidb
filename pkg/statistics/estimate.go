@@ -67,45 +67,41 @@ func EstimateNDVByGEE(sampleNDV, singletonItems, sampleSize, rowCount uint64) ui
 }
 
 // EstimateGlobalSingletonBySketches estimates the global singleton count using NDV and singleton sketches.
-// For each node i, we ask: how many of node i's local singletons
-// never appeared in any other node? Those are the values that are
-// truly unique across the entire dataset, contributed by node i.
+// For each region i, we ask: how many of region i's local singletons
+// never appeared in any other region? Those are the values that are
+// truly unique across the entire dataset, contributed by region i.
 //
-// We compute this by merging all *other* nodes' NDV sketches (their full
-// distinct-value sets), then checking how much node i's local singletons
-// grow that union. The growth is approximately node i's singleton's
-// FMSketch that no other node has seen.
+// We compute this by merging all *other* regions' NDV sketches (their full
+// distinct-value sets), then checking how much region i's local singletons
+// grow that union. The growth is approximately region i's singletons
+// that no other region has seen.
 //
-// Summing these per-node contributions gives the global singleton estimate.
+// Summing these per-region contributions gives the global singleton estimate.
 //
-// The implementation splits the nodes into two halves, precomputes one NDV
-// union per half, and then rebuilds only the suffix within each half while
-// keeping a rolling in-half prefix. That keeps the O(k²) time complexity
-// but cuts repeated merge work to roughly one quarter of the naive
-// rebuild-from-scratch loop while preserving O(1) extra sketches. A full
-// prefix-suffix cache could reduce the runtime to O(k), but it would require
-// O(k) extra sketches (~80KB each), which risks significant memory pressure
-// for tables with many nodes.
+// To avoid rebuilding "all other regions" from scratch for every region
+// (O(k^2) merges), we precompute suffix unions and keep a rolling prefix
+// union, so each region's complement is a single prefix-suffix combine. This
+// runs in O(k) merges using O(k) cached union sketches.
 //
-// Example with three nodes:
+// Example with three regions:
 //
-//	Node 0 all distinct values: {a, b, c}    local singletons: {a, b, c}
-//	Node 1 all distinct values: {b, c, d}    local singletons: {b, d}
-//	Node 2 all distinct values: {c, e, f}    local singletons: {e, f}
+//	Region 0 all distinct values: {a, b, c}    local singletons: {a, b, c}
+//	Region 1 all distinct values: {b, c, d}    local singletons: {b, d}
+//	Region 2 all distinct values: {c, e, f}    local singletons: {e, f}
 //
 // True global frequencies: a×1, b×2, c×3, d×1, e×1, f×1
 // True singletons = 4  (the values {a, d, e, f} appear exactly once globally)
 //
-//	Node 0: others' NDV = {b,c,d,e,f} (size 5)
-//	        + node 0 singletons {a,b,c} = {a,b,c,d,e,f} (size 6)
+//	Region 0: others' NDV = {b,c,d,e,f} (size 5)
+//	        + region 0 singletons {a,b,c} = {a,b,c,d,e,f} (size 6)
 //	        contribution = 1  (only `a` is new)
 //
-//	Node 1: others' NDV = {a,b,c,e,f} (size 5)
-//	        + node 1 singletons {b,d} = {a,b,c,d,e,f} (size 6)
+//	Region 1: others' NDV = {a,b,c,e,f} (size 5)
+//	        + region 1 singletons {b,d} = {a,b,c,d,e,f} (size 6)
 //	        contribution = 1  (only `d` is new)
 //
-//	Node 2: others' NDV = {a,b,c,d} (size 4)
-//	        + node 2 singletons {e,f} = {a,b,c,d,e,f} (size 6)
+//	Region 2: others' NDV = {a,b,c,d} (size 4)
+//	        + region 2 singletons {e,f} = {a,b,c,d,e,f} (size 6)
 //	        contribution = 2  (`e` and `f` are new)
 //
 // Estimated singletons = 1 + 1 + 2 = 4
@@ -133,50 +129,32 @@ func EstimateGlobalSingletonBySketches(ndvSketches, singletonSketches []*FMSketc
 		return 0
 	}
 
-	mid := len(ndvSketches) - len(ndvSketches)/2
-	var leftHalfNDV *FMSketch
-	for _, sketch := range ndvSketches[:mid] {
-		leftHalfNDV = mergeCopiedFMSketch(leftHalfNDV, sketch)
-	}
-	var rightHalfNDV *FMSketch
-	for _, sketch := range ndvSketches[mid:] {
-		rightHalfNDV = mergeCopiedFMSketch(rightHalfNDV, sketch)
+	// suffixNDV[i] = union of ndvSketches[i:] (suffixNDV[n] is empty). Precomputing
+	// these makes each region's "union of all others" a prefix∪suffix combine, so the
+	// pass is O(n) merges instead of O(n^2), at the cost of O(n) cached union sketches.
+	n := len(ndvSketches)
+	suffixNDV := make([]*FMSketch, n+1)
+	for i := n - 1; i >= 1; i-- {
+		suffixNDV[i] = mergeCopiedFMSketch(mergeCopiedFMSketch(nil, suffixNDV[i+1]), ndvSketches[i])
 	}
 
-	// NOTE: For each node, we still merge every other node's NDV sketch.
-	globalSingleton := estimateGlobalSingletonInRange(ndvSketches[:mid], singletonSketches[:mid], rightHalfNDV)
-	globalSingleton += estimateGlobalSingletonInRange(ndvSketches[mid:], singletonSketches[mid:], leftHalfNDV)
-	// SAFETY: Each per-node contribution is clamped to >= 0 before accumulation.
-	intest.Assert(globalSingleton >= 0, "globalSingleton must be positive")
-	return uint64(globalSingleton)
-}
-
-func estimateGlobalSingletonInRange(ndvSketches, singletonSketches []*FMSketch, outOfRangeNDVSketch *FMSketch) int64 {
 	var globalSingleton int64
-	// prefixNDVSketch accumulates ndvSketches[0..i-1] as i advances, so
-	// each iteration only rebuilds the suffix (ndvSketches[i+1..]) from
-	// scratch instead of the full "all-except-i" set.
-	var prefixNDVSketch *FMSketch
+	// prefixNDV accumulates the union of ndvSketches[0:i] as i advances.
+	var prefixNDV *FMSketch
 	for i := range ndvSketches {
-		other := mergeCopiedFMSketch(nil, prefixNDVSketch)
-		for _, sketch := range ndvSketches[i+1:] {
-			other = mergeCopiedFMSketch(other, sketch)
-		}
-		other = mergeCopiedFMSketch(other, outOfRangeNDVSketch)
-
-		// NDV of the union of all other nodes before merging this node's singletons.
+		// Union of every region except i = prefix(0:i) ∪ suffix(i+1:).
+		other := mergeCopiedFMSketch(mergeCopiedFMSketch(nil, prefixNDV), suffixNDV[i+1])
 		ndvOther := other.NDV()
 		other = mergeCopiedFMSketch(other, singletonSketches[i])
-
-		// NDV of the union after merging this node's singleton sketch.
-		ndvUnion := other.NDV()
-		// FM sketch NDV estimates are not monotone under merge, so the estimated
-		// union can be smaller than ndvOther. Clamp the per-node contribution to 0.
-		// In practice, this appears to be fairly rare.
-		globalSingleton += max(0, ndvUnion-ndvOther)
-		prefixNDVSketch = mergeCopiedFMSketch(prefixNDVSketch, ndvSketches[i])
+		// FM sketch NDV estimates are not monotone under merge, so the union can come
+		// out smaller than ndvOther; clamp the per-region contribution to >= 0.
+		globalSingleton += max(0, other.NDV()-ndvOther)
+		prefixNDV = mergeCopiedFMSketch(prefixNDV, ndvSketches[i])
+		suffixNDV[i+1] = nil // consumed; release for GC
 	}
-	return globalSingleton
+	// SAFETY: Each per-region contribution is clamped to >= 0 before accumulation.
+	intest.Assert(globalSingleton >= 0, "globalSingleton must be >= 0")
+	return uint64(globalSingleton)
 }
 
 func mergeCopiedFMSketch(dst, src *FMSketch) *FMSketch {

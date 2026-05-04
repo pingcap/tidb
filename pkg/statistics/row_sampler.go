@@ -17,6 +17,7 @@ package statistics
 import (
 	"container/heap"
 	"context"
+	"maps"
 	"math/rand"
 	"unsafe"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -41,12 +43,51 @@ type RowSampleCollector interface {
 }
 
 type baseCollector struct {
-	Samples    WeightedRowSampleHeap
-	NullCount  []int64
+	Samples   WeightedRowSampleHeap
+	NullCount []int64
+	// FMSketches holds the per-column FM sketch for NDV. While sampling it counts this
+	// collector's distinct values; merging unions them, so the root's FMSketches is the
+	// global NDV — used directly (NDV sample rate >= 1) or as the sample NDV in the GEE
+	// correction. This is the merged whole, unlike the per-region RegionSketchSummaries.
 	FMSketches []*FMSketch
-	TotalSizes []int64
-	Count      int64
-	MemSize    int64
+	// SingletonSketches holds the per-column "seen exactly once" sketch. It is filled
+	// only on the producing side (the in-process sampler: Collect -> buildSingletonSketches)
+	// and serialized by ToProto into the response, mirroring TiKV. It stays empty on the
+	// merge side, where received per-region singletons are kept in RegionSketchSummaries.
+	SingletonSketches []*FMSketch
+	// RegionSketchSummaries holds one summary per region collected into this collector
+	// (see RegionSketchSummary): a from-response leaf carries its own region (built in
+	// FromProto, straight from the decoded proto), and a merged collector carries the
+	// concatenation. It is nil when singleton sketches are not collected (NDV sample
+	// rate >= 1).
+	//
+	// It grows with the region count and is not counted in MemSize, so the consumer
+	// must bound and account for it.
+	RegionSketchSummaries []RegionSketchSummary
+	TotalSizes            []int64
+	Count                 int64
+	// SketchSampleCount is the number of rows fed into FMSketches and
+	// SingletonSketches.
+	// It rescales NullCount and TotalSizes to the full population;
+	// 0 means no sub-sampling.
+	SketchSampleCount int64
+	MemSize           int64
+}
+
+// RegionSketchSummary holds one region's NDV and singleton sketches plus the row
+// count that fed them, kept separate per region: unioning singleton sketches breaks
+// "seen exactly once" (a value singleton in two regions occurs twice), so
+// EstimateGlobalSingletonBySketches consumes each region on its own. Sketches use
+// the compact proto form (not Go maps) because one is retained per region until the
+// estimate; the consumer rebuilds each before use.
+type RegionSketchSummary struct {
+	// NDVSketches is the region's per-column distinct-value sketch (compact form).
+	NDVSketches []*tipb.FMSketch
+	// SingletonSketches is the region's per-column sketch of values seen exactly
+	// once in the region (compact form).
+	SingletonSketches []*tipb.FMSketch
+	// SketchSampleCount is the number of rows that fed these sketches.
+	SketchSampleCount int64
 }
 
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
@@ -64,6 +105,73 @@ type ReservoirRowSampleCollector struct {
 	MaxSampleSize int
 }
 
+// singletonSketchBuilder partitions hash values into singletons (seen exactly
+// once) and the rest. Only singletons feed the final FM sketch, which is the
+// basis for population NDV estimation under sub-sampling.
+type singletonSketchBuilder struct {
+	once     map[uint64]struct{}
+	multiple map[uint64]struct{}
+}
+
+func newSingletonSketchBuilder() *singletonSketchBuilder {
+	return &singletonSketchBuilder{
+		once:     make(map[uint64]struct{}),
+		multiple: make(map[uint64]struct{}),
+	}
+}
+
+func (s *singletonSketchBuilder) insertHashValue(hashVal uint64) {
+	if _, ok := s.multiple[hashVal]; ok {
+		return
+	}
+	if _, ok := s.once[hashVal]; ok {
+		delete(s.once, hashVal)
+		s.multiple[hashVal] = struct{}{}
+	} else {
+		s.once[hashVal] = struct{}{}
+	}
+}
+
+func (s *singletonSketchBuilder) insertValue(sc *stmtctx.StatementContext, value types.Datum) error {
+	hashVal, err := hashDatum(sc, value)
+	if err != nil {
+		return err
+	}
+	s.insertHashValue(hashVal)
+	return nil
+}
+
+func (s *singletonSketchBuilder) insertRowValue(sc *stmtctx.StatementContext, values []types.Datum) error {
+	hashVal, err := hashRow(sc, values)
+	if err != nil {
+		return err
+	}
+	s.insertHashValue(hashVal)
+	return nil
+}
+
+func (s *singletonSketchBuilder) clone() *singletonSketchBuilder {
+	if s == nil {
+		return nil
+	}
+	return &singletonSketchBuilder{
+		once:     maps.Clone(s.once),
+		multiple: maps.Clone(s.multiple),
+	}
+}
+
+func (s *singletonSketchBuilder) build(maxSketchSize int) *FMSketch {
+	if s == nil {
+		return nil
+	}
+	intest.Assert(maxSketchSize > 0, "maxSketchSize should be greater than 0")
+	sketch := NewFMSketch(maxSketchSize)
+	for val := range s.once {
+		sketch.insertHashValue(val)
+	}
+	return sketch
+}
+
 // ReservoirRowSampleItem is the item for the ReservoirRowSampleCollector. The weight is needed for the sampling algorithm.
 type ReservoirRowSampleItem struct {
 	Handle  kv.Handle
@@ -73,6 +181,14 @@ type ReservoirRowSampleItem struct {
 
 // EmptyReservoirSampleItemSize = (24 + 16 + 8) now.
 const EmptyReservoirSampleItemSize = int64(unsafe.Sizeof(ReservoirRowSampleItem{}))
+
+// ShouldBuildSingletonSketches reports whether the configured NDV sample rate
+// requires building per-region singleton sketches (rate < NDVSampleSkipRate means sketches are
+// collected from a subset of rows and a global NDV estimate is derived from
+// the singletons).
+func ShouldBuildSingletonSketches(rate float64) bool {
+	return rate < NDVSampleSkipRate
+}
 
 // MemUsage returns the memory usage of sample item.
 func (i ReservoirRowSampleItem) MemUsage() (sum int64) {
@@ -120,14 +236,24 @@ func (h *WeightedRowSampleHeap) Pop() any {
 
 // RowSampleBuilder is used to construct the ReservoirRowSampleCollector to get the samples.
 type RowSampleBuilder struct {
-	RecordSet       sqlexec.RecordSet
-	Sc              *stmtctx.StatementContext
-	Rng             *rand.Rand
-	ColsFieldType   []*types.FieldType
-	Collators       []collate.Collator
-	ColGroups       [][]int64
-	MaxSampleSize   int
-	SampleRate      float64
+	RecordSet     sqlexec.RecordSet
+	Sc            *stmtctx.StatementContext
+	Rng           *rand.Rand
+	ColsFieldType []*types.FieldType
+	Collators     []collate.Collator
+	ColGroups     [][]int64
+	MaxSampleSize int
+	// SampleRate is the per-row keep probability for the row sample (the rows that
+	// build histograms and TopN). It drives Bernoulli sampling only when
+	// MaxSampleSize is 0; otherwise reservoir sampling is used and this is ignored.
+	SampleRate float64
+	// NDVSampleRate is the per-row keep probability for the per-column aggregates:
+	// FMsketches, NULL counts, and TotalSizes. NULL counts and TotalSizes are
+	// rescaled back to the full population afterwards. It is in (0, 1] and uses a
+	// separate per-row draw from SampleRate. Below NDVSampleSkipRate (1) the
+	// sketches see only a sub-sample, so singleton sketches are built to estimate
+	// population NDV from it.
+	NDVSampleRate   float64
 	MaxFMSketchSize int
 }
 
@@ -145,10 +271,11 @@ func NewRowSampleCollector(maxSampleSize int, sampleRate float64, totalLen int) 
 // NewReservoirRowSampleCollector creates the new collector by the given inputs.
 func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirRowSampleCollector {
 	base := &baseCollector{
-		Samples:    make(WeightedRowSampleHeap, 0, maxSampleSize),
-		NullCount:  make([]int64, totalLen),
-		FMSketches: make([]*FMSketch, 0, totalLen),
-		TotalSizes: make([]int64, totalLen),
+		Samples:           make(WeightedRowSampleHeap, 0, maxSampleSize),
+		NullCount:         make([]int64, totalLen),
+		FMSketches:        make([]*FMSketch, 0, totalLen),
+		SingletonSketches: make([]*FMSketch, 0, totalLen),
+		TotalSizes:        make([]int64, totalLen),
 	}
 	return &ReservoirRowSampleCollector{
 		baseCollector: base,
@@ -160,9 +287,20 @@ func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirR
 // column group.
 // Then use the weighted reservoir sampling to collect the samples.
 func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
-	collector := NewRowSampleCollector(s.MaxSampleSize, s.SampleRate, len(s.ColsFieldType)+len(s.ColGroups))
-	for range len(s.ColsFieldType) + len(s.ColGroups) {
+	totalLen := len(s.ColsFieldType) + len(s.ColGroups)
+	collector := NewRowSampleCollector(s.MaxSampleSize, s.SampleRate, totalLen)
+	ndvSampleRate := s.NDVSampleRate
+	intest.Assert(ndvSampleRate > 0 && ndvSampleRate <= NDVSampleSkipRate, "NDVSampleRate must be in (0, 1]")
+	buildSingletons := ShouldBuildSingletonSketches(ndvSampleRate)
+	var singletonBuilders []*singletonSketchBuilder
+	if buildSingletons {
+		singletonBuilders = make([]*singletonSketchBuilder, 0, totalLen)
+	}
+	for range totalLen {
 		collector.Base().FMSketches = append(collector.Base().FMSketches, NewFMSketch(s.MaxFMSketchSize))
+		if buildSingletons {
+			singletonBuilders = append(singletonBuilders, newSingletonSketchBuilder())
+		}
 	}
 	ctx := context.TODO()
 	chk := s.RecordSet.NewChunk(nil)
@@ -203,17 +341,25 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 					datums[i].SetBytes(encodedKey)
 				}
 			}
-			err := collector.Base().collectColumns(s.Sc, datums, sizes)
-			if err != nil {
-				return nil, err
-			}
-			err = collector.Base().collectColumnGroups(s.Sc, datums, s.ColGroups, sizes)
-			if err != nil {
-				return nil, err
+			collectSketch := !buildSingletons || s.Rng.Float64() < ndvSampleRate
+			if collectSketch {
+				if err := collector.Base().collectColumns(s.Sc, datums, sizes, singletonBuilders); err != nil {
+					return nil, err
+				}
+				if err := collector.Base().collectColumnGroups(s.Sc, datums, s.ColGroups, sizes, singletonBuilders); err != nil {
+					return nil, err
+				}
+				if buildSingletons {
+					collector.Base().SketchSampleCount++
+				}
 			}
 			collector.sampleRow(newCols, s.Rng)
 		}
 	}
+	// NDV sub-sampling only tallies NullCount/TotalSizes for rows that passed
+	// the rate check. Rescale them back to per-population estimates before the
+	// single-column-group copy below picks them up.
+	collector.Base().rescaleNullCountAndTotalSizes()
 	for i, group := range s.ColGroups {
 		if len(group) != 1 {
 			continue
@@ -224,17 +370,31 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 		colIdx := group[0]
 		colGroupIdx := len(s.ColsFieldType) + i
 		collector.Base().FMSketches[colGroupIdx] = collector.Base().FMSketches[colIdx].Copy()
+		if buildSingletons {
+			singletonBuilders[colGroupIdx] = singletonBuilders[colIdx].clone()
+		}
 		collector.Base().NullCount[colGroupIdx] = collector.Base().NullCount[colIdx]
 		collector.Base().TotalSizes[colGroupIdx] = collector.Base().TotalSizes[colIdx]
+	}
+	if buildSingletons {
+		collector.Base().buildSingletonSketches(singletonBuilders, s.MaxFMSketchSize)
 	}
 	return collector, nil
 }
 
 func (s *baseCollector) destroyAndPutToPool() {
 	s.FMSketches = nil // Release for GC.
+	s.SingletonSketches = nil
+	s.RegionSketchSummaries = nil
 }
 
-func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
+func (s *baseCollector) collectColumns(
+	sc *stmtctx.StatementContext,
+	cols []types.Datum,
+	sizes []int64,
+	singletonBuilders []*singletonSketchBuilder,
+) error {
+	collectSingletonSketch := singletonBuilders != nil
 	for i, col := range cols {
 		if col.IsNull() {
 			s.NullCount[i]++
@@ -242,16 +402,27 @@ func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []type
 		}
 		// Minus one is to remove the flag byte.
 		s.TotalSizes[i] += sizes[i] - 1
-		err := s.FMSketches[i].InsertValue(sc, col)
-		if err != nil {
+		if err := s.FMSketches[i].InsertValue(sc, col); err != nil {
 			return err
+		}
+		if collectSingletonSketch {
+			if err := singletonBuilders[i].insertValue(sc, col); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols []types.Datum, colGroups [][]int64, sizes []int64) error {
+func (s *baseCollector) collectColumnGroups(
+	sc *stmtctx.StatementContext,
+	cols []types.Datum,
+	colGroups [][]int64,
+	sizes []int64,
+	singletonBuilders []*singletonSketchBuilder,
+) error {
 	colLen := len(cols)
+	collectSingletonSketch := singletonBuilders != nil
 	datumBuffer := make([]types.Datum, 0, len(cols))
 	for i, group := range colGroups {
 		if len(group) == 1 {
@@ -268,12 +439,72 @@ func (s *baseCollector) collectColumnGroups(sc *stmtctx.StatementContext, cols [
 				s.TotalSizes[colLen+i] += sizes[c] - 1
 			}
 		}
-		err := s.FMSketches[colLen+i].InsertRowValue(sc, datumBuffer)
-		if err != nil {
+		if err := s.FMSketches[colLen+i].InsertRowValue(sc, datumBuffer); err != nil {
 			return err
+		}
+		if collectSingletonSketch {
+			if err := singletonBuilders[colLen+i].insertRowValue(sc, datumBuffer); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// rescaleSampledValue scales `sampled` (accumulated over `sampleCount` rows)
+// into an estimate over `totalRowCount` rows using round-half-up division.
+// Only used in the mock store path (unistore cophandler), so int64 is wide
+// enough for any realistic test fixture. Non-positive inputs return 0.
+func rescaleSampledValue(sampled, totalRowCount, sampleCount int64) int64 {
+	intest.Assert(sampleCount > 0, "sampleCount must be positive")
+	if sampled <= 0 {
+		return 0
+	}
+	// Round-half-up integer division: floor(a*b/c + 0.5).
+	return (sampled*totalRowCount + sampleCount/2) / sampleCount
+}
+
+// rescaleNullCountAndTotalSizes converts per-column null counts and total sizes
+// gathered from the NDV sub-sample into estimates over the full row population.
+// Count itself is exact (TiKV reports it from scanned_rows_per_range; the
+// mock store has no scan-level sampling) and is only read here as the
+// scaling divisor — it is never modified. No-op when no sub-sampling occurred
+// (sampleCount == 0 or every row was sampled).
+func (s *baseCollector) rescaleNullCountAndTotalSizes() {
+	sampleCount := s.SketchSampleCount
+	totalRowCount := s.Count
+	// sampleCount > totalRowCount would scale stats *down* and corrupt them.
+	intest.Assert(totalRowCount >= sampleCount, "totalRowCount must be bigger than or equal to sampleCount")
+	// No sub-sampling: values are already exact.
+	if sampleCount <= 0 {
+		return
+	}
+	// Scaling factor is 1.0; nothing to do.
+	if totalRowCount == sampleCount {
+		return
+	}
+	for i, nc := range s.NullCount {
+		s.NullCount[i] = rescaleSampledValue(nc, totalRowCount, sampleCount)
+	}
+	for i, ts := range s.TotalSizes {
+		s.TotalSizes[i] = rescaleSampledValue(ts, totalRowCount, sampleCount)
+	}
+}
+
+func (s *baseCollector) buildSingletonSketches(singletonBuilders []*singletonSketchBuilder, maxSketchSize int) {
+	s.SingletonSketches = make([]*FMSketch, len(singletonBuilders))
+	for i, builder := range singletonBuilders {
+		s.SingletonSketches[i] = builder.build(maxSketchSize)
+	}
+}
+
+// collectRegionSketchSummaries forwards the sub-collector's per-region summaries to
+// this collector — they are kept separate rather than unioned (see RegionSketchSummary).
+// A response leaf builds its summary in FromProto and the in-process sampling path is
+// never merged, so a merged sub already carries whatever summaries it has (possibly
+// none, e.g. NDV sample rate >= 1).
+func (s *baseCollector) collectRegionSketchSummaries(sub *baseCollector) {
+	s.RegionSketchSummaries = append(s.RegionSketchSummaries, sub.RegionSketchSummaries...)
 }
 
 // ToProto converts the collector to pb struct.
@@ -282,12 +513,18 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	for _, sketch := range s.FMSketches {
 		pbFMSketches = append(pbFMSketches, FMSketchToProto(sketch))
 	}
+	pbSingletonSketches := make([]*tipb.FMSketch, 0, len(s.SingletonSketches))
+	for _, sketch := range s.SingletonSketches {
+		pbSingletonSketches = append(pbSingletonSketches, FMSketchToProto(sketch))
+	}
 	collector := &tipb.RowSampleCollector{
-		Samples:    RowSamplesToProto(s.Samples),
-		NullCounts: s.NullCount,
-		Count:      s.Count,
-		FmSketch:   pbFMSketches,
-		TotalSize:  s.TotalSizes,
+		Samples:           RowSamplesToProto(s.Samples),
+		NullCounts:        s.NullCount,
+		Count:             s.Count,
+		FmSketch:          pbFMSketches,
+		TotalSize:         s.TotalSizes,
+		SingletonSketch:   pbSingletonSketches,
+		SketchSampleCount: s.SketchSampleCount,
 	}
 	return collector
 }
@@ -296,8 +533,20 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
+	s.SketchSampleCount = pbCollector.GetSketchSampleCount()
 	for _, pbSketch := range pbCollector.FmSketch {
 		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
+	}
+	// Retain this region's sketches as one summary, straight from the decoded
+	// response: no re-serialization (the live FMSketches above are only for the root
+	// NDV merge) and no singleton live maps (they are never merged). Merging later
+	// concatenates this into the root; the estimator rebuilds the sketches it needs.
+	if singletons := pbCollector.GetSingletonSketch(); len(singletons) > 0 {
+		s.RegionSketchSummaries = []RegionSketchSummary{{
+			NDVSketches:       pbCollector.FmSketch,
+			SingletonSketches: singletons,
+			SketchSampleCount: pbCollector.GetSketchSampleCount(),
+		}}
 	}
 	s.TotalSizes = pbCollector.TotalSize
 	sampleNum := len(pbCollector.Samples)
@@ -370,9 +619,11 @@ func (s *ReservoirRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 // MergeCollector merges the collectors to a final one.
 func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
 	s.Count += subCollector.Base().Count
+	s.SketchSampleCount += subCollector.Base().SketchSampleCount
 	for i, fms := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(fms)
 	}
+	s.collectRegionSketchSummaries(subCollector.Base())
 	for i, nullCount := range subCollector.Base().NullCount {
 		s.NullCount[i] += nullCount
 	}
@@ -440,10 +691,11 @@ type BernoulliRowSampleCollector struct {
 // NewBernoulliRowSampleCollector creates the new collector by the given inputs.
 func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *BernoulliRowSampleCollector {
 	base := &baseCollector{
-		Samples:    make(WeightedRowSampleHeap, 0, 8),
-		NullCount:  make([]int64, totalLen),
-		FMSketches: make([]*FMSketch, 0, totalLen),
-		TotalSizes: make([]int64, totalLen),
+		Samples:           make(WeightedRowSampleHeap, 0, 8),
+		NullCount:         make([]int64, totalLen),
+		FMSketches:        make([]*FMSketch, 0, totalLen),
+		SingletonSketches: make([]*FMSketch, 0, totalLen),
+		TotalSizes:        make([]int64, totalLen),
 	}
 	return &BernoulliRowSampleCollector{
 		baseCollector: base,
@@ -464,9 +716,11 @@ func (s *BernoulliRowSampleCollector) sampleRow(row []types.Datum, rng *rand.Ran
 // MergeCollector merges the collectors to a final one.
 func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleCollector) {
 	s.Count += subCollector.Base().Count
+	s.SketchSampleCount += subCollector.Base().SketchSampleCount
 	for i := range subCollector.Base().FMSketches {
 		s.FMSketches[i].MergeFMSketch(subCollector.Base().FMSketches[i])
 	}
+	s.collectRegionSketchSummaries(subCollector.Base())
 	for i := range subCollector.Base().NullCount {
 		s.NullCount[i] += subCollector.Base().NullCount[i]
 	}
