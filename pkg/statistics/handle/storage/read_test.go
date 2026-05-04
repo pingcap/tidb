@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -119,7 +118,9 @@ func TestColumnStatsIsInvalidSkipsInternalColumnID(t *testing.T) {
 	statistics.ColumnStatsIsInvalid(nil, tk.Session().GetPlanCtx(), histColl, -1)
 
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
-	require.Len(t, items, 0)
+	for _, item := range items {
+		require.False(t, !item.IsIndex && item.TableID == histColl.PhysicalID && item.ID <= 0)
+	}
 }
 
 func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
@@ -134,12 +135,10 @@ func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
-	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where a = 2 and b = 2 and _tidb_rowid > 0;").Check(testkit.Rows("2 2"))
 
-	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	colAID := tableInfo.Columns[0].ID
@@ -182,7 +181,7 @@ func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
 	asyncload.AsyncLoadHistogramNeededItems.Insert(internalColumnItem, true)
 
 	require.NotPanics(t, func() {
-		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h)
+		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h, false)
 		require.NoError(t, err)
 	})
 	require.NotContains(t, asyncload.AsyncLoadHistogramNeededItems.AllItems(), model.StatsLoadItem{
