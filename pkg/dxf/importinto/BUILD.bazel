@@ -111,7 +111,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 27,
+    shard_count = 31,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -154,6 +154,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/tici",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/etcd",

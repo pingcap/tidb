@@ -60,6 +60,7 @@ go_test(
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/common",
         "//pkg/lightning/verification",
+        "//pkg/meta/model",
         "//pkg/objstore",
         "//pkg/parser/ast",
         "//pkg/session",

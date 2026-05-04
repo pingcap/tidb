@@ -155,6 +155,7 @@ go_test(
         "//pkg/planner/util",
         "//pkg/session",
         "//pkg/sessionctx/vardef",
+        "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/testkit",

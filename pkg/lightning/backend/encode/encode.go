@@ -34,7 +34,9 @@ type EncodingConfig struct {
 	// when encoding.
 	// default false, in this case we will do sharding automatically if needed.
 	UseIdentityAutoRowID bool
-	// SkipTiCIIndexKVs controls whether to skip TiCI index KV encoding.
+	// SkipTiCIIndexKVs skips generating TiCI index KVs from the encoder.
+	// Duplicate-resolution re-encoding uses this because TiCI KVs are not part
+	// of the TiKV checksum that conflicted-row bookkeeping adjusts.
 	SkipTiCIIndexKVs bool
 }
 
