@@ -19,10 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -75,6 +78,7 @@ func TestWeightedSampling(t *testing.T) {
 			Collators:       make([]collate.Collator, 1),
 			ColGroups:       nil,
 			MaxSampleSize:   int(sampleNum),
+			NDVSampleRate:   NDVSampleSkipRate,
 			MaxFMSketchSize: 1000,
 			Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 		}
@@ -117,6 +121,7 @@ func TestDistributedWeightedSampling(t *testing.T) {
 				Collators:       make([]collate.Collator, 1),
 				ColGroups:       nil,
 				MaxSampleSize:   int(sampleNum),
+				NDVSampleRate:   NDVSampleSkipRate,
 				MaxFMSketchSize: 1000,
 				Rng:             rand.New(rand.NewSource(time.Now().UnixNano())),
 			}
@@ -258,6 +263,28 @@ func TestBuildSampleFullNDV(t *testing.T) {
 	require.Equal(t, 2, len(topN.TopN), "TopN should be trimmed to sampleNDV-1 items when ndv > sampleNDV")
 }
 
+func TestRescaleSampledValue(t *testing.T) {
+	cases := []struct {
+		name       string
+		sampled    int64
+		population int64
+		sample     int64
+		expected   int64
+	}{
+		{"identity when sampled == sample", 50, 100, 50, 100},
+		{"scales up linearly", 10, 100, 50, 20},
+		{"rounds half up", 1, 3, 2, 2},
+		{"rounds down below half", 1, 4, 3, 1},
+		{"zero sampled stays zero", 0, 100, 50, 0},
+		{"negative sampled clamps to zero", -5, 100, 50, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.expected, rescaleSampledValue(c.sampled, c.population, c.sample))
+		})
+	}
+}
+
 type testSampleSuite struct {
 	count int
 	rs    sqlexec.RecordSet
@@ -268,6 +295,149 @@ func TestSampleSerial(t *testing.T) {
 	t.Run("SubTestCollectColumnStats", SubTestCollectColumnStats(s))
 	t.Run("SubTestMergeSampleCollector", SubTestMergeSampleCollector(s))
 	t.Run("SubTestCollectorProtoConversion", SubTestCollectorProtoConversion(s))
+	t.Run("SubTestRowSampleDefaultNDVRate", SubTestRowSampleDefaultNDVRate())
+	t.Run("SubTestRowSampleSingletonSketches", SubTestRowSampleSingletonSketches())
+	t.Run("SubTestRowSampleRescalesNullCountUnderSubSampling", SubTestRowSampleRescalesNullCountUnderSubSampling())
+	t.Run("SubTestSingletonSketchBuildRespectsMaxSize", SubTestSingletonSketchBuildRespectsMaxSize())
+}
+
+func SubTestRowSampleDefaultNDVRate() func(*testing.T) {
+	return func(t *testing.T) {
+		rs := recordSetForWeightSamplingTest(100)
+		builder := &RowSampleBuilder{
+			Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+			RecordSet:       rs,
+			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+			Collators:       make([]collate.Collator, 1),
+			MaxSampleSize:   10,
+			NDVSampleRate:   NDVSampleSkipRate,
+			MaxFMSketchSize: 1000,
+			Rng:             rand.New(rand.NewSource(1)),
+		}
+		collector, err := builder.Collect()
+		require.NoError(t, err)
+
+		require.Equal(t, int64(100), collector.Base().FMSketches[0].NDV())
+		require.Zero(t, collector.Base().SketchSampleCount)
+		require.Empty(t, collector.Base().SingletonSketches)
+
+		pbCollector := collector.Base().ToProto()
+		require.Empty(t, pbCollector.GetSingletonSketch())
+		require.Zero(t, pbCollector.GetSketchSampleCount())
+	}
+}
+
+func SubTestRowSampleSingletonSketches() func(*testing.T) {
+	return func(t *testing.T) {
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		rs := &sqlexec.SimpleRecordSet{
+			ResultFields: []*resolve.ResultField{
+				{Column: &model.ColumnInfo{FieldType: *intType}},
+				{Column: &model.ColumnInfo{FieldType: *intType}},
+			},
+			Rows: [][]any{
+				{int64(1), int64(10)},
+				{int64(2), int64(10)},
+				{int64(2), int64(20)},
+				{int64(3), int64(20)},
+			},
+			MaxChunkSize: 32,
+		}
+
+		builder := &RowSampleBuilder{
+			Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+			RecordSet:       rs,
+			ColsFieldType:   []*types.FieldType{intType, intType},
+			Collators:       make([]collate.Collator, 2),
+			ColGroups:       [][]int64{{0}, {0, 1}},
+			MaxSampleSize:   4,
+			NDVSampleRate:   0.5,
+			MaxFMSketchSize: 1000,
+			// Seed 1 deterministically samples rows [2, 3] under rate=0.5, exercising the
+			// "sketch sampling filtered some rows" path while keeping NDVs deterministic.
+			Rng: rand.New(rand.NewSource(1)),
+		}
+		collector, err := builder.Collect()
+		require.NoError(t, err)
+		base := collector.Base()
+
+		// Only rows (2, 20) and (3, 20) pass the rate=0.5 sketch sampling check.
+		require.Equal(t, int64(2), base.SketchSampleCount)
+		require.Len(t, base.SingletonSketches, 4)
+		require.Equal(t, int64(2), base.SingletonSketches[0].NDV()) // col 0: 2 and 3 are singletons.
+		require.Equal(t, int64(0), base.SingletonSketches[1].NDV()) // col 1: 20 repeats.
+		// Single-column group [0] is cloned from col 0, so its singletons match.
+		require.Equal(t, base.SingletonSketches[0].NDV(), base.SingletonSketches[2].NDV())
+		// Multi-column group [0,1]: (2,20) and (3,20) are singleton row pairs.
+		require.Equal(t, int64(2), base.SingletonSketches[3].NDV())
+
+		pbCollector := base.ToProto()
+		require.Equal(t, int64(2), pbCollector.GetSketchSampleCount())
+		require.Len(t, pbCollector.GetSingletonSketch(), 4)
+
+		restored := NewReservoirRowSampleCollector(4, 4)
+		restored.FromProto(pbCollector, memory.NewTracker(0, -1))
+		require.Equal(t, base.SketchSampleCount, restored.SketchSampleCount)
+		require.Len(t, restored.SingletonSketches, 4)
+		require.Equal(t, base.SingletonSketches[0].NDV(), restored.SingletonSketches[0].NDV())
+		require.Equal(t, base.SingletonSketches[3].NDV(), restored.SingletonSketches[3].NDV())
+	}
+}
+
+func SubTestRowSampleRescalesNullCountUnderSubSampling() func(*testing.T) {
+	return func(t *testing.T) {
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		rs := &sqlexec.SimpleRecordSet{
+			ResultFields: []*resolve.ResultField{
+				{Column: &model.ColumnInfo{FieldType: *intType}},
+				{Column: &model.ColumnInfo{FieldType: *intType}},
+			},
+			// Seed 1 + rate 0.5 deterministically samples rows [2, 3].
+			// Nulls outside the sampled window are intentionally not "seen" so the
+			// rescaled estimate diverges from the true full-table null count — that
+			// is the entire point of post-sampling rescaling.
+			Rows: [][]any{
+				{nil, int64(10)},      // row 0 — not sampled.
+				{int64(2), nil},       // row 1 — not sampled.
+				{int64(3), int64(20)}, // row 2 — sampled. no nulls.
+				{nil, int64(40)},      // row 3 — sampled. col 0 null.
+			},
+			MaxChunkSize: 32,
+		}
+
+		builder := &RowSampleBuilder{
+			Sc:              mock.NewContext().GetSessionVars().StmtCtx,
+			RecordSet:       rs,
+			ColsFieldType:   []*types.FieldType{intType, intType},
+			Collators:       make([]collate.Collator, 2),
+			MaxSampleSize:   4,
+			NDVSampleRate:   0.5,
+			MaxFMSketchSize: 1000,
+			Rng:             rand.New(rand.NewSource(1)),
+		}
+		collector, err := builder.Collect()
+		require.NoError(t, err)
+		base := collector.Base()
+
+		// Count is exact by construction (mock store doesn't drop rows), so we
+		// don't assert on it here — we only check that NullCount got rescaled.
+		// Rows 2 and 3 are sampled (rate=0.5, seed=1), and within that sample
+		// col 0 has 1 null and col 1 has 0 nulls. Rescale factor is 4/2 = 2.
+		require.Equal(t, int64(2), base.SketchSampleCount)
+		require.Equal(t, int64(2), base.NullCount[0])
+		require.Equal(t, int64(0), base.NullCount[1])
+	}
+}
+
+func SubTestSingletonSketchBuildRespectsMaxSize() func(*testing.T) {
+	return func(t *testing.T) {
+		builder := newSingletonSketchBuilder()
+		for i := range 100 {
+			builder.insertHashValue(uint64(i))
+		}
+
+		require.LessOrEqual(t, len(builder.build(10).hashset), 10)
+	}
 }
 
 func createTestSampleSuite() *testSampleSuite {

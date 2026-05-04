@@ -20,4 +20,6 @@ const (
 	DefaultTopNValue = 100
 	// DefaultHistogramBuckets is the default number of histogram buckets
 	DefaultHistogramBuckets = 256
+	// NDVSampleSkipRate is the sample rate at which sampling is skipped, so NDV sketches are built from every row.
+	NDVSampleSkipRate = 1
 )
