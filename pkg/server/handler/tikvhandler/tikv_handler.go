@@ -2039,6 +2039,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			old := local.CurrentMaxBatchSplitRanges.Load()
 			intV := int(v)
 			local.CurrentMaxBatchSplitRanges.Store(&intV)
+			if old == nil {
+				return 0
+			}
 			return float64(*old)
 		}
 	case IngestParamMaxSplitRangesPerSec:
@@ -2051,6 +2054,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		updateGlobal = func(v float64) float64 {
 			old := local.CurrentMaxSplitRangesPerSec.Load()
 			local.CurrentMaxSplitRangesPerSec.Store(&v)
+			if old == nil {
+				return 0
+			}
 			return *old
 		}
 	case IngestParamMaxPerSecond:
@@ -2063,6 +2069,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		updateGlobal = func(v float64) float64 {
 			old := local.CurrentMaxIngestPerSec.Load()
 			local.CurrentMaxIngestPerSec.Store(&v)
+			if old == nil {
+				return 0
+			}
 			return *old
 		}
 	case IngestParamMaxInflight:
@@ -2077,6 +2086,9 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			old := local.CurrentMaxIngestInflight.Load()
 			intV := int(v)
 			local.CurrentMaxIngestInflight.Store(&intV)
+			if old == nil {
+				return 0
+			}
 			return float64(*old)
 		}
 	default:
@@ -2086,7 +2098,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	case http.MethodGet:
 		var respValue float64
 		var respIsNull bool
-		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+		err := kv.RunInNewTxn(ctx, h.Store.(kv.Storage), false, func(_ context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var getErr error
 			respValue, respIsNull, getErr = getter(m)
@@ -2116,7 +2129,8 @@ func (h IngestConcurrencyHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 			handler.WriteError(w, errors.New("value must be >= 0"))
 			return
 		}
-		err := kv.RunInNewTxn(context.Background(), h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+		err := kv.RunInNewTxn(ctx, h.Store.(kv.Storage), true, func(_ context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			return setter(m, newValue)
 		})
