@@ -45,14 +45,9 @@ type columnStatsUsageCollector struct {
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
 
-	// visitedPhysTblIDs all ds.PhysicalTableID that have been visited.
-	// It's always collected, even collectHistNeededColumns is not set.
+	// visitedPhysTblIDs is always collected for stats-load logic and reused by plan replayer capture.
+	// NOTE: it currently stores table meta IDs (DataSource.TableInfo.ID), not ds.PhysicalTableID.
 	visitedPhysTblIDs *intset.FastIntSet
-
-	// collectVisitedTable indicates whether to collect visited table
-	collectVisitedTable bool
-	// visitedtbls indicates the visited table
-	visitedtbls map[int64]struct{}
 
 	// tblID2PartitionIDs is used for tables with static pruning mode.
 	// Note that we've no longer suggested to use static pruning mode.
@@ -67,7 +62,7 @@ type columnStatsUsageCollector struct {
 	colSet map[int64]struct{}
 }
 
-func newColumnStatsUsageCollector(enabledPlanCapture bool, collectIndexPruningCols bool) *columnStatsUsageCollector {
+func newColumnStatsUsageCollector(collectIndexPruningCols bool) *columnStatsUsageCollector {
 	set := intset.NewFastIntSet()
 	collector := &columnStatsUsageCollector{
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
@@ -77,10 +72,6 @@ func newColumnStatsUsageCollector(enabledPlanCapture bool, collectIndexPruningCo
 	}
 	collector.predicateCols = make(map[model.TableItemID]bool)
 	collector.colMap = make(map[int64]map[model.TableItemID]struct{})
-	if enabledPlanCapture {
-		collector.collectVisitedTable = true
-		collector.visitedtbls = map[int64]struct{}{}
-	}
 	if collectIndexPruningCols {
 		collector.interestingColsByDS = make(map[*logicalop.DataSource][]*expression.Column)
 		collector.colSet = make(map[int64]struct{})
@@ -145,9 +136,6 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
 	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
 	tblID := ds.TableInfo.ID
-	if c.collectVisitedTable {
-		c.visitedtbls[tblID] = struct{}{}
-	}
 	c.visitedPhysTblIDs.Insert(int(tblID))
 	if tblID != ds.PhysicalTableID {
 		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.PhysicalTableID)
@@ -442,10 +430,15 @@ func CollectColumnStatsUsage(lp base.LogicalPlan) (
 	threshold := lp.SCtx().GetSessionVars().OptIndexPruneThreshold
 	collectIndexPruningCols := threshold >= 0
 
-	collector := newColumnStatsUsageCollector(lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled(), collectIndexPruningCols)
+	enablePlanCapture := lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled()
+	collector := newColumnStatsUsageCollector(collectIndexPruningCols)
 	collector.collectFromPlan(nil, lp, nil, nil)
-	if collector.collectVisitedTable {
-		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
+	if enablePlanCapture {
+		visitedTbls := make(map[int64]struct{}, collector.visitedPhysTblIDs.Len())
+		collector.visitedPhysTblIDs.ForEach(func(tblID int) {
+			visitedTbls[int64(tblID)] = struct{}{}
+		})
+		recordTableRuntimeStats(lp.SCtx(), visitedTbls)
 	}
 
 	// Populate DataSource field with the collected interesting columns (if index pruning is enabled)
