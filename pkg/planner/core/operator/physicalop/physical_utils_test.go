@@ -17,7 +17,14 @@ package physicalop
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,4 +88,96 @@ func TestFlattenTreePushDownPlan(t *testing.T) {
 	require.Equal(t, 2, len(m))
 	require.Equal(t, 6, m[2])
 	require.Equal(t, 5, m[3])
+}
+
+func TestTiCIIndexScanPBIncludesCommonHandlePrimaryColumnIDs(t *testing.T) {
+	ctx := mock.NewContext()
+
+	workspaceIDCol := &model.ColumnInfo{
+		ID:        1,
+		Name:      ast.NewCIStr("workspace_id"),
+		Offset:    0,
+		State:     model.StatePublic,
+		FieldType: *types.NewFieldType(mysql.TypeVarchar),
+	}
+	workspaceIDCol.AddFlag(mysql.PriKeyFlag)
+	idCol := &model.ColumnInfo{
+		ID:        2,
+		Name:      ast.NewCIStr("id"),
+		Offset:    1,
+		State:     model.StatePublic,
+		FieldType: *types.NewFieldType(mysql.TypeVarchar),
+	}
+	idCol.AddFlag(mysql.PriKeyFlag)
+	textCol := &model.ColumnInfo{
+		ID:        3,
+		Name:      ast.NewCIStr("text_value_5"),
+		Offset:    2,
+		State:     model.StatePublic,
+		FieldType: *types.NewFieldType(mysql.TypeBlob),
+	}
+
+	primaryIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    ast.NewCIStr("PRIMARY"),
+		Primary: true,
+		Unique:  true,
+		Columns: []*model.IndexColumn{
+			{Offset: 0, Length: types.UnspecifiedLength},
+			{Offset: 1, Length: types.UnspecifiedLength},
+		},
+	}
+	ftsIdx := &model.IndexInfo{
+		ID:   2,
+		Name: ast.NewCIStr("idx_fts_text_value_5"),
+		Columns: []*model.IndexColumn{
+			{Offset: 2, Length: types.UnspecifiedLength},
+		},
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeNgramV1,
+		},
+	}
+	tbl := &model.TableInfo{
+		ID:                  100,
+		Name:                ast.NewCIStr("obj_new"),
+		IsCommonHandle:      true,
+		CommonHandleVersion: 1,
+		Columns:             []*model.ColumnInfo{workspaceIDCol, idCol, textCol},
+		Indices:             []*model.IndexInfo{primaryIdx, ftsIdx},
+	}
+
+	workspaceIDExprCol := &expression.Column{
+		ID:       workspaceIDCol.ID,
+		RetType:  &workspaceIDCol.FieldType,
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+	}
+	idExprCol := &expression.Column{
+		ID:       idCol.ID,
+		RetType:  &idCol.FieldType,
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+	}
+	textExprCol := &expression.Column{
+		ID:       textCol.ID,
+		RetType:  &textCol.FieldType,
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+	}
+
+	indexScan := PhysicalIndexScan{
+		Table:            tbl,
+		Index:            ftsIdx,
+		IdxCols:          []*expression.Column{textExprCol},
+		Columns:          tbl.Columns,
+		DataSourceSchema: expression.NewSchema(workspaceIDExprCol, idExprCol, textExprCol),
+	}.Init(ctx, 0)
+	indexScan.InitSchemaForTiCIIndex([]*expression.Column{workspaceIDExprCol, idExprCol}, []*expression.Column{textExprCol})
+
+	require.True(t, indexScan.NeedCommonHandle)
+	require.Equal(t, workspaceIDCol.ID, indexScan.Schema().Columns[0].ID)
+	require.Equal(t, idCol.ID, indexScan.Schema().Columns[1].ID)
+
+	exec, err := indexScan.ToPB(ctx.GetBuildPBCtx(), kv.TiCI)
+	require.NoError(t, err)
+	require.Equal(t, []int64{workspaceIDCol.ID, idCol.ID}, exec.IdxScan.PrimaryColumnIds)
+	require.Len(t, exec.IdxScan.Columns, 4)
+	require.Equal(t, int64(model.ExtraVersionID), exec.IdxScan.Columns[3].ColumnId)
 }
