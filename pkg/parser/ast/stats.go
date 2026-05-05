@@ -360,8 +360,13 @@ func dedupStatsObjects(objects []*StatsObject) []*StatsObject {
 		return objects
 	}
 
+	type tableKey struct {
+		dbName    string
+		tableName string
+	}
+
 	dbSeen := make(map[string]struct{})
-	tableSeen := make(map[string]struct{})
+	tableSeen := make(map[tableKey]struct{})
 	result := make([]*StatsObject, 0, len(objects))
 
 	for _, obj := range objects {
@@ -382,7 +387,7 @@ func dedupStatsObjects(objects []*StatsObject) []*StatsObject {
 				if existing.StatsObjectScope == StatsObjectScopeTable {
 					existingDBKey := existing.DBName.L
 					if existingDBKey != "" && existingDBKey == dbKey {
-						tblKey := existingDBKey + "." + existing.TableName.L
+						tblKey := tableKey{dbName: existingDBKey, tableName: existing.TableName.L}
 						delete(tableSeen, tblKey)
 						continue
 					}
@@ -397,7 +402,7 @@ func dedupStatsObjects(objects []*StatsObject) []*StatsObject {
 					continue
 				}
 			}
-			tblKey := dbKey + "." + obj.TableName.L
+			tblKey := tableKey{dbName: dbKey, tableName: obj.TableName.L}
 			if _, exists := tableSeen[tblKey]; exists {
 				continue
 			}

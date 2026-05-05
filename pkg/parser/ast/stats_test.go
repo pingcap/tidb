@@ -113,6 +113,11 @@ func TestFlushStatsDeltaScopedDedup(t *testing.T) {
 			sql:  "FLUSH STATS_DELTA db1.t1, db1.T1, db2.t1",
 			want: "FLUSH STATS_DELTA `db1`.`t1`, `db2`.`t1`",
 		},
+		{
+			name: "quoted dotted names are distinct",
+			sql:  "FLUSH STATS_DELTA `a.b`.`c`, `a`.`b.c`",
+			want: "FLUSH STATS_DELTA `a.b`.`c`, `a`.`b.c`",
+		},
 	}
 
 	p := parser.New()
