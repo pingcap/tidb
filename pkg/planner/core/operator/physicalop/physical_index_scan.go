@@ -458,6 +458,7 @@ func (p *PhysicalIndexScan) InitSchemaForTiKVIndex(idxExprCols []*expression.Col
 // So we build the layout like [primary key columns..., deduplicated index columns...].
 func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols []*expression.Column) {
 	intest.Assert(!p.Index.Global && !p.Index.MVIndex)
+	p.NeedCommonHandle = p.Table.IsCommonHandle
 	handleLen := 1
 	if p.Table.IsCommonHandle {
 		handleLen = len(possibleHandleCols)
