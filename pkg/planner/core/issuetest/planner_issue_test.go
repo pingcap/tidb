@@ -364,14 +364,45 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`    └─TableReader_136 10000.00 root  data:TableFullScan_135`,
 		`      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 
+	prepareSharedTestKit := func(t *testing.T) *testkit.TestKit {
+		t.Helper()
+		tk.MustExec("drop database if exists test")
+		tk.MustExec("create database test")
+		tk.MustExec("use test")
+		tk.MustExec("set @@sql_mode = default")
+		tk.MustExec("set @@tidb_enable_inl_join_inner_multi_pattern='OFF'")
+		tk.MustExec("set @@tidb_enable_unsafe_substitute=0")
+		return tk
+	}
+
 	// Regression test for https://github.com/pingcap/tidb/issues/66339
 	// Read-only user variables with uppercase names should be converted to constant
 	// and use IndexRangeScan, same as lowercase names.
-	tk.MustExec("create table t(a int, key(a))")
-	tk.MustExec("set @a=1")
-	tk.MustHavePlan("select a from t where a=@a", "IndexRangeScan")
-	tk.MustExec("set @A=1")
-	tk.MustHavePlan("select a from t where a=@A", "IndexRangeScan")
+	// issue-66339-readonly-var-uppercase-uses-index-range
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t(a int, key(a))")
+		tk.MustExec("set @a=1")
+		tk.MustHavePlan("select a from t where a=@a", "IndexRangeScan")
+		tk.MustExec("set @A=1")
+		tk.MustHavePlan("select a from t where a=@A", "IndexRangeScan")
+	}
+
+	// issue-67967-unionscan-should-eliminate-tabledual-for-null-comparison
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t_issue_67967 (id bigint not null primary key auto_increment, delete_flag tinyint default null)")
+
+		for _, sql := range []string{
+			"begin",
+			"insert into t_issue_67967(delete_flag) values (null)",
+		} {
+			tk.MustExec(sql)
+		}
+		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 use index() where delete_flag = null").CheckContain("TableDual")
+		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 where delete_flag = null").CheckContain("TableDual")
+		tk.MustExec("rollback")
+	}
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
