@@ -1232,6 +1232,33 @@ func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {
 	require.Equal(t, int64(32), row.GetInt64(0))
 }
 
+func TestAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_auto_analyze_concurrency'").Check(testkit.Rows(strconv.Itoa(vardef.DefTiDBAutoAnalyzeConcurrency)))
+
+	upgradeFromVersion := session.CurrentBootstrapVersion - 1
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(upgradeFromVersion))
+	require.NoError(t, txn.Commit(context.Background()))
+	revertVersionAndVariables(t, tk.Session(), int(upgradeFromVersion))
+	tk.MustExec("update mysql.global_variables set variable_value='8' where variable_name='tidb_auto_analyze_concurrency'")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	dom.Close()
+
+	domUpgraded, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domUpgraded.Close()
+
+	testkit.NewTestKit(t, store).MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_auto_analyze_concurrency'").Check(testkit.Rows("8"))
+}
+
 func TestBootstrapInNextGenInvalidSystemTable(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("this is only checked in next-gen kernel")
