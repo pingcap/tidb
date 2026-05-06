@@ -4332,6 +4332,8 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt:
 		isCrucial = true
+	case *ast.AdminStmt:
+		isCrucial = isAdminLogReplStmt(stmt.Tp)
 	}
 
 	if isCrucial {

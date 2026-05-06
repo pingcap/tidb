@@ -1,6 +1,8 @@
 package ast
 
 import (
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -56,6 +58,57 @@ func (a *AlterLogReplication) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	return nil
+}
+
+// SecureText implements SensitiveStmtNode for log replication admin statements with SOURCE_PASSWORD.
+func (n *AdminStmt) SecureText() string {
+	redactedStmt := *n
+	switch n.Tp {
+	case AdminCreateLogReplication:
+		if n.CreateLogReplication == nil || !hasLogReplicationPasswordOpt(n.CreateLogReplication.Opts) {
+			return n.Text()
+		}
+		redactedCreate := *n.CreateLogReplication
+		redactedCreate.Opts = redactLogReplicationPasswordOpt(n.CreateLogReplication.Opts)
+		redactedStmt.CreateLogReplication = &redactedCreate
+	case AdminAlterLogReplication:
+		if n.AlterLogReplication == nil || !hasLogReplicationPasswordOpt(n.AlterLogReplication.Opts) {
+			return n.Text()
+		}
+		redactedAlter := *n.AlterLogReplication
+		redactedAlter.Opts = redactLogReplicationPasswordOpt(n.AlterLogReplication.Opts)
+		redactedStmt.AlterLogReplication = &redactedAlter
+	default:
+		return n.Text()
+	}
+
+	var sb strings.Builder
+	_ = redactedStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
+}
+
+func hasLogReplicationPasswordOpt(opts []*LogReplicationOpt) bool {
+	for _, opt := range opts {
+		if opt != nil && opt.Tp == LogReplicationOptSourcePassword {
+			return true
+		}
+	}
+	return false
+}
+
+func redactLogReplicationPasswordOpt(opts []*LogReplicationOpt) []*LogReplicationOpt {
+	redactedOpts := make([]*LogReplicationOpt, len(opts))
+	for i, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		redactedOpt := *opt
+		if redactedOpt.Tp == LogReplicationOptSourcePassword {
+			redactedOpt.Value = "***"
+		}
+		redactedOpts[i] = &redactedOpt
+	}
+	return redactedOpts
 }
 
 type PauseLogReplication struct {
