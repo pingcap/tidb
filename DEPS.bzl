@@ -3598,8 +3598,19 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
+<<<<<<< HEAD
         sum = "h1:wxolKysltFSu8gxWJBdUdWuTBoSuY3MjNIIZI5S9JLY=",
         version = "v0.0.0-20260605083900-f9f651ef5fbc",
+=======
+        sha256 = "68768a27ed6c35716fcb01a0b4a15ff13e5c1a5dc11acc7a3d44ba02a2742077",
+        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20260414032333-da912b84de6f",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260414032333-da912b84de6f.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260414032333-da912b84de6f.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260414032333-da912b84de6f.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20260414032333-da912b84de6f.zip",
+        ],
+>>>>>>> 6f1ffd407e4 (*: bump tipb for row-sample singleton sketch fields (#68158))
     )
     go_repository(
         name = "com_github_pkg_browser",
