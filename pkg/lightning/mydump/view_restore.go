@@ -102,7 +102,7 @@ func (c *viewDependencyCollector) Enter(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
-func (c *viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
+func (_ *viewDependencyCollector) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 

@@ -314,7 +314,10 @@ func unionTableNames(sets ...tableNameSet) tableNameSet {
 // loadExistingViewDependencies fetches downstream tables and views for every
 // schema touched by the plan so validation can distinguish missing external
 // objects from already satisfied dependencies or name collisions.
-func (si *SchemaImporter) loadExistingViewDependencies(ctx context.Context, plan *viewRestorePlan) (tableNameSet, tableNameSet, error) {
+func (si *SchemaImporter) loadExistingViewDependencies(
+	ctx context.Context,
+	plan *viewRestorePlan,
+) (existingTables tableNameSet, existingViews tableNameSet, err error) {
 	schemas := make(set.StringSet)
 	for _, node := range plan.nodes {
 		schemas.Insert(strings.ToLower(node.key.Schema))
@@ -323,10 +326,11 @@ func (si *SchemaImporter) loadExistingViewDependencies(ctx context.Context, plan
 		}
 	}
 
-	existingTables := make(tableNameSet)
-	existingViews := make(tableNameSet)
+	existingTables = make(tableNameSet)
+	existingViews = make(tableNameSet)
 	for schema := range schemas {
-		tables, err := si.getExistingTables(ctx, schema)
+		var tables map[string]struct{}
+		tables, err = si.getExistingTables(ctx, schema)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -334,7 +338,8 @@ func (si *SchemaImporter) loadExistingViewDependencies(ctx context.Context, plan
 			existingTables.add(filter.Table{Schema: schema, Name: tableName})
 		}
 
-		views, err := si.getExistingViews(ctx, schema)
+		var views map[string]struct{}
+		views, err = si.getExistingViews(ctx, schema)
 		if err != nil {
 			return nil, nil, err
 		}

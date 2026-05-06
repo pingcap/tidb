@@ -301,8 +301,8 @@ func (s *mockGCSSuite) TestOnlyDataFiles() {
 		WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}))
 	mock.ExpectExec("CREATE DATABASE IF NOT EXISTS `db`;").
 		WillReturnResult(sqlmock.NewResult(0, 1))
-	mock.ExpectQuery(`SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'db'`).
-		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}).AddRow("tb"))
+	mock.ExpectQuery("SHOW CREATE TABLE `db`.`tb`").
+		WillReturnRows(sqlmock.NewRows([]string{"Create Table"}).AddRow("CREATE TABLE `db`.`tb` (`a` INT, `b` VARCHAR(10));"))
 	importSDK, err := NewImportSDK(
 		context.Background(),
 		fmt.Sprintf("gs://onlydata?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
