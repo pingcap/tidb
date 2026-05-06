@@ -19,6 +19,7 @@ go_library(
         "schema_import.go",
         "spark_rebase.go",
         "spark_rebase_micros_generated.go",
+        "view_restore.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/lightning/mydump",
     visibility = ["//visibility:public"],
@@ -87,6 +88,7 @@ go_test(
         "region_test.go",
         "router_test.go",
         "schema_import_test.go",
+        "view_restore_test.go",
     ],
     data = glob([
         "csv/*",
