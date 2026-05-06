@@ -2545,15 +2545,14 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		// NULLIF returns the first argument when the comparison is false, otherwise NULL.
 		// Keep the NULL branch as TypeNull so IF inherits the return type from the
 		// value branch instead of aggregating it with a typed NULL and rewriting metadata.
-		valueBranch := param1
-		retTp := valueBranch.GetType(er.sctx.GetEvalCtx())
+		valueBranch := param1.Clone()
+		retTp := valueBranch.GetType(er.sctx.GetEvalCtx()).Clone()
 		retTp.DelFlag(mysql.NotNullFlag)
 		if !retTp.EvalType().IsStringKind() {
 			retTp.SetCharset(charset.CharsetBin)
 			retTp.SetCollate(charset.CollationBin)
 		}
-		valueBranch.GetType(er.sctx.GetEvalCtx()).SetCharset(retTp.GetCharset())
-		valueBranch.GetType(er.sctx.GetEvalCtx()).SetCollate(retTp.GetCollate())
+		setExprRetType(valueBranch, retTp.Clone())
 		paramNull := &expression.Constant{
 			Value:   types.NewDatum(nil),
 			RetType: types.NewFieldType(mysql.TypeNull),
@@ -2568,6 +2567,19 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func setExprRetType(expr expression.Expression, retTp *types.FieldType) {
+	switch x := expr.(type) {
+	case *expression.Column:
+		x.RetType = retTp
+	case *expression.CorrelatedColumn:
+		x.RetType = retTp
+	case *expression.Constant:
+		x.RetType = retTp
+	case *expression.ScalarFunction:
+		x.RetType = retTp
 	}
 }
 
