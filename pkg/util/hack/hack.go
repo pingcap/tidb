@@ -38,6 +38,7 @@ func Slice(s string) []byte {
 }
 
 func init() {
+	checkMapABI()
 }
 
 // GetBytesFromPtr return a bytes array from the given ptr and length
