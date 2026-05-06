@@ -348,7 +348,7 @@ func TestLatestServerInfosByInstanceKeepsNewestDDLID(t *testing.T) {
 func waitExecutorFinishedCount(t *testing.T, svc *MVService, expected int64) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		return svc.executor.metrics.counters.finishedCount.Load() == expected
+		return svc.combinedTaskExecutorMetrics().finishedCount == expected
 	}, testEventuallyWait, testEventuallyTick)
 }
 
@@ -1091,7 +1091,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.purgeMVLog([]*mvLog{l})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.purgeExecutor.metrics.counters.failedCount.Load())
 			require.Eventually(t, func() bool {
 				svc.mvLogPurgeMu.Lock()
 				_, ok := svc.mvLogPurgeMu.pending[l.ID]
@@ -1117,7 +1117,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.purgeMVLog([]*mvLog{l})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.purgeExecutor.metrics.counters.failedCount.Load())
 
 			svc.mvLogPurgeMu.Lock()
 			item, ok := svc.mvLogPurgeMu.pending[l.ID]
@@ -1220,7 +1220,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.refreshMV([]*mv{m})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.refreshExecutor.metrics.counters.failedCount.Load())
 			require.Eventually(t, func() bool {
 				svc.mvRefreshMu.Lock()
 				_, ok := svc.mvRefreshMu.pending[m.ID]
@@ -1246,7 +1246,7 @@ func TestMVServiceTaskResult(t *testing.T) {
 			svc.refreshMV([]*mv{m})
 
 			waitExecutorFinishedCount(t, svc, 1)
-			require.Equal(t, int64(0), svc.executor.metrics.counters.failedCount.Load())
+			require.Equal(t, int64(0), svc.refreshExecutor.metrics.counters.failedCount.Load())
 
 			svc.mvRefreshMu.Lock()
 			item, ok := svc.mvRefreshMu.pending[m.ID]
@@ -1462,7 +1462,8 @@ func TestRegisterMVServiceBootstrapAndDDLHandler(t *testing.T) {
 		MemThreshold: defaultBackpressureMemThreshold,
 		Delay:        defaultTaskBackpressureDelay,
 	}, svc.GetTaskBackpressureConfig())
-	require.NotNil(t, svc.executor.backpressure.Load())
+	require.NotNil(t, svc.refreshExecutor.backpressure.Load())
+	require.NotNil(t, svc.purgeExecutor.backpressure.Load())
 
 	createTable := notifier.NewCreateTableEvent(&meta.TableInfo{ID: 1})
 	require.NoError(t, gotHandler(context.Background(), nil, createTable))

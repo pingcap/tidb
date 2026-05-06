@@ -154,6 +154,8 @@ const (
 	TiDBMViewMaintainImportDiskQuota = "tidb_mview_maintain_import_disk_quota"
 	// TiDBMViewTaskMax controls the max concurrency of MV background tasks. 0 means using GOMAXPROCS.
 	TiDBMViewTaskMax = "tidb_mview_task_max"
+	// TiDBMViewTaskRefreshRatio controls the refresh-task share of MV background task concurrency.
+	TiDBMViewTaskRefreshRatio = "tidb_mview_task_refresh_ratio"
 	// TiDBMViewTaskThresholdCPU controls MV task backpressure CPU threshold.
 	TiDBMViewTaskThresholdCPU = "tidb_mview_task_threshold_cpu"
 	// TiDBMViewTaskThresholdMemory controls MV task backpressure memory threshold.
@@ -1506,6 +1508,7 @@ const (
 	DefTiDBMViewMaintainImportThreads                 = 0
 	DefTiDBMViewMaintainImportDiskQuota               = ""
 	DefTiDBMViewTaskMax                               = 0
+	DefTiDBMViewTaskRefreshRatio                      = 0.6
 	DefTiDBMViewTaskThresholdCPU                      = 0.8
 	DefTiDBMViewTaskThresholdMemory                   = 0.8
 	DefTiDBMViewRefreshHistTime                       = 168
@@ -1807,6 +1810,8 @@ var (
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
 	// SetMVServiceTaskMaxConcurrency applies global tidb_mview_task_max to the local MV service.
 	SetMVServiceTaskMaxConcurrency atomic.Pointer[func(int)]
+	// SetMVServiceRefreshTaskConcurrencyRatio applies global tidb_mview_task_refresh_ratio to the local MV service.
+	SetMVServiceRefreshTaskConcurrencyRatio atomic.Pointer[func(float64)]
 	// SetMVServiceTaskThresholdCPU applies global tidb_mview_task_threshold_cpu to the local MV service.
 	SetMVServiceTaskThresholdCPU atomic.Pointer[func(float64)]
 	// SetMVServiceTaskThresholdMemory applies global tidb_mview_task_threshold_memory to the local MV service.

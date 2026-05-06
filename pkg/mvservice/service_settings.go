@@ -17,6 +17,7 @@ package mvservice
 import (
 	"context"
 	"fmt"
+	"math"
 	"runtime"
 	"time"
 
@@ -25,8 +26,9 @@ import (
 
 // Config is the config for constructing MVService.
 type Config struct {
-	TaskMaxConcurrency int
-	TaskTimeout        time.Duration
+	TaskMaxConcurrency          int
+	RefreshTaskConcurrencyRatio float64
+	TaskTimeout                 time.Duration
 
 	FetchInterval         time.Duration
 	BasicInterval         time.Duration
@@ -47,6 +49,7 @@ type Config struct {
 func DefaultMVServiceConfig() Config {
 	return Config{
 		TaskMaxConcurrency:           defaultMVTaskMaxConcurrency(),
+		RefreshTaskConcurrencyRatio:  defaultMVRefreshTaskConcurrencyRatio,
 		TaskTimeout:                  defaultMVTaskTimeout,
 		FetchInterval:                defaultMVFetchInterval,
 		BasicInterval:                defaultMVBasicInterval,
@@ -61,9 +64,9 @@ func DefaultMVServiceConfig() Config {
 
 func defaultMVTaskMaxConcurrency() int {
 	if maxProcs := runtime.GOMAXPROCS(0); maxProcs > 0 {
-		return maxProcs
+		return max(2, maxProcs)
 	}
-	return 1
+	return 2
 }
 
 // normalizeMVServiceConfig clamps invalid values to safe defaults.
@@ -71,6 +74,12 @@ func normalizeMVServiceConfig(cfg Config) Config {
 	def := DefaultMVServiceConfig()
 	if cfg.TaskMaxConcurrency <= 0 {
 		cfg.TaskMaxConcurrency = def.TaskMaxConcurrency
+	}
+	if cfg.TaskMaxConcurrency < 2 {
+		cfg.TaskMaxConcurrency = 2
+	}
+	if cfg.RefreshTaskConcurrencyRatio <= 0 || cfg.RefreshTaskConcurrencyRatio >= 1 {
+		cfg.RefreshTaskConcurrencyRatio = def.RefreshTaskConcurrencyRatio
 	}
 	if cfg.TaskTimeout < 0 {
 		cfg.TaskTimeout = 0
@@ -102,16 +111,40 @@ func normalizeMVServiceConfig(cfg Config) Config {
 	return cfg
 }
 
+func splitTaskConcurrency(total int, refreshRatio float64) (refresh, purge int) {
+	if total < 2 {
+		total = 2
+	}
+	if refreshRatio <= 0 || refreshRatio >= 1 {
+		refreshRatio = defaultMVRefreshTaskConcurrencyRatio
+	}
+	refresh = int(math.Round(float64(total) * refreshRatio))
+	if refresh < 1 {
+		refresh = 1
+	}
+	if refresh >= total {
+		refresh = total - 1
+	}
+	purge = total - refresh
+	if purge < 1 {
+		purge = 1
+		refresh = total - purge
+	}
+	return refresh, purge
+}
+
 // NewMVService creates a new MVService with the given helper and config.
 func NewMVService(ctx context.Context, se basic.SessionPool, helper Helper, cfg Config) *MVService {
 	if helper == nil || se == nil {
 		panic("invalid arguments")
 	}
 	cfg = normalizeMVServiceConfig(cfg)
+	refreshConcurrency, purgeConcurrency := splitTaskConcurrency(cfg.TaskMaxConcurrency, cfg.RefreshTaskConcurrencyRatio)
 	mgr := &MVService{
-		sysSessionPool: se,
-		sch:            NewServerConsistentHash(ctx, cfg.ServerConsistentHashReplicas, helper),
-		executor:       NewTaskExecutor(cfg.TaskMaxConcurrency, cfg.TaskTimeout),
+		sysSessionPool:  se,
+		sch:             NewServerConsistentHash(ctx, cfg.ServerConsistentHashReplicas, helper),
+		refreshExecutor: NewTaskExecutor(refreshConcurrency, cfg.TaskTimeout),
+		purgeExecutor:   NewTaskExecutor(purgeConcurrency, cfg.TaskTimeout),
 
 		notifier: NewNotifier(),
 		ctx:      ctx,
@@ -120,6 +153,7 @@ func NewMVService(ctx context.Context, se basic.SessionPool, helper Helper, cfg 
 		basicInterval:         cfg.BasicInterval,
 		serverRefreshInterval: cfg.ServerRefreshInterval,
 	}
+	mgr.refreshTaskConcurrencyRatioBits.Store(math.Float64bits(cfg.RefreshTaskConcurrencyRatio))
 	if err := mgr.setFetchInterval(cfg.FetchInterval); err != nil {
 		panic(fmt.Sprintf("invalid MV service fetch interval config: fetch_interval=%s err=%v",
 			cfg.FetchInterval, err))
@@ -149,12 +183,45 @@ func (t *MVService) SetTaskMaxConcurrency(maxConcurrency int) {
 	if maxConcurrency == 0 {
 		maxConcurrency = defaultMVTaskMaxConcurrency()
 	}
-	t.executor.setMaxConcurrency(maxConcurrency)
+	if maxConcurrency < 2 {
+		maxConcurrency = 2
+	}
+	refreshConcurrency, purgeConcurrency := splitTaskConcurrency(maxConcurrency, t.GetRefreshTaskConcurrencyRatio())
+	t.refreshExecutor.setMaxConcurrency(refreshConcurrency)
+	t.purgeExecutor.setMaxConcurrency(purgeConcurrency)
+}
+
+// SetRefreshTaskConcurrencyRatio sets the refresh-task share of total MV task concurrency.
+func (t *MVService) SetRefreshTaskConcurrencyRatio(ratio float64) {
+	if ratio <= 0 || ratio >= 1 {
+		ratio = defaultMVRefreshTaskConcurrencyRatio
+	}
+	t.refreshTaskConcurrencyRatioBits.Store(math.Float64bits(ratio))
+	total := int(t.refreshExecutor.maxConcurrency.Load() + t.purgeExecutor.maxConcurrency.Load())
+	if total < 2 {
+		total = defaultMVTaskMaxConcurrency()
+	}
+	refreshConcurrency, purgeConcurrency := splitTaskConcurrency(total, ratio)
+	t.refreshExecutor.setMaxConcurrency(refreshConcurrency)
+	t.purgeExecutor.setMaxConcurrency(purgeConcurrency)
+}
+
+// GetRefreshTaskConcurrencyRatio returns the configured refresh-task share.
+func (t *MVService) GetRefreshTaskConcurrencyRatio() float64 {
+	if t == nil {
+		return defaultMVRefreshTaskConcurrencyRatio
+	}
+	ratio := math.Float64frombits(t.refreshTaskConcurrencyRatioBits.Load())
+	if ratio <= 0 || ratio >= 1 {
+		return defaultMVRefreshTaskConcurrencyRatio
+	}
+	return ratio
 }
 
 // SetTaskTimeout sets timeout for MV tasks.
 func (t *MVService) SetTaskTimeout(timeout time.Duration) {
-	t.executor.setTimeout(timeout)
+	t.refreshExecutor.setTimeout(timeout)
+	t.purgeExecutor.setTimeout(timeout)
 }
 
 // setFetchInterval sets metadata fetch interval.
@@ -248,7 +315,8 @@ func (t *MVService) GetTaskBackpressureConfig() TaskBackpressureConfig {
 
 // SetTaskBackpressureController sets the task backpressure controller.
 func (t *MVService) SetTaskBackpressureController(controller TaskBackpressureController) {
-	t.executor.SetBackpressureController(controller)
+	t.refreshExecutor.SetBackpressureController(controller)
+	t.purgeExecutor.SetBackpressureController(controller)
 }
 
 // historyGCInterval returns history GC interval.

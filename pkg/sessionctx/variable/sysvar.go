@@ -2773,6 +2773,25 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBMViewTaskRefreshRatio, Value: strconv.FormatFloat(DefTiDBMViewTaskRefreshRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		val, err := strconv.ParseFloat(normalizedValue, 64)
+		if err != nil {
+			return "", err
+		}
+		if val <= 0 || val >= 1 {
+			return "", ErrWrongValueForVar.GenWithStackByArgs(TiDBMViewTaskRefreshRatio, originalValue)
+		}
+		return normalizedValue, nil
+	}, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
+		val, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return err
+		}
+		if setter := SetMVServiceRefreshTaskConcurrencyRatio.Load(); setter != nil {
+			(*setter)(val)
+		}
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBMViewTaskThresholdCPU, Value: strconv.FormatFloat(DefTiDBMViewTaskThresholdCPU, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1, SetGlobal: func(_ context.Context, _ *SessionVars, s string) error {
 		val, err := strconv.ParseFloat(s, 64)
 		if err != nil {
