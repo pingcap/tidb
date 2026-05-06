@@ -16,15 +16,22 @@ package external
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -123,6 +130,157 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key25"), []byte("key26"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
+}
+
+func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]KVPair) (dataFiles, statFiles []string) {
+	ctx := context.Background()
+	for i, c := range contents {
+		var summary *WriterSummary
+		// we want to create a file for each content, so make the below size larger.
+		writer := NewWriterBuilder().SetPropKeysDistance(4).
+			SetMemorySizeLimit(8*units.MiB).SetBlockSize(8*units.MiB).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(store, "/test", fmt.Sprintf("%d", i))
+		for _, p := range c {
+			require.NoError(t, writer.WriteRow(ctx, p.Key, p.Value, nil))
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.Len(t, summary.MultipleFilesStats, 1)
+		require.Len(t, summary.MultipleFilesStats[0].Filenames, 1)
+		require.Zero(t, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+		dataFiles = append(dataFiles, summary.MultipleFilesStats[0].Filenames[0][0])
+		statFiles = append(statFiles, summary.MultipleFilesStats[0].Filenames[0][1])
+	}
+	return
+}
+
+func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *common.DataAndRanges) []KVPair {
+	ctx := context.Background()
+	iter := dataAndRanges.Data.NewIter(ctx, nil, nil, membuf.NewPool())
+	var allKVs []KVPair
+	for iter.First(); iter.Valid(); iter.Next() {
+		allKVs = append(allKVs, KVPair{Key: iter.Key(), Value: iter.Value()})
+	}
+	require.NoError(t, iter.Close())
+	return allKVs
+}
+
+func TestLoadRangeBatchReleasesReadersWhileWaitingForDownstream(t *testing.T) {
+	t.Run("already released data still allows retry", func(t *testing.T) {
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.dataReleaseCh <- struct{}{}
+		require.NoError(t, extEngine.waitIngestDataReleased(context.Background()))
+	})
+
+	t.Run("concurrent release between signal check and count check still allows retry", func(t *testing.T) {
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.inFlightDataCount.Store(1)
+		const failpointName = "github.com/pingcap/tidb/pkg/lightning/backend/external/waitIngestDataReleasedBeforeCountCheck"
+		require.NoError(t, failpoint.EnableCall(failpointName, func() {
+			extEngine.onIngestDataReleased()
+		}))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable(failpointName))
+		})
+		require.NoError(t, extEngine.waitIngestDataReleased(context.Background()))
+	})
+
+	t.Run("wait log includes in-flight data count", func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		ctx := context.WithValue(context.Background(), logutil.CtxLogKey, zap.New(core))
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.inFlightDataCount.Store(7)
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- extEngine.waitIngestDataReleased(ctx)
+		}()
+		require.Eventually(t, func() bool {
+			return logs.FilterMessage("wait for downstream to release loaded data before retrying read").Len() == 1
+		}, time.Second, 10*time.Millisecond)
+		extEngine.dataReleaseCh <- struct{}{}
+		require.NoError(t, <-errCh)
+
+		fields := logs.All()[0].ContextMap()
+		require.EqualValues(t, 7, fields["inFlightDataCount"])
+	})
+
+	ctx := context.Background()
+	store := &trackOpenMemStorage{MemStorage: storage.NewMemStorage()}
+	dataFiles, statFiles := prepareKVFiles(t, store, [][]KVPair{{
+		{Key: []byte{1}, Value: []byte("first")},
+		{Key: []byte{2}, Value: []byte("second")},
+	}})
+	extEngine := NewExternalEngine(
+		store,
+		dataFiles,
+		statFiles,
+		[]byte{1},
+		[]byte{3},
+		[][]byte{{1}, {2}, {3}},
+		[][]byte{{1}, {2}, {3}},
+		1,
+		123,
+		2,
+		2,
+		true,
+		4*units.MiB,
+		common.OnDuplicateKeyIgnore,
+		"/",
+	)
+	t.Cleanup(func() {
+		require.NoError(t, extEngine.Close())
+	})
+
+	loadDataCh := make(chan common.DataAndRanges)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- extEngine.LoadIngestData(ctx, loadDataCh)
+	}()
+
+	first := <-loadDataCh
+	first.Data.IncRef()
+	firstReleased := false
+	t.Cleanup(func() {
+		if !firstReleased {
+			first.Data.DecRef()
+		}
+	})
+
+	// Each batch opens both stats and data files on this release branch. Four
+	// opens prove that the second batch has reached the data reader.
+	require.Eventually(t, func() bool {
+		return store.totalOpened.Load() >= 4
+	}, 3*time.Second, 10*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		return store.opened.Load() == 0
+	}, 3*time.Second, 10*time.Millisecond, "failed memory acquire should close readers before waiting for downstream release")
+
+	first.Data.DecRef()
+	firstReleased = true
+
+	var second common.DataAndRanges
+	require.Eventually(t, func() bool {
+		select {
+		case second = <-loadDataCh:
+			return true
+		default:
+			return false
+		}
+	}, 3*time.Second, 10*time.Millisecond)
+	second.Data.IncRef()
+	defer second.Data.DecRef()
+
+	require.Equal(t, []KVPair{{Key: []byte{2}, Value: []byte("second")}}, getAllDataFromDataAndRanges(t, &second))
+	require.NoError(t, <-errCh)
 }
 
 type dummyWorker struct{}
