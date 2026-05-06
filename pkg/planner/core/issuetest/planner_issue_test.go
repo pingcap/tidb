@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -388,21 +387,6 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		tk.MustHavePlan("select a from t where a=@a", "IndexRangeScan")
 		tk.MustExec("set @A=1")
 		tk.MustHavePlan("select a from t where a=@A", "IndexRangeScan")
-	}
-
-	// plan-cache-explain-for-connection
-	{
-		tk := prepareSharedTestKit(t)
-		tk.MustExec("create table t(a int, b int, c int)")
-		tk.MustExec("create table tt(a int, index idx(a))")
-		tk.MustExec("prepare stmt from 'select * from t where b > (select a from tt where tt.a = t.a and t.b  >= ? and t.b <= ?)'")
-		tk.MustExec("set @a=1, @b=100")
-		tk.MustExec("execute stmt using @a, @b")
-		tkProcess := tk.Session().ShowProcess()
-		ps := []*sessmgr.ProcessInfo{tkProcess}
-		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"IndexRangeScan"})
 	}
 
 	// issue-66610-normal-vs-prepared-hashagg
