@@ -962,13 +962,23 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 // CleanUnusedTiCIIndexes removes the unused TiCI indexes from PossibleAccessPaths and AllPossibleAccessPaths.
 // It also checks whether all hinted indexes is pruned, and raises a warning if so.
 func (ds *DataSource) CleanUnusedTiCIIndexes() {
-	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0
-	})
+	shouldClean := func(path *util.AccessPath) bool {
+		if path.Index == nil || !path.Index.IsTiCIIndex() {
+			return false
+		}
+		if len(path.AccessConds) > 0 {
+			return false
+		}
+		// Keep hybrid indexes with vector components — they are matched via
+		// VectorProp during physical optimization, not via AccessConds.
+		if path.Index.HasHybridVectorComponent() {
+			return false
+		}
+		return true
+	}
+	ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, shouldClean)
 	origLen := len(ds.PossibleAccessPaths)
-	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
-		return path.Index != nil && path.Index.IsTiCIIndex() && len(path.AccessConds) == 0
-	})
+	ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, shouldClean)
 	nowLen := len(ds.PossibleAccessPaths)
 	stillHasHintedIndex := false
 	for _, path := range ds.PossibleAccessPaths {

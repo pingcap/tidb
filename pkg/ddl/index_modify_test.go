@@ -1546,7 +1546,7 @@ partition by range (a) (
         partition p0 values less than (10),
         partition p1 values less than (20)
 );`)
-	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}], "sharding_key":{"columns":["b"]}}'`)
+	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"],"index_info":{"distance_metric":"L2"}}], "sharding_key":{"columns":["b"]}}'`)
 	tbl := external.GetTableByName(t, tk, "test", "pt_create")
 	idx := tbl.Meta().FindIndexByName("idx_hybrid")
 	require.NotNil(t, idx)
@@ -1560,7 +1560,7 @@ partition by range (a) (
         partition p0 values less than (5),
         partition p1 values less than (15)
 );`)
-	tk.MustExec(`alter table pt_alter add columnar index idx_hybrid_alter(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}], "sharding_key":{"columns":["b"]}}'`)
+	tk.MustExec(`alter table pt_alter add columnar index idx_hybrid_alter(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"],"index_info":{"distance_metric":"L2"}}], "sharding_key":{"columns":["b"]}}'`)
 	tbl = external.GetTableByName(t, tk, "test", "pt_alter")
 	idx = tbl.Meta().FindIndexByName("idx_hybrid_alter")
 	require.NotNil(t, idx)
@@ -2319,6 +2319,98 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 	require.Len(t, idx.HybridInfo.Sharding.Columns, 2)
 	require.Equal(t, "col1", idx.HybridInfo.Sharding.Columns[0].Name.O)
 	require.Equal(t, "col4", idx.HybridInfo.Sharding.Columns[1].Name.O)
+}
+
+func TestHybridIndexVectorValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b text, v1 vector(3), v2 vector(5))")
+
+	// Multiple vector columns in one component should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1, v2) using hybrid parameter '{
+		"vector":[{"columns":["v1","v2"]}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify exactly one column")
+
+	// Missing index_info entirely should be rejected (distance_metric required).
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"]}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify a distance_metric")
+
+	// Empty index_info should be rejected (distance_metric required).
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify a distance_metric")
+
+	// Missing distance_metric with only dimension should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":3}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify a distance_metric")
+
+	// Unsupported distance metric should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"HAMMING"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "unsupported distance metric")
+
+	// Zero dimension should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":0, "distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "dimension must be greater than 0")
+
+	// Dimension mismatch with column definition should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":10, "distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "does not match column")
+
+	// Repeated vector metrics on the same column inside one HYBRID index should be rejected.
+	tk.MustContainErrMsg(`create columnar index idx on t(b, v1) using hybrid parameter '{
+		"vector":[
+			{"columns":["v1"], "index_info":{"distance_metric":"L2"}},
+			{"columns":["v1"], "index_info":{"distance_metric":"L2"}}
+		],
+		"sharding_key":{"columns":["b"]}
+	}'`, "duplicates distance metric")
+
+	// Valid L2 metric should succeed (dimension auto-materialized from column).
+	tk.MustExec(`create columnar index idx_l2 on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+
+	// Reusing the same metric on the same column across existing indexes should also be rejected.
+	tk.MustContainErrMsg(`create columnar index idx_dup_l2 on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "already exists on column")
+	tk.MustExec("drop index idx_l2 on t")
+
+	// Valid COSINE metric should succeed (dimension auto-materialized from column).
+	tk.MustExec(`create columnar index idx_cos on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"distance_metric":"COSINE"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	tk.MustExec("drop index idx_cos on t")
+
+	// Matching dimension should succeed.
+	tk.MustExec(`create columnar index idx_dim on t(b, v1) using hybrid parameter '{
+		"vector":[{"columns":["v1"], "index_info":{"dimension":3, "distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
 }
 
 func TestHybridIndexCreateTiCIOnce(t *testing.T) {

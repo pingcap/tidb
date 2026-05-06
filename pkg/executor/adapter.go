@@ -112,6 +112,20 @@ type recordSet struct {
 	traceID []byte
 }
 
+func rewriteContextCanceledWithKillSignal(stmt *ExecStmt, err error) error {
+	if stmt == nil || errors.Cause(err) != context.Canceled {
+		return err
+	}
+	sqlKiller := &stmt.Ctx.GetSessionVars().SQLKiller
+	if sqlKiller.GetKillSignal() == 0 {
+		return err
+	}
+	if killErr := sqlKiller.HandleSignal(); killErr != nil {
+		return killErr
+	}
+	return err
+}
+
 func (a *recordSet) Fields() []*resolve.ResultField {
 	if len(a.fields) == 0 {
 		a.fields = colNames2ResultFields(a.schema, a.stmt.OutputNames, a.stmt.Ctx.GetSessionVars().CurrentDB)
@@ -187,6 +201,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
+		err = rewriteContextCanceledWithKillSignal(a.stmt, err)
 		a.lastErrs = append(a.lastErrs, err)
 		return err
 	}

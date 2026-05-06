@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -769,6 +768,12 @@ func compareBool(l, r bool) int {
 	return 1
 }
 
+func isTiCIVectorSearchCandidate(candidate *candidatePath, prop *property.PhysicalProperty) bool {
+	return prop != nil && prop.VectorProp.VSInfo != nil &&
+		candidate != nil && candidate.matchPropResult.Matched() &&
+		candidate.path != nil && hasTiCIHybridVectorIndex(candidate.path.Index)
+}
+
 func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 	result := compareBool(lhs.path.IsSingleScan, rhs.path.IsSingleScan)
 	if result == 0 && !lhs.path.IsSingleScan {
@@ -832,8 +837,10 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
 	}
-	// TiCI index can not be compared currently.
-	if lhs.path.FtsQueryInfo != nil || rhs.path.FtsQueryInfo != nil {
+	// TiCI special access paths do not participate in skyline pruning yet.
+	if lhs.path.FtsQueryInfo != nil || rhs.path.FtsQueryInfo != nil ||
+		lhs.path.TiCIVectorQueryInfo != nil || rhs.path.TiCIVectorQueryInfo != nil ||
+		isTiCIVectorSearchCandidate(lhs, prop) || isTiCIVectorSearchCandidate(rhs, prop) {
 		return 0, false
 	}
 	// lhsPseudo == lhs has pseudo (no) stats for the table or index for the lhs path.
@@ -1025,19 +1032,12 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		// TableScan with cluster table can't keep order.
 		return property.PropNotMatched
 	}
-	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
-		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
-			return property.PropNotMatched
-		}
-
-		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
-			return property.PropNotMatched
-		}
+	if prop.VectorProp.VSInfo != nil && path.Index != nil && findVectorSearchIndexMatch(path.Index, prop.VectorProp.VSInfo, ds.TableInfo) != nil {
 		return property.PropMatched
 	}
 	// Though TiCI index can keep order, we haven't implemented the multi-way merging TiCI index scan result to
 	// satisfy the required order. So we just return PropNotMatched here.
-	if path.Index != nil && path.Index.IsTiCIIndex() {
+	if path.Index != nil && path.Index.IsTiCIIndex() && prop.VectorProp.VSInfo == nil {
 		return property.PropNotMatched
 	}
 	if path.IsIntHandlePath {
@@ -1574,13 +1574,18 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				}
 			}
 
+			isHybridTiCIVectorPath := hasTiCIHybridVectorIndex(path.Index)
+			allowPlainSingleScanKeep := path.IsSingleScan &&
+				!(isHybridTiCIVectorPath && path.FtsQueryInfo == nil && prop.VectorProp.VSInfo == nil)
+
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
 			// 1. This path's access cond is not nil.
 			// 2. We have a non-empty prop to match.
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
-			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex || path.FtsQueryInfo != nil
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || allowPlainSingleScanKeep || matchPartialOrderIndex || path.FtsQueryInfo != nil ||
+				(prop.VectorProp.VSInfo != nil && hasTiCIHybridVectorIndex(path.Index))
 			if !keepIndex {
 				// If none of the above conditions are met, this index will be directly pruned here.
 				continue
@@ -2272,8 +2277,18 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// TODO: make IndexReader support accessing MVIndex directly.
 		return base.InvalidTask, nil
 	}
-	// TiCI currently can not set the order property.
+	// TiCI currently can not set the order property (except for vector search which uses VectorProp).
 	if candidate.path.FtsQueryInfo != nil && !prop.IsSortItemEmpty() {
+		return base.InvalidTask, nil
+	}
+	// TiCI index scans must carry either FTSQueryInfo or TiCIVectorQueryInfo.
+	// Reject plain queries here as a safety net, even if the planner path survives
+	// earlier pruning by mistake.
+	if candidate.path.Index != nil && candidate.path.Index.IsTiCIIndex() &&
+		candidate.path.FtsQueryInfo == nil && prop.VectorProp.VSInfo == nil {
+		return base.InvalidTask, nil
+	}
+	if candidate.path.Index != nil && candidate.path.Index.IsTiCIIndex() && !prop.IsSortItemEmpty() && prop.VectorProp.VSInfo == nil {
 		return base.InvalidTask, nil
 	}
 	if !candidate.path.IsSingleScan {
@@ -2287,6 +2302,10 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	// Check if sort items can be matched. If not, return Invalid task
 	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
+		return base.InvalidTask, nil
+	}
+	// For vector search, the property match is via VectorProp, not SortItems.
+	if prop.VectorProp.VSInfo != nil && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask, nil
 	}
 	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
@@ -2309,7 +2328,22 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	// then it must meet the requirements.
 
 	path := candidate.path
+	var tiCIVectorQueryInfo *tipb.TiCIVectorQueryInfo
+	if prop.VectorProp.VSInfo != nil {
+		if len(path.IndexFilters) > 0 || len(path.TableFilters) > 0 || path.Index == nil || path.Index.HybridInfo == nil {
+			return base.InvalidTask, nil
+		}
+		tiCIVectorQueryInfo = buildTiCIVectorQueryInfo(path.Index, prop.VectorProp.VSInfo, prop.VectorProp.TopK, ds.TableInfo)
+		if tiCIVectorQueryInfo == nil {
+			return base.InvalidTask, nil
+		}
+	}
 	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan)
+	if tiCIVectorQueryInfo != nil {
+		is.TiCIVectorQueryInfo = tiCIVectorQueryInfo
+		ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI vector query currently can not be cached")
+		is.SetStats(property.DeriveLimitStats(is.StatsInfo(), float64(prop.VectorProp.TopK)))
+	}
 	cop := &physicalop.CopTask{
 		IndexPlan:   is,
 		TblColHists: ds.TblColHists,
@@ -2581,21 +2615,9 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	// MPP task
 	if prop.TaskTp == property.MppTaskType || canMppConvertToRootForDisaggregatedTiFlash || canMppConvertToRootForWhenTiFlashCopIsBanned {
 		if candidate.path.Index != nil && candidate.path.Index.VectorInfo != nil {
-			// Only the corresponding index can generate a valid task.
-			intest.Assert(ts.Table.Columns[candidate.path.Index.Columns[0].Offset].ID == prop.VectorProp.Column.ID, "The passed vector column is not matched with the index")
-			distanceMetric := model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L]
-			distanceMetricPB := tipb.VectorDistanceMetric_value[string(distanceMetric)]
-			intest.Assert(distanceMetricPB != 0, "unexpected distance metric")
-
-			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildVectorIndexExtra(
-				candidate.path.Index,
-				tipb.ANNQueryType_OrderBy,
-				tipb.VectorDistanceMetric(distanceMetricPB),
-				prop.VectorProp.TopK,
-				ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-				prop.VectorProp.Vec.SerializeTo(nil),
-				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
-			))
+			vectorIndexExtra := buildVectorIndexExtraForTopN(candidate.path.Index, prop.VectorProp.VSInfo, prop.VectorProp.TopK, ts.Table)
+			intest.Assert(vectorIndexExtra != nil, "The passed vector property is not matched with the index")
+			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, vectorIndexExtra)
 			ts.SetStats(property.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
 		// ********************************** future deprecated start **************************/

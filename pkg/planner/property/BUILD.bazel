@@ -31,9 +31,12 @@ go_test(
     srcs = ["physical_property_test.go"],
     embed = [":property"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/expression",
+        "//pkg/parser/ast",
         "//pkg/planner/funcdep",
+        "//pkg/types",
         "//pkg/util/intset",
         "@com_github_stretchr_testify//require",
     ],

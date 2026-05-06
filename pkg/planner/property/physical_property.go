@@ -600,12 +600,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 		for _, col := range p.MPPPartitionCols {
 			p.hashcode = append(p.hashcode, col.hashCode()...)
 		}
-		if p.VectorProp.VSInfo != nil {
-			// We only accept the vector information from the TopN which is directly above the DataSource.
-			// So it's safe to not hash the vector constant.
-			p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)
-			p.hashcode = codec.EncodeInt(p.hashcode, int64(p.VectorProp.FnPbCode))
-		}
+	}
+	if p.VectorProp.VSInfo != nil {
+		// We only accept the vector information from the TopN which is directly above the DataSource.
+		// So it's safe to not hash the vector constant.
+		p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(p.VectorProp.FnPbCode))
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
 	// encode indexJoinProp into physical prop's hashcode.
@@ -665,6 +665,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionTp:        p.MPPPartitionTp,
 		MPPPartitionCols:      p.MPPPartitionCols,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		VectorProp:            p.VectorProp,
 		NoCopPushDown:         p.NoCopPushDown,
 		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
 		// we default not to clone basic indexJoinProp by default.

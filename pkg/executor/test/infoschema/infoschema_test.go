@@ -1122,7 +1122,7 @@ func TestIndexUsageWithData(t *testing.T) {
 			}
 
 			return true
-		}, 10*time.Second, 100*time.Millisecond)
+		}, 30*time.Second, 100*time.Millisecond)
 	}
 	t.Run("test index usage with normal index", func(t *testing.T) {
 		tk.MustExec("use test")

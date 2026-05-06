@@ -107,7 +107,8 @@ type PhysicalIndexScan struct {
 
 	StoreType kv.StoreType
 
-	FtsQueryInfo *tipb.FTSQueryInfo `plan-cache-clone:"must-nil"`
+	FtsQueryInfo        *tipb.FTSQueryInfo        `plan-cache-clone:"must-nil"`
+	TiCIVectorQueryInfo *tipb.TiCIVectorQueryInfo `plan-cache-clone:"must-nil"`
 
 	// For GroupedRanges and GroupByColIdxs, please see comments in struct AccessPath.
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
@@ -309,6 +310,9 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(fmt.Sprintf("topK: %d, ", *p.FtsQueryInfo.TopK))
 		}
 	}
+	if p.TiCIVectorQueryInfo != nil {
+		buffer.WriteString(fmt.Sprintf("vector search: column=%s, topK=%d, ", p.TiCIVectorQueryInfo.ColumnName, p.TiCIVectorQueryInfo.TopK))
+	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
 	if p.Desc {
@@ -340,7 +344,7 @@ func (p *PhysicalIndexScan) haveCorCol() bool {
 
 // IsFullScan checks whether the index scan covers the full range of the index.
 func (p *PhysicalIndexScan) IsFullScan() bool {
-	if len(p.RangeInfo) > 0 || p.haveCorCol() || p.FtsQueryInfo != nil {
+	if len(p.RangeInfo) > 0 || p.haveCorCol() || p.FtsQueryInfo != nil || p.TiCIVectorQueryInfo != nil {
 		return false
 	}
 	for _, ran := range p.Ranges {
@@ -656,13 +660,14 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, store kv.StoreType) (*t
 		executorID := p.ExplainID().String()
 		unique := false
 		idxExec := &tipb.IndexScan{
-			TableId:          p.Table.ID,
-			IndexId:          p.Index.ID,
-			Columns:          pkgutil.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
-			Desc:             false,
-			Unique:           &unique,
-			PrimaryColumnIds: pkColIDs,
-			FtsQueryInfo:     p.FtsQueryInfo,
+			TableId:             p.Table.ID,
+			IndexId:             p.Index.ID,
+			Columns:             pkgutil.ColumnsToProto(columns, p.Table.PKIsHandle, true, false),
+			Desc:                false,
+			Unique:              &unique,
+			PrimaryColumnIds:    pkColIDs,
+			FtsQueryInfo:        p.FtsQueryInfo,
+			TiciVectorQueryInfo: p.TiCIVectorQueryInfo,
 		}
 		return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec, ExecutorId: &executorID}, nil
 	}
@@ -781,24 +786,25 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool) *PhysicalIndexScan {
 	idx := path.Index
 	is := PhysicalIndexScan{
-		Table:            ds.TableInfo,
-		TableAsName:      ds.TableAsName,
-		DBName:           ds.DBName,
-		Columns:          sliceutil.DeepClone(ds.Columns),
-		Index:            idx,
-		IdxCols:          path.IdxCols,
-		IdxColLens:       path.IdxColLens,
-		AccessCondition:  path.AccessConds,
-		Ranges:           path.Ranges,
-		DataSourceSchema: ds.Schema(),
-		IsPartition:      ds.PartitionDefIdx != nil,
-		PhysicalTableID:  ds.PhysicalTableID,
-		TblColHists:      ds.TblColHists,
-		PkIsHandleCol:    ds.GetPKIsHandleCol(),
-		ConstColsByCond:  path.ConstCols,
-		Prop:             prop,
-		StoreType:        path.StoreType,
-		FtsQueryInfo:     path.FtsQueryInfo,
+		Table:               ds.TableInfo,
+		TableAsName:         ds.TableAsName,
+		DBName:              ds.DBName,
+		Columns:             sliceutil.DeepClone(ds.Columns),
+		Index:               idx,
+		IdxCols:             path.IdxCols,
+		IdxColLens:          path.IdxColLens,
+		AccessCondition:     path.AccessConds,
+		Ranges:              path.Ranges,
+		DataSourceSchema:    ds.Schema(),
+		IsPartition:         ds.PartitionDefIdx != nil,
+		PhysicalTableID:     ds.PhysicalTableID,
+		TblColHists:         ds.TblColHists,
+		PkIsHandleCol:       ds.GetPKIsHandleCol(),
+		ConstColsByCond:     path.ConstCols,
+		Prop:                prop,
+		StoreType:           path.StoreType,
+		FtsQueryInfo:        path.FtsQueryInfo,
+		TiCIVectorQueryInfo: path.TiCIVectorQueryInfo,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	if path.Index.IsTiCIIndex() {
 		is.StoreType = kv.TiCI

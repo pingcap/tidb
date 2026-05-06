@@ -410,6 +410,62 @@ func TestTiCIWithDirtyWrites(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+func TestTiCIHybridVectorPlannerPath(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`))
+	defer func() {
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress")
+		require.NoError(t, err)
+	}()
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t_vec(a int primary key, b text, v vector(3))")
+	tk.MustExec(`create hybrid index idx_hybrid on t_vec(b, v) parameter '{
+		"vector":[{"columns":["v"], "index_info":{"distance_metric":"L2"}}],
+		"sharding_key":{"columns":["b"]}
+	}'`)
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t_vec")
+
+	// Vector-only query: ORDER BY vec_l2_distance LIMIT K should use TiCI vector path.
+	tk.MustQuery("explain format='brief' select * from t_vec order by vec_l2_distance(v, '[1,2,3]') limit 10").CheckContain("vector search")
+	tk.MustQuery("explain format='brief' select * from t_vec order by vec_l2_distance(v, '[1,2,3]') limit 10").CheckContain("idx_hybrid")
+
+	// Wrong metric: COSINE distance on an L2 index should NOT use TiCI vector path.
+	tk.MustQuery("explain format='brief' select * from t_vec order by vec_cosine_distance(v, '[1,2,3]') limit 10").CheckNotContain("vector search")
+
+	// No LIMIT: should NOT use TiCI vector path (not a top-k query).
+	tk.MustQuery("explain format='brief' select * from t_vec order by vec_l2_distance(v, '[1,2,3]')").CheckNotContain("vector search")
+
+	// Plain queries must not treat the hybrid vector index as a normal TiCI covering index.
+	tk.MustQuery("explain format='brief' select b from t_vec limit 10").CheckNotContain("cop[tici]")
+	tk.MustQuery("explain format='brief' select count(*) from t_vec").CheckNotContain("cop[tici]")
+
+	// Hybrid index without distance_metric should be rejected by DDL validation.
+	tk.MustExec("create table t_vec2(a int primary key, b text, v vector(3))")
+	tk.MustContainErrMsg(`create hybrid index idx_hybrid2 on t_vec2(b, v) parameter '{
+		"vector":[{"columns":["v"]}],
+		"sharding_key":{"columns":["b"]}
+	}'`, "must specify a distance_metric")
+}
+
 func TestTiCIWithWrongColumn(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))

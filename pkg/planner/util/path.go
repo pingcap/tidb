@@ -160,7 +160,8 @@ type AccessPath struct {
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
 
-	FtsQueryInfo *tipb.FTSQueryInfo
+	FtsQueryInfo        *tipb.FTSQueryInfo
+	TiCIVectorQueryInfo *tipb.TiCIVectorQueryInfo
 
 	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
 	IndexLookUpPushDownBy IndexLookUpPushDownByType
@@ -217,6 +218,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		FtsQueryInfo:                 path.FtsQueryInfo,
+		TiCIVectorQueryInfo:          path.TiCIVectorQueryInfo,
 		IndexLookUpPushDownBy:        path.IndexLookUpPushDownBy,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),

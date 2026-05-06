@@ -639,8 +639,8 @@ func (index *IndexInfo) IsColumnarIndex() bool {
 	return index.VectorInfo != nil || index.InvertedInfo != nil // || index.FullTextInfo != nil
 }
 
-// IsTiCIIndex checks whether the index is a fulltext index.
-// Fulltext index only exists in TiCI, no actual index data need to be written to KV layer.
+// IsTiCIIndex checks whether the index is backed by TiCI.
+// TiCI indexes do not write actual index data into the KV layer.
 func (index *IndexInfo) IsTiCIIndex() bool {
 	return index.FullTextInfo != nil || index.HybridInfo != nil
 }
@@ -663,6 +663,11 @@ func (index *IndexInfo) HybridShardingColumns() []*IndexColumn {
 		return nil
 	}
 	return index.HybridInfo.Sharding.Columns
+}
+
+// HasHybridVectorComponent checks whether a hybrid TiCI index has at least one vector component.
+func (index *IndexInfo) HasHybridVectorComponent() bool {
+	return index != nil && index.HybridInfo != nil && len(index.HybridInfo.Vector) > 0
 }
 
 // GetColumnarIndexType returns the type of columnar index.

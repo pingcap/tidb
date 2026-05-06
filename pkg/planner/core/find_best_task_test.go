@@ -19,10 +19,15 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -162,4 +167,251 @@ func TestHintCannotFitProperty(t *testing.T) {
 	mockPhysicalPlan, ok = task.Plan().(*mockPhysicalPlan4Test)
 	require.True(t, ok)
 	require.Equal(t, 1, mockPhysicalPlan.planType)
+}
+
+func TestConvertToIndexScanRejectsPlainTiCIHybridVectorPath(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	ds := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
+	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
+	candidate := &candidatePath{
+		path: &util.AccessPath{
+			Index: &model.IndexInfo{
+				Name:  ast.NewCIStr("idx_hybrid"),
+				State: model.StatePublic,
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{}},
+				},
+			},
+		},
+	}
+
+	task, err := convertToIndexScan(ds, prop, candidate)
+	require.NoError(t, err)
+	require.True(t, task.Invalid())
+}
+
+func TestConvertToIndexScanRejectsTiCIVectorPathWithResidualFilters(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	ds := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
+	prop := property.NewPhysicalProperty(property.CopSingleReadTaskType, nil, false, 0, false)
+	prop.VectorProp.VSInfo = &expression.VSInfo{
+		DistanceFnName: ast.NewCIStr(ast.VecL2Distance),
+		Vec:            types.MustCreateVectorFloat32([]float32{1, 2, 3}),
+		Column:         &expression.Column{ID: 1},
+	}
+	prop.VectorProp.TopK = 10
+	candidate := &candidatePath{
+		path: &util.AccessPath{
+			Index: &model.IndexInfo{
+				Name:  ast.NewCIStr("idx_hybrid"),
+				State: model.StatePublic,
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{}},
+				},
+			},
+			IsSingleScan: true,
+			IndexFilters: []expression.Expression{&expression.Constant{}},
+		},
+		matchPropResult: property.PropMatched,
+	}
+
+	task, err := convertToIndexScan(ds, prop, candidate)
+	require.NoError(t, err)
+	require.True(t, task.Invalid())
+}
+
+func TestConvertToIndexScanRejectsTiCIVectorPathWithDimensionMismatch(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	ds := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
+	ds.TableInfo = &model.TableInfo{
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{{
+			ID:   1,
+			Name: ast.NewCIStr("v"),
+		}},
+	}
+	ds.Table = tables.MockTableFromMeta(ds.TableInfo)
+
+	dim := uint64(3)
+	prop := property.NewPhysicalProperty(property.CopSingleReadTaskType, nil, false, 0, false)
+	prop.VectorProp.VSInfo = &expression.VSInfo{
+		DistanceFnName: ast.NewCIStr(ast.VecL2Distance),
+		Vec:            types.MustCreateVectorFloat32([]float32{1, 2}),
+		Column:         &expression.Column{ID: 1},
+	}
+	prop.VectorProp.TopK = 10
+	candidate := &candidatePath{
+		path: &util.AccessPath{
+			Index: &model.IndexInfo{
+				ID:    2,
+				Name:  ast.NewCIStr("idx_hybrid"),
+				State: model.StatePublic,
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{
+						Columns: []*model.IndexColumn{{
+							Name:   ast.NewCIStr("v"),
+							Offset: 0,
+						}},
+						IndexInfo: &model.HybridVectorIndexInfo{
+							DistanceMetric: string(model.DistanceMetricL2),
+							Dimension:      &dim,
+						},
+					}},
+				},
+			},
+			IsSingleScan: true,
+		},
+		matchPropResult: property.PropMatched,
+	}
+
+	task, err := convertToIndexScan(ds, prop, candidate)
+	require.NoError(t, err)
+	require.True(t, task.Invalid())
+}
+
+func TestCompareCandidatesSkipsTiCIVectorSearchCandidates(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	prop := property.NewPhysicalProperty(property.CopSingleReadTaskType, nil, false, 0, false)
+	prop.VectorProp.VSInfo = &expression.VSInfo{
+		DistanceFnName: ast.NewCIStr(ast.VecL2Distance),
+		Vec:            types.MustCreateVectorFloat32([]float32{1, 2, 3}),
+		Column:         &expression.Column{ID: 1},
+	}
+
+	vectorCandidate := &candidatePath{
+		path: &util.AccessPath{
+			Index: &model.IndexInfo{
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{}},
+				},
+			},
+			IsSingleScan: true,
+		},
+		matchPropResult: property.PropMatched,
+	}
+	tableCandidate := &candidatePath{
+		path: &util.AccessPath{
+			IsIntHandlePath: true,
+			IsSingleScan:    true,
+		},
+		matchPropResult: property.PropNotMatched,
+	}
+
+	result, missingStats := compareCandidates(ctx.GetPlanCtx(), nil, prop, vectorCandidate, tableCandidate, false)
+	require.Zero(t, result)
+	require.False(t, missingStats)
+}
+
+func TestMatchPropertyUsesSharedVectorSearchMatch(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	ds := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
+	ds.TableInfo = &model.TableInfo{
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{{
+			ID:   1,
+			Name: ast.NewCIStr("v"),
+		}},
+	}
+	ds.Table = tables.MockTableFromMeta(ds.TableInfo)
+
+	prop := property.NewPhysicalProperty(property.CopSingleReadTaskType, nil, false, 0, false)
+	prop.VectorProp.VSInfo = &expression.VSInfo{
+		DistanceFnName: ast.NewCIStr(ast.VecL2Distance),
+		Vec:            types.MustCreateVectorFloat32([]float32{1, 2, 3}),
+		Column:         &expression.Column{ID: 1},
+	}
+
+	t.Run("standalone vector index", func(t *testing.T) {
+		path := &util.AccessPath{
+			Index: &model.IndexInfo{
+				VectorInfo: &model.VectorIndexInfo{
+					Dimension:      3,
+					DistanceMetric: model.DistanceMetricL2,
+				},
+				Columns: []*model.IndexColumn{{
+					Name:   ast.NewCIStr("v"),
+					Offset: 0,
+				}},
+			},
+		}
+		require.Equal(t, property.PropMatched, matchProperty(ds, path, prop))
+	})
+
+	t.Run("standalone dimension mismatch", func(t *testing.T) {
+		path := &util.AccessPath{
+			Index: &model.IndexInfo{
+				VectorInfo: &model.VectorIndexInfo{
+					Dimension:      4,
+					DistanceMetric: model.DistanceMetricL2,
+				},
+				Columns: []*model.IndexColumn{{
+					Name:   ast.NewCIStr("v"),
+					Offset: 0,
+				}},
+			},
+		}
+		require.Equal(t, property.PropNotMatched, matchProperty(ds, path, prop))
+	})
+
+	t.Run("hybrid vector index", func(t *testing.T) {
+		dim := uint64(3)
+		path := &util.AccessPath{
+			Index: &model.IndexInfo{
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{
+						Columns: []*model.IndexColumn{{
+							Name:   ast.NewCIStr("v"),
+							Offset: 0,
+						}},
+						IndexInfo: &model.HybridVectorIndexInfo{
+							DistanceMetric: string(model.DistanceMetricL2),
+							Dimension:      &dim,
+						},
+					}},
+				},
+			},
+		}
+		require.Equal(t, property.PropMatched, matchProperty(ds, path, prop))
+	})
+
+	t.Run("hybrid dimension mismatch", func(t *testing.T) {
+		dim := uint64(4)
+		path := &util.AccessPath{
+			Index: &model.IndexInfo{
+				HybridInfo: &model.HybridIndexInfo{
+					Vector: []*model.HybridVectorSpec{{
+						Columns: []*model.IndexColumn{{
+							Name:   ast.NewCIStr("v"),
+							Offset: 0,
+						}},
+						IndexInfo: &model.HybridVectorIndexInfo{
+							DistanceMetric: string(model.DistanceMetricL2),
+							Dimension:      &dim,
+						},
+					}},
+				},
+			},
+		}
+		require.Equal(t, property.PropNotMatched, matchProperty(ds, path, prop))
+	})
 }
