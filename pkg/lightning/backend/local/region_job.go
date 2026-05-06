@@ -457,20 +457,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		regionMaxSize = j.regionSplitSize * 4 / 3
 	}
 
-	// preparation work for the write timeout fault injection, only enabled if the following failpoint is enabled
-	wctx := ctx
-	wcancel := func() {}
-	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
-		var innerTimeout time.Duration
-		// GO_FAILPOINTS action supplies the duration in
-		ms, _ := val.(int)
-		innerTimeout = time.Duration(ms) * time.Millisecond
-		tidblogutil.Logger(ctx).Info("Injecting a timeout to write context.")
-		wctx, wcancel = context.WithTimeoutCause(
-			ctx, innerTimeout, common.ErrWriteTooSlow)
-	})
-	defer wcancel()
-
 	flushKVs := func() error {
 		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 		preparedMsg := &grpc.PreparedMsg{}
@@ -483,7 +469,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		for i := range clients {
 			// original ctx would be used when failpoint is not enabled
 			// that new context would be used when failpoint is enabled
-			err := writeLimiter.WaitN(wctx, allPeers[i].StoreId, int(size))
+			err := writeLimiter.WaitN(ctx, allPeers[i].StoreId, int(size))
 			if err != nil {
 				// We expect to encounter two types of errors here:
 				// 1. context.DeadlineExceeded — occurs when the calculated delay is
@@ -493,13 +479,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 				//    path triggered when the delay already exceeds the remaining
 				//    time for context before sleeping.
 				//
-				// Unfortunately, we cannot precisely control when the context will
-				// expire, so both scenarios are valid and expected.
-				// Fortunately, the "rate: Wait" error is already treated as
-				// retryable, so we only need to explicitly handle
-				// context.DeadlineExceeded here.
-				// We rely on the defer function at the top of doWrite to handle it
-				// for us in general.
+				// "rate: Wait" error is already treated as retryable,
+				// writeWithTimeout will handle the context.DeadlineExceeded.
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
