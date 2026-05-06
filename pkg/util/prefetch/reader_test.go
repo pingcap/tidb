@@ -17,7 +17,9 @@ package prefetch
 import (
 	"bytes"
 	"io"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -79,4 +81,61 @@ func TestCloseBeforeDrainRead(t *testing.T) {
 	r := NewReader(io.NopCloser(bytes.NewReader(data)), 2)
 	err := r.Close()
 	require.NoError(t, err)
+}
+
+type fragmentReader struct {
+	data     []byte
+	i        atomic.Int64
+	fragSize int
+}
+
+func (r *fragmentReader) Read(p []byte) (n int, err error) {
+	i := int(r.i.Load())
+	if i >= len(r.data) {
+		return 0, io.EOF
+	}
+	copySize := min(len(p), r.fragSize)
+	n = copy(p, r.data[i:i+copySize])
+	r.i.Add(int64(n))
+	return
+}
+
+func TestFillPrefetchBuffer(t *testing.T) {
+	// test fragmentReader behaviour
+	fragReader := &fragmentReader{
+		data:     []byte("0123456789"),
+		fragSize: 3,
+	}
+	buf := make([]byte, 5)
+	n, err := fragReader.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, 3, n)
+	require.Equal(t, "012", string(buf[:n]))
+
+	buf = make([]byte, 1)
+	n, err = fragReader.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.Equal(t, "3", string(buf[:n]))
+
+	fragReader = &fragmentReader{
+		data:     []byte("0123456789"),
+		fragSize: 3,
+	}
+	// when prefetch is 10B, the two internal ping-pong buffers are 5B
+	prefetchReader := NewReader(io.NopCloser(fragReader), 10)
+	// when no read happens, one of ping-pong buffer is fully filled
+	require.Eventually(t, func() bool {
+		return fragReader.i.Load() == 5
+	}, time.Second, 10*time.Millisecond)
+	// when any small read happens, one of ping-pong buffer is serving the read,
+	// another buffer is fully filled
+	buf = make([]byte, 2)
+	n, err = prefetchReader.Read(buf)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, n)
+	require.EqualValues(t, "01", string(buf[:n]))
+	require.Eventually(t, func() bool {
+		return fragReader.i.Load() == 10
+	}, time.Second, 10*time.Millisecond)
 }
