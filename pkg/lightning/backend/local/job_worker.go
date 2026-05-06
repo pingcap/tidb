@@ -271,6 +271,9 @@ func (w *regionJobBaseWorker) writeWithTimeout(
 	ctx context.Context,
 	job *regionJob,
 ) (ret *tikvWriteResult, err error) {
+	// set a timeout for the write operation, if it takes too long, we will
+	// return with common.ErrWriteTooSlow and let caller retry the whole job
+	// instead of being stuck forever.
 	timeout := 15 * time.Minute
 	ctx, cancel := context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
 	defer cancel()
