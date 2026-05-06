@@ -476,21 +476,19 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	require.NoError(t, err)
 	newCfg.Log.SlowQueryFile = f.Name()
 	config.StoreGlobalConfig(&newCfg)
-	defer func() {
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+	t.Cleanup(func() {
+		if t.Failed() {
+			// On failure, dump the slow log to disambiguate a missing entry from one
+			// that's present but doesn't match the expected pattern (issue #66727).
+			if data, err := os.ReadFile(f.Name()); err == nil {
+				t.Logf("slow log contents (%d bytes):\n%s", len(data), data)
+			}
+		}
+
 		config.StoreGlobalConfig(originCfg)
 		require.NoError(t, f.Close())
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
-	}()
-	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
-	// On failure, dump the slow log to disambiguate a missing entry from one
-	// that's present but doesn't match the expected pattern (issue #66727).
-	t.Cleanup(func() {
-		if !t.Failed() {
-			return
-		}
-		if data, err := os.ReadFile(f.Name()); err == nil {
-			t.Logf("slow log contents (%d bytes):\n%s", len(data), data)
-		}
 	})
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
