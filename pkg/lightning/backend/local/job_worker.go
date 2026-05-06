@@ -277,7 +277,8 @@ func (w *regionJobBaseWorker) writeWithTimeout(
 
 	wcancel := func() {}
 	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
-		innerTimeout := time.Duration(val.(int)) * time.Millisecond
+		ms := val.(int)
+		innerTimeout := time.Duration(ms) * time.Millisecond
 		tidblogutil.Logger(ctx).Info("Injecting a timeout to write context.")
 		ctx, wcancel = context.WithTimeoutCause(ctx, innerTimeout, common.ErrWriteTooSlow)
 	})
