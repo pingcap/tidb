@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
 )
 
@@ -86,22 +87,31 @@ func NewSchemaImporter(logger log.Logger, sqlMode mysql.SQLMode, db *sql.DB, sto
 
 // Run imports all schemas from the given database metas.
 func (si *SchemaImporter) Run(ctx context.Context, dbMetas []*MDDatabaseMeta) (err error) {
+	plan, err := NewSchemaImportPlan(ctx, si.store, si.sqlMode, dbMetas)
+	if err != nil {
+		return err
+	}
+	return si.RunWithPlan(ctx, plan)
+}
+
+// RunWithPlan imports all schemas from the given prebuilt schema import plan.
+func (si *SchemaImporter) RunWithPlan(ctx context.Context, plan *SchemaImportPlan) (err error) {
 	logTask := si.logger.Begin(zap.InfoLevel, "restore all schema")
 	defer func() {
 		logTask.End(zap.ErrorLevel, err)
 	}()
 
-	if len(dbMetas) == 0 {
+	if plan == nil || len(plan.dbMetas) == 0 {
 		return nil
 	}
 
-	if err = si.importDatabases(ctx, dbMetas); err != nil {
+	if err = si.importDatabases(ctx, plan.dbMetas); err != nil {
 		return errors.Trace(err)
 	}
-	if err = si.importTables(ctx, dbMetas); err != nil {
+	if err = si.importTables(ctx, plan.dbMetas); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(si.importViews(ctx, dbMetas))
+	return errors.Trace(si.importViews(ctx, plan))
 }
 
 func (si *SchemaImporter) importDatabases(ctx context.Context, dbMetas []*MDDatabaseMeta) error {
@@ -212,44 +222,39 @@ func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabas
 
 // dumpling dump a view as a table-schema sql file which creates a table of same name
 // as the view, and a view-schema sql file which drops the table and creates the view.
-func (si *SchemaImporter) importViews(ctx context.Context, dbMetas []*MDDatabaseMeta) error {
+func (si *SchemaImporter) importViews(ctx context.Context, plan *SchemaImportPlan) error {
 	// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
-	// we don't support restore views concurrency, cauz it maybe will raise a error
+	if plan == nil || plan.viewPlan == nil {
+		return nil
+	}
+	existingTables, existingViews, err := si.loadExistingViewDependencies(ctx, plan.viewPlan)
+	if err != nil {
+		return err
+	}
+	if err := validateViewRestorePlan(plan.viewPlan, unionTableNames(existingTables, existingViews)); err != nil {
+		return err
+	}
+
 	p := parser.New()
 	p.SetSQLMode(si.sqlMode)
-	for _, dbMeta := range dbMetas {
-		if len(dbMeta.Views) == 0 {
+
+	for _, node := range plan.viewPlan.ordered {
+		if existingViews.has(node.key) {
+			si.logger.Info("view already exists in downstream, skip",
+				zap.String("db", node.key.Schema),
+				zap.String("view-name", node.key.Name))
 			continue
 		}
-		existingViews, err := si.getExistingViews(ctx, dbMeta.Name)
-		if err != nil {
-			return err
+		if existingTables.has(node.key) {
+			return common.ErrCreateSchema.GenWithStack("downstream table already exists for view '%s'", node.key.String())
 		}
-		for _, viewMeta := range dbMeta.Views {
-			if existingViews.Exist(strings.ToLower(viewMeta.Name)) {
-				si.logger.Info("view already exists in downstream, skip",
-					zap.String("db", dbMeta.Name),
-					zap.String("view-name", viewMeta.Name))
-				continue
-			}
-			sqlStr, err := viewMeta.GetSchema(ctx, si.store)
-			if err != nil {
-				return err
-			}
-			if strings.TrimSpace(sqlStr) == "" {
-				si.logger.Info("view schema is empty, skip",
-					zap.String("db", dbMeta.Name),
-					zap.String("view-name", viewMeta.Name))
-				continue
-			}
-			if err = si.runCommonJob(ctx, p, &schemaJob{
-				dbName:   dbMeta.Name,
-				tblName:  viewMeta.Name,
-				stmtType: schemaCreateView,
-				sqlStr:   sqlStr,
-			}); err != nil {
-				return err
-			}
+		if err := si.runCommonJob(ctx, p, &schemaJob{
+			dbName:   node.key.Schema,
+			tblName:  node.key.Name,
+			stmtType: schemaCreateView,
+			sqlStr:   node.createSQL,
+		}); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -276,6 +281,68 @@ func (si *SchemaImporter) runCreateTableJob(ctx context.Context, p *parser.Parse
 		return errors.Trace(err)
 	}
 	return si.runJob(ctx, job, stmts)
+}
+
+func filterTableName(dbName, tblName string) filter.Table {
+	return filter.Table{Schema: dbName, Name: tblName}
+}
+
+// collectDumpTables returns only the physical tables restored before the view
+// phase. View dependencies are tracked separately in viewRestorePlan.
+func collectDumpTables(dbMetas []*MDDatabaseMeta) tableNameSet {
+	tables := make(tableNameSet)
+	for _, dbMeta := range dbMetas {
+		for _, tableMeta := range dbMeta.Tables {
+			tables.add(filterTableName(tableMeta.DB, tableMeta.Name))
+		}
+	}
+	return tables
+}
+
+// unionTableNames merges downstream tables/views into one lookup set for
+// external dependency validation.
+func unionTableNames(sets ...tableNameSet) tableNameSet {
+	merged := make(tableNameSet)
+	for _, set := range sets {
+		for key := range set {
+			merged.add(key)
+		}
+	}
+	return merged
+}
+
+// loadExistingViewDependencies fetches downstream tables and views for every
+// schema touched by the plan so validation can distinguish missing external
+// objects from already satisfied dependencies or name collisions.
+func (si *SchemaImporter) loadExistingViewDependencies(ctx context.Context, plan *viewRestorePlan) (tableNameSet, tableNameSet, error) {
+	schemas := make(set.StringSet)
+	for _, node := range plan.nodes {
+		schemas.Insert(strings.ToLower(node.key.Schema))
+		for _, dep := range node.deps {
+			schemas.Insert(strings.ToLower(dep.Schema))
+		}
+	}
+
+	existingTables := make(tableNameSet)
+	existingViews := make(tableNameSet)
+	for schema := range schemas {
+		tables, err := si.getExistingTables(ctx, schema)
+		if err != nil {
+			return nil, nil, err
+		}
+		for tableName := range tables {
+			existingTables.add(filter.Table{Schema: schema, Name: tableName})
+		}
+
+		views, err := si.getExistingViews(ctx, schema)
+		if err != nil {
+			return nil, nil, err
+		}
+		for viewName := range views {
+			existingViews.add(filter.Table{Schema: schema, Name: viewName})
+		}
+	}
+	return existingTables, existingViews, nil
 }
 
 func (si *SchemaImporter) runCommonJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
@@ -342,6 +409,13 @@ func (si *SchemaImporter) isTableExist(ctx context.Context, dbName, tableName st
 	// show create table always return the table if no error, so no need to check
 	// the result row count.
 	return true, nil
+}
+
+// the result contains views too, but as table and view share the same name space, it's ok.
+func (si *SchemaImporter) getExistingTables(ctx context.Context, dbName string) (set.StringSet, error) {
+	sb := new(strings.Builder)
+	sqlescape.MustFormatSQL(sb, `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = %?`, dbName)
+	return si.getExistingSchemas(ctx, sb.String())
 }
 
 func (si *SchemaImporter) getExistingViews(ctx context.Context, dbName string) (set.StringSet, error) {

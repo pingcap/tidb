@@ -66,9 +66,8 @@ func (s *mockGCSSuite) TestCSVSource() {
 	defer db.Close()
 	mock.ExpectQuery(`SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`).
 		WillReturnRows(sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("cloud_csv"))
-	mock.ExpectQuery("SHOW CREATE TABLE `cloud_csv`.`t`").
-		WillReturnRows(sqlmock.NewRows([]string{"Create Table"}).AddRow(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
-		key(a), key(c,d), key(d));`))
+	mock.ExpectQuery(`SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'cloud_csv'`).
+		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}).AddRow("t"))
 
 	cloudSDK, err := importsdk.NewImportSDK(context.Background(), sourceURI, db,
 		importsdk.WithFileRouters([]*config.FileRouteRule{

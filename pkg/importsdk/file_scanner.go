@@ -83,6 +83,7 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 		DefaultFileRules: len(cfg.fileRouteRules) == 0,
 		CharacterSet:     cfg.charset,
 		Routes:           cfg.routes,
+		SQLMode:          cfg.sqlMode,
 	}
 
 	var loaderOptions []mydump.MDLoaderSetupOption
@@ -128,7 +129,7 @@ func (s *fileScanner) CreateSchemasAndTables(ctx context.Context) error {
 		s.config.concurrency,
 	)
 
-	err := importer.Run(ctx, dbMetas)
+	err := importer.RunWithPlan(ctx, s.loader.GetSchemaImportPlan())
 	if err != nil {
 		return errors.Annotatef(ErrCreateSchema, "source=%s, db_count=%d, err=%v", s.redactedSourcePath, len(dbMetas), err)
 	}

@@ -499,6 +499,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	var mdl *mydump.MDLoader
 	var dbMetas []*mydump.MDDatabaseMeta
+	var schemaImportPlan *mydump.SchemaImportPlan
 	s := o.dumpFileStorage
 	if taskCfg.TikvImporter.Backend != config.BackendImportInto {
 		mdl, s, err = l.initDataSource(ctx, taskCfg, o)
@@ -507,6 +508,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		}
 
 		dbMetas = mdl.GetDatabases()
+		schemaImportPlan = mdl.GetSchemaImportPlan()
 		progress.BroadcastInitProgress(dbMetas)
 	}
 
@@ -517,6 +519,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 
 	param := &importer.ControllerParam{
 		DBMetas:           dbMetas,
+		SchemaImportPlan:  schemaImportPlan,
 		Status:            &l.status,
 		DumpFileStorage:   s,
 		OwnExtStorage:     o.dumpFileStorage == nil,

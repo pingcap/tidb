@@ -200,6 +200,7 @@ type Controller struct {
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
 	dbInfos       map[string]*importdef.DBInfo
+	schemaPlan    *mydump.SchemaImportPlan
 	tableWorkers  *worker.Pool
 	indexWorkers  *worker.Pool
 	regionWorkers *worker.Pool
@@ -264,6 +265,8 @@ type LightningStatus struct {
 type ControllerParam struct {
 	// databases that dumper created
 	DBMetas []*mydump.MDDatabaseMeta
+	// schema import plan prepared by the loader
+	SchemaImportPlan *mydump.SchemaImportPlan
 	// a pointer to status to report it to caller
 	Status *LightningStatus
 	// storage interface to read the dump data
@@ -490,6 +493,7 @@ func NewImportControllerWithPauser(
 		taskCtx:       ctx,
 		cfg:           cfg,
 		dbMetas:       p.DBMetas,
+		schemaPlan:    p.SchemaImportPlan,
 		tableWorkers:  nil,
 		indexWorkers:  nil,
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
@@ -618,9 +622,16 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	rc.db.SetMaxIdleConns(concurrency + 1)
 	defer rc.db.SetMaxIdleConns(2)
 	schemaImp := mydump.NewSchemaImporter(logger, rc.cfg.TiDB.SQLMode, rc.db, rc.store, concurrency)
-	err := schemaImp.Run(ctx, rc.dbMetas)
-	if err != nil {
-		return err
+	if rc.schemaPlan != nil {
+		err := schemaImp.RunWithPlan(ctx, rc.schemaPlan)
+		if err != nil {
+			return err
+		}
+	} else {
+		err := schemaImp.Run(ctx, rc.dbMetas)
+		if err != nil {
+			return err
+		}
 	}
 
 	dbInfos, err := rc.preInfoGetter.GetAllTableStructures(ctx)

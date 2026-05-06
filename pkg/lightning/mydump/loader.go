@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -251,6 +252,7 @@ type LoaderConfig struct {
 	// If it's true, the default file routing rules will be appended to the FileRouters.
 	// a little confusing, but it's true only when FileRouters is empty.
 	DefaultFileRules bool
+	SQLMode          mysql.SQLMode
 }
 
 // NewLoaderCfg creates loader config from lightning config.
@@ -264,17 +266,20 @@ func NewLoaderCfg(cfg *config.Config) LoaderConfig {
 		FileRouters:      cfg.Mydumper.FileRouters,
 		CaseSensitive:    cfg.Mydumper.CaseSensitive,
 		DefaultFileRules: cfg.Mydumper.DefaultFileRules,
+		SQLMode:          cfg.TiDB.SQLMode,
 	}
 }
 
 // MDLoader is for 'Mydumper File Loader', which loads the files in the data source and generates a set of metadata.
 type MDLoader struct {
-	store      storeapi.Storage
-	dbs        []*MDDatabaseMeta
-	filter     filter.Filter
-	router     *regexprrouter.RouteTable
-	fileRouter FileRouter
-	charSet    string
+	store            storeapi.Storage
+	dbs              []*MDDatabaseMeta
+	filter           filter.Filter
+	router           *regexprrouter.RouteTable
+	fileRouter       FileRouter
+	charSet          string
+	sqlMode          mysql.SQLMode
+	schemaImportPlan *SchemaImportPlan
 }
 
 // RawFile store the path and size of a file.
@@ -297,6 +302,7 @@ type mdLoaderSetup struct {
 	tableDatas    []FileInfo
 	dbIndexMap    map[string]int
 	tableIndexMap map[filter.Table]int
+	viewIndexMap  map[filter.Table]int
 	setupCfg      *MDLoaderSetupConfig
 
 	// store file info of parquet from parallel reading
@@ -368,6 +374,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		filter:     f,
 		router:     r,
 		charSet:    cfg.CharacterSet,
+		sqlMode:    cfg.SQLMode,
 		fileRouter: fileRouter,
 	}
 
@@ -376,6 +383,7 @@ func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
 		loader:        mdl,
 		dbIndexMap:    make(map[string]int),
 		tableIndexMap: make(map[filter.Table]int),
+		viewIndexMap:  make(map[filter.Table]int),
 		setupCfg:      mdLoaderSetupCfg,
 	}
 
@@ -545,14 +553,14 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 	if len(s.viewSchemas) != 0 {
 		// setup view schema
 		for _, fileInfo := range s.viewSchemas {
-			_, tableExists := s.insertView(fileInfo)
-			if !tableExists {
-				// we are not expect the user only has view schema without table schema when user use dumpling to get view.
-				// remove the last `-view.sql` from path as the relate table schema file path
-				return common.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
+			_, viewExists := s.insertView(fileInfo)
+			if viewExists && s.loader.router == nil {
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
+
+	s.pruneViewPlaceholders()
 
 	// Sql file for restore data
 	for _, fileInfo := range s.tableDatas {
@@ -561,6 +569,12 @@ func (s *mdLoaderSetup) setup(ctx context.Context) error {
 		tableMeta.DataFiles = append(tableMeta.DataFiles, fileInfo)
 		tableMeta.TotalSize += fileInfo.FileMeta.RealSize
 	}
+
+	schemaImportPlan, err := NewSchemaImportPlan(ctx, s.loader.store, s.loader.sqlMode, s.loader.dbs)
+	if err != nil {
+		return err
+	}
+	s.loader.schemaImportPlan = schemaImportPlan
 
 	for _, dbMeta := range s.loader.dbs {
 		// Put the small table in the front of the slice which can avoid large table
@@ -822,7 +836,7 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (tblMeta *MDTableMeta, db
 	return ptr, dbExists, false
 }
 
-func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, tableExists bool) {
+func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, viewExists bool) {
 	dbFileInfo := FileInfo{
 		TableName: filter.Table{
 			Schema: fileInfo.TableName.Schema,
@@ -830,24 +844,57 @@ func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (dbExists bool, tableExist
 		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
 	}
 	dbMeta, dbExists := s.insertDB(dbFileInfo)
-	_, ok := s.tableIndexMap[fileInfo.TableName]
-	if ok {
-		meta := &MDTableMeta{
-			DB:           fileInfo.TableName.Schema,
-			Name:         fileInfo.TableName.Name,
-			SchemaFile:   fileInfo,
-			charSet:      s.loader.charSet,
-			IndexRatio:   0.0,
-			IsRowOrdered: true,
-		}
-		dbMeta.Views = append(dbMeta.Views, meta)
+	if _, ok := s.viewIndexMap[fileInfo.TableName]; ok {
+		return dbExists, true
 	}
-	return dbExists, ok
+	s.viewIndexMap[fileInfo.TableName] = len(dbMeta.Views)
+	meta := &MDTableMeta{
+		DB:           fileInfo.TableName.Schema,
+		Name:         fileInfo.TableName.Name,
+		SchemaFile:   fileInfo,
+		charSet:      s.loader.charSet,
+		IndexRatio:   0.0,
+		IsRowOrdered: true,
+	}
+	dbMeta.Views = append(dbMeta.Views, meta)
+	return dbExists, false
+}
+
+func (s *mdLoaderSetup) pruneViewPlaceholders() {
+	if len(s.viewIndexMap) == 0 || len(s.tableIndexMap) == 0 {
+		return
+	}
+
+	// Dumpling emits a table schema file for each view before the dedicated view
+	// schema file is discovered. Once the view list is complete, drop those
+	// placeholder tables so schema restore only sees the real table objects.
+	for _, dbMeta := range s.loader.dbs {
+		filtered := dbMeta.Tables[:0]
+		for _, tableMeta := range dbMeta.Tables {
+			if _, ok := s.viewIndexMap[filterTableName(tableMeta.DB, tableMeta.Name)]; ok {
+				continue
+			}
+			filtered = append(filtered, tableMeta)
+		}
+		dbMeta.Tables = filtered
+	}
+
+	s.tableIndexMap = make(map[filter.Table]int)
+	for _, dbMeta := range s.loader.dbs {
+		for i, tableMeta := range dbMeta.Tables {
+			s.tableIndexMap[filterTableName(tableMeta.DB, tableMeta.Name)] = i
+		}
+	}
 }
 
 // GetDatabases gets the list of scanned MDDatabaseMeta for the loader.
 func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 	return l.dbs
+}
+
+// GetSchemaImportPlan gets the schema import plan prepared during loader setup.
+func (l *MDLoader) GetSchemaImportPlan() *SchemaImportPlan {
+	return l.schemaImportPlan
 }
 
 // GetStore gets the external storage used by the loader.
