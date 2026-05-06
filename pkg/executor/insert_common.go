@@ -673,7 +673,7 @@ func (e *InsertValues) fillColValue(
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) (
 	[]types.Datum, error,
 ) {
-	gCols := make([]*table.Column, 0)
+	var gCols []*table.Column
 	tCols := e.Table.Cols()
 	if e.hasExtraHandle {
 		col := &table.Column{}
@@ -710,6 +710,11 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if err := checkRowForExchangePartition(e.Ctx(), row, tbl); err != nil {
 			return nil, err
 		}
+	}
+
+	// Fast path: no generated columns, nothing more to do.
+	if len(gCols) == 0 {
+		return row, nil
 	}
 
 	sctx := e.Ctx()
