@@ -107,7 +107,6 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return GlobalMemoryLimitTuner.calcMemoryLimit(fallbackPercentage) == debug.SetMemoryLimit(-1)
 	}, 5*time.Second, 100*time.Millisecond)
-	gcNum = getNowGCNum()
 	memoryLimitGCTotal := memory.MemoryLimitGCTotal.Load()
 	memory100mb := allocator.alloc(100 << 20)
 	// This window used to assert "no GC at all" via NumGC, but that is inherently
@@ -117,9 +116,9 @@ func TestGlobalMemoryTuner(t *testing.T) {
 	// What we really need to assert is: while MemoryLimit is in fallback mode,
 	// allocating more memory should not immediately cause an extra *memory-limit*
 	// GC/adjust cycle.
-	require.Eventually(t, func() bool {
-		return memoryLimitGCTotal == memory.MemoryLimitGCTotal.Load()
-	}, 5*time.Second, 100*time.Millisecond)
+	require.Never(t, func() bool {
+		return memoryLimitGCTotal != memory.MemoryLimitGCTotal.Load()
+	}, 500*time.Millisecond, 100*time.Millisecond)
 
 	allocator.free(memory210mb)
 	allocator.free(memory100mb)
