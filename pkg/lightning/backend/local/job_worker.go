@@ -282,7 +282,7 @@ func (w *regionJobBaseWorker) writeWithTimeout(
 	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
 		ms := val.(int)
 		innerTimeout := time.Duration(ms) * time.Millisecond
-		tidblogutil.Logger(ctx).Info("Injecting a timeout to write context.")
+		tidblogutil.Logger(ctx).Info("injecting a timeout to write context.")
 		ctx, wcancel = context.WithTimeoutCause(ctx, innerTimeout, common.ErrWriteTooSlow)
 	})
 	defer wcancel()
@@ -293,7 +293,7 @@ func (w *regionJobBaseWorker) writeWithTimeout(
 	}
 	if errors.Cause(err) == context.DeadlineExceeded {
 		if cause := context.Cause(ctx); goerrors.Is(cause, common.ErrWriteTooSlow) {
-			tidblogutil.Logger(ctx).Info("Experiencing a wait timeout while writing to TiKV")
+			tidblogutil.Logger(ctx).Info("experiencing a wait timeout while writing to TiKV")
 			err = errors.Trace(cause)
 		}
 	}
