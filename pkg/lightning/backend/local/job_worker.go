@@ -275,17 +275,12 @@ func (w *regionJobBaseWorker) writeWithTimeout(
 	// return with common.ErrWriteTooSlow and let caller retry the whole job
 	// instead of being stuck forever.
 	timeout := 15 * time.Minute
-	ctx, cancel := context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
-	defer cancel()
-
-	wcancel := func() {}
 	failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
 		ms := val.(int)
-		innerTimeout := time.Duration(ms) * time.Millisecond
-		tidblogutil.Logger(ctx).Info("injecting a timeout to write context.")
-		ctx, wcancel = context.WithTimeoutCause(ctx, innerTimeout, common.ErrWriteTooSlow)
+		timeout = time.Duration(ms) * time.Millisecond
 	})
-	defer wcancel()
+	ctx, cancel := context.WithTimeoutCause(ctx, timeout, common.ErrWriteTooSlow)
+	defer cancel()
 
 	ret, err = w.writeFn(ctx, job)
 	if err == nil {

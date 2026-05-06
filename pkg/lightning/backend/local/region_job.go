@@ -465,7 +465,11 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		if err := preparedMsg.Encode(clients[0], req); err != nil {
 			return err
 		}
-
+		failpoint.Inject("shortWaitNTimeout", func(val failpoint.Value) {
+			// add 20 to make sure the ctx is timed out.
+			ms := val.(int) + 20
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		})
 		for i := range clients {
 			// original ctx would be used when failpoint is not enabled
 			// that new context would be used when failpoint is enabled
