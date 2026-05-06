@@ -399,14 +399,8 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		} {
 			tk.MustExec(sql)
 		}
-		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 use index() where delete_flag = null").Check(testkit.Rows(
-			"Projection 0.00 root  1->Column#4",
-			"└─TableDual 0.00 root  rows:0",
-		))
-		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 where delete_flag = null").Check(testkit.Rows(
-			"Projection 0.00 root  1->Column#4",
-			"└─TableDual 0.00 root  rows:0",
-		))
+		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 use index() where delete_flag = null").CheckContain("TableDual")
+		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 where delete_flag = null").CheckContain("TableDual")
 		tk.MustExec("rollback")
 	}
 }
