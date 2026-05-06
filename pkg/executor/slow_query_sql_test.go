@@ -476,7 +476,6 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 	require.NoError(t, err)
 	newCfg.Log.SlowQueryFile = f.Name()
 	config.StoreGlobalConfig(&newCfg)
-	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 	t.Cleanup(func() {
 		if t.Failed() {
 			// On failure, dump the slow log to disambiguate a missing entry from one
@@ -490,6 +489,7 @@ func TestStorageEnginesInSlowQuery(t *testing.T) {
 		require.NoError(t, f.Close())
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	})
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
