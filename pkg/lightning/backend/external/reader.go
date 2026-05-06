@@ -50,11 +50,15 @@ func readAllData(
 	)
 	defer func() {
 		if err != nil {
+			output.kvs = nil
 			output.kvsPerFile = nil
 			for _, b := range output.memKVBuffers {
 				b.Destroy()
 			}
 			output.memKVBuffers = nil
+			output.size = 0
+			output.droppedSize = 0
+			output.droppedSizePerFile = nil
 		} else {
 			// try to fix a bug that the memory is retained in http2 package
 			if gcs, ok := store.(*storage.GCSStorage); ok {
@@ -181,10 +185,22 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
+<<<<<<< HEAD
 		kvs = append(kvs, KVPair{
 			Key:   smallBlockBuf.AddBytes(k),
 			Value: smallBlockBuf.AddBytes(v),
 		})
+=======
+		key, err := smallBlockBuf.TryAddBytes(k)
+		if err != nil {
+			return err
+		}
+		value, err := smallBlockBuf.TryAddBytes(v)
+		if err != nil {
+			return err
+		}
+		kvs = append(kvs, KVPair{Key: key, Value: value})
+>>>>>>> 47eea3d2375 (globalsort: retry external data loads under memory pressure (#68176))
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())

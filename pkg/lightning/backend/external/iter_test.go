@@ -33,14 +33,25 @@ import (
 )
 
 type trackOpenMemStorage struct {
+<<<<<<< HEAD
 	*storage.MemStorage
 	opened atomic.Int32
 }
 
 func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *storage.ReaderOption) (storage.ExternalFileReader, error) {
+=======
+	*objstore.MemStorage
+	opened      atomic.Int32
+	totalOpened atomic.Int32
+}
+
+func (s *trackOpenMemStorage) Open(ctx context.Context, path string, opt *storeapi.ReaderOption) (objectio.Reader, error) {
+>>>>>>> 47eea3d2375 (globalsort: retry external data loads under memory pressure (#68176))
 	s.opened.Inc()
-	r, err := s.MemStorage.Open(ctx, path, nil)
+	s.totalOpened.Inc()
+	r, err := s.MemStorage.Open(ctx, path, opt)
 	if err != nil {
+		s.opened.Dec()
 		return nil, err
 	}
 	return &trackOpenFileReader{r, s}, nil

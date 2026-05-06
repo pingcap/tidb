@@ -20,11 +20,23 @@ import (
 	"testing"
 	"time"
 
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+=======
+	"github.com/docker/go-units"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+>>>>>>> 47eea3d2375 (globalsort: retry external data loads under memory pressure (#68176))
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -125,6 +137,391 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
 
+<<<<<<< HEAD
+=======
+func prepareKVFiles(t *testing.T, store storeapi.Storage, contents [][]KVPair) (dataFiles, statFiles []string) {
+	ctx := context.Background()
+	for i, c := range contents {
+		var summary *WriterSummary
+		// we want to create a file for each content, so make the below size larger.
+		writer := NewWriterBuilder().SetPropKeysDistance(4).
+			SetMemorySizeLimit(8*units.MiB).SetBlockSize(8*units.MiB).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(store, "/test", fmt.Sprintf("%d", i))
+		for _, p := range c {
+			require.NoError(t, writer.WriteRow(ctx, p.Key, p.Value, nil))
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.Len(t, summary.MultipleFilesStats, 1)
+		require.Len(t, summary.MultipleFilesStats[0].Filenames, 1)
+		require.Zero(t, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+		dataFiles = append(dataFiles, summary.MultipleFilesStats[0].Filenames[0][0])
+		statFiles = append(statFiles, summary.MultipleFilesStats[0].Filenames[0][1])
+	}
+	return
+}
+
+func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *engineapi.DataAndRanges) []KVPair {
+	ctx := context.Background()
+	iter := dataAndRanges.Data.NewIter(ctx, nil, nil, membuf.NewPool())
+	var allKVs []KVPair
+	for iter.First(); iter.Valid(); iter.Next() {
+		allKVs = append(allKVs, KVPair{Key: iter.Key(), Value: iter.Value()})
+	}
+	require.NoError(t, iter.Close())
+	return allKVs
+}
+
+func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T) {
+	t.Run("already released data still allows retry", func(t *testing.T) {
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.dataReleaseCh <- struct{}{}
+		require.NoError(t, extEngine.waitIngestDataReleased(context.Background()))
+	})
+
+	t.Run("concurrent release between signal check and count check still allows retry", func(t *testing.T) {
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.inFlightDataCount.Store(1)
+		const failpointName = "github.com/pingcap/tidb/pkg/lightning/backend/external/waitIngestDataReleasedBeforeCountCheck"
+		require.NoError(t, failpoint.EnableCall(failpointName, func() {
+			extEngine.onIngestDataReleased()
+		}))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable(failpointName))
+		})
+		require.NoError(t, extEngine.waitIngestDataReleased(context.Background()))
+	})
+
+	t.Run("wait log includes in-flight data count", func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		ctx := logutil.WithLogger(context.Background(), zap.New(core))
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.inFlightDataCount.Store(7)
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- extEngine.waitIngestDataReleased(ctx)
+		}()
+		require.Eventually(t, func() bool {
+			return logs.FilterMessage("wait for downstream to release loaded data before retrying read").Len() == 1
+		}, time.Second, 10*time.Millisecond)
+		extEngine.dataReleaseCh <- struct{}{}
+		require.NoError(t, <-errCh)
+
+		fields := logs.All()[0].ContextMap()
+		require.EqualValues(t, 7, fields["inFlightDataCount"])
+	})
+
+	ctx := context.Background()
+	store := &trackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
+	dataFiles, statFiles := prepareKVFiles(t, store, [][]KVPair{{
+		{Key: []byte{1}, Value: []byte("first")},
+		{Key: []byte{2}, Value: []byte("second")},
+	}})
+	extEngine := NewExternalEngine(
+		ctx,
+		store,
+		dataFiles,
+		statFiles,
+		[]byte{1},
+		[]byte{3},
+		[][]byte{{1}, {2}, {3}},
+		[][]byte{{1}, {2}, {3}},
+		1,
+		123,
+		2,
+		2,
+		true,
+		4*units.MiB,
+		engineapi.OnDuplicateKeyIgnore,
+		"/",
+	)
+	t.Cleanup(func() {
+		require.NoError(t, extEngine.Close())
+	})
+
+	loadDataCh := make(chan engineapi.DataAndRanges)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- extEngine.LoadIngestData(ctx, loadDataCh)
+	}()
+
+	first := <-loadDataCh
+	first.Data.IncRef()
+	firstReleased := false
+	t.Cleanup(func() {
+		if !firstReleased {
+			first.Data.DecRef()
+		}
+	})
+
+	// Stats offsets are precomputed before the range loop. After the first range
+	// is emitted, the next failed read only opens the data file, so three opens
+	// prove the retry path has reached object storage.
+	require.Eventually(t, func() bool {
+		return store.totalOpened.Load() >= 3
+	}, 3*time.Second, 10*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		return store.opened.Load() == 0
+	}, 3*time.Second, 10*time.Millisecond, "failed memory acquire should close readers before waiting for downstream release")
+
+	first.Data.DecRef()
+	firstReleased = true
+
+	var second engineapi.DataAndRanges
+	require.Eventually(t, func() bool {
+		select {
+		case second = <-loadDataCh:
+			return true
+		default:
+			return false
+		}
+	}, 3*time.Second, 10*time.Millisecond)
+	second.Data.IncRef()
+	defer second.Data.DecRef()
+
+	require.Equal(t, []KVPair{{Key: []byte{2}, Value: []byte("second")}}, getAllDataFromDataAndRanges(t, &second))
+	require.NoError(t, <-errCh)
+}
+
+func TestEngineOnDup(t *testing.T) {
+	ctx := context.Background()
+	contents := [][]KVPair{{
+		{Key: []byte{4}, Value: []byte("bbb")},
+		{Key: []byte{4}, Value: []byte("bbb")},
+		{Key: []byte{1}, Value: []byte("aa")},
+		{Key: []byte{1}, Value: []byte("aa")},
+		{Key: []byte{1}, Value: []byte("aa")},
+		{Key: []byte{2}, Value: []byte("vv")},
+		{Key: []byte{3}, Value: []byte("sds")},
+	}}
+
+	getEngineFn := func(store storeapi.Storage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
+		return NewExternalEngine(
+			ctx,
+			store, inDataFiles, inStatFiles,
+			[]byte{1}, []byte{5},
+			[][]byte{{1}, {2}, {3}, {4}, {5}},
+			[][]byte{{1}, {3}, {5}},
+			10,
+			123,
+			456,
+			789,
+			true,
+			16*units.GiB,
+			onDup,
+			"/",
+		)
+	}
+
+	t.Run("on duplicate ignore", func(t *testing.T) {
+		onDup := engineapi.OnDuplicateKeyIgnore
+		store := objstore.NewMemStorage()
+		dataFiles, statFiles := prepareKVFiles(t, store, contents)
+		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
+		loadDataCh := make(chan engineapi.DataAndRanges, 4)
+		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "duplicate key found")
+		t.Cleanup(func() {
+			require.NoError(t, extEngine.Close())
+		})
+	})
+
+	t.Run("on duplicate error", func(t *testing.T) {
+		onDup := engineapi.OnDuplicateKeyError
+		store := objstore.NewMemStorage()
+		dataFiles, statFiles := prepareKVFiles(t, store, contents)
+		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
+		loadDataCh := make(chan engineapi.DataAndRanges, 4)
+		require.ErrorContains(t, extEngine.LoadIngestData(ctx, loadDataCh), "[Lightning:Restore:ErrFoundDuplicateKey]found duplicate key '\x01', value 'aa'")
+		t.Cleanup(func() {
+			require.NoError(t, extEngine.Close())
+		})
+	})
+
+	t.Run("on duplicate record or remove, no duplicates", func(t *testing.T) {
+		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
+			store := objstore.NewMemStorage()
+			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
+				{Key: []byte{4}, Value: []byte("bbb")},
+				{Key: []byte{1}, Value: []byte("aa")},
+				{Key: []byte{2}, Value: []byte("vv")},
+				{Key: []byte{3}, Value: []byte("sds")},
+			}})
+			extEngine := getEngineFn(store, od, dfiles, sfiles)
+			loadDataCh := make(chan engineapi.DataAndRanges, 4)
+			require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
+			t.Cleanup(func() {
+				require.NoError(t, extEngine.Close())
+			})
+			require.Len(t, loadDataCh, 1)
+			dataAndRanges := <-loadDataCh
+			allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
+			require.EqualValues(t, []KVPair{
+				{Key: []byte{1}, Value: []byte("aa")},
+				{Key: []byte{2}, Value: []byte("vv")},
+				{Key: []byte{3}, Value: []byte("sds")},
+				{Key: []byte{4}, Value: []byte("bbb")},
+			}, allKVs)
+			info := extEngine.ConflictInfo()
+			require.Zero(t, info.Count)
+			require.Empty(t, info.Files)
+		}
+	})
+
+	t.Run("on duplicate record or remove, partial duplicated", func(t *testing.T) {
+		contents2 := [][]KVPair{
+			{{Key: []byte{1}, Value: []byte("aa")}, {Key: []byte{1}, Value: []byte("aa")}},
+			{{Key: []byte{1}, Value: []byte("aa")}, {Key: []byte{2}, Value: []byte("vv")}, {Key: []byte{3}, Value: []byte("sds")}},
+			{{Key: []byte{4}, Value: []byte("bbb")}, {Key: []byte{4}, Value: []byte("bbb")}},
+		}
+		for _, cont := range [][][]KVPair{contents, contents2} {
+			for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
+				store := objstore.NewMemStorage()
+				dataFiles, statFiles := prepareKVFiles(t, store, cont)
+				extEngine := getEngineFn(store, od, dataFiles, statFiles)
+				loadDataCh := make(chan engineapi.DataAndRanges, 4)
+				require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
+				t.Cleanup(func() {
+					require.NoError(t, extEngine.Close())
+				})
+				require.Len(t, loadDataCh, 1)
+				dataAndRanges := <-loadDataCh
+				allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
+				require.EqualValues(t, []KVPair{
+					{Key: []byte{2}, Value: []byte("vv")},
+					{Key: []byte{3}, Value: []byte("sds")},
+				}, allKVs)
+				info := extEngine.ConflictInfo()
+				if od == engineapi.OnDuplicateKeyRemove {
+					require.Zero(t, info.Count)
+					require.Empty(t, info.Files)
+				} else {
+					require.EqualValues(t, 5, info.Count)
+					require.Len(t, info.Files, 1)
+					dupPairs := readKVFile(t, store, info.Files[0])
+					require.EqualValues(t, []KVPair{
+						{Key: []byte{1}, Value: []byte("aa")},
+						{Key: []byte{1}, Value: []byte("aa")},
+						{Key: []byte{1}, Value: []byte("aa")},
+						{Key: []byte{4}, Value: []byte("bbb")},
+						{Key: []byte{4}, Value: []byte("bbb")},
+					}, dupPairs)
+				}
+			}
+		}
+	})
+
+	t.Run("on duplicate record or remove, all duplicated", func(t *testing.T) {
+		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
+			store := objstore.NewMemStorage()
+			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
+				{Key: []byte{1}, Value: []byte("aaa")},
+				{Key: []byte{1}, Value: []byte("aaa")},
+				{Key: []byte{1}, Value: []byte("aaa")},
+				{Key: []byte{1}, Value: []byte("aaa")},
+			}})
+			extEngine := getEngineFn(store, od, dfiles, sfiles)
+			loadDataCh := make(chan engineapi.DataAndRanges, 4)
+			require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
+			t.Cleanup(func() {
+				require.NoError(t, extEngine.Close())
+			})
+			require.Len(t, loadDataCh, 1)
+			dataAndRanges := <-loadDataCh
+			allKVs := getAllDataFromDataAndRanges(t, &dataAndRanges)
+			require.Empty(t, allKVs)
+			info := extEngine.ConflictInfo()
+			if od == engineapi.OnDuplicateKeyRemove {
+				require.Zero(t, info.Count)
+				require.Empty(t, info.Files)
+			} else {
+				require.EqualValues(t, 4, info.Count)
+				require.Len(t, info.Files, 1)
+				dupPairs := readKVFile(t, store, info.Files[0])
+				require.EqualValues(t, []KVPair{
+					{Key: []byte{1}, Value: []byte("aaa")},
+					{Key: []byte{1}, Value: []byte("aaa")},
+					{Key: []byte{1}, Value: []byte("aaa")},
+					{Key: []byte{1}, Value: []byte("aaa")},
+				}, dupPairs)
+			}
+		}
+	})
+}
+
+func TestLoadIngestDataMultiBatch(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+	// Create data spread across 4 key ranges, with 2 files to exercise
+	// cross-file offset reuse in the multi-batch path (start > 0).
+	contents := [][]KVPair{
+		{
+			{Key: []byte{1}, Value: []byte("v1")},
+			{Key: []byte{2}, Value: []byte("v2")},
+			{Key: []byte{3}, Value: []byte("v3")},
+			{Key: []byte{4}, Value: []byte("v4")},
+		},
+		{
+			{Key: []byte{5}, Value: []byte("v5")},
+			{Key: []byte{6}, Value: []byte("v6")},
+			{Key: []byte{7}, Value: []byte("v7")},
+			{Key: []byte{8}, Value: []byte("v8")},
+		},
+	}
+	dataFiles, statFiles := prepareKVFiles(t, store, contents)
+
+	// 5 job keys = 4 ranges. With workerConcurrency=2 the loop produces
+	// two batches: keys[0:3] (ranges 1-2) and keys[2:5] (ranges 3-4).
+	jobKeys := [][]byte{{1}, {3}, {5}, {7}, {9}}
+	extEngine := NewExternalEngine(
+		ctx,
+		store, dataFiles, statFiles,
+		[]byte{1}, []byte{9},
+		jobKeys,
+		[][]byte{{1}, {5}, {9}},
+		2, // workerConcurrency — forces 2 batches
+		123,
+		456,
+		8,
+		true,
+		16*units.GiB,
+		engineapi.OnDuplicateKeyError,
+		"/",
+	)
+	t.Cleanup(func() {
+		require.NoError(t, extEngine.Close())
+	})
+
+	loadDataCh := make(chan engineapi.DataAndRanges, 4)
+	require.NoError(t, extEngine.LoadIngestData(ctx, loadDataCh))
+	require.Len(t, loadDataCh, 2, "expected 2 batches from LoadIngestData")
+
+	var allKVs []KVPair
+	for range 2 {
+		dr := <-loadDataCh
+		allKVs = append(allKVs, getAllDataFromDataAndRanges(t, &dr)...)
+	}
+	require.EqualValues(t, []KVPair{
+		{Key: []byte{1}, Value: []byte("v1")},
+		{Key: []byte{2}, Value: []byte("v2")},
+		{Key: []byte{3}, Value: []byte("v3")},
+		{Key: []byte{4}, Value: []byte("v4")},
+		{Key: []byte{5}, Value: []byte("v5")},
+		{Key: []byte{6}, Value: []byte("v6")},
+		{Key: []byte{7}, Value: []byte("v7")},
+		{Key: []byte{8}, Value: []byte("v8")},
+	}, allKVs)
+}
+
+>>>>>>> 47eea3d2375 (globalsort: retry external data loads under memory pressure (#68176))
 type dummyWorker struct{}
 
 func (w *dummyWorker) Tune(int32, bool) {
