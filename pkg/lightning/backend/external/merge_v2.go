@@ -128,28 +128,34 @@ func MergeOverlappingFilesV2(
 
 		now := time.Now()
 
-		var readRanges [][]uint64
+		var readRanges []ReadRange
 		readRanges, err = getReadRangeFromProps(
 			ctx, [][]byte{curStart, curEnd}, statFilesOfGroup, store)
 		if err != nil {
 			return err
 		}
+		cachedReaders := make([]cachedReader, len(dataFilesOfGroup))
 
 		err1 = readAllData(
 			ctx,
 			store,
 			dataFilesOfGroup,
-			statFilesOfGroup,
+			cachedReaders,
 			curStart,
 			curEnd,
-			readRanges[0],
-			readRanges[1],
+			readRanges[0].Start,
+			readRanges[1].End,
 			bufPool,
 			bufPool,
 			loaded,
 		)
 		if err1 != nil {
+			_ = closeCachedReaders(cachedReaders)
 			logutil.Logger(ctx).Warn("read all data failed", zap.Error(err1))
+			return
+		}
+		if err1 = closeCachedReaders(cachedReaders); err1 != nil {
+			logutil.Logger(ctx).Warn("close cached readers failed", zap.Error(err1))
 			return
 		}
 		loaded.build(ctx)

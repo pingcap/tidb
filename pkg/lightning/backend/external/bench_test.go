@@ -704,10 +704,11 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	readRanges, err := getReadRangeFromProps(ctx, [][]byte{startKey, endKey}, statFiles, store)
 	require.NoError(t, err)
 	err = readAllData(
-		ctx, store, dataFiles, statFiles,
+		ctx, store, dataFiles,
+		make([]cachedReader, len(dataFiles)),
 		startKey, endKey,
-		readRanges[0],
-		readRanges[1],
+		readRanges[0].Start,
+		readRanges[1].End,
 		smallBlockBufPool, largeBlockBufPool, output)
 	t.Logf("read all data cost: %s", time.Since(now))
 	intest.AssertNoError(err)
@@ -860,10 +861,11 @@ finishCreateFiles:
 	readRanges, err := getReadRangeFromProps(ctx, [][]byte{readRangeStart, readRangeEnd}, statFiles, store)
 	require.NoError(t, err)
 	err = readAllData(
-		ctx, store, dataFiles, statFiles,
+		ctx, store, dataFiles,
+		make([]cachedReader, len(dataFiles)),
 		readRangeStart, readRangeEnd,
-		readRanges[0],
-		readRanges[1],
+		readRanges[0].Start,
+		readRanges[1].End,
 		smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)

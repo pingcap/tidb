@@ -104,56 +104,64 @@ func TestGetReadRangeFromProps(t *testing.T) {
 	// single key between props
 	got, err := getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5")}, paths, store)
 	require.NoError(t, err)
-	// key2.5: file1 => prop "key1" matches (offset=10), file2 => prop "key2" matches (offset=20)
-	require.Equal(t, []uint64{10, 20}, got[0])
+	require.Equal(t, []uint64{10, 20}, got[0].Start)
+	require.Equal(t, []uint64{36, 46}, got[0].End)
 
 	// two keys between props
 	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key2.6")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, []uint64{10, 20}, got[0])
-	require.Equal(t, []uint64{10, 20}, got[1])
+	require.Equal(t, []uint64{10, 20}, got[0].Start)
+	require.Equal(t, []uint64{36, 46}, got[0].End)
+	require.Equal(t, []uint64{10, 20}, got[1].Start)
+	require.Equal(t, []uint64{36, 46}, got[1].End)
 
 	// key exactly on a prop boundary
 	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, paths, store)
 	require.NoError(t, err)
-	// key3: file1 => prop "key3" matches (offset=30), file2 => prop "key2" matches (offset=20)
-	require.Equal(t, []uint64{30, 20}, got[0])
+	require.Equal(t, []uint64{30, 20}, got[0].Start)
+	require.Equal(t, []uint64{56, 46}, got[0].End)
 
 	// two keys, second exactly on a prop boundary
 	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key2.5"), []byte("key3")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, []uint64{10, 20}, got[0])
-	require.Equal(t, []uint64{30, 20}, got[1])
+	require.Equal(t, []uint64{10, 20}, got[0].Start)
+	require.Equal(t, []uint64{36, 46}, got[0].End)
+	require.Equal(t, []uint64{30, 20}, got[1].Start)
+	require.Equal(t, []uint64{56, 46}, got[1].End)
 
 	// key below all props
 	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0")}, paths, store)
 	require.NoError(t, err)
-	// key0: no prop <= key0, so offset stays at zero default
-	require.Equal(t, []uint64{0, 0}, got[0])
+	require.Equal(t, []uint64{0, 0}, got[0].Start)
+	require.Equal(t, []uint64{0, 0}, got[0].End)
 
 	// key exactly on first prop
 	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key1")}, paths, store)
 	require.NoError(t, err)
-	// key1: file1 => prop "key1" matches (offset=10), file2 => no prop <= key1 so 0
-	require.Equal(t, []uint64{10, 0}, got[0])
+	require.Equal(t, []uint64{10, 0}, got[0].Start)
+	require.Equal(t, []uint64{36, 0}, got[0].End)
 
 	// two keys: one below all, one on first prop
 	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key0"), []byte("key1")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, []uint64{0, 0}, got[0])
-	require.Equal(t, []uint64{10, 0}, got[1])
+	require.Equal(t, []uint64{0, 0}, got[0].Start)
+	require.Equal(t, []uint64{0, 0}, got[0].End)
+	require.Equal(t, []uint64{10, 0}, got[1].Start)
+	require.Equal(t, []uint64{36, 0}, got[1].End)
 
 	// key above all props
 	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999")}, paths, store)
 	require.NoError(t, err)
-	// key999: file1 => last prop "key5" (offset=50), file2 => last prop "key4" (offset=40)
-	require.Equal(t, []uint64{50, 40}, got[0])
+	require.Equal(t, []uint64{50, 40}, got[0].Start)
+	require.Equal(t, []uint64{76, 66}, got[0].End)
 
 	// two identical keys above all props
 	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key999"), []byte("key999")}, paths, store)
 	require.NoError(t, err)
-	require.Equal(t, []uint64{50, 40}, got[0])
-	require.Equal(t, []uint64{50, 40}, got[1])
+	require.Equal(t, []uint64{50, 40}, got[0].Start)
+	require.Equal(t, []uint64{76, 66}, got[0].End)
+	require.Equal(t, []uint64{50, 40}, got[1].Start)
+	require.Equal(t, []uint64{76, 66}, got[1].End)
 
 	// empty stat file should return zero offsets
 	file3 := "/test3"
@@ -163,7 +171,8 @@ func TestGetReadRangeFromProps(t *testing.T) {
 	require.NoError(t, err)
 	got, err = getReadRangeFromProps(ctx, [][]byte{[]byte("key3")}, []string{file1, file2, file3}, store)
 	require.NoError(t, err)
-	require.Equal(t, []uint64{30, 20, 0}, got[0])
+	require.Equal(t, []uint64{30, 20, 0}, got[0].Start)
+	require.Equal(t, []uint64{56, 46, 0}, got[0].End)
 }
 
 func TestGetReadRangeFromPropsEmptyJobKeys(t *testing.T) {
@@ -236,7 +245,6 @@ func TestGetReadRangeFromPropsLimitsParallelRead(t *testing.T) {
 	close(store.releaseCh)
 	require.NoError(t, <-errCh)
 }
-
 func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
