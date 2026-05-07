@@ -112,12 +112,19 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 // readerOpenerFn is a function that opens a sorted reader.
 type readerOpenerFn[T heapElem, R sortedReader[T]] func() (*R, error)
 
+const maxOpenReadersPerCall = 64
+
+const (
+	mergeSortReaderBufferSize = int(3 * size.MB)
+)
+
 // openAndGetFirstElem opens readers in parallel and reads the first element.
 func openAndGetFirstElem[
 	T heapElem,
 	R sortedReader[T],
 ](openers ...readerOpenerFn[T, R]) ([]*R, []T, error) {
 	wg := errgroup.Group{}
+	wg.SetLimit(maxOpenReadersPerCall)
 	mayNilReaders := make([]*R, len(openers))
 	closeReaders := func() {
 		for _, rp := range mayNilReaders {
@@ -530,7 +537,8 @@ func NewMergeKVIter(
 
 	for i := range paths {
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
-			rd, err := NewKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
+			kvReaderBufSize := max(readBufferSize, mergeSortReaderBufferSize)
+			rd, err := NewKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], kvReaderBufSize)
 			if err != nil {
 				return nil, err
 			}
