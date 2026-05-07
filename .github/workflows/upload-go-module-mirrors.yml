@@ -31,6 +31,11 @@ jobs:
           set -euo pipefail
           unset CI
 
+          if [[ -z "${GCS_MIRROR_SA_KEY}" ]]; then
+            echo "Skip mirror upload because GCS_MIRROR_SA_KEY is not available."
+            exit 0
+          fi
+
           printf '%s' "${GCS_MIRROR_SA_KEY}" > "${GOOGLE_APPLICATION_CREDENTIALS}"
           chmod 600 "${GOOGLE_APPLICATION_CREDENTIALS}"
           sed -i '/bazel-cache/d' DEPS.bzl
