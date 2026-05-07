@@ -341,8 +341,6 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 }
 
 func (pp *ParquetParser) buildRowGroupParser() (err error) {
-	// Wrappers must outlive eg.Wait(), so build them off pp.ctx rather than
-	// egCtx (which gets canceled once eg.Wait() returns).
 	builder, err := pp.getBuilder(pp.ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -364,7 +362,6 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 
 	for i := range pp.fileMeta.NumColumns() {
 		eg.Go(func() error {
-			// Short-circuit if a sibling already failed.
 			select {
 			case <-egCtx.Done():
 				return egCtx.Err()
