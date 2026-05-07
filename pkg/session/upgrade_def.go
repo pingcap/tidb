@@ -2118,5 +2118,5 @@ func upgradeToVer258(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer259(s sessionapi.Session, _ int64) {
-	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, variable.BoolToOnOff(vardef.DefTiDBIgnoreInlistPlanDigest))
+	initGlobalVariableIfNotExists(s, vardef.TiDBIgnoreInlistPlanDigest, vardef.Off)
 }
