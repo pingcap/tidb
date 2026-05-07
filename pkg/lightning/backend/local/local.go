@@ -723,6 +723,7 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 		BackendConfig: config,
 		logger:        logger,
 		engineMgr:     engineMgr,
+		tikvCodec:     storeHelper.GetTiKVCodec(),
 	}
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
@@ -882,7 +883,11 @@ func (local *Backend) PostProcess(ctx context.Context) error {
 }
 
 func (local *Backend) markTiCIWriteEngine(engineUUID uuid.UUID, enabled bool) {
-	local.logger.Info(
+	logger := local.logger
+	if logger.Logger == nil {
+		logger = log.L()
+	}
+	logger.Info(
 		"mark tici write engine",
 		zap.String("engine-uuid", engineUUID.String()),
 		zap.Bool("tici-write-enabled", enabled),
@@ -2051,7 +2056,10 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 // InitTiCIWriterGroup initializes the ticiWriteGroup field for the Backend using the given table info and schema
 // in the TiDB instance level. The `taskID` is a unique identifier for this Job.
 func (local *Backend) InitTiCIWriterGroup(ctx context.Context, tblInfo *model.TableInfo, schema string, taskID string, newIndexIDs []int64) error {
-	keyspaceID := uint32(local.tikvCodec.GetKeyspaceID())
+	keyspaceID := uint32(0)
+	if local.tikvCodec != nil {
+		keyspaceID = uint32(local.tikvCodec.GetKeyspaceID())
+	}
 	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, tblInfo, schema, taskID, keyspaceID, newIndexIDs)
 	if err != nil {
 		return err

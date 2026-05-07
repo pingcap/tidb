@@ -226,6 +226,12 @@ service MetaService {
   // DropIndex removes an existing index
   rpc DropIndex(DropIndexRequest) returns (DropIndexResponse);
 
+  // AddPartition adds new partitions to one or more existing indexes.
+  rpc AddPartition(AddPartitionRequest) returns (AddPartitionResponse);
+
+  // DropPartition removes a partition from one or more existing indexes.
+  rpc DropPartition(DropPartitionRequest) returns (DropPartitionResponse);
+
   // GetIndexProgress retrieves the current progress of an index build
   rpc GetIndexProgress(GetIndexProgressRequest)
       returns (GetIndexProgressResponse);
@@ -424,6 +430,28 @@ message CreateIndexResponse {
   string index_id = 3;
 }
 
+// AddPartitionRequest is a request to add new partitions to one or more existing
+// indexes.
+message AddPartitionRequest {
+  string database_name = 1;
+  bytes table_info = 2;
+  repeated int64 index_ids = 3;
+  // Keyspace ID
+  uint32 keyspace_id = 4;
+
+  // Parser information for index creation.
+  ParserInfo parser_info = 5;
+}
+
+// AddPartitionResponse is a response to the add partition request.
+message AddPartitionResponse {
+  ErrorCode status = 1;
+  // Error message, only valid when status is non-zero
+  string error_message = 2;
+  // Created index IDs
+  repeated int64 index_ids = 3;
+}
+
 // DropIndexRequest is a request to drop an index
 message DropIndexRequest {
   int64 table_id = 1;
@@ -434,6 +462,22 @@ message DropIndexRequest {
 
 // DropIndexResponse is a response to the index drop request
 message DropIndexResponse {
+  ErrorCode status = 1;
+  // Error message, only valid when status is non-zero
+  string error_message = 2;
+}
+
+// DropPartitionRequest is a request to drop a partition for one or more
+// existing indexes.
+message DropPartitionRequest {
+  int64 table_id = 1;
+  repeated int64 index_ids = 2;
+  // Keyspace ID
+  uint32 keyspace_id = 3;
+}
+
+// DropPartitionResponse is a response to the partition drop request.
+message DropPartitionResponse {
   ErrorCode status = 1;
   // Error message, only valid when status is non-zero
   string error_message = 2;

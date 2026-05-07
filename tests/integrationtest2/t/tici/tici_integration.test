@@ -46,7 +46,7 @@ INSERT INTO t4 VALUES
 ALTER TABLE t4 ADD FULLTEXT INDEX ft_idx1 (body1) WITH PARSER standard;
 ALTER TABLE t4 ADD FULLTEXT INDEX ft_idx2 (body2) WITH PARSER standard;
 
-DO SLEEP(10);
+DO SLEEP(30);
 SELECT * FROM t1 WHERE fts_match_word('first', body);
 SELECT * FROM t2 WHERE fts_match_word('first', content);
 SELECT * FROM t3 WHERE fts_match_word('hello', body);

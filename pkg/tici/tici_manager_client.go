@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -54,6 +55,8 @@ type addIndexProgressLogKey struct {
 var addIndexProgressLogState sync.Map // map[addIndexProgressLogKey]GetIndexProgressResponse_State
 
 var mockTiCICreateIndexRequest atomic.Value            // stores []byte of CreateIndexRequest for tests.
+var mockTiCIAddPartitionRequest atomic.Value           // stores []byte of AddPartitionRequest for tests.
+var mockTiCIDropPartitionRequest atomic.Value          // stores []byte of DropPartitionRequest for tests.
 var mockTiCIGetImportStoragePrefixRequest atomic.Value // stores []byte of GetImportStoragePrefixRequest for tests.
 var mockTiCIFinishIndexUploadRequest atomic.Value      // stores []byte of FinishImportIndexUploadRequest for tests.
 var mockTiCIPreSplitImportShardsRequest atomic.Value   // stores []byte of PreSplitImportShardsRequest for tests.
@@ -75,6 +78,44 @@ func GetMockTiCICreateIndexRequest() []byte {
 // ResetMockTiCICreateIndexRequest clears the captured request for tests.
 func ResetMockTiCICreateIndexRequest() {
 	mockTiCICreateIndexRequest.Store([]byte{})
+}
+
+// GetMockTiCIAddPartitionRequest returns the marshaled AddPartitionRequest bytes captured by the
+// `MockAddTiCIPartitionRequest` failpoint. It returns nil if nothing was captured.
+func GetMockTiCIAddPartitionRequest() []byte {
+	v := mockTiCIAddPartitionRequest.Load()
+	if v == nil {
+		return nil
+	}
+	b, ok := v.([]byte)
+	if !ok || len(b) == 0 {
+		return nil
+	}
+	return append([]byte(nil), b...)
+}
+
+// ResetMockTiCIAddPartitionRequest clears the captured request for tests.
+func ResetMockTiCIAddPartitionRequest() {
+	mockTiCIAddPartitionRequest.Store([]byte{})
+}
+
+// GetMockTiCIDropPartitionRequest returns the marshaled DropPartitionRequest bytes captured by the
+// `MockDropTiCIPartitionRequest` failpoint. It returns nil if nothing was captured.
+func GetMockTiCIDropPartitionRequest() []byte {
+	v := mockTiCIDropPartitionRequest.Load()
+	if v == nil {
+		return nil
+	}
+	b, ok := v.([]byte)
+	if !ok || len(b) == 0 {
+		return nil
+	}
+	return append([]byte(nil), b...)
+}
+
+// ResetMockTiCIDropPartitionRequest clears the captured request for tests.
+func ResetMockTiCIDropPartitionRequest() {
+	mockTiCIDropPartitionRequest.Store([]byte{})
 }
 
 // GetMockTiCIGetImportStoragePrefixRequest returns the marshaled GetImportStoragePrefixRequest bytes captured by the
@@ -313,6 +354,20 @@ func buildCreateFulltextIndexRequest(tblInfo *model.TableInfo, indexID int64, sc
 	}, nil
 }
 
+func buildAddPartitionRequest(tblInfo *model.TableInfo, indexIDs []int64, schemaName string, keyspaceID uint32, parserInfo *ParserInfo) (*AddPartitionRequest, error) {
+	tableInfoJSON, err := cloneAndMarshalAddPartitionTableInfo(tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	return &AddPartitionRequest{
+		DatabaseName: schemaName,
+		TableInfo:    tableInfoJSON,
+		IndexIds:     append([]int64(nil), indexIDs...),
+		KeyspaceId:   keyspaceID,
+		ParserInfo:   parserInfo,
+	}, nil
+}
+
 func (t *ManagerCtx) createIndex(ctx context.Context, req *CreateIndexRequest) error {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -331,6 +386,39 @@ func (t *ManagerCtx) createIndex(ctx context.Context, req *CreateIndexRequest) e
 	return nil
 }
 
+func (t *ManagerCtx) addPartition(ctx context.Context, req *AddPartitionRequest) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if err := t.checkMetaClient(); err != nil {
+		return err
+	}
+	resp, err := t.metaClient.client.AddPartition(ctx, req)
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(fmt.Sprintf("tici AddPartition rpc error: %v", err))
+	}
+	if resp.Status != ErrorCode_SUCCESS {
+		code := resp.Status
+		errMsg := fmt.Sprintf(
+			"tici AddPartition failed: status=%s(%d) keyspaceID=%d indexIDs=%v error=%s",
+			code.String(),
+			resp.Status,
+			req.KeyspaceId,
+			req.IndexIds,
+			resp.ErrorMessage,
+		)
+		logutil.BgLogger().Error("add partition failed",
+			zap.Int64s("indexIDs", req.IndexIds),
+			zap.Uint32("keyspaceID", req.KeyspaceId),
+			zap.Int32("statusCode", int32(resp.Status)),
+			zap.String("status", code.String()),
+			zap.String("errorMessage", resp.ErrorMessage),
+		)
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(errMsg)
+	}
+	logutil.BgLogger().Info("add partition success", zap.Int64s("indexIDs", resp.IndexIds))
+	return nil
+}
+
 // CreateFulltextIndex creates fulltext index on TiCI.
 func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string, parserInfo *ParserInfo) error {
 	req, err := buildCreateFulltextIndexRequest(tblInfo, indexInfo.ID, schemaName, t.getKeyspaceID(), parserInfo)
@@ -338,6 +426,18 @@ func (t *ManagerCtx) CreateFulltextIndex(ctx context.Context, tblInfo *model.Tab
 		return err
 	}
 	return t.createIndex(ctx, req)
+}
+
+// AddPartition notifies TiCI to add new partition(s) for the given indexes.
+func (t *ManagerCtx) AddPartition(ctx context.Context, tblInfo *model.TableInfo, indexIDs []int64, schemaName string, parserInfo *ParserInfo) error {
+	if len(indexIDs) == 0 {
+		return nil
+	}
+	req, err := buildAddPartitionRequest(tblInfo, indexIDs, schemaName, t.getKeyspaceID(), parserInfo)
+	if err != nil {
+		return err
+	}
+	return t.addPartition(ctx, req)
 }
 
 // DropFullTextIndex drop fulltext index on TiCI.
@@ -360,6 +460,45 @@ func (t *ManagerCtx) DropFullTextIndex(ctx context.Context, tableID, indexID int
 		return errors.New(resp.ErrorMessage)
 	}
 	logutil.BgLogger().Info("drop full text index success", zap.Int64("tableID", req.TableId), zap.Int64("indexID", req.IndexId))
+	return nil
+}
+
+// DropPartition notifies TiCI to drop a partition for the given indexes.
+func (t *ManagerCtx) DropPartition(ctx context.Context, tableID int64, indexIDs []int64) error {
+	if len(indexIDs) == 0 {
+		return nil
+	}
+	req := &DropPartitionRequest{
+		TableId:    tableID,
+		IndexIds:   append([]int64(nil), indexIDs...),
+		KeyspaceId: t.getKeyspaceID(),
+	}
+	return t.dropPartition(ctx, req)
+}
+
+func (t *ManagerCtx) dropPartition(ctx context.Context, req *DropPartitionRequest) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if err := t.checkMetaClient(); err != nil {
+		return err
+	}
+	resp, err := t.metaClient.client.DropPartition(ctx, req)
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(fmt.Sprintf("tici DropPartition rpc error: %v", err))
+	}
+	if resp.Status != ErrorCode_SUCCESS {
+		code := resp.Status
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(fmt.Sprintf(
+			"tici DropPartition failed: status=%s(%d) keyspaceID=%d tableID=%d indexIDs=%v error=%s",
+			code.String(),
+			resp.Status,
+			req.KeyspaceId,
+			req.TableId,
+			req.IndexIds,
+			resp.ErrorMessage,
+		))
+	}
+	logutil.BgLogger().Info("drop partition success", zap.Int64("tableID", req.TableId), zap.Int64s("indexIDs", req.IndexIds))
 	return nil
 }
 
@@ -867,6 +1006,15 @@ func (t *ManagerCtx) AbortIndexUpload(
 	return nil
 }
 
+func isRetryableGetShardLocalCacheStatus(status int32) bool {
+	switch ErrorCode(status) {
+	case ErrorCode_TRY_AGAIN, ErrorCode_WORKER_NOT_FOUND, ErrorCode_SHARD_NOT_SCHEDULED:
+		return true
+	default:
+		return false
+	}
+}
+
 // ScanRanges sends a request to the TiCI shard cache service to scan ranges for a given table and index.
 func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int64, keyRanges []kv.KeyRange, limit int) ([]*ShardLocalCacheInfo, error) {
 	ticiKeyRanges := make([]*KeyRange, 0, len(keyRanges))
@@ -884,29 +1032,85 @@ func (t *ManagerCtx) ScanRanges(ctx context.Context, tableID int64, indexID int6
 		KeyRanges:  ticiKeyRanges,
 		Limit:      int32(limit),
 	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if err := t.checkMetaClient(); err != nil {
-		return nil, err
-	}
-	resp, err := t.metaClient.client.GetShardLocalCacheInfo(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	if resp.Status != 0 {
-		return nil, fmt.Errorf("GetShardLocalCacheInfo failed: %d", resp.Status)
-	}
 
-	var s = "ShardLocalCacheInfos:["
-	for _, info := range resp.ShardLocalCacheInfos {
-		if info != nil {
-			s += fmt.Sprintf("[ShardId: %d, StartKey: %v, EndKey: %v, Epoch: %d, LocalCacheAddrs: %v; ]",
-				info.Shard.ShardId, hex.EncodeToString(info.Shard.StartKey), hex.EncodeToString(info.Shard.EndKey), info.Shard.Epoch, info.LocalCacheAddrs)
+	var (
+		backoff    = 100 * time.Millisecond
+		maxBackoff = time.Second
+
+		start   = time.Now()
+		maxWait = 30 * time.Second
+	)
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < maxWait {
+			maxWait = remaining
 		}
 	}
-	s += "]"
-	logutil.BgLogger().Info("GetShardLocalCacheInfo", zap.String("info", s))
-	return resp.ShardLocalCacheInfos, nil
+	for attempt := 0; ; attempt++ {
+		resp, err := func() (*GetShardLocalCacheResponse, error) {
+			t.mu.RLock()
+			defer t.mu.RUnlock()
+			if err := t.checkMetaClient(); err != nil {
+				return nil, err
+			}
+			return t.metaClient.client.GetShardLocalCacheInfo(ctx, request)
+		}()
+		if err != nil {
+			return nil, err
+		}
+		if resp.Status == 0 {
+			var s = "ShardLocalCacheInfos:["
+			for _, info := range resp.ShardLocalCacheInfos {
+				if info != nil {
+					s += fmt.Sprintf("[ShardId: %d, StartKey: %v, EndKey: %v, Epoch: %d, LocalCacheAddrs: %v; ]",
+						info.Shard.ShardId, hex.EncodeToString(info.Shard.StartKey), hex.EncodeToString(info.Shard.EndKey), info.Shard.Epoch, info.LocalCacheAddrs)
+				}
+			}
+			s += "]"
+			logutil.BgLogger().Info("GetShardLocalCacheInfo", zap.String("info", s))
+			return resp.ShardLocalCacheInfos, nil
+		}
+
+		code := ErrorCode(resp.Status)
+		if !isRetryableGetShardLocalCacheStatus(resp.Status) || time.Since(start) >= maxWait {
+			return nil, fmt.Errorf(
+				"GetShardLocalCacheInfo failed after %s (attempts=%d, keyspaceID=%d, tableID=%d, indexID=%d, ranges=%d, limit=%d, returnedShards=%d): %s(%d)",
+				time.Since(start).Round(time.Millisecond),
+				attempt+1,
+				request.KeyspaceId,
+				tableID,
+				indexID,
+				len(keyRanges),
+				limit,
+				len(resp.ShardLocalCacheInfos),
+				code.String(),
+				resp.Status,
+			)
+		}
+		logutil.BgLogger().Debug("GetShardLocalCacheInfo retryable error",
+			zap.Int64("tableID", tableID),
+			zap.Int64("indexID", indexID),
+			zap.Int("attempt", attempt+1),
+			zap.Duration("elapsed", time.Since(start)),
+			zap.Duration("maxWait", maxWait),
+			zap.String("status", code.String()),
+			zap.Int32("status_code", resp.Status),
+		)
+
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+
+		if backoff < maxBackoff {
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
+	}
 }
 
 // ModelTableToTiCITableInfo converts a model.TableInfo to a TableInfo.
@@ -1063,6 +1267,139 @@ func DropFullTextIndex(ctx context.Context, store kv.Storage, tableID int64, ind
 	return ticiManager.DropFullTextIndex(ctx, tableID, indexID)
 }
 
+// AddPartition notifies TiCI to create new partition(s) for the given table and
+// create corresponding index metadata for existing indexes.
+func AddPartition(ctx context.Context, store kv.Storage, tblInfo *model.TableInfo, schemaName string, indexIDs []int64, parserInfo *ParserInfo) error {
+	if len(indexIDs) == 0 {
+		return nil
+	}
+
+	keyspaceID := uint32(0)
+	if store != nil {
+		keyspaceID = uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+	}
+
+	req, err := buildAddPartitionRequest(tblInfo, indexIDs, schemaName, keyspaceID, parserInfo)
+	if err != nil {
+		return err
+	}
+
+	failpoint.Inject("MockAddTiCIPartitionRequest", func(val failpoint.Value) {
+		v, _ := val.(int)
+		switch v {
+		case 1:
+			data, err := req.Marshal()
+			if err != nil {
+				failpoint.Return(errors.Trace(err))
+			}
+			mockTiCIAddPartitionRequest.Store(data)
+			failpoint.Return(nil)
+		case 2:
+			data, err := req.Marshal()
+			if err != nil {
+				failpoint.Return(errors.Trace(err))
+			}
+			failpoint.Return(errors.Errorf("mock tici add partition request: %s", hex.EncodeToString(data)))
+		}
+	})
+
+	failpoint.Inject("MockAddTiCIPartitionSuccess", func(val failpoint.Value) {
+		if x := val.(bool); x {
+			logutil.BgLogger().Info("MockAddTiCIPartitionSuccess failpoint triggered", zap.Bool("success", true))
+			failpoint.Return(nil)
+		}
+		err := dbterror.ErrInvalidDDLJob.FastGenByArgs("mock TiCI add partition failed")
+		logutil.BgLogger().Warn("MockAddTiCIPartitionSuccess failpoint triggered", zap.Bool("success", false), zap.Error(err))
+		failpoint.Return(err)
+	})
+
+	etcdClient, err := getEtcdClientFunc()
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer closeEtcdClient(etcdClient)
+	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer ticiManager.Close()
+	if store != nil {
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
+	return ticiManager.addPartition(ctx, req)
+}
+
+// DropPartition notifies TiCI to drop a physical table (partition) and remove
+// corresponding index metadata for the given indexes.
+func DropPartition(ctx context.Context, store kv.Storage, physicalTableID int64, indexIDs []int64) error {
+	if len(indexIDs) == 0 {
+		return nil
+	}
+
+	keyspaceID := uint32(0)
+	if store != nil {
+		keyspaceID = uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+	}
+
+	req := &DropPartitionRequest{
+		TableId:    physicalTableID,
+		IndexIds:   append([]int64(nil), indexIDs...),
+		KeyspaceId: keyspaceID,
+	}
+
+	failpoint.Inject("MockDropTiCIPartitionRequest", func(val failpoint.Value) {
+		v, _ := val.(int)
+		switch v {
+		case 1:
+			data, err := req.Marshal()
+			if err != nil {
+				failpoint.Return(errors.Trace(err))
+			}
+			mockTiCIDropPartitionRequest.Store(data)
+			failpoint.Return(nil)
+		case 2:
+			data, err := req.Marshal()
+			if err != nil {
+				failpoint.Return(errors.Trace(err))
+			}
+			failpoint.Return(errors.Errorf("mock tici drop partition request: %s", hex.EncodeToString(data)))
+		}
+	})
+
+	failpoint.Inject("MockDropTiCIPartitionSuccess", func(val failpoint.Value) {
+		if x := val.(bool); x {
+			logutil.BgLogger().Info("MockDropTiCIPartitionSuccess failpoint triggered", zap.Bool("success", true))
+			failpoint.Return(nil)
+		}
+		err := errors.New("mock TiCI drop partition failed")
+		logutil.BgLogger().Warn("MockDropTiCIPartitionSuccess failpoint triggered", zap.Bool("success", false), zap.Error(err))
+		failpoint.Return(err)
+	})
+
+	etcdClient, err := getEtcdClientFunc()
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer closeEtcdClient(etcdClient)
+	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
+	if err != nil {
+		return dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer ticiManager.Close()
+	if store != nil {
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
+	return ticiManager.dropPartition(ctx, req)
+}
+
 // FinishIndexUpload notifies TiCI that all partitions for the given job in all TiDB instances
 // have been uploaded successfully.
 func FinishIndexUpload(ctx context.Context, store kv.Storage, tidbTaskID string) error {
@@ -1176,6 +1513,25 @@ func cloneAndMarshalTableInfo(tbl *model.TableInfo) ([]byte, error) {
 	clonedTbl, err := cloneAndNormalizeTableInfo(tbl)
 	if err != nil {
 		return nil, err
+	}
+	return json.Marshal(clonedTbl)
+}
+
+// cloneAndMarshalAddPartitionTableInfo narrows the partition snapshot in AddPartition
+// requests to the newly-added partitions only, so TiCI does not treat existing
+// partitions as fresh additions.
+func cloneAndMarshalAddPartitionTableInfo(tbl *model.TableInfo) ([]byte, error) {
+	if tbl == nil {
+		return nil, errors.New("tableInfo is nil")
+	}
+	clonedTbl, err := cloneAndNormalizeTableInfo(tbl)
+	if err != nil {
+		return nil, err
+	}
+	if clonedTbl.Partition != nil && len(clonedTbl.Partition.AddingDefinitions) > 0 {
+		clonedTbl.Partition.Definitions = append([]model.PartitionDefinition(nil), clonedTbl.Partition.AddingDefinitions...)
+		clonedTbl.Partition.AddingDefinitions = nil
+		clonedTbl.Partition.DroppingDefinitions = nil
 	}
 	return json.Marshal(clonedTbl)
 }
