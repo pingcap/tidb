@@ -24,19 +24,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var maxConcurrentRangeReadRequestsPerNode = 64
-
-var concurrentRangeReadReqTokens = make(chan struct{}, maxConcurrentRangeReadRequestsPerNode)
-
-func acquireConcurrentRangeReadToken(ctx context.Context) (func(), error) {
-	select {
-	case concurrentRangeReadReqTokens <- struct{}{}:
-		return func() { <-concurrentRangeReadReqTokens }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
 // concurrentFileReader reads a file with multiple chunks concurrently.
 type concurrentFileReader struct {
 	ctx            context.Context
@@ -92,13 +79,7 @@ func (r *concurrentFileReader) read(bufs [][]byte) ([][]byte, error) {
 		offset := r.offset
 		r.offset += int64(end)
 		eg.Go(func() error {
-			releaseToken, err := acquireConcurrentRangeReadToken(r.ctx)
-			if err != nil {
-				return err
-			}
-			defer releaseToken()
-
-			_, err = objstore.ReadDataInRange(
+			_, err := objstore.ReadDataInRange(
 				r.ctx,
 				r.storage,
 				r.name,

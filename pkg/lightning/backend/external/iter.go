@@ -112,8 +112,6 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 // readerOpenerFn is a function that opens a sorted reader.
 type readerOpenerFn[T heapElem, R sortedReader[T]] func() (*R, error)
 
-const maxOpenReadersPerCall = 64
-
 const (
 	mergeSortReaderBufferSize = int(3 * size.MB)
 )
@@ -124,7 +122,6 @@ func openAndGetFirstElem[
 	R sortedReader[T],
 ](openers ...readerOpenerFn[T, R]) ([]*R, []T, error) {
 	wg := errgroup.Group{}
-	wg.SetLimit(maxOpenReadersPerCall)
 	mayNilReaders := make([]*R, len(openers))
 	closeReaders := func() {
 		for _, rp := range mayNilReaders {

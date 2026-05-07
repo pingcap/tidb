@@ -30,44 +30,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const maxConcurrentS3ReadRequestsPerNode = 64
-
-var s3ReadRequestTokens = make(chan struct{}, maxConcurrentS3ReadRequestsPerNode)
-
-func acquireS3ReadRequestToken(ctx context.Context) (func(), error) {
-	select {
-	case s3ReadRequestTokens <- struct{}{}:
-		return func() { <-s3ReadRequestTokens }, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-}
-
-type s3ReadLimiter struct {
-	ctx context.Context
-	rd  io.ReadCloser
-}
-
-func withS3ReadLimiter(ctx context.Context, rd io.ReadCloser) io.ReadCloser {
-	return &s3ReadLimiter{
-		ctx: ctx,
-		rd:  rd,
-	}
-}
-
-func (r *s3ReadLimiter) Read(p []byte) (int, error) {
-	releaseToken, err := acquireS3ReadRequestToken(r.ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer releaseToken()
-	return r.rd.Read(p)
-}
-
-func (r *s3ReadLimiter) Close() error {
-	return r.rd.Close()
-}
-
 // s3ObjectReader wrap GetObjectOutput.Body and add the `Seek` method.
 type s3ObjectReader struct {
 	storage   *Storage
@@ -114,7 +76,6 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
 			return
 		}
-		newReader = withS3ReadLimiter(r.ctx, newReader)
 		r.reader = newReader
 		if r.prefetchSize > 0 {
 			r.reader = prefetch.NewReader(r.reader, rangeInfo.RangeSize(), r.prefetchSize)
@@ -188,7 +149,6 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	newReader = withS3ReadLimiter(r.ctx, newReader)
 	r.reader = newReader
 	if r.prefetchSize > 0 {
 		r.reader = prefetch.NewReader(r.reader, info.RangeSize(), r.prefetchSize)
