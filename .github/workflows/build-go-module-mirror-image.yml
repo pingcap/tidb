@@ -1,0 +1,50 @@
+name: Build Go Module Mirror Image
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/docker/go-module-mirror/**
+      - .github/workflows/build-go-module-mirror-image.yml
+      - cmd/mirror/**
+      - DEPS.bzl
+      - WORKSPACE
+      - go.mod
+      - go.sum
+      - pkg/parser/go.mod
+      - pkg/parser/go.sum
+      - build/patches/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build Go Module Mirror Image
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/pingcap/tidb/go-module-mirror
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Log in to GHCR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+      - name: Build and push image
+        run: |
+          set -euo pipefail
+
+          docker build \
+            -f .github/docker/go-module-mirror/Dockerfile \
+            -t "${IMAGE}:latest" \
+            -t "${IMAGE}:${GITHUB_SHA}" \
+            .
+          docker push "${IMAGE}:latest"
+          docker push "${IMAGE}:${GITHUB_SHA}"
