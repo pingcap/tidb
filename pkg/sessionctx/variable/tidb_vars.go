@@ -139,6 +139,10 @@ const (
 
 	// TiDBMLogPurgeBatchSize is used to split PURGE MATERIALIZED VIEW LOG into multiple delete batches.
 	TiDBMLogPurgeBatchSize = "tidb_mlog_purge_batch_size"
+	// TiDBMLogPurgeMinRate controls the minimum target delete rate for adaptive MV log purge throttling.
+	TiDBMLogPurgeMinRate = "tidb_mlog_purge_min_rate"
+	// TiDBMLogPurgeRateBudgetRatio controls the fraction of the current scheduling window that purge may spend deleting.
+	TiDBMLogPurgeRateBudgetRatio = "tidb_mlog_purge_rate_budget_ratio"
 
 	// The following session variables controls the memory quota during query execution.
 
@@ -1363,7 +1367,9 @@ const (
 	DefMaxPagingSize                        = int(paging.MaxPagingSize)
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
-	DefTiDBMLogPurgeBatchSize               = 100000
+	DefTiDBMLogPurgeBatchSize               = 10000
+	DefTiDBMLogPurgeMinRate                 = 2000
+	DefTiDBMLogPurgeRateBudgetRatio         = 0.5
 	DefMaxPreparedStmtCount                 = -1
 	DefWaitTimeout                          = 28800
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.

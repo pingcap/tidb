@@ -534,6 +534,11 @@ func TestValidate(t *testing.T) {
 		{TiDBMVMaintainIsolationReadEngines, "", true},
 		{TiDBMVMaintainIsolationReadEngines, "tikv", false},
 		{TiDBMVMaintainIsolationReadEngines, "TiKV,tiflash", false},
+		{TiDBMLogPurgeMinRate, "0", true},
+		{TiDBMLogPurgeMinRate, "1", false},
+		{TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{TiDBMLogPurgeRateBudgetRatio, "1.1", true},
 	}
 
 	for _, tc := range testCases {
@@ -560,6 +565,11 @@ func TestValidate(t *testing.T) {
 		{TiDBMVMaintainIsolationReadEngines, "", true},
 		{TiDBMVMaintainIsolationReadEngines, "tikv", false},
 		{TiDBMVMaintainIsolationReadEngines, "TiKV,tiflash", false},
+		{TiDBMLogPurgeMinRate, "0", true},
+		{TiDBMLogPurgeMinRate, "1", false},
+		{TiDBMLogPurgeRateBudgetRatio, "0", true},
+		{TiDBMLogPurgeRateBudgetRatio, "0.5", false},
+		{TiDBMLogPurgeRateBudgetRatio, "1.1", true},
 	}
 
 	for _, tc := range testCases {

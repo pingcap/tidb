@@ -2194,6 +2194,32 @@ var defaultSysVars = []*SysVar{
 		s.MLogPurgeBatchSize = int(TidbOptInt64(val, DefTiDBMLogPurgeBatchSize))
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMLogPurgeMinRate, Value: strconv.Itoa(DefTiDBMLogPurgeMinRate), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		v, err := strconv.ParseUint(normalizedValue, 10, 64)
+		if err != nil {
+			return "", err
+		}
+		if v == 0 {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBMLogPurgeMinRate, originalValue)
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.MLogPurgeMinRate = int(TidbOptInt64(val, DefTiDBMLogPurgeMinRate))
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMLogPurgeRateBudgetRatio, Value: strconv.FormatFloat(DefTiDBMLogPurgeRateBudgetRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		v, err := strconv.ParseFloat(originalValue, 64)
+		if err != nil {
+			return "", err
+		}
+		if v <= 0 || v > 1 {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBMLogPurgeRateBudgetRatio, originalValue)
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.MLogPurgeRateBudgetRatio = tidbOptFloat64(val, DefTiDBMLogPurgeRateBudgetRatio)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxChunkSize, Value: strconv.Itoa(DefMaxChunkSize), Type: TypeUnsigned, MinValue: maxChunkSizeLowerBound, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 		return nil

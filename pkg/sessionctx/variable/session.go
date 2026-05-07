@@ -768,6 +768,10 @@ type SessionVars struct {
 	DMLBatchSize int
 	// MLogPurgeBatchSize indicates the max rows deleted by one purge batch transaction.
 	MLogPurgeBatchSize  int
+	// MLogPurgeMinRate indicates the minimum target delete rate for adaptive MV log purge throttling.
+	MLogPurgeMinRate int
+	// MLogPurgeRateBudgetRatio indicates the fraction of the current scheduling window that purge may spend deleting.
+	MLogPurgeRateBudgetRatio float64
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
 	*UserVars
@@ -2324,6 +2328,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
 	vars.MLogPurgeBatchSize = DefTiDBMLogPurgeBatchSize
+	vars.MLogPurgeMinRate = DefTiDBMLogPurgeMinRate
+	vars.MLogPurgeRateBudgetRatio = DefTiDBMLogPurgeRateBudgetRatio
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
