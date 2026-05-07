@@ -643,6 +643,7 @@ var Keywords = []KeywordsType{
 	{"STATS_SAMPLE_PAGES", false, "unreserved"},
 	{"STATS_SAMPLE_RATE", false, "unreserved"},
 	{"STATUS", false, "unreserved"},
+	{"STMT", false, "unreserved"},
 	{"STORAGE", false, "unreserved"},
 	{"STRICT_FORMAT", false, "unreserved"},
 	{"STRING", false, "unreserved"},

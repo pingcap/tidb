@@ -40,6 +40,7 @@ var (
 	_ StmtNode = &DoStmt{}
 	_ StmtNode = &ExecuteStmt{}
 	_ StmtNode = &ExplainStmt{}
+	_ StmtNode = &ExplainRoutineStmt{}
 	_ StmtNode = &GrantStmt{}
 	_ StmtNode = &PrepareStmt{}
 	_ StmtNode = &RollbackStmt{}
@@ -211,6 +212,87 @@ type ExplainStmt struct {
 	Stmt    StmtNode
 	Format  string
 	Analyze bool
+}
+
+const (
+	// ExplainRoutineTypeFunction indicates EXPLAIN ROUTINE FUNCTION.
+	ExplainRoutineTypeFunction = "FUNCTION"
+	// ExplainRoutineTypeProcedure indicates EXPLAIN ROUTINE PROCEDURE.
+	ExplainRoutineTypeProcedure = "PROCEDURE"
+)
+
+// ExplainRoutineStmt is a statement to provide information about static SQL statements inside a stored routine.
+type ExplainRoutineStmt struct {
+	stmtNode
+
+	Format               string
+	Analyze              bool
+	RoutineType          string
+	Name                 *TableName
+	Args                 []ExprNode
+	HasTargetStmtOrdinal bool
+	TargetStmtOrdinal    uint64
+}
+
+// Restore implements Node interface.
+func (n *ExplainRoutineStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("EXPLAIN ")
+	if n.Analyze {
+		ctx.WriteKeyWord("ANALYZE ")
+	}
+	if n.Format != "" && strings.ToLower(n.Format) != "row" {
+		ctx.WriteKeyWord("FORMAT ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Format)
+		ctx.WritePlain(" ")
+	}
+	ctx.WriteKeyWord("ROUTINE ")
+	ctx.WriteKeyWord(n.RoutineType)
+	ctx.WritePlain(" ")
+	if err := n.Name.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore ExplainRoutineStmt.Name")
+	}
+	ctx.WritePlain("(")
+	for i, arg := range n.Args {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := arg.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore ExplainRoutineStmt.Args[%d]", i)
+		}
+	}
+	ctx.WritePlain(")")
+	if n.HasTargetStmtOrdinal {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord("FOR ")
+		ctx.WriteKeyWord("STMT ")
+		ctx.WritePlain(strconv.FormatUint(n.TargetStmtOrdinal, 10))
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ExplainRoutineStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ExplainRoutineStmt)
+	if n.Name != nil {
+		node, ok := n.Name.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Name = node.(*TableName)
+	}
+	for i, arg := range n.Args {
+		node, ok := arg.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Args[i] = node.(ExprNode)
+	}
+	return v.Leave(n)
 }
 
 // Restore implements Node interface.

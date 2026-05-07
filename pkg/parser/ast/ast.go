@@ -193,6 +193,11 @@ func GetStmtLabel(stmtNode StmtNode) string {
 			return "ExplainAnalyzeSQL"
 		}
 		return "ExplainSQL"
+	case *ExplainRoutineStmt:
+		if x.Analyze {
+			return "ExplainAnalyzeSQL"
+		}
+		return "ExplainSQL"
 	case *InsertStmt:
 		if x.IsReplace {
 			return "Replace"

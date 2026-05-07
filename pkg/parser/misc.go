@@ -849,6 +849,7 @@ var tokenMap = map[string]int{
 	"STDDEV_SAMP":                    stddevSamp,
 	"STDDEV":                         stddevPop,
 	"STOP":                           stop,
+	"STMT":                           stmt,
 	"STORAGE":                        storage,
 	"STORED":                         stored,
 	"STRAIGHT_JOIN":                  straightJoin,
