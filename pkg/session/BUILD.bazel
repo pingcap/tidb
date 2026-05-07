@@ -147,6 +147,11 @@ go_test(
         "main_test.go",
         "session_test.go",
         "tidb_test.go",
+<<<<<<< HEAD
+=======
+        "upgrade_backfill_test.go",
+        "upgrade_test.go",
+>>>>>>> 8db32988f85 ( (#68137))
     ],
     embed = [":session"],
     flaky = True,
