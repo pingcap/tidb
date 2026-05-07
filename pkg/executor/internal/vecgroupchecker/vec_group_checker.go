@@ -537,7 +537,10 @@ func (e *VecGroupChecker) IsExhausted() bool {
 	return e.nextGroupID >= e.groupCount
 }
 
-// Reset resets the group checker.
+// Reset resets current-chunk state.
+// It intentionally keeps lastGroupKeyOfPrevChk because SplitIntoGroups calls
+// Reset before every input chunk and still needs the previous chunk key to
+// detect a group that spans chunk boundaries.
 func (e *VecGroupChecker) Reset() {
 	if e.groupOffset != nil {
 		e.groupOffset = e.groupOffset[:0]
@@ -560,7 +563,10 @@ func (e *VecGroupChecker) Reset() {
 	}
 }
 
-// ResetForNewExecution resets both current-chunk state and previous-chunk state.
+// ResetForNewExecution resets all state for a new logical input stream.
+// Unlike Reset, it also clears lastGroupKeyOfPrevChk so a reused executor will
+// not treat the first chunk of the new execution as a continuation of the last
+// chunk from the previous execution.
 func (e *VecGroupChecker) ResetForNewExecution() {
 	e.Reset()
 	e.nextGroupID = 0

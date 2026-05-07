@@ -58,6 +58,9 @@ func (e *PartitionTopNWindowExec) Open(ctx context.Context) error {
 // OpenSelf initializes the executor state without opening children.
 func (e *PartitionTopNWindowExec) OpenSelf() error {
 	e.childResult = nil
+	// OpenSelf may run again on a reused executor instance. Drop cross-chunk
+	// partition state here so the first chunk of this execution starts a fresh
+	// row_number sequence instead of continuing the previous execution.
 	e.groupChecker.ResetForNewExecution()
 	e.groupStart = 0
 	e.groupEnd = 0
