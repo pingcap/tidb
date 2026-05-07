@@ -640,6 +640,13 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		plan = e.tableImporter.Plan
 	}
 	ticiWriteEnabled := decideTiCIWriteEnabled(e.logger, e.taskID, subtask.ID, sm.KVGroup, plan)
+	var ticiIndexID int64
+	if ticiWriteEnabled {
+		ticiIndexID, err = external.KVGroup2IndexID(sm.KVGroup)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	localBackend := e.tableImporter.Backend()
 	// compatible with old version task meta
@@ -661,6 +668,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		TiCIWriteEnabled: ticiWriteEnabled,
+		TiCIIndexID:      ticiIndexID,
 		External: &backend.ExternalEngineConfig{
 			ExtStore:      objStore,
 			DataFiles:     sm.DataFiles,

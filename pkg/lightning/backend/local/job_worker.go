@@ -75,7 +75,7 @@ type regionJobBaseWorker struct {
 	// job.
 	regenerateJobsFn func(
 		ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
-		regionSplitSize, regionSplitKeys int64, ticiWriteEnabled bool, ticiHeaderCommitTS uint64,
+		regionSplitSize, regionSplitKeys int64, ticiWriteEnabled bool, ticiIndexID int64, ticiHeaderCommitTS uint64,
 	) ([]*regionJob, error)
 }
 
@@ -133,6 +133,7 @@ func (w *regionJobBaseWorker) process(job *regionJob) error {
 			job.regionSplitSize,
 			job.regionSplitKeys,
 			job.ticiWriteEnabled,
+			job.ticiIndexID,
 			job.ticiHeaderCommitTS,
 		)
 		if err2 != nil {
@@ -434,7 +435,7 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		if err := ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
 			return nil, errors.Annotate(err, "failed to close tici file writer")
 		}
-		if err := ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
+		if err := ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, job.ticiIndexID, firstKey, lastKey); err != nil {
 			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")
 		}
 

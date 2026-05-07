@@ -83,7 +83,7 @@ func newRegionJobWorkerPoolForTest(
 				ingestFn:    ingestFn,
 				regenerateJobsFn: func(
 					ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
-					regionSplitSize, regionSplitKeys int64, ticiWriteEnabled bool, ticiHeaderCommitTS uint64,
+					regionSplitSize, regionSplitKeys int64, ticiWriteEnabled bool, ticiIndexID int64, ticiHeaderCommitTS uint64,
 				) ([]*regionJob, error) {
 					return []*regionJob{
 						{}, {}, {},

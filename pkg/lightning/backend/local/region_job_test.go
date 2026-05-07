@@ -383,6 +383,7 @@ func TestNewRegionJobs(t *testing.T) {
 			buildJobRanges(c.jobRangeKeys),
 			0, 0, nil, false,
 			0,
+			0,
 		)
 		require.Len(t, jobs, len(c.jobKeys)-1, "case %d", caseIdx)
 		for i, j := range jobs {

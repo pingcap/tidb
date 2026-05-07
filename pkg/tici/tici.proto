@@ -595,6 +595,8 @@ message FinishImportPartitionUploadRequest {
   string storage_uri = 3;
   // Keyspace ID
   uint32 keyspace_id = 4;
+  // Index ID for the uploaded partition data. A zero value means unspecified.
+  int64 index_id = 5;
 }
 
 // One merged SortedKVMeta group used for import pre-split analysis.

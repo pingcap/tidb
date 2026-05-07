@@ -525,7 +525,7 @@ type ticiWriteGroup interface {
 	WriteHeader(ctx context.Context, fileWriter *tici.FileWriter, commitTS uint64) error
 	WritePairs(ctx context.Context, fileWriter *tici.FileWriter, pairs []*sst.Pair, count int) error
 	CloseFileWriters(ctx context.Context, fileWriter *tici.FileWriter) error
-	FinishPartitionUpload(ctx context.Context, fileWriter *tici.FileWriter, lowerBound, upperBound []byte) error
+	FinishPartitionUpload(ctx context.Context, fileWriter *tici.FileWriter, indexID int64, lowerBound, upperBound []byte) error
 	FinishIndexUpload(ctx context.Context) error
 	Close() error
 }
@@ -566,6 +566,7 @@ type Backend struct {
 
 	ticiWriteGroup     ticiWriteGroup // TiCI writer group
 	ticiWriteEngines   sync.Map
+	ticiIndexIDs       sync.Map
 	ticiHeaderCommitTS sync.Map
 }
 
@@ -902,9 +903,25 @@ func (local *Backend) setTiCIHeaderCommitTS(engineUUID uuid.UUID, ts uint64) {
 	local.ticiHeaderCommitTS.Store(engineUUID, ts)
 }
 
+func (local *Backend) setTiCIIndexID(engineUUID uuid.UUID, enabled bool, indexID int64) {
+	if !enabled || indexID == 0 {
+		local.ticiIndexIDs.Delete(engineUUID)
+		return
+	}
+	local.ticiIndexIDs.Store(engineUUID, indexID)
+}
+
 func (local *Backend) isTiCIWriteEngine(engineUUID uuid.UUID) bool {
 	_, ok := local.ticiWriteEngines.Load(engineUUID)
 	return ok
+}
+
+func (local *Backend) getTiCIIndexID(engineUUID uuid.UUID) int64 {
+	value, ok := local.ticiIndexIDs.Load(engineUUID)
+	if !ok {
+		return 0
+	}
+	return value.(int64)
 }
 
 func (local *Backend) getTiCIHeaderCommitTS(engineUUID uuid.UUID) uint64 {
@@ -918,6 +935,7 @@ func (local *Backend) getTiCIHeaderCommitTS(engineUUID uuid.UUID) uint64 {
 // OpenEngine must be called with holding mutex of Engine.
 func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	local.markTiCIWriteEngine(engineUUID, cfg.TiCIWriteEnabled)
+	local.setTiCIIndexID(engineUUID, cfg.TiCIWriteEnabled, cfg.TiCIIndexID)
 	local.setTiCIHeaderCommitTS(engineUUID, cfg.TiCIHeaderCommitTS)
 	return local.engineMgr.openEngine(ctx, cfg, engineUUID)
 }
@@ -925,6 +943,7 @@ func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig,
 // CloseEngine closes backend engine by uuid.
 func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	local.markTiCIWriteEngine(engineUUID, cfg.TiCIWriteEnabled)
+	local.setTiCIIndexID(engineUUID, cfg.TiCIWriteEnabled, cfg.TiCIIndexID)
 	local.setTiCIHeaderCommitTS(engineUUID, cfg.TiCIHeaderCommitTS)
 	return local.engineMgr.closeEngine(ctx, cfg, engineUUID)
 }
@@ -1137,6 +1156,7 @@ func (local *Backend) prepareAndSendJob(
 	regionSplitKeys [][]byte,
 	regionSplitSize, regionSplitKeyCnt int64,
 	ticiWriteEnabled bool,
+	ticiIndexID int64,
 	ticiHeaderCommitTS uint64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
@@ -1197,6 +1217,7 @@ func (local *Backend) prepareAndSendJob(
 		regionSplitSize,
 		regionSplitKeyCnt,
 		ticiWriteEnabled,
+		ticiIndexID,
 		ticiHeaderCommitTS,
 		jobToWorkerCh,
 		jobWg,
@@ -1209,6 +1230,7 @@ func (local *Backend) generateAndSendJob(
 	engine engineapi.Engine,
 	regionSplitSize, regionSplitKeys int64,
 	ticiWriteEnabled bool,
+	ticiIndexID int64,
 	ticiHeaderCommitTS uint64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
@@ -1240,7 +1262,7 @@ func (local *Backend) generateAndSendJob(
 						jobToWorkerCh <- &regionJob{}
 						time.Sleep(5 * time.Second)
 					})
-					jobs, err := local.generateJobForRange(egCtx, p.Data, p.SortedRanges, regionSplitSize, regionSplitKeys, ticiWriteEnabled, ticiHeaderCommitTS)
+					jobs, err := local.generateJobForRange(egCtx, p.Data, p.SortedRanges, regionSplitSize, regionSplitKeys, ticiWriteEnabled, ticiIndexID, ticiHeaderCommitTS)
 					if err != nil {
 						if common.IsContextCanceledError(err) {
 							return nil
@@ -1294,6 +1316,7 @@ func (local *Backend) generateJobForRange(
 	sortedJobRanges []engineapi.Range,
 	regionSplitSize, regionSplitKeys int64,
 	ticiWriteEnabled bool,
+	ticiIndexID int64,
 	ticiHeaderCommitTS uint64,
 ) ([]*regionJob, error) {
 	startOfAllRanges, endOfAllRanges := sortedJobRanges[0].Start, sortedJobRanges[len(sortedJobRanges)-1].End
@@ -1341,7 +1364,7 @@ func (local *Backend) generateJobForRange(
 		return nil, err
 	}
 
-	jobs := newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics, ticiWriteEnabled, ticiHeaderCommitTS)
+	jobs := newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics, ticiWriteEnabled, ticiIndexID, ticiHeaderCommitTS)
 	tidblogutil.Logger(ctx).Info("generate region jobs",
 		zap.Int("len(jobs)", len(jobs)),
 		zap.String("startOfAllRanges", hex.EncodeToString(startOfAllRanges)),
@@ -1543,8 +1566,9 @@ func (local *Backend) ImportEngine(
 
 	failpoint.InjectCall("ReadyForImportEngine")
 
+	ticiIndexID := local.getTiCIIndexID(engineUUID)
 	ticiHeaderCommitTS := local.getTiCIHeaderCommitTS(engineUUID)
-	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys, ticiWriteEnabled, ticiHeaderCommitTS)
+	err = local.doImport(ctx, e, splitKeys, regionSplitSize, regionSplitKeys, ticiWriteEnabled, ticiIndexID, ticiHeaderCommitTS)
 	if err == nil {
 		importedSize, importedLength := e.ImportedStatistics()
 
@@ -1574,6 +1598,7 @@ func (local *Backend) doImport(
 	regionSplitKeys [][]byte,
 	regionSplitSize, regionSplitKeyCnt int64,
 	ticiWriteEnabled bool,
+	ticiIndexID int64,
 	ticiHeaderCommitTS uint64,
 ) error {
 	/*
@@ -1708,6 +1733,7 @@ func (local *Backend) doImport(
 			regionSplitSize,
 			regionSplitKeyCnt,
 			ticiWriteEnabled,
+			ticiIndexID,
 			ticiHeaderCommitTS,
 			jobToWorkerCh,
 			&jobWg,

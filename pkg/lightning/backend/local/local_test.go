@@ -1828,6 +1828,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		1<<30,
 		false,
 		0,
+		0,
 		jobCh,
 		&jobWg,
 	)
@@ -1900,6 +1901,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		10*units.GB,
 		1<<30,
 		false,
+		0,
 		0,
 		jobCh,
 		&jobWg,
@@ -2071,7 +2073,7 @@ func TestDoImport(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -2099,7 +2101,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange"),
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "meet error when generateJobForRange")
 
 	// test second call to generateJobForRange (needRescan) meet error
@@ -2148,7 +2150,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange again"),
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "meet error when generateJobForRange again")
 
 	// test write meet unretryable error
@@ -2199,7 +2201,7 @@ func TestDoImport(t *testing.T) {
 			},
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "fatal error")
 }
 
@@ -2287,7 +2289,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -2345,7 +2347,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
@@ -2377,7 +2379,7 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		),
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0)
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
@@ -2934,7 +2936,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 
 	// Generate and send jobs
 	// The fix ensures all jobs are ref'd before sending to jobToWorkerCh
-	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, jobToWorkerCh, &jobWg)
+	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0, 0, jobToWorkerCh, &jobWg)
 	require.NoError(t, err)
 
 	// Wait for all jobs to be processed
