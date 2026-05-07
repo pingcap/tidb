@@ -505,8 +505,16 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	}
 	// computed the avgInnerRowCnt
 	var avgInnerRowCnt float64
-	if count := outerStats.RowCount; count > 0 {
+	buildRows := 0.0
+	if outerStats != nil {
+		buildRows = outerStats.RowCount
+	}
+	if buildRows > 0 {
+		count := buildRows
 		avgInnerRowCnt = p.EqualCondOutCnt / count
+	}
+	if shouldPruneIndexJoinByScanRatio(p.SCtx().GetSessionVars().IndexJoinScanRatioThreshold, buildRows, avgInnerRowCnt, p.Children()[1-outerIdx]) {
+		return nil
 	}
 	// for pk path
 	indexJoinPropTS := &property.IndexJoinRuntimeProp{
@@ -529,6 +537,29 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropTS, outerStats)...)
 	indexJoins = append(indexJoins, constructIndexHashJoinStatic(p, prop, outerIdx, indexJoinPropIS, outerStats)...)
 	return indexJoins
+}
+
+func getProbeFullScanRowsForIndexJoinPrune(p base.LogicalPlan) float64 {
+	stats := p.StatsInfo()
+	if stats != nil && stats.HistColl != nil && stats.HistColl.RealtimeCount > 0 {
+		return float64(stats.HistColl.RealtimeCount)
+	}
+	return 0
+}
+
+func shouldPruneIndexJoinByScanRatio(threshold, buildRows, probeRowsOne float64, probe base.LogicalPlan) bool {
+	if threshold <= 0 || buildRows <= 1 {
+		return false
+	}
+	innerFullScanRows := getProbeFullScanRowsForIndexJoinPrune(probe)
+	if innerFullScanRows <= 0 {
+		return false
+	}
+	probeRowsTot := buildRows * probeRowsOne
+	if probeRowsTot <= 0 {
+		return false
+	}
+	return probeRowsTot/innerFullScanRows >= threshold
 }
 
 func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *property.PhysicalProperty) bool {

@@ -187,6 +187,7 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 			})
 			plan.Check(testkit.Rows(outputReproHashJoinIssue[i].Plan...))
 		}
+		tk.MustExec("set @@session.tidb_opt_index_join_scan_ratio_threshold = 0")
 
 		// issue:59563
 		tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
