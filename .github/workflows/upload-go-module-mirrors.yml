@@ -4,18 +4,42 @@ on:
   pull_request:
     branches:
       - master
-    paths:
-      - go.mod
-      - go.sum
-      - pkg/parser/go.mod
-      - pkg/parser/go.sum
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  detect:
+    name: Detect Go Module Changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.gomod.outputs.changed }}
+    steps:
+      - name: Detect Go module changes
+        id: gomod
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          changed=false
+          while IFS= read -r path; do
+            case "${path}" in
+              go.mod|go.sum|pkg/parser/go.mod|pkg/parser/go.sum)
+                changed=true
+                break
+                ;;
+            esac
+          done < <(gh pr diff "${PR_NUMBER}" --repo "${REPOSITORY}" --name-only)
+
+          echo "changed=${changed}" >> "${GITHUB_OUTPUT}"
   upload:
     name: Upload Go Module Mirrors
+    needs: detect
+    if: needs.detect.outputs.changed == 'true'
     runs-on: ubuntu-latest
     environment: gcs-mirror-upload
     steps:
