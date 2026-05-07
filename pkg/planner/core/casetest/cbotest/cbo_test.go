@@ -171,7 +171,7 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 		require.NoError(t, testkit.LoadTableStats("repro_hash_join_issue_t_small.json", dom))
 		require.NoError(t, testkit.LoadTableStats("repro_hash_join_issue_t_big.json", dom))
 		tk.MustExec("set @@session.tidb_cost_model_version = 2")
-		tk.MustExec("set @@session.tidb_opt_index_join_scan_ratio_threshold = 0.5")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_probe_scan_ratio = 0.5")
 
 		var inputReproHashJoinIssue []string
 		var outputReproHashJoinIssue []struct {
@@ -187,7 +187,7 @@ func TestAnalyzeSuiteRegression(t *testing.T) {
 			})
 			plan.Check(testkit.Rows(outputReproHashJoinIssue[i].Plan...))
 		}
-		tk.MustExec("set @@session.tidb_opt_index_join_scan_ratio_threshold = 0")
+		tk.MustExec("set @@session.tidb_opt_index_join_max_probe_scan_ratio = 0")
 
 		// issue:59563
 		tk.MustExec("set @@session.tidb_executor_concurrency = 4;")

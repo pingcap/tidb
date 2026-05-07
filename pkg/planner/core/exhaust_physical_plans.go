@@ -513,7 +513,7 @@ func enumerateIndexJoinByOuterIdx(super base.LogicalPlan, prop *property.Physica
 		count := buildRows
 		avgInnerRowCnt = p.EqualCondOutCnt / count
 	}
-	if shouldPruneIndexJoinByScanRatio(p.SCtx().GetSessionVars().IndexJoinScanRatioThreshold, buildRows, avgInnerRowCnt, p.Children()[1-outerIdx]) {
+	if shouldPruneIndexJoinByScanRatio(p.SCtx().GetSessionVars().IndexJoinMaxProbeScanRatio, buildRows, avgInnerRowCnt, p.Children()[1-outerIdx]) {
 		return nil
 	}
 	// for pk path
