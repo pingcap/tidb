@@ -205,6 +205,20 @@ ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 			"<nil> Bob <nil> <nil>"))
 	}
 
+	// issue-66322-nullif-type-leak
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t_nullif (c6 mediumtext null, c10 enum('value1','value2','value3') null, c14 float(8,2) null, c15 double(12,4) null)")
+		tk.MustExec("insert into t_nullif values ('sample_jNu', 'value3', 43.51, 49.92)")
+		tk.MustQuery("select nullif(nullif(c10, c15), c15) from t_nullif").Check(testkit.Rows("value3"))
+		tk.MustQuery("select c6 as v from t_nullif union all select nullif(nullif(c10, c15), c15) from t_nullif").Sort().Check(testkit.Rows("sample_jNu", "value3"))
+		tk.MustQuery("with cte_995 as (select (select s164.c10 as subq_col from t_nullif as s164 order by s164.c10 asc limit 1) as col_1, nullif(nullif(pft41.c10, pft41.c15), pft41.c15) as col_3 from t_nullif as pft41) (select distinct variance(car26.c14) as col_1, car26.c6 as c6 from t_nullif as car26 group by car26.c6) union all select ueb82.col_1 as col_1, ueb82.col_3 as col_5 from cte_995 as ueb82").Sort().Check(testkit.Rows("0 sample_jNu", "value3 value3"))
+		tk.MustExec("create table t_nullif_plan (u bigint unsigned not null)")
+		// The returned value branch should keep the original NULLIF argument type, not the comparison type.
+		plan := tk.MustQuery("explain format = 'plan_tree' select nullif(u, 1) from t_nullif_plan").String()
+		require.NotContains(t, plan, "cast(test.t_nullif_plan.u")
+	}
+
 	// update-join-covering-index
 	{
 		tk := prepareSharedTestKit(t)

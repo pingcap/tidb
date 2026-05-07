@@ -60,3 +60,10 @@ func TestCanBroadcastToTiDBRPCForTestRejectsInvalidEndpoints(t *testing.T) {
 	// listener. Such targets must not take the broadcast path.
 	require.False(t, canBroadcastToTiDBRPCForTest(context.Background(), []string{"", ""}))
 }
+
+// BuildExecutorForTest builds stmt's executor tree. It is exported only for
+// external package tests that need to assert executor-build behavior.
+func BuildExecutorForTest(ctx context.Context, stmt *ExecStmt) error {
+	_, err := stmt.buildExecutor(ctx)
+	return err
+}

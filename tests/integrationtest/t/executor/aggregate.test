@@ -1073,6 +1073,8 @@ admin reload opt_rule_blacklist;
 
 # TestIssue61735AggregateTruncatedDecimal
 --enable_warnings
+select nullif(77.15, PI());
+select avg(nullif(77.15, PI()));
 select distinct avg(nullif(77.15, PI()));
 --disable_warnings
 

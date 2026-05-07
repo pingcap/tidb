@@ -537,8 +537,7 @@ func initGrpcChannelzCollectorLocked() error {
 
 func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
 	return tikvcollectors.ChannelzCollectorOpts{
-		Namespace:         namespace,
-		DisableLocalLabel: true,
+		Namespace: namespace,
 		Filter: func(node any) (collect bool, walkChildren bool) {
 			// Only collect socket and leaf subchannel info, which are more useful for troubleshooting network issues.
 			switch n := node.(type) {
@@ -556,10 +555,7 @@ func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
 					len(n.GetChannelRef()) == 0 &&
 					len(n.GetSubchannelRef()) == 0
 
-				if isLeaf {
-					return true, true
-				}
-				return false, true
+				return isLeaf, true
 
 			case *grpc_channelz_v1.Socket:
 				if isInternalChannelzSocket(n) {
