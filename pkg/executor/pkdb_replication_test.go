@@ -2,12 +2,15 @@ package executor
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/logreplicationpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -18,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/rawkv"
+	pd "github.com/tikv/pd/client"
 )
 
 func TestScanReplStateCF(t *testing.T) {
@@ -212,4 +216,68 @@ func TestCreateLogReplicationExecNextDetached(t *testing.T) {
 	err = e.Next(context.Background(), req)
 	require.NoError(t, err)
 	require.Equal(t, 0, req.NumRows())
+}
+
+type mockStoreLister struct {
+	stores []*metapb.Store
+	err    error
+}
+
+func (m mockStoreLister) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+	return m.stores, m.err
+}
+
+func TestFetchTiKVConfigFromPD(t *testing.T) {
+	tikv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"replicator":{"enable":true},"raft-engine":{"enable-log-archive":true}}`))
+	}))
+	defer tikv1.Close()
+
+	tikv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"replicator":{"enable":false},"raft-engine":{"enable-log-archive":true}}`))
+	}))
+	defer tikv2.Close()
+
+	stores := []*metapb.Store{
+		{
+			Id:            1,
+			Address:       "tikv-2:20160",
+			StatusAddress: strings.TrimPrefix(tikv2.URL, "http://"),
+			State:         metapb.StoreState_Up,
+		},
+		{
+			Id:            2,
+			Address:       "tikv-1:20160",
+			StatusAddress: strings.TrimPrefix(tikv1.URL, "http://"),
+			State:         metapb.StoreState_Up,
+		},
+	}
+
+	instances, configValues, err := fetchTiKVConfigFromPD(context.Background(), "source", mockStoreLister{stores: stores}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"tikv-1:20160", "tikv-2:20160"}, instances)
+	require.Equal(t, map[string]map[string]bool{
+		tikvConfigReplicatorEnabledKey: {
+			"tikv-1:20160": true,
+			"tikv-2:20160": false,
+		},
+		tikvConfigLogArchiveEnabledKey: {
+			"tikv-1:20160": true,
+			"tikv-2:20160": true,
+		},
+	}, configValues)
+}
+
+func TestFetchTiKVConfigFromPDRejectsNonUpStore(t *testing.T) {
+	stores := []*metapb.Store{
+		{
+			Id:            3,
+			Address:       "tikv-offline:20160",
+			StatusAddress: "127.0.0.1:65535",
+			State:         metapb.StoreState_Offline,
+		},
+	}
+
+	_, _, err := fetchTiKVConfigFromPD(context.Background(), "source", mockStoreLister{stores: stores}, nil)
+	require.ErrorContains(t, err, "source TiKV store 3 is not in Up state")
 }
