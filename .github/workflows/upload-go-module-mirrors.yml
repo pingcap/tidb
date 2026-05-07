@@ -13,10 +13,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: upload-go-module-mirrors-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   upload:
     name: Upload Go Module Mirrors
