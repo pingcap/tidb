@@ -34,11 +34,11 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1288,13 +1288,12 @@ func TestEstimateParquetReaderMemoryCtxLifetime(t *testing.T) {
 	rowGroupInMemoryThreshold = 1
 	t.Cleanup(func() { rowGroupInMemoryThreshold = origThreshold })
 
-	const fp = "github.com/pingcap/tidb/pkg/lightning/mydump/interceptParquetReader"
-	require.NoError(t, failpoint.EnableCall(fp,
+	testfailpoint.EnableCall(t,
+		"github.com/pingcap/tidb/pkg/lightning/mydump/interceptParquetReader",
 		func(r *objectio.Reader, ctx context.Context) {
 			*r = &ctxAwareReader{Reader: *r, ctx: ctx}
 		},
-	))
-	t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
+	)
 
 	pc := []ParquetColumn{
 		{

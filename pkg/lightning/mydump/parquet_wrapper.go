@@ -113,7 +113,8 @@ func newParquetWrapper(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Test hook: lets a test replace `reader` with a ctx-aware wrapper.
+	// LocalStorage's reader ignores ctx after Open returns, so tests use
+	// this hook to swap in a ctx-aware wrapper.
 	failpoint.InjectCall("interceptParquetReader", &reader, ctx)
 
 	var lastOff int64

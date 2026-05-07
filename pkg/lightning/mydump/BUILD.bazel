@@ -110,6 +110,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/mysql",
         "//pkg/table",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/filter",
