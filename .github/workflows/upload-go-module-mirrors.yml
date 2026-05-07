@@ -7,48 +7,14 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  packages: read
 
 jobs:
-  guard:
-    name: Check Mirror Upload Safety
-    runs-on: ubuntu-latest
-    outputs:
-      safe: ${{ steps.guard.outputs.safe }}
-    steps:
-      - name: Check sensitive file changes
-        id: guard
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-
-          safe=true
-          while IFS= read -r path; do
-            case "${path}" in
-              Makefile|WORKSPACE|WORKSPACE.bazel|WORKSPACE.bzlmod|MODULE.bazel|MODULE.bazel.lock|.bazelrc|cmd/mirror|cmd/mirror/*|BUILD|BUILD.bazel|*/BUILD|*/BUILD.bazel|*.bzl|*/*.bzl)
-                echo "Skip mirror upload because this PR changes a sensitive build path: ${path}"
-                safe=false
-                ;;
-            esac
-          done < <(gh pr diff "${PR_NUMBER}" --repo "${REPOSITORY}" --name-only)
-
-          echo "safe=${safe}" >> "${GITHUB_OUTPUT}"
   upload:
     name: Upload Go Module Mirrors
-    needs: guard
-    if: needs.guard.outputs.safe == 'true'
     runs-on: ubuntu-latest
     environment: gcs-mirror-upload
     steps:
-      - name: Checkout trusted source
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: trusted
-          persist-credentials: false
       - name: Checkout PR branch
         uses: actions/checkout@v6
         with:
@@ -58,6 +24,7 @@ jobs:
           persist-credentials: false
       - name: Upload Go Module Mirrors
         env:
+          GH_TOKEN: ${{ github.token }}
           GCS_MIRROR_SA_KEY: ${{ secrets.GCS_MIRROR_SA_KEY }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcs-credentials.json
         run: |
@@ -71,17 +38,14 @@ jobs:
 
           printf '%s' "${GCS_MIRROR_SA_KEY}" > "${GOOGLE_APPLICATION_CREDENTIALS}"
           chmod 600 "${GOOGLE_APPLICATION_CREDENTIALS}"
+          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           sed -i '/bazel-cache/d' pr/DEPS.bzl
           sed -i '/ats.apps.svc/d' pr/DEPS.bzl
           sed -i '/bazel-cache/d' pr/WORKSPACE
           sed -i '/ats.apps.svc/d' pr/WORKSPACE
 
-          docker build \
-            -f trusted/.github/docker/go-module-mirror/Dockerfile \
-            -t tidb-go-module-mirror \
-            trusted
           docker run --rm \
             -e GOOGLE_APPLICATION_CREDENTIALS=/credentials/gcs-credentials.json \
             -v "${GOOGLE_APPLICATION_CREDENTIALS}:/credentials/gcs-credentials.json:ro" \
             -v "${PWD}/pr:/workspace:ro" \
-            tidb-go-module-mirror
+            ghcr.io/pingcap/tidb/go-module-mirror:latest
