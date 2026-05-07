@@ -1,0 +1,49 @@
+name: Upload Go Module Mirrors
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      - go.mod
+      - go.sum
+      - pkg/parser/go.mod
+      - pkg/parser/go.sum
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upload-go-module-mirrors-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  upload:
+    name: Upload Go Module Mirrors
+    runs-on: ubuntu-latest
+    environment: gcs-mirror-upload
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+      - name: Set up bazelisk
+        uses: bazel-contrib/setup-bazel@0.16.0
+      - name: Upload Go Module Mirrors
+        env:
+          GCS_MIRROR_SA_KEY: ${{ secrets.GCS_MIRROR_SA_KEY }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcs-credentials.json
+        run: |
+          set -euo pipefail
+          unset CI
+
+          printf '%s' "${GCS_MIRROR_SA_KEY}" > "${GOOGLE_APPLICATION_CREDENTIALS}"
+          chmod 600 "${GOOGLE_APPLICATION_CREDENTIALS}"
+          sed -i '/bazel-cache/d' DEPS.bzl
+          sed -i '/ats.apps.svc/d' DEPS.bzl
+          sed -i '/bazel-cache/d' WORKSPACE
+          sed -i '/ats.apps.svc/d' WORKSPACE
+          bazel run --norun_validations //cmd/mirror -- --mirror --upload
