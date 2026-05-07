@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/pkdb"
 	"go.uber.org/zap"
 )
 
@@ -468,23 +469,29 @@ func (e *AlterLogReplicationExec) Open(ctx context.Context) error {
 				return errors.Errorf("no replication status found for %s", e.Name)
 			}
 
-			// TODO(lance6716): let PD export these strings, like LogReplicationStateSyncReplicating
 			lagSec := int64(-1)
-			state := targetStatus.GetState()
-			switch state {
-			case "SYNC_REPLICATING":
-				break waitLagRetryLoop
-			case "ASYNC_REPLICATING":
-				lagSec = targetStatus.GetCheckpointLagSec()
-			case "UNKNOWN", "INITIALIZING":
+			replicationMode := targetStatus.GetReplicationMode()
+			replicationState := targetStatus.GetState()
+			switch replicationState {
+			case pkdb.LogReplicationStatePaused:
+				return errors.Errorf("replication status for %s is %s, can't ALTER", e.Name.L, replicationState)
+			case pkdb.LogReplicationStateInitializing:
 				// leave lagSec = -1 to retry
-			case "PAUSED", "MAYBE_BLOCKING_SUSPENDED", "NON_BLOCKING_SUSPENDED":
-				return errors.Errorf("replication status for %s is %s, can't ALTER", e.Name.L, state)
+			case pkdb.LogReplicationStateReplicating:
+				switch replicationMode {
+				case pkdb.LogReplicationModeSync:
+					break waitLagRetryLoop
+				case pkdb.LogReplicationModeAsync:
+					lagSec = targetStatus.GetCheckpointLagSec()
+				}
+			default:
+				// leave lagSec = -1 to retry
+				logutil.Logger(ctx).Warn("unknown replication state, will retry", zap.String("replication_state", replicationState))
 			}
 
 			if lagSec < 0 || lagSec > maxLagSec {
 				logutil.Logger(ctx).Warn("lag is too large or unavailable, will wait lag decreased",
-					zap.String("state", state),
+					zap.String("replicationMode", replicationMode),
 					zap.Int64("currentLagSec", lagSec),
 					zap.Int64("maxLagSec", maxLagSec))
 				select {
