@@ -214,17 +214,6 @@ func MergeOverlappingFiles(
 	return err
 }
 
-// EstimateMergeSubtaskReadLayout estimates the merge task layout for one subtask.
-// fileGroups is the number of merge tasks produced by MergeOverlappingFiles.
-// maxReadersPerGroup is the maximum number of readers opened by one merge task.
-func EstimateMergeSubtaskReadLayout(fileCount, concurrency int) (fileGroups int, maxReadersPerGroup int) {
-	if fileCount <= 0 {
-		return 0, 0
-	}
-	fileGroups = splitDataFileShares(fileCount, concurrency)
-	return fileGroups, (fileCount + fileGroups - 1) / fileGroups
-}
-
 // split input data files into multiple shares evenly, with the max number files
 // in each share MaxMergingFilesPerThread, if there are not enough files, merge at
 // least 2 files in one batch.
