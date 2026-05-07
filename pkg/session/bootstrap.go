@@ -1278,7 +1278,7 @@ const (
 	version228 = 228
 
 	// ...
-	// [version228, version238] is the version range reserved for patches of 8.5.x
+	// [version229, version238] is the version range reserved for patches of 8.5.x
 	// ...
 	// next version should start with 239
 
@@ -3417,7 +3417,7 @@ func upgradeToVer228(s sessiontypes.Session, ver int64) {
 	if ver >= version228 {
 		return
 	}
-	initGlobalVariableIfNotExists(s, variable.TiDBIgnoreInlistPlanDigest, variable.BoolToOnOff(variable.DefTiDBIgnoreInlistPlanDigest))
+	initGlobalVariableIfNotExists(s, variable.TiDBIgnoreInlistPlanDigest, variable.Off)
 }
 
 func getPrimaryKeyColsOrEmpty(s sessiontypes.Session, dbName, tableName string) []string {
