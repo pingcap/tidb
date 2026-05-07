@@ -37,9 +37,8 @@ import (
 
 var (
 	// MaxMergingFilesPerThread is the maximum number of files that can be merged by a
-	// single thread. This value comes from the fact that 16 threads are ok to merge 4k
-	// files in parallel, so we set it to 250.
-	MaxMergingFilesPerThread = 250
+	// single thread.
+	MaxMergingFilesPerThread = 64
 	// MinUploadPartSize is the minimum size of each part when uploading files to
 	// external storage, which is 5MiB for both S3 and GCS.
 	MinUploadPartSize int64 = 5 * units.MiB
@@ -212,17 +211,6 @@ func MergeOverlappingFiles(
 		return opErr
 	}
 	return err
-}
-
-// EstimateMergeSubtaskReadLayout estimates the merge task layout for one subtask.
-// fileGroups is the number of merge tasks produced by MergeOverlappingFiles.
-// maxReadersPerGroup is the maximum number of readers opened by one merge task.
-func EstimateMergeSubtaskReadLayout(fileCount, concurrency int) (fileGroups int, maxReadersPerGroup int) {
-	if fileCount <= 0 {
-		return 0, 0
-	}
-	fileGroups = splitDataFileShares(fileCount, concurrency)
-	return fileGroups, (fileCount + fileGroups - 1) / fileGroups
 }
 
 // split input data files into multiple shares evenly, with the max number files
