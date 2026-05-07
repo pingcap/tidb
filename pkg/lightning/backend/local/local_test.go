@@ -2626,6 +2626,16 @@ func TestMarkTiCIWriteEngineLogs(t *testing.T) {
 	require.Equal(t, false, fields["tici-write-enabled"])
 }
 
+func TestMarkTiCIWriteEngineWithNilLogger(t *testing.T) {
+	backend := &Backend{}
+	engineUUID := uuid.New()
+
+	require.NotPanics(t, func() {
+		backend.markTiCIWriteEngine(engineUUID, true)
+		backend.markTiCIWriteEngine(engineUUID, false)
+	})
+}
+
 // refCountIngestData is a mock IngestData that tracks reference count.
 type refCountIngestData struct {
 	mockIngestData

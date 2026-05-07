@@ -695,6 +695,7 @@ func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper St
 		BackendConfig: config,
 		logger:        logger,
 		engineMgr:     engineMgr,
+		tikvCodec:     storeHelper.GetTiKVCodec(),
 	}
 	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
@@ -847,13 +848,15 @@ func (local *Backend) PostProcess(ctx context.Context) error {
 }
 
 func (local *Backend) markTiCIWriteEngine(engineUUID uuid.UUID, enabled bool) {
-	if local.logger.Logger != nil {
-		local.logger.Info(
-			"mark tici write engine",
-			zap.String("engine-uuid", engineUUID.String()),
-			zap.Bool("tici-write-enabled", enabled),
-		)
+	logger := local.logger
+	if logger.Logger == nil {
+		logger = log.L()
 	}
+	logger.Info(
+		"mark tici write engine",
+		zap.String("engine-uuid", engineUUID.String()),
+		zap.Bool("tici-write-enabled", enabled),
+	)
 	if enabled {
 		local.ticiWriteEngines.Store(engineUUID, struct{}{})
 		return
@@ -2099,7 +2102,10 @@ func (local *Backend) InitTiCIWriterGroup(ctx context.Context, getEtcdClient fun
 			return etcd.NewClientFromCfg(endpoints, 5*time.Second, "", tls)
 		}
 	}
-	keyspaceID := uint32(local.tikvCodec.GetKeyspaceID())
+	keyspaceID := uint32(0)
+	if local.tikvCodec != nil {
+		keyspaceID = uint32(local.tikvCodec.GetKeyspaceID())
+	}
 	ticiWriteGroup, err := tici.NewTiCIDataWriterGroup(ctx, getEtcdClient, tblInfo, schema, taskID, keyspaceID, newIndexIDs)
 	if err != nil {
 		return err
