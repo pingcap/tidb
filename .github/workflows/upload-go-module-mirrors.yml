@@ -1,7 +1,7 @@
 name: Upload Go Module Mirrors
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - master
 
@@ -16,6 +16,10 @@ jobs:
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v6
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
       - name: Set up bazelisk
         uses: bazel-contrib/setup-bazel@0.16.0
       - name: Upload Go Module Mirrors
