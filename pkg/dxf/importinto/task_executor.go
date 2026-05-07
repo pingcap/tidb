@@ -446,6 +446,8 @@ type mergeSortStepExecutor struct {
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
+const maxActiveMergeReadersPerSubtask = 64
+
 func (m *mergeSortStepExecutor) Init(context.Context) error {
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(m.GetResource(), &m.taskMeta.Plan)
 	m.dataKVPartSize = max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/external.MaxUploadPartCount))
@@ -515,7 +517,21 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	wctx := workerpool.NewContext(ctx)
 	mergeSplitConcurrency := int(m.GetResource().CPU.Capacity())
+	fileGroups, maxReadersPerGroup := external.EstimateMergeSubtaskReadLayout(len(sm.DataFiles), mergeSplitConcurrency)
 	mergeOpConcurrency := mergeSplitConcurrency
+	if maxReadersPerGroup > 0 {
+		mergeOpConcurrency = min(mergeOpConcurrency, max(1, maxActiveMergeReadersPerSubtask/maxReadersPerGroup))
+	}
+	estimatedActiveReaders := mergeOpConcurrency * maxReadersPerGroup
+	logger.Info("merge sort concurrency settings",
+		zap.Int("file-count", len(sm.DataFiles)),
+		zap.Int("file-groups", fileGroups),
+		zap.Int("max-readers-per-group", maxReadersPerGroup),
+		zap.Int("active-reader-budget", maxActiveMergeReadersPerSubtask),
+		zap.Int("split-concurrency", mergeSplitConcurrency),
+		zap.Int("operator-concurrency", mergeOpConcurrency),
+		zap.Int("estimated-active-readers", estimatedActiveReaders),
+	)
 	op := external.NewMergeOperator(
 		wctx,
 		objStore,

@@ -50,9 +50,6 @@ func NewKVReader(
 	initFileOffset uint64,
 	bufSize int,
 ) (*KVReader, error) {
-	if store == nil {
-		return nil, errors.New("external storage is nil")
-	}
 	// some test use very random buf size, might < 3
 	oneThird := max(bufSize/3, 1)
 	sr, err := openStoreReaderAndSeek(ctx, store, name, initFileOffset, oneThird*2)
