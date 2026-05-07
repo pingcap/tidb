@@ -34,5 +34,5 @@ func main() {
 	if certFile == "" || keyFile == "" {
 		log.Fatal("fake-oauth: FAKE_OAUTH_TLS_CERT and FAKE_OAUTH_TLS_KEY must be set to provide TLS certificate and key files.")
 	}
-	_ = http.ListenAndServeTLS(":5000", certFile, keyFile, nil)
+	log.Fatal(http.ListenAndServeTLS("127.0.0.1:5000", certFile, keyFile, nil))
 }
