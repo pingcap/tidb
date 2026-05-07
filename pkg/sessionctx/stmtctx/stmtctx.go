@@ -317,7 +317,7 @@ type StatementContext struct {
 	// log to help diagnostics, so we store them here separately.
 	ExtraWarnHandler contextutil.WarnHandlerExt
 
-	deduplicateTruncatedWrongValueWarnings bool
+	deduplicatedTruncatedWrongValueWarnings map[warningDedupKey]struct{}
 
 	execdetails.SyncExecDetails
 
@@ -1145,6 +1145,7 @@ func (sc *StatementContext) NumErrorWarnings() (ec uint16, wc int) {
 // SetWarnings sets warnings.
 func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.WarnHandler.SetWarnings(warns)
+	sc.rebuildDeduplicatedTruncatedWrongValueWarnings()
 }
 
 // SetDeduplicateTruncatedWrongValueWarnings controls whether duplicated
@@ -1153,12 +1154,19 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 // conversion diagnostics come from repeated planning/building work rather than
 // distinct input rows.
 func (sc *StatementContext) SetDeduplicateTruncatedWrongValueWarnings(deduplicate bool) {
-	sc.deduplicateTruncatedWrongValueWarnings = deduplicate
+	if !deduplicate {
+		sc.deduplicatedTruncatedWrongValueWarnings = nil
+		return
+	}
+	if sc.deduplicatedTruncatedWrongValueWarnings == nil {
+		sc.deduplicatedTruncatedWrongValueWarnings = make(map[warningDedupKey]struct{})
+	}
+	sc.rebuildDeduplicatedTruncatedWrongValueWarnings()
 }
 
 // AppendWarning appends a warning with level 'Warning'.
 func (sc *StatementContext) AppendWarning(warn error) {
-	if sc.shouldSkipDuplicatedWarning(contextutil.WarnLevelWarning, warn, nil) {
+	if sc.skipOrRecordTruncatedWrongValueWarning(contextutil.WarnLevelWarning, warn) {
 		return
 	}
 	sc.WarnHandler.AppendWarning(warn)
@@ -1166,11 +1174,10 @@ func (sc *StatementContext) AppendWarning(warn error) {
 
 // AppendWarnings appends some warnings.
 func (sc *StatementContext) AppendWarnings(warns []SQLWarn) {
-	if sc.deduplicateTruncatedWrongValueWarnings {
-		warnings := sc.WarnHandler.CopyWarnings(nil)
+	if sc.deduplicatedTruncatedWrongValueWarnings != nil {
 		deduplicated := make([]SQLWarn, 0, len(warns))
 		for _, warn := range warns {
-			if duplicatedTruncatedWrongValueWarning(warn.Level, warn.Err, warnings, deduplicated) {
+			if sc.skipOrRecordTruncatedWrongValueWarning(warn.Level, warn.Err) {
 				continue
 			}
 			deduplicated = append(deduplicated, warn)
@@ -1180,29 +1187,31 @@ func (sc *StatementContext) AppendWarnings(warns []SQLWarn) {
 	sc.WarnHandler.AppendWarnings(warns)
 }
 
-func (sc *StatementContext) shouldSkipDuplicatedWarning(level string, warn error, pending []SQLWarn) bool {
-	if !sc.deduplicateTruncatedWrongValueWarnings {
+func (sc *StatementContext) skipOrRecordTruncatedWrongValueWarning(level string, warn error) bool {
+	if sc.deduplicatedTruncatedWrongValueWarnings == nil {
 		return false
 	}
-	return duplicatedTruncatedWrongValueWarning(level, warn, sc.WarnHandler.CopyWarnings(nil), pending)
-}
-
-func duplicatedTruncatedWrongValueWarning(level string, warn error, warnings []SQLWarn, pending []SQLWarn) bool {
 	key, ok := truncatedWrongValueWarningKey(level, warn)
 	if !ok {
 		return false
 	}
-	for _, warning := range warnings {
-		if existingKey, ok := truncatedWrongValueWarningKey(warning.Level, warning.Err); ok && existingKey == key {
-			return true
-		}
+	if _, ok := sc.deduplicatedTruncatedWrongValueWarnings[key]; ok {
+		return true
 	}
-	for _, warning := range pending {
-		if existingKey, ok := truncatedWrongValueWarningKey(warning.Level, warning.Err); ok && existingKey == key {
-			return true
-		}
-	}
+	sc.deduplicatedTruncatedWrongValueWarnings[key] = struct{}{}
 	return false
+}
+
+func (sc *StatementContext) rebuildDeduplicatedTruncatedWrongValueWarnings() {
+	if sc.deduplicatedTruncatedWrongValueWarnings == nil {
+		return
+	}
+	clear(sc.deduplicatedTruncatedWrongValueWarnings)
+	for _, warning := range sc.WarnHandler.CopyWarnings(nil) {
+		if key, ok := truncatedWrongValueWarningKey(warning.Level, warning.Err); ok {
+			sc.deduplicatedTruncatedWrongValueWarnings[key] = struct{}{}
+		}
+	}
 }
 
 func truncatedWrongValueWarningKey(level string, warn error) (warningDedupKey, bool) {
@@ -1277,6 +1286,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TaskID = AllocateTaskID()
 	sc.WarnHandler.TruncateWarnings(0)
 	sc.ExtraWarnHandler.TruncateWarnings(0)
+	sc.rebuildDeduplicatedTruncatedWrongValueWarnings()
 
 	// `TaskID` is reset, we'll need to reset distSQLCtx
 	sc.distSQLCtxCache.init = sync.Once{}

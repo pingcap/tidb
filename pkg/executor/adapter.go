@@ -646,9 +646,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	// must set plan according to the `Execute` plan before getting planDigest
 	a.inheritContextFromExecuteStmt()
-	if a.isPreparedStmt && sctx.GetSessionVars().EnablePreparedPlanCache {
-		sctx.GetSessionVars().StmtCtx.SetDeduplicateTruncatedWrongValueWarnings(true)
-	}
 	var rm *runaway.Manager
 	dom := domain.GetDomain(sctx)
 	if dom != nil {

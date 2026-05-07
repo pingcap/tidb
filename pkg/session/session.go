@@ -2457,6 +2457,9 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	}
 
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if sessVars.EnablePreparedPlanCache {
+			sessVars.StmtCtx.SetDeduplicateTruncatedWrongValueWarnings(true)
+		}
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
 			args, err := expression.ExecBinaryParam(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
 			if err != nil {
