@@ -808,7 +808,8 @@ const (
 		MVIEW_ID bigint NOT NULL,
 		MV_SCHEMA varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
 		MV_NAME varchar(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-		ALERT_LEVEL varchar(16) NOT NULL,
+		ALERT_LEVEL varchar(16) DEFAULT NULL,
+		REFRESH_FAILED varchar(3) DEFAULT NULL,
 		LAST_SUCCESS_TIME datetime(6) DEFAULT NULL,
 		UPDATED_AT datetime(6) DEFAULT NULL,
 		PRIMARY KEY(MVIEW_ID))`
@@ -1305,12 +1306,16 @@ const (
 	// Add REFRESH_COMMIT_TSO and lookup index to MV refresh history table.
 	version226 = 226
 
-	// next version should start with 227
+	// version 227
+	// Add REFRESH_FAILED and allow NULL ALERT_LEVEL in MV refresh alert table.
+	version227 = 227
+
+	// next version should start with 228
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version226
+var currentBootstrapVersion int64 = version227
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1492,6 +1497,7 @@ var (
 		upgradeToVer224,
 		upgradeToVer225,
 		upgradeToVer226,
+		upgradeToVer227,
 	}
 )
 
@@ -3429,6 +3435,14 @@ func upgradeToVer226(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `REFRESH_COMMIT_TSO` bigint unsigned DEFAULT NULL AFTER `REFRESH_READ_TSO`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_mv_name_commit_tso (MV_SCHEMA, MV_NAME, REFRESH_COMMIT_TSO)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer227(s sessiontypes.Session, ver int64) {
+	if ver >= version227 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_alert MODIFY COLUMN `ALERT_LEVEL` varchar(16) DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_alert ADD COLUMN `REFRESH_FAILED` varchar(3) DEFAULT NULL AFTER `ALERT_LEVEL`", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

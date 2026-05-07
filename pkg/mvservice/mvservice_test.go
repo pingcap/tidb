@@ -1182,7 +1182,7 @@ func (h *fullChainMVServiceHelper) setPending(logs map[int64]time.Time, mvs map[
 	}
 }
 
-func (h *fullChainMVServiceHelper) loadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
+func (h *fullChainMVServiceHelper) LoadAllTiDBMVLogPurge(context.Context, basic.SessionPool) (map[int64]*mvLog, error) {
 	h.fetchLogsCalls.Add(1)
 	if h.fetchLogsErr != nil {
 		return nil, h.fetchLogsErr
@@ -1202,7 +1202,7 @@ func (h *fullChainMVServiceHelper) loadAllTiDBMVLogPurge(context.Context, basic.
 	return ret, nil
 }
 
-func (h *fullChainMVServiceHelper) loadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
+func (h *fullChainMVServiceHelper) LoadAllTiDBMVRefresh(context.Context, basic.SessionPool) (map[int64]*mv, error) {
 	h.fetchViewCalls.Add(1)
 	if h.fetchViewsErr != nil {
 		return nil, h.fetchViewsErr

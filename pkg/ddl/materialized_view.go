@@ -49,6 +49,7 @@ import (
 const (
 	mviewAttrAlertWarning                                 = "mview_alert_warning"
 	mviewAttrAlertOverdue                                 = "mview_alert_overdue"
+	mviewAttrAlertRefreshFailed                           = "mview_alert_refresh_failed"
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
 )
 
@@ -327,21 +328,22 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	if err != nil {
 		return err
 	}
-	alertWarningSec, alertOverdueSec, err := parseMViewAttributes(s.Attributes)
+	alertWarningSec, alertOverdueSec, alertRefreshFailed, err := parseMViewAttributes(s.Attributes)
 	if err != nil {
 		return err
 	}
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	mvTableInfo.MaterializedView = &model.MaterializedViewInfo{
-		BaseTableIDs:      []int64{baseTableID},
-		InitBuildState:    model.MVInitBuildBuilding,
-		SQLContent:        selectSQL,
-		RefreshMethod:     refreshMethod,
-		RefreshStartWith:  refreshStartWith,
-		RefreshNext:       refreshNext,
-		AlertWarningSec:   alertWarningSec,
-		AlertOverdueSec:   alertOverdueSec,
-		DefinitionSQLMode: ctx.GetSessionVars().SQLMode,
+		BaseTableIDs:       []int64{baseTableID},
+		InitBuildState:     model.MVInitBuildBuilding,
+		SQLContent:         selectSQL,
+		RefreshMethod:      refreshMethod,
+		RefreshStartWith:   refreshStartWith,
+		RefreshNext:        refreshNext,
+		AlertWarningSec:    alertWarningSec,
+		AlertOverdueSec:    alertOverdueSec,
+		AlertRefreshFailed: alertRefreshFailed,
+		DefinitionSQLMode:  ctx.GetSessionVars().SQLMode,
 		DefinitionTimeZone: model.TimeZoneLocation{
 			Name:   tzName,
 			Offset: tzOffset,
@@ -485,7 +487,7 @@ func (e *executor) AlterMaterializedView(ctx sessionctx.Context, s *ast.AlterMat
 				return err
 			}
 		case ast.AlterMaterializedViewActionAttributes:
-			if _, _, err := parseMViewAttributes(action.Attributes); err != nil {
+			if _, _, _, err := parseMViewAttributes(action.Attributes); err != nil {
 				return err
 			}
 		default:
@@ -736,7 +738,7 @@ func (e *executor) alterMaterializedViewAttributes(
 	mviewID int64,
 	attrs string,
 ) error {
-	alertWarningSec, alertOverdueSec, err := parseMViewAttributes(attrs)
+	alertWarningSec, alertOverdueSec, alertRefreshFailed, err := parseMViewAttributes(attrs)
 	if err != nil {
 		return err
 	}
@@ -753,8 +755,9 @@ func (e *executor) alterMaterializedViewAttributes(
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 	args := &model.AlterMaterializedViewAttributesArgs{
-		AlertWarningSec: alertWarningSec,
-		AlertOverdueSec: alertOverdueSec,
+		AlertWarningSec:    alertWarningSec,
+		AlertOverdueSec:    alertOverdueSec,
+		AlertRefreshFailed: alertRefreshFailed,
 	}
 	return errors.Trace(e.doDDLJob2(ctx, job, args))
 }
@@ -1227,52 +1230,64 @@ func buildMViewRefreshMeta(sctx sessionctx.Context, refresh *ast.MViewRefreshCla
 	}
 }
 
-func parseMViewAttributes(attrs string) (alertWarningSec, alertOverdueSec int64, err error) {
+func parseMViewAttributes(attrs string) (alertWarningSec, alertOverdueSec int64, alertRefreshFailed bool, err error) {
 	attrs = strings.TrimSpace(attrs)
 	if attrs == "" {
-		return 0, 0, nil
+		return 0, 0, false, nil
 	}
 
-	seen := make(map[string]struct{}, 2)
+	seen := make(map[string]struct{}, 3)
 	for _, rawKV := range strings.Split(attrs, ",") {
 		kv := strings.TrimSpace(rawKV)
 		if kv == "" {
-			return 0, 0, errors.New("invalid ATTRIBUTES format: empty key-value pair")
+			return 0, 0, false, errors.New("invalid ATTRIBUTES format: empty key-value pair")
 		}
 		pos := strings.Index(kv, "=")
 		if pos <= 0 || pos >= len(kv)-1 {
-			return 0, 0, errors.Errorf("invalid ATTRIBUTES format: %q", kv)
+			return 0, 0, false, errors.Errorf("invalid ATTRIBUTES format: %q", kv)
 		}
 		key := strings.ToLower(strings.TrimSpace(kv[:pos]))
 		valStr := strings.TrimSpace(kv[pos+1:])
 		if key == "" || valStr == "" {
-			return 0, 0, errors.Errorf("invalid ATTRIBUTES format: %q", kv)
+			return 0, 0, false, errors.Errorf("invalid ATTRIBUTES format: %q", kv)
 		}
 		if _, ok := seen[key]; ok {
-			return 0, 0, errors.Errorf("duplicate ATTRIBUTES key: %s", key)
+			return 0, 0, false, errors.Errorf("duplicate ATTRIBUTES key: %s", key)
 		}
 		seen[key] = struct{}{}
 
-		val, convErr := strconv.ParseInt(valStr, 10, 64)
-		if convErr != nil || val < 0 {
-			return 0, 0, errors.Errorf("invalid ATTRIBUTES value for %s: %s (must be non-negative integer seconds)", key, valStr)
-		}
-
 		switch key {
 		case mviewAttrAlertWarning:
+			val, convErr := strconv.ParseInt(valStr, 10, 64)
+			if convErr != nil || val < 0 {
+				return 0, 0, false, errors.Errorf("invalid ATTRIBUTES value for %s: %s (must be non-negative integer seconds)", key, valStr)
+			}
 			alertWarningSec = val
 		case mviewAttrAlertOverdue:
+			val, convErr := strconv.ParseInt(valStr, 10, 64)
+			if convErr != nil || val < 0 {
+				return 0, 0, false, errors.Errorf("invalid ATTRIBUTES value for %s: %s (must be non-negative integer seconds)", key, valStr)
+			}
 			alertOverdueSec = val
+		case mviewAttrAlertRefreshFailed:
+			switch strings.ToLower(valStr) {
+			case "yes":
+				alertRefreshFailed = true
+			case "no":
+				alertRefreshFailed = false
+			default:
+				return 0, 0, false, errors.Errorf("invalid ATTRIBUTES value for %s: %s (must be yes or no)", key, valStr)
+			}
 		default:
-			return 0, 0, errors.Errorf("unsupported ATTRIBUTES key: %s", key)
+			return 0, 0, false, errors.Errorf("unsupported ATTRIBUTES key: %s", key)
 		}
 	}
 
 	if alertWarningSec > 0 && alertOverdueSec > 0 && alertWarningSec > alertOverdueSec {
-		return 0, 0, errors.Errorf("invalid ATTRIBUTES: %s (%d) must be less than or equal to %s (%d)",
+		return 0, 0, false, errors.Errorf("invalid ATTRIBUTES: %s (%d) must be less than or equal to %s (%d)",
 			mviewAttrAlertWarning, alertWarningSec, mviewAttrAlertOverdue, alertOverdueSec)
 	}
-	return alertWarningSec, alertOverdueSec, nil
+	return alertWarningSec, alertOverdueSec, alertRefreshFailed, nil
 }
 
 type mviewGroupByInfo struct {

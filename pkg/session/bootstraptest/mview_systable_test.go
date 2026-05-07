@@ -96,6 +96,10 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name='ALERT_LEVEL'").
 		Check(testkit.Rows("varchar(16)"))
+	tk.MustQuery("select is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name='ALERT_LEVEL'").
+		Check(testkit.Rows("YES"))
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name='REFRESH_FAILED'").
+		Check(testkit.Rows("varchar(3)"))
 	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('LAST_SUCCESS_TIME', 'UPDATED_AT') order by column_name").
 		Check(testkit.Rows("6", "6"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and index_name='PRIMARY' order by seq_in_index").
@@ -381,13 +385,17 @@ func TestUpgradeToVer224MaterializedViewHistoryDurationIndexesAndAlertTable(t *t
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mview_id"))
 	tk.MustQuery("select lower(column_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' order by ordinal_position").
-		Check(testkit.Rows("mview_id", "mv_schema", "mv_name", "alert_level", "last_success_time", "updated_at"))
+		Check(testkit.Rows("mview_id", "mv_schema", "mv_name", "alert_level", "refresh_failed", "last_success_time", "updated_at"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('MV_SCHEMA', 'MV_NAME') order by column_name").
 		Check(testkit.Rows("varchar(64)", "varchar(64)"))
 	tk.MustQuery("select lower(collation_name) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('MV_SCHEMA', 'MV_NAME') order by column_name").
 		Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name='ALERT_LEVEL'").
 		Check(testkit.Rows("varchar(16)"))
+	tk.MustQuery("select is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name='ALERT_LEVEL'").
+		Check(testkit.Rows("YES"))
+	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name='REFRESH_FAILED'").
+		Check(testkit.Rows("varchar(3)"))
 	tk.MustQuery("select datetime_precision from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_alert' and column_name in ('LAST_SUCCESS_TIME', 'UPDATED_AT') order by column_name").
 		Check(testkit.Rows("6", "6"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_duration_sec' order by seq_in_index").

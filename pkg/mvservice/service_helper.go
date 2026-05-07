@@ -112,16 +112,30 @@ func (*serviceHelper) serverFilter(s serverInfo) bool {
 	return true
 }
 
-func buildDeleteMVRefreshAlertSQL(mviewIDs []int64) string {
-	var sql strings.Builder
-	sql.WriteString("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN (")
+func appendMViewIDInCondition(sql *strings.Builder, mviewIDs []int64) {
+	sql.WriteString("(")
 	for i, mviewID := range mviewIDs {
 		if i > 0 {
 			sql.WriteString(",")
 		}
-		sqlescape.MustFormatSQL(&sql, "%?", mviewID)
+		sqlescape.MustFormatSQL(sql, "%?", mviewID)
 	}
 	sql.WriteString(")")
+}
+
+func buildDeleteResolvedMVRefreshAlertSQL(mviewIDs []int64) string {
+	var sql strings.Builder
+	sql.WriteString("DELETE FROM mysql.tidb_mview_refresh_alert WHERE MVIEW_ID IN ")
+	appendMViewIDInCondition(&sql, mviewIDs)
+	sql.WriteString(" AND REFRESH_FAILED IS NULL")
+	return sql.String()
+}
+
+func buildClearResolvedMVRefreshAlertLevelSQL(updatedAt time.Time, mviewIDs []int64) string {
+	var sql strings.Builder
+	sqlescape.MustFormatSQL(&sql, "UPDATE mysql.tidb_mview_refresh_alert SET ALERT_LEVEL = NULL, UPDATED_AT = %? WHERE MVIEW_ID IN ", updatedAt.Round(0))
+	appendMViewIDInCondition(&sql, mviewIDs)
+	sql.WriteString(" AND REFRESH_FAILED IS NOT NULL AND ALERT_LEVEL IS NOT NULL")
 	return sql.String()
 }
 
@@ -163,7 +177,7 @@ func buildCleanupStaleMVRefreshAlertSQL() string {
 	return `DELETE a
 FROM mysql.tidb_mview_refresh_alert AS a
 LEFT JOIN mysql.tidb_mview_refresh_info AS i ON a.MVIEW_ID = i.MVIEW_ID
-WHERE i.MVIEW_ID IS NULL OR i.NEXT_TIME IS NULL`
+WHERE i.MVIEW_ID IS NULL OR (a.ALERT_LEVEL IS NULL AND a.REFRESH_FAILED IS NULL)`
 }
 
 func (*serviceHelper) SyncMVRefreshAlertStates(
@@ -184,7 +198,7 @@ func (*serviceHelper) SyncMVRefreshAlertStates(
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	sctx := se.(sessionctx.Context)
 
-	deleteIDs := make([]int64, 0, len(states))
+	resolvedIDs := make([]int64, 0, len(states))
 	upsertStates := make([]refreshAlertTask, 0, len(states))
 	for _, state := range states {
 		if state.mviewID <= 0 {
@@ -194,15 +208,19 @@ func (*serviceHelper) SyncMVRefreshAlertStates(
 			continue
 		}
 		if state.alertLevel == "" {
-			deleteIDs = append(deleteIDs, state.mviewID)
+			resolvedIDs = append(resolvedIDs, state.mviewID)
 			continue
 		}
 		upsertStates = append(upsertStates, state)
 	}
 
-	for start := 0; start < len(deleteIDs); start += refreshAlertWriteBatchSize {
-		end := min(start+refreshAlertWriteBatchSize, len(deleteIDs))
-		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, buildDeleteMVRefreshAlertSQL(deleteIDs[start:end]), nil); err != nil {
+	for start := 0; start < len(resolvedIDs); start += refreshAlertWriteBatchSize {
+		end := min(start+refreshAlertWriteBatchSize, len(resolvedIDs))
+		ids := resolvedIDs[start:end]
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, buildDeleteResolvedMVRefreshAlertSQL(ids), nil); err != nil {
+			return err
+		}
+		if _, err := execRCRestrictedSQLWithSession(ctx, sctx, buildClearResolvedMVRefreshAlertLevelSQL(updatedAt, ids), nil); err != nil {
 			return err
 		}
 	}
@@ -1249,8 +1267,8 @@ func purgeMVHistoryByCountLimit(
 	return nil
 }
 
-// loadAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
-func (*serviceHelper) loadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
+// LoadAllTiDBMVLogPurge loads all scheduled MV log purge tasks from metadata.
+func (*serviceHelper) LoadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mvLog, error) {
 	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MLOG_ID FROM mysql.tidb_mlog_purge_info WHERE NEXT_TIME IS NOT NULL`
 	rows, err := execRCRestrictedSQLWithSessionPool(ctx, sysSessionPool, sql, nil)
 	if err != nil {
@@ -1276,8 +1294,8 @@ func (*serviceHelper) loadAllTiDBMVLogPurge(ctx context.Context, sysSessionPool 
 	return newPending, nil
 }
 
-// loadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
-func (*serviceHelper) loadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
+// LoadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
+func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mv, error) {
 	const sql = `SELECT TIMESTAMPDIFF(SECOND, '1970-01-01 00:00:00', NEXT_TIME) as NEXT_TIME_SEC, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_TIME IS NOT NULL`
 	se, err := sysSessionPool.Get()
 	if err != nil {

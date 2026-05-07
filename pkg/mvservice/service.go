@@ -937,7 +937,7 @@ func (t *MVService) fetchAllTiDBMVLogPurge() (map[int64]*mvLog, error) {
 		t.mh.observeTaskDuration(mvFetchTypeMLogPurge, result, mvsSince(start))
 	}()
 
-	newPending, err := t.mh.loadAllTiDBMVLogPurge(t.ctx, t.sysSessionPool)
+	newPending, err := t.mh.LoadAllTiDBMVLogPurge(t.ctx, t.sysSessionPool)
 	if err != nil {
 		result = mvDurationResultFailed
 		fields := append(t.runtimeLogFields(), zap.Error(err))
@@ -956,7 +956,7 @@ func (t *MVService) fetchAllTiDBMVRefresh() (map[int64]*mv, error) {
 		t.mh.observeTaskDuration(mvFetchTypeMViewRefresh, result, mvsSince(start))
 	}()
 
-	newPending, err := t.mh.loadAllTiDBMVRefresh(t.ctx, t.sysSessionPool)
+	newPending, err := t.mh.LoadAllTiDBMVRefresh(t.ctx, t.sysSessionPool)
 	if err != nil {
 		result = mvDurationResultFailed
 		fields := append(t.runtimeLogFields(), zap.Error(err))
