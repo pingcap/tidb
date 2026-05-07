@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -20,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -89,9 +91,14 @@ type ProcedureExec struct {
 	securityType        string
 	cache               []plannercore.NeedCloseCur
 	parentContext       *variable.ProcedureContext
+	routineAnalyzer     *routineExplainAnalyzer
 
 	buildPlan  func(base.Plan) exec.Executor
 	isFunction bool
+}
+
+type routineTxnPreparer interface {
+	PrepareTxnCtx(context.Context) error
 }
 
 // Close ProcedureExec.
@@ -1025,7 +1032,7 @@ func (e *ProcedureExec) executeCall(ctx context.Context) error {
 		}
 		oldIP = ip
 		cmd := e.procedurePlan.ProcedureCommandList[ip]
-		if vars.StmtCtx.TriggerCtx.InTrigger || e.isFunction {
+		if vars.StmtCtx.TriggerCtx.InTrigger || e.isFunction || e.routineAnalyzer != nil {
 			cmd.RegisterCompileAndExecFunc(e.executeWithSameContext)
 		}
 
@@ -1059,16 +1066,71 @@ func (e *ProcedureExec) executeCall(ctx context.Context) error {
 }
 
 func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast.StmtNode) ([]chunk.Row, []*types.FieldType, error) {
+	var (
+		site             plannercore.ExplainRoutineRuntimeSite
+		hasRoutineSite   bool
+		runtimeStmt      ast.StmtNode
+		runtimeSQLText   string
+		stmtForExecution = stmtNode
+		stmtForStmtCtx   = stmtNode
+		captureDrilldown bool
+	)
+	if e.routineAnalyzer != nil {
+		site, hasRoutineSite = plannercore.ExplainRoutineRuntimeSiteFromContext(ctx)
+		if hasRoutineSite {
+			var err error
+			runtimeStmt, runtimeSQLText, err = resolveRoutineExplainRuntimeStmt(stmtNode, e.Ctx().GetSessionVars())
+			if err != nil {
+				return nil, nil, err
+			}
+			if _, ok := stmtNode.(*ast.ExecuteStmt); ok && runtimeStmt != nil {
+				stmtForStmtCtx = runtimeStmt
+			}
+			captureDrilldown = e.routineAnalyzer.targetMatches(site.StmtOrdinal)
+			if captureDrilldown {
+				targetStatsColl := e.routineAnalyzer.drilldownRuntimeStatsCollForTarget()
+				originalStatsColl := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl
+				e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl = targetStatsColl
+				defer func() {
+					e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl = originalStatsColl
+				}()
+			}
+		}
+	}
+
+	vars := e.Ctx().GetSessionVars()
+	originalStmtCtx := vars.StmtCtx
+	restoreStmtCtx := resetStmtCtx(e.Ctx(), stmtForStmtCtx)
+	defer restoreStmtCtx()
+	restoreReplacedStmtCtx := func() {
+		currentStmtCtx := vars.StmtCtx
+		if currentStmtCtx == originalStmtCtx {
+			return
+		}
+		currentStmtCtx.CopyMuForCallProcedure(originalStmtCtx)
+		vars.StmtCtx = originalStmtCtx
+	}
+	defer restoreReplacedStmtCtx()
 	callStmt, _ := e.Statement.(*ast.CallStmt)
-	span, ctx := startRoutineStatementTraceSpan(ctx, callStmt, stmtNode)
+	span, ctx := startRoutineStatementTraceSpan(ctx, callStmt, stmtForExecution)
 	defer span.Finish()
 	origTraceCtx := e.Ctx().GetTraceCtx()
 	e.Ctx().SetTraceCtx(ctx)
 	defer e.Ctx().SetTraceCtx(origTraceCtx)
 
-	defer resetStmtCtx(e.Ctx(), stmtNode)()
-	nodeW := resolve.NewNodeW(stmtNode)
-	err := plannercore.Preprocess(ctx, e.Ctx(), nodeW)
+	if preparer, ok := e.Ctx().(routineTxnPreparer); ok {
+		if err := preparer.PrepareTxnCtx(ctx); err != nil {
+			return nil, nil, err
+		}
+	}
+	txnManager := sessiontxn.GetTxnManager(e.Ctx())
+	if err := txnManager.OnStmtStart(ctx, stmtForExecution); err != nil {
+		return nil, nil, err
+	}
+	defer txnManager.OnStmtEnd()
+
+	nodeW := resolve.NewNodeW(stmtForExecution)
+	err := plannercore.Preprocess(ctx, e.Ctx(), nodeW, plannercore.InitTxnContextProvider)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1095,6 +1157,15 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	if newExec == nil {
 		return nil, nil, errors.New("failed to build executor for stored function")
 	}
+	if executorExec, ok := newExec.(*ExecuteExec); ok {
+		if err := executorExec.Build(builder); err != nil {
+			return nil, nil, err
+		}
+		if executorExec.lowerPriority {
+			e.Ctx().GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+		}
+		newExec = executorExec.stmtExec
+	}
 
 	if err := exec.Open(ctx, newExec); err != nil {
 		terror.Log(exec.Close(newExec))
@@ -1106,7 +1177,10 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		fieldTypes = append(fieldTypes, field.RetType)
 	}
 
+	start := time.Now()
 	var rows []chunk.Row
+	var rowsProduced int64
+	drainRows := plannercore.ExplainRoutineDrainRowsFromContext(ctx)
 	for {
 		chk := exec.NewFirstChunk(newExec)
 		err = exec.Next(ctx, newExec, chk)
@@ -1115,6 +1189,10 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 		}
 		if chk.NumRows() == 0 {
 			break
+		}
+		rowsProduced += int64(chk.NumRows())
+		if drainRows {
+			continue
 		}
 		if rows == nil {
 			rows = make([]chunk.Row, 0, chk.NumRows())
@@ -1131,7 +1209,33 @@ func (e *ProcedureExec) executeWithSameContext(ctx context.Context, stmtNode ast
 	if err != nil {
 		return nil, nil, err
 	}
-	e.Ctx().StmtCommit(ctx)
+	restoreReplacedStmtCtx()
+	if txnManager.GetContextProvider() != nil {
+		e.Ctx().StmtCommit(ctx)
+	}
+
+	if e.routineAnalyzer != nil && hasRoutineSite {
+		var (
+			drilldownRows [][]string
+			planKey       string
+			explainable   bool
+		)
+		planForExplain := p
+		if executePlan, ok := p.(*plannercore.Execute); ok && executePlan.Plan != nil {
+			planForExplain = executePlan.Plan
+		}
+		if runtimeStmt != nil {
+			explainable = !routineExplainIsScaffoldingStmt(stmtNode)
+			planKey = routineExplainPlanKey(planForExplain)
+			if captureDrilldown && explainable {
+				drilldownRows, err = renderRoutineExplainAnalyzeRows(planForExplain, runtimeStmt, e.routineAnalyzer.drilldownFormat)
+				if err != nil {
+					return nil, nil, err
+				}
+			}
+		}
+		e.routineAnalyzer.observe(site.StmtOrdinal, runtimeSQLText, rowsProduced, time.Since(start), planKey, explainable, drilldownRows)
+	}
 	return rows, fieldTypes, nil
 }
 

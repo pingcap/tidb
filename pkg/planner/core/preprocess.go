@@ -328,6 +328,9 @@ const (
 	// inCreateRoutine is set when visiting routine.
 	// skip table && execute precheck
 	inCreateRoutine
+	// inExplainRoutineName skips routine-name resolution while still allowing
+	// normal table resolution in EXPLAIN ROUTINE argument expressions.
+	inExplainRoutineName
 	// inCreateOrDropTrigger is set when visiting create or drop trigger statement.
 	inCreateOrDropTrigger
 )
@@ -582,6 +585,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inAnalyze
 	case *ast.CreateProcedureInfo:
 		p.flag |= inCreateRoutine
+	case *ast.ExplainRoutineStmt:
+		p.flag |= inExplainRoutineName
 	case *ast.CreateTriggerStmt:
 		p.flag |= inCreateOrDropTrigger
 		p.checkCreateTriggerGrammar(node)
@@ -782,6 +787,17 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			}
 		}
 		if !valid {
+			p.err = plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs(x.Format)
+		}
+	case *ast.ExplainRoutineStmt:
+		valid := false
+		for i, length := 0, len(types.ExplainFormats); i < length; i++ {
+			if strings.ToLower(x.Format) == types.ExplainFormats[i] {
+				valid = true
+				break
+			}
+		}
+		if x.Format != "" && !valid {
 			p.err = plannererrors.ErrUnknownExplainFormat.GenWithStackByArgs(x.Format)
 		}
 	case *ast.TableName:
@@ -1773,6 +1789,10 @@ func (p *preprocessor) stmtType() string {
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	// Creating routine doesn't check tables exist or not.
 	if p.flag&inCreateRoutine == inCreateRoutine {
+		return
+	}
+	if p.flag&inExplainRoutineName == inExplainRoutineName {
+		p.flag &= ^inExplainRoutineName
 		return
 	}
 	if tn.Schema.L == "" {

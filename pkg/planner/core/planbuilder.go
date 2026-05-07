@@ -340,6 +340,21 @@ type PlanBuilder struct {
 	procedureGoSet []*variable.ProcedureLabel
 
 	storedFuncRetType *types.FieldType
+
+	// explainRoutineBlockPath stores the current routine block path while building
+	// procedure command lists, so EXPLAIN ROUTINE can surface stable statement
+	// placement metadata without reverse-engineering control flow later.
+	explainRoutineBlockPath []string
+	// explainRoutineBlockCount assigns stable ordinals per block kind.
+	explainRoutineBlockCount map[string]int
+	// explainRoutineElseIfCount tracks ELSEIF ordinals for the currently active IF stack.
+	explainRoutineElseIfCount []int
+	// explainRoutineRootBodyEntered marks that the top-level routine body has been
+	// entered, so we keep top-level statements at `root` instead of `root/block#1/body`.
+	explainRoutineRootBodyEntered bool
+	// explainRoutineStmtOrdinal assigns stable statement ordinals to observable
+	// routine statement sites while building the procedure command list.
+	explainRoutineStmtOrdinal int
 }
 
 type handleColHelper struct {
@@ -642,6 +657,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildExecute(ctx, x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(ctx, x)
+	case *ast.ExplainRoutineStmt:
+		return b.buildExplainRoutine(ctx, x)
 	case *ast.ExplainForStmt:
 		return b.buildExplainFor(x)
 	case *ast.TraceStmt:
@@ -6180,6 +6197,41 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	}
 
 	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt, nil)
+}
+
+func (b *PlanBuilder) buildExplainRoutine(ctx context.Context, stmt *ast.ExplainRoutineStmt) (base.Plan, error) {
+	format := normalizeExplainRoutineFormat(stmt.Format)
+	if err := validateExplainRoutineFormat(format, stmt.Analyze, stmt.HasTargetStmtOrdinal); err != nil {
+		return nil, err
+	}
+
+	callStmt := newExplainRoutineStmtFromAST(stmt)
+	if !stmt.Analyze && len(callStmt.Procedure.Args) == 0 {
+		if err := b.fillExplainRoutineShapeOnlyArgs(ctx, callStmt); err != nil {
+			return nil, err
+		}
+	}
+
+	callPlan, err := b.buildCallProcedure(ctx, callStmt, false)
+	if err != nil {
+		return nil, err
+	}
+
+	call, ok := callPlan.(*CallStmt)
+	if !ok {
+		return nil, errors.Errorf("unexpected explain routine call plan %T", callPlan)
+	}
+
+	p := &ExplainRoutine{
+		Format:               format,
+		Analyze:              stmt.Analyze,
+		HasTargetStmtOrdinal: stmt.HasTargetStmtOrdinal,
+		TargetStmtOrdinal:    stmt.TargetStmtOrdinal,
+		Call:                 call,
+		Catalog:              BuildExplainRoutineCatalog(call.Plan),
+	}
+	p.SetSCtx(b.ctx)
+	return p, p.prepareSchema()
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {

@@ -225,6 +225,79 @@ func prepareCacheAst(ctx context.Context, astCache ProcedureCacheAst, exec sqlex
 	return nil
 }
 
+func (b *PlanBuilder) initExplainRoutineBlockState() {
+	b.explainRoutineBlockPath = []string{"root"}
+	b.explainRoutineBlockCount = make(map[string]int)
+	b.explainRoutineElseIfCount = b.explainRoutineElseIfCount[:0]
+	b.explainRoutineRootBodyEntered = false
+	b.explainRoutineStmtOrdinal = 0
+}
+
+func (b *PlanBuilder) currentExplainRoutineBlockPath() string {
+	if len(b.explainRoutineBlockPath) == 0 {
+		return "root"
+	}
+	return strings.Join(b.explainRoutineBlockPath, "/")
+}
+
+func (b *PlanBuilder) nextExplainRoutineBlockSegment(kind string) string {
+	if b.explainRoutineBlockCount == nil {
+		b.explainRoutineBlockCount = make(map[string]int)
+	}
+	b.explainRoutineBlockCount[kind]++
+	return fmt.Sprintf("%s#%d", kind, b.explainRoutineBlockCount[kind])
+}
+
+func (b *PlanBuilder) pushExplainRoutineBlockPath(segments ...string) {
+	b.explainRoutineBlockPath = append(b.explainRoutineBlockPath, segments...)
+}
+
+func (b *PlanBuilder) popExplainRoutineBlockPath(n int) {
+	if n <= 0 || n > len(b.explainRoutineBlockPath) {
+		return
+	}
+	b.explainRoutineBlockPath = b.explainRoutineBlockPath[:len(b.explainRoutineBlockPath)-n]
+}
+
+func (b *PlanBuilder) withExplainRoutineBlockPath(segments []string, fn func() error) error {
+	b.pushExplainRoutineBlockPath(segments...)
+	defer b.popExplainRoutineBlockPath(len(segments))
+	return fn()
+}
+
+func (b *PlanBuilder) withExplainRoutineBlockPathOverride(path []string, fn func() error) error {
+	oldPath := b.explainRoutineBlockPath
+	b.explainRoutineBlockPath = append([]string(nil), path...)
+	defer func() {
+		b.explainRoutineBlockPath = oldPath
+	}()
+	return fn()
+}
+
+func (b *PlanBuilder) currentExplainRoutinePathTail() string {
+	if len(b.explainRoutineBlockPath) == 0 {
+		return ""
+	}
+	return b.explainRoutineBlockPath[len(b.explainRoutineBlockPath)-1]
+}
+
+func (b *PlanBuilder) currentExplainRoutineIfBasePath() []string {
+	if len(b.explainRoutineBlockPath) == 0 {
+		return []string{"root"}
+	}
+	for i := len(b.explainRoutineBlockPath) - 1; i >= 0; i-- {
+		if strings.HasPrefix(b.explainRoutineBlockPath[i], "if#") {
+			return append([]string(nil), b.explainRoutineBlockPath[:i+1]...)
+		}
+	}
+	return append([]string(nil), b.explainRoutineBlockPath...)
+}
+
+func (b *PlanBuilder) nextExplainRoutineStmtOrdinal() int {
+	b.explainRoutineStmtOrdinal++
+	return b.explainRoutineStmtOrdinal
+}
+
 // CacheExpr Stores expr ast tree
 // isInvalid Indicates whether it is invalid
 // expr Indicates expr string
@@ -583,8 +656,10 @@ func (p *ProcedurceFetchInto) CloneStructure(contextMap map[*variable.ProcedureC
 // OpenProcedurceCursor open cursor.
 type OpenProcedurceCursor struct {
 	baseProcedureExecPlan
-	curName string
-	context *variable.ProcedureContext
+	curName     string
+	context     *variable.ProcedureContext
+	blockPath   string
+	stmtOrdinal int
 }
 
 // NewOpenProcedurceCursor create OpenProcedurceCursor instance only use test.
@@ -607,6 +682,7 @@ func (p *OpenProcedurceCursor) Execute(ctx context.Context, sctx sessionctx.Cont
 	if !ok {
 		return cache, errors.Errorf("unspport CursorRes type %T", cursors)
 	}
+	ctx = WithExplainRoutineRuntimeSite(ctx, ExplainRoutineRuntimeSite{StmtOrdinal: p.stmtOrdinal})
 	err = curs.OpenCurs(ctx, sctx, &p.baseProcedureExecPlan)
 	if err != nil {
 		return cache, err
@@ -632,16 +708,24 @@ func (p *OpenProcedurceCursor) GetString(_ sessionctx.Context, level string) str
 
 // CloneStructure Clone OpenProcedurceCursor data structure without data.
 func (p *OpenProcedurceCursor) CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan {
-	return &OpenProcedurceCursor{curName: p.curName, context: p.context.CopyContext(contextMap)}
+	return &OpenProcedurceCursor{
+		curName:     p.curName,
+		context:     p.context.CopyContext(contextMap),
+		blockPath:   p.blockPath,
+		stmtOrdinal: p.stmtOrdinal,
+	}
 }
 
 // UpdateVariables init procedure variable.
 type UpdateVariables struct {
 	baseProcedureExecPlan
-	name     string
-	expr     string
-	context  *variable.ProcedureContext
-	declType *types.FieldType
+	name        string
+	expr        string
+	exprNode    ast.ExprNode
+	context     *variable.ProcedureContext
+	declType    *types.FieldType
+	blockPath   string
+	stmtOrdinal int
 }
 
 // ProcedureSaveIP save next execute id.
@@ -989,6 +1073,7 @@ func (vars *UpdateVariables) Execute(ctx context.Context, sctx sessionctx.Contex
 	// according to bug14643_1.
 	// If the initialization fails, the variable will still be created.
 	exec := vars.baseProcedureExecPlan.compileAndExec
+	ctx = WithExplainRoutineRuntimeSite(ctx, ExplainRoutineRuntimeSite{StmtOrdinal: vars.stmtOrdinal})
 	d, err := GetExprValue(ctx, &CacheExpr{expr: vars.expr, isInvalid: true}, vars.declType, sctx, vars.name, exec)
 	vari := variable.NewProcedureVars(vars.name, vars.declType)
 	vars.context.Vars = append(vars.context.Vars, vari)
@@ -1021,19 +1106,25 @@ func (vars *UpdateVariables) GetString(_ sessionctx.Context, level string) strin
 // CloneStructure Clone UpdateVariables data structure without data.
 func (vars *UpdateVariables) CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan {
 	return &UpdateVariables{name: vars.name,
-		expr:     vars.expr,
-		context:  vars.context.CopyContext(contextMap),
-		declType: vars.declType}
+		expr:        vars.expr,
+		exprNode:    vars.exprNode,
+		context:     vars.context.CopyContext(contextMap),
+		declType:    vars.declType,
+		blockPath:   vars.blockPath,
+		stmtOrdinal: vars.stmtOrdinal}
 }
 
 // ProcedureIfGo Logical Judgment Jump Structure.
 type ProcedureIfGo struct {
 	baseProcedureExecPlan
-	context   *variable.ProcedureContext
-	label     *variable.ProcedureLabel
-	expr      *CacheExpr
-	dest      uint
-	errorDest uint
+	context     *variable.ProcedureContext
+	label       *variable.ProcedureLabel
+	expr        *CacheExpr
+	exprNode    ast.ExprNode
+	blockPath   string
+	stmtOrdinal int
+	dest        uint
+	errorDest   uint
 }
 
 // NewProcedureIfGo create ProcedureIfGo instance only use test.
@@ -1058,6 +1149,7 @@ func (pIf *ProcedureIfGo) Execute(ctx context.Context, sctx sessionctx.Context, 
 		return cache, err
 	}
 	exec := pIf.baseProcedureExecPlan.compileAndExec
+	ctx = WithExplainRoutineRuntimeSite(ctx, ExplainRoutineRuntimeSite{StmtOrdinal: pIf.stmtOrdinal})
 	datum, err := GetExprValue(ctx, pIf.expr, types.NewFieldType(mysql.TypeTiny), sctx, "", exec)
 	if err != nil {
 		return cache, err
@@ -1107,11 +1199,14 @@ func (vars *ProcedureIfGo) GetString(ctx sessionctx.Context, level string) strin
 // CloneStructure Clone ProcedureIfGo data structure without data.
 func (pIf *ProcedureIfGo) CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan {
 	return &ProcedureIfGo{
-		context:   pIf.context.CopyContext(contextMap),
-		label:     pIf.label,
-		expr:      pIf.expr,
-		dest:      pIf.dest,
-		errorDest: pIf.errorDest,
+		context:     pIf.context.CopyContext(contextMap),
+		label:       pIf.label,
+		expr:        pIf.expr,
+		exprNode:    pIf.exprNode,
+		blockPath:   pIf.blockPath,
+		stmtOrdinal: pIf.stmtOrdinal,
+		dest:        pIf.dest,
+		errorDest:   pIf.errorDest,
 	}
 }
 
@@ -1163,21 +1258,26 @@ func NewExecuteBaseSQL(sql string, context *variable.ProcedureContext) *executeB
 	return &executeBaseSQL{
 		cacheStmt: &CacheAst{sql: sql, isInvalid: true},
 		context:   context,
+		blockPath: "root",
 	}
 }
 
 // executeBaseSQL execute base sql.
 type executeBaseSQL struct {
 	baseProcedureExecPlan
-	cacheStmt *CacheAst
-	context   *variable.ProcedureContext
+	cacheStmt   *CacheAst
+	context     *variable.ProcedureContext
+	blockPath   string
+	stmtOrdinal int
 }
 
 type returnInst struct {
 	baseProcedureExecPlan
-	cacheStmt *CacheAst
-	context   *variable.ProcedureContext
-	retType   *types.FieldType
+	cacheStmt   *CacheAst
+	context     *variable.ProcedureContext
+	retType     *types.FieldType
+	blockPath   string
+	stmtOrdinal int
 }
 
 // Execute execute base sql.
@@ -1207,6 +1307,7 @@ func (p *returnInst) Execute(ctx context.Context, sctx sessionctx.Context, id *u
 		switch x := stmt.(type) {
 		case *ast.ProcedureReturnStmt:
 			exec := p.baseProcedureExecPlan.compileAndExec
+			ctx = WithExplainRoutineRuntimeSite(ctx, ExplainRoutineRuntimeSite{StmtOrdinal: p.stmtOrdinal})
 			d, err2 := GetExprValue(ctx, NewCacheExpr(true, ExprNodeToString(x.ReturnExpr), nil), p.retType, sctx, "", exec)
 			if err2 != nil {
 				return cache, err2
@@ -1270,16 +1371,21 @@ func (p *returnInst) Hanlable() bool {
 // CloneStructure gets base context.
 func (p *returnInst) CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan {
 	return &returnInst{
-		context:   p.context.CopyContext(contextMap),
-		cacheStmt: p.cacheStmt,
-		retType:   p.retType,
+		context:     p.context.CopyContext(contextMap),
+		cacheStmt:   p.cacheStmt,
+		retType:     p.retType,
+		blockPath:   p.blockPath,
+		stmtOrdinal: p.stmtOrdinal,
 	}
 }
 
 // conditionDest If condition equal jump to dest destination
 type conditionDest struct {
-	condition *CacheExpr
-	dest      uint
+	condition   *CacheExpr
+	exprNode    ast.ExprNode
+	blockPath   string
+	stmtOrdinal int
+	dest        uint
 }
 
 // NewProcedureSimpleCase create procedureSimpleCase instance only use test.
@@ -1310,14 +1416,17 @@ func (procedureCase *procedureSimpleCase) AddDest(con *conditionDest) {
 // procedureSimpleCase represent `case expr when ... then ... `
 type procedureSimpleCase struct {
 	baseProcedureExecPlan
-	hasElse   bool
-	context   *variable.ProcedureContext
-	condition *CacheExpr
-	dests     []conditionDest
-	errDest   uint
-	elseDest  uint
-	collate   string
-	ID        int
+	hasElse           bool
+	context           *variable.ProcedureContext
+	condition         *CacheExpr
+	conditionExprNode ast.ExprNode
+	blockPath         string
+	stmtOrdinal       int
+	dests             []conditionDest
+	errDest           uint
+	elseDest          uint
+	collate           string
+	ID                int
 }
 
 // Execute implement `case expr when then` to get jump address.
@@ -1331,13 +1440,15 @@ func (procedureCase *procedureSimpleCase) Execute(ctx context.Context, sctx sess
 	if err != nil {
 		return cache, err
 	}
+	ctx = WithExplainRoutineRuntimeSite(ctx, ExplainRoutineRuntimeSite{StmtOrdinal: procedureCase.stmtOrdinal})
 	datum, err := getExprValue(ctx, procedureCase.condition, sctx, &procedureCase.baseProcedureExecPlan)
 	if err != nil {
 		return cache, err
 	}
 	for i, dest := range procedureCase.dests {
 		procedureCase.ID = i
-		datum1, err := getExprValue(ctx, dest.condition, sctx, &procedureCase.baseProcedureExecPlan)
+		destCtx := WithExplainRoutineRuntimeSite(ctx, ExplainRoutineRuntimeSite{StmtOrdinal: dest.stmtOrdinal})
+		datum1, err := getExprValue(destCtx, dest.condition, sctx, &procedureCase.baseProcedureExecPlan)
 		if err != nil {
 			return cache, err
 		}
@@ -1414,13 +1525,16 @@ func (procedureCase *procedureSimpleCase) GetString(ctx sessionctx.Context, leve
 // CloneStructure gets base context.
 func (procedureCase *procedureSimpleCase) CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan {
 	return &procedureSimpleCase{
-		hasElse:   procedureCase.hasElse,
-		context:   procedureCase.context.CopyContext(contextMap),
-		condition: procedureCase.condition,
-		dests:     procedureCase.dests,
-		errDest:   procedureCase.errDest,
-		elseDest:  procedureCase.elseDest,
-		collate:   procedureCase.collate,
+		hasElse:           procedureCase.hasElse,
+		context:           procedureCase.context.CopyContext(contextMap),
+		condition:         procedureCase.condition,
+		conditionExprNode: procedureCase.conditionExprNode,
+		blockPath:         procedureCase.blockPath,
+		stmtOrdinal:       procedureCase.stmtOrdinal,
+		dests:             procedureCase.dests,
+		errDest:           procedureCase.errDest,
+		elseDest:          procedureCase.elseDest,
+		collate:           procedureCase.collate,
 	}
 
 }
@@ -1466,7 +1580,8 @@ func (procedureSearch *procedureSearchCase) Execute(ctx context.Context, sctx se
 	}
 	for i, dest := range procedureSearch.dests {
 		procedureSearch.id = i
-		datum1, err := getExprValue(ctx, dest.condition, sctx, &procedureSearch.baseProcedureExecPlan)
+		destCtx := WithExplainRoutineRuntimeSite(ctx, ExplainRoutineRuntimeSite{StmtOrdinal: dest.stmtOrdinal})
+		datum1, err := getExprValue(destCtx, dest.condition, sctx, &procedureSearch.baseProcedureExecPlan)
 		if err != nil {
 			return cache, err
 		}
@@ -1552,6 +1667,11 @@ func executeSelectStmt(ctx context.Context, sctx sessionctx.Context, node *ast.S
 			_ = node.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 			return errors.Errorf("sql:%s should be no result set", (sb.String()))
 		}
+	} else if p.compileAndExec != nil {
+		_, _, err := p.executeStmt(WithExplainRoutineDrainRows(ctx), exec, execNode, sqlexec.ExecOptionUseCurSession)
+		if err != nil {
+			return err
+		}
 	} else {
 		err := sctx.GetSessionExec().MultiHanldeNodeWithResult(ctx, execNode)
 		if err != nil {
@@ -1584,6 +1704,7 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 	if err != nil {
 		return cache, err
 	}
+	ctx = WithExplainRoutineRuntimeSite(ctx, ExplainRoutineRuntimeSite{StmtOrdinal: p.stmtOrdinal})
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	for _, stmt := range p.cacheStmt.stmts {
 		if sctx.GetSessionVars().StmtCtx.TriggerCtx.InTrigger {
@@ -1608,9 +1729,16 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 			}
 
 		case *ast.ExplainStmt, *ast.SetOprStmt, *ast.ShowStmt:
-			err := sctx.GetSessionExec().MultiHanldeNodeWithResult(ctx, x)
-			if err != nil {
-				return cache, err
+			if p.baseProcedureExecPlan.compileAndExec != nil {
+				_, _, err := p.executeStmt(WithExplainRoutineDrainRows(ctx), exec, x, sqlexec.ExecOptionUseCurSession)
+				if err != nil {
+					return cache, err
+				}
+			} else {
+				err := sctx.GetSessionExec().MultiHanldeNodeWithResult(ctx, x)
+				if err != nil {
+					return cache, err
+				}
 			}
 
 		case *ast.PrepareStmt:
@@ -1653,9 +1781,16 @@ func (p *executeBaseSQL) Execute(ctx context.Context, sctx sessionctx.Context, i
 
 			// What other types have result set??
 			case *ast.ExplainStmt, *ast.SetOprStmt, *ast.ShowStmt:
-				err := sctx.GetSessionExec().MultiHanldeNodeWithResult(ctx, x)
-				if err != nil {
-					return cache, err
+				if p.baseProcedureExecPlan.compileAndExec != nil {
+					_, _, err := p.executeStmt(WithExplainRoutineDrainRows(ctx), exec, x, sqlexec.ExecOptionUseCurSession)
+					if err != nil {
+						return cache, err
+					}
+				} else {
+					err := sctx.GetSessionExec().MultiHanldeNodeWithResult(ctx, x)
+					if err != nil {
+						return cache, err
+					}
 				}
 			default:
 				rows, _, err := p.executeStmt(ctx, exec, x, sqlexec.ExecOptionUseCurSession)
@@ -1734,8 +1869,10 @@ func (p *executeBaseSQL) Hanlable() bool {
 // CloneStructure gets base context.
 func (p *executeBaseSQL) CloneStructure(contextMap map[*variable.ProcedureContext]*variable.ProcedureContext) ProcedureExecPlan {
 	return &executeBaseSQL{
-		context:   p.context.CopyContext(contextMap),
-		cacheStmt: p.cacheStmt,
+		context:     p.context.CopyContext(contextMap),
+		cacheStmt:   p.cacheStmt,
+		blockPath:   p.blockPath,
+		stmtOrdinal: p.stmtOrdinal,
 	}
 }
 
@@ -1899,6 +2036,7 @@ func (curInfo *procedurceCurInfo) CloseCurs() error {
 func (b *PlanBuilder) buildCallBodyPlan(ctx context.Context, stmtNodes *ast.CreateProcedureInfo, collate string) error {
 	b.ctx.GetSessionVars().SetInCallProcedure()
 	defer b.ctx.GetSessionVars().OutCallProcedure(false)
+	b.initExplainRoutineBlockState()
 	if stmtNodes.FunctionInfo.RetType != nil {
 		retType, err := b.setDefaultLengthAndCharset(stmtNodes.FunctionInfo.RetType, collate)
 		if err != nil {
@@ -2128,43 +2266,52 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 	switch x := node.(type) {
 	// Convert block to clean vars initialize vars (including setting default) and then execute stmt.
 	case *ast.ProcedureBlock:
-		label := &variable.ProcedureLabel{
-			LabelType:  variable.BLOCKLABEL,
-			LabelBegin: b.procedurePlan.GetLen(),
-		}
-		b.procedureGoSet = append(b.procedureGoSet, label)
-		procedureCon := variable.NewProcedureContext(variable.BLOCKLABEL)
-		procedureCon.SetRoot(b.procedureNowContext)
-		b.procedureNowContext = procedureCon
-		// clear this block variable
-		exec := &ProcedureClearBlockVar{
-			context: procedureCon,
-		}
-		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, exec)
-		// create this block variables.
-		for _, varN := range x.ProcedureVars {
-			err := b.newVariableVars(ctx, collate, procedureCon, varN)
-			if err != nil {
-				return err
+		buildBlock := func() error {
+			label := &variable.ProcedureLabel{
+				LabelType:  variable.BLOCKLABEL,
+				LabelBegin: b.procedurePlan.GetLen(),
 			}
-		}
+			b.procedureGoSet = append(b.procedureGoSet, label)
+			procedureCon := variable.NewProcedureContext(variable.BLOCKLABEL)
+			procedureCon.SetRoot(b.procedureNowContext)
+			b.procedureNowContext = procedureCon
+			// clear this block variable
+			exec := &ProcedureClearBlockVar{
+				context: procedureCon,
+			}
+			b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, exec)
+			// create this block variables.
+			for _, varN := range x.ProcedureVars {
+				err := b.newVariableVars(ctx, collate, procedureCon, varN)
+				if err != nil {
+					return err
+				}
+			}
 
-		for _, stmt := range x.ProcedureProcStmts {
-			err := b.procedureNodePlan(ctx, stmt, collate)
-			if err != nil {
-				return err
+			for _, stmt := range x.ProcedureProcStmts {
+				err := b.procedureNodePlan(ctx, stmt, collate)
+				if err != nil {
+					return err
+				}
 			}
-		}
-		label.LabelEnd = b.procedurePlan.GetLen()
-		// sets label end for ProcedureSetGoTo
-		for _, needSet := range procedureCon.NeedSet {
-			if !needSet.SetDest(label, label.LabelEnd) {
-				return errors.New("mismatch label ,which go to label end")
+			label.LabelEnd = b.procedurePlan.GetLen()
+			// sets label end for ProcedureSetGoTo
+			for _, needSet := range procedureCon.NeedSet {
+				if !needSet.SetDest(label, label.LabelEnd) {
+					return errors.New("mismatch label ,which go to label end")
+				}
 			}
+			// out this label.
+			b.procedureGoSet = b.procedureGoSet[:len(b.procedureGoSet)-1]
+			b.procedureNowContext = b.procedureNowContext.GetRoot()
+			return nil
 		}
-		// out this label.
-		b.procedureGoSet = b.procedureGoSet[:len(b.procedureGoSet)-1]
-		b.procedureNowContext = b.procedureNowContext.GetRoot()
+		if !b.explainRoutineRootBodyEntered {
+			b.explainRoutineRootBodyEntered = true
+			return buildBlock()
+		}
+		blockSegment := b.nextExplainRoutineBlockSegment("block")
+		return b.withExplainRoutineBlockPath([]string{blockSegment, "body"}, buildBlock)
 	case *ast.ProcedureLabelBlock:
 		// handler block label.
 		labelEnd, ok := x.GetErrorStatus()
@@ -2211,7 +2358,12 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		if x.IfBody == nil {
 			return errors.New("tidb procdure if block is nil")
 		}
-		err := b.procedureNodePlan(ctx, x.IfBody, collate)
+		ifSegment := b.nextExplainRoutineBlockSegment("if")
+		b.explainRoutineElseIfCount = append(b.explainRoutineElseIfCount, 0)
+		err := b.withExplainRoutineBlockPath([]string{ifSegment}, func() error {
+			return b.procedureNodePlan(ctx, x.IfBody, collate)
+		})
+		b.explainRoutineElseIfCount = b.explainRoutineElseIfCount[:len(b.explainRoutineElseIfCount)-1]
 		if err != nil {
 			return err
 		}
@@ -2236,14 +2388,31 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		// else ==> ast.ProcedureElseBlock / else if ==> ProcedureElseIfBlock
 		label := b.procedureGoSet[len(b.procedureGoSet)-1]
 		exec := &ProcedureIfGo{
-			context: b.procedureNowContext,
-			label:   label,
-			expr:    &CacheExpr{expr: ExprNodeToString(x.IfExpr), isInvalid: true},
+			context:     b.procedureNowContext,
+			label:       label,
+			expr:        &CacheExpr{expr: ExprNodeToString(x.IfExpr), isInvalid: true},
+			exprNode:    x.IfExpr,
+			blockPath:   b.currentExplainRoutineBlockPath(),
+			stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
 		}
 		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, exec)
 		// handler stmts
-		for _, stmt := range x.ProcedureIfStmts {
-			err := b.procedureNodePlan(ctx, stmt, collate)
+		handleThen := func() error {
+			for _, stmt := range x.ProcedureIfStmts {
+				err := b.procedureNodePlan(ctx, stmt, collate)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if strings.HasPrefix(b.currentExplainRoutinePathTail(), "elseif#") {
+			err := handleThen()
+			if err != nil {
+				return err
+			}
+		} else {
+			err := b.withExplainRoutineBlockPath([]string{"then"}, handleThen)
 			if err != nil {
 				return err
 			}
@@ -2260,16 +2429,32 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		}
 		exec.dest = b.procedurePlan.GetLen()
 		if x.ProcedureElseStmt != nil {
+			if elseBlock, ok := x.ProcedureElseStmt.(*ast.ProcedureElseBlock); ok {
+				basePath := b.currentExplainRoutineIfBasePath()
+				err := b.withExplainRoutineBlockPathOverride(append(basePath, "else"), func() error {
+					return b.procedureNodePlan(ctx, elseBlock, collate)
+				})
+				if err != nil {
+					return err
+				}
+				break
+			}
 			err := b.procedureNodePlan(ctx, x.ProcedureElseStmt, collate)
 			if err != nil {
 				return err
 			}
 		}
 	case *ast.ProcedureElseIfBlock:
-		err := b.procedureNodePlan(ctx, x.ProcedureIfStmt, collate)
-		if err != nil {
-			return err
+		if len(b.explainRoutineElseIfCount) == 0 {
+			return errors.New("unexpected elseif block without if context")
 		}
+		lastIdx := len(b.explainRoutineElseIfCount) - 1
+		b.explainRoutineElseIfCount[lastIdx]++
+		elseifSegment := fmt.Sprintf("elseif#%d", b.explainRoutineElseIfCount[lastIdx])
+		basePath := b.currentExplainRoutineIfBasePath()
+		return b.withExplainRoutineBlockPathOverride(append(basePath, elseifSegment), func() error {
+			return b.procedureNodePlan(ctx, x.ProcedureIfStmt, collate)
+		})
 	case *ast.ProcedureElseBlock:
 		for _, stmt := range x.ProcedureIfStmts {
 			err := b.procedureNodePlan(ctx, stmt, collate)
@@ -2279,6 +2464,7 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		}
 
 	case *ast.ProcedureWhileStmt:
+		whileSegment := b.nextExplainRoutineBlockSegment("while")
 		label := &variable.ProcedureLabel{
 			LabelType:  variable.LOOPLABEL,
 			LabelBegin: b.procedurePlan.GetLen(),
@@ -2288,18 +2474,27 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		procedureWhile.SetRoot(b.procedureNowContext)
 		b.procedureNowContext = procedureWhile
 		exec := &ProcedureIfGo{
-			context: b.procedureNowContext,
-			label:   label,
-			expr:    &CacheExpr{expr: ExprNodeToString(x.Condition), isInvalid: true},
+			context:     b.procedureNowContext,
+			label:       label,
+			expr:        &CacheExpr{expr: ExprNodeToString(x.Condition), isInvalid: true},
+			exprNode:    x.Condition,
+			blockPath:   strings.Join([]string{b.currentExplainRoutineBlockPath(), whileSegment}, "/"),
+			stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
 		}
 		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, exec)
 		procedureWhile.NeedSet = append(procedureWhile.NeedSet, exec)
 		procedureWhile.ErrorSet = append(procedureWhile.ErrorSet, exec)
-		for _, stmt := range x.Body {
-			err := b.procedureNodePlan(ctx, stmt, collate)
-			if err != nil {
-				return err
+		err := b.withExplainRoutineBlockPath([]string{whileSegment, "body"}, func() error {
+			for _, stmt := range x.Body {
+				err := b.procedureNodePlan(ctx, stmt, collate)
+				if err != nil {
+					return err
+				}
 			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 		toBegin := &ProcedureGoToStart{
 			dest:  label.LabelBegin,
@@ -2320,6 +2515,7 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		b.procedureNowContext = procedureWhile.GetRoot()
 		b.procedureGoSet = b.procedureGoSet[:len(b.procedureGoSet)-1]
 	case *ast.ProcedureRepeatStmt:
+		repeatSegment := b.nextExplainRoutineBlockSegment("repeat")
 		label := &variable.ProcedureLabel{
 			LabelType:  variable.LOOPLABEL,
 			LabelBegin: b.procedurePlan.GetLen(),
@@ -2329,17 +2525,26 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		procedureRepeat.SetRoot(b.procedureNowContext)
 		b.procedureNowContext = procedureRepeat
 
-		for _, stmt := range x.Body {
-			err := b.procedureNodePlan(ctx, stmt, collate)
-			if err != nil {
-				return err
+		err := b.withExplainRoutineBlockPath([]string{repeatSegment, "body"}, func() error {
+			for _, stmt := range x.Body {
+				err := b.procedureNodePlan(ctx, stmt, collate)
+				if err != nil {
+					return err
+				}
 			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 		exec := &ProcedureIfGo{
-			context: b.procedureNowContext,
-			label:   label,
-			expr:    &CacheExpr{expr: ExprNodeToString(x.Condition), isInvalid: true},
-			dest:    label.LabelBegin,
+			context:     b.procedureNowContext,
+			label:       label,
+			expr:        &CacheExpr{expr: ExprNodeToString(x.Condition), isInvalid: true},
+			exprNode:    x.Condition,
+			blockPath:   strings.Join([]string{b.currentExplainRoutineBlockPath(), repeatSegment}, "/"),
+			stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
+			dest:        label.LabelBegin,
 		}
 		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, exec)
 		exec.errorDest = uint(len(b.procedurePlan.ProcedureCommandList))
@@ -2407,8 +2612,10 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 			return err
 		}
 		exec := &OpenProcedurceCursor{
-			curName: x.CurName,
-			context: procedureCon,
+			curName:     x.CurName,
+			context:     procedureCon,
+			blockPath:   b.currentExplainRoutineBlockPath(),
+			stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
 		}
 		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, exec)
 	case *ast.ProcedureCloseCur:
@@ -2443,26 +2650,39 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		}
 		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, exec)
 	case *ast.SimpleCaseStmt:
+		caseSegment := b.nextExplainRoutineBlockSegment("case")
 		procedureCon := b.procedureNowContext
 		simpleCase := &procedureSimpleCase{
-			context:   procedureCon,
-			condition: &CacheExpr{expr: ExprNodeToString(x.Condition), isInvalid: true},
-			collate:   collate,
+			context:           procedureCon,
+			condition:         &CacheExpr{expr: ExprNodeToString(x.Condition), isInvalid: true},
+			conditionExprNode: x.Condition,
+			blockPath:         strings.Join([]string{b.currentExplainRoutineBlockPath(), caseSegment}, "/"),
+			stmtOrdinal:       b.nextExplainRoutineStmtOrdinal(),
+			collate:           collate,
 		}
 		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, simpleCase)
 		simpleCase.dests = make([]conditionDest, 0, len(x.WhenCases))
 		needSets := make([]variable.ProcedureSetGoTo, 0, len(x.WhenCases))
-		for _, caseCon := range x.WhenCases {
+		for i, caseCon := range x.WhenCases {
 			dest := conditionDest{
-				condition: &CacheExpr{expr: ExprNodeToString(caseCon.Expr), isInvalid: true},
-				dest:      uint(len(b.procedurePlan.ProcedureCommandList)),
+				condition:   &CacheExpr{expr: ExprNodeToString(caseCon.Expr), isInvalid: true},
+				exprNode:    caseCon.Expr,
+				blockPath:   strings.Join([]string{b.currentExplainRoutineBlockPath(), caseSegment, fmt.Sprintf("when#%d", i+1)}, "/"),
+				stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
+				dest:        uint(len(b.procedurePlan.ProcedureCommandList)),
 			}
 			simpleCase.dests = append(simpleCase.dests, dest)
-			for _, stmt := range caseCon.ProcedureStmts {
-				err := b.procedureNodePlan(ctx, stmt, collate)
-				if err != nil {
-					return err
+			err := b.withExplainRoutineBlockPath([]string{caseSegment, fmt.Sprintf("when#%d", i+1)}, func() error {
+				for _, stmt := range caseCon.ProcedureStmts {
+					err := b.procedureNodePlan(ctx, stmt, collate)
+					if err != nil {
+						return err
+					}
 				}
+				return nil
+			})
+			if err != nil {
+				return err
 			}
 			goToEnd := &ProcedureGoToEnd{}
 			needSets = append(needSets, goToEnd)
@@ -2471,11 +2691,17 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		simpleCase.elseDest = uint(len(b.procedurePlan.ProcedureCommandList))
 		if len(x.ElseCases) != 0 {
 			simpleCase.hasElse = true
-			for _, stmt := range x.ElseCases {
-				err := b.procedureNodePlan(ctx, stmt, collate)
-				if err != nil {
-					return err
+			err := b.withExplainRoutineBlockPath([]string{caseSegment, "else"}, func() error {
+				for _, stmt := range x.ElseCases {
+					err := b.procedureNodePlan(ctx, stmt, collate)
+					if err != nil {
+						return err
+					}
 				}
+				return nil
+			})
+			if err != nil {
+				return err
 			}
 		}
 		end := uint(len(b.procedurePlan.ProcedureCommandList))
@@ -2484,6 +2710,7 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 			needSet.SetDest(nil, end)
 		}
 	case *ast.SearchCaseStmt:
+		caseSegment := b.nextExplainRoutineBlockSegment("case")
 		procedureCon := b.procedureNowContext
 		simpleCase := &procedureSearchCase{
 			context: procedureCon,
@@ -2491,17 +2718,26 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, simpleCase)
 		simpleCase.dests = make([]conditionDest, 0, len(x.WhenCases))
 		needSets := make([]variable.ProcedureSetGoTo, 0, len(x.WhenCases))
-		for _, caseCon := range x.WhenCases {
+		for i, caseCon := range x.WhenCases {
 			dest := conditionDest{
-				condition: &CacheExpr{expr: ExprNodeToString(caseCon.Expr), isInvalid: true},
-				dest:      uint(len(b.procedurePlan.ProcedureCommandList)),
+				condition:   &CacheExpr{expr: ExprNodeToString(caseCon.Expr), isInvalid: true},
+				exprNode:    caseCon.Expr,
+				blockPath:   strings.Join([]string{b.currentExplainRoutineBlockPath(), caseSegment, fmt.Sprintf("when#%d", i+1)}, "/"),
+				stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
+				dest:        uint(len(b.procedurePlan.ProcedureCommandList)),
 			}
 			simpleCase.dests = append(simpleCase.dests, dest)
-			for _, stmt := range caseCon.ProcedureStmts {
-				err := b.procedureNodePlan(ctx, stmt, collate)
-				if err != nil {
-					return err
+			err := b.withExplainRoutineBlockPath([]string{caseSegment, fmt.Sprintf("when#%d", i+1)}, func() error {
+				for _, stmt := range caseCon.ProcedureStmts {
+					err := b.procedureNodePlan(ctx, stmt, collate)
+					if err != nil {
+						return err
+					}
 				}
+				return nil
+			})
+			if err != nil {
+				return err
 			}
 			goToEnd := &ProcedureGoToEnd{}
 			needSets = append(needSets, goToEnd)
@@ -2510,11 +2746,17 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		simpleCase.elseDest = uint(len(b.procedurePlan.ProcedureCommandList))
 		if len(x.ElseCases) != 0 {
 			simpleCase.hasElse = true
-			for _, stmt := range x.ElseCases {
-				err := b.procedureNodePlan(ctx, stmt, collate)
-				if err != nil {
-					return err
+			err := b.withExplainRoutineBlockPath([]string{caseSegment, "else"}, func() error {
+				for _, stmt := range x.ElseCases {
+					err := b.procedureNodePlan(ctx, stmt, collate)
+					if err != nil {
+						return err
+					}
 				}
+				return nil
+			})
+			if err != nil {
+				return err
 			}
 		}
 		end := uint(len(b.procedurePlan.ProcedureCommandList))
@@ -2523,6 +2765,7 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 			needSet.SetDest(nil, end)
 		}
 	case *ast.ProcedureLoopStmt:
+		loopSegment := b.nextExplainRoutineBlockSegment("loop")
 		label := &variable.ProcedureLabel{
 			LabelType:  variable.LOOPLABEL,
 			LabelBegin: b.procedurePlan.GetLen(),
@@ -2530,11 +2773,17 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		procedureLoop := variable.NewProcedureContext(variable.LOOPLABEL)
 		procedureLoop.SetRoot(b.procedureNowContext)
 		b.procedureNowContext = procedureLoop
-		for _, stmt := range x.Body {
-			err := b.procedureNodePlan(ctx, stmt, collate)
-			if err != nil {
-				return err
+		err := b.withExplainRoutineBlockPath([]string{loopSegment, "body"}, func() error {
+			for _, stmt := range x.Body {
+				err := b.procedureNodePlan(ctx, stmt, collate)
+				if err != nil {
+					return err
+				}
 			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 		toBegin := &ProcedureGoToStart{
 			dest:  label.LabelBegin,
@@ -2544,9 +2793,11 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		b.procedureNowContext = procedureLoop.GetRoot()
 	case *ast.ProcedureReturnStmt:
 		ri := &returnInst{
-			context:   b.procedureNowContext,
-			cacheStmt: &CacheAst{node.Text(), false, []ast.StmtNode{node}},
-			retType:   b.storedFuncRetType,
+			context:     b.procedureNowContext,
+			cacheStmt:   &CacheAst{node.Text(), false, []ast.StmtNode{node}},
+			retType:     b.storedFuncRetType,
+			blockPath:   b.currentExplainRoutineBlockPath(),
+			stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
 		}
 		// TODO(lance6716): like below `default` branch, add a checkProcedureStatus logic?
 		b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, ri)
@@ -2554,8 +2805,10 @@ func (b *PlanBuilder) procedureNodePlan(ctx context.Context, node ast.StmtNode, 
 		return dbterror.ErrSpBadstatement.FastGenByArgs("USE")
 	default:
 		exec := &executeBaseSQL{
-			context:   b.procedureNowContext,
-			cacheStmt: &CacheAst{node.Text(), false, []ast.StmtNode{node}},
+			context:     b.procedureNowContext,
+			cacheStmt:   &CacheAst{node.Text(), false, []ast.StmtNode{node}},
+			blockPath:   b.currentExplainRoutineBlockPath(),
+			stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
 		}
 		err := exec.checkProcedureStatus(ctx, b.ctx)
 		if err != nil {
@@ -2629,15 +2882,19 @@ func (b *PlanBuilder) newVariableVars(ctx context.Context, collate string, conte
 			}
 
 			exec := &UpdateVariables{
-				name:     name,
-				expr:     defaultString,
-				context:  context,
-				declType: x.DeclType,
+				name:        name,
+				expr:        defaultString,
+				exprNode:    x.DeclDefault,
+				context:     context,
+				declType:    x.DeclType,
+				blockPath:   b.currentExplainRoutineBlockPath(),
+				stmtOrdinal: b.nextExplainRoutineStmtOrdinal(),
 			}
 			b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, exec)
 		}
 	// Handling Stored Procedure handler error variables.
 	case *ast.ProcedureErrorControl:
+		handlerSegment := b.nextExplainRoutineBlockSegment("handler")
 		handleProcedureCon := variable.NewProcedureContext(variable.HANDLELABEL)
 		handleProcedureCon.SetRoot(context)
 
@@ -2735,7 +2992,9 @@ func (b *PlanBuilder) newVariableVars(ctx context.Context, collate string, conte
 			b.procedurePlan.ProcedureCommandList = append(b.procedurePlan.ProcedureCommandList, exec)
 		}
 
-		err := b.procedureNodePlan(ctx, x.Operate, collate)
+		err := b.withExplainRoutineBlockPath([]string{handlerSegment, "body"}, func() error {
+			return b.procedureNodePlan(ctx, x.Operate, collate)
+		})
 		if err != nil {
 			return err
 		}

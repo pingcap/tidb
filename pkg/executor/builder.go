@@ -199,6 +199,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildTrace(v)
 	case *plannercore.Explain:
 		return b.buildExplain(v)
+	case *plannercore.ExplainRoutine:
+		return b.buildExplainRoutine(v)
 	case *plannercore.PointGetPlan:
 		return b.buildPointGet(v)
 	case *plannercore.BatchPointGetPlan:
@@ -1405,6 +1407,55 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) exec.Executor {
 	// to get partition pruning.
 	explainExec.analyzeExec = b.build(v.TargetPlan)
 	return explainExec
+}
+
+func (b *executorBuilder) buildExplainRoutine(v *plannercore.ExplainRoutine) exec.Executor {
+	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	base.SetInitCap(chunk.ZeroCapacity)
+
+	callPlan := *v.Call
+	callPlan.Plan = v.Call.Plan.DeepCopyForExecution()
+	if callPlan.Plan == nil {
+		b.err = errors.New("missing stored routine execution plan")
+		return nil
+	}
+
+	var securityType string
+	switch callPlan.Plan.SecurityType {
+	case "INVOKER":
+		securityType = "INVOKER"
+	case "DEFAULT", "DEFINER":
+		securityType = "DEFINER"
+	default:
+		b.err = errors.Errorf("unsupport security type %s", callPlan.Plan.SecurityType)
+		return nil
+	}
+
+	procExec := &ProcedureExec{
+		BaseExecutor:    exec.NewBaseExecutor(b.ctx, nil, 0),
+		Statement:       callPlan.Callstmt,
+		flag:            0,
+		is:              b.is,
+		done:            false,
+		ProcedureSQLMod: callPlan.ProcedureSQLMod,
+		outVarParam:     make(map[string]string, 10),
+		outLocalParam:   make(map[string]string, 10),
+		outTriggerParam: make(map[string]int, 10),
+		procedurePlan:   callPlan.Plan.ProcedureExecPlan,
+		IsStrict:        callPlan.IsStrictMode,
+		definerHost:     callPlan.Plan.DefinerHost,
+		definerUser:     callPlan.Plan.DefinerUser,
+		securityType:    securityType,
+		isFunction:      callPlan.Callstmt.IsFunction,
+	}
+
+	return &ExplainRoutineExec{
+		BaseExecutor: base,
+		explain:      v,
+		call:         &callPlan,
+		catalog:      plannercore.BuildExplainRoutineCatalog(callPlan.Plan),
+		procExec:     procExec,
+	}
 }
 
 func (b *executorBuilder) buildSelectInto(v *plannercore.SelectInto) exec.Executor {

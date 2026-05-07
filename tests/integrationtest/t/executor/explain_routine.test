@@ -1,0 +1,135 @@
+set global tidb_enable_procedure = ON;
+drop database if exists db_explain_routine;
+create database db_explain_routine;
+use db_explain_routine;
+
+drop table if exists t_explain_routine;
+create table t_explain_routine(a int, b int, key idx_a(a));
+insert into t_explain_routine values (1, 10), (2, 20), (3, 30);
+
+drop procedure if exists p_explain_routine_summary;
+delimiter //
+create procedure p_explain_routine_summary(id int)
+begin
+	if id > 10 then
+		select * from t_explain_routine where a = id;
+	end if;
+	select * from t_explain_routine where a = id;
+end//
+delimiter ;
+
+--replace_column 12 <total_time> 13 <avg_time>
+explain analyze routine procedure p_explain_routine_summary(1);
+
+--replace_regex /_[0-9]+/_<id>/
+--replace_column 6 <execution_info> 8 <memory> 9 <disk>
+explain analyze routine procedure p_explain_routine_summary(1) for stmt 3;
+
+drop procedure if exists p_explain_routine_dynamic;
+delimiter //
+create procedure p_explain_routine_dynamic(id int)
+begin
+	set @sql = concat('select * from t_explain_routine where a = ', id);
+	prepare stmt1 from @sql;
+	execute stmt1;
+	deallocate prepare stmt1;
+end//
+delimiter ;
+
+--replace_column 12 <total_time> 13 <avg_time>
+explain analyze routine procedure p_explain_routine_dynamic(1);
+
+drop procedure if exists p_explain_routine_dynamic_using;
+delimiter //
+create procedure p_explain_routine_dynamic_using(id int)
+begin
+	set @sql = 'select * from t_explain_routine where a = ?';
+	set @id = id;
+	prepare stmt1 from @sql;
+	execute stmt1 using @id;
+	deallocate prepare stmt1;
+end//
+delimiter ;
+
+--replace_column 12 <total_time> 13 <avg_time>
+explain analyze routine procedure p_explain_routine_dynamic_using(1);
+
+--replace_regex /_[0-9]+/_<id>/
+--replace_column 6 <execution_info> 8 <memory> 9 <disk>
+explain analyze routine procedure p_explain_routine_dynamic_using(1) for stmt 4;
+
+drop procedure if exists p_explain_routine_nested_helper;
+delimiter //
+create procedure p_explain_routine_nested_helper(id int)
+begin
+	declare v int default 0;
+	select b into v from t_explain_routine where a = id;
+end//
+delimiter ;
+
+drop procedure if exists p_explain_routine_nested_parent;
+delimiter //
+create procedure p_explain_routine_nested_parent(id int)
+begin
+	call p_explain_routine_nested_helper(id);
+	select * from t_explain_routine where a = id;
+end//
+delimiter ;
+
+--replace_column 12 <total_time> 13 <avg_time>
+explain analyze routine procedure p_explain_routine_nested_parent(1);
+
+set @seen = 0;
+drop procedure if exists p_explain_routine_invalid_target;
+delimiter //
+create procedure p_explain_routine_invalid_target(id int)
+begin
+	set @seen = @seen + 1;
+	select * from t_explain_routine where a = id;
+end//
+delimiter ;
+
+--error 1105
+explain analyze routine procedure p_explain_routine_invalid_target(1) for stmt 99;
+select @seen;
+
+set @seen = 0;
+drop procedure if exists p_explain_routine_missing_args;
+delimiter //
+create procedure p_explain_routine_missing_args(id int)
+begin
+	set @seen = @seen + 1;
+	select * from t_explain_routine where a = id;
+end//
+delimiter ;
+
+--error 1318
+explain analyze routine procedure p_explain_routine_missing_args;
+select @seen;
+
+drop procedure if exists p_explain_routine_write;
+delimiter //
+create procedure p_explain_routine_write(id int)
+begin
+	update t_explain_routine set b = b + 1 where a = id;
+end//
+delimiter ;
+
+--replace_column 12 <total_time> 13 <avg_time>
+explain analyze routine procedure p_explain_routine_write(1);
+select b from t_explain_routine where a = 1;
+
+set @seen = 0;
+drop procedure if exists p_explain_routine_write_preflight;
+delimiter //
+create procedure p_explain_routine_write_preflight(id int)
+begin
+	set @seen = @seen + 1;
+	update t_explain_routine set b = b + 1 where a = id;
+end//
+delimiter ;
+
+--replace_column 12 <total_time> 13 <avg_time>
+explain analyze routine procedure p_explain_routine_write_preflight(1);
+select @seen;
+select b from t_explain_routine where a = 1;
