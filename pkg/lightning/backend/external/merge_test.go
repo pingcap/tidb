@@ -108,6 +108,18 @@ func TestSplitDataFiles(t *testing.T) {
 		})
 	}
 
+	fileGroups, maxReaders := EstimateMergeSubtaskReadLayout(0, 7)
+	require.Equal(t, 0, fileGroups)
+	require.Equal(t, 0, maxReaders)
+
+	fileGroups, maxReaders = EstimateMergeSubtaskReadLayout(288, 7)
+	require.Equal(t, 7, fileGroups)
+	require.Equal(t, 42, maxReaders)
+
+	fileGroups, maxReaders = EstimateMergeSubtaskReadLayout(5, 4)
+	require.Equal(t, 2, fileGroups)
+	require.Equal(t, 3, maxReaders)
+
 	bak := MaxMergingFilesPerThread
 	t.Cleanup(func() {
 		MaxMergingFilesPerThread = bak
@@ -128,6 +140,9 @@ func TestSplitDataFiles(t *testing.T) {
 		allPaths[38:47], allPaths[47:56], allPaths[56:65], allPaths[65:74],
 		allPaths[74:83], allPaths[83:92], allPaths[92:101],
 	}, splitDataFiles(allPaths[:101], 8))
+	fileGroups, maxReaders = EstimateMergeSubtaskReadLayout(99, 8)
+	require.Equal(t, 10, fileGroups)
+	require.Equal(t, 10, maxReaders)
 }
 
 func TestMergeOperator(t *testing.T) {

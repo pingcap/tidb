@@ -487,6 +487,7 @@ func (rs *Storage) Open(ctx context.Context, path string, o *storeapi.ReaderOpti
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	reader = withS3ReadLimiter(ctx, reader)
 	if prefetchSize > 0 {
 		reader = prefetch.NewReader(reader, r.RangeSize(), o.PrefetchSize)
 	}
