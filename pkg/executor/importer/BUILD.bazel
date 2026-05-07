@@ -81,6 +81,7 @@ go_library(
         "//pkg/util/sqlkiller",
         "//pkg/util/stringutil",
         "//pkg/util/syncutil",
+        "//pkg/util/timeutil",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -116,7 +117,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 38,
+    shard_count = 39,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
