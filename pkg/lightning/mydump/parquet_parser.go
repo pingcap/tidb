@@ -213,7 +213,12 @@ type convertedType struct {
 	converted   schema.ConvertedType
 	decimalMeta schema.DecimalMetadata
 
-	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types
+	// See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#temporal-types.
+	//
+	// true  => epoch value has instant semantics (normalized to UTC), so convert to parser location first.
+	// false => epoch value has local semantics, so keep the "as-if UTC" wall clock unchanged.
+	//
+	// NOTE: types.FromGoTime stores only wall-clock fields and drops location metadata.
 	IsAdjustedToUTC bool
 
 	// sparkRebaseMicros is non-empty when the file footer says the column was
@@ -637,7 +642,28 @@ func NewParquetParser(
 		logicalType := desc.LogicalType()
 		if logicalType.IsValid() {
 			colTypes[i].converted, colTypes[i].decimalMeta = logicalType.ToConvertedType()
-			if t, ok := logicalType.(*schema.TimeLogicalType); ok {
+			if t, ok := logicalType.(schema.TimestampLogicalType); ok {
+				// TimestampLogicalType.ToConvertedType() might return none when
+				// IsAdjustedToUTC=false, and not from force convert, so we have
+				// to check again here.
+				switch t.TimeUnit() {
+				case schema.TimeUnitMillis:
+					colTypes[i].converted = schema.ConvertedTypes.TimestampMillis
+				case schema.TimeUnitMicros:
+					colTypes[i].converted = schema.ConvertedTypes.TimestampMicros
+				default:
+					return nil, errors.Errorf("unsupported timestamp time unit %d", t.TimeUnit())
+				}
+				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
+			} else if t, ok := logicalType.(schema.TimeLogicalType); ok {
+				// TimeLogicalType.ToConvertedType() returns none when
+				// IsAdjustedToUTC=false, so preserve the logical time unit here.
+				switch t.TimeUnit() {
+				case schema.TimeUnitMillis:
+					colTypes[i].converted = schema.ConvertedTypes.TimeMillis
+				case schema.TimeUnitMicros:
+					colTypes[i].converted = schema.ConvertedTypes.TimeMicros
+				}
 				colTypes[i].IsAdjustedToUTC = t.IsAdjustedToUTC()
 			} else {
 				colTypes[i].IsAdjustedToUTC = true
