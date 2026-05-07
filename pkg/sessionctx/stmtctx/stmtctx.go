@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -68,6 +69,16 @@ func AllocateTaskID() uint64 {
 
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
+
+type warningDedupKey struct {
+	code    uint16
+	message string
+}
+
+type sqlWarningForDedup interface {
+	Code() errors.ErrCode
+	GetMsg() string
+}
 
 // LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
 // building a logical plan from AST.
@@ -305,6 +316,8 @@ type StatementContext struct {
 	// extraWarnings would not be printed through SHOW WARNINGS, but we want to always output them through the slow
 	// log to help diagnostics, so we store them here separately.
 	ExtraWarnHandler contextutil.WarnHandlerExt
+
+	deduplicateTruncatedWrongValueWarnings bool
 
 	execdetails.SyncExecDetails
 
@@ -1134,14 +1147,76 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.WarnHandler.SetWarnings(warns)
 }
 
+// SetDeduplicateTruncatedWrongValueWarnings controls whether duplicated
+// ErrTruncatedWrongValue warnings with the same message are ignored when they
+// are appended. This should only be enabled for narrow paths where duplicate
+// conversion diagnostics come from repeated planning/building work rather than
+// distinct input rows.
+func (sc *StatementContext) SetDeduplicateTruncatedWrongValueWarnings(deduplicate bool) {
+	sc.deduplicateTruncatedWrongValueWarnings = deduplicate
+}
+
 // AppendWarning appends a warning with level 'Warning'.
 func (sc *StatementContext) AppendWarning(warn error) {
+	if sc.shouldSkipDuplicatedWarning(contextutil.WarnLevelWarning, warn, nil) {
+		return
+	}
 	sc.WarnHandler.AppendWarning(warn)
 }
 
 // AppendWarnings appends some warnings.
 func (sc *StatementContext) AppendWarnings(warns []SQLWarn) {
+	if sc.deduplicateTruncatedWrongValueWarnings {
+		warnings := sc.WarnHandler.CopyWarnings(nil)
+		deduplicated := make([]SQLWarn, 0, len(warns))
+		for _, warn := range warns {
+			if duplicatedTruncatedWrongValueWarning(warn.Level, warn.Err, warnings, deduplicated) {
+				continue
+			}
+			deduplicated = append(deduplicated, warn)
+		}
+		warns = deduplicated
+	}
 	sc.WarnHandler.AppendWarnings(warns)
+}
+
+func (sc *StatementContext) shouldSkipDuplicatedWarning(level string, warn error, pending []SQLWarn) bool {
+	if !sc.deduplicateTruncatedWrongValueWarnings {
+		return false
+	}
+	return duplicatedTruncatedWrongValueWarning(level, warn, sc.WarnHandler.CopyWarnings(nil), pending)
+}
+
+func duplicatedTruncatedWrongValueWarning(level string, warn error, warnings []SQLWarn, pending []SQLWarn) bool {
+	key, ok := truncatedWrongValueWarningKey(level, warn)
+	if !ok {
+		return false
+	}
+	for _, warning := range warnings {
+		if existingKey, ok := truncatedWrongValueWarningKey(warning.Level, warning.Err); ok && existingKey == key {
+			return true
+		}
+	}
+	for _, warning := range pending {
+		if existingKey, ok := truncatedWrongValueWarningKey(warning.Level, warning.Err); ok && existingKey == key {
+			return true
+		}
+	}
+	return false
+}
+
+func truncatedWrongValueWarningKey(level string, warn error) (warningDedupKey, bool) {
+	if level != contextutil.WarnLevelWarning {
+		return warningDedupKey{}, false
+	}
+	sqlWarn, ok := errors.Cause(warn).(sqlWarningForDedup)
+	if !ok {
+		return warningDedupKey{}, false
+	}
+	if uint16(sqlWarn.Code()) != mysql.ErrTruncatedWrongValue {
+		return warningDedupKey{}, false
+	}
+	return warningDedupKey{code: mysql.ErrTruncatedWrongValue, message: sqlWarn.GetMsg()}, true
 }
 
 // AppendNote appends a warning with level 'Note'.

@@ -437,6 +437,26 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Equal(t, 1, len(warnings))
 	require.Equal(t, contextutil.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
+
+	sc = stmtctx.NewStmtCtx()
+	sc.SetDeduplicateTruncatedWrongValueWarnings(true)
+	truncatedTimeWarn := types.ErrTruncatedWrongVal.FastGenByArgs("time", "NULL")
+	truncatedDateWarn := types.ErrTruncatedWrongVal.FastGenByArgs("date", "NULL")
+	sc.AppendWarning(truncatedTimeWarn)
+	sc.AppendWarning(errors.NewNoStackError("regular warning"))
+	sc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("datetime", "NULL"))
+	sc.AppendWarning(types.ErrTruncatedWrongVal.FastGenByArgs("time", "NULL"))
+	sc.AppendWarnings([]stmtctx.SQLWarn{
+		{Level: contextutil.WarnLevelWarning, Err: truncatedDateWarn},
+		{Level: contextutil.WarnLevelWarning, Err: truncatedTimeWarn},
+		{Level: contextutil.WarnLevelWarning, Err: truncatedDateWarn},
+	})
+	warnings = sc.GetWarnings()
+	require.Equal(t, 4, len(warnings))
+	require.EqualError(t, warnings[0].Err, "[types:1292]Truncated incorrect time value: 'NULL'")
+	require.EqualError(t, warnings[1].Err, "regular warning")
+	require.EqualError(t, warnings[2].Err, "[types:1292]Truncated incorrect datetime value: 'NULL'")
+	require.EqualError(t, warnings[3].Err, "[types:1292]Truncated incorrect date value: 'NULL'")
 }
 
 func TestSetStmtCtxTimeZone(t *testing.T) {
