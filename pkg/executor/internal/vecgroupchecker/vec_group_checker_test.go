@@ -267,6 +267,16 @@ func TestVecGroupChecker(t *testing.T) {
 	require.Equal(t, b, 0)
 	require.Equal(t, e, 3)
 	require.True(t, groupChecker.IsExhausted())
+
+	groupChecker.Reset()
+	isFirstGroupSameAsPrev, err := groupChecker.SplitIntoGroups(chk)
+	require.NoError(t, err)
+	require.True(t, isFirstGroupSameAsPrev)
+
+	groupChecker.ResetForNewExecution()
+	isFirstGroupSameAsPrev, err = groupChecker.SplitIntoGroups(chk)
+	require.NoError(t, err)
+	require.False(t, isFirstGroupSameAsPrev)
 }
 
 func TestIssue53867(t *testing.T) {

@@ -58,6 +58,7 @@ func (e *PartitionTopNWindowExec) Open(ctx context.Context) error {
 // OpenSelf initializes the executor state without opening children.
 func (e *PartitionTopNWindowExec) OpenSelf() error {
 	e.childResult = nil
+	e.groupChecker.ResetForNewExecution()
 	e.groupStart = 0
 	e.groupEnd = 0
 	e.groupRank = 0

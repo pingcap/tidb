@@ -560,6 +560,16 @@ func (e *VecGroupChecker) Reset() {
 	}
 }
 
+// ResetForNewExecution resets both current-chunk state and previous-chunk state.
+func (e *VecGroupChecker) ResetForNewExecution() {
+	e.Reset()
+	e.nextGroupID = 0
+	e.groupCount = 0
+	if e.lastGroupKeyOfPrevChk != nil {
+		e.lastGroupKeyOfPrevChk = e.lastGroupKeyOfPrevChk[:0]
+	}
+}
+
 // GroupCount returns the number of groups.
 func (e *VecGroupChecker) GroupCount() int {
 	return e.groupCount
