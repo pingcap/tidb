@@ -217,7 +217,10 @@ func MergeOverlappingFiles(
 // in each share MaxMergingFilesPerThread, if there are not enough files, merge at
 // least 2 files in one batch.
 func splitDataFiles(paths []string, concurrency int) [][]string {
-	shares := splitDataFileShares(len(paths), concurrency)
+	shares := max((len(paths)+MaxMergingFilesPerThread-1)/MaxMergingFilesPerThread, concurrency)
+	if len(paths) < 2*concurrency {
+		shares = max(1, len(paths)/2)
+	}
 	dataFilesSlice := make([][]string, 0, shares)
 	batchCount := len(paths) / shares
 	remainder := len(paths) % shares
@@ -235,14 +238,6 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 		start = end
 	}
 	return dataFilesSlice
-}
-
-func splitDataFileShares(fileCount, concurrency int) int {
-	shares := max((fileCount+MaxMergingFilesPerThread-1)/MaxMergingFilesPerThread, concurrency)
-	if fileCount < 2*concurrency {
-		shares = max(1, fileCount/2)
-	}
-	return shares
 }
 
 // mergeOverlappingFilesInternal reads from given files whose key range may overlap
