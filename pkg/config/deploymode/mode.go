@@ -61,10 +61,9 @@ func IsStarter() bool {
 	return kerneltype.IsNextGen() && Get() == Starter
 }
 
-// Set updates the current deployment mode.
+// Set sets the current deployment mode during TiDB startup.
 //
-// The deployment mode is initialized during TiDB startup and should not be
-// changed during runtime.
+// The deployment mode cannot be changed after it is set.
 func Set(mode Mode) error {
 	if !kerneltype.IsNextGen() {
 		return fmt.Errorf("deploy mode can only be set for nextgen TiDB")
