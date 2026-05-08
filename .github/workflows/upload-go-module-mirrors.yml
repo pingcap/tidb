@@ -1,29 +1,99 @@
 name: Upload Go Module Mirrors
 
 on:
-  pull_request_target:
-    branches:
-      - master
-    paths:
-      - go.mod
-      - go.sum
-      - pkg/parser/go.mod
-      - pkg/parser/go.sum
+  workflow_run:
+    workflows:
+      - Request Go Module Mirror Upload
+    types:
+      - completed
 
 permissions:
   contents: read
+  pull-requests: read
+
+concurrency:
+  group: upload-go-module-mirrors-${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
 
 jobs:
+  resolve:
+    name: Resolve Pull Request
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      should_upload: ${{ steps.pr.outputs.should_upload }}
+      pr_number: ${{ steps.pr.outputs.pr_number }}
+      head_repo: ${{ steps.pr.outputs.head_repo }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+    steps:
+      - name: Resolve PR metadata
+        id: pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_OWNER: ${{ github.event.workflow_run.head_repository.owner.login }}
+          HEAD_REF: ${{ github.event.workflow_run.head_branch }}
+          RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          pr_number="$(
+            gh api "repos/${REPOSITORY}/pulls" \
+              --method GET \
+              -f state=open \
+              -f head="${HEAD_OWNER}:${HEAD_REF}" \
+              --jq '.[0].number'
+          )"
+
+          if [[ -z "${pr_number}" || "${pr_number}" == "null" ]]; then
+            echo "Unable to resolve pull request for ${HEAD_OWNER}:${HEAD_REF}." >&2
+            echo "should_upload=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          head_repo="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.repo.full_name')"
+          head_sha="$(gh api "repos/${REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
+
+          printf 'pr_number=%s\n' "${pr_number}" >> "${GITHUB_OUTPUT}"
+          printf 'head_repo=%s\n' "${head_repo}" >> "${GITHUB_OUTPUT}"
+          printf 'head_sha=%s\n' "${head_sha}" >> "${GITHUB_OUTPUT}"
+
+          if [[ "${head_sha}" != "${RUN_HEAD_SHA}" ]]; then
+            {
+              echo "Skip stale mirror upload request."
+              echo "PR: #${pr_number}"
+              echo "Current head SHA: ${head_sha}"
+              echo "Workflow run head SHA: ${RUN_HEAD_SHA}"
+            } | tee -a "${GITHUB_STEP_SUMMARY}"
+            echo "should_upload=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          {
+            echo "Resolved mirror upload request."
+            echo "PR: #${pr_number}"
+            echo "Head repository: ${head_repo}"
+            echo "Head SHA: ${head_sha}"
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
+
+          echo "should_upload=true" >> "${GITHUB_OUTPUT}"
+
   upload:
     name: Upload Go Module Mirrors
+    needs:
+      - resolve
+    if: needs.resolve.outputs.should_upload == 'true'
     runs-on: ubuntu-latest
     environment: gcs-mirror-upload
     steps:
       - name: Checkout PR branch
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ needs.resolve.outputs.head_repo }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
           path: pr
           persist-credentials: false
       - name: Set up Go
@@ -52,6 +122,17 @@ jobs:
           goroot="$(go env GOROOT)"
           mirror_tmp="${RUNNER_TEMP}/tidb-mirror"
           mkdir -p "${mirror_tmp}/go-build" "${mirror_tmp}/go-mod"
+
+          {
+            echo "Starting mirror upload container."
+            echo "PR: #${{ needs.resolve.outputs.pr_number }}"
+            echo "Head repository: ${{ needs.resolve.outputs.head_repo }}"
+            echo "Head SHA: ${{ needs.resolve.outputs.head_sha }}"
+            echo "Image: us-docker.pkg.dev/gcp-compute-dev/tidb-ci-public/tidb-mirror-uploader:20260508"
+            echo "Workspace mount: ${PWD}/pr -> /workspace"
+            echo "GOROOT mount: ${goroot} -> ${goroot}"
+            echo "Container stdout and stderr are streamed to this step log."
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
 
           docker run --rm \
             --user "$(id -u):$(id -g)" \
