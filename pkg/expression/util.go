@@ -1276,9 +1276,11 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 	}
 	// The map above is keyed by hash for set semantics; sort the extracted filters
 	// before returning them so plan and test output stay deterministic.
-	slices.SortFunc(extractedExpr, func(a, b Expression) int {
-		return bytes.Compare(a.HashCode(), b.HashCode())
-	})
+	if len(extractedExpr) > 1 {
+		slices.SortFunc(extractedExpr, func(a, b Expression) int {
+			return bytes.Compare(a.HashCode(), b.HashCode())
+		})
+	}
 	if onlyNeedExtracted {
 		return extractedExpr, nil
 	}
