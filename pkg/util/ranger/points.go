@@ -637,6 +637,8 @@ func (r *builder) buildFromIn(
 ) ([]*point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
+	pointObjs := make([]point, len(list)*2)
+	pointCount := 0
 	hasNull := false
 	ft := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
 	colCollate := ft.GetCollate()
@@ -657,19 +659,18 @@ func (r *builder) buildFromIn(
 			hasNull = true
 			continue
 		}
-		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetType() == mysql.TypeEnum {
+		if ft.GetType() == mysql.TypeEnum {
 			switch dt.Kind() {
 			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
-				targetType := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
-				enum, parseErr := types.ParseEnumName(targetType.GetElems(), dt.GetString(), targetType.GetCollate())
+				enum, parseErr := types.ParseEnumName(ft.GetElems(), dt.GetString(), ft.GetCollate())
 				if parseErr == nil {
-					dt.SetMysqlEnum(enum, targetType.GetCollate())
+					dt.SetMysqlEnum(enum, ft.GetCollate())
 				} else {
 					err = parseErr
 				}
 			default:
-				dt, err = dt.ConvertTo(tc, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
+				dt, err = dt.ConvertTo(tc, ft)
 			}
 
 			if err != nil {
@@ -677,21 +678,23 @@ func (r *builder) buildFromIn(
 				continue
 			}
 		}
-		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetType() == mysql.TypeYear {
-			dt, err = dt.ConvertToMysqlYear(tc, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
+		if ft.GetType() == mysql.TypeYear {
+			dt, err = dt.ConvertToMysqlYear(tc, ft)
 			if err != nil {
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
 			}
 		}
-		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
-			dt.SetString(dt.GetString(), expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetCollate()) // refine the string like what we did in builder.buildFromBinOp
+		if ft.EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
+			dt.SetString(dt.GetString(), ft.GetCollate()) // refine the string like what we did in builder.buildFromBinOp
 		}
-		var startValue, endValue types.Datum
-		dt.Copy(&startValue)
-		dt.Copy(&endValue)
-		startPoint := &point{value: startValue, start: true}
-		endPoint := &point{value: endValue}
+		dt.Copy(&pointObjs[pointCount].value)
+		pointObjs[pointCount].start = true
+		startPoint := &pointObjs[pointCount]
+		pointCount++
+		dt.Copy(&pointObjs[pointCount].value)
+		endPoint := &pointObjs[pointCount]
+		pointCount++
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	collator := collate.GetCollator(colCollate)

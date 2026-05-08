@@ -22,13 +22,17 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -159,6 +163,125 @@ func getAllDataFromDataAndRanges(t *testing.T, dataAndRanges *engineapi.DataAndR
 	}
 	require.NoError(t, iter.Close())
 	return allKVs
+}
+
+func TestLoadRangeBatchDataReleasesReadersWhileWaitingForDownstream(t *testing.T) {
+	t.Run("already released data still allows retry", func(t *testing.T) {
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.dataReleaseCh <- struct{}{}
+		require.NoError(t, extEngine.waitIngestDataReleased(context.Background()))
+	})
+
+	t.Run("concurrent release between signal check and count check still allows retry", func(t *testing.T) {
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.inFlightDataCount.Store(1)
+		const failpointName = "github.com/pingcap/tidb/pkg/lightning/backend/external/waitIngestDataReleasedBeforeCountCheck"
+		require.NoError(t, failpoint.EnableCall(failpointName, func() {
+			extEngine.onIngestDataReleased()
+		}))
+		t.Cleanup(func() {
+			require.NoError(t, failpoint.Disable(failpointName))
+		})
+		require.NoError(t, extEngine.waitIngestDataReleased(context.Background()))
+	})
+
+	t.Run("wait log includes in-flight data count", func(t *testing.T) {
+		core, logs := observer.New(zap.InfoLevel)
+		ctx := logutil.WithLogger(context.Background(), zap.New(core))
+		extEngine := &Engine{
+			dataReleaseCh: make(chan struct{}, 1),
+		}
+		extEngine.inFlightDataCount.Store(7)
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- extEngine.waitIngestDataReleased(ctx)
+		}()
+		require.Eventually(t, func() bool {
+			return logs.FilterMessage("wait for downstream to release loaded data before retrying read").Len() == 1
+		}, time.Second, 10*time.Millisecond)
+		extEngine.dataReleaseCh <- struct{}{}
+		require.NoError(t, <-errCh)
+
+		fields := logs.All()[0].ContextMap()
+		require.EqualValues(t, 7, fields["inFlightDataCount"])
+	})
+
+	ctx := context.Background()
+	store := &trackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
+	dataFiles, statFiles := prepareKVFiles(t, store, [][]KVPair{{
+		{Key: []byte{1}, Value: []byte("first")},
+		{Key: []byte{2}, Value: []byte("second")},
+	}})
+	extEngine := NewExternalEngine(
+		ctx,
+		store,
+		dataFiles,
+		statFiles,
+		[]byte{1},
+		[]byte{3},
+		[][]byte{{1}, {2}, {3}},
+		[][]byte{{1}, {2}, {3}},
+		1,
+		123,
+		2,
+		2,
+		true,
+		4*units.MiB,
+		engineapi.OnDuplicateKeyIgnore,
+		"/",
+	)
+	t.Cleanup(func() {
+		require.NoError(t, extEngine.Close())
+	})
+
+	loadDataCh := make(chan engineapi.DataAndRanges)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- extEngine.LoadIngestData(ctx, loadDataCh)
+	}()
+
+	first := <-loadDataCh
+	first.Data.IncRef()
+	firstReleased := false
+	t.Cleanup(func() {
+		if !firstReleased {
+			first.Data.DecRef()
+		}
+	})
+
+	// Stats offsets are precomputed before the range loop. After the first range
+	// is emitted, the next failed read only opens the data file, so three opens
+	// prove the retry path has reached object storage.
+	require.Eventually(t, func() bool {
+		return store.totalOpened.Load() >= 3
+	}, 3*time.Second, 10*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		return store.opened.Load() == 0
+	}, 3*time.Second, 10*time.Millisecond, "failed memory acquire should close readers before waiting for downstream release")
+
+	first.Data.DecRef()
+	firstReleased = true
+
+	var second engineapi.DataAndRanges
+	require.Eventually(t, func() bool {
+		select {
+		case second = <-loadDataCh:
+			return true
+		default:
+			return false
+		}
+	}, 3*time.Second, 10*time.Millisecond)
+	second.Data.IncRef()
+	defer second.Data.DecRef()
+
+	require.Equal(t, []KVPair{{Key: []byte{2}, Value: []byte("second")}}, getAllDataFromDataAndRanges(t, &second))
+	require.NoError(t, <-errCh)
 }
 
 func TestEngineOnDup(t *testing.T) {

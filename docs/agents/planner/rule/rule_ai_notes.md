@@ -133,3 +133,19 @@ Implementation choice:
 
 Review note:
 - Reviewers explicitly asked for comments on both the window-top1 uniqueness helper and the row-number upper-bound matcher, because the correctness argument is not obvious from the function names alone.
+
+## 2026-04-21 - Prefer larger planner rule suites when using RunTestUnderCascadesWithDomain
+
+Background:
+- `RunTestUnderCascadesWithDomain` initializes domain state and system tables. Splitting small planner rule regressions across many top-level tests adds repeated setup cost with little isolation benefit.
+
+Key takeaways:
+- For planner rule casetests that already share the same domain requirements and schema setup, prefer one larger suite with subtests over multiple small top-level tests.
+- Keep `RunTestUnderCascadesWithDomain` wrappers as few as possible and make each wrapper cover multiple related scenarios when the lifecycle is compatible.
+- When a testdata loader keys off the test name or caller, suite refactors should preserve the old lookup key explicitly instead of relying on nested subtest names.
+
+Implementation choice:
+- Merge `DerivedTopN` cases under one `TestDerivedTopNSuite` wrapper so both TiFlash/domain-dependent and plain TopN scenarios reuse the same domain initialization.
+
+Validation note:
+- Re-run the affected suite after the refactor because nested subtests can silently change testdata caller names and break recordings.

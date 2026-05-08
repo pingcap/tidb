@@ -628,6 +628,11 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
 	// The principle is to load the histogram for each column at most once in async load, as we already have a retry mechanism in the sync load.
 	defer asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+	// Internal pseudo columns (for example, _tidb_rowid with ID -1) do not have corresponding column metadata/stats.
+	// Skip them defensively in case they leak into the async-load queue.
+	if col.ID <= 0 {
+		return nil
+	}
 	statsTbl, ok := statsHandle.Get(col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.

@@ -3671,6 +3671,14 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 
 	switch raw := node.(type) {
 	case *ast.FlushStmt:
+		if raw.Tp == ast.FlushStatsDelta {
+			if err := fillDefaultDBForStatsObjects(b.ctx, raw.FlushObjects); err != nil {
+				return nil, err
+			}
+			raw.DedupFlushObjects()
+			b.requireSelectPrivForStatsObjects(raw.FlushObjects)
+			break
+		}
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RELOAD")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReloadPriv, "", "", "", err)
 	case *ast.AlterInstanceStmt:
@@ -4012,12 +4020,19 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		}
 		colExpr := mockPlan.Schema().Columns[idx]
 
-		originalVal := b.allowBuildCastArray
-		b.allowBuildCastArray = true
-		expr, _, err := b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
-		b.allowBuildCastArray = originalVal
-		if err != nil {
-			return igc, err
+		var expr expression.Expression
+		// Fast path: pure value literals (e.g. GENERATED ALWAYS AS (NULL) VIRTUAL) contain no
+		// column references and need no rewriting. Skip the expensive Clone()+rewrite() for them.
+		if valExpr, ok := column.GeneratedExpr.Internal().(*driver.ValueExpr); ok {
+			expr = &expression.Constant{Value: valExpr.Datum, RetType: column.FieldType.Clone()}
+		} else {
+			originalVal := b.allowBuildCastArray
+			b.allowBuildCastArray = true
+			expr, _, err = b.rewrite(ctx, column.GeneratedExpr.Clone(), mockPlan, nil, true)
+			b.allowBuildCastArray = originalVal
+			if err != nil {
+				return igc, err
+			}
 		}
 
 		igc.Exprs = append(igc.Exprs, expr)
@@ -4665,15 +4680,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
 		importFromServer = objstore.IsLocal(u)
-		// for SEM v2, they are checked by configured rules.
 		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
-			}
-			if kerneltype.IsNextGen() && objstore.IsS3Like(u) {
-				if err := checkNextGenS3PathWithSem(u); err != nil {
-					return nil, err
-				}
 			}
 		}
 		// a nextgen cluster might be shared by multiple tenants, and they might
@@ -4681,6 +4690,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
+			if err := checkNextGenS3PathWithSem(u); err != nil {
+				return nil, err
+			}
 			values := u.Query()
 			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
@@ -4818,11 +4830,11 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) base.Plan {
 }
 
 func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, error) {
-	if err := fillDefaultDBForRefreshStats(b.ctx, rs); err != nil {
+	if err := fillDefaultDBForStatsObjects(b.ctx, rs.RefreshObjects); err != nil {
 		return nil, err
 	}
 	rs.Dedup()
-	b.requireSelectOrRestoreAdminPrivForRefreshStats(rs)
+	b.requireSelectOrRestoreAdminPrivForStatsObjects(rs.RefreshObjects)
 	p := &Simple{
 		Statement:    rs,
 		IsFromRemote: false,
@@ -4831,14 +4843,14 @@ func (b *PlanBuilder) buildRefreshStats(rs *ast.RefreshStatsStmt) (base.Plan, er
 	return p, nil
 }
 
-func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt) error {
-	if len(rs.RefreshObjects) == 0 {
+func fillDefaultDBForStatsObjects(ctx base.PlanContext, objects []*ast.StatsObject) error {
+	if len(objects) == 0 {
 		return nil
 	}
 
 	currentDB := ctx.GetSessionVars().CurrentDB
-	for _, obj := range rs.RefreshObjects {
-		if obj.RefreshObjectScope != ast.RefreshObjectScopeTable {
+	for _, obj := range objects {
+		if obj.StatsObjectScope != ast.StatsObjectScopeTable {
 			continue
 		}
 		if obj.DBName.L != "" {
@@ -4852,9 +4864,9 @@ func fillDefaultDBForRefreshStats(ctx base.PlanContext, rs *ast.RefreshStatsStmt
 	return nil
 }
 
-func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.RefreshStatsStmt) {
-	if len(rs.RefreshObjects) == 0 {
-		intest.Assert(len(rs.RefreshObjects) > 0, "RefreshStatsStmt.RefreshObjects should not be empty")
+func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForStatsObjects(objects []*ast.StatsObject) {
+	if len(objects) == 0 {
+		intest.Assert(len(objects) > 0, "stats objects should not be empty")
 		return
 	}
 
@@ -4866,10 +4878,19 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 		}
 	}
 
+	b.requireSelectPrivForStatsObjects(objects)
+}
+
+func (b *PlanBuilder) requireSelectPrivForStatsObjects(objects []*ast.StatsObject) {
+	if len(objects) == 0 {
+		intest.Assert(len(objects) > 0, "stats objects should not be empty")
+		return
+	}
+
 	user := b.ctx.GetSessionVars().User
-	for _, obj := range rs.RefreshObjects {
-		switch obj.RefreshObjectScope {
-		case ast.RefreshObjectScopeGlobal:
+	for _, obj := range objects {
+		switch obj.StatsObjectScope {
+		case ast.StatsObjectScopeGlobal:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs("SELECT")
@@ -4878,19 +4899,18 @@ func (b *PlanBuilder) requireSelectOrRestoreAdminPrivForRefreshStats(rs *ast.Ref
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, "", "", "", err)
 			return
-		case ast.RefreshObjectScopeDatabase:
+		case ast.StatsObjectScopeDatabase:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, obj.DBName.O)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, "", "", err)
-		case ast.RefreshObjectScopeTable:
-			dbName := obj.DBName.L
+		case ast.StatsObjectScopeTable:
 			var err error
 			if user != nil {
 				err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, obj.TableName.O)
 			}
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, obj.TableName.L, "", err)
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, obj.DBName.L, obj.TableName.L, "", err)
 		}
 	}
 }
@@ -6319,15 +6339,29 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	return nil
 }
 
-// for nextgen import-into with SEM, we disallow user to set S3 external ID explicitly,
-// and we will use the keyspace name as the S3 external ID.
+// For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
+// disallow explicit S3 external ID. The keyspace name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
+	hasAccessKey := false
+	hasSecretAccessKey := false
+	hasRoleARN := false
 	for k := range values {
-		lowerK := strings.ToLower(k)
-		if lowerK == s3like.S3ExternalID {
+		normalizedK := objstore.NormalizeQueryParameterKey(k)
+		switch normalizedK {
+		case s3like.S3ExternalID:
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+		case s3like.S3AccessKey:
+			hasAccessKey = hasAccessKey || values.Get(k) != ""
+		case s3like.S3SecretAccessKey:
+			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
+		case s3like.S3RoleARN:
+			hasRoleARN = hasRoleARN || values.Get(k) != ""
 		}
+	}
+
+	if !hasRoleARN && !(hasAccessKey && hasSecretAccessKey) {
+		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
 	}
 
 	return nil

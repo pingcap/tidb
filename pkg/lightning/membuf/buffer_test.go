@@ -114,6 +114,52 @@ func TestPoolMemLimit(t *testing.T) {
 	// after buf2 is finished, still can allocate memory from pool
 	buf.AllocBytes(2 * 1024 * 1024)
 	buf.Destroy()
+
+	t.Run("try add bytes returns without blocking", func(t *testing.T) {
+		limiter := NewLimiter(1024 + smallObjOverheadBatch)
+		pool := NewPool(
+			WithBlockNum(0),
+			WithBlockSize(1024),
+			WithPoolMemoryLimiter(limiter),
+		)
+		defer pool.Destroy()
+
+		buf := pool.NewBuffer()
+		_, err := buf.TryAddBytes([]byte("a"))
+		require.NoError(t, err)
+
+		buf2 := pool.NewBuffer()
+		_, err = buf2.TryAddBytes([]byte("b"))
+		require.ErrorIs(t, err, ErrCannotAcquireMemory)
+
+		buf.Destroy()
+		_, err = buf2.TryAddBytes([]byte("b"))
+		require.NoError(t, err)
+		buf2.Destroy()
+	})
+
+	t.Run("failed try allocation keeps buffer unchanged", func(t *testing.T) {
+		const blockSize = 1024
+		limiter := NewLimiter(blockSize)
+		pool := NewPool(
+			WithBlockNum(0),
+			WithBlockSize(blockSize),
+			WithPoolMemoryLimiter(limiter),
+		)
+		defer pool.Destroy()
+
+		buf := pool.NewBuffer()
+		_, err := buf.TryAllocBytes(1)
+		require.ErrorIs(t, err, ErrCannotAcquireMemory)
+
+		require.Equal(t, blockSize, limiter.limit)
+		require.Empty(t, buf.blocks)
+		require.Nil(t, buf.curBlock)
+		require.Equal(t, -1, buf.curBlockIdx)
+		require.Zero(t, buf.curIdx)
+		require.Zero(t, buf.smallObjOverhead)
+		require.Zero(t, buf.smallObjOverheadCache)
+	})
 }
 
 func TestBufferIsolation(t *testing.T) {
