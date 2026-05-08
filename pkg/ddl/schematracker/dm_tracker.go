@@ -20,8 +20,8 @@ package schematracker
 
 import (
 	"context"
+	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -252,15 +252,22 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	if baseTable.IsView() || baseTable.IsSequence() || baseTable.TempTableType != model.TempTableNone {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
-
-	mlogName := "$mlog$" + baseTable.Name.O
-	mlogNameCIStr := pmodel.NewCIStr(mlogName)
-	if utf8.RuneCountInString(mlogNameCIStr.L) > mysql.MaxTableNameLength {
-		return dbterror.ErrTooLongIdent.GenWithStackByArgs(mlogNameCIStr)
+	if baseTable.MaterializedViewBase != nil && baseTable.MaterializedViewBase.MLogID != 0 {
+		return infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Name.O))
 	}
-	if _, err := d.TableByName(context.Background(), schemaName, mlogNameCIStr); err == nil {
-		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
-	} else if !infoschema.ErrTableNotExists.Equal(err) {
+
+	mlogNameCIStr, err := ddl.BuildMaterializedViewLogTableName(
+		baseTable.Name,
+		func(tableName pmodel.CIStr) (bool, error) {
+			if _, err := d.TableByName(context.Background(), schemaName, tableName); err == nil {
+				return true, nil
+			} else if !infoschema.ErrTableNotExists.Equal(err) {
+				return false, err
+			}
+			return false, nil
+		},
+	)
+	if err != nil {
 		return err
 	}
 

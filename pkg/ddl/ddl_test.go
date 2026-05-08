@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -172,6 +173,40 @@ func TestBuildCreateMaterializedViewLogPurgeInfoUpsertSQL(t *testing.T) {
 	require.Contains(t, sqlWithNull, "NEXT_TIME")
 	require.Contains(t, sqlWithNull, "VALUES(NEXT_TIME)")
 	require.Contains(t, sqlWithNull, ", NULL)")
+}
+
+func TestBuildMaterializedViewLogTableName(t *testing.T) {
+	oldMLogSeq := MLogTableNameSeq.Load()
+	oldShortSeq := MLogShortTableNameSeq.Load()
+	MLogTableNameSeq.Store(0)
+	MLogShortTableNameSeq.Store(0)
+	t.Cleanup(func() {
+		MLogTableNameSeq.Store(oldMLogSeq)
+		MLogShortTableNameSeq.Store(oldShortSeq)
+	})
+
+	exists := map[string]struct{}{
+		"$mlog$1base_table_name": {},
+		"$mlog$1":                {},
+	}
+	tableExists := func(name pmodel.CIStr) (bool, error) {
+		_, ok := exists[name.O]
+		return ok, nil
+	}
+
+	name, err := BuildMaterializedViewLogTableName(pmodel.NewCIStr("$mlog$base_table_name"), tableExists)
+	require.NoError(t, err)
+	require.Equal(t, "$mlog$2base_table_name", name.O)
+	require.Equal(t, uint64(2), MLogTableNameSeq.Load())
+
+	name, err = BuildMaterializedViewLogTableName(pmodel.NewCIStr(strings.Repeat("表", mysql.MaxTableNameLength)), tableExists)
+	require.NoError(t, err)
+	require.Equal(t, "$mlog$2", name.O)
+	require.Equal(t, uint64(2), MLogShortTableNameSeq.Load())
+
+	MLogTableNameSeq.Store(math.MaxUint64)
+	_, err = nextMaterializedViewLogTableNameNumber(&MLogTableNameSeq, "out of range")
+	require.ErrorContains(t, err, "out of range")
 }
 
 func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {

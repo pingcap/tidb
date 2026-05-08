@@ -1085,17 +1085,15 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
+	if baseInfo := baseTable.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
+		return infoschema.ErrTableExists.GenWithStackByArgs(fmt.Sprintf("mlog of %s.%s has been created before", schemaName, baseTable.Meta().Name.O))
+	}
 
-	mlogName := "$mlog$" + baseTable.Meta().Name.O
-	mlogNameCIStr := pmodel.NewCIStr(mlogName)
-	if err := checkTooLongTable(mlogNameCIStr); err != nil {
-		return err
-	}
-	_, err = is.TableByName(e.ctx, schemaName, mlogNameCIStr)
-	if err == nil {
-		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
-	}
-	if !infoschema.ErrTableNotExists.Equal(err) {
+	mlogNameCIStr, err := BuildMaterializedViewLogTableName(
+		baseTable.Meta().Name,
+		getExistenceOfMLogTableChecker(e.ctx, is, schemaName),
+	)
+	if err != nil {
 		return err
 	}
 

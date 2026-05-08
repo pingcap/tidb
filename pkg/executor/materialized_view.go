@@ -1952,29 +1952,12 @@ func (e *PurgeMaterializedViewLogExec) resolvePurgeMaterializedViewLogMeta(
 		return schemaName, nil, mlogName, 0, nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
 	baseTableMeta = baseTable.Meta()
-	baseTableID := baseTableMeta.ID
 
-	mlogName = pmodel.NewCIStr("$mlog$" + baseTableMeta.Name.O)
-	mlogTable, err := is.TableByName(context.Background(), schemaName, mlogName)
+	mlogTable, err := ddl.ResolveMLogTableByBaseTable(context.Background(), is, schemaName, baseTableMeta)
 	if err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return schemaName, baseTableMeta, mlogName, 0, nil, errors.Errorf(
-				"materialized view log does not exist for base table %s.%s",
-				schemaName.O,
-				s.Table.Name.O,
-			)
-		}
 		return schemaName, baseTableMeta, mlogName, 0, nil, err
 	}
-	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
-		return schemaName, baseTableMeta, mlogName, 0, nil, errors.Errorf(
-			"table %s.%s is not a materialized view log for base table %s.%s",
-			schemaName.O,
-			mlogName.O,
-			schemaName.O,
-			s.Table.Name.O,
-		)
-	}
+	mlogName = mlogTable.Meta().Name
 	mlogID = mlogTable.Meta().ID
 	mlogInfo = mlogTable.Meta().MaterializedViewLog
 

@@ -278,12 +278,25 @@ func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) e
 
 // CreateMaterializedViewLog implements the DDL interface.
 func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error {
+	mlogSeqBefore := ddl.MLogTableNameSeq.Load()
+	shortSeqBefore := ddl.MLogShortTableNameSeq.Load()
 	err := d.realExecutor.CreateMaterializedViewLog(ctx, stmt)
 	if err != nil || d.closed.Load() {
 		return err
 	}
+	mlogSeqAfter := ddl.MLogTableNameSeq.Load()
+	shortSeqAfter := ddl.MLogShortTableNameSeq.Load()
 
-	err = d.tracker.CreateMaterializedViewLog(ctx, stmt)
+	// Replay the same DDL from the pre-real sequence so SchemaTracker derives the same mlog name.
+	ddl.MLogTableNameSeq.Store(mlogSeqBefore)
+	ddl.MLogShortTableNameSeq.Store(shortSeqBefore)
+	func() {
+		defer func() {
+			ddl.MLogTableNameSeq.Store(mlogSeqAfter)
+			ddl.MLogShortTableNameSeq.Store(shortSeqAfter)
+		}()
+		err = d.tracker.CreateMaterializedViewLog(ctx, stmt)
+	}()
 	if err != nil {
 		panic(err)
 	}
@@ -292,7 +305,12 @@ func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.Cr
 	if schemaName.O == "" {
 		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	}
-	d.checkTableInfo(ctx, schemaName, pmodel.NewCIStr("$mlog$"+stmt.Table.Name.O))
+	baseTable, _ := d.infoCache.GetLatest().TableByName(context.Background(), schemaName, stmt.Table.Name)
+	if baseTable != nil && baseTable.Meta().MaterializedViewBase != nil {
+		if mlogTable, ok := d.infoCache.GetLatest().TableByID(context.Background(), baseTable.Meta().MaterializedViewBase.MLogID); ok {
+			d.checkTableInfo(ctx, schemaName, mlogTable.Meta().Name)
+		}
+	}
 	d.checkTableInfo(ctx, schemaName, stmt.Table.Name)
 	return nil
 }

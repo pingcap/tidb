@@ -71,6 +71,17 @@ func differentIsolationReadEnginesForTest(current string) string {
 	return "tikv"
 }
 
+func resetMLogNameSeqForTest(t *testing.T) {
+	oldMLogSeq := ddl.MLogTableNameSeq.Load()
+	oldShortSeq := ddl.MLogShortTableNameSeq.Load()
+	ddl.MLogTableNameSeq.Store(0)
+	ddl.MLogShortTableNameSeq.Store(0)
+	t.Cleanup(func() {
+		ddl.MLogTableNameSeq.Store(oldMLogSeq)
+		ddl.MLogShortTableNameSeq.Store(oldShortSeq)
+	})
+}
+
 func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -123,6 +134,26 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 
 	// Duplicated MV LOG should fail (same derived table name).
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
+}
+
+func TestCreateMaterializedViewLogNameWithMLogPrefix(t *testing.T) {
+	resetMLogNameSeqForTest(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table `$mlog$base_table_name` (a int, key idx_a(a))")
+	tk.MustExec("create table `$mlog$1base_table_name` (a int)")
+
+	tk.MustExec("create materialized view log on `$mlog$base_table_name` (a)")
+	tk.MustQuery("show tables like '$mlog$2base_table_name'").Check(testkit.Rows("$mlog$2base_table_name"))
+	tk.MustQuery("show create materialized view log on `$mlog$base_table_name`").
+		CheckContain("CREATE MATERIALIZED VIEW LOG ON `$mlog$base_table_name` (`a`)")
+
+	tk.MustExec("create materialized view mv_mlog_prefix (a, cnt) refresh fast as select a, count(1) from `$mlog$base_table_name` group by a")
+	tk.MustExec("alter materialized view log on `$mlog$base_table_name` purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("drop materialized view mv_mlog_prefix")
+	tk.MustExec("drop materialized view log on `$mlog$base_table_name`")
+	tk.MustQuery("show tables like '$mlog$2base_table_name'").Check(testkit.Rows())
 }
 
 func TestShowCreateMaterializedViewLog(t *testing.T) {
@@ -480,6 +511,7 @@ func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
 }
 
 func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
+	resetMLogNameSeqForTest(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -490,8 +522,12 @@ func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema='test' and table_name='%s'", "$mlog$"+maxName)).Check(testkit.Rows("1"))
 
 	tooLongName := strings.Repeat("表", 59)
+	tk.MustExec("create table `$mlog$1` (a int)")
 	tk.MustExec(fmt.Sprintf("create table `%s` (a int)", tooLongName))
-	tk.MustGetErrCode(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName), errno.ErrTooLongIdent)
+	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName))
+	tk.MustQuery("select count(*) from information_schema.tables where table_schema='test' and table_name='$mlog$2'").Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("show create materialized view log on `%s`", tooLongName)).
+		CheckContain(fmt.Sprintf("CREATE MATERIALIZED VIEW LOG ON `%s` (`a`)", tooLongName))
 }
 
 func TestCreateMaterializedViewLogUpdatesPlacementBundle(t *testing.T) {

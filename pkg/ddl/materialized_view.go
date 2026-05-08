@@ -17,8 +17,11 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -37,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -47,10 +51,159 @@ import (
 )
 
 const (
+	materializedViewLogTablePrefix                        = "$mlog$"
 	mviewAttrAlertWarning                                 = "mview_alert_warning"
 	mviewAttrAlertOverdue                                 = "mview_alert_overdue"
 	alterMaterializedScheduleInfoUpdateLockWaitTimeoutSec = int64(10)
 )
+
+var (
+	// MLogTableNameSeq allocates numeric components for mlog names derived from
+	// base tables whose names already start with "$mlog$".
+	MLogTableNameSeq atomic.Uint64
+	// MLogShortTableNameSeq allocates numeric components for shortened mlog names
+	// used when the derived name exceeds TiDB's table-name length limit.
+	MLogShortTableNameSeq atomic.Uint64
+)
+
+// BuildMaterializedViewLogTableName builds an available mlog table name for the base table.
+func BuildMaterializedViewLogTableName(
+	baseTableName pmodel.CIStr,
+	checkTableExistence func(pmodel.CIStr) (bool, error),
+) (pmodel.CIStr, error) {
+	if checkTableExistence == nil {
+		return pmodel.CIStr{}, errors.New("materialized view log table name exists checker is nil")
+	}
+
+	var candidate pmodel.CIStr
+	if strings.HasPrefix(baseTableName.L, materializedViewLogTablePrefix) {
+		suffix := baseTableName.O[len(materializedViewLogTablePrefix):]
+		for {
+			var err error
+			number, err := nextMaterializedViewLogTableNameNumber(
+				&MLogTableNameSeq,
+				"materialized view log table name number is out of range",
+			)
+			if err != nil {
+				return pmodel.CIStr{}, err
+			}
+			candidate = pmodel.NewCIStr(materializedViewLogTablePrefix + strconv.FormatUint(number, 10) + suffix)
+			exists, err := checkTableExistence(candidate)
+			if err != nil {
+				return pmodel.CIStr{}, err
+			}
+			if !exists {
+				break
+			}
+		}
+	} else {
+		candidate = pmodel.NewCIStr(materializedViewLogTablePrefix + baseTableName.O)
+	}
+
+	if utf8.RuneCountInString(candidate.L) <= mysql.MaxTableNameLength {
+		return candidate, nil
+	}
+
+	for {
+		var err error
+		number, err := nextMaterializedViewLogTableNameNumber(
+			&MLogShortTableNameSeq,
+			"materialized view log short table name number is out of range",
+		)
+		if err != nil {
+			return pmodel.CIStr{}, err
+		}
+		candidate = pmodel.NewCIStr(materializedViewLogTablePrefix + strconv.FormatUint(number, 10))
+		if utf8.RuneCountInString(candidate.L) > mysql.MaxTableNameLength {
+			return pmodel.CIStr{}, dbterror.ErrTooLongIdent.GenWithStackByArgs(candidate)
+		}
+		exists, err := checkTableExistence(candidate)
+		if err != nil {
+			return pmodel.CIStr{}, err
+		}
+		if !exists {
+			return candidate, nil
+		}
+	}
+}
+
+func nextMaterializedViewLogTableNameNumber(counter *atomic.Uint64, outOfRangeErr string) (uint64, error) {
+	if counter.Load() == math.MaxUint64 {
+		return 0, errors.New(outOfRangeErr)
+	}
+	next := counter.Add(1)
+	if next == 0 {
+		return 0, errors.New(outOfRangeErr)
+	}
+	return next, nil
+}
+
+func getExistenceOfMLogTableChecker(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemaName pmodel.CIStr,
+) func(pmodel.CIStr) (bool, error) {
+	return func(tableName pmodel.CIStr) (bool, error) {
+		_, err := is.TableByName(ctx, schemaName, tableName)
+		if err == nil {
+			return true, nil
+		}
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return false, nil
+		}
+		return false, err
+	}
+}
+
+// ResolveMLogTableByBaseTable returns the mlog table recorded on the base table metadata.
+func ResolveMLogTableByBaseTable(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemaName pmodel.CIStr,
+	baseTableMeta *model.TableInfo,
+) (table.Table, error) {
+	return resolveMLogTableByBaseTable(ctx, is, schemaName, baseTableMeta)
+}
+
+func resolveMLogTableByBaseTable(
+	ctx context.Context,
+	is infoschema.InfoSchema,
+	schemaName pmodel.CIStr,
+	baseTableMeta *model.TableInfo,
+) (table.Table, error) {
+	if baseTableMeta == nil {
+		return nil, errors.New("materialized view log: invalid base table metadata")
+	}
+	if baseTableMeta.MaterializedViewBase == nil || baseTableMeta.MaterializedViewBase.MLogID == 0 {
+		return nil, errors.Errorf(
+			"materialized view log does not exist for base table %s.%s",
+			schemaName.O,
+			baseTableMeta.Name.O,
+		)
+	}
+
+	mlogID := baseTableMeta.MaterializedViewBase.MLogID
+	mlogTable, ok := is.TableByID(ctx, mlogID)
+	if !ok {
+		return nil, errors.Errorf(
+			"materialized view log does not exist for base table %s.%s",
+			schemaName.O,
+			baseTableMeta.Name.O,
+		)
+	}
+	mlogName := mlogTable.Meta().Name
+	mlogInfo := mlogTable.Meta().MaterializedViewLog
+	if mlogInfo == nil || mlogInfo.BaseTableID != baseTableMeta.ID {
+		return nil, errors.Errorf(
+			"table %s.%s is not a materialized view log for base table %s.%s",
+			schemaName.O,
+			mlogName.O,
+			schemaName.O,
+			baseTableMeta.Name.O,
+		)
+	}
+	return mlogTable, nil
+}
 
 // ApplyMViewExecutionSessionVars applies MV execution vars onto a session and returns a restore closure.
 func ApplyMViewExecutionSessionVars(sessVars *variable.SessionVars, target variable.MViewExecutionSessionVars) (func(), error) {
@@ -234,16 +387,9 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	}
 	baseTableID := baseTable.Meta().ID
 
-	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
-	mlogTable, err := is.TableByName(e.ctx, baseTableName.Schema, mlogName)
+	mlogTable, err := resolveMLogTableByBaseTable(e.ctx, is, baseTableName.Schema, baseTable.Meta())
 	if err != nil {
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return errors.Errorf("materialized view log does not exist for base table %s.%s", baseTableName.Schema.O, baseTableName.Name.O)
-		}
 		return err
-	}
-	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
-		return errors.Errorf("table %s.%s is not a materialized view log for base table %s.%s", baseTableName.Schema.O, mlogName.O, baseTableName.Schema.O, baseTableName.Name.O)
 	}
 
 	// Validate Stage-1 query contract and ensure MV LOG columns cover query references.
@@ -431,16 +577,12 @@ func (e *executor) DropMaterializedViewLog(ctx sessionctx.Context, s *ast.DropMa
 	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
-	baseTableID := baseTable.Meta().ID
 
-	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
-	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
+	mlogTable, err := resolveMLogTableByBaseTable(e.ctx, is, schemaName, baseTable.Meta())
 	if err != nil {
 		return err
 	}
-	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
-		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
-	}
+	mlogName := mlogTable.Meta().Name
 
 	// MV LOG cannot be dropped while any MV still depends on the base table.
 	if hasMaterializedViewDependsOnBaseTable(baseTable.Meta()) {
@@ -559,16 +701,12 @@ func (e *executor) AlterMaterializedViewLog(ctx sessionctx.Context, s *ast.Alter
 	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
 	}
-	baseTableID := baseTable.Meta().ID
 
-	mlogName := pmodel.NewCIStr("$mlog$" + baseTable.Meta().Name.O)
-	mlogTable, err := is.TableByName(e.ctx, schemaName, mlogName)
+	mlogTable, err := resolveMLogTableByBaseTable(e.ctx, is, schemaName, baseTable.Meta())
 	if err != nil {
 		return err
 	}
-	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTableID {
-		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
-	}
+	mlogName := mlogTable.Meta().Name
 
 	for _, action := range s.Actions {
 		switch action.Tp {
