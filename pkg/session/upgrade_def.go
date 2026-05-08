@@ -501,7 +501,7 @@ const (
 	version259 = 259
 
 	// Add mysql.tidb_masking_policy table.
-    version260 = 260
+	version260 = 260
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
