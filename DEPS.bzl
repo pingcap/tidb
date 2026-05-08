@@ -11446,13 +11446,13 @@ def go_deps():
         name = "org_uber_go_zap",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/zap",
-        sha256 = "38760227142d38369069374c005707bc6b3c270a75f34fa3f17c48c863143cdc",
-        strip_prefix = "go.uber.org/zap@v1.27.1",
+        sha256 = "49d6287497537480c2e9330e3dee9c38ac793fbf9fd2257dbc4fa5697818919c",
+        strip_prefix = "go.uber.org/zap@v1.28.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.1.zip",
-            "http://ats.apps.svc/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.1.zip",
-            "https://cache.hawkingrei.com/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/go.uber.org/zap/org_uber_go_zap-v1.28.0.zip",
+            "http://ats.apps.svc/gomod/go.uber.org/zap/org_uber_go_zap-v1.28.0.zip",
+            "https://cache.hawkingrei.com/gomod/go.uber.org/zap/org_uber_go_zap-v1.28.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.uber.org/zap/org_uber_go_zap-v1.28.0.zip",
         ],
     )
     go_repository(
