@@ -153,6 +153,7 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// Wait for the GC triggered by memory810mb
 			func() bool {
+				runtime.GC()
 				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
 			},
 			500*time.Millisecond, 100*time.Millisecond)
@@ -198,6 +199,7 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// Wait for the GC triggered by memory810mb
 			func() bool {
+				runtime.GC()
 				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
 			},
 			500*time.Millisecond, 100*time.Millisecond)
@@ -212,6 +214,7 @@ func TestIssue48741(t *testing.T) {
 		require.Eventually(t,
 			// The GC will be trigged immediately after memoryLimit is set back to 1GB * 80% = 800MB.
 			func() bool {
+				runtime.GC()
 				return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterMemory810mb < getMemoryLimitGCTotal()
 			},
 			2*time.Second, 100*time.Millisecond)
