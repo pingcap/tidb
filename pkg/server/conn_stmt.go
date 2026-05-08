@@ -233,8 +233,6 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
-<<<<<<< HEAD
-=======
 
 	fn := func() bool {
 		if cc.bufReadConn != nil {
@@ -246,7 +244,6 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
 
 	//nolint:forcetypeassert
->>>>>>> 89f9ca4c561 (server: check connection is available in SQLKiller (#60685))
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
