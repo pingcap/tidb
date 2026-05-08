@@ -1448,12 +1448,22 @@ var defaultSysVars = []*SysVar{
 		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.RequireSecureTransport, Value: BoolToOnOff(vardef.DefRequireSecureTransport), Type: vardef.TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			if config.GetGlobalConfig().EnableTiDBCloudServerlessMode {
+				return vardef.On, nil
+			}
 			return BoolToOnOff(tls.RequireSecureTransport.Load()), nil
 		},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			if config.GetGlobalConfig().EnableTiDBCloudServerlessMode {
+				tls.RequireSecureTransport.Store(false)
+				return nil
+			}
 			tls.RequireSecureTransport.Store(TiDBOptOn(val))
 			return nil
 		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			if config.GetGlobalConfig().EnableTiDBCloudServerlessMode && vars.StmtCtx.StmtType == "Set" {
+				return "", errors.New("require_secure_transport can not be set in serverless mode")
+			}
 			if vars.StmtCtx.StmtType == "Set" && TiDBOptOn(normalizedValue) {
 				// On tidbcloud dedicated cluster with the default configuration, if an user modify
 				// @@global.require_secure_transport=on, he can not login the cluster anymore!

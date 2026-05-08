@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbtls "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/stretchr/testify/require"
 )
 
@@ -627,6 +628,39 @@ func TestSetSysVar(t *testing.T) {
 	require.Equal(t, "America/New_York", val)
 	variable.SetSysVar(vardef.SystemTimeZone, originalVal) // restore
 	require.Equal(t, originalVal, variable.GetSysVar(vardef.SystemTimeZone).Value)
+
+	originalCfg := *config.GetGlobalConfig()
+	originalRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&originalCfg)
+		tidbtls.RequireSecureTransport.Store(originalRequireSecureTransport)
+	})
+
+	mock := variable.NewMockGlobalAccessor4Tests()
+	mock.SessionVars.GlobalVarsAccessor = mock
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), vardef.RequireSecureTransport, vardef.On))
+	require.True(t, tidbtls.RequireSecureTransport.Load())
+
+	val, err = variable.GetSysVar(vardef.RequireSecureTransport).GetGlobalFromHook(context.Background(), mock.SessionVars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	serverlessCfg := originalCfg
+	serverlessCfg.EnableTiDBCloudServerlessMode = true
+	config.StoreGlobalConfig(&serverlessCfg)
+	require.NoError(t, variable.GetSysVar(vardef.RequireSecureTransport).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.On, false))
+	require.False(t, tidbtls.RequireSecureTransport.Load())
+
+	val, err = variable.GetSysVar(vardef.RequireSecureTransport).GetGlobalFromHook(context.Background(), mock.SessionVars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	config.StoreGlobalConfig(&originalCfg)
+	require.NoError(t, variable.GetSysVar(vardef.RequireSecureTransport).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.Off, false))
+	require.False(t, tidbtls.RequireSecureTransport.Load())
+
+	require.NoError(t, variable.GetSysVar(vardef.RequireSecureTransport).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.On, false))
+	require.True(t, tidbtls.RequireSecureTransport.Load())
 }
 
 func TestSkipSysvarCache(t *testing.T) {
@@ -635,6 +669,7 @@ func TestSkipSysvarCache(t *testing.T) {
 	require.True(t, variable.GetSysVar(vardef.TiDBGCLifetime).SkipSysvarCache())
 	require.True(t, variable.GetSysVar(vardef.TiDBGCConcurrency).SkipSysvarCache())
 	require.True(t, variable.GetSysVar(vardef.TiDBGCScanLockMode).SkipSysvarCache())
+	require.False(t, variable.GetSysVar(vardef.RequireSecureTransport).SkipSysvarCache())
 	require.False(t, variable.GetSysVar(vardef.TiDBEnableAsyncCommit).SkipSysvarCache())
 }
 

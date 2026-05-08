@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	tidbtls "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/stretchr/testify/require"
 )
 
@@ -345,12 +346,31 @@ func TestIssue47665(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{} // unrelated mock for the test.
-	originSEM := config.GetGlobalConfig().Security.EnableSEM
-	config.GetGlobalConfig().Security.EnableSEM = true
+	originCfg := *config.GetGlobalConfig()
+	originRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&originCfg)
+		tidbtls.RequireSecureTransport.Store(originRequireSecureTransport)
+	})
+	semCfg := originCfg
+	semCfg.Security.EnableSEM = true
+	config.StoreGlobalConfig(&semCfg)
 	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
-	config.GetGlobalConfig().Security.EnableSEM = originSEM
+	config.StoreGlobalConfig(&originCfg)
 	tk.MustExec("set @@global.require_secure_transport = on")
 	tk.MustExec("set @@global.require_secure_transport = off") // recover to default value
+	serverlessCfg := originCfg
+	serverlessCfg.EnableTiDBCloudServerlessMode = true
+	config.StoreGlobalConfig(&serverlessCfg)
+	tk.MustQuery("select @@global.require_secure_transport").Check(testkit.Rows("1"))
+	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set in serverless mode")
+	tk.MustGetErrMsg("set @@global.require_secure_transport = off", "require_secure_transport can not be set in serverless mode")
+	config.StoreGlobalConfig(&originCfg)
+	expected := "0"
+	if originRequireSecureTransport {
+		expected = "1"
+	}
+	tk.MustQuery("select @@global.require_secure_transport").Check(testkit.Rows(expected))
 }
 
 func TestSessionCtx(t *testing.T) {

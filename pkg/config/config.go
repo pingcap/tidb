@@ -193,31 +193,32 @@ type Config struct {
 	TempStoragePath  string    `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
-	ServerVersion              string                  `toml:"server-version" json:"server-version"`
-	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
-	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
-	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
-	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
-	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
-	Log                        Log                     `toml:"log" json:"log"`
-	Instance                   Instance                `toml:"instance" json:"instance"`
-	Security                   Security                `toml:"security" json:"security"`
-	Status                     Status                  `toml:"status" json:"status"`
-	Performance                Performance             `toml:"performance" json:"performance"`
-	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
-	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
-	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
-	RUV2                       RUV2Config              `toml:"ru-v2" json:"ru-v2"`
-	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
-	IndexLimit                 int                     `toml:"index-limit" json:"index-limit"`
-	TableColumnCountLimit      uint32                  `toml:"table-column-count-limit" json:"table-column-count-limit"`
-	GracefulWaitBeforeShutdown int                     `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	TempStorageQuota              int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
+	TxnLocalLatches               tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
+	ServerVersion                 string                  `toml:"server-version" json:"server-version"`
+	VersionComment                string                  `toml:"version-comment" json:"version-comment"`
+	TiDBEdition                   string                  `toml:"tidb-edition" json:"tidb-edition"`
+	TiDBReleaseVersion            string                  `toml:"tidb-release-version" json:"tidb-release-version"`
+	EnableTiDBCloudServerlessMode bool                    `toml:"enable-tidb-cloud-serverless-mode" json:"enable-tidb-cloud-serverless-mode"`
+	KeyspaceName                  string                  `toml:"keyspace-name" json:"keyspace-name"`
+	TiKVWorkerURL                 string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
+	Log                           Log                     `toml:"log" json:"log"`
+	Instance                      Instance                `toml:"instance" json:"instance"`
+	Security                      Security                `toml:"security" json:"security"`
+	Status                        Status                  `toml:"status" json:"status"`
+	Performance                   Performance             `toml:"performance" json:"performance"`
+	PreparedPlanCache             PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing                   OpenTracing             `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol                 ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
+	PDClient                      tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
+	TiKVClient                    tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
+	RUV2                          RUV2Config              `toml:"ru-v2" json:"ru-v2"`
+	CompatibleKillQuery           bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	PessimisticTxn                PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
+	MaxIndexLength                int                     `toml:"max-index-length" json:"max-index-length"`
+	IndexLimit                    int                     `toml:"index-limit" json:"index-limit"`
+	TableColumnCountLimit         uint32                  `toml:"table-column-count-limit" json:"table-column-count-limit"`
+	GracefulWaitBeforeShutdown    int                     `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -1154,7 +1155,8 @@ var defaultConf = Config{
 		Dir:  "/data/deploy/plugin",
 		Load: "",
 	},
-	PessimisticTxn: DefaultPessimisticTxn(),
+	EnableTiDBCloudServerlessMode: false,
+	PessimisticTxn:                DefaultPessimisticTxn(),
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},

@@ -886,8 +886,19 @@ spilled-file-encryption-method = "aes128-ctr"
 	require.NoError(t, conf.Load(configFile))
 	require.Equal(t, SpilledFileEncryptionMethodAES128CTR, conf.Security.SpilledFileEncryptionMethod)
 
+	conf = NewConfig()
+	require.False(t, conf.EnableTiDBCloudServerlessMode)
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString(`
+enable-tidb-cloud-serverless-mode = true
+`)
+	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.EnableTiDBCloudServerlessMode)
 
 	conf = NewConfig()
 	require.Equal(t, time.Second*3, conf.TiKVClient.GetGrpcKeepAliveTimeout())

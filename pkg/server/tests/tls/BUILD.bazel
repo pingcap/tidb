@@ -21,6 +21,7 @@ go_test(
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit/testsetup",
         "//pkg/util",
+        "//pkg/util/tls",
         "//pkg/util/topsql/state",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
