@@ -69,6 +69,42 @@ func (s *mockExtStore) GetFileSize() (int64, error) {
 }
 
 func TestByteReader(t *testing.T) {
+	t.Run("concurrent read allocation is non-blocking", func(t *testing.T) {
+		ctx := context.Background()
+		st := objstore.NewMemStorage()
+		require.NoError(t, st.WriteFile(ctx, "testfile", []byte("abcdef")))
+		rsc, err := st.Open(ctx, "testfile", nil)
+		require.NoError(t, err)
+		br, err := newByteReader(ctx, rsc, 1)
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, br.Close())
+		}()
+
+		pool := membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithBlockSize(1),
+			membuf.WithPoolMemoryLimiter(membuf.NewLimiter(0)),
+		)
+		br.enableConcurrentRead(st, "testfile", 1, 1, pool.NewBuffer())
+
+		errCh := make(chan error, 1)
+		go func() {
+			if err := br.switchConcurrentMode(true); err != nil {
+				errCh <- err
+				return
+			}
+			_, err := br.readNBytes(2)
+			errCh <- err
+		}()
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, membuf.ErrCannotAcquireMemory)
+		case <-time.After(time.Second):
+			require.Fail(t, "switchConcurrentMode blocked on limited memory")
+		}
+	})
+
 	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
 	defer clean()
 

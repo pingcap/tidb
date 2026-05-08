@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/grafana/pyroscope-go"
@@ -143,6 +144,12 @@ const (
 	nmStandby           = "standby"
 	nmActivationTimeout = "activation-timeout"
 	nmMaxIdleSeconds    = "max-idle-seconds"
+)
+
+const (
+	exitCodeOK  = 0
+	exitCodeErr = 1
+	exitCodeInt = 128 + int(syscall.SIGINT)
 )
 
 var (
@@ -403,31 +410,50 @@ func main() {
 	}
 
 	exited := make(chan struct{})
-	signal.SetupSignalHandler(func() {
+	exitCode := exitCodeOK
+	signal.SetupSignalHandler(func(sig os.Signal) {
 		svr.Close()
 		resourcemanager.InstanceResourceManager.Stop()
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
 		executor.Stop()
+		exitCode = exitCodeForSignal(sig)
 		close(exited)
 	})
 	topsql.SetupTopProfiling(keyspace.GetKeyspaceNameBytesBySettings(), svr, dom)
 	terror.MustNil(svr.Run(dom))
 	<-exited
-	syncLog()
+	if err := syncLog(); err != nil {
+		// Log sync failure means shutdown did not finish cleanly, so keep
+		// reporting it as a generic non-zero exit instead of a successful exit.
+		exitCode = exitCodeErr
+	}
+	if exitCode != exitCodeOK {
+		os.Exit(exitCode)
+	}
 }
 
-func syncLog() {
+func exitCodeForSignal(sig os.Signal) int {
+	// Standby force shutdown uses SIGINT. Return 128+SIGINT so deployment scripts
+	// can identify this force-shutdown path.
+	if sig == syscall.SIGINT {
+		return exitCodeInt
+	}
+	return exitCodeOK
+}
+
+func syncLog() error {
 	if err := log.Sync(); err != nil {
 		// Don't complain about /dev/stdout as Fsync will return EINVAL.
 		if pathErr, ok := err.(*fs.PathError); ok {
 			if pathErr.Path == "/dev/stdout" {
-				os.Exit(0)
+				return nil
 			}
 		}
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }
 
 func checkTempStorageQuota() error {

@@ -97,6 +97,9 @@ func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, pla
 	if len(flushObjects) == 0 {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	// HACK: Some tests register in-process TiDB domains but do not start TiDB RPC
 	// endpoints. Broadcasting FLUSH STATS_DELTA CLUSTER to those mock endpoints can
