@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -434,7 +433,7 @@ func NewFileChunkProcessor(
 	parser mydump.Parser,
 	encoder *TableKVEncoder,
 	keyspace []byte,
-	chunk *checkpoints.ChunkCheckpoint,
+	chunk *Chunk,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
 	dataWriter backend.EngineWriter,
@@ -455,8 +454,8 @@ func NewFileChunkProcessor(
 		deliver:    deliver,
 		enc: newChunkEncoder(
 			chunk.GetKey(),
-			parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
-			chunk.Chunk.Offset,
+			parserEncodeReader(parser, chunk.EndOffset, chunk.GetKey()),
+			chunk.Offset,
 			deliver.sendEncodedData,
 			collector,
 			encoder,

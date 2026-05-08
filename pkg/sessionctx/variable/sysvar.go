@@ -2544,6 +2544,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableStrictDoubleTypeCheck = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableStrictNotNullCheck, Value: BoolToOnOff(vardef.DefTiDBEnableStrictNotNullCheck), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableStrictNotNullCheck = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableVectorizedExpression, Value: BoolToOnOff(vardef.DefEnableVectorizedExpression), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableVectorizedExpression = TiDBOptOn(val)
 		return nil
@@ -2610,6 +2614,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableAdvancedJoinReorder, Value: BoolToOnOff(vardef.DefTiDBOptEnableAdvancedJoinReorder), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.TiDBOptEnableAdvancedJoinReorder = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughProj, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughProj), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiDBOptJoinReorderThroughProj = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughSel), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -3935,6 +3943,10 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableCachePrepareStmt, Value: BoolToOnOff(vardef.DefEnableCachePrepareStmt), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableCachePrepareStmt = TiDBOptOn(val)
+		return nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

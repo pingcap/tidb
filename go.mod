@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.25.8
+go 1.25.9
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -106,7 +106,7 @@ require (
 	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20260210113932-1447c9d7e9fe
+	github.com/pingcap/tipb v0.0.0-20260414032333-da912b84de6f
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
@@ -115,7 +115,6 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.3.6
 	github.com/shirou/gopsutil/v3 v3.24.5
-	github.com/shurcooL/httpgzip v0.0.0-20190720172056-320755c1c1b0
 	github.com/soheilhy/cmux v0.1.5
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
@@ -124,7 +123,7 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260401083018-b7f9a9e9d2ab
+	github.com/tikv/client-go/v2 v2.0.8-0.20260423085316-fce9638195b3
 	github.com/tikv/pd/client v0.0.0-20260404141330-8a6813497b52
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6

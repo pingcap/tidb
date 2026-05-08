@@ -27,6 +27,7 @@ import (
 	stderrs "errors"
 	"fmt"
 	"iter"
+	"maps"
 	"math"
 	"math/rand"
 	"regexp"
@@ -109,7 +110,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
-	drivertxn "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -2425,6 +2425,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
 	defer r.End()
+	ctx = execdetails.ContextWithMissingExecDetailsInitialized(ctx)
 
 	if err := s.PrepareTxnCtx(ctx, stmtNode); err != nil {
 		return nil, err
@@ -2446,10 +2447,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		return nil, err
 	}
 	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-	if ruv2Metrics == nil {
-		ruv2Metrics = execdetails.NewRUV2Metrics()
-		ctx = context.WithValue(ctx, execdetails.RUV2MetricsCtxKey, ruv2Metrics)
-	}
 	sessVars.RUV2Metrics = ruv2Metrics
 	bypass := shouldBypass(ctx, stmtNode, sessVars)
 	if ruv2Metrics != nil {
@@ -3185,6 +3182,37 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err = sessiontxn.GetTxnManager(s).AdviseWarmup(); err != nil {
 		return
 	}
+
+	var dedupKey string
+	if s.sessionVars.EnableCachePrepareStmt {
+		// Session-level prepare dedup cache: if the same SQL text has been prepared
+		// before in this session (with the same charset/collation/currentDB), reuse
+		// the already-built PlanCacheStmt and skip the expensive Preprocess+Build.
+		charset, collation := s.sessionVars.GetCharsetInfo()
+		dedupKey = variable.PrepareDedupCacheKey(sql, charset, collation, s.sessionVars.CurrentDB, s.sessionVars.SQLMode)
+		if v := s.sessionVars.GetPrepareStmtDedupCache(dedupKey); v != nil {
+			cached := v.(*plannercore.PrepareStmtCacheEntry)
+			is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+			if cached.Stmt.SchemaVersion == is.SchemaMetaVersion() {
+				newStmt, rebuildErr := s.rebuildFromPrepareCache(ctx, cached, sql, charset, collation)
+				if rebuildErr == nil {
+					stmtID = s.sessionVars.GetNextPreparedStmtID()
+					if err = s.sessionVars.AddPreparedStmt(stmtID, newStmt); err != nil {
+						s.rollbackOnError(ctx)
+						return
+					}
+					paramCount = cached.ParamCount
+					fields = cached.Fields
+					s.rollbackOnError(ctx)
+					return
+				}
+				// Re-parse or rebuild failed; fall through to the full prepare path.
+				logutil.Logger(ctx).Warn("prepare stmt dedup cache rebuild failed, fallback to full prepare", zap.Error(rebuildErr))
+			}
+			// Schema version changed; fall through and re-cache below.
+		}
+	}
+
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
 	// Rollback even if err is nil.
@@ -3193,7 +3221,105 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err != nil {
 		return
 	}
+
+	// Store the result in the dedup cache for future Prepares of the same SQL.
+	if s.sessionVars.EnableCachePrepareStmt {
+		if prepareExec.Stmt != nil {
+			s.sessionVars.SetPrepareStmtDedupCache(dedupKey, &plannercore.PrepareStmtCacheEntry{
+				Stmt:       prepareExec.Stmt.(*plannercore.PlanCacheStmt),
+				Fields:     prepareExec.Fields,
+				ParamCount: prepareExec.ParamCount,
+			})
+		}
+	}
 	return prepareExec.ID, prepareExec.ParamCount, prepareExec.Fields, nil
+}
+
+// rebuildFromPrepareCache constructs a new PlanCacheStmt from a cached entry,
+// re-parsing the SQL to obtain an independent AST (with fresh ParamMarkerExpr
+// nodes) while skipping only the expensive PlanBuilder.Build step.
+// Preprocess is still executed to build a fresh ResolveCtx whose tableNames map
+// is keyed by the new AST's TableName pointers; reusing the cached ResolveCtx
+// would cause nil-deref panics on plan-cache miss because the old pointer keys
+// would not match the newly-parsed AST nodes.
+func (s *session) rebuildFromPrepareCache(
+	ctx context.Context,
+	cached *plannercore.PrepareStmtCacheEntry,
+	sql, charset, collation string,
+) (*plannercore.PlanCacheStmt, error) {
+	stmts, _, err := s.ParseSQL(ctx, sql,
+		parser.CharsetConnection(charset),
+		parser.CollationConnection(collation),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(stmts) != 1 {
+		return nil, errors.New("unexpected statement count after re-parse")
+	}
+	stmtNode := stmts[0]
+
+	// Extract fresh param markers from the new AST and initialise them to NULL.
+	markers := plannercore.ExtractAndSortParamMarkers(stmtNode)
+
+	is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+
+	// Run Preprocess to build a fresh ResolveCtx aligned with the new AST.
+	// This is the only way to populate ResolveCtx.tableNames with the new
+	// AST's *ast.TableName pointer keys without re-running the full Build.
+	ret := &plannercore.PreprocessorReturn{InfoSchema: is}
+	nodeW := resolve.NewNodeW(stmtNode)
+	if err = plannercore.Preprocess(ctx, s, nodeW, plannercore.InPrepare,
+		plannercore.WithPreprocessorReturn(ret)); err != nil {
+		return nil, err
+	}
+	// Defensive: if schema changed between our earlier check and Preprocess,
+	// fall through to the full prepare path.
+	if ret.InfoSchema.SchemaMetaVersion() != cached.Stmt.SchemaVersion {
+		return nil, errors.New("schema version changed during rebuild")
+	}
+
+	newStmt := &plannercore.PlanCacheStmt{
+		// Fields derived from the new AST:
+		PreparedAst: &ast.Prepared{
+			Stmt:     stmtNode,
+			StmtType: cached.Stmt.PreparedAst.StmtType,
+		},
+		Params: markers,
+
+		// Fresh ResolveCtx whose tableNames keys match the new AST pointers.
+		ResolveCtx: nodeW.GetResolveContext(),
+
+		// Immutable fields – safe to share with the cached template:
+		StmtDB:              cached.Stmt.StmtDB,
+		StmtText:            cached.Stmt.StmtText,
+		VisitInfos:          cached.Stmt.VisitInfos,
+		NormalizedSQL:       cached.Stmt.NormalizedSQL,
+		SQLDigest:           cached.Stmt.SQLDigest,
+		ForUpdateRead:       cached.Stmt.ForUpdateRead,
+		SnapshotTSEvaluator: cached.Stmt.SnapshotTSEvaluator,
+		StmtCacheable:       cached.Stmt.StmtCacheable,
+		UncacheableReason:   cached.Stmt.UncacheableReason,
+		SchemaVersion:       cached.Stmt.SchemaVersion,
+
+		// Mutable containers – clone so each stmt has independent state:
+		RelateVersion: maps.Clone(cached.Stmt.RelateVersion),
+		// PointGet is zeroed (per-execution executor state must not leak).
+		// NormalizedPlan / PlanDigest are left as zero values; they will be
+		// populated on the first plan-cache miss during Execute.
+	}
+
+	// Walk the new AST to populate limits, hasSubquery, and tables.
+	// These fields hold pointers into the AST, so they must refer to the
+	// newly-parsed tree rather than the cached one.
+	plannercore.CollectPlanCacheStmtInfo(ctx, is, newStmt, stmtNode)
+
+	// dbName and tbls are only read during Execute (not written to by
+	// CollectPlanCacheStmtInfo since that populates tables, not tbls).
+	// Clone them so that planCachePreprocess can safely replace tbls[i].
+	newStmt.SetDBNameAndTbls(cached.Stmt.DBName(), cached.Stmt.Tbls())
+
+	return newStmt, nil
 }
 
 // ExecutePreparedStmt executes a prepared statement.
@@ -3351,7 +3477,6 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			KVVars:                 vars.KVVars,
 			KvExecCounter:          sc.KvExecCounter,
 			RUV2Metrics:            vars.RUV2Metrics,
-			RUV2RPCInterceptor:     drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics),
 			SessionMemTracker:      vars.MemTracker,
 
 			Location:         sc.TimeZone(),
@@ -3407,7 +3532,6 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	}
 	if dctx.RUV2Metrics != vars.RUV2Metrics {
 		dctx.RUV2Metrics = vars.RUV2Metrics
-		dctx.RUV2RPCInterceptor = drivertxn.NewStatementRUV2RPCInterceptor(vars.RUV2Metrics)
 	}
 
 	return dctx
