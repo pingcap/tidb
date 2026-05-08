@@ -12,7 +12,7 @@ port = 4000
 # Registered store name, [tikv, mocktikv, unistore]
 store = "unistore"
 
-# Deployment mode, [premium, premium_reserved]. It is initialized on startup
+# Deployment mode, [premium, premium_reserved, starter]. It is initialized on startup
 # and cannot be changed at runtime.
 deploy-mode = "premium"
 

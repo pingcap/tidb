@@ -26,6 +26,7 @@ import (
 const (
 	premiumName         = "premium"
 	premiumReservedName = "premium_reserved"
+	starterName         = "starter"
 )
 
 // Mode is the deployment mode of the TiDB instance. It is only allowed when
@@ -39,6 +40,8 @@ const (
 	// resources are fixed when the cluster starts. TiDB-worker, TiKV-worker, and
 	// coprocessor-worker are not scaled on demand.
 	PremiumReserved
+	// Starter is for deployments that support a large number of small tenants.
+	Starter
 )
 
 var currentMode atomic.Int32
@@ -51,6 +54,11 @@ func Get() Mode {
 // IsPremiumReserved returns true if the current deployment mode is PremiumReserved.
 func IsPremiumReserved() bool {
 	return kerneltype.IsNextGen() && Get() == PremiumReserved
+}
+
+// IsStarter returns true if the current deployment mode is Starter.
+func IsStarter() bool {
+	return kerneltype.IsNextGen() && Get() == Starter
 }
 
 // Set updates the current deployment mode.
@@ -75,6 +83,8 @@ func Parse(s string) (Mode, error) {
 		return Premium, nil
 	case premiumReservedName:
 		return PremiumReserved, nil
+	case starterName:
+		return Starter, nil
 	default:
 		return Premium, fmt.Errorf("invalid deploy mode %q", s)
 	}
@@ -87,6 +97,8 @@ func (m Mode) String() string {
 		return premiumName
 	case PremiumReserved:
 		return premiumReservedName
+	case Starter:
+		return starterName
 	default:
 		return fmt.Sprintf("unknown(%d)", m)
 	}
@@ -95,7 +107,7 @@ func (m Mode) String() string {
 // Valid returns true if the deployment mode is valid.
 func (m Mode) Valid() bool {
 	switch m {
-	case Premium, PremiumReserved:
+	case Premium, PremiumReserved, Starter:
 		return true
 	default:
 		return false
@@ -104,7 +116,7 @@ func (m Mode) Valid() bool {
 
 // ModeList returns all valid deployment modes.
 func ModeList() []Mode {
-	return []Mode{Premium, PremiumReserved}
+	return []Mode{Premium, PremiumReserved, Starter}
 }
 
 // MarshalJSON implements json.Marshaler.

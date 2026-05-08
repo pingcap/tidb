@@ -27,6 +27,8 @@
 // and TiDB-worker behavior. User traffic and distributed task execution run
 // directly on TiDB nodes, and they all run on the SYSTEM keyspace.
 //
+// Starter is a deployment mode for supporting a large number of small tenants.
+//
 // Deploy mode is stored in TiDB component config. This can make the deploy mode
 // inconsistent across TiDB instances if different instances are started with
 // different config values. The tradeoff is intentional: keeping deploy mode in

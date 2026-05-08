@@ -28,6 +28,10 @@ func TestModeJSON(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, `"premium_reserved"`, string(data))
 
+	data, err = json.Marshal(Starter)
+	require.NoError(t, err)
+	require.Equal(t, `"starter"`, string(data))
+
 	var mode Mode
 	require.NoError(t, json.Unmarshal([]byte(`"premium"`), &mode))
 	require.Equal(t, Premium, mode)
@@ -37,6 +41,9 @@ func TestModeJSON(t *testing.T) {
 
 	require.NoError(t, json.Unmarshal([]byte(`"Premium_Reserved"`), &mode))
 	require.Equal(t, PremiumReserved, mode)
+
+	require.NoError(t, json.Unmarshal([]byte(`"Starter"`), &mode))
+	require.Equal(t, Starter, mode)
 
 	require.ErrorContains(t, json.Unmarshal([]byte(`"unknown"`), &mode), `invalid deploy mode "unknown"`)
 	require.Error(t, json.Unmarshal([]byte(`1`), &mode))
@@ -54,6 +61,10 @@ func TestModeTOML(t *testing.T) {
 	_, err = toml.Decode(`deploy-mode = "Premium"`, &cfg)
 	require.NoError(t, err)
 	require.Equal(t, Premium, cfg.Mode)
+
+	_, err = toml.Decode(`deploy-mode = "Starter"`, &cfg)
+	require.NoError(t, err)
+	require.Equal(t, Starter, cfg.Mode)
 }
 
 func TestCurrentMode(t *testing.T) {
@@ -66,14 +77,22 @@ func TestCurrentMode(t *testing.T) {
 		require.Equal(t, Premium, Get())
 		currentMode.Store(int32(PremiumReserved))
 		require.False(t, IsPremiumReserved())
+		currentMode.Store(int32(Starter))
+		require.False(t, IsStarter())
 		require.ErrorContains(t, Set(PremiumReserved), "deploy mode can only be set for nextgen TiDB")
 		return
 	}
 
 	require.Equal(t, Premium, Get())
 	require.False(t, IsPremiumReserved())
+	require.False(t, IsStarter())
 	require.NoError(t, Set(PremiumReserved))
 	require.Equal(t, PremiumReserved, Get())
 	require.True(t, IsPremiumReserved())
+	require.False(t, IsStarter())
+	require.NoError(t, Set(Starter))
+	require.Equal(t, Starter, Get())
+	require.False(t, IsPremiumReserved())
+	require.True(t, IsStarter())
 	require.ErrorContains(t, Set(Mode(100)), "invalid deploy mode")
 }

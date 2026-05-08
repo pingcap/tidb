@@ -1075,6 +1075,12 @@ func TestDeployModeConfig(t *testing.T) {
 	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
 	require.NoError(t, conf.Valid())
 
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, deploymode.Starter, conf.DeployMode)
+	require.NoError(t, conf.Valid())
+
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
 	conf = NewConfig()
 	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
