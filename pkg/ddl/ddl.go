@@ -1331,9 +1331,9 @@ var (
 	RunInGoTest bool
 )
 
-// GetRecoverTableSnapshotTS returns the snapshot timestamp for reconstructing
-// table metadata from a finished drop/truncate table job.
-func GetRecoverTableSnapshotTS(job *model.Job) uint64 {
+// GetRecoverSnapshotTS returns the snapshot timestamp for reconstructing
+// metadata from a finished drop/truncate table or drop schema job.
+func GetRecoverSnapshotTS(job *model.Job) uint64 {
 	if job.RealStartTS != 0 {
 		return job.RealStartTS
 	}
@@ -1347,7 +1347,7 @@ func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 			continue
 		}
 
-		snapshotTS := GetRecoverTableSnapshotTS(job)
+		snapshotTS := GetRecoverSnapshotTS(job)
 		// Check GC safe point for getting snapshot infoSchema.
 		err := gcutil.ValidateSnapshotWithGCSafePoint(snapshotTS, gcSafePoint)
 		if err != nil {
