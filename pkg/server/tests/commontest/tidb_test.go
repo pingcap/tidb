@@ -3459,22 +3459,12 @@ func TestIssue57531(t *testing.T) {
 	var rsCnt int
 	for i := range 2 {
 		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-			var conn *sql.Conn
-			var netConn net.Conn
-			conn, _ = dbt.GetDB().Conn(context.Background())
-
-			// get the TCP connection
-			conn.Raw(func(driverConn any) error {
-				v := reflect.ValueOf(driverConn)
-				if v.Kind() == reflect.Ptr {
-					v = v.Elem()
-				}
-				f := v.FieldByName("netConn")
-				if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
-					netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
-				}
-				return nil
-			})
+			conn, err := dbt.GetDB().Conn(context.Background())
+			require.NoError(t, err)
+			defer func() {
+				_ = conn.Close()
+			}()
+			netConn := getRawNetConn(t, conn)
 
 			// execute `select sleep(300)`
 			go func() {
@@ -3512,6 +3502,132 @@ func TestIssue57531(t *testing.T) {
 			}, 5*time.Second, 50*time.Millisecond)
 		})
 	}
+}
+
+func TestClientDisconnectKillsAutocommitInsert(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists issue57531_insert")
+		dbt.MustExec("create table issue57531_insert (a int primary key, b int)")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			_ = conn.Close()
+		}()
+		netConn := getRawNetConn(t, conn)
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := conn.ExecContext(context.Background(), "insert into issue57531_insert values (1, sleep(300))")
+			done <- err
+		}()
+
+		require.Eventually(t, func() bool {
+			return processlistCountByInfo(t, dbt, "insert into issue57531_insert%") == 1
+		}, 5*time.Second, 50*time.Millisecond)
+
+		require.NoError(t, netConn.Close())
+
+		var execErr error
+		require.Eventually(t, func() bool {
+			select {
+			case execErr = <-done:
+				return true
+			default:
+				return false
+			}
+		}, 5*time.Second, 50*time.Millisecond)
+		require.Error(t, execErr)
+
+		require.Eventually(t, func() bool {
+			return processlistCountByInfo(t, dbt, "insert into issue57531_insert%") == 0
+		}, 5*time.Second, 50*time.Millisecond)
+
+		var cnt int
+		err = dbt.GetDB().QueryRowContext(context.Background(), "select count(*) from issue57531_insert").Scan(&cnt)
+		require.NoError(t, err)
+		require.Equal(t, 0, cnt)
+	})
+}
+
+func TestClientDisconnectCancelsAutocommitInsertPrewrite(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("drop table if exists issue57531_prewrite")
+		dbt.MustExec("create table issue57531_prewrite (a int primary key, b int)")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcPrewriteResult", `return("notLeader")`)
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			_ = conn.Close()
+		}()
+		netConn := getRawNetConn(t, conn)
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := conn.ExecContext(context.Background(), "insert into issue57531_prewrite values (1, 1)")
+			done <- err
+		}()
+
+		require.Eventually(t, func() bool {
+			return processlistCountByInfo(t, dbt, "insert into issue57531_prewrite%") == 1
+		}, 5*time.Second, 50*time.Millisecond)
+
+		require.NoError(t, netConn.Close())
+
+		var execErr error
+		require.Eventually(t, func() bool {
+			select {
+			case execErr = <-done:
+				return true
+			default:
+				return false
+			}
+		}, 5*time.Second, 50*time.Millisecond)
+		require.Error(t, execErr)
+
+		require.Eventually(t, func() bool {
+			return processlistCountByInfo(t, dbt, "insert into issue57531_prewrite%") == 0
+		}, 5*time.Second, 50*time.Millisecond)
+
+		var cnt int
+		err = dbt.GetDB().QueryRowContext(context.Background(), "select count(*) from issue57531_prewrite").Scan(&cnt)
+		require.NoError(t, err)
+		require.Equal(t, 0, cnt)
+	})
+}
+
+func getRawNetConn(t *testing.T, conn *sql.Conn) net.Conn {
+	var netConn net.Conn
+	err := conn.Raw(func(driverConn any) error {
+		v := reflect.ValueOf(driverConn)
+		if v.Kind() == reflect.Ptr {
+			v = v.Elem()
+		}
+		f := v.FieldByName("netConn")
+		if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+			netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotNil(t, netConn)
+	return netConn
+}
+
+func processlistCountByInfo(t *testing.T, dbt *testkit.DBTestKit, pattern string) int {
+	var cnt int
+	err := dbt.GetDB().QueryRowContext(
+		context.Background(),
+		"select count(*) from information_schema.processlist where info like ?",
+		pattern,
+	).Scan(&cnt)
+	require.NoError(t, err)
+	return cnt
 }
 
 func TestCloseConnForUndeterminedError(t *testing.T) {

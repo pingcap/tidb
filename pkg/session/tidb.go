@@ -220,7 +220,12 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 			failpoint.Return(errors.New("occur an error after finishStmt"))
 		}
 	})
-	if !sql.IsReadOnly(sessVars) {
+	readOnly := sql.IsReadOnly(sessVars)
+	if !readOnly && meetsErr == nil && shouldCheckConnectionAliveBeforeCommit(sessVars, sql) {
+		sessVars.SQLKiller.CheckConnectionAlive()
+		meetsErr = sessVars.SQLKiller.HandleSignal()
+	}
+	if !readOnly {
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
 			// Add only retry-safe write statements to StmtHistory.
 			// LOAD DATA LOCAL INFILE uses a one-shot client file stream via
@@ -267,6 +272,19 @@ func isLoadDataLocal(sql sqlexec.Statement) bool {
 		return s.FileLocRef == ast.FileLocClient
 	}
 	return false
+}
+
+func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
+	stmt, err := resolvePreparedStmt(sql.GetStmtNode(), sessVars)
+	if err != nil || stmt == nil {
+		return false
+	}
+	switch stmt.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return true
+	default:
+		return false
+	}
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {

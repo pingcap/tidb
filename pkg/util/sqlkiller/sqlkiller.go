@@ -234,6 +234,14 @@ func (killer *SQLKiller) HandleSignal() error {
 	return err
 }
 
+// CheckConnectionAlive checks whether the connection is alive immediately.
+func (killer *SQLKiller) CheckConnectionAlive() {
+	fn := killer.IsConnectionAlive.Load()
+	if fn != nil && !(*fn)() {
+		atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
+	}
+}
+
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
 	if atomic.LoadUint32(&killer.Signal) != 0 {

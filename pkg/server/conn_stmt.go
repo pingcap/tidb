@@ -233,15 +233,6 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args []param.BinaryParam, useCursor bool) (err error) {
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 
-	fn := func() bool {
-		if cc.bufReadConn != nil {
-			return cc.bufReadConn.IsAlive() != 0
-		}
-		return true
-	}
-	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
-	defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
-
 	//nolint:forcetypeassert
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
@@ -319,9 +310,24 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		sql = planCacheStmt.StmtText
 	}
 	execStmt.SetText(charset.EncodingUTF8Impl, sql)
+	clearConnectionAlive := func() {}
+	monitoringConnectionAlive := false
+	if planCacheStmt != nil && planCacheStmt.PreparedAst != nil {
+		monitoringConnectionAlive = shouldMonitorConnectionAliveDuringExecute(planCacheStmt.PreparedAst.Stmt, vars)
+		if monitoringConnectionAlive {
+			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		}
+	}
 	rs, err := (&cc.ctx).ExecuteStmt(ctx, execStmt)
+	if rs == nil || err != nil {
+		clearConnectionAlive()
+	}
 	var lazy bool
 	if rs != nil {
+		if !monitoringConnectionAlive {
+			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
+		}
+		defer clearConnectionAlive()
 		defer func() {
 			if !lazy {
 				rs.Close()
