@@ -112,11 +112,13 @@ type IndexMergeReaderExecutor struct {
 	partitionTableMode bool                  // if this IndexMerge is accessing a partition table
 	prunedPartitions   []table.PhysicalTable // pruned partition tables need to access
 
-	// partialWorkerKVRanges stores the pre-built kv ranges for each partial worker.
-	// partialWorkerKVRanges[i] is for the i-th partial plan. Each *kvRangesWithPhysicalTblID
-	// represents one sorted stream (from partitions, grouped ranges from IN conditions, or both).
-	// This field unifies the previous keyRanges and partitionKeyRanges fields.
-	partialWorkerKVRanges [][]*kvRangesWithPhysicalTblID
+	// partialWorkerKVRanges stores the pre-built kv ranges for each partial worker. This field unifies the previous
+	// keyRanges and partitionKeyRanges fields.
+	// partialWorkerKVRanges[i] is for the i-th partial plan, and consists of multiple grouped kv ranges (wchi may come
+	// from partitions, grouped ranges from IN conditions, or both). Each group is a kvRangesWithPhysicalTblID.
+	// Note that IndexMergeReaderExecutor doesn't rely on this field for partial table path, but memIndexMergeReader
+	// need this, so we still build this field for all partial paths.
+	partialWorkerKVRanges [][]*kvRangesWithPhysicalTblID // partial paths -> grouped kv ranges -> kv ranges
 
 	// All fields above are immutable.
 
@@ -196,6 +198,48 @@ func (e *IndexMergeReaderExecutor) Open(_ context.Context) (err error) {
 	return nil
 }
 
+func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
+	len1 := len(e.partialPlans)
+	len2 := len(e.isCorColInPartialAccess)
+	if len1 != len2 {
+		return errors.Errorf("unexpect length for partialPlans(%d) and isCorColInPartialAccess(%d)", len1, len2)
+	}
+	for i, plan := range e.partialPlans {
+		if e.isCorColInPartialAccess[i] {
+			switch x := plan[0].(type) {
+			case *physicalop.PhysicalIndexScan:
+				e.ranges[i], err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), x, x.IdxCols, x.IdxColLens)
+				if err != nil {
+					return err
+				}
+				if len(x.GroupByColIdxs) > 0 {
+					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs)
+					if err != nil {
+						return err
+					}
+				}
+			case *physicalop.PhysicalTableScan:
+				e.ranges[i], err = x.ResolveCorrelatedColumns()
+				if err != nil {
+					return err
+				}
+				if len(x.GroupByColIdxs) > 0 {
+					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs)
+					if err != nil {
+						return err
+					}
+				}
+			default:
+				err = errors.Errorf("unsupported plan type %T", plan[0])
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // buildPartialWorkerKVRanges builds the unified partialWorkerKVRanges for all partial workers,
 // handling partition mode and grouped ranges (from IN conditions with merge sort) in a unified way.
 func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
@@ -265,47 +309,6 @@ func (e *IndexMergeReaderExecutor) buildPartialWorkerKVRanges() error {
 	return nil
 }
 
-func (e *IndexMergeReaderExecutor) rebuildRangeForCorCol() (err error) {
-	len1 := len(e.partialPlans)
-	len2 := len(e.isCorColInPartialAccess)
-	if len1 != len2 {
-		return errors.Errorf("unexpect length for partialPlans(%d) and isCorColInPartialAccess(%d)", len1, len2)
-	}
-	for i, plan := range e.partialPlans {
-		if e.isCorColInPartialAccess[i] {
-			switch x := plan[0].(type) {
-			case *physicalop.PhysicalIndexScan:
-				e.ranges[i], err = rebuildIndexRanges(e.Ctx().GetExprCtx(), e.Ctx().GetRangerCtx(), x, x.IdxCols, x.IdxColLens)
-				if err != nil {
-					return err
-				}
-				if len(x.GroupByColIdxs) > 0 {
-					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs)
-					if err != nil {
-						return err
-					}
-				}
-			case *physicalop.PhysicalTableScan:
-				e.ranges[i], err = x.ResolveCorrelatedColumns()
-				if err != nil {
-					return err
-				}
-				if len(x.GroupByColIdxs) > 0 {
-					x.GroupedRanges, err = plannercore.GroupRangesByCols(e.ranges[i], x.GroupByColIdxs)
-					if err != nil {
-						return err
-					}
-				}
-			default:
-				err = errors.Errorf("unsupported plan type %T", plan[0])
-			}
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
 
 func (e *IndexMergeReaderExecutor) startWorkers(ctx context.Context) error {
 	exitCh := make(chan struct{})
