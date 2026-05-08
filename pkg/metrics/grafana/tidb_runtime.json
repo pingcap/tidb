@@ -96,7 +96,7 @@
           "linewidth": 1,
           "links": [],
           "maxPerRow": 3,
-          "nullPointMode": "null",
+          "nullPointMode": "null as zero",
           "percentage": false,
           "pluginVersion": "6.1.6",
           "pointradius": 5,
