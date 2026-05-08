@@ -68,7 +68,7 @@ func PrintTiDBInfo() {
 		fields = append(fields, zap.String("TiDB Component Version", componentVersion))
 	}
 	if kerneltype.IsNextGen() {
-		fields = append(fields, zap.String("Deploy Mode", deploymode.Get().String()))
+		fields = append(fields, zap.Stringer("Deploy Mode", deploymode.Get()))
 	}
 	fields = append(fields, zap.String("Kernel Type", kerneltype.Name()))
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
