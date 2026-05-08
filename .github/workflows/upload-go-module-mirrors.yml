@@ -38,7 +38,6 @@ jobs:
 
           printf '%s' "${GCS_MIRROR_SA_KEY}" > "${GOOGLE_APPLICATION_CREDENTIALS}"
           chmod 600 "${GOOGLE_APPLICATION_CREDENTIALS}"
-          echo "${GH_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           sed -i '/bazel-cache/d' pr/DEPS.bzl
           sed -i '/ats.apps.svc/d' pr/DEPS.bzl
           sed -i '/bazel-cache/d' pr/WORKSPACE
@@ -48,4 +47,4 @@ jobs:
             -e GOOGLE_APPLICATION_CREDENTIALS=/credentials/gcs-credentials.json \
             -v "${GOOGLE_APPLICATION_CREDENTIALS}:/credentials/gcs-credentials.json:ro" \
             -v "${PWD}/pr:/workspace:ro" \
-            ghcr.io/pingcap/tidb/go-module-mirror:latest
+            us-west1-docker.pkg.dev/gcp-compute-dev/gcp-computer-dev/tidb-mirror-uploader:20260508
