@@ -322,7 +322,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// latestSchemaVersion + sqlMode + timeZoneOffset + isolationReadEngines + selectLimit
 	hashLen += 8 + 8 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
-	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3 * 5 + 8 + 2
+	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3*5 + 8 + 2
 	if len(stmt.limits) > 0 {
 		// '|' + each limit count/offset takes 8 bytes + '|'
 		hashLen += 2 + len(stmt.limits)*2*8
