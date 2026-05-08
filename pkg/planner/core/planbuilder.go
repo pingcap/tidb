@@ -6346,20 +6346,17 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	hasAccessKey := false
 	hasSecretAccessKey := false
 	hasRoleARN := false
-	hasValue := func(values []string) bool {
-		return len(values) > 0 && values[0] != ""
-	}
-	for k, v := range values {
+	for k := range values {
 		normalizedK := objstore.NormalizeQueryParameterKey(k)
 		switch normalizedK {
 		case s3like.S3ExternalID:
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
 		case s3like.S3AccessKey:
-			hasAccessKey = hasAccessKey || hasValue(v)
+			hasAccessKey = hasAccessKey || values.Get(k) != ""
 		case s3like.S3SecretAccessKey:
-			hasSecretAccessKey = hasSecretAccessKey || hasValue(v)
+			hasSecretAccessKey = hasSecretAccessKey || values.Get(k) != ""
 		case s3like.S3RoleARN:
-			hasRoleARN = hasRoleARN || hasValue(v)
+			hasRoleARN = hasRoleARN || values.Get(k) != ""
 		}
 	}
 
