@@ -131,10 +131,12 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode,
 		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
 		endOffset: -1,
 		startPos:  -1,
-				resetFn:   func() {},
-			}
-			return
-		}// queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
+		resetFn:   func() {},
+	}
+	return
+}
+
+// queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
 func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
 	reader := queryChunkEncodeReader{chunkCh: chunkCh}
 	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {

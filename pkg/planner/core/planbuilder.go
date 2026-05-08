@@ -355,6 +355,9 @@ type PlanBuilder struct {
 	// explainRoutineStmtOrdinal assigns stable statement ordinals to observable
 	// routine statement sites while building the procedure command list.
 	explainRoutineStmtOrdinal int
+	// explainSetPlan is set while building a SET statement that needs its
+	// folded subquery plans for EXPLAIN output.
+	explainSetPlan *Set
 }
 
 type handleColHelper struct {
@@ -843,6 +846,16 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 
 func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, error) {
 	p := &Set{}
+	if ExplainRoutineSetStmtHasPlanBearingPath(v) {
+		p.SetSCtx(b.ctx)
+		if b.shouldRecordExplainSetScalarSubquery(ctx) {
+			previousSetPlan := b.explainSetPlan
+			b.explainSetPlan = p
+			defer func() {
+				b.explainSetPlan = previousSetPlan
+			}()
+		}
+	}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
 			err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or SYSTEM_VARIABLES_ADMIN")
@@ -915,6 +928,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 				if err != nil {
 					return nil, err
 				}
+				b.recordExplainSetScalarSubquery(ctx, physicalPlan, possiblePlan.QueryBlockOffset(), possiblePlan.Schema().Len())
 				row, err := EvalSubqueryFirstRow(ctx, physicalPlan, b.is, b.ctx)
 				if err != nil {
 					return nil, err
@@ -937,6 +951,35 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 		p.VarAssigns = append(p.VarAssigns, assign)
 	}
 	return p, nil
+}
+
+func (b *PlanBuilder) shouldRecordExplainSetScalarSubquery(ctx context.Context) bool {
+	if _, ok := ExplainRoutineRuntimeSiteFromContext(ctx); ok {
+		return true
+	}
+	vars := b.ctx.GetSessionVars()
+	return vars != nil && vars.StmtCtx.InExplainStmt
+}
+
+func (b *PlanBuilder) recordExplainSetScalarSubquery(ctx context.Context, physicalPlan base.PhysicalPlan, offset int, outputColCount int) {
+	if b == nil || b.explainSetPlan == nil || physicalPlan == nil || outputColCount <= 0 {
+		return
+	}
+	vars := b.ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	outputColIDs := make([]int64, 0, outputColCount)
+	for i := 0; i < outputColCount; i++ {
+		outputColIDs = append(outputColIDs, vars.AllocPlanColumnID())
+	}
+	subqueryCtx := ScalarSubqueryEvalCtx{
+		scalarSubQuery: physicalPlan,
+		ctx:            ctx,
+		is:             b.is,
+		outputColIDs:   outputColIDs,
+	}.Init(b.ctx, offset)
+	b.explainSetPlan.explainScalarSubQueries = append(b.explainSetPlan.explainScalarSubQueries, subqueryCtx)
 }
 
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (base.Plan, error) {

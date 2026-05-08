@@ -203,6 +203,15 @@ func FlattenPhysicalPlan(p base.Plan, buildSideFirst bool) *FlatPhysicalPlan {
 		res.CTEs = append(res.CTEs, cteExplained)
 		flattenedCTEPlan[cteDef.CTE.IDForStorage] = struct{}{}
 	}
+	appendScalarSubQuery := func(scalarSubQ *ScalarSubqueryEvalCtx) {
+		subQExplained := res.flattenScalarSubQRecursively(scalarSubQ, initInfo, nil)
+		res.ScalarSubQueries = append(res.ScalarSubQueries, subQExplained)
+	}
+	if setPlan, ok := p.(*Set); ok {
+		for _, scalarSubQ := range setPlan.explainScalarSubQueries {
+			appendScalarSubQuery(scalarSubQ)
+		}
+	}
 	if p.SCtx() == nil || p.SCtx().GetSessionVars() == nil {
 		return res
 	}
@@ -212,8 +221,7 @@ func FlattenPhysicalPlan(p base.Plan, buildSideFirst bool) *FlatPhysicalPlan {
 			logutil.BgLogger().Debug("Wrong item regiestered as scalar subquery", zap.String("the wrong item", fmt.Sprintf("%T", scalarSubQ)))
 			continue
 		}
-		subQExplained := res.flattenScalarSubQRecursively(castedScalarSubQ, initInfo, nil)
-		res.ScalarSubQueries = append(res.ScalarSubQueries, subQExplained)
+		appendScalarSubQuery(castedScalarSubQ)
 	}
 	return res
 }

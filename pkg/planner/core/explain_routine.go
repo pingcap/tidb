@@ -377,11 +377,33 @@ func explainRoutineStmtMeta(stmt ast.StmtNode) (stmtKind string, explainable boo
 		return "delete", true, "", true
 	case *ast.CallStmt:
 		return "call", true, "", true
+	case *ast.SetStmt:
+		if ExplainRoutineSetStmtHasPlanBearingPath(x) {
+			return "set", true, "", true
+		}
+		return "", false, "", false
 	case *ast.PrepareStmt, *ast.ExecuteStmt:
 		return "dynamic_sql", false, "dynamic SQL is not explainable in v1", true
 	default:
 		return "", false, "", false
 	}
+}
+
+// ExplainRoutineSetStmtHasPlanBearingPath reports whether a SET statement contains
+// an assignment expression that needs a query plan, such as a scalar subquery.
+func ExplainRoutineSetStmtHasPlanBearingPath(stmt *ast.SetStmt) bool {
+	if stmt == nil {
+		return false
+	}
+	for _, variable := range stmt.Variables {
+		if variable == nil || variable.Value == nil {
+			continue
+		}
+		if explainRoutineExprContainsPlanBearingPath(variable.Value) {
+			return true
+		}
+	}
+	return false
 }
 
 func explainRoutineExprContainsPlanBearingPath(expr ast.ExprNode) bool {

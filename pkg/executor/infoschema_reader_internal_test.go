@@ -21,9 +21,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -277,9 +277,9 @@ func makeRoutineChunkRow(schema, name, routineType string) chunk.Row {
 		types.NewStringDatum("utf8mb4_bin"),
 		types.NewTimeDatum(types.ZeroTimestamp),
 		types.NewTimeDatum(types.ZeroTimestamp),
-		types.Datum{},
-		types.Datum{},
-		types.Datum{},
+		{},
+		{},
+		{},
 	}
 	return chunk.MutRowFromDatums(datums).ToRow()
 }

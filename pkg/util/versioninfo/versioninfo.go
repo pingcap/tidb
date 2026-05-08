@@ -28,5 +28,5 @@ var (
 	TiDBGitBranch                  = "None"
 	TiDBEdition                    = CommunityEdition
 	TiDBEnterpriseExtensionGitHash = ""
-	TiDBCoreVersion				   = CoreVersion
+	TiDBCoreVersion                = CoreVersion
 )

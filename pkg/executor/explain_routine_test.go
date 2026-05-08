@@ -325,6 +325,43 @@ end`)
 	})
 }
 
+func TestExplainRoutineCoversSetSubqueries(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec(`create procedure p_explain_routine_set_subqueries(id int)
+begin
+	declare v int default 0;
+	set v = (select b from t_explain_routine where a = id);
+	set @explain_routine_set_count = (select count(*) from t_explain_routine where a <= id);
+	set v = id + 1;
+	select v;
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain routine procedure p_explain_routine_set_subqueries(1)").Rows())
+	require.NotEmpty(t, rows)
+	requireAnyRow(t, rows, func(row []string) bool {
+		sqlText := strings.ToLower(row[6])
+		return row[4] == "root" && row[5] == "set" &&
+			strings.Contains(sqlText, "set v") &&
+			strings.Contains(sqlText, "select b") &&
+			strings.Contains(sqlText, "t_explain_routine") &&
+			row[7] == "YES" && row[8] == "" &&
+			strings.Contains(strings.ToLower(strings.Join(row[9:], " ")), "t_explain_routine")
+	})
+	requireAnyRow(t, rows, func(row []string) bool {
+		sqlText := strings.ToLower(row[6])
+		return row[4] == "root" && row[5] == "set" &&
+			strings.Contains(sqlText, "@explain_routine_set_count") &&
+			strings.Contains(sqlText, "select count(") &&
+			row[7] == "YES" && row[8] == "" &&
+			strings.Contains(strings.ToLower(strings.Join(row[9:], " ")), "t_explain_routine")
+	})
+	for _, row := range rows {
+		require.False(t,
+			row[5] == "set" && strings.Contains(strings.ToLower(row[6]), "set v = id + 1"),
+			"constant SET should not be cataloged: %v", row)
+	}
+}
+
 func TestExplainRoutineShapeOnlyArgs(t *testing.T) {
 	tk := setupExplainRoutineTestKit(t)
 	tk.MustExec(`create procedure p_explain_routine_shape(id int, out out_b int)
@@ -506,6 +543,34 @@ end`)
 	rows := rowsToStrings(tk.MustQuery("explain analyze routine procedure p_explain_routine_analyze_drilldown(1) for stmt 1").Rows())
 	require.NotEmpty(t, rows)
 	requireAnyRow(t, rows, func(row []string) bool {
+		return len(row) == 9 && strings.Contains(strings.ToLower(strings.Join(row, " ")), "t_explain_routine")
+	})
+}
+
+func TestExplainAnalyzeRoutineSetSubqueryDrilldownRows(t *testing.T) {
+	tk := setupExplainRoutineTestKit(t)
+	tk.MustExec(`create procedure p_explain_routine_analyze_set_subquery(id int)
+begin
+	declare v int default 0;
+	set v = (select b from t_explain_routine where a = id);
+	select v;
+end`)
+
+	rows := rowsToStrings(tk.MustQuery("explain analyze routine procedure p_explain_routine_analyze_set_subquery(1)").Rows())
+	targetOrdinal := ""
+	requireAnyRow(t, rows, func(row []string) bool {
+		if row[5] != "set" || !strings.Contains(strings.ToLower(row[6]), "select b") {
+			return false
+		}
+		targetOrdinal = row[3]
+		return row[4] == "root" && row[7] == "YES" && row[8] == "" &&
+			row[10] == "1" && row[13] == "0"
+	})
+	require.NotEmpty(t, targetOrdinal)
+
+	drilldownRows := rowsToStrings(tk.MustQuery("explain analyze routine procedure p_explain_routine_analyze_set_subquery(1) for stmt " + targetOrdinal).Rows())
+	require.NotEmpty(t, drilldownRows)
+	requireAnyRow(t, drilldownRows, func(row []string) bool {
 		return len(row) == 9 && strings.Contains(strings.ToLower(strings.Join(row, " ")), "t_explain_routine")
 	})
 }

@@ -191,6 +191,9 @@ func routineExplainIsScaffoldingStmt(stmt ast.StmtNode) bool {
 	case *ast.PrepareStmt, *ast.DeallocateStmt:
 		return true
 	case *ast.SetStmt:
+		if plannercore.ExplainRoutineSetStmtHasPlanBearingPath(x) {
+			return false
+		}
 		for _, variable := range x.Variables {
 			if variable != nil && variable.IsSystem {
 				return false
@@ -207,10 +210,26 @@ func routineExplainPlanKey(plan base.Plan) string {
 		return ""
 	}
 	_, digest := plannercore.NormalizePlan(plan)
-	if digest == nil {
+	if digest != nil {
+		if planKey := digest.String(); planKey != "" {
+			return planKey
+		}
+	}
+	flat := plannercore.FlattenPhysicalPlan(plan, true)
+	if flat == nil || len(flat.ScalarSubQueries) == 0 {
 		return ""
 	}
-	return digest.String()
+	planKeys := make([]string, 0, len(flat.ScalarSubQueries))
+	for _, subQuery := range flat.ScalarSubQueries {
+		_, digest = plannercore.NormalizeFlatPlan(&plannercore.FlatPhysicalPlan{Main: subQuery})
+		if digest == nil {
+			continue
+		}
+		if planKey := digest.String(); planKey != "" {
+			planKeys = append(planKeys, planKey)
+		}
+	}
+	return strings.Join(planKeys, ";")
 }
 
 func renderRoutineExplainAnalyzeRows(plan base.Plan, stmt ast.StmtNode, format string) ([][]string, error) {
